@@ -109,7 +109,10 @@ export default function CrmConversationsPage() {
             const lastMsg = c.messages[0]
             const lastDate = new Date(c.updatedAt)
             const isToday = lastDate.toDateString() === new Date().toDateString()
-            const meta = SOURCE_META[c.source] ?? SOURCE_META.manual
+            // SOURCE_META.manual is statically defined so we know this is
+            // never undefined; the cast avoids TS's noUncheckedIndexedAccess
+            // false-positive.
+            const meta: { icon: string; label: string } = SOURCE_META[c.source] ?? SOURCE_META['manual']!
             return (
               <button
                 key={c.id}
