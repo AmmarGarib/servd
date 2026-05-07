@@ -1,0 +1,58 @@
+# Production tfvars — copy to prod.tfvars, fill in all values, then apply.
+# NEVER commit this file with real secrets. Add prod.tfvars to .gitignore.
+#
+# Usage:
+#   terraform init -backend-config=prod.tfbackend
+#   terraform apply -var-file=prod.tfvars
+
+app_name   = "servd"
+aws_region = "ap-south-1"
+domain     = "servd.pk"
+
+# ECS desired counts — scale to traffic; 2 minimum for HA across AZs.
+api_desired_count        = 2
+web_desired_count        = 2
+storefront_desired_count = 2
+
+# ── Database & cache ──────────────────────────────────────────────────────────
+# Minimum 32-char random strings. Generate with: openssl rand -hex 32
+db_password      = "REPLACE-ME-STRONG-DB-PASSWORD"
+redis_auth_token = "REPLACE-ME-REDIS-AUTH-TOKEN-32-CHARS-MIN"
+
+# ── Auth secrets ──────────────────────────────────────────────────────────────
+# Must be different values. Generate with: openssl rand -base64 64
+jwt_secret         = "REPLACE-ME-32-CHARS-OR-MORE-PROD-VALUE"
+jwt_refresh_secret = "REPLACE-ME-DIFFERENT-32-CHARS-OR-MORE-PROD-VALUE"
+
+# ── Payment gateways ──────────────────────────────────────────────────────────
+# Keenu HMAC secret — from Keenu merchant portal → Developer → Webhook settings
+keenu_webhook_secret = "REPLACE-ME-KEENU-WEBHOOK-SECRET"
+
+# ── Delivery aggregators ──────────────────────────────────────────────────────
+# Foodpanda webhook HMAC secret — from Foodpanda vendor portal.
+foodpanda_webhook_secret = "REPLACE-ME-FOODPANDA-SECRET"
+
+# Careem Food webhook HMAC secret — from Careem vendor portal.
+careem_webhook_secret = "REPLACE-ME-CAREEM-SECRET"
+
+# ── Notifications ─────────────────────────────────────────────────────────────
+# Twilio — for SMS OTPs and WhatsApp fallback.
+twilio_auth_token = "REPLACE-ME-TWILIO-AUTH-TOKEN"
+
+# AWS SES SMTP — for customer emails (receipts, confirmations).
+# Create SMTP credentials in SES → Email Sending → SMTP Settings.
+ses_smtp_user     = "REPLACE-ME-SES-SMTP-USER"
+ses_smtp_password = "REPLACE-ME-SES-SMTP-PASSWORD"
+
+# ── Ops alerting ──────────────────────────────────────────────────────────────
+# Email to receive CloudWatch alarm pages (SNS subscription).
+# Leave empty to disable email alerts (SNS topic is always created).
+alert_email = "ops@servd.pk"
+
+# ── FBR PRAL Electronic POS (SRO 1307(I)/2022) ───────────────────────────────
+# Required if any concept is registered as a Tier-1 business with FBR.
+# Obtain from PRAL portal (https://esp.pral.com.pk) after POS registration.
+# Leave empty if FBR integration is not yet activated — the worker will skip
+# all orders gracefully (no fbrPosId set on concept = no submission).
+fbr_username = "REPLACE-ME-FBR-NTN-USERNAME"
+fbr_password  = "REPLACE-ME-FBR-PRAL-PASSWORD"

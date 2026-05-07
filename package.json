@@ -1,0 +1,31 @@
+{
+  "name": "servd",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Hospitality Operations Platform",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "install:all": "npm install && npm install --prefix backend && npm install --prefix frontend/admin && npm install --prefix frontend/storefront",
+    "dev": "concurrently -k -n API,ADMIN,STORE -c yellow,cyan,magenta \"npm run dev --prefix backend\" \"npm run dev --prefix frontend/admin\" \"npm run dev --prefix frontend/storefront\"",
+    "dev:backend": "npm run dev --prefix backend",
+    "dev:admin": "npm run dev --prefix frontend/admin",
+    "dev:storefront": "npm run dev --prefix frontend/storefront",
+    "build": "npm run build --prefix backend && npm run build --prefix frontend/admin && npm run build --prefix frontend/storefront",
+    "format": "prettier --write \"**/*.{ts,tsx,json,md}\"",
+    "db:generate": "npm run db:generate --prefix backend",
+    "db:migrate": "npm run db:migrate --prefix backend",
+    "db:seed": "npm run db:seed --prefix backend",
+    "db:studio": "npm run db:studio --prefix backend"
+  },
+  "devDependencies": {
+    "@typescript-eslint/eslint-plugin": "^7.0.0",
+    "@typescript-eslint/parser": "^7.0.0",
+    "concurrently": "^9.1.0",
+    "eslint": "^8.57.0",
+    "eslint-config-prettier": "^9.1.0",
+    "prettier": "^3.2.5",
+    "typescript": "^5.4.5"
+  }
+}

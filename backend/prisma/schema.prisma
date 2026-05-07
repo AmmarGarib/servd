@@ -1,0 +1,3633 @@
+// servd — Prisma Schema
+// Database: PostgreSQL 15+
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ───────────────────────────────────────────────────────────────────
+
+enum ConceptType {
+  restaurant
+  digital
+  cart
+}
+
+enum OrderSource {
+  servd
+  foodpanda
+  careem
+  pos
+  cart
+  manual
+}
+
+enum OrderStatus {
+  received
+  confirmed
+  preparing
+  ready
+  completed
+  cancelled
+  rejected
+  refunded
+}
+
+enum ItemStatus {
+  pending
+  preparing
+  ready
+  bumped
+  held
+  recalled
+  voided
+}
+
+enum UserRole {
+  admin
+  manager
+  cashier
+  kitchen
+  expediter
+  marketing       // outside agency / in-house marketing — scoped to /marketing operations
+}
+
+enum PaymentMethod {
+  cash
+  card
+  jazzcash_wallet
+  easypaisa_wallet
+  keenu_qr
+  split
+  comp
+}
+
+enum PaymentStatus {
+  pending
+  paid
+  failed
+  refunded
+}
+
+enum PaymentGateway {
+  keenu
+  jazzcash
+  easypaisa
+  none
+}
+
+enum ShiftStatus {
+  open
+  closed
+}
+
+enum LoyaltyTxType {
+  earn
+  redeem
+  expire
+  adjustment
+}
+
+enum BroadcastStatus {
+  draft
+  scheduled
+  sent
+  failed
+}
+
+enum TriggerType {
+  birthday
+  winback
+  loyalty_tier
+  custom
+}
+
+enum RiderStatus {
+  available
+  busy
+  offline
+}
+
+enum VehicleType {
+  bike
+  car
+  bicycle
+  foot
+}
+
+enum ComplaintStatus {
+  open
+  in_progress
+  resolved
+  closed
+}
+
+enum ComplaintPriority {
+  low
+  medium
+  high
+  urgent
+}
+
+enum AccountType {
+  asset
+  liability
+  equity
+  revenue
+  expense
+}
+
+enum JournalEntryType {
+  debit
+  credit
+}
+
+// ─── Concept ──────────────────────────────────────────────────────────────────
+
+model Concept {
+  id          String      @id @default(uuid())
+  tenantId    String?                                  // tenant — backfilled to "main" on first boot
+  name        String
+  slug        String      @unique
+  type        ConceptType
+  description String?
+  logoUrl     String?
+  primaryColor String?
+  isActive    Boolean     @default(true)
+  taxRate     Float       @default(17) // FBR GST %
+
+  // Storefront CMS — editable from ops admin
+  storefrontVisible  Boolean  @default(true)  // show/hide on customer ordering page
+  heroTagline        String?                  // punchy line under concept name
+  announcementBanner String?                  // live message customers see (e.g. "Closed today")
+  storefrontLayout   Json?                    // ordered array of page blocks (page builder)
+
+  // ── Brand strategy brief ──────────────────────────────────────────────
+  // Captured during onboarding, reused in CRM segmentation, marketing copy,
+  // and competitive analytics. Free-form fields so operators describe their
+  // brand the way they actually pitch it, not a forced taxonomy.
+  conceptStatement    String?                 // one-line concept ("Build-your-own smashburger over brioche")
+  cuisine             String?                 // 'burgers' | 'desi' | 'asian' | etc.
+  heroProduct         String?                 // signature dish — drives daily-special suggestions
+  anchoringExperience String?                 // the memorable thing — "27-layer croissant", "open kitchen"
+  targetCustomer      String?                 // "22–35 urban DHA, daily indulgence"
+  priceTier           String?                 // 'budget' | 'mid' | 'premium' | 'luxury'
+  daypartFocus        String[] @default([])   // ['lunch', 'dinner', 'late_night']
+  competitors         String[] @default([])   // up to 5 named competitors
+  differentiator      String?                 // wedge — "in-house lamination, not bakery buns"
+  brandVoice          String?                 // tone notes — "loud, urban, no-precious-paragraphs"
+
+  // Delivery geography — null = no restriction (global / dine-in / pickup)
+  latitude          Float?
+  longitude         Float?
+  deliveryRadiusKm  Float    @default(5)      // how far this brand delivers from its outlet
+
+  // Foodpanda commission rate as a fraction (0.25 = 25%). Negotiated per
+  // concept; some brands have promotional discounts. Default mirrors the
+  // standard contract.
+  foodpandaCommissionRate Float @default(0.25)
+
+  // FBR registration / tax invoice details. Required fields on Pakistani tax
+  // invoices: STRN (Sales Tax Registration Number) and NTN (National Tax
+  // Number). Province governs which provincial revenue authority's tax also
+  // applies to services.
+  strn          String?   // FBR sales-tax registration number
+  ntn           String?   // National Tax Number
+  province      String?   // 'PB' | 'SD' | 'KP' | 'BL' | 'ICT' | 'GB' | 'AJK'
+  invoiceLegalName    String?  // legal entity name as registered with FBR
+  invoiceAddress      String?  // billing address printed on invoices
+  invoicePrefix       String?  // e.g. "STX-" — concept-scoped sequence prefix
+
+  // FBR PRAL Electronic POS — POSID assigned by FBR at POS registration.
+  // Required for Tier-1 businesses under SRO 1307(I)/2022. Null = concept
+  // is not registered for real-time invoice submission.
+  fbrPosId    Int?
+
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  deletedAt   DateTime?
+
+  menus           MenuItem[]
+  categories      Category[]
+  orders          Order[]
+  stations        Station[]
+  tables          Table[]
+  financialEntries FinancialEntry[]
+  customers       Customer[]        @relation("PreferredConcept")
+  reviews         OrderReview[]
+  complaints      OrderComplaint[]
+  promoCodes      PromoCode[]
+  sectionDiscounts SectionDiscount[]
+  abandonedCarts  AbandonedCart[]
+  qrCodes         QrCode[]
+  allocationWeights AllocationRuleWeight[]
+  floors          Floor[]
+  reservations    Reservation[]
+  blockouts       ConceptBlockout[]
+  serviceHours    ServiceHours[]
+  groupOrders     GroupOrder[]
+  scheduledShifts ScheduledShift[]
+  analyticsEvents    AnalyticsEvent[]   @relation("ConceptAnalytics")
+  contentEvents      ContentEvent[]     @relation("ConceptCalendar")
+  locations          ConceptLocation[]
+  tenant             Tenant?            @relation(fields: [tenantId], references: [id])
+  componentUses      ComponentBrandUse[]
+
+  @@index([tenantId])
+  @@map("concepts")
+}
+
+// ─── Station ──────────────────────────────────────────────────────────────────
+
+model Station {
+  id           String    @id @default(uuid())
+  conceptId    String
+  name         String
+  displayOrder Int       @default(0)
+  isActive     Boolean   @default(true)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  deletedAt    DateTime?
+
+  concept    Concept     @relation(fields: [conceptId], references: [id])
+  orderItems OrderItem[]
+
+  @@map("stations")
+}
+
+// ─── Category ─────────────────────────────────────────────────────────────────
+
+model Category {
+  id                    String    @id @default(uuid())
+  conceptId             String
+  name                  String
+  sortOrder             Int       @default(0)
+  timeRestrictionStart  String?   // HH:MM (e.g. "08:00")
+  timeRestrictionEnd    String?   // HH:MM (e.g. "11:00")
+  isActive              Boolean   @default(true)
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  deletedAt             DateTime?
+
+  concept          Concept          @relation(fields: [conceptId], references: [id])
+  items            MenuItem[]
+  sectionDiscounts SectionDiscount[]
+
+  @@map("categories")
+}
+
+// ─── MenuItem ─────────────────────────────────────────────────────────────────
+
+enum TaxClassification {
+  standard       // standard-rate (uses concept.taxRate, default 17% FBR)
+  zero_rated     // 0% — exports, certain food staples
+  exempt         // outside the GST regime entirely (no input-tax recovery either)
+  custom         // use overrideTaxRate
+}
+
+model MenuItem {
+  id           String    @id @default(uuid())
+  conceptId    String
+  categoryId   String
+  name             String
+  nameUrdu         String?   @map("name_urdu")
+  description      String?
+  instructions     String?   // cooking/assembly steps shown in KDS tap modal
+  instructionsUrdu String?   @map("instructions_urdu")
+  priceCents   Int
+  imageUrl     String?
+  isAvailable        Boolean   @default(true)
+  portionsAvailable  Int?      // null = unlimited; set per service for live stock tracking
+  displayOrder       Int       @default(0)
+  stationId          String?   // default routing station
+
+  // FBR tax classification per item. CA can override per-item; default is
+  // 'standard' (uses concept.taxRate). 'custom' uses overrideTaxRate.
+  taxClassification TaxClassification @default(standard)
+  overrideTaxRate   Float?    // only consulted when taxClassification = 'custom'
+
+  // Allergens + dietary tags. Stored as a string array (Postgres TEXT[]) so
+  // operators can add custom labels beyond the standard set.
+  // Standard set: gluten, dairy, eggs, peanuts, tree_nuts, soy, fish,
+  // shellfish, sesame, mustard. Dietary: vegetarian, vegan, halal, gluten_free.
+  allergens String[]  @default([])
+  dietary   String[]  @default([])
+  spiceLevel Int?     // 0–5; null = not applicable
+
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  deletedAt    DateTime?
+
+  concept        Concept         @relation(fields: [conceptId], references: [id])
+  category       Category        @relation(fields: [categoryId], references: [id])
+  modifierGroups ModifierGroup[]
+  orderItems     OrderItem[]
+  recipe         Recipe?
+
+  @@map("menu_items")
+}
+
+// ─── ModifierGroup ────────────────────────────────────────────────────────────
+
+model ModifierGroup {
+  id         String    @id @default(uuid())
+  menuItemId String
+  name       String
+  minSelect  Int       @default(0)
+  maxSelect  Int       @default(1)
+  isRequired Boolean   @default(false)
+  sortOrder  Int       @default(0)
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  deletedAt  DateTime?
+
+  menuItem  MenuItem   @relation(fields: [menuItemId], references: [id])
+  modifiers Modifier[]
+
+  @@map("modifier_groups")
+}
+
+// ─── Modifier ─────────────────────────────────────────────────────────────────
+
+model Modifier {
+  id             String    @id @default(uuid())
+  groupId        String
+  name           String
+  priceDeltaCents Int      @default(0)
+  isDefault      Boolean   @default(false)
+  sortOrder      Int       @default(0)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  deletedAt      DateTime?
+
+  group          ModifierGroup       @relation(fields: [groupId], references: [id])
+  orderItemMods  OrderItemModifier[]
+
+  @@map("modifiers")
+}
+
+// ─── Table ────────────────────────────────────────────────────────────────────
+
+enum TableShape {
+  rectangle
+  square
+  round
+  banquette   // long sofa-style seating
+  counter     // bar / pass counter
+  barstool    // single bar seat
+}
+
+model Table {
+  id           String    @id @default(uuid())
+  conceptId    String
+  floorId      String?   // groups tables onto a Floor; null = legacy or unassigned
+  label        String    // e.g. "T1", "Patio-3"
+  capacity     Int       @default(4)
+  floorSection String?
+  status       String    @default("available") // available|seated|ordered|eating|check|reserved|cleaning|out_of_service
+  // Canvas positioning — pixels in floor-plan space (Floor.width × Floor.height).
+  // Editor snaps to a 10px grid by default.
+  shape        TableShape @default(rectangle)
+  x            Int        @default(40)
+  y            Int        @default(40)
+  width        Int        @default(120)
+  height       Int        @default(80)
+  rotation     Int        @default(0)    // degrees, 0–359
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  deletedAt    DateTime?
+
+  concept      Concept       @relation(fields: [conceptId], references: [id])
+  floor        Floor?        @relation(fields: [floorId], references: [id])
+  orders       Order[]
+  qrCodes      QrCode[]
+  reservations Reservation[]
+
+  @@index([conceptId, floorId])
+  @@map("tables")
+}
+
+model Floor {
+  id            String   @id @default(uuid())
+  conceptId     String
+  name          String   // "Main", "Patio", "Mezzanine", "Bar"
+  displayOrder  Int      @default(0)
+  width         Int      @default(1200)   // canvas px
+  height        Int      @default(800)
+  backgroundUrl String?  // optional floorplan image — restaurant blueprint scan
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  deletedAt     DateTime?
+
+  concept Concept @relation(fields: [conceptId], references: [id])
+  tables  Table[]
+
+  @@index([conceptId, displayOrder])
+  @@map("floors")
+}
+
+enum ReservationStatus {
+  booked
+  confirmed
+  seated
+  completed
+  no_show
+  cancelled
+}
+
+enum ReservationSource {
+  staff
+  website
+  phone
+  walkin
+}
+
+model Reservation {
+  id           String              @id @default(uuid())
+  conceptId    String
+  customerId   String?             // linked when guest matches a Customer record
+  tableId      String?             // null until seated; can change if a guest is reseated
+  partySize    Int
+  startTime    DateTime
+  endTime      DateTime            // start + duration (default 90 min, configurable)
+  status       ReservationStatus   @default(booked)
+  source       ReservationSource   @default(staff)
+
+  // Guest info — captured even for non-customer (no Customer row) bookings.
+  // Synced into a Customer record on first arrival if email/phone provided.
+  guestName    String
+  guestPhone   String?
+  guestEmail   String?
+
+  notes        String?             // allergies, occasion, requests
+  isVip        Boolean   @default(false)
+  // For walk-ins / waitlist parties without an immediate table assignment
+  waitlist     Boolean   @default(false)
+
+  // Optional credit-card hold for premium / large-party bookings. When set,
+  // the customer's card is authed (not captured) for this amount; they only
+  // pay if they no-show. Operator releases the hold on arrival.
+  depositCents Int       @default(0)
+  depositRef   String?   // gateway reference (Keenu transaction id)
+
+  // Confirmation token — public link the guest can hit to confirm or cancel
+  // without signing in.
+  confirmToken String?   @unique
+  confirmedAt  DateTime?
+
+  // Reminder flags — flipped by the loyaltyTriggers-style worker so we don't
+  // double-send.
+  reminder24hSentAt DateTime?
+  reminder2hSentAt  DateTime?
+
+  seatedAt     DateTime?
+  completedAt  DateTime?
+  cancelledAt  DateTime?
+  cancelReason String?
+
+  createdById  String?             // staff user, null if from public website
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  concept   Concept   @relation(fields: [conceptId], references: [id])
+  customer  Customer? @relation(fields: [customerId], references: [id])
+  table     Table?    @relation(fields: [tableId], references: [id])
+
+  @@index([conceptId, startTime])
+  @@index([tableId, startTime])
+  @@index([status, startTime])
+  @@index([reminder24hSentAt])
+  @@map("reservations")
+}
+
+// ─── Concept blockouts ──────────────────────────────────────────────────────
+// Closures, private events, holiday hours. The slot-search API refuses to
+// surface time inside a blockout, and the dashboard surfaces them visually.
+
+enum BlockoutKind {
+  closure          // restaurant closed entirely
+  private_event    // booked out for a private function
+  reduced_capacity // only N tables available
+  custom
+}
+
+model ConceptBlockout {
+  id          String       @id @default(uuid())
+  conceptId   String
+  kind        BlockoutKind @default(closure)
+  startTime   DateTime
+  endTime     DateTime
+  // For reduced_capacity, only this many tables remain available
+  capacityCap Int?
+  reason      String?      // free-text, surfaced to staff
+  createdById String?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  concept Concept @relation(fields: [conceptId], references: [id])
+
+  @@index([conceptId, startTime])
+  @@map("concept_blockouts")
+}
+
+// ─── Service hours (per concept × per day-of-week) ───────────────────────────
+// Defines when a concept accepts reservations. Multiple windows per day allow
+// for split lunch/dinner service.
+
+model ServiceHours {
+  id          String   @id @default(uuid())
+  conceptId   String
+  dayOfWeek   Int      // 0 = Sun, 1 = Mon, … 6 = Sat
+  // HH:MM 24-hour stored as int minutes since midnight (0–1440)
+  openMin     Int
+  closeMin    Int
+  isReservable Boolean @default(true)  // false = walk-in only
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  concept Concept @relation(fields: [conceptId], references: [id])
+
+  @@unique([conceptId, dayOfWeek, openMin])
+  @@map("service_hours")
+}
+
+// ─── Customer guest tags (allergies, regular, VIP, etc.) ────────────────────
+// Free-form labels operators apply to a customer. Surfaced on reservation rows
+// and in the customer 360 view.
+
+// ─── Gift cards ──────────────────────────────────────────────────────────────
+//
+// Issued with a face value, redeemable across any GS Foods concept (the
+// liability sits in 2080). Each redemption decrements balance, posts to the
+// journal, and stores a transaction record. Codes are human-readable but
+// long enough that brute-forcing is impractical.
+
+enum GiftCardStatus {
+  active
+  redeemed_full
+  expired
+  voided
+}
+
+model GiftCard {
+  id              String          @id @default(uuid())
+  code            String          @unique  // human-readable, e.g. "GS-7K2P-X9MD"
+  issuedAmountCents Int
+  balanceCents    Int
+  currency        String          @default("PKR")
+  status          GiftCardStatus  @default(active)
+  expiresAt       DateTime?
+
+  // Buyer + recipient details (same person if self-purchase)
+  buyerCustomerId    String?
+  buyerEmail         String?
+  recipientName      String?
+  recipientEmail     String?
+  message            String?
+
+  issuedById      String?         // staff user; null for storefront purchase
+  conceptId       String?         // null = redeemable everywhere
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  voidedAt        DateTime?
+  voidReason      String?
+
+  redemptions     GiftCardRedemption[]
+
+  @@index([status])
+  @@index([buyerEmail])
+  @@map("gift_cards")
+}
+
+model GiftCardRedemption {
+  id             String   @id @default(uuid())
+  giftCardId     String
+  orderId        String?
+  amountCents    Int
+  balanceAfter   Int
+  redeemedAt     DateTime @default(now())
+  redeemedById   String?  // staff user when manual
+
+  giftCard GiftCard @relation(fields: [giftCardId], references: [id], onDelete: Cascade)
+  order    Order?   @relation(fields: [orderId], references: [id])
+
+  @@index([giftCardId, redeemedAt(sort: Desc)])
+  @@index([orderId])
+  @@map("gift_card_redemptions")
+}
+
+model GuestTag {
+  id         String  @id @default(uuid())
+  customerId String
+  label      String  // "VIP", "Vegan", "Allergic — peanuts", "Press", "Industry"
+  color      String? // optional hex
+  createdById String?
+  createdAt  DateTime @default(now())
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+  @@map("guest_tags")
+}
+
+// ─── User (Staff) ─────────────────────────────────────────────────────────────
+
+model User {
+  id        String    @id @default(uuid())
+  tenantId  String?                        // tenant — backfilled on first boot
+  name      String
+  email     String    @unique
+  password  String    // bcrypt hash
+  pin       String?   // bcrypt hash of PIN
+  role      UserRole  @default(kitchen)
+  // Concepts this user is allowed to access. Empty array = no concept restriction
+  // is applied (intended for admin/manager — role check is the gate). Non-admin
+  // roles MUST have explicit concept IDs to access concept-scoped resources.
+  conceptIds String[] @default([])
+  // Payroll: hourly rate in paisa (PKR cents). Null = unpaid (volunteer/owner).
+  hourlyRateCents Int?
+  // Wage account this employee's labour posts to: 6030 kitchen / 6031 FOH /
+  // 6032 management / 6035 riders. Null = derive from role.
+  wageAccountCode String?
+  isActive  Boolean   @default(true)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  shifts                Shift[]
+  clockLogs             ClockLog[]
+  posOrders             Order[]                @relation("PosStaff")
+  poActivityLog         PoActivityLog[]
+  receivingDiscrepancies ReceivingDiscrepancy[]
+  wasteLogs             WasteLog[]
+  payrollLines          PayrollRunLine[]
+  tipPoolMemberships    TipPoolMember[]
+  scheduledShifts       ScheduledShift[]
+  assignedSuppliers     Supplier[]             @relation("SupplierAssignee")
+  contentEvents         ContentEvent[]         @relation("EventAssignee")
+  createdEvents         ContentEvent[]         @relation("EventCreatedBy")
+  supplierConversations SupplierConversation[]
+  customerConversations CustomerConversation[] @relation("CustomerConversationStaff")
+  tenant                Tenant?                @relation(fields: [tenantId], references: [id])
+  // Multi-tenant memberships — a user can own/manage multiple tenants. The
+  // `tenantId` above acts as the *active* tenant; this list is the set of
+  // tenants they're authorised to switch into.
+  tenantMemberships     TenantMember[]
+
+  @@map("users")
+}
+
+// ─── Shift ────────────────────────────────────────────────────────────────────
+
+model Shift {
+  id                String      @id @default(uuid())
+  userId            String
+  locationId        String?     // physical place this shift was opened at
+  status            ShiftStatus @default(open)
+  openedAt          DateTime    @default(now())
+  closedAt          DateTime?
+  openingFloatCents Int         @default(0)
+  closingFloatCents Int?
+  notes             String?
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+
+  user     User       @relation(fields: [userId], references: [id])
+  location Location?  @relation(fields: [locationId], references: [id])
+  payments Payment[]
+
+  @@index([locationId, openedAt(sort: Desc)])
+  @@map("shifts")
+}
+
+// ─── ClockLog ─────────────────────────────────────────────────────────────────
+
+model ClockLog {
+  id         String   @id @default(uuid())
+  userId     String
+  type       String   // "in" | "out"
+  lat        Float?
+  lng        Float?
+  selfieUrl  String?                                  // captured at clock-in to prevent buddy-punching
+  geofenceMatched   Boolean?                          // null = not checked; true = within concept geofence
+  geofenceDistanceM Float?                            // metres from concept lat/lng (when checked)
+  ipAddress  String?
+  recordedAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId, recordedAt])
+  @@map("clock_logs")
+}
+
+// ─── Payroll ─────────────────────────────────────────────────────────────────
+//
+// A payroll run covers a date range (typically a week or month). The
+// computation derives hours from ClockLog pairings, multiplies by hourlyRate,
+// and posts a single journal entry: Dr Wages (per account code) / Cr Wages
+// Payable. Settlement (paying the employee) happens via supplier-payment-style
+// entries when the bank transfer goes out.
+
+enum PayrollRunStatus {
+  draft       // computed but not posted
+  posted      // accrual JE posted; wages payable open
+  paid        // payment JE posted; wages payable cleared
+}
+
+model PayrollRun {
+  id            String           @id @default(uuid())
+  periodStart   DateTime
+  periodEnd     DateTime
+  status        PayrollRunStatus @default(draft)
+  totalGrossCents Int            @default(0)
+  postedAt      DateTime?
+  paidAt        DateTime?
+  createdById   String?
+  notes         String?
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  lines PayrollRunLine[]
+
+  @@index([periodStart(sort: Desc)])
+  @@map("payroll_runs")
+}
+
+model PayrollRunLine {
+  id              String  @id @default(uuid())
+  payrollRunId   String
+  userId          String
+  userName        String
+  hoursWorked     Float
+  hourlyRateCents Int
+  grossCents      Int
+  wageAccountCode String      // 6030/6031/6032/6035
+  // Optional adjustments (advances, deductions, bonuses) — signed cents
+  adjustmentCents Int     @default(0)
+  netCents        Int
+  notes           String?
+
+  payrollRun PayrollRun @relation(fields: [payrollRunId], references: [id], onDelete: Cascade)
+  user       User       @relation(fields: [userId], references: [id])
+
+  @@index([payrollRunId])
+  @@index([userId])
+  @@map("payroll_run_lines")
+}
+
+// ─── Customer ─────────────────────────────────────────────────────────────────
+
+model Customer {
+  id                String    @id @default(uuid())
+  name              String
+  email             String?   @unique
+  phone             String?   @unique
+  marketingOptIn    Boolean   @default(false)
+  ntn               String?   // National Tax Number (for FBR invoice BuyerNTN field)
+  cnic              String?   // CNIC (for FBR invoice BuyerCNIC field)
+  birthdayMmDd      String?   // MM-DD format, e.g. "04-23"
+  firstOrderAt      DateTime?
+  lastOrderAt       DateTime?
+  totalSpentCents   Int       @default(0)
+  preferredConceptId String?
+  walletBalance     Int       @default(0)
+  password          String?
+  isBlacklisted     Boolean   @default(false)
+  blacklistReason   String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  deletedAt         DateTime?
+
+  preferredConcept   Concept?          @relation("PreferredConcept", fields: [preferredConceptId], references: [id])
+  orders             Order[]
+  loyaltyAccount     LoyaltyAccount?
+  magicLinks         MagicLink[]
+  triggerLogs        TriggerLog[]
+  campaignSends      CampaignSend[]
+  walletTransactions WalletTransaction[]
+  savedAddresses     CustomerAddress[]
+  reservations       Reservation[]
+  guestTags          GuestTag[]
+  analyticsEvents    AnalyticsEvent[]
+  segmentMemberships CustomerSegmentMembership[]
+  conversations      CustomerConversation[]
+
+  @@map("customers")
+}
+
+// ─── CRM outreach: customer chat threads ──────────────────────────────────────
+// Mirrors SupplierConversation/SupplierMessage. Used when staff reach out to
+// a customer about a complaint, review, or just-because — and any reply
+// (email, WhatsApp) lands back in the same thread.
+//
+// `source` records why the thread exists: "complaint" / "review" / "manual"
+// for retroactive linkage in the UI ("This thread is about complaint #1234").
+// `sourceRefId` is a loose reference (no FK constraint — keeps schema flat
+// and avoids cascade headaches when a complaint gets archived).
+
+model CustomerConversation {
+  id          String   @id @default(cuid())
+  customerId  String
+  staffId     String   // who initiated the outreach
+  subject     String?
+  source      String   @default("manual")  // "complaint" | "review" | "manual"
+  sourceRefId String?  // id of the complaint/review row this thread relates to
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  customer Customer          @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  staff    User              @relation("CustomerConversationStaff", fields: [staffId], references: [id])
+  messages CustomerMessage[]
+
+  @@index([customerId, updatedAt])
+  @@index([staffId])
+  @@index([source, sourceRefId])
+  @@map("customer_conversations")
+}
+
+model CustomerMessage {
+  id             String   @id @default(cuid())
+  conversationId String
+  fromStaff      Boolean
+  senderId       String?
+  body           String
+  mediaUrl       String?
+  seenAt         DateTime?
+  createdAt      DateTime @default(now())
+
+  // Channel of origin — same enum-as-string as SupplierMessage.channel.
+  channel        String   @default("web_portal")
+  externalMessageId  String?  @unique
+  inboundFromAddress String?
+
+  conversation CustomerConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt])
+  @@map("customer_messages")
+}
+
+model CustomerAddress {
+  id           String   @id @default(uuid())
+  customerId   String
+  label        String   // e.g. "Home", "Work", "Padel Court"
+  address      String
+  lat          Float?
+  lng          Float?
+  isDefault    Boolean  @default(false)
+  createdAt    DateTime @default(now())
+
+  customer     Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+  @@map("customer_addresses")
+}
+
+model TriggerLog {
+  id          String   @id @default(uuid())
+  customerId  String
+  triggerType String   // birthday | winback
+  createdAt   DateTime @default(now())
+
+  customer Customer @relation(fields: [customerId], references: [id])
+
+  @@index([customerId, triggerType, createdAt])
+  @@map("trigger_logs")
+}
+
+// ─── MagicLink ────────────────────────────────────────────────────────────────
+
+model MagicLink {
+  id         String   @id @default(uuid())
+  customerId String
+  token      String   @unique
+  expiresAt  DateTime
+  usedAt     DateTime?
+  createdAt  DateTime @default(now())
+
+  customer Customer @relation(fields: [customerId], references: [id])
+
+  @@map("magic_links")
+}
+
+// ─── LoyaltyAccount ───────────────────────────────────────────────────────────
+
+model LoyaltyAccount {
+  id             String   @id @default(uuid())
+  customerId     String   @unique
+  pointsBalance  Int      @default(0)
+  lifetimePoints Int      @default(0)
+  tier           String   @default("bronze") // bronze|silver|gold
+  stampCounts    Json     @default("{}") // { "simmer": 3, "stax": 7 }
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  customer     Customer           @relation(fields: [customerId], references: [id])
+  transactions LoyaltyTransaction[]
+
+  @@map("loyalty_accounts")
+}
+
+// ─── LoyaltyTransaction ───────────────────────────────────────────────────────
+
+model LoyaltyTransaction {
+  id               String        @id @default(uuid())
+  loyaltyAccountId String
+  orderId          String?
+  type             LoyaltyTxType
+  pointsDelta      Int
+  description      String?
+  createdAt        DateTime      @default(now())
+
+  loyaltyAccount LoyaltyAccount @relation(fields: [loyaltyAccountId], references: [id])
+  order          Order?         @relation(fields: [orderId], references: [id])
+
+  @@map("loyalty_transactions")
+}
+
+// ─── Order ────────────────────────────────────────────────────────────────────
+
+model Order {
+  id              String      @id @default(uuid())
+  conceptId       String
+  locationId      String?     // physical place; nullable so existing rows still work — auto-set from Shift / cashier session
+  source          OrderSource
+  externalId      String?     // platform-assigned ID; null for native orders
+  status          OrderStatus @default(received)
+  tableId         String?
+  customerId      String?
+  customerName    String?     // raw name for non-direct orders
+  posStaffId      String?     // staff who created it (POS)
+  shiftId         String?     // associated shift (POS cash orders)
+  riderId              String?
+  promoCodeId          String?
+  totalCents           Int
+  discountCents        Int         @default(0)
+  promoDiscountCents   Int         @default(0)
+  walletAmountCents    Int         @default(0)
+  taxCents             Int         @default(0)
+  // Service charge: house-imposed % on subtotal, recognised as revenue (4100).
+  serviceChargeCents   Int         @default(0)
+  // Tips: customer-discretionary, paid through to staff. Liability (2090
+  // accrued / 6031 settled at payroll) — not house revenue.
+  tipCents             Int         @default(0)
+  deliveryNotes        String?
+  estimatedPickup      DateTime?
+  scheduledFor         DateTime?
+  isPreOrder           Boolean     @default(false)
+  // Rider hand-off OTP — 4-digit code shown to customer on the storefront.
+  // Rider must enter this on dispatch to mark the order delivered. Prevents
+  // riders from claiming "delivered" without proof. Set on order placement
+  // for delivery orders; verified at dispatch.
+  deliveryOtp           String?
+  deliveryOtpVerifiedAt DateTime?
+  deliveryOtpAttempts   Int         @default(0)
+  placedAt             DateTime    @default(now())
+  completedAt          DateTime?
+  createdAt            DateTime    @default(now())
+  updatedAt            DateTime    @updatedAt
+  deletedAt            DateTime?
+
+  // FBR PRAL invoice number returned by PRAL after successful submission.
+  // Null until the FBR worker processes the order (fire-and-forget).
+  fbrInvoiceNumber String?
+
+  // raw platform payload stored for audit/debug
+  rawPayload      Json?
+
+  concept     Concept    @relation(fields: [conceptId], references: [id])
+  location    Location?  @relation(fields: [locationId], references: [id])
+  table       Table?     @relation(fields: [tableId], references: [id])
+  customer    Customer?  @relation(fields: [customerId], references: [id])
+  posStaff    User?      @relation("PosStaff", fields: [posStaffId], references: [id])
+  rider       Rider?     @relation(fields: [riderId], references: [id])
+  promoCode   PromoCode? @relation(fields: [promoCodeId], references: [id])
+  items       OrderItem[]
+  payments    Payment[]
+  loyaltyTxs          LoyaltyTransaction[]
+  giftCardRedemptions GiftCardRedemption[]
+  financialEntries    FinancialEntry[]
+  taxInvoices         TaxInvoice[]
+  review              OrderReview?
+  complaints          OrderComplaint[]
+  promoUsages         PromoCodeUsage[]
+
+  @@unique([source, externalId])
+  @@index([conceptId, placedAt(sort: Desc)])
+  @@index([locationId, placedAt(sort: Desc)])
+  @@index([status, placedAt(sort: Desc)])
+  @@index([customerId])
+  @@index([shiftId])
+  @@index([placedAt(sort: Desc)])
+  @@map("orders")
+}
+
+// ─── OrderItem ────────────────────────────────────────────────────────────────
+
+model OrderItem {
+  id             String     @id @default(uuid())
+  orderId        String
+  menuItemId     String?    // null if unmapped platform item
+  stationId      String?
+  externalItemId String?
+  name           String     // raw item name (preserved from source)
+  quantity       Int        @default(1)
+  unitPriceCents Int
+  status         ItemStatus @default(pending)
+  notes          String?
+  course         Int?       // course number for sequencing
+  firedAt        DateTime?
+  completedAt    DateTime?
+  voidedAt       DateTime?
+  voidReason     String?
+  scheduledFireAt DateTime? // course pacing: when this item should auto-fire
+  bumpPhotoUrl    String?   // R2 URL of plating photo captured at bump
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  order     Order               @relation(fields: [orderId], references: [id])
+  menuItem  MenuItem?           @relation(fields: [menuItemId], references: [id])
+  station   Station?            @relation(fields: [stationId], references: [id])
+  modifiers OrderItemModifier[]
+
+  @@index([orderId])
+  @@index([stationId, status])
+  @@map("order_items")
+}
+
+// ─── OrderItemModifier ────────────────────────────────────────────────────────
+
+model OrderItemModifier {
+  id             String @id @default(uuid())
+  orderItemId    String
+  modifierId     String?
+  name           String // raw name
+  priceDeltaCents Int   @default(0)
+
+  orderItem  OrderItem @relation(fields: [orderItemId], references: [id])
+  modifier   Modifier? @relation(fields: [modifierId], references: [id])
+
+  @@map("order_item_modifiers")
+}
+
+// ─── Payment ──────────────────────────────────────────────────────────────────
+
+model Payment {
+  id           String         @id @default(uuid())
+  orderId      String
+  shiftId      String?
+  method       PaymentMethod
+  amountCents  Int
+  status       PaymentStatus  @default(pending)
+  gateway      PaymentGateway @default(none)
+  gatewayRef   String?        // gateway transaction ID
+  gatewayMeta  Json?          // raw gateway response
+  tenderedCents Int?          // for cash: amount given
+  changeCents   Int?          // for cash: change returned
+  // Check-splitting: when one bill is split across multiple diners, each
+  // diner has their own Payment row pointing at the same orderId. The split
+  // group is an integer (1, 2, 3, …) with an optional label; total of all
+  // splits must equal order total.
+  splitGroup   Int?           // 1-based; null = single payment for whole bill
+  splitLabel   String?        // e.g. "Ali", "Sara", or "Half 1"
+  processedAt  DateTime?
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  order Order  @relation(fields: [orderId], references: [id])
+  shift Shift? @relation(fields: [shiftId], references: [id])
+
+  @@index([orderId])
+  @@index([shiftId, status])
+  @@index([gatewayRef])
+  @@map("payments")
+}
+
+// ─── Tip pool ────────────────────────────────────────────────────────────────
+//
+// A pool covers a date range (typically a shift or a service period). Tips
+// collected from orders during the period (Order.tipCents → posted to the
+// 2095 Tips Payable liability) are distributed to staff present in the pool
+// according to their configured share weight × hours worked.
+//
+// On payout, the pool posts: Dr 2095 Tips Payable / Cr cash or bank.
+
+enum TipPoolStatus {
+  draft
+  posted   // distribution committed, lines locked
+  paid     // funds disbursed to staff
+}
+
+model TipPool {
+  id          String        @id @default(uuid())
+  conceptId   String?       // null = pool spans all concepts (single operator)
+  name        String        // e.g. "Sat dinner shift", "Week of Apr 28"
+  periodStart DateTime
+  periodEnd   DateTime
+  totalTipsCents Int        @default(0)
+  status      TipPoolStatus @default(draft)
+  postedAt    DateTime?
+  paidAt      DateTime?
+  createdById String?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  members TipPoolMember[]
+
+  @@index([periodStart(sort: Desc)])
+  @@map("tip_pools")
+}
+
+model TipPoolMember {
+  id              String  @id @default(uuid())
+  poolId          String
+  userId          String
+  userName        String  // snapshot — survives if user is later deleted
+  // Computed: hoursWorked × roleWeight = shareUnits. Operator can override
+  // shareUnits manually before posting (e.g. for tipout to BOH).
+  hoursWorked     Float
+  roleWeight      Float   @default(1.0)
+  shareUnits      Float
+  shareCents      Int     @default(0)   // computed share — set when pool is posted
+  notes           String?
+
+  pool TipPool @relation(fields: [poolId], references: [id], onDelete: Cascade)
+  user User   @relation(fields: [userId], references: [id])
+
+  @@unique([poolId, userId])
+  @@index([userId])
+  @@map("tip_pool_members")
+}
+
+// ─── Group orders (shared cart) ──────────────────────────────────────────────
+//
+// One initiator creates a group order at a brand. Friends join via a share
+// link, each adds items as themselves. Initiator (or any member) closes the
+// cart and submits as one Order. Each member's contribution is preserved in
+// the order's items via an inviteCode label.
+
+enum GroupOrderStatus {
+  open
+  locked     // closed for new items, awaiting checkout
+  submitted  // turned into a real Order
+  cancelled
+}
+
+model GroupOrder {
+  id          String           @id @default(uuid())
+  conceptId   String
+  initiatorCustomerId String?
+  initiatorName String           // free-text in case initiator isn't a customer yet
+  shareCode   String           @unique  // 6-char shareable
+  status      GroupOrderStatus @default(open)
+  closingAt   DateTime?        // soft deadline shown to participants
+  orderId     String?          // set when submitted
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  concept Concept            @relation(fields: [conceptId], references: [id])
+  members GroupOrderMember[]
+  items   GroupOrderItem[]
+
+  @@index([shareCode])
+  @@map("group_orders")
+}
+
+model GroupOrderMember {
+  id           String   @id @default(uuid())
+  groupOrderId String
+  customerId   String?
+  displayName  String
+  joinedAt     DateTime @default(now())
+
+  groupOrder GroupOrder @relation(fields: [groupOrderId], references: [id], onDelete: Cascade)
+  items      GroupOrderItem[]
+
+  @@unique([groupOrderId, displayName])
+  @@map("group_order_members")
+}
+
+model GroupOrderItem {
+  id           String  @id @default(uuid())
+  groupOrderId String
+  memberId     String
+  menuItemId   String
+  name         String  // snapshot
+  quantity     Int     @default(1)
+  unitPriceCents Int
+  notes        String?
+  createdAt    DateTime @default(now())
+
+  groupOrder GroupOrder       @relation(fields: [groupOrderId], references: [id], onDelete: Cascade)
+  member     GroupOrderMember @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@index([groupOrderId])
+  @@map("group_order_items")
+}
+
+// ─── InventoryItem ────────────────────────────────────────────────────────────
+
+model InventoryItem {
+  id              String    @id @default(uuid())
+  name            String
+  unit            String    // e.g. "kg", "pcs", "litres"
+  parLevel        Float     @default(0)
+  currentStock    Float     @default(0)
+  unitCostCents   Int?      // cost per unit (paisa) — updated on each PO receipt
+  supplierId      String?
+  notes           String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  deletedAt       DateTime?
+
+  supplier           Supplier?           @relation(fields: [supplierId], references: [id])
+  recipeIngredients  RecipeIngredient[]
+  purchaseOrderLines PurchaseOrderLine[]
+  priceHistory       ItemPriceHistory[]
+  billLines          SupplierBillLine[]
+  wasteLogs          WasteLog[]
+  components         Component[]
+
+  @@map("inventory_items")
+}
+
+// ─── WasteLog ─────────────────────────────────────────────────────────────────
+
+model WasteLog {
+  id                 String   @id @default(uuid())
+  inventoryItemId    String
+  quantity           Float
+  unit               String
+  reason             String   // spoilage | over_prep | expired | damaged | other
+  estimatedCostCents Int?
+  photoUrl           String?                              // required when waste cost > photoRequiredAboveCents (OperationsConfig)
+  approvedById       String?                              // supervisor who approved (PIN-verified)
+  notes              String?
+  recordedById       String?
+  recordedAt         DateTime @default(now())
+
+  inventoryItem InventoryItem @relation(fields: [inventoryItemId], references: [id], onDelete: Cascade)
+  recordedBy    User?         @relation(fields: [recordedById], references: [id])
+
+  @@index([inventoryItemId, recordedAt(sort: Desc)])
+  @@index([recordedAt(sort: Desc)])
+  @@map("waste_logs")
+}
+
+// ─── Supplier ─────────────────────────────────────────────────────────────────
+
+model Supplier {
+  id                  String    @id @default(uuid())
+  name                String
+  category            String?   // meat, fish, farm, dairy, dry-goods, etc.
+  assignedStaffId     String?   // procurement person responsible
+  phone               String?
+  email               String?
+  // Separate from `phone`: many suppliers use a different number for WhatsApp
+  // (personal vs. business line). Stored E.164 digits (e.g. "923001234567",
+  // no leading + or spaces) so it matches the format Meta sends in the
+  // WhatsApp Cloud API webhook `from` field exactly.
+  whatsappPhone       String?
+  address             String?
+  taxId               String?   // NTN / STRN
+  notes               String?
+  paymentTermsDays    Int       @default(30)
+  leadTimeDays        Int?
+  openingBalanceCents Int       @default(0)
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+  deletedAt           DateTime?
+
+  assignedStaff  User?                  @relation("SupplierAssignee", fields: [assignedStaffId], references: [id], onDelete: SetNull)
+  inventoryItems InventoryItem[]
+  purchaseOrders PurchaseOrder[]
+  bills          SupplierBill[]
+  payments       SupplierPayment[]
+  priceHistory   ItemPriceHistory[]
+  conversations  SupplierConversation[]
+  portalTokens   SupplierPortalToken[]
+
+  @@index([whatsappPhone])
+  @@index([email])
+  @@map("suppliers")
+}
+
+// ─── Recipe costing ───────────────────────────────────────────────────────────
+
+model Recipe {
+  id            String    @id @default(uuid())
+  menuItemId    String    @unique
+  servings      Int       @default(1) // portions per batch
+  portionSizeG  Float?                // grams per portion (display reference)
+  laborMinutes  Int       @default(0)
+  notes         String?
+  steps         String?   // cooking/assembly steps for kitchen staff (KDS)
+  stepsUrdu     String?   @map("steps_urdu")
+
+  // Seasonality. `seasons` is an array of slugs from the curated set:
+  // 'spring' | 'summer' | 'monsoon' | 'autumn' | 'winter' | 'ramadan' | 'year-round'
+  // Empty array = "year-round" (treated as always available). Use this to
+  // filter the recipe library + auto-toggle menu item availability when the
+  // current season changes.
+  seasons       String[]  @default([])
+
+  // Optional explicit window for menu items that come back at the same time
+  // each year (e.g. mango lassi: Apr 1 – Sep 30). Stored as MM-DD strings so
+  // the rule applies every year regardless of date.
+  seasonStart   String?   // 'MM-DD' inclusive, null = no window
+  seasonEnd     String?   // 'MM-DD' inclusive, null = no window
+
+  // Active/featured flags for menu engineering — independent of season
+  isActive      Boolean   @default(true)
+
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  menuItem    MenuItem           @relation(fields: [menuItemId], references: [id])
+  ingredients RecipeIngredient[]
+
+  @@index([isActive])
+  @@map("recipes")
+}
+
+model RecipeIngredient {
+  id              String  @id @default(uuid())
+  recipeId        String
+  inventoryItemId String
+  quantity        Float   // usable recipe quantity (post-yield) in `unit`
+  yieldPct        Float   @default(1.0) // 0.01–1.0, e.g. 0.75 = 75% yield
+  unit            String  // unit label for display
+  notes           String?
+
+  recipe        Recipe        @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+  inventoryItem InventoryItem @relation(fields: [inventoryItemId], references: [id])
+
+  @@map("recipe_ingredients")
+}
+
+// ─── Purchase Orders ──────────────────────────────────────────────────────────
+
+model PurchaseOrder {
+  id              String    @id @default(uuid())
+  supplierId      String
+  status          String    @default("draft") // draft | pending_approval | sent | received | partial | cancelled
+  orderDate       DateTime  @default(now())
+  expectedDate    DateTime?
+  receivedDate    DateTime?
+  reference       String?   // supplier invoice / PO number
+  notes           String?
+  totalCents      Int       @default(0)
+
+  // Audit / lifecycle
+  createdBy       String?
+  approvedById    String?
+  approvedAt      DateTime?
+  rejectedReason  String?
+  sentAt          DateTime?
+  sentToEmail     String?
+  cancelledById   String?
+  cancelledAt     DateTime?
+  cancelReason    String?
+
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  supplier     Supplier              @relation(fields: [supplierId], references: [id])
+  lines        PurchaseOrderLine[]
+  bills        SupplierBill[]
+  activityLog  PoActivityLog[]
+
+  @@index([supplierId, status])
+  @@index([status, orderDate(sort: Desc)])
+  @@map("purchase_orders")
+}
+
+model PurchaseOrderLine {
+  id              String  @id @default(uuid())
+  purchaseOrderId String
+  inventoryItemId String
+  quantityOrdered Float
+  quantityReceived Float  @default(0)
+  unitCostCents   Int     // agreed cost per unit (paisa)
+  notes           String?
+
+  purchaseOrder      PurchaseOrder            @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  inventoryItem      InventoryItem            @relation(fields: [inventoryItemId], references: [id])
+  billLines          SupplierBillLine[]
+  discrepancies      ReceivingDiscrepancy[]
+  priceHistoryEntries ItemPriceHistory[]
+
+  @@index([purchaseOrderId])
+  @@index([inventoryItemId])
+  @@map("purchase_order_lines")
+}
+
+// ─── PO Activity Log (audit trail) ────────────────────────────────────────────
+
+model PoActivityLog {
+  id              String   @id @default(uuid())
+  purchaseOrderId String
+  userId          String?
+  action          String   // created | line_added | submitted | approved | rejected | sent | received | cancelled | edited
+  details         Json?
+  createdAt       DateTime @default(now())
+
+  purchaseOrder PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  user          User?         @relation(fields: [userId], references: [id])
+
+  @@index([purchaseOrderId, createdAt])
+  @@map("po_activity_log")
+}
+
+// ─── Receiving Discrepancy (variance log) ─────────────────────────────────────
+
+model ReceivingDiscrepancy {
+  id           String   @id @default(uuid())
+  poLineId     String
+  expectedQty  Float
+  receivedQty  Float
+  reason       String   // short_shipment | over_shipment | damaged | wrong_item | quality_issue
+  notes        String?
+  recordedById String?
+  recordedAt   DateTime @default(now())
+
+  poLine     PurchaseOrderLine @relation(fields: [poLineId], references: [id], onDelete: Cascade)
+  recordedBy User?             @relation(fields: [recordedById], references: [id])
+
+  @@index([poLineId])
+  @@map("receiving_discrepancies")
+}
+
+// ─── Item Price History ───────────────────────────────────────────────────────
+
+model ItemPriceHistory {
+  id              String   @id @default(uuid())
+  inventoryItemId String
+  supplierId      String?
+  oldCostCents    Int?
+  newCostCents    Int
+  source          String   // po_receive | manual_adjust | bill_match
+  poLineId        String?
+  recordedAt      DateTime @default(now())
+
+  inventoryItem InventoryItem      @relation(fields: [inventoryItemId], references: [id], onDelete: Cascade)
+  supplier      Supplier?          @relation(fields: [supplierId], references: [id])
+  poLine        PurchaseOrderLine? @relation(fields: [poLineId], references: [id], onDelete: SetNull)
+
+  @@index([inventoryItemId, recordedAt(sort: Desc)])
+  @@index([supplierId, recordedAt(sort: Desc)])
+  @@map("item_price_history")
+}
+
+// ─── Supplier Bills (Accounts Payable) ────────────────────────────────────────
+
+model SupplierBill {
+  id            String    @id @default(uuid())
+  supplierId    String
+  poId          String?   // optional link to a PO for 3-way match
+  billNumber    String    // supplier's invoice/bill number
+  billDate      DateTime
+  dueDate       DateTime
+  status        String    @default("open") // draft | open | partially_paid | paid | void
+  subtotalCents Int       @default(0)
+  taxCents      Int       @default(0)
+  totalCents    Int       @default(0)
+  paidCents     Int       @default(0)       // running total of payments applied
+  notes         String?
+  attachmentUrl String?                     // S3/R2 link to scanned bill
+  createdBy     String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  voidedAt      DateTime?
+  voidReason    String?
+
+  supplier     Supplier                       @relation(fields: [supplierId], references: [id])
+  po           PurchaseOrder?                 @relation(fields: [poId], references: [id])
+  lines        SupplierBillLine[]
+  applications SupplierPaymentApplication[]
+
+  @@unique([supplierId, billNumber])
+  @@index([supplierId, status])
+  @@index([dueDate, status])
+  @@map("supplier_bills")
+}
+
+model SupplierBillLine {
+  id              String  @id @default(uuid())
+  billId          String
+  inventoryItemId String?
+  poLineId        String? // 3-way match link
+  description     String
+  quantity        Float
+  unitCostCents   Int
+  lineTotalCents  Int
+
+  bill          SupplierBill       @relation(fields: [billId], references: [id], onDelete: Cascade)
+  inventoryItem InventoryItem?     @relation(fields: [inventoryItemId], references: [id])
+  poLine        PurchaseOrderLine? @relation(fields: [poLineId], references: [id], onDelete: SetNull)
+
+  @@index([billId])
+  @@map("supplier_bill_lines")
+}
+
+// ─── Supplier Payments + multi-bill applications ──────────────────────────────
+
+model SupplierPayment {
+  id           String   @id @default(uuid())
+  supplierId   String
+  paymentDate  DateTime @default(now())
+  method       String   // cash | bank_transfer | cheque | wallet
+  reference    String?  // cheque #, bank ref
+  amountCents  Int
+  appliedCents Int      @default(0) // sum of applications
+  notes        String?
+  createdBy    String?
+  createdAt    DateTime @default(now())
+
+  supplier     Supplier                     @relation(fields: [supplierId], references: [id])
+  applications SupplierPaymentApplication[]
+
+  @@index([supplierId, paymentDate(sort: Desc)])
+  @@map("supplier_payments")
+}
+
+model SupplierPaymentApplication {
+  id                String  @id @default(uuid())
+  paymentId         String
+  billId            String
+  amountAppliedCents Int
+  createdAt         DateTime @default(now())
+
+  payment SupplierPayment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  bill    SupplierBill    @relation(fields: [billId], references: [id], onDelete: Cascade)
+
+  @@unique([paymentId, billId])
+  @@index([billId])
+  @@map("supplier_payment_applications")
+}
+
+// ─── Financial / Accounting ───────────────────────────────────────────────────
+
+model Account {
+  id          String      @id @default(uuid())
+  code        String      @unique // e.g. "4001"
+  name        String      // e.g. "Restaurant Revenue"
+  type        AccountType
+  description String?
+  isActive    Boolean     @default(true)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  journalLines JournalLine[]
+
+  @@map("accounts")
+}
+
+model JournalEntry {
+  id          String   @id @default(uuid())
+  reference   String?  // e.g. order ID, shift ID
+  description String
+  entryDate   DateTime @default(now())
+  postedBy    String?  // user ID or "system"
+  createdAt   DateTime @default(now())
+
+  lines JournalLine[]
+
+  @@map("journal_entries")
+}
+
+model JournalLine {
+  id             String           @id @default(uuid())
+  journalEntryId String
+  accountId      String
+  type           JournalEntryType
+  amountCents    Int
+  memo           String?
+
+  journalEntry JournalEntry @relation(fields: [journalEntryId], references: [id])
+  account      Account      @relation(fields: [accountId], references: [id])
+
+  @@map("journal_lines")
+}
+
+// ─── Reconciliation ──────────────────────────────────────────────────────────
+//
+// Imported bank/payment-gateway statements that the operator reconciles
+// against the ledger. Each line is either matched to a journal line OR posts
+// an adjustment when there's no internal record. Settlement reconciliation
+// (Foodpanda payouts vs expected commission) uses the same model.
+
+model BankStatementImport {
+  id             String   @id @default(uuid())
+  source         String   // "bank:hbl", "foodpanda", "keenu", …
+  accountCode    String   // CoA code the statement is reconciling against (e.g. 1020 Bank)
+  statementDate  DateTime
+  openingBalanceCents Int @default(0)
+  closingBalanceCents Int @default(0)
+  filename       String?
+  importedById   String?
+  importedAt     DateTime @default(now())
+
+  lines BankStatementLine[]
+
+  @@index([source, statementDate(sort: Desc)])
+  @@map("bank_statement_imports")
+}
+
+model BankStatementLine {
+  id             String   @id @default(uuid())
+  importId       String
+  postedDate     DateTime
+  description    String
+  reference      String?
+  amountCents    Int      // signed: + = credit to bank, − = debit
+  matchStatus    String   @default("unmatched") // unmatched | matched | adjusted | ignored
+  matchedJournalLineId String?
+  notes          String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  import BankStatementImport @relation(fields: [importId], references: [id], onDelete: Cascade)
+
+  @@index([importId, matchStatus])
+  @@index([postedDate(sort: Desc)])
+  @@map("bank_statement_lines")
+}
+
+// Foodpanda payout reconciliation. One row per settlement received from
+// Foodpanda; we compute expected (sum of order net) vs actual (Foodpanda's
+// payout) and flag the variance for investigation.
+model FoodpandaSettlement {
+  id                 String   @id @default(uuid())
+  settlementDate     DateTime
+  reference          String?  // Foodpanda's settlement ID
+  expectedAmountCents Int     // computed: sum of (order total - commission) for orders in period
+  actualAmountCents  Int      // what Foodpanda actually paid
+  varianceCents      Int      @default(0)
+  status             String   @default("open") // open | reconciled | written_off
+  notes              String?
+  recordedById       String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([settlementDate(sort: Desc)])
+  @@map("foodpanda_settlements")
+}
+
+// ─── Cost allocation ─────────────────────────────────────────────────────────
+//
+// A shared OpEx account (rent, electricity, etc.) is split across concepts by
+// a configurable driver. v1 supports static percentage and revenue-share. The
+// allocation runs at period end: it credits the source account and debits a
+// per-concept "allocated rent / electricity / …" account that the BS/PL views
+// surface inline.
+
+enum AllocationDriver {
+  fixed_pct      // weights stored on each rule line
+  revenue_share  // computed at run time from per-concept revenue in the period
+}
+
+model CostAllocationRule {
+  id              String           @id @default(uuid())
+  name            String           // operator-friendly label ("Q4 rent split")
+  sourceAccountCode String         // 6010, 6020, 6021, …
+  driver          AllocationDriver
+  isActive        Boolean          @default(true)
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  weights AllocationRuleWeight[]
+  runs    CostAllocationRun[]
+
+  @@unique([sourceAccountCode])
+  @@map("cost_allocation_rules")
+}
+
+model AllocationRuleWeight {
+  id           String  @id @default(uuid())
+  ruleId       String
+  conceptId    String
+  // For fixed_pct: 0–10000 (basis points, sums to 10000 across rule). For
+  // revenue_share: ignored at compute time but the row is required to enumerate
+  // which concepts participate (use 0 to opt a concept out).
+  weightBps    Int
+  // The destination account code for THIS concept (e.g. 6010 may post to per-
+  // concept "Rent — Stax", "Rent — Simmer" if you want sub-accounts; or all to
+  // 6010 with concept memo). Null = post back to source account with concept
+  // tag in memo only.
+  targetAccountCode String?
+
+  rule    CostAllocationRule @relation(fields: [ruleId],    references: [id], onDelete: Cascade)
+  concept Concept            @relation(fields: [conceptId], references: [id])
+
+  @@unique([ruleId, conceptId])
+  @@map("allocation_rule_weights")
+}
+
+model CostAllocationRun {
+  id            String   @id @default(uuid())
+  ruleId        String
+  periodStart   DateTime
+  periodEnd     DateTime
+  totalAmountCents Int
+  postedAt      DateTime  @default(now())
+  postedById    String?
+
+  rule CostAllocationRule @relation(fields: [ruleId], references: [id])
+
+  @@index([ruleId, periodStart(sort: Desc)])
+  @@map("cost_allocation_runs")
+}
+
+// ─── Tax invoices (FBR-compliant) ────────────────────────────────────────────
+//
+// Issued against an Order at fulfilment. Sequential per concept (the prefix
+// + zero-padded counter). Once issued, immutable — corrections post a credit
+// note (negative invoice).
+
+enum InvoiceType {
+  invoice
+  credit_note
+}
+
+model TaxInvoice {
+  id             String      @id @default(uuid())
+  invoiceNumber  String      @unique  // e.g. "STX-2026-0001"
+  type           InvoiceType @default(invoice)
+  orderId        String
+  conceptId      String
+  issuedAt       DateTime    @default(now())
+
+  // Snapshotted seller details at issue time
+  sellerLegalName String
+  sellerStrn      String?
+  sellerNtn       String?
+  sellerAddress   String?
+
+  // Optional buyer details — only populated when known
+  buyerName       String?
+  buyerStrn       String?
+  buyerNtn        String?
+  buyerAddress    String?
+
+  // Money fields snapshotted (cents) — these never change after issue
+  subtotalCents      Int
+  discountCents      Int       @default(0)
+  taxableValueCents  Int
+  fbrTaxCents        Int       @default(0)   // 17% federal GST on goods
+  provincialTaxCents Int       @default(0)   // PRA/SRB/KPRA/BRA on services
+  serviceChargeCents Int       @default(0)
+  tipCents           Int       @default(0)
+  totalCents         Int
+
+  // Reference to the original invoice when this is a credit note
+  originalInvoiceId String?
+
+  pdfUrl String?       // optional: where the rendered PDF lives in S3
+
+  order   Order   @relation(fields: [orderId], references: [id])
+  lines   TaxInvoiceLine[]
+  original TaxInvoice? @relation("InvoiceCorrections", fields: [originalInvoiceId], references: [id])
+  corrections TaxInvoice[] @relation("InvoiceCorrections")
+
+  @@index([conceptId, issuedAt(sort: Desc)])
+  @@index([orderId])
+  @@map("tax_invoices")
+}
+
+model TaxInvoiceLine {
+  id              String  @id @default(uuid())
+  invoiceId       String
+  description     String
+  quantity        Float
+  unitPriceCents  Int
+  lineTotalCents  Int
+
+  invoice TaxInvoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@index([invoiceId])
+  @@map("tax_invoice_lines")
+}
+
+// Per-concept invoice counter to guarantee gap-free sequential numbers — FBR
+// requires this. Use a transaction with SELECT ... FOR UPDATE to allocate.
+model InvoiceCounter {
+  conceptId String   @id
+  year      Int
+  nextValue Int
+
+  @@map("invoice_counters")
+}
+
+// ─── SiteLayout — page builder for storefront pages ─────────────────────────
+//
+// One row per page slug (e.g. "servd:home", "brand:simmer", "brand:stax").
+// `blocks` is an ordered array of typed Block records consumed by the
+// storefront's PageRenderer. Operator edits via the dashboard /content
+// editor; storefront falls back to hard-coded defaults if no row exists.
+
+model SiteLayout {
+  id          String   @id @default(uuid())
+  slug        String   @unique  // "servd:home" | "brand:<conceptSlug>" | "brand:<slug>:about" etc.
+  title       String?  // operator-facing label, e.g. "Simmer — home"
+  blocks      Json     // Block[] — array of typed block configs
+  updatedById String?
+  publishedAt DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([slug])
+  @@map("site_layouts")
+}
+
+// ─── Audit log ───────────────────────────────────────────────────────────────
+//
+// Append-only record of high-stakes mutations: period close, account changes,
+// wage-rate updates, allocation rule changes, manual journal entries. The point
+// is forensic — when something looks wrong six months later, who did what when.
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  action    String   // dotted-path verb: "period.close", "account.create", "wage.update", …
+  entity    String   // e.g. "User", "Account", "PeriodLock", "PayrollRun"
+  entityId  String?  // primary key of the touched row, when applicable
+  userId    String?  // who did it; null for system events
+  userEmail String?  // denormalised so deleted users still have attribution
+  before    Json?    // previous-state snapshot (for updates/deletes)
+  after     Json?    // new-state snapshot (for creates/updates)
+  metadata  Json?    // extra context (IP, reason, etc.)
+  createdAt DateTime @default(now())
+
+  @@index([action, createdAt(sort: Desc)])
+  @@index([entity, entityId])
+  @@index([userId, createdAt(sort: Desc)])
+  @@map("audit_logs")
+}
+
+// Books-closed lock. There is at most one active row; new lock dates only move
+// FORWARD. Any postJournalEntry with entryDate <= lockedThrough is rejected.
+// Reversing entries posted *after* lock date for an event before it ARE allowed
+// (they post in the open period with their own date), preserving auditability.
+model PeriodLock {
+  id             String   @id @default(uuid())
+  lockedThrough  DateTime // inclusive — books are closed up to and including this date
+  lockedBy       String   // user ID
+  lockedAt       DateTime @default(now())
+  note           String?
+
+  @@map("period_locks")
+}
+
+// Denormalised summary row per completed order (for fast reporting)
+model FinancialEntry {
+  id              String    @id @default(uuid())
+  orderId         String
+  conceptId       String
+  locationId      String?   // physical place — copied from Order at posting time
+  channel         String    // order source as string
+  grossCents      Int
+  commissionCents Int       @default(0) // delivery platform commission
+  discountCents   Int       @default(0)
+  taxCents        Int       @default(0)
+  netCents        Int       // gross - commission - discount
+  entryDate       DateTime  @default(now())
+  createdAt       DateTime  @default(now())
+
+  order    Order    @relation(fields: [orderId], references: [id])
+  concept  Concept  @relation(fields: [conceptId], references: [id])
+  location Location? @relation(fields: [locationId], references: [id])
+
+  @@index([conceptId, entryDate(sort: Desc)])
+  @@index([locationId, entryDate(sort: Desc)])
+  @@map("financial_entries")
+}
+
+// ─── CRM ──────────────────────────────────────────────────────────────────────
+
+model Segment {
+  id          String   @id @default(uuid())
+  name        String
+  description String?
+  // filter criteria stored as JSON predicate
+  filters     Json
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  campaigns Campaign[]
+
+  @@map("segments")
+}
+
+model Campaign {
+  id          String          @id @default(uuid())
+  segmentId   String?
+  name        String
+  channel     String          // email|sms|whatsapp
+  subject     String?
+  body        String
+  status      BroadcastStatus @default(draft)
+  scheduledAt DateTime?
+  sentAt      DateTime?
+  recipientCount Int?
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  segment Segment? @relation(fields: [segmentId], references: [id])
+  sends   CampaignSend[]
+
+  @@map("campaigns")
+}
+
+model CampaignSend {
+  id          String    @id @default(uuid())
+  campaignId  String
+  customerId  String
+  sentAt      DateTime?
+  status      String    @default("queued") // queued|sent|failed|bounced
+  errorMsg    String?
+
+  campaign Campaign @relation(fields: [campaignId], references: [id])
+  customer Customer  @relation(fields: [customerId], references: [id])
+
+  @@map("campaign_sends")
+}
+
+model AutomationTrigger {
+  id          String      @id @default(uuid())
+  type        TriggerType
+  name        String
+  isActive    Boolean     @default(true)
+  // config: days inactive, discount %, etc.
+  config      Json
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  @@map("automation_triggers")
+}
+
+// ─── Rider ────────────────────────────────────────────────────────────────────
+
+model Rider {
+  id          String      @id @default(uuid())
+  name        String
+  phone       String      @unique
+  vehicleType VehicleType @default(bike)
+  status      RiderStatus @default(offline)
+  isActive    Boolean     @default(true)
+  notes       String?
+  totalDeliveries Int     @default(0)
+  // Last reported geolocation — also pushed to a per-order WebSocket channel
+  // so customers see the live pin move on their tracking page.
+  lastLat       Float?
+  lastLng       Float?
+  lastHeading   Float?    // degrees 0-359
+  lastAccuracy  Float?    // metres
+  lastReportedAt DateTime?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  deletedAt   DateTime?
+
+  orders    Order[]
+  locations RiderLocation[]
+
+  @@map("riders")
+}
+
+// Append-only location stream from rider devices. Keeps a 24h history for
+// dispute resolution / time-to-arrive analytics. Older rows pruned by a
+// background sweep.
+model RiderLocation {
+  id         String   @id @default(uuid())
+  riderId    String
+  orderId    String?  // when on an active delivery
+  lat        Float
+  lng        Float
+  heading    Float?
+  accuracy   Float?
+  speedMps   Float?
+  recordedAt DateTime @default(now())
+
+  rider Rider @relation(fields: [riderId], references: [id], onDelete: Cascade)
+
+  @@index([riderId, recordedAt(sort: Desc)])
+  @@index([orderId, recordedAt(sort: Desc)])
+  @@map("rider_locations")
+}
+
+// ─── OrderReview ──────────────────────────────────────────────────────────────
+
+model OrderReview {
+  id         String   @id @default(uuid())
+  orderId    String   @unique
+  customerId String?
+  conceptId  String
+  rating     Int      // 1–5
+  comment    String?
+  source     String   @default("storefront")
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  order   Order   @relation(fields: [orderId], references: [id])
+  concept Concept @relation(fields: [conceptId], references: [id])
+
+  @@map("order_reviews")
+}
+
+// ─── OrderComplaint ───────────────────────────────────────────────────────────
+
+model OrderComplaint {
+  id          String            @id @default(uuid())
+  orderId     String?
+  customerId  String?
+  conceptId   String
+  title       String
+  description String
+  category    String            // wrong_item|missing_item|quality|service|delivery|other
+  status      ComplaintStatus   @default(open)
+  priority    ComplaintPriority @default(medium)
+  resolvedAt  DateTime?
+  resolution  String?
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  concept Concept @relation(fields: [conceptId], references: [id])
+  order   Order?  @relation(fields: [orderId], references: [id])
+
+  @@map("order_complaints")
+}
+
+// ─── Settings ────────────────────────────────────────────────────────────────
+
+model Setting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+
+  @@map("settings")
+}
+
+// ─── StorefrontPromo ──────────────────────────────────────────────────────────
+
+model StorefrontPromo {
+  id        String   @id @default(uuid())
+  emoji     String   @default("🔥")
+  badge     String
+  headline  String
+  sub       String
+  bg        String   @default("#c0392b")
+  shadow    String   @default("#922b21")
+  sortOrder Int      @default(0)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("storefront_promos")
+}
+
+// ─── WalletTransaction ────────────────────────────────────────────────────────
+
+model WalletTransaction {
+  id           String   @id @default(uuid())
+  customerId   String
+  type         String   // topup | spend | refund | bonus | expire
+  amountCents  Int      // positive = credit, negative = debit
+  balanceAfter Int
+  description  String?
+  orderId      String?
+  createdAt    DateTime @default(now())
+
+  customer Customer @relation(fields: [customerId], references: [id])
+
+  @@index([customerId, createdAt])
+  @@map("wallet_transactions")
+}
+
+// ─── PromoCode ────────────────────────────────────────────────────────────────
+
+model PromoCode {
+  id               String    @id @default(uuid())
+  conceptId        String?
+  code             String    @unique
+  description      String?
+  discountType     String    @default("percentage") // percentage | fixed
+  discountValue    Float
+  minOrderCents    Int?
+  maxDiscountCents Int?
+  maxUsageCount    Int?
+  perCustomerLimit Int       @default(1)
+  usedCount        Int       @default(0)
+  channel          String    @default("both") // app | web | both
+  startAt          DateTime
+  endAt            DateTime
+  isActive         Boolean   @default(true)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  concept Concept?        @relation(fields: [conceptId], references: [id])
+  usages  PromoCodeUsage[]
+  orders  Order[]
+
+  @@map("promo_codes")
+}
+
+model PromoCodeUsage {
+  id            String   @id @default(uuid())
+  promoCodeId   String
+  customerId    String?
+  orderId       String
+  discountCents Int
+  usedAt        DateTime @default(now())
+
+  promoCode PromoCode @relation(fields: [promoCodeId], references: [id])
+  order     Order     @relation(fields: [orderId], references: [id])
+
+  @@map("promo_code_usages")
+}
+
+// ─── SectionDiscount ──────────────────────────────────────────────────────────
+
+model SectionDiscount {
+  id              String    @id @default(uuid())
+  conceptId       String?
+  categoryId      String?
+  discountPercent Float
+  deliveryTypes   String[]
+  orderTypes      String[]
+  startDate       DateTime
+  endDate         DateTime
+  startTime       String    // "HH:MM"
+  endTime         String    // "HH:MM"
+  isActive        Boolean   @default(true)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  concept  Concept?  @relation(fields: [conceptId], references: [id])
+  category Category? @relation(fields: [categoryId], references: [id])
+
+  @@map("section_discounts")
+}
+
+// ─── AbandonedCart ────────────────────────────────────────────────────────────
+
+model AbandonedCart {
+  id             String    @id @default(uuid())
+  cartId         String    @unique
+  conceptId      String
+  customerId     String?
+  customerPhone  String?
+  customerEmail  String?
+  items          Json
+  subtotalCents  Int
+  abandonedAt    DateTime  @default(now())
+  recoveredAt    DateTime?
+  reminderSentAt DateTime?
+
+  concept Concept @relation(fields: [conceptId], references: [id])
+
+  @@index([conceptId, abandonedAt])
+  @@map("abandoned_carts")
+}
+
+// ─── QrCode ───────────────────────────────────────────────────────────────────
+
+model QrCode {
+  id          String   @id @default(uuid())
+  conceptId   String
+  tableId     String?
+  orderType   String   @default("dine-in") // dine-in | pickup
+  label       String
+  qrImageUrl  String?
+  scanCount   Int      @default(0)
+  conversions Int      @default(0)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  concept Concept @relation(fields: [conceptId], references: [id])
+  table   Table?  @relation(fields: [tableId], references: [id])
+
+  @@map("qr_codes")
+}
+
+// ─── Employee Scheduling ──────────────────────────────────────────────────────
+
+model ScheduledShift {
+  id        String   @id @default(uuid())
+  userId    String
+  conceptId String
+  date      DateTime @db.Date
+  startTime String   // "09:00"
+  endTime   String   // "17:00"
+  role      String?
+  notes     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user    User    @relation(fields: [userId], references: [id])
+  concept Concept @relation(fields: [conceptId], references: [id])
+
+  @@index([conceptId, date])
+  @@map("scheduled_shifts")
+}
+
+// ─── Analytics ───────────────────────────────────────────────────────────────
+
+enum AnalyticsEventType {
+  page_view
+  concept_view
+  item_view
+  item_added
+  item_removed
+  cart_viewed
+  checkout_started
+  checkout_step
+  checkout_abandoned
+  order_placed
+  search
+  filter_applied
+  concept_switched
+  promo_applied
+  promo_failed
+}
+
+model AnalyticsEvent {
+  id         String             @id @default(uuid())
+  sessionId  String
+  customerId String?
+  conceptId  String?
+  event      AnalyticsEventType
+  properties Json?
+  url        String?
+  referrer   String?
+  createdAt  DateTime           @default(now())
+
+  customer Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  concept  Concept?  @relation("ConceptAnalytics", fields: [conceptId], references: [id], onDelete: SetNull)
+
+  @@index([customerId, createdAt])
+  @@index([conceptId, event, createdAt])
+  @@index([event, createdAt])
+  @@index([sessionId])
+  @@map("analytics_events")
+}
+
+// ─── Customer Segments ───────────────────────────────────────────────────────
+
+model CustomerSegment {
+  id             String    @id @default(cuid())
+  slug           String    @unique
+  name           String
+  description    String?
+  color          String    @default("#6366f1")
+  emoji          String    @default("👥")
+  memberCount    Int       @default(0)
+  lastComputedAt DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  memberships CustomerSegmentMembership[]
+
+  @@map("customer_segments")
+}
+
+model CustomerSegmentMembership {
+  customerId String
+  segmentId  String
+  joinedAt   DateTime @default(now())
+
+  customer Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  segment  CustomerSegment @relation(fields: [segmentId], references: [id], onDelete: Cascade)
+
+  @@id([customerId, segmentId])
+  @@index([segmentId])
+  @@map("customer_segment_memberships")
+}
+
+// ─── Content Calendar ─────────────────────────────────────────────────────────
+
+enum ContentEventType {
+  social_post
+  menu_change
+  seasonal_ingredient
+  deal
+  shoot
+  event_promo
+  reminder
+  task
+}
+
+enum ContentEventStatus {
+  draft
+  scheduled
+  live
+  done
+  cancelled
+}
+
+model ContentEvent {
+  id          String             @id @default(cuid())
+  title       String
+  description String?
+  type        ContentEventType
+  startDate   DateTime
+  endDate     DateTime?
+  allDay      Boolean            @default(true)
+  status      ContentEventStatus @default(draft)
+  conceptId   String?
+  assigneeId  String?
+  department  String?            // marketing, procurement, kitchen, ops, management
+  color       String?
+  metadata    Json?              // type-specific: { platform, caption, mediaUrls, ingredient, dealValue… }
+  createdById String
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+
+  concept    Concept?    @relation("ConceptCalendar", fields: [conceptId], references: [id], onDelete: SetNull)
+  assignee   User?       @relation("EventAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+  createdBy  User        @relation("EventCreatedBy", fields: [createdById], references: [id])
+  socialPost SocialPost?
+
+  @@index([startDate])
+  @@index([conceptId, startDate])
+  @@map("content_events")
+}
+
+enum SocialPlatform {
+  instagram
+  facebook
+  tiktok
+}
+
+enum SocialPostStatus {
+  draft
+  scheduled
+  published
+  failed
+}
+
+model SocialPost {
+  id             String           @id @default(cuid())
+  eventId        String           @unique
+  platform       SocialPlatform
+  caption        String
+  mediaUrls      String[]         @default([])
+  scheduledFor   DateTime
+  publishedAt    DateTime?
+  status         SocialPostStatus @default(draft)
+  platformPostId String?
+  error          String?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  event ContentEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@index([scheduledFor, status])
+  @@map("social_posts")
+}
+
+// ─── Supplier Chat ────────────────────────────────────────────────────────────
+
+model SupplierConversation {
+  id         String   @id @default(cuid())
+  supplierId String
+  staffId    String
+  subject    String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  supplier Supplier          @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  staff    User              @relation(fields: [staffId], references: [id])
+  messages SupplierMessage[]
+
+  @@index([supplierId])
+  @@index([staffId])
+  @@map("supplier_conversations")
+}
+
+model SupplierMessage {
+  id             String   @id @default(cuid())
+  conversationId String
+  fromStaff      Boolean
+  senderId       String?
+  body           String
+  mediaUrl       String?
+  seenAt         DateTime?
+  createdAt      DateTime @default(now())
+
+  // Where this message was *originated* — for outbound (fromStaff=true) it's
+  // typically "web_portal" because staff types in the admin UI; the same
+  // logical message may also fan out via email/whatsapp but that's tracked as
+  // delivery, not channel. For inbound (fromStaff=false) it's the channel the
+  // supplier replied through: "web_portal", "email", or "whatsapp".
+  channel        String   @default("web_portal")
+
+  // For inbound messages: vendor's message id (Postmark MessageID, Meta wamid).
+  // Used for de-duplication on webhook retries — same provider id = same
+  // logical message, ignore the second delivery.
+  externalMessageId  String?  @unique
+  // For inbound: the from address (email like "ali@gsfoods.pk" or wa-style
+  // E.164 phone "923001234567"). Lets us reconstruct routing decisions
+  // and shows in the UI as "from <ali@gsfoods.pk> via email".
+  inboundFromAddress String?
+
+  conversation SupplierConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt])
+  @@map("supplier_messages")
+}
+
+model SupplierPortalToken {
+  id         String    @id @default(cuid())
+  supplierId String
+  token      String    @unique @default(cuid())
+  label      String?
+  expiresAt  DateTime?
+  lastUsedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  supplier Supplier @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+
+  @@index([token])
+  @@map("supplier_portal_tokens")
+}
+
+// ─── Configuration models — 18 setup gaps shipped in one batch ───────────────
+
+// Reusable modifier template — instead of creating "Sauces (Choose 1)" inline
+// per menu item, operators define once and reference from many items.
+model ModifierTemplate {
+  id          String   @id @default(cuid())
+  name        String                                        // 'Sauces', 'Sizes', 'Sides', 'Spice Level'
+  description String?
+  isRequired  Boolean  @default(false)
+  minSelect   Int      @default(0)
+  maxSelect   Int      @default(1)
+  isActive    Boolean  @default(true)
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  deletedAt   DateTime?
+
+  options     ModifierTemplateOption[]
+
+  @@map("modifier_templates")
+}
+
+model ModifierTemplateOption {
+  id              String   @id @default(cuid())
+  templateId      String
+  name            String
+  priceDeltaCents Int      @default(0)
+  isDefault       Boolean  @default(false)
+  isAvailable     Boolean  @default(true)
+  sortOrder       Int      @default(0)
+
+  template        ModifierTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+
+  @@index([templateId])
+  @@map("modifier_template_options")
+}
+
+// Delivery zones — radius-based or polygon-based, with fee + minimum order
+model DeliveryZone {
+  id              String   @id @default(cuid())
+  conceptId       String?                                   // null = all concepts
+  name            String                                     // "Inner DHA", "Phase 5", "Outside city"
+  // Distance-based mode
+  radiusKmMin     Float?                                     // 0 for first zone
+  radiusKmMax     Float?
+  // Polygon mode (GeoJSON-style coords)
+  polygon         Json?
+  feeCents        Int      @default(0)
+  freeAboveCents  Int?                                       // free delivery if order >= this
+  minOrderCents   Int      @default(0)
+  estimatedMinutes Int?                                      // delivery time estimate shown to customers
+  isActive        Boolean  @default(true)
+  sortOrder       Int      @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([conceptId])
+  @@map("delivery_zones")
+}
+
+// Notification templates — order events, system events, marketing
+model NotificationTemplate {
+  id          String   @id @default(cuid())
+  conceptId   String?                                        // null = global default
+  channel     String                                          // 'email' | 'sms' | 'whatsapp' | 'push'
+  event       String                                          // 'order.confirmed' | 'order.ready' | 'order.refunded' | 'shift.opened' | 'reservation.reminder' | etc.
+  subject     String?                                         // email subject; null for SMS
+  body        String                                          // template string with {{variables}}
+  variables   String[] @default([])                           // declared variables for editor hint
+  isActive    Boolean  @default(true)
+  language    String   @default("en")                         // 'en' | 'ur'
+  notes       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([conceptId, channel, event, language])
+  @@index([conceptId, channel])
+  @@map("notification_templates")
+}
+
+// Bank accounts — used in reconciliation against Foodpanda/Careem settlements + card payouts
+model BankAccount {
+  id            String   @id @default(cuid())
+  name          String                                       // "HBL Operations Account"
+  bankName      String?                                       // "HBL", "Meezan"
+  accountTitle String?
+  accountNumber String?
+  iban          String?
+  branchCode    String?
+  swiftCode     String?
+  currency      String   @default("PKR")
+  openingBalanceCents Int @default(0)
+  isActive      Boolean  @default(true)
+  notes         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  deletedAt     DateTime?
+
+  @@map("bank_accounts")
+}
+
+// KDS device registry — physical screens distinct from logical Stations
+model KdsDevice {
+  id                String   @id @default(cuid())
+  name              String                                    // "Grill Tablet 1"
+  stationId         String?                                    // logical station this device displays
+  conceptId         String?                                    // optional concept restriction
+  deviceFingerprint String?  @unique                            // browser fingerprint or set on first connect
+  lastSeenAt        DateTime?
+  ipAddress         String?
+  isActive          Boolean  @default(true)
+  notes             String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([stationId])
+  @@map("kds_devices")
+}
+
+// Outbound webhooks — let third-party software subscribe to servd events
+model WebhookSubscription {
+  id          String   @id @default(cuid())
+  url         String                                          // https://accountant.example.com/webhooks/servd
+  events      String[] @default([])                            // ['order.completed', 'order.refunded', 'shift.closed']
+  secret      String                                          // HMAC SHA-256 signing secret
+  isActive    Boolean  @default(true)
+  lastSentAt  DateTime?
+  lastStatus  String?                                          // 'success' | 'failed_4xx' | 'failed_5xx' | 'timeout'
+  failureCount Int @default(0)
+  notes       String?
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  deletedAt   DateTime?
+
+  @@map("webhook_subscriptions")
+}
+
+// Custom fields — operator-defined extensions to core entities
+model CustomFieldDefinition {
+  id          String   @id @default(cuid())
+  scope       String                                          // 'customer' | 'order' | 'menu_item' | 'supplier'
+  key         String                                          // 'gift_recipient', 'table_preference', 'allergy_severity'
+  label       String                                          // operator-facing label
+  type        String                                          // 'text' | 'number' | 'date' | 'select' | 'boolean'
+  options     String[] @default([])                            // for select type
+  helpText    String?
+  isRequired  Boolean  @default(false)
+  showInList  Boolean  @default(false)                         // include in list view columns
+  sortOrder   Int      @default(0)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  values      CustomFieldValue[]
+
+  @@unique([scope, key])
+  @@index([scope])
+  @@map("custom_field_definitions")
+}
+
+model CustomFieldValue {
+  id           String   @id @default(cuid())
+  fieldId      String
+  entityType   String                                         // matches field.scope
+  entityId     String                                         // FK by string — flexible across entity types
+  value        String                                         // serialised; parsed by field.type
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  field        CustomFieldDefinition @relation(fields: [fieldId], references: [id], onDelete: Cascade)
+
+  @@unique([fieldId, entityType, entityId])
+  @@index([entityType, entityId])
+  @@map("custom_field_values")
+}
+
+// Scheduled reports — owner gets daily/weekly digests by email
+model ScheduledReport {
+  id           String   @id @default(cuid())
+  name         String                                         // "Daily P&L"
+  reportType   String                                         // 'sales_daily' | 'shift_summary' | 'low_stock' | 'food_cost' | 'ap_aging' | 'menu_engineering'
+  cron         String                                         // standard cron syntax
+  recipients   String[] @default([])                           // email addresses
+  conceptId    String?                                         // null = all concepts
+  isActive     Boolean  @default(true)
+  lastRunAt    DateTime?
+  lastStatus   String?
+  notes        String?
+  createdById  String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  deletedAt    DateTime?
+
+  @@map("scheduled_reports")
+}
+
+// Refund / void / comp policy — single record per scope
+model RefundPolicy {
+  id                       String   @id @default(cuid())
+  scope                    String   @default("global")        // 'global' | 'concept'
+  scopeId                  String?                              // concept id when scope='concept'
+
+  // Per-role caps (cents). 0 = role can't perform without manager override.
+  cashierVoidLimitCents    Int      @default(0)
+  cashierCompLimitCents    Int      @default(50000)             // PKR 500
+  cashierRefundLimitCents  Int      @default(0)
+
+  managerVoidLimitCents    Int      @default(500000)            // PKR 5,000
+  managerCompLimitCents    Int      @default(500000)
+  managerRefundLimitCents  Int      @default(500000)
+
+  requireReason            Boolean  @default(true)
+  requirePhotoEvidence     Boolean  @default(false)
+  notifyOwnerAboveCents    Int?                                 // alert owner above threshold
+  approverEmail            String?
+  notes                    String?
+  updatedAt                DateTime @updatedAt
+  updatedById              String?
+
+  @@unique([scope, scopeId])
+  @@map("refund_policies")
+}
+
+// Reservation policy — single record per scope
+model ReservationPolicy {
+  id                          String   @id @default(cuid())
+  scope                       String   @default("global")
+  scopeId                     String?
+
+  depositRequiredAboveParty   Int?                              // require deposit for parties larger than this
+  depositCents                Int      @default(0)
+  noShowGraceMinutes          Int      @default(15)
+  cancellationWindowHours     Int      @default(24)
+  maxAdvanceDays              Int      @default(60)
+  minAdvanceHours             Int      @default(2)
+  maxPartySize                Int      @default(20)
+  walkInsAllowed              Boolean  @default(true)
+  remindersEnabled            Boolean  @default(true)
+  reminderHoursBefore         Int      @default(24)
+  notes                       String?
+  updatedAt                   DateTime @updatedAt
+  updatedById                 String?
+
+  @@unique([scope, scopeId])
+  @@map("reservation_policies")
+}
+
+// Receipt customization — logo/footer/legal/format
+model ReceiptConfig {
+  id                  String   @id @default(cuid())
+  scope               String   @default("global")
+  scopeId             String?
+  paperWidthMm        Int      @default(80)                   // 80 or 58
+  showLogo            Boolean  @default(true)
+  logoUrl             String?
+  headerText          String?                                  // e.g. "Mubarak Biryani Co. — DHA Phase 5"
+  footerText          String?                                  // "Thank you, see you again!"
+  legalDisclaimer     String?                                  // "Goods sold are not returnable"
+  showTaxBreakdown    Boolean  @default(true)
+  showFbrInvoice      Boolean  @default(true)
+  printerIp           String?                                   // ESC/POS network printer
+  printerPort         Int      @default(9100)
+  autoPrintOnOrder    Boolean  @default(false)
+  autoPrintOnPay      Boolean  @default(true)
+  drawerKickEnabled   Boolean  @default(true)
+  cashVarianceLimitCents Int   @default(20000)                 // PKR 200 default
+  updatedAt           DateTime @updatedAt
+  updatedById         String?
+
+  @@unique([scope, scopeId])
+  @@map("receipt_configs")
+}
+
+// Operations config — service charge, tip pool rules, invoice numbering, withholding tax,
+// brand assets, period locks, COA — settings the platform reads but no dedicated full
+// model. Stored as a single typed record per scope.
+model OperationsConfig {
+  id                          String   @id @default(cuid())
+  scope                       String   @default("global")
+  scopeId                     String?
+
+  // Service charge
+  serviceChargePct            Float    @default(0)              // 0–1, e.g. 0.05 = 5%
+  serviceChargeAppliesToChannels String[] @default([])           // ['pos', 'storefront'] — if empty, applies to all
+
+  // Tip pool
+  tipPoolEnabled              Boolean  @default(false)
+  tipPoolDistribution         String   @default("equal")         // 'equal' | 'by_hours' | 'by_role_weight'
+  tipPoolRoleWeights          Json?                              // { kitchen: 1.0, cashier: 1.5, ... }
+
+  // Tax invoice numbering
+  invoiceSequenceReset        String   @default("yearly")        // 'yearly' | 'monthly' | 'never'
+  invoiceCreditNotePrefix     String?                             // 'CN-'
+
+  // Withholding tax
+  withholdingTaxEnabled       Boolean  @default(false)
+  withholdingTaxPct           Float    @default(0)
+  withholdingTaxRecoverable   Boolean  @default(true)
+
+  // Brand assets (extended palette)
+  secondaryColors             String[] @default([])              // hex colors
+  fontHeading                 String?                             // 'Playfair Display'
+  fontBody                    String?                             // 'Inter'
+  brandVoiceNotes             String?                             // tone-of-voice guidance for marketing copy
+  socialInstagramHandle       String?
+  socialTiktokHandle          String?
+  socialFacebookUrl           String?
+
+  // Anti-theft enforcement thresholds (added 2026-05-06)
+  cashierDiscountPctCap        Float    @default(0.10)             // 10% — above requires manager PIN
+  managerDiscountPctCap        Float    @default(0.50)             // 50% — admin override above
+  cashierPriceOverrideCap      Int      @default(0)                // PKR cents — 0 = no override allowed for cashiers
+  photoRequiredAboveCents      Int      @default(50000)            // waste/receipt photo required above this
+  geofenceRadiusMetres         Int      @default(150)              // clock-in must be within N metres of concept lat/lng
+  geofenceEnforced             Boolean  @default(false)            // soft-launch flag; flips to true after staff training
+  selfieRequiredAtClockIn      Boolean  @default(false)            // selfie photo at clock-in
+  pii_export_row_threshold     Int      @default(100)              // bulk customer/recipe export above this auto-flags
+  shrinkage_trend_weeks        Int      @default(4)                // window for chronic shrinkage detection
+
+  updatedAt                   DateTime @updatedAt
+  updatedById                 String?
+
+  @@unique([scope, scopeId])
+  @@map("operations_configs")
+}
+
+// ─── Component library ────────────────────────────────────────────────────────
+// Master file of every prep / sauce / sub-recipe built FROM raw ingredients and
+// used IN menu items. Sits between InventoryItem (raw) and MenuItem (finished).
+// One ingredient can yield many components — operators capture hero forms,
+// supporting forms, and trim/waste utilizations all hanging off the same
+// parent ingredient. Plug-and-play seasonal additions over time.
+//
+// Examples from the GS Foods component matrix:
+//   Dates → hero: "Stuffed Dates"
+//         → supporting: "Date Syrup", "Date Ketchup"
+//         → trim/waste: "Date Coffee"
+//   Lemon → hero: "Lemon Curd / Fluid Gel"
+//         → supporting: "Preserved Lemons"
+//         → trim/waste: "Candied Lemon Julienne"
+
+enum ComponentType {
+  hero
+  supporting
+  trim_waste
+}
+
+model Component {
+  id                 String              @id @default(cuid())
+  baseIngredientId   String?
+  name               String
+  type               ComponentType
+  description        String?
+  preparation        String?
+
+  seasons            String[]            @default([])
+
+  yieldGrams         Float?
+  shelfLifeHours     Int?
+  laborMinutes       Int?
+
+  isActive           Boolean             @default(true)
+  notes              String?
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  deletedAt          DateTime?
+
+  baseIngredient     InventoryItem?      @relation(fields: [baseIngredientId], references: [id])
+  brands             ComponentBrandUse[]
+
+  @@index([baseIngredientId])
+  @@index([type])
+  @@index([isActive])
+  @@map("components")
+}
+
+model ComponentBrandUse {
+  componentId String
+  conceptId   String
+  usageNote   String?
+  isPrimary   Boolean   @default(false)
+  createdAt   DateTime  @default(now())
+
+  component   Component @relation(fields: [componentId], references: [id], onDelete: Cascade)
+  concept     Concept   @relation(fields: [conceptId], references: [id], onDelete: Cascade)
+
+  @@id([componentId, conceptId])
+  @@index([conceptId])
+  @@map("component_brand_uses")
+}
+
+// ─── Capital ledger ───────────────────────────────────────────────────────────
+// Tracks every PKR out against the project's total capital ask. Mirrors the
+// "Date / Amount / For / Paid Out To" tab most operators run in Excel.
+
+model CapitalLedgerEntry {
+  id          String   @id @default(cuid())
+  tenantId    String?
+  conceptId   String?
+  projectId   String?
+  date        DateTime
+  amountCents Int
+  description String
+  paidTo      String?
+  invoiceUrl  String?
+  category    String?                       // 'rent' | 'broker' | 'capex' | 'license' | 'equipment' | 'consulting' | 'other'
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  deletedAt   DateTime?
+
+  @@index([tenantId, date(sort: Desc)])
+  @@index([conceptId, date(sort: Desc)])
+  @@index([projectId])
+  @@map("capital_ledger_entries")
+}
+
+// ─── CapEx project ────────────────────────────────────────────────────────────
+// One project per location/concept buildout. Line items grouped into scopes
+// (BOH = back of house, FOH = front of house, AG = above ground / finishing).
+
+model CapexProject {
+  id                  String   @id @default(cuid())
+  tenantId            String?
+  conceptId           String?
+  locationId          String?                                            // physical location being built/refurbed
+  name                String
+  projectType         String   @default("kitchen_buildout")              // kitchen_buildout | refurb | expansion | new_brand | equipment_only
+  phase               String   @default("planning")                       // planning | quoting | executing | snagging | live
+  // Budget envelope — owner-set cap. Lines + fees + tax + contingency = totalAsk;
+  // we flag when totalAsk exceeds this.
+  budgetEnvelopeCents Int      @default(0)
+  contingencyPct      Float    @default(0.10)                            // 10% default
+  totalAskCents       Int      @default(0)                               // legacy; recomputed from lines + fees
+  consultantFeesCents Int      @default(0)
+  taxCents            Int      @default(0)
+  // Project schedule
+  targetOpeningDate   DateTime?
+  actualOpeningDate   DateTime?
+  // Project metadata
+  ownerId             String?                                            // project manager / owner
+  address             String?
+  floorAreaSqft       Int?
+  // Per-project scope sections — JSON array of { key, label, emoji, hint }.
+  // null = use platform default (BOH/FOH/AG/etc). Operators rename/add/reorder.
+  scopeConfig         Json?
+  status              String   @default("planning")                       // legacy alias for phase
+  notes               String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+  deletedAt           DateTime?
+
+  lines               CapexLine[]
+
+  @@index([tenantId])
+  @@index([conceptId])
+  @@index([locationId])
+  @@map("capex_projects")
+}
+
+model CapexLine {
+  id              String   @id @default(cuid())
+  projectId       String
+  scope           String                       // 'BOH' | 'FOH' | 'AG' | 'Equipment' | 'MEP' | 'Civil' | 'Tech' | 'Branding' | 'Permits' | 'SoftCosts' | 'Other'
+  category        String?                      // sub-grouping for the operator's mental model
+  item            String
+  quantity        Int      @default(1)
+  unitCostCents   Int                          // budgeted/estimated cost — what you planned
+  // Vendor + quoting
+  vendor          String?                      // selected vendor
+  vendorContact   String?
+  quotedCents     Int?                         // initial quote total
+  negotiatedCents Int?                         // final negotiated total — what you actually committed to
+  paidCents       Int      @default(0)         // running total paid
+  // Status pipeline
+  status          String   @default("not_quoted")  // not_quoted | quoted | ordered | partial_paid | delivered | installed | commissioned | snag | done
+  priority        String   @default("must_have")   // must_have | nice_to_have | future
+  // Schedule
+  leadTimeDays      Int?
+  expectedDeliveryDate DateTime?
+  actualDeliveryDate   DateTime?
+  installedDate     DateTime?
+  // Documents + photos as JSON arrays of {label, url}
+  documentUrls    Json?
+  photoUrls       Json?
+  // Operational
+  warrantyMonths  Int?
+  assignedToId    String?
+  notes           String?
+  sortOrder       Int      @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  project         CapexProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  quotes          CapexQuote[]
+  payments        CapexPayment[]
+
+  @@index([projectId])
+  @@index([status])
+  @@map("capex_lines")
+}
+
+// Multiple quotes per line — vendor comparison shopping. Operator marks one
+// as the winner; that one populates CapexLine.vendor + negotiatedCents.
+model CapexQuote {
+  id            String   @id @default(cuid())
+  lineId        String
+  vendor        String
+  contactName   String?
+  contactPhone  String?
+  totalCents    Int
+  leadTimeDays  Int?
+  validUntil    DateTime?
+  fileUrl       String?                         // PDF / image of the quote document
+  notes         String?
+  isWinner      Boolean  @default(false)
+  createdAt     DateTime @default(now())
+
+  line          CapexLine @relation(fields: [lineId], references: [id], onDelete: Cascade)
+
+  @@index([lineId])
+  @@map("capex_quotes")
+}
+
+// ─── OpEx tracker — recurring operational expenses ───────────────────────────
+// Different shape from CapEx: these are recurring cash-outflows (rent, payroll,
+// utilities, software). The model is "category → line → period payments" with
+// expected vs actual per period so trend + variance jump out.
+
+model OpexCategory {
+  id        String   @id @default(cuid())
+  tenantId  String?
+  conceptId String?                                // null = company-wide
+  name      String                                 // 'Rent' | 'Utilities' | 'Payroll' | 'Software' | etc.
+  emoji     String?                                // surfaced in UI
+  budgetMonthlyCents Int @default(0)               // monthly cap; variance vs actual flagged
+  notes     String?
+  isActive  Boolean  @default(true)
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  deletedAt DateTime?
+
+  lines     OpexLine[]
+
+  @@index([tenantId])
+  @@index([conceptId])
+  @@map("opex_categories")
+}
+
+model OpexLine {
+  id            String   @id @default(cuid())
+  categoryId    String
+  conceptId     String?
+  projectId     String?                             // optional link to a CapexProject (build-out + run together = full TCO)
+  name          String                              // 'Office rent — Lahore', 'KE bill — Karachi kitchen'
+  vendor        String?
+  vendorContact String?
+  amountCents   Int                                 // expected per-period amount
+  cadence       String   @default("monthly")        // 'monthly' | 'quarterly' | 'annual' | 'per_use'
+  nextDueDate   DateTime?
+  paymentMethod String?                             // 'bank_transfer' | 'card' | 'cash' | 'auto_debit'
+  bankAccountId String?
+  // Source: 'manual' for hand-entered; 'payroll'/'license'/'subscription' link to internal data.
+  source        String   @default("manual")
+  isActive      Boolean  @default(true)
+  notes         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  category      OpexCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  payments      OpexPayment[]
+
+  @@index([categoryId])
+  @@index([projectId])
+  @@index([nextDueDate])
+  @@map("opex_lines")
+}
+
+model OpexPayment {
+  id            String   @id @default(cuid())
+  lineId        String
+  periodStart   DateTime
+  periodEnd     DateTime
+  expectedCents Int                                 // forecast for this period
+  actualCents   Int?                                // what hit the bank (null until paid)
+  paidAt        DateTime?
+  paymentRef    String?
+  receiptUrl    String?
+  notes         String?
+  createdAt     DateTime @default(now())
+
+  line          OpexLine @relation(fields: [lineId], references: [id], onDelete: Cascade)
+
+  @@index([lineId, periodStart])
+  @@index([paidAt])
+  @@map("opex_payments")
+}
+
+// Payment schedule per line — deposit / midpoint / balance / extras.
+// Cash-flow page sums these by dueDate to show outflow timeline.
+model CapexPayment {
+  id            String   @id @default(cuid())
+  lineId        String
+  label         String                          // 'deposit' | 'midpoint' | 'balance' | 'extra'
+  amountCents   Int
+  dueDate       DateTime?
+  paidAt        DateTime?
+  paidAmountCents Int?                          // null until paid; supports partial
+  paymentRef    String?                         // bank ref, cheque #, transaction ID
+  notes         String?
+  createdAt     DateTime @default(now())
+
+  line          CapexLine @relation(fields: [lineId], references: [id], onDelete: Cascade)
+
+  @@index([lineId])
+  @@index([dueDate])
+  @@map("capex_payments")
+}
+
+// ─── Pro-forma / financial projection ─────────────────────────────────────────
+// Persisted version of the operator's Excel "Annual Projection" tab. One
+// ProForma = one scenario; channels + fixed costs + monthly ramp curves
+// produce the per-month P&L.
+
+model ProForma {
+  id                       String   @id @default(cuid())
+  tenantId                 String?
+  conceptId                String?
+  name                     String
+  scenario                 String   @default("base")
+  totalAskCents            Int      @default(0)
+  capexCents               Int      @default(0)
+  workingCapitalCents      Int      @default(0)
+  brokerFeeCents           Int      @default(0)
+  rentAdvanceSecurityCents Int      @default(0)
+  monthlyFixedCostsCents   Int      @default(0)
+  variableCostPct          Float    @default(0.40)
+  tradingDaysPerMonth      Int      @default(26)
+  notes                    String?
+  createdById              String?
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
+  deletedAt                DateTime?
+
+  channels                 ProFormaChannel[]
+  fixedCosts               ProFormaFixedCost[]
+  months                   ProFormaMonth[]
+
+  @@index([tenantId])
+  @@index([conceptId])
+  @@map("pro_formas")
+}
+
+model ProFormaChannel {
+  id              String   @id @default(cuid())
+  proFormaId      String
+  name            String
+  checkAvgCents   Int
+  ordersTue       Int      @default(0)
+  ordersWed       Int      @default(0)
+  ordersThu       Int      @default(0)
+  ordersFri       Int      @default(0)
+  ordersSat       Int      @default(0)
+  ordersSun       Int      @default(0)
+  ordersMon       Int      @default(0)
+  sortOrder       Int      @default(0)
+
+  proForma        ProForma @relation(fields: [proFormaId], references: [id], onDelete: Cascade)
+
+  @@index([proFormaId])
+  @@map("pro_forma_channels")
+}
+
+model ProFormaFixedCost {
+  id           String   @id @default(cuid())
+  proFormaId   String
+  category     String
+  monthlyCents Int
+  notes        String?
+  sortOrder    Int      @default(0)
+
+  proForma     ProForma @relation(fields: [proFormaId], references: [id], onDelete: Cascade)
+
+  @@index([proFormaId])
+  @@map("pro_forma_fixed_costs")
+}
+
+model ProFormaMonth {
+  id              String   @id @default(cuid())
+  proFormaId      String
+  monthIndex      Int
+  rampPct         Float
+  channelOverrides Json?
+  notes           String?
+
+  proForma        ProForma @relation(fields: [proFormaId], references: [id], onDelete: Cascade)
+
+  @@unique([proFormaId, monthIndex])
+  @@index([proFormaId])
+  @@map("pro_forma_months")
+}
+
+// ─── Custom domains ───────────────────────────────────────────────────────────
+// Maps a hostname (`order.mubarakbiryani.pk`) to a concept. Storefront-side
+// middleware reads the Host header and serves that concept's microsite / order
+// flow. SSL is provisioned at the edge (Cloudflare / Caddy / Vercel) — servd
+// just tracks status here so the operator can see what's wired up.
+//
+// Verification flow:
+//   1. User adds domain. We generate a 16-char `verificationToken`.
+//   2. UI tells them to add a DNS TXT record:
+//        _servd-verify.<their-domain> = <verificationToken>
+//   3. Plus a CNAME for traffic:
+//        <their-domain> → <servd-storefront-host>
+//   4. They click "Verify". We DNS-resolve the TXT and flip status: verified.
+//   5. Operator (or auto-job) provisions SSL at the edge → flips status: active.
+
+enum DomainStatus {
+  pending          // added, awaiting DNS records
+  verified         // TXT record found, ready for SSL
+  active           // SSL issued + serving traffic
+  failed           // verification failed; user fix DNS and retry
+  disabled         // operator paused this domain
+}
+
+model Domain {
+  id                String       @id @default(cuid())
+  tenantId          String?
+  conceptId         String?      // null = generic tenant landing; set = specific brand microsite / order page
+  hostname          String       @unique     // 'order.mubarakbiryani.pk', no scheme
+  purpose           String       @default("order")  // 'order' | 'brand_microsite' | 'admin' (rare)
+  status            DomainStatus @default(pending)
+  verificationToken String       // random 16-char string included in TXT record
+  verifiedAt        DateTime?
+  sslIssuedAt       DateTime?
+  lastCheckedAt     DateTime?
+  notes             String?
+  createdById       String?
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+  deletedAt         DateTime?
+
+  @@index([tenantId])
+  @@index([conceptId])
+  @@index([status])
+  @@map("domains")
+}
+
+// ─── Tenant ───────────────────────────────────────────────────────────────────
+// Lightweight multi-tenancy. Each restaurant company is one Tenant; concepts
+// (brands) and users belong to a tenant. We attach tenantId nullably so existing
+// single-tenant data keeps working — the seed function promotes existing rows
+// into a default "main" tenant on first boot.
+//
+// (Named Tenant rather than Account because `Account` is already the chart-of-
+// accounts model in the accounting module.)
+//
+// What this gets you today:
+//   - A signup flow that creates a fresh tenant + admin + first concept
+//   - Templates apply per-tenant so prospects can try with sample data
+//   - Top-level list endpoints will filter by tenantId once we wire the JWT
+//
+// What's NOT here yet:
+//   - Row-level isolation across every model (deferred — risky refactor;
+//     concepts already filter most queries by conceptId so tenant scoping
+//     flows naturally for now)
+//   - Per-tenant billing customer ID, plan tier (next iteration)
+
+model Tenant {
+  id            String    @id @default(cuid())
+  slug          String    @unique
+  name          String
+  ownerEmail    String?                    // owner contact — set during signup
+  industry      String?                    // 'qsr' | 'cafe' | 'fine_dining' | 'cloud_kitchen' | 'biryani' | 'multi_brand'
+  countryCode   String    @default("PK")   // ISO 3166-1 alpha-2 — drives currency, tax regime
+  currency      String    @default("PKR")
+  timezone      String    @default("Asia/Karachi")
+  plan          String    @default("trial") // 'trial' | 'starter' | 'growth' | 'chain'
+  trialEndsAt   DateTime?
+  isActive      Boolean   @default(true)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  deletedAt     DateTime?
+
+  concepts      Concept[]
+  users         User[]
+  members       TenantMember[]
+
+  @@map("tenants")
+}
+
+// ─── TenantMember ─────────────────────────────────────────────────────────────
+// Many-to-many between User and Tenant. A user can own / be a member of multiple
+// tenants (each billed separately). The User.tenantId column above continues to
+// represent the *active* tenant in the current session. Switching active tenant
+// = update User.tenantId to another tenant the user is a member of.
+
+model TenantMember {
+  id        String   @id @default(cuid())
+  userId    String
+  tenantId  String
+  role      String   @default("owner")    // 'owner' | 'admin' | 'manager'
+  createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, tenantId])
+  @@index([userId])
+  @@index([tenantId])
+  @@map("tenant_members")
+}
+
+// ─── Payment gateway configuration ────────────────────────────────────────────
+// Per-provider toggle + non-secret config. Secrets (merchant keys, hash keys)
+// live in env vars — referenced by name here so the UI can show the user
+// which env var to populate.
+
+model PaymentGatewayConfig {
+  id            String   @id @default(uuid())
+  provider      String                          // 'keenu' | 'jazzcash' | 'easypaisa' | 'cash'
+  conceptId     String?                         // null = global; otherwise per-concept override
+  isEnabled     Boolean  @default(false)
+  isLive        Boolean  @default(false)        // false = sandbox / test mode
+  merchantId    String?                         // public, safe to store (NOT the secret)
+  callbackUrl   String?
+  successUrl    String?
+  failureUrl    String?
+  notes         String?
+  updatedAt     DateTime @updatedAt
+  updatedById   String?
+
+  @@unique([provider, conceptId])
+  @@map("payment_gateway_configs")
+}
+
+// ─── Locations ────────────────────────────────────────────────────────────────
+// A physical place. A location can host one or many Concepts (multi-concept
+// kitchens, ghost kitchens, food courts). A concept can theoretically also run
+// at multiple locations (chain expansion), so the relationship is many-to-many.
+//
+// Why a separate model: Concept = brand (logical, has its own menu, branding,
+// loyalty); Location = physical venue (has an address, a cash drawer, a kitchen,
+// a printer). Accounting and ops need to filter by both axes independently.
+
+model Location {
+  id          String   @id @default(uuid())
+  slug        String   @unique
+  name        String                          // "Gulberg Branch", "DHA Kitchen"
+  address     String?
+  city        String?
+  latitude    Float?
+  longitude   Float?
+  phone       String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  deletedAt   DateTime?
+
+  concepts    ConceptLocation[]
+  orders      Order[]
+  shifts      Shift[]
+  financialEntries FinancialEntry[]
+
+  @@map("locations")
+}
+
+// Many-to-many link between Concept (brand) and Location (place).
+// A row in this table means "concept X is operated at location Y".
+model ConceptLocation {
+  conceptId   String
+  locationId  String
+  isPrimary   Boolean  @default(false)        // primary location for a concept (used when an order doesn't specify one)
+  createdAt   DateTime @default(now())
+
+  concept     Concept  @relation(fields: [conceptId], references: [id])
+  location    Location @relation(fields: [locationId], references: [id])
+
+  @@id([conceptId, locationId])
+  @@index([locationId])
+  @@map("concept_locations")
+}
+
+// ─── Role-based permissions ──────────────────────────────────────────────────
+// Editable permission matrix. The catalogue of permission keys lives in code
+// (see lib/permissions.ts); this table tracks which role currently has each
+// one enabled. Admins can flip any cell from the Roles & Permissions admin UI.
+
+model RolePermission {
+  id         String   @id @default(cuid())
+  role       UserRole
+  permission String
+  enabled    Boolean  @default(true)
+  updatedAt  DateTime @updatedAt
+
+  @@unique([role, permission])
+  @@index([role])
+  @@map("role_permissions")
+}
+
+// ─── API access tokens ───────────────────────────────────────────────────────
+// Long-lived bearer tokens for partner integrations + the customer mobile app.
+// Tokens are hashed with sha256 before storage; the plaintext is shown only
+// once (at creation time). Revoke by setting revokedAt — never delete the row,
+// so audit lookups stay intact.
+
+model ApiToken {
+  id          String    @id @default(cuid())
+  name        String                  // human-readable label, e.g. "Mobile app prod"
+  tokenHash   String    @unique       // sha256 of the plaintext bearer
+  scopes      String[]  @default([])  // free-form permission scopes ("orders:read", "menu:read", "*")
+  conceptId   String?                 // null = all concepts
+  createdById String?                 // staff user who issued the token
+  lastUsedAt  DateTime?
+  expiresAt   DateTime?
+  revokedAt   DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([tokenHash])
+  @@map("api_tokens")
+}
+
+// ─── Media Library ────────────────────────────────────────────────────────────
+
+model MediaAsset {
+  id           String   @id @default(cuid())
+  key          String
+  url          String
+  filename     String
+  contentType  String
+  category     String   @default("general") // menu, marketing, shoot, kds, general
+  uploadedById String?
+  createdAt    DateTime @default(now())
+
+  @@index([category, createdAt])
+  @@map("media_assets")
+}
+
+// ─── Cross-checks: closed-loop inventory + fraud detection ───────────────────
+//
+// The platform's anti-fraud spine. Each model captures one checkpoint in the
+// "buy → receive → use → sell" loop. Variance between adjacent checkpoints is
+// the signal — `ExceptionFlag` records that signal so the owner only sees
+// what's broken, not what's working.
+
+// Goods receipt — what physically arrived at the dock. Independent of the
+// supplier's bill so we can detect price manipulation or short-shipments
+// before the bill is paid (3-way match: PO qty / GRN qty / Bill qty).
+model GoodsReceipt {
+  id            String   @id @default(cuid())
+  poId          String?                              // matched PO if scanned at dock
+  supplierId    String
+  receivedById  String                               // user who accepted delivery
+  receivedAt    DateTime @default(now())
+  photoUrl      String?                              // dock-door photo (required if config)
+  notes         String?
+  status        String   @default("pending")         // pending | accepted | disputed | partial
+  varianceFlag  Boolean  @default(false)             // true if any line variance > threshold
+
+  lines         GoodsReceiptLine[]
+
+  @@index([supplierId, receivedAt])
+  @@index([status])
+  @@map("goods_receipts")
+}
+
+model GoodsReceiptLine {
+  id              String  @id @default(cuid())
+  receiptId       String
+  inventoryItemId String?                            // null when receiving non-inventoried items
+  description     String                             // human-readable; mirrors PO line
+  poQty           Float?                             // ordered qty (when matched)
+  receivedQty     Float                              // what actually arrived
+  poUnitCostCents Int?                               // expected unit cost
+  unit            String  @default("kg")
+  variancePct     Float?                             // (receivedQty - poQty) / poQty
+  notes           String?
+
+  receipt         GoodsReceipt @relation(fields: [receiptId], references: [id], onDelete: Cascade)
+
+  @@index([receiptId])
+  @@map("goods_receipt_lines")
+}
+
+// Prep batch — kitchen records what they made + what they used to make it.
+// Yield variance (actualYield / expectedYield) is the leak signal between
+// "received into inventory" and "available to sell". A chef walking out with
+// product shows up here as low yield % over time.
+model PrepBatch {
+  id                String   @id @default(cuid())
+  recipeId          String?                           // null for ad-hoc preps
+  itemName          String                            // e.g. "Confit garlic"
+  inputs            Json                              // [{inventoryItemId, qtyDrawn, unit}]
+  expectedYieldQty  Float?
+  actualYieldQty    Float
+  unit              String   @default("g")
+  yieldVariancePct  Float?                            // actualYield / expectedYield
+  staffId           String                            // chef who logged it
+  photoUrl          String?                           // photo of finished prep
+  notes             String?
+  createdAt         DateTime @default(now())
+
+  @@index([staffId, createdAt])
+  @@index([recipeId])
+  @@map("prep_batches")
+}
+
+// Physical count — periodic spot-counts. Variance vs system stock shows
+// shrinkage between checkpoints (received→used or used→sold). Cumulative
+// per-item shrinkage trends drive the strongest theft signal.
+model PhysicalCount {
+  id          String   @id @default(cuid())
+  countedById String
+  countedAt   DateTime @default(now())
+  status      String   @default("pending")            // pending | completed | reviewed
+  notes       String?
+
+  lines       PhysicalCountLine[]
+
+  @@index([countedAt])
+  @@map("physical_counts")
+}
+
+model PhysicalCountLine {
+  id              String  @id @default(cuid())
+  countId         String
+  inventoryItemId String
+  systemQty       Float                                // what the DB thinks
+  physicalQty     Float                                // what was physically counted
+  variancePct     Float?                               // (physical - system) / system
+  reason          String?                              // free-text justification
+
+  count           PhysicalCount @relation(fields: [countId], references: [id], onDelete: Cascade)
+
+  @@index([countId])
+  @@index([inventoryItemId])
+  @@map("physical_count_lines")
+}
+
+// ExceptionFlag — universal anomaly signal. Anywhere in the codebase fires
+// `flagException(...)` when a control trigger fires; the owner inbox reads
+// open flags and shows only what needs attention. Resolution + acknowledgement
+// are tracked so audit trail is complete.
+enum ExceptionSeverity {
+  low
+  medium
+  high
+  critical
+}
+
+enum ExceptionStatus {
+  open
+  acknowledged
+  resolved
+  dismissed
+}
+
+model ExceptionFlag {
+  id          String            @id @default(cuid())
+  kind        String                                // 'receiving_variance' | 'shrinkage' | 'consecutive_voids' | 'cash_variance' | 'route_variance' | 'pii_export' | 'self_approval' | 'price_drift' | 'yield_low' | 'ghost_employee'
+  severity    ExceptionSeverity @default(medium)
+  title       String
+  description String
+  entityType  String?                               // 'GoodsReceipt' | 'Order' | 'Shift' | 'PrepBatch' | etc.
+  entityId    String?
+  metadata    Json?                                 // arbitrary context (variance %, names, amounts)
+  conceptId   String?                               // when scoped to a brand
+  actorId     String?                               // user who triggered it (if applicable)
+  amountCents Int?                                  // monetary impact, if any
+
+  status            ExceptionStatus @default(open)
+  acknowledgedById  String?
+  acknowledgedAt    DateTime?
+  resolvedById      String?
+  resolvedAt        DateTime?
+  resolution        String?
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([status, severity, createdAt])
+  @@index([kind, status])
+  @@index([entityType, entityId])
+  @@map("exception_flags")
+}
+
+// ─── Petty cash ──────────────────────────────────────────────────────────────
+// Float box(es) the operator stocks for small spend (water bottles, last-minute
+// herbs, courier tips). Without this, PKR leaks through "miscellaneous" with no
+// trail. Every spend requires a receipt photo above threshold; reconcile
+// monthly against actual count.
+
+model PettyCashBox {
+  id            String   @id @default(cuid())
+  name          String                                  // "Front-of-house till", "Manager pocket"
+  conceptId     String?
+  custodianId   String                                  // user responsible for the box
+  floatCents    Int      @default(0)                    // current balance (system view)
+  topUpLimitCents Int    @default(2000000)              // reject top-up above this without admin
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  deletedAt     DateTime?
+
+  movements     PettyCashMovement[]
+
+  @@index([conceptId])
+  @@map("petty_cash_boxes")
+}
+
+model PettyCashMovement {
+  id            String   @id @default(cuid())
+  boxId         String
+  type          String                                  // 'topup' | 'spend' | 'reconcile' | 'transfer'
+  amountCents   Int                                     // signed: + topup, - spend
+  category      String?                                 // expense category (drives JE account)
+  reason        String                                  // free-text description
+  receiptUrl    String?                                 // photo of vendor receipt (required above threshold)
+  vendorName    String?
+  approvedById  String?                                 // for spend > role cap
+  createdById   String
+  createdAt     DateTime @default(now())
+
+  box           PettyCashBox @relation(fields: [boxId], references: [id])
+
+  @@index([boxId, createdAt])
+  @@map("petty_cash_movements")
+}
+
+// ─── Bank deposit drops ──────────────────────────────────────────────────────
+// End-of-day cash to bank. Closes the cash loop: shift cash sales should equal
+// the deposit drop. Variance flags theft between till and bank teller.
+
+model DepositDrop {
+  id              String   @id @default(cuid())
+  shiftId         String?                               // when scoped per-shift
+  conceptId       String?
+  bankAccountId   String?
+  amountCents     Int                                   // counted at drop
+  expectedCents   Int                                   // cash sales total
+  varianceCents   Int                                   // amount - expected
+  bagSerial       String?                               // tamper-evident bag serial
+  receiptUrl      String?                               // photo of teller deposit slip
+  droppedById     String                                // who delivered to bank
+  witnessedById   String?                               // dual-signoff (optional)
+  droppedAt       DateTime @default(now())
+  notes           String?
+
+  @@index([conceptId, droppedAt])
+  @@index([shiftId])
+  @@map("deposit_drops")
+}
+
+// ─── Staff meals ─────────────────────────────────────────────────────────────
+// Free / staff-rate meals consumed by employees. Without logging, "I'll take a
+// burger off the line" runs untracked and inventory shrinks without a paper
+// trail. Approver PIN required + caps; above cap auto-flags.
+
+model StaffMeal {
+  id                 String   @id @default(cuid())
+  staffId            String                              // who ate
+  approvedById       String                              // manager who approved (PIN-verified)
+  shiftId            String?
+  conceptId          String?
+  description        String                              // "Stax Classic + fries"
+  estimatedCostCents Int      @default(0)               // recipe-cost approximation
+  reason             String   @default("shift_meal")    // 'shift_meal' | 'training' | 'tasting' | 'comp'
+  consumedAt         DateTime @default(now())
+
+  @@index([staffId, consumedAt])
+  @@index([conceptId, consumedAt])
+  @@map("staff_meals")
+}

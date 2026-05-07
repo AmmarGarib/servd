@@ -1,0 +1,38 @@
+# Staging tfvars — copy to staging.tfvars and fill in. Do NOT commit.
+#
+# Usage:
+#   terraform init -backend-config=staging.tfbackend
+#   terraform apply -var-file=staging.tfvars
+
+app_name = "servd-staging"
+domain   = "staging.servd.pk"
+
+# Smaller / cheaper for staging — cost-sensitive but still production-shaped.
+# RDS, ElastiCache, and ECS dimensions all flow from these.
+api_desired_count        = 1
+web_desired_count        = 1
+storefront_desired_count = 1
+
+# Secrets — fill in before applying. Different from prod.
+db_password         = "REPLACE-ME-STAGING-DB"
+redis_auth_token    = "REPLACE-ME-STAGING-REDIS-32-CHARS-MIN"
+jwt_secret          = "REPLACE-ME-32-CHARS-OR-MORE-STAGING-VALUE"
+jwt_refresh_secret  = "REPLACE-ME-32-CHARS-OR-MORE-STAGING-VALUE"
+
+# Webhook secrets — okay to leave empty in staging if you're not testing real
+# aggregator webhooks. NODE_ENV=staging skips the production startup guard.
+keenu_webhook_secret     = ""
+foodpanda_webhook_secret = ""
+careem_webhook_secret    = ""
+twilio_auth_token        = ""
+ses_smtp_user            = ""
+ses_smtp_password        = ""
+
+# Alert email — set to receive CloudWatch paging in staging. Leave empty for
+# silent staging (alarms still trigger, just no email).
+alert_email = ""
+
+# FBR PRAL — leave empty in staging unless testing real PRAL sandbox.
+# Set FBR_ENV=sandbox in ECS env to use the PRAL sandbox endpoint.
+fbr_username = ""
+fbr_password  = ""

@@ -1,0 +1,2 @@
+ALTER TABLE "orders" ADD COLUMN "serviceChargeCents" INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE "orders" ADD COLUMN "tipCents"           INTEGER NOT NULL DEFAULT 0;

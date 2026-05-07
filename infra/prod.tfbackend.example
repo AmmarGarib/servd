@@ -1,0 +1,7 @@
+# Backend config for production. Copy to prod.tfbackend (gitignored).
+# Usage: terraform init -backend-config=prod.tfbackend
+bucket         = "servd-tf-state"
+key            = "prod/terraform.tfstate"
+region         = "ap-south-1"
+encrypt        = true
+dynamodb_table = "servd-tf-locks"

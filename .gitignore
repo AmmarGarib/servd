@@ -1,0 +1,26 @@
+node_modules/
+dist/
+build/
+coverage/
+.next/
+.turbo/
+*.tsbuildinfo
+*.log
+npm-debug.log*
+
+# Secrets — NEVER commit
+.env
+.env.*
+!.env.example
+
+# JSON DB — keep folder, ignore data
+backend/data/*.json
+!backend/data/.gitkeep
+backend/public/uploads/*
+!backend/public/uploads/.gitkeep
+
+.DS_Store
+Thumbs.db
+
+# Legacy
+_legacy/

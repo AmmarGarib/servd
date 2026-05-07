@@ -1,0 +1,65 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "API (3001)",
+      "type": "shell",
+      "command": "pnpm --filter @servd/api dev",
+      "isBackground": true,
+      "problemMatcher": [],
+      "presentation": {
+        "group": "servd",
+        "panel": "dedicated",
+        "reveal": "always",
+        "showReuseMessage": false
+      },
+      "options": {
+        "cwd": "${workspaceFolder}"
+      }
+    },
+    {
+      "label": "Web / Ops (3000)",
+      "type": "shell",
+      "command": "pnpm --filter @servd/web dev",
+      "isBackground": true,
+      "problemMatcher": [],
+      "presentation": {
+        "group": "servd",
+        "panel": "dedicated",
+        "reveal": "always",
+        "showReuseMessage": false
+      },
+      "options": {
+        "cwd": "${workspaceFolder}"
+      }
+    },
+    {
+      "label": "Storefront (3002)",
+      "type": "shell",
+      "command": "pnpm --filter @servd/storefront dev",
+      "isBackground": true,
+      "problemMatcher": [],
+      "presentation": {
+        "group": "servd",
+        "panel": "dedicated",
+        "reveal": "always",
+        "showReuseMessage": false
+      },
+      "options": {
+        "cwd": "${workspaceFolder}"
+      }
+    },
+    {
+      "label": "servd: Start All",
+      "dependsOn": ["API (3001)", "Web / Ops (3000)", "Storefront (3002)"],
+      "dependsOrder": "parallel",
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "presentation": {
+        "reveal": "always"
+      }
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "outDir": "dist",
+    "rootDir": "..",
+    "exactOptionalPropertyTypes": false,
+    "paths": {
+      "@servd/types": ["../packages/types/src/index.ts"]
+    }
+  },
+  "include": ["src", "../packages/types/src/**/*.ts"],
+  "exclude": ["node_modules", "dist"]
+}

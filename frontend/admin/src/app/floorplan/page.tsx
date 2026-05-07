@@ -1,0 +1,215 @@
+'use client'
+
+// Floorplan page — top-level container. Loads concepts + floors, lets the
+// operator switch between Edit mode and Live mode, and per-concept floor
+// tabs (Main / Patio / Bar etc.).
+
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useEffect, useState } from 'react'
+import Link from 'next/link'
+import { api } from '../../lib/api'
+import { FloorPlanEditor } from '../../components/floorplan/FloorPlanEditor'
+import type { FloorTable } from '../../components/floorplan/FloorCanvas'
+import { LiveFloor } from './LiveFloor'
+import { LayoutsGallery } from '../../components/floorplan/LayoutsGallery'
+
+interface Concept { id: string; name: string; slug: string }
+
+interface Floor {
+  id: string
+  conceptId: string
+  name: string
+  width: number
+  height: number
+  backgroundUrl: string | null
+  tables: FloorTable[]
+}
+
+export default function FloorplanPage() {
+  const qc = useQueryClient()
+  const [conceptId, setConceptId] = useState<string>('')
+  const [floorId,   setFloorId]   = useState<string>('')
+  const [mode,      setMode]      = useState<'edit' | 'live'>('live')
+  const [showNewFloor, setShowNewFloor] = useState(false)
+  const [showLayouts,  setShowLayouts]  = useState(false)
+
+  const concepts = useQuery({
+    queryKey: ['concepts'],
+    queryFn: () => api.get<Concept[]>('/concepts'),
+  })
+
+  useEffect(() => {
+    if (!conceptId && concepts.data && concepts.data.length > 0) {
+      setConceptId(concepts.data[0]!.id)
+    }
+  }, [concepts.data, conceptId])
+
+  const floors = useQuery({
+    queryKey: ['floors', conceptId],
+    queryFn: () => api.get<Floor[]>(`/floors?conceptId=${conceptId}`),
+    enabled: !!conceptId,
+  })
+
+  useEffect(() => {
+    if (!floorId && floors.data && floors.data.length > 0) {
+      setFloorId(floors.data[0]!.id)
+    }
+    // If selected floor disappears (deleted, concept switched), clear it
+    if (floorId && floors.data && !floors.data.some((f) => f.id === floorId)) {
+      setFloorId(floors.data[0]?.id ?? '')
+    }
+  }, [floors.data, floorId])
+
+  const createFloor = useMutation({
+    mutationFn: (input: { name: string }) => api.post<Floor>('/floors', { conceptId, name: input.name }),
+    onSuccess: (f) => {
+      void qc.invalidateQueries({ queryKey: ['floors', conceptId] })
+      setFloorId(f.id)
+      setShowNewFloor(false)
+    },
+  })
+
+  const saveLayout = useMutation({
+    mutationFn: (tables: FloorTable[]) => api.put('/floors/layout', { floorId, tables }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['floors', conceptId] }),
+  })
+
+  const addTable = useMutation({
+    mutationFn: async (input: { label: string; capacity: number; shape: FloorTable['shape']; x: number; y: number }) => {
+      const created = await api.post<{ id: string; label: string; capacity: number; shape: FloorTable['shape']; x: number; y: number; width: number; height: number; rotation: number }>(
+        '/tables',
+        { conceptId, label: input.label, capacity: input.capacity, floorSection: '' },
+      )
+      // Patch the new table with shape + position right away
+      await api.patch(`/floors/tables/${created.id}/position`, {
+        floorId, shape: input.shape, x: input.x, y: input.y,
+      })
+      return { ...created, floorId, shape: input.shape, x: input.x, y: input.y } as FloorTable
+    },
+  })
+
+  const deleteTable = useMutation({
+    mutationFn: (id: string) => api.delete(`/tables/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['floors', conceptId] }),
+  })
+
+  const currentFloor = floors.data?.find((f) => f.id === floorId)
+
+  return (
+    <div className="min-h-screen bg-s-bg">
+      <header className="sticky top-0 z-10 bg-s-bg/80 backdrop-blur border-b border-s-border px-6 py-4 flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <p className="text-xs text-s-muted">Operations</p>
+          <h1 className="text-xl font-bold text-s-text">Floor plan</h1>
+        </div>
+        <div className="flex gap-2 items-center flex-wrap">
+          <select value={conceptId} onChange={(e) => { setConceptId(e.target.value); setFloorId('') }}
+            className="bg-white border border-s-border rounded px-2 py-1 text-sm">
+            {concepts.data?.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+
+          <div className="rounded-full border border-s-border bg-white p-0.5 flex">
+            <button onClick={() => setMode('live')}  aria-pressed={mode === 'live'}
+              className={`px-3 py-1 rounded-full text-xs font-bold ${mode === 'live' ? 'bg-s-teal text-white' : 'text-s-text'}`}>
+              ● Live
+            </button>
+            <button onClick={() => setMode('edit')} aria-pressed={mode === 'edit'}
+              className={`px-3 py-1 rounded-full text-xs font-bold ${mode === 'edit' ? 'bg-black text-white' : 'text-s-text'}`}>
+              Edit
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <div className="p-6 max-w-7xl">
+        {/* Floor tabs */}
+        <div className="flex items-center gap-1.5 mb-4 flex-wrap">
+          {floors.data?.map((f) => (
+            <button
+              key={f.id}
+              onClick={() => setFloorId(f.id)}
+              aria-pressed={floorId === f.id}
+              className={`px-3 py-1.5 rounded-full text-xs font-semibold border ${
+                floorId === f.id ? 'bg-black text-white border-black' : 'bg-white border-s-border text-s-text hover:bg-s-bg-soft'
+              }`}
+            >
+              {f.name} <span className="ml-1 opacity-60">{f.tables.length}</span>
+            </button>
+          ))}
+          <button
+            onClick={() => setShowNewFloor(true)}
+            className="px-3 py-1.5 rounded-full text-xs font-semibold border bg-white border-dashed border-s-border text-s-muted hover:bg-s-bg-soft"
+          >
+            + New floor
+          </button>
+          {currentFloor && (
+            <button
+              onClick={() => setShowLayouts(true)}
+              className="px-3 py-1.5 rounded-full text-xs font-semibold border bg-white border-s-border text-s-text hover:bg-s-bg-soft"
+              title="Drop a pre-built table arrangement onto this floor"
+            >
+              📐 Layouts
+            </button>
+          )}
+        </div>
+
+        {showLayouts && currentFloor && (
+          <LayoutsGallery
+            floorId={currentFloor.id}
+            hasExistingTables={currentFloor.tables.length > 0}
+            onClose={() => setShowLayouts(false)}
+            onApplied={() => { setShowLayouts(false); void qc.invalidateQueries({ queryKey: ['floors', conceptId] }) }}
+          />
+        )}
+
+        {/* New-floor inline form */}
+        {showNewFloor && (
+          <div className="s-card p-3 mb-4 flex gap-2">
+            <input
+              autoFocus
+              placeholder="Floor name (e.g. Main, Patio, Bar)"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  const v = (e.target as HTMLInputElement).value.trim()
+                  if (v) createFloor.mutate({ name: v })
+                }
+                if (e.key === 'Escape') setShowNewFloor(false)
+              }}
+              className="flex-1 bg-white border border-s-border rounded px-2 py-1 text-sm"
+            />
+            <button onClick={() => setShowNewFloor(false)} className="text-xs text-s-muted">Cancel</button>
+          </div>
+        )}
+
+        {/* Empty state */}
+        {floors.isLoading && <p className="text-s-muted text-sm">Loading floors…</p>}
+        {floors.data && floors.data.length === 0 && (
+          <div className="s-card p-12 text-center">
+            <h3 className="text-lg font-semibold mb-2">No floors yet</h3>
+            <p className="text-s-muted text-sm mb-4">Create your first floor — Main, Patio, Bar, whatever you call it.</p>
+            <button onClick={() => setShowNewFloor(true)} className="s-btn-primary text-sm">+ Create floor</button>
+          </div>
+        )}
+
+        {/* Edit / Live */}
+        {currentFloor && mode === 'edit' && (
+          <FloorPlanEditor
+            floor={currentFloor}
+            initialTables={currentFloor.tables}
+            conceptId={conceptId}
+            onSave={async (tables) => { await saveLayout.mutateAsync(tables) }}
+            onAddTable={async (input) => addTable.mutateAsync(input)}
+            onDeleteTable={async (id) => { await deleteTable.mutateAsync(id) }}
+          />
+        )}
+        {currentFloor && mode === 'live' && (
+          <LiveFloor floor={currentFloor} conceptId={conceptId} />
+        )}
+
+        <p className="text-xs text-s-muted mt-6">
+          See reservations on the <Link href="/reservations" className="text-s-teal hover:underline">reservations page</Link>.
+        </p>
+      </div>
+    </div>
+  )
+}

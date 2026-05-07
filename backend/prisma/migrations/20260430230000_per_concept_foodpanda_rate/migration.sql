@@ -1,0 +1,1 @@
+ALTER TABLE "concepts" ADD COLUMN "foodpandaCommissionRate" DOUBLE PRECISION NOT NULL DEFAULT 0.25;
