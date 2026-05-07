@@ -1,0 +1,34 @@
+# AWS Amplify build config for the servd admin Next.js app.
+#
+# This is a monorepo containing 3 apps (backend, admin, storefront). Amplify
+# only builds the admin frontend — backend deploys via Elastic Beanstalk
+# separately, storefront isn't yet wired to Amplify.
+#
+# `appRoot: frontend/admin` tells Amplify to chdir into that directory before
+# running any commands. Build artefacts (the .next directory) are picked up
+# relative to that root.
+#
+# Env vars (e.g. NEXT_PUBLIC_API_URL) are configured per-branch in the Amplify
+# console — see the Amplify > App settings > Environment variables panel.
+# `NEXT_PUBLIC_*` vars are baked in at *build* time, so changing them requires
+# a redeploy (which Amplify triggers automatically on env var change).
+
+version: 1
+applications:
+  - frontend:
+      phases:
+        preBuild:
+          commands:
+            - npm ci --no-audit --no-fund
+        build:
+          commands:
+            - npm run build
+      artifacts:
+        baseDirectory: .next
+        files:
+          - '**/*'
+      cache:
+        paths:
+          - node_modules/**/*
+          - .next/cache/**/*
+    appRoot: frontend/admin
