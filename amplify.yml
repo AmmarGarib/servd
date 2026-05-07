@@ -19,7 +19,12 @@ applications:
       phases:
         preBuild:
           commands:
-            - npm ci --no-audit --no-fund
+            # `npm install` (not `npm ci`) — the existing lock file has a stale
+            # @swc/helpers pin that conflicts with Next.js 14.2.3's peer dep.
+            # `npm install` resolves cleanly; `npm ci` bails on the mismatch.
+            # When the lock is regenerated cleanly later, switch back to `npm ci`
+            # for faster, reproducible installs.
+            - npm install --no-audit --no-fund
         build:
           commands:
             - npm run build
