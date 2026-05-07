@@ -420,32 +420,42 @@ function ConversationView({
       </div>
 
       <div className="flex-1 overflow-y-auto p-4 space-y-3">
-        {messages.map((msg) => (
-          <div key={msg.id} className={`flex ${msg.fromStaff ? 'justify-end' : 'justify-start'}`}>
-            <div className={`max-w-[70%] rounded-2xl px-4 py-2.5 ${
-              msg.fromStaff
-                ? 'bg-kds-green text-black rounded-br-sm'
-                : 'bg-kds-card border border-kds-border text-kds-text rounded-bl-sm'
-            }`}>
-              <p className="text-sm whitespace-pre-wrap">{msg.body}</p>
-              <p className={`text-xs mt-1 flex items-center gap-1.5 ${msg.fromStaff ? 'text-black/60' : 'text-kds-subtext'}`}>
-                <span>
-                  {new Date(msg.createdAt).toLocaleTimeString('en-PK', { hour: '2-digit', minute: '2-digit' })}
-                  {msg.fromStaff && msg.seenAt && ' · Seen'}
-                </span>
-                {/* Channel chip — only show non-default origins, since the
-                    staff side is always portal-originated. Inbound replies
-                    via email/WA stand out so operators know their messages
-                    are reaching suppliers through real channels. */}
-                {!msg.fromStaff && msg.channel && msg.channel !== 'web_portal' && CHANNEL_META[msg.channel] && (
-                  <span className={`inline-flex items-center gap-0.5 ${CHANNEL_META[msg.channel].color}`} title={`Replied via ${CHANNEL_META[msg.channel].label}`}>
-                    · {CHANNEL_META[msg.channel].icon} {CHANNEL_META[msg.channel].label}
+        {messages.map((msg) => {
+          // Pre-compute channel chip metadata so TS narrows it once,
+          // outside JSX where flow-typing through &&-chains is brittle
+          // under noUncheckedIndexedAccess.
+          const channelMeta =
+            !msg.fromStaff && msg.channel && msg.channel !== 'web_portal'
+              ? CHANNEL_META[msg.channel] ?? null
+              : null
+
+          return (
+            <div key={msg.id} className={`flex ${msg.fromStaff ? 'justify-end' : 'justify-start'}`}>
+              <div className={`max-w-[70%] rounded-2xl px-4 py-2.5 ${
+                msg.fromStaff
+                  ? 'bg-kds-green text-black rounded-br-sm'
+                  : 'bg-kds-card border border-kds-border text-kds-text rounded-bl-sm'
+              }`}>
+                <p className="text-sm whitespace-pre-wrap">{msg.body}</p>
+                <p className={`text-xs mt-1 flex items-center gap-1.5 ${msg.fromStaff ? 'text-black/60' : 'text-kds-subtext'}`}>
+                  <span>
+                    {new Date(msg.createdAt).toLocaleTimeString('en-PK', { hour: '2-digit', minute: '2-digit' })}
+                    {msg.fromStaff && msg.seenAt && ' · Seen'}
                   </span>
-                )}
-              </p>
+                  {/* Channel chip — only shows non-default origins, since the
+                      staff side is always portal-originated. Inbound replies
+                      via email/WA stand out so operators know their messages
+                      are reaching suppliers through real channels. */}
+                  {channelMeta && (
+                    <span className={`inline-flex items-center gap-0.5 ${channelMeta.color}`} title={`Replied via ${channelMeta.label}`}>
+                      · {channelMeta.icon} {channelMeta.label}
+                    </span>
+                  )}
+                </p>
+              </div>
             </div>
-          </div>
-        ))}
+          )
+        })}
         {messages.length === 0 && (
           <div className="text-center mt-12">
             <p className="text-3xl mb-2">📬</p>
