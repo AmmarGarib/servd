@@ -1,0 +1,76 @@
+import { View, Text, FlatList, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native'
+import { useQuery } from '@tanstack/react-query'
+import { useRouter } from 'expo-router'
+import { api } from '../../src/lib/api'
+
+interface Concept {
+  id: string
+  name: string
+  slug: string
+  description: string | null
+  primaryColor: string | null
+  logoUrl: string | null
+}
+
+export default function BrowseScreen() {
+  const router = useRouter()
+  const { data: concepts, isLoading } = useQuery({
+    queryKey: ['concepts-public'],
+    queryFn: () => api.get<Concept[]>('/concepts'),
+  })
+
+  if (isLoading) {
+    return (
+      <View style={s.center}>
+        <ActivityIndicator color="#00D4B1" size="large" />
+      </View>
+    )
+  }
+
+  return (
+    <View style={s.container}>
+      <Text style={s.heading}>What are you craving?</Text>
+      <FlatList
+        data={concepts ?? []}
+        keyExtractor={item => item.id}
+        contentContainerStyle={s.list}
+        renderItem={({ item }) => (
+          <View style={[s.card, { borderColor: item.primaryColor ?? '#00D4B1' }]}>
+            <View style={[s.brandColor, { backgroundColor: item.primaryColor ?? '#00D4B1' }]} />
+            <View style={s.cardBody}>
+              <Text style={s.brandName}>{item.name}</Text>
+              {item.description && <Text style={s.brandDesc} numberOfLines={2}>{item.description}</Text>}
+              <View style={s.actionRow}>
+                <TouchableOpacity onPress={() => router.push(`/${item.slug}/menu`)} style={s.primaryBtn}>
+                  <Text style={s.primaryBtnText}>🛍 Order</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => router.push(`/reserve/${item.slug}`)} style={s.secondaryBtn}>
+                  <Text style={s.secondaryBtnText}>📅 Book table</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        )}
+        ListEmptyComponent={<Text style={s.empty}>No brands available</Text>}
+      />
+    </View>
+  )
+}
+
+const s = StyleSheet.create({
+  container: { flex: 1, backgroundColor: '#090a0e' },
+  center: { flex: 1, backgroundColor: '#090a0e', alignItems: 'center', justifyContent: 'center' },
+  heading: { fontSize: 22, fontWeight: '900', color: '#fff', paddingHorizontal: 20, paddingTop: 20, paddingBottom: 12 },
+  list: { padding: 16, gap: 12 },
+  card: { flexDirection: 'row', borderRadius: 16, borderWidth: 1, overflow: 'hidden', backgroundColor: '#0d0f15' },
+  brandColor: { width: 6 },
+  cardBody: { flex: 1, padding: 16 },
+  brandName: { fontSize: 18, fontWeight: '800', color: '#fff', marginBottom: 4 },
+  brandDesc: { fontSize: 13, color: '#888', marginBottom: 12, lineHeight: 18 },
+  actionRow: { flexDirection: 'row', gap: 8 },
+  primaryBtn: { flex: 1, backgroundColor: '#22c55e', borderRadius: 10, paddingVertical: 10, alignItems: 'center' },
+  primaryBtnText: { color: '#000', fontWeight: '800', fontSize: 13 },
+  secondaryBtn: { flex: 1, backgroundColor: 'rgba(255,255,255,0.06)', borderRadius: 10, paddingVertical: 10, alignItems: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
+  secondaryBtnText: { color: '#fff', fontWeight: '700', fontSize: 13 },
+  empty: { textAlign: 'center', color: '#555', marginTop: 60 },
+})

@@ -1,0 +1,21 @@
+{
+  "expo": {
+    "name": "servd",
+    "slug": "servd-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "servd",
+    "userInterfaceStyle": "dark",
+    "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "pk.servd.app"
+    },
+    "android": {
+      "adaptiveIcon": { "backgroundColor": "#0C0D10" },
+      "package": "pk.servd.app"
+    },
+    "plugins": ["expo-router", "expo-secure-store"],
+    "experiments": { "typedRoutes": true }
+  }
+}

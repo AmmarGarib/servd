@@ -204,7 +204,7 @@ Login at `https://admin.your.domain`.
 
 ## 6. Mobile app deployment (separate from docker)
 
-The mobile app at `/c/Dev/servd-mobile/` is **Expo / React Native**. It does NOT deploy via docker. Two options:
+The mobile app at `mobile/` (inside this repo) is **Expo / React Native**. It does NOT deploy via docker. Two options:
 
 ### Option A — Expo Go (testing, no app store)
 - Customer installs Expo Go from app store
@@ -221,7 +221,7 @@ Good for internal testing right now — your kitchen staff can install Expo Go a
 - `eas build --platform ios` and `eas build --platform android`
 - Submit to App Store Connect / Google Play Console
 
-**Before either option:** edit `c:/Dev/servd-mobile/app.json` → `extra.apiUrl` to point at your production backend (`https://api.your.domain`).
+**Before either option:** edit `mobile/app.json` → `extra.apiUrl` to point at your production backend (`https://api.your.domain`).
 
 ---
 
