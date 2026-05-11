@@ -20,11 +20,16 @@ function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): nu
 
 const createDirectOrderSchema = z.object({
   conceptSlug: z.string(),
-  type: z.enum(['delivery', 'pickup', 'dine-in']),
+  type: z.enum(['delivery', 'pickup', 'dine-in', 'curbside']),
   deliveryAddress: z.string().optional(),
   deliveryLat: z.number().optional(),     // delivery zone lookup
   deliveryLng: z.number().optional(),
   tableId: z.string().uuid().optional(),
+  // Curbside fields — only meaningful when type='curbside'. Customer enters
+  // them at checkout so staff knows which car to run the food to.
+  curbsideVehicle: z.string().min(2).max(80).optional(),
+  curbsidePlate:   z.string().max(20).optional(),
+  curbsideSpot:    z.string().max(20).optional(),
   scheduledFor: z.string().datetime().optional(),
   promoCode: z.string().optional(),
   useWallet: z.boolean().default(false),
@@ -349,6 +354,7 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
         id: true, name: true, slug: true, type: true, description: true,
         logoUrl: true, primaryColor: true, heroTagline: true, announcementBanner: true,
         latitude: true, longitude: true, deliveryRadiusKm: true,
+        reservationsEnabled: true,
       },
     })
 
@@ -509,14 +515,23 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
 
     const { order } = await ingestOrder(dto)
 
-    // Persist computed surcharges. ingestOrder() doesn't know about zones /
-    // service charge so we patch after creation. (deliveryZoneId is derivable
-    // from delivery address + concept later if needed.)
+    // Persist computed surcharges + curbside details. ingestOrder() doesn't
+    // know about zones / service charge / curbside so we patch after creation.
+    const orderPatch: Record<string, unknown> = {}
     if (serviceChargeCents > 0 || deliveryFeeCents > 0) {
-      await prisma.order.update({
-        where: { id: order.id },
-        data: { serviceChargeCents },
-      })
+      orderPatch.serviceChargeCents = serviceChargeCents
+    }
+    if (body.type === 'curbside') {
+      if (!body.curbsideVehicle) {
+        // Schema-level validation should have caught this, but defend anyway.
+        throw new AppError('CURBSIDE_VEHICLE_REQUIRED', 'Tell us about your car so we can find you.', 422)
+      }
+      orderPatch.curbsideVehicle = body.curbsideVehicle
+      if (body.curbsidePlate) orderPatch.curbsidePlate = body.curbsidePlate
+      if (body.curbsideSpot)  orderPatch.curbsideSpot = body.curbsideSpot
+    }
+    if (Object.keys(orderPatch).length > 0) {
+      await prisma.order.update({ where: { id: order.id }, data: orderPatch })
     }
 
     // Tip + gift card — patched after creation so we don't have to plumb them
@@ -603,7 +618,71 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
     return reply.status(201).send({ ...order, promoDiscountCents, walletAmountCents, loyaltyPointsRedeemed, loyaltyDiscountCents })
   })
 
-  // GET /storefront/orders/:id — customer order status
+  // POST /storefront/orders/:id/arrived — customer marks "I'm here" for a
+  // curbside order. Stamps curbsideArrivedAt and, optionally, lets the
+  // customer correct their vehicle description in case they swapped cars.
+  fastify.post<{ Params: { id: string } }>(
+    '/orders/:id/arrived',
+    { preHandler: requireCustomerAuth },
+    async (req) => {
+      const body = z.object({
+        curbsideVehicle: z.string().min(2).max(80).optional(),
+        curbsidePlate:   z.string().max(20).optional(),
+        curbsideSpot:    z.string().max(20).optional(),
+      }).parse(req.body ?? {})
+
+      const order = await prisma.order.findFirst({
+        where: { id: req.params.id, customerId: req.customer!.id },
+        select: { id: true, status: true, curbsideArrivedAt: true, curbsideVehicle: true, conceptId: true },
+      })
+      if (!order) throw new NotFoundError('Order', req.params.id)
+      if (!order.curbsideVehicle) {
+        // Allow upgrading any pickup/dine-in to curbside on arrival if the
+        // customer changed their mind in the parking lot. Requires vehicle.
+        if (!body.curbsideVehicle) {
+          throw new AppError('NOT_CURBSIDE', 'Add your car description first.', 422)
+        }
+      }
+
+      const updated = await prisma.order.update({
+        where: { id: order.id },
+        data: {
+          curbsideArrivedAt: order.curbsideArrivedAt ?? new Date(),
+          ...(body.curbsideVehicle && { curbsideVehicle: body.curbsideVehicle }),
+          ...(body.curbsidePlate   && { curbsidePlate:   body.curbsidePlate   }),
+          ...(body.curbsideSpot    && { curbsideSpot:    body.curbsideSpot    }),
+        },
+        select: { id: true, curbsideArrivedAt: true, curbsideVehicle: true, curbsideSpot: true, status: true },
+      })
+
+      // Light up the kitchen / front-of-house immediately.
+      const { getIO } = await import('../../lib/ws.js')
+      try {
+        const io = getIO()
+        io.to('all-orders').emit('order:curbsideArrived', {
+          orderId: updated.id,
+          conceptId: order.conceptId,
+          vehicle: updated.curbsideVehicle,
+          spot:    updated.curbsideSpot,
+          arrivedAt: updated.curbsideArrivedAt,
+        })
+        io.to(`concept:${order.conceptId}`).emit('order:curbsideArrived', {
+          orderId: updated.id,
+          conceptId: order.conceptId,
+          vehicle: updated.curbsideVehicle,
+          spot:    updated.curbsideSpot,
+          arrivedAt: updated.curbsideArrivedAt,
+        })
+      } catch { /* ws may not be up in tests; non-blocking */ }
+
+      return updated
+    },
+  )
+
+  // GET /storefront/orders/:id — customer order status. Includes a flag
+  // indicating whether this order has already been reviewed, used by the
+  // /orders/[id]/review page to short-circuit straight to the "thanks"
+  // state instead of showing the form again.
   fastify.get<{ Params: { id: string } }>(
     '/orders/:id',
     { preHandler: requireCustomerAuth },
@@ -616,7 +695,11 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
         },
       })
       if (!order) throw new NotFoundError('Order', req.params.id)
-      return order
+      const review = await prisma.orderReview.findUnique({
+        where: { orderId: order.id },
+        select: { id: true },
+      })
+      return { ...order, alreadyReviewed: review != null }
     },
   )
 
@@ -628,6 +711,17 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
       where: { slug: body.conceptSlug, isActive: true },
     })
     if (!concept) throw new NotFoundError('Concept', body.conceptSlug)
+
+    // Naughty-list gate — block guest orders whose phone/email is on the ban
+    // list. The customer didn't think they could outsmart us by ordering as
+    // a guest after their account got banned.
+    const { assertNotBanned } = await import('../../lib/banCheck.js')
+    await assertNotBanned({
+      email: body.customerEmail ?? null,
+      phone: body.customerPhone ?? null,
+      ip:    req.ip ?? null,
+      intent: 'order',
+    })
 
     let itemTotal = 0
     const resolvedItems = []
@@ -711,7 +805,7 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
     return order
   })
 
-  // GET /storefront/account — customer profile + loyalty + wallet
+  // GET /storefront/account — customer profile + loyalty + wallet + referrals
   fastify.get('/account', { preHandler: requireCustomerAuth }, async (req) => {
     const customer = await prisma.customer.findUnique({
       where: { id: req.customer!.id },
@@ -721,6 +815,9 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
         firstOrderAt: true, lastOrderAt: true,
         totalSpentCents: true, walletBalance: true,
         isBlacklisted: true, createdAt: true,
+        // Referral fields surfaced so the storefront /account can render the
+        // share box ("Invite friends, get 200 pts each").
+        referralCode: true, referredAt: true, referralRewardCreditedAt: true,
         loyaltyAccount: true,
         orders: {
           orderBy: { placedAt: 'desc' },
@@ -739,6 +836,199 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
     })
     if (!customer) throw new NotFoundError('Customer')
     return customer
+  })
+
+  // GET /storefront/my-reservations — upcoming + recent reservations for the
+  // signed-in customer. Powers the /account "Bookings" tab. Customer can
+  // cancel from here directly.
+  fastify.get('/my-reservations', { preHandler: requireCustomerAuth }, async (req) => {
+    const now = new Date()
+    const ninetyDaysAgo = new Date(now.getTime() - 90 * 86_400_000)
+    const reservations = await prisma.reservation.findMany({
+      where: {
+        customerId: req.customer!.id,
+        startTime: { gte: ninetyDaysAgo },
+      },
+      orderBy: { startTime: 'desc' },
+      select: {
+        id: true, partySize: true, startTime: true, endTime: true, status: true,
+        notes: true, isVip: true, confirmToken: true,
+        concept: { select: { name: true, slug: true, primaryColor: true } },
+        table:   { select: { label: true } },
+      },
+    })
+    const upcoming = reservations.filter((r) =>
+      r.startTime > now && ['booked', 'confirmed'].includes(r.status),
+    )
+    const past     = reservations.filter((r) => !upcoming.includes(r))
+    return { upcoming, past }
+  })
+
+  // GET /storefront/my-reviews — reviews this customer has left. Lets them
+  // see their own history + the manager's response (if any).
+  fastify.get('/my-reviews', { preHandler: requireCustomerAuth }, async (req) => {
+    const reviews = await prisma.orderReview.findMany({
+      where: { customerId: req.customer!.id },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+      select: {
+        id: true, rating: true, comment: true, tags: true, categoryRatings: true,
+        managerResponse: true, managerResponseAt: true,
+        createdAt: true,
+        concept: { select: { name: true, slug: true } },
+        order:   { select: { id: true, totalCents: true, placedAt: true } },
+      },
+    })
+    return reviews
+  })
+
+  // GET /storefront/my-perks — tier perks the customer has unlocked. Used
+  // by the /account page to render the "what your tier gets you" panel and
+  // by mobile to show the same.
+  fastify.get('/my-perks', { preHandler: requireCustomerAuth }, async (req) => {
+    const { getCustomerPerks } = await import('../../lib/tierPerks.js')
+    const account = await prisma.loyaltyAccount.findUnique({
+      where: { customerId: req.customer!.id },
+      select: { pointsBalance: true, lifetimePoints: true, tier: true },
+    })
+    if (!account) return { tier: 'bronze', pointsBalance: 0, lifetimePoints: 0, perks: null, nextTier: null }
+
+    const perks = await getCustomerPerks(req.customer!.id)
+    // Show next-tier teaser to motivate progression.
+    const tierThresholds: Record<string, number> = { silver: 1000, gold: 5000 }
+    const nextTier = account.tier === 'bronze' ? 'silver' : account.tier === 'silver' ? 'gold' : null
+    const pointsToNextTier = nextTier ? Math.max(0, tierThresholds[nextTier]! - account.lifetimePoints) : 0
+
+    let nextPerks = null
+    if (nextTier) {
+      nextPerks = await getCustomerPerks(req.customer!.id).then(async () => {
+        const { getTierPerks } = await import('../../lib/tierPerks.js')
+        return getTierPerks(nextTier as 'silver' | 'gold')
+      })
+    }
+
+    return {
+      tier: account.tier,
+      pointsBalance: account.pointsBalance,
+      lifetimePoints: account.lifetimePoints,
+      perks,
+      nextTier,
+      pointsToNextTier,
+      nextPerks,
+    }
+  })
+
+  // GET /storefront/my-referrals — share box on /account: how many people
+  // signed up via my code, how many actually placed a first order (the
+  // moment my bonus credits), how many points I've earned from referrals.
+  fastify.get('/my-referrals', { preHandler: requireCustomerAuth }, async (req) => {
+    const referrals = await prisma.customer.findMany({
+      where: { referredById: req.customer!.id },
+      select: {
+        id: true, name: true,
+        referredAt: true, firstOrderAt: true, referralRewardCreditedAt: true,
+      },
+      orderBy: { referredAt: 'desc' },
+    })
+    const totalReferred = referrals.length
+    const completedFirstOrder = referrals.filter((r) => r.firstOrderAt != null).length
+    const pendingPayout       = referrals.filter((r) => r.firstOrderAt == null).length
+    const paidOut             = referrals.filter((r) => r.referralRewardCreditedAt != null).length
+
+    // Sum loyalty points earned from referrals, by reading transaction descriptions.
+    // Relies on the worker's deterministic prefix; if missing, just shows 0.
+    const account = await prisma.loyaltyAccount.findUnique({
+      where: { customerId: req.customer!.id },
+      select: { id: true },
+    })
+    const earnedPoints = account
+      ? await prisma.loyaltyTransaction.aggregate({
+          where: { loyaltyAccountId: account.id, description: { startsWith: 'Referral bonus:' } },
+          _sum: { pointsDelta: true },
+        }).then((r) => r._sum.pointsDelta ?? 0)
+      : 0
+
+    return {
+      summary: { totalReferred, completedFirstOrder, pendingPayout, paidOut, earnedPoints },
+      referrals: referrals.map((r) => ({
+        // Don't leak the referee's email/phone — just first name.
+        firstName: (r.name ?? '').split(' ')[0] ?? 'A guest',
+        referredAt: r.referredAt,
+        firstOrderAt: r.firstOrderAt,
+        rewarded: r.referralRewardCreditedAt != null,
+      })),
+    }
+  })
+
+  // GET /storefront/my-favorites — items the customer has ordered most often,
+  // grouped by menu item with last-ordered date + counts. Powers the
+  // /account "Favorites" tab + a fast reorder. We compute on-the-fly because
+  // the dataset is small per-customer (typically <500 orders ever).
+  fastify.get('/my-favorites', { preHandler: requireCustomerAuth }, async (req) => {
+    const items = await prisma.orderItem.findMany({
+      where: {
+        order: { customerId: req.customer!.id, status: 'completed' },
+        menuItemId: { not: null },
+      },
+      select: {
+        menuItemId: true,
+        name: true,
+        quantity: true,
+        unitPriceCents: true,
+        order: { select: { placedAt: true, conceptId: true } },
+      },
+    })
+    // Aggregate by menuItemId
+    const byItem = new Map<string, {
+      menuItemId: string
+      name: string
+      timesOrdered: number
+      lastOrderedAt: Date
+      conceptId: string
+      avgPriceCents: number
+    }>()
+    for (const it of items) {
+      if (!it.menuItemId) continue
+      const existing = byItem.get(it.menuItemId)
+      if (existing) {
+        existing.timesOrdered += it.quantity
+        if (it.order.placedAt > existing.lastOrderedAt) existing.lastOrderedAt = it.order.placedAt
+      } else {
+        byItem.set(it.menuItemId, {
+          menuItemId: it.menuItemId,
+          name: it.name,
+          timesOrdered: it.quantity,
+          lastOrderedAt: it.order.placedAt,
+          conceptId: it.order.conceptId,
+          avgPriceCents: it.unitPriceCents,
+        })
+      }
+    }
+    // Top 12 by times ordered. Cross-reference back to MenuItem to get
+    // current availability + concept slug for the "Order again" link.
+    const top = [...byItem.values()].sort((a, b) => b.timesOrdered - a.timesOrdered).slice(0, 12)
+    if (top.length === 0) return []
+    const menuItems = await prisma.menuItem.findMany({
+      where: { id: { in: top.map((t) => t.menuItemId) } },
+      select: {
+        id: true, name: true, priceCents: true, isAvailable: true, imageUrl: true,
+        concept: { select: { name: true, slug: true } },
+      },
+    })
+    const menuById = new Map(menuItems.map((m) => [m.id, m]))
+    return top.map((t) => {
+      const m = menuById.get(t.menuItemId)
+      return {
+        menuItemId: t.menuItemId,
+        name: m?.name ?? t.name,
+        priceCents: m?.priceCents ?? t.avgPriceCents,
+        imageUrl: m?.imageUrl ?? null,
+        isAvailable: m?.isAvailable ?? false,
+        timesOrdered: t.timesOrdered,
+        lastOrderedAt: t.lastOrderedAt,
+        concept: m?.concept ?? null,
+      }
+    })
   })
 
   // ── Saved addresses ────────────────────────────────────────────────────────

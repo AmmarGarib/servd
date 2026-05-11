@@ -17,6 +17,7 @@
     "db:seed": "tsx prisma/seed.ts",
     "db:studio": "prisma studio",
     "smoke": "tsx scripts/smoke-test.ts",
+    "seed:customer": "tsx scripts/seed-customer-experience.ts",
     "seed:gs": "tsx scripts/seed-gs-foods.ts",
     "seed:gs-components": "tsx scripts/seed-gs-components.ts"
   },

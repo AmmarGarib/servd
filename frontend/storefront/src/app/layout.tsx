@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from 'next'
 import './globals.css'
 import { StorefrontNav } from '../components/StorefrontNav'
 import { StorefrontFooter } from '../components/StorefrontFooter'
+import { FeedbackWidget } from '../components/feedback/FeedbackWidget'
 
 export const metadata: Metadata = {
   title: { default: 'servd — order from your favourite kitchens', template: '%s · servd' },
@@ -42,6 +43,7 @@ export default function StorefrontLayout({ children }: { children: React.ReactNo
         <StorefrontNav />
         <main id="main">{children}</main>
         <StorefrontFooter />
+        <FeedbackWidget />
       </body>
     </html>
   )

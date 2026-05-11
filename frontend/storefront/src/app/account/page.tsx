@@ -15,6 +15,7 @@ interface Order {
 interface LoyaltyAccount { pointsBalance: number; tier: string }
 interface CustomerProfile {
   name: string | null; email: string | null; phone: string | null
+  referralCode?: string | null
   loyaltyAccount: LoyaltyAccount | null; orders: Order[]
 }
 interface CustomerAddress {
@@ -478,10 +479,367 @@ export default function AccountPage() {
           )}
         </div>
 
+        {/* ── Refer a friend ── */}
+        <ReferralSection token={token} referralCode={profile.referralCode} customerName={profile.name} />
+
+        {/* ── My Bookings ── */}
+        <MyBookingsSection token={token} />
+
+        {/* ── My Reviews ── */}
+        <MyReviewsSection token={token} />
+
+        {/* ── Favorites — items I order most ── */}
+        <MyFavoritesSection token={token} />
+
         {/* ── Need help? Inline complaint flow ── */}
         <SupportSection orders={profile.orders.slice(0, 10)} />
       </div>
     </main>
+  )
+}
+
+// ─── Refer a friend ──────────────────────────────────────────────────────────
+// Shareable code + invite link + running tally of who's signed up vs.
+// completed their first order. The 200-pt dual bonus fires from the
+// loyaltyTriggers worker when the referee's firstOrderAt gets set.
+interface ReferralSummary {
+  totalReferred: number
+  completedFirstOrder: number
+  pendingPayout: number
+  paidOut: number
+  earnedPoints: number
+}
+interface ReferralEntry {
+  firstName: string
+  referredAt: string | null
+  firstOrderAt: string | null
+  rewarded: boolean
+}
+
+function ReferralSection({
+  token, referralCode, customerName,
+}: { token: string | null; referralCode: string | null | undefined; customerName: string | null }) {
+  const [data, setData] = useState<{ summary: ReferralSummary; referrals: ReferralEntry[] } | null>(null)
+  const [copied, setCopied] = useState(false)
+
+  useEffect(() => {
+    if (!token) return
+    fetch(`${API_URL}/api/v1/storefront/my-referrals`, { headers: { Authorization: `Bearer ${token}` } })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: { summary: ReferralSummary; referrals: ReferralEntry[] } | null) => setData(d))
+      .catch(() => {})
+  }, [token])
+
+  if (!referralCode) return null  // Older customers may not have a code yet
+
+  const inviteUrl = typeof window !== 'undefined'
+    ? `${window.location.origin}/signup?ref=${referralCode}`
+    : `https://servd.pk/signup?ref=${referralCode}`
+  const shareText = `Hey, try servd — Pakistan's nicest food app. Use my code ${referralCode} when you sign up and we both get PKR 200 off our next orders. ${inviteUrl}`
+
+  function copy(text: string) {
+    if (typeof navigator !== 'undefined' && navigator.clipboard) {
+      navigator.clipboard.writeText(text).then(() => {
+        setCopied(true)
+        setTimeout(() => setCopied(false), 2000)
+      })
+    }
+  }
+  function shareNative() {
+    if (typeof navigator !== 'undefined' && 'share' in navigator) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ;(navigator as any).share({ title: 'servd', text: shareText, url: inviteUrl }).catch(() => {})
+    } else {
+      copy(shareText)
+    }
+  }
+
+  return (
+    <div className="rounded-3xl p-5 sm:p-6"
+      style={{
+        background: 'linear-gradient(135deg, #fef3c7 0%, #fed7aa 100%)',
+        border: '1px solid #fbbf24',
+      }}>
+      <p className="text-[9px] font-black uppercase tracking-[0.28em]" style={{ color: '#9a3412' }}>
+        Refer & earn
+      </p>
+      <h3 className="text-lg font-black mt-1 mb-2" style={{ color: '#7c2d12' }}>
+        Invite a friend, earn <span style={{ color: '#dc2626' }}>+200 pts each</span>
+      </h3>
+      <p className="text-xs mb-4" style={{ color: '#9a3412' }}>
+        They sign up with your code. You both get PKR 200 off — credited the moment they place their first order.
+      </p>
+
+      {/* Code + share */}
+      <div className="flex items-center gap-2 mb-3">
+        <div className="flex-1 min-w-0 rounded-xl px-4 py-3 font-mono text-lg font-black tabular-nums tracking-wider text-center"
+          style={{ background: '#fff', color: '#7c2d12', border: '2px dashed #fbbf24' }}>
+          {referralCode}
+        </div>
+        <button onClick={() => copy(referralCode)}
+          className="rounded-xl px-3 py-3 text-xs font-bold whitespace-nowrap"
+          style={{ background: '#7c2d12', color: '#fff' }}>
+          {copied ? '✓ Copied' : 'Copy'}
+        </button>
+      </div>
+
+      <div className="flex gap-2">
+        <button onClick={shareNative}
+          className="flex-1 rounded-xl px-3 py-2.5 text-xs font-bold"
+          style={{ background: '#22c55e', color: '#000' }}>
+          Share invite link
+        </button>
+        <a href={`https://wa.me/?text=${encodeURIComponent(shareText)}`}
+          target="_blank" rel="noopener noreferrer"
+          className="flex-1 rounded-xl px-3 py-2.5 text-xs font-bold text-center"
+          style={{ background: '#25D366', color: '#fff' }}>
+          WhatsApp
+        </a>
+      </div>
+
+      {/* Tally */}
+      {data && data.summary.totalReferred > 0 && (
+        <div className="mt-4 pt-4 border-t" style={{ borderColor: 'rgba(154,52,18,0.2)' }}>
+          <div className="grid grid-cols-3 gap-2 text-center">
+            <Stat n={data.summary.totalReferred} label="invited" />
+            <Stat n={data.summary.completedFirstOrder} label="ordered" />
+            <Stat n={data.summary.earnedPoints} label="pts earned" />
+          </div>
+          {data.summary.pendingPayout > 0 && (
+            <p className="mt-3 text-[11px] text-center" style={{ color: '#9a3412' }}>
+              {data.summary.pendingPayout} friend{data.summary.pendingPayout === 1 ? '' : 's'} signed up but haven&rsquo;t ordered yet — nudge them!
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+function Stat({ n, label }: { n: number; label: string }) {
+  return (
+    <div>
+      <div className="text-2xl font-black" style={{ color: '#7c2d12' }}>{n}</div>
+      <div className="text-[10px] font-bold uppercase tracking-wide" style={{ color: '#9a3412' }}>{label}</div>
+    </div>
+  )
+}
+
+// ─── My Bookings (reservations) ──────────────────────────────────────────────
+// Hidden entirely when the customer has never made a reservation — keeps the
+// page from showing a hollow "you haven't booked yet" state.
+interface MyReservationsResponse {
+  upcoming: Array<{
+    id: string; partySize: number; startTime: string; status: string; notes: string | null
+    isVip: boolean; confirmToken: string | null
+    concept: { name: string; slug: string; primaryColor: string | null }
+    table:   { label: string } | null
+  }>
+  past: Array<{
+    id: string; partySize: number; startTime: string; status: string
+    concept: { name: string; slug: string }
+  }>
+}
+
+function MyBookingsSection({ token }: { token: string | null }) {
+  const [data, setData] = useState<MyReservationsResponse | null>(null)
+  useEffect(() => {
+    if (!token) return
+    fetch(`${API_URL}/api/v1/storefront/my-reservations`, { headers: { Authorization: `Bearer ${token}` } })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: MyReservationsResponse | null) => setData(d))
+      .catch(() => {})
+  }, [token])
+
+  if (!data) return null
+  if (data.upcoming.length === 0 && data.past.length === 0) return null  // hide entirely if empty
+
+  const fmt = (iso: string) => new Date(iso).toLocaleString('en-GB', {
+    timeZone: 'Asia/Karachi', weekday: 'short', day: 'numeric', month: 'short',
+    hour: '2-digit', minute: '2-digit', hour12: false,
+  })
+
+  return (
+    <div className="rounded-3xl p-5 sm:p-6" style={{ background: '#fff', border: '1px solid rgba(0,0,0,0.06)' }}>
+      <p className="text-[9px] font-black uppercase tracking-[0.28em]" style={{ color: 'rgba(24,22,15,0.38)' }}>
+        My bookings
+      </p>
+      <h3 className="text-lg font-black mt-1 mb-3" style={{ color: '#18160f' }}>
+        {data.upcoming.length > 0 ? `${data.upcoming.length} upcoming` : 'Past visits'}
+      </h3>
+
+      {data.upcoming.length > 0 && (
+        <div className="space-y-2 mb-4">
+          {data.upcoming.map((r) => (
+            <div key={r.id} className="rounded-xl p-3 flex items-center justify-between gap-3"
+              style={{ background: 'rgba(34,197,94,0.05)', border: '1px solid rgba(34,197,94,0.15)' }}>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <span className="font-black text-sm">{r.concept.name}</span>
+                  {r.isVip && <span className="text-[10px] font-bold text-amber-600">★</span>}
+                  <span className="text-[10px] font-bold uppercase tracking-wider px-1.5 rounded-full"
+                    style={{
+                      background: r.status === 'confirmed' ? 'rgba(20,184,166,0.15)' : 'rgba(59,130,246,0.15)',
+                      color:      r.status === 'confirmed' ? '#0d9488' : '#2563eb',
+                    }}>
+                    {r.status}
+                  </span>
+                </div>
+                <div className="text-xs mt-0.5" style={{ color: 'rgba(24,22,15,0.55)' }}>
+                  Party of {r.partySize} · {fmt(r.startTime)}
+                  {r.table ? ` · table ${r.table.label}` : ''}
+                </div>
+              </div>
+              {r.confirmToken && r.status === 'booked' && (
+                <Link href={`/reserve/confirm/${r.confirmToken}`}
+                  className="rounded-lg px-3 py-1.5 text-xs font-bold whitespace-nowrap"
+                  style={{ background: '#22c55e', color: '#fff' }}>
+                  Confirm
+                </Link>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {data.past.length > 0 && (
+        <details>
+          <summary className="text-xs font-bold cursor-pointer" style={{ color: 'rgba(24,22,15,0.55)' }}>
+            Past visits ({data.past.length})
+          </summary>
+          <div className="space-y-1.5 mt-2">
+            {data.past.slice(0, 8).map((r) => (
+              <div key={r.id} className="text-xs flex items-center justify-between py-1"
+                style={{ color: 'rgba(24,22,15,0.55)' }}>
+                <span>{r.concept.name} · {r.partySize}px</span>
+                <span>{fmt(r.startTime)}</span>
+              </div>
+            ))}
+          </div>
+        </details>
+      )}
+    </div>
+  )
+}
+
+// ─── My Reviews ──────────────────────────────────────────────────────────────
+interface MyReview {
+  id: string; rating: number; comment: string | null; tags: string[]
+  managerResponse: string | null
+  managerResponseAt: string | null
+  createdAt: string
+  concept: { name: string; slug: string }
+  order: { id: string; totalCents: number; placedAt: string }
+}
+function MyReviewsSection({ token }: { token: string | null }) {
+  const [reviews, setReviews] = useState<MyReview[] | null>(null)
+  useEffect(() => {
+    if (!token) return
+    fetch(`${API_URL}/api/v1/storefront/my-reviews`, { headers: { Authorization: `Bearer ${token}` } })
+      .then((r) => (r.ok ? r.json() : []))
+      .then((d: MyReview[]) => setReviews(d))
+      .catch(() => setReviews([]))
+  }, [token])
+
+  if (!reviews || reviews.length === 0) return null
+
+  return (
+    <div className="rounded-3xl p-5 sm:p-6" style={{ background: '#fff', border: '1px solid rgba(0,0,0,0.06)' }}>
+      <p className="text-[9px] font-black uppercase tracking-[0.28em]" style={{ color: 'rgba(24,22,15,0.38)' }}>
+        My reviews
+      </p>
+      <h3 className="text-lg font-black mt-1 mb-3" style={{ color: '#18160f' }}>
+        {reviews.length} review{reviews.length === 1 ? '' : 's'}
+      </h3>
+      <div className="space-y-3">
+        {reviews.slice(0, 5).map((r) => (
+          <div key={r.id} className="rounded-xl p-3" style={{ background: 'rgba(0,0,0,0.025)' }}>
+            <div className="flex items-center justify-between gap-2">
+              <span className="font-bold text-sm">{r.concept.name}</span>
+              <span className="text-amber-500 text-sm font-bold">{'★'.repeat(r.rating)}{'☆'.repeat(5 - r.rating)}</span>
+            </div>
+            {r.comment && (
+              <p className="text-xs mt-1.5" style={{ color: 'rgba(24,22,15,0.7)' }}>{r.comment}</p>
+            )}
+            {r.tags.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mt-2">
+                {r.tags.map((t) => (
+                  <span key={t} className="text-[10px] font-bold px-1.5 py-0.5 rounded"
+                    style={{ background: 'rgba(34,197,94,0.1)', color: '#15803d' }}>{t}</span>
+                ))}
+              </div>
+            )}
+            {r.managerResponse && (
+              <div className="mt-2.5 pl-2.5 border-l-2 text-xs" style={{ borderColor: '#22c55e', color: 'rgba(24,22,15,0.65)' }}>
+                <div className="font-bold mb-0.5" style={{ color: '#16a34a' }}>From the team:</div>
+                {r.managerResponse}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// ─── My Favorites ────────────────────────────────────────────────────────────
+interface FavoriteItem {
+  menuItemId: string; name: string; priceCents: number
+  imageUrl: string | null; isAvailable: boolean
+  timesOrdered: number; lastOrderedAt: string
+  concept: { name: string; slug: string } | null
+}
+function MyFavoritesSection({ token }: { token: string | null }) {
+  const [items, setItems] = useState<FavoriteItem[] | null>(null)
+  useEffect(() => {
+    if (!token) return
+    fetch(`${API_URL}/api/v1/storefront/my-favorites`, { headers: { Authorization: `Bearer ${token}` } })
+      .then((r) => (r.ok ? r.json() : []))
+      .then((d: FavoriteItem[]) => setItems(d))
+      .catch(() => setItems([]))
+  }, [token])
+
+  if (!items || items.length === 0) return null
+
+  return (
+    <div className="rounded-3xl p-5 sm:p-6" style={{ background: '#fff', border: '1px solid rgba(0,0,0,0.06)' }}>
+      <p className="text-[9px] font-black uppercase tracking-[0.28em]" style={{ color: 'rgba(24,22,15,0.38)' }}>
+        Your usual
+      </p>
+      <h3 className="text-lg font-black mt-1 mb-3" style={{ color: '#18160f' }}>
+        Order again, fast
+      </h3>
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+        {items.slice(0, 6).map((it) => (
+          <Link
+            key={it.menuItemId}
+            href={it.concept ? `/${it.concept.slug}` : '/browse'}
+            className="rounded-xl p-3 text-left transition-all hover:scale-[1.01]"
+            style={{ background: 'rgba(0,0,0,0.025)', border: '1px solid rgba(0,0,0,0.05)' }}>
+            <div className="text-[10px] font-bold uppercase tracking-wider"
+              style={{ color: 'rgba(24,22,15,0.4)' }}>
+              {it.concept?.name ?? 'Brand'}
+            </div>
+            <div className="font-bold text-sm mt-0.5 line-clamp-2" style={{ color: '#18160f' }}>
+              {it.name}
+            </div>
+            <div className="flex items-center justify-between mt-2">
+              <span className="text-xs" style={{ color: 'rgba(24,22,15,0.55)' }}>
+                Ordered {it.timesOrdered}×
+              </span>
+              <span className="text-sm font-black" style={{ color: '#22c55e' }}>
+                Rs. {(it.priceCents / 100).toFixed(0)}
+              </span>
+            </div>
+            {!it.isAvailable && (
+              <div className="mt-1.5 text-[10px] font-bold uppercase tracking-wider"
+                style={{ color: '#dc2626' }}>
+                Currently unavailable
+              </div>
+            )}
+          </Link>
+        ))}
+      </div>
+    </div>
   )
 }
 

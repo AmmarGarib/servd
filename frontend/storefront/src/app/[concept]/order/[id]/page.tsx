@@ -15,6 +15,10 @@ interface OrderStatus {
     id: string; name: string; phone: string; vehicleType: string
     lastLat: number | null; lastLng: number | null; lastReportedAt: string | null
   } | null
+  curbsideVehicle?: string | null
+  curbsidePlate?: string | null
+  curbsideArrivedAt?: string | null
+  curbsideRunnerOutAt?: string | null
 }
 
 const STEPS = [
@@ -320,6 +324,44 @@ export default function OrderStatusPage() {
           </div>
         </section>
 
+        {/* ── Curbside "I'm here" CTA ────────────────────────────────────
+            Only shows for curbside orders that are ready and customer hasn't
+            yet marked themselves as arrived. Tapping POSTs to /arrived which
+            stamps the queue + flashes the admin /orders/curbside page. */}
+        {order.curbsideVehicle && !order.curbsideArrivedAt && order.status !== 'cancelled' && order.status !== 'completed' && (
+          <CurbsideArrivedButton orderId={order.id} onArrived={() => {
+            setOrder((o) => o ? { ...o, curbsideArrivedAt: new Date().toISOString() } : o)
+          }} />
+        )}
+        {order.curbsideVehicle && order.curbsideArrivedAt && !order.curbsideRunnerOutAt && (
+          <div className="rounded-2xl px-4 py-3.5 text-center"
+            style={{ background: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.35)', color: '#15803d' }}>
+            <p className="font-black text-sm">✓ We see you. Bringing your food now.</p>
+            <p className="text-xs mt-0.5" style={{ color: 'rgba(21,128,61,0.7)' }}>{order.curbsideVehicle}</p>
+          </div>
+        )}
+        {order.curbsideVehicle && order.curbsideRunnerOutAt && (
+          <div className="rounded-2xl px-4 py-3.5 text-center"
+            style={{ background: 'rgba(99,102,241,0.1)', border: '1px solid rgba(99,102,241,0.35)', color: '#4338ca' }}>
+            <p className="font-black text-sm">🚶 Runner is on their way to your car</p>
+          </div>
+        )}
+
+        {/* ── Rate-your-meal CTA (completed orders only) ────────────────── */}
+        {order.status === 'completed' && (
+          <Link href={`/orders/${order.id}/review`}
+            className="flex items-center justify-center gap-2 w-full rounded-2xl py-3.5 font-bold text-sm transition-all duration-150 hover:scale-[1.01] active:scale-[0.98]"
+            style={{
+              background: 'linear-gradient(135deg, #fef3c7 0%, #fde68a 100%)',
+              color: '#78350f',
+              border: '1px solid #fbbf24',
+              boxShadow: '0 1px 3px rgba(251,191,36,0.2)',
+            }}>
+            <span style={{ fontSize: '1.1rem' }}>★</span>
+            <span>Rate your meal · +50 loyalty pts</span>
+          </Link>
+        )}
+
         {/* ── Order again ── */}
         <Link href={`/${slug}`}
           className="flex items-center justify-center gap-2 w-full rounded-2xl py-3.5 font-bold text-sm transition-all duration-150 hover:scale-[1.01] active:scale-[0.98]"
@@ -340,5 +382,41 @@ export default function OrderStatusPage() {
         </Link>
       </div>
     </main>
+  )
+}
+
+// "I'm here" button for curbside orders. POSTs the arrival, then optimistic-
+// updates the parent so the user immediately sees confirmation without the
+// poll having to land.
+function CurbsideArrivedButton({ orderId, onArrived }: { orderId: string; onArrived: () => void }) {
+  const token = useCustomerAuth((s) => s.token)
+  const [busy, setBusy] = useState(false)
+
+  async function tap() {
+    if (!token) return
+    setBusy(true)
+    try {
+      const res = await fetch(`${API_URL}/api/v1/storefront/orders/${orderId}/arrived`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({}),
+      })
+      if (res.ok) onArrived()
+    } catch { /* swallow */ }
+    finally { setBusy(false) }
+  }
+
+  return (
+    <button onClick={tap} disabled={busy}
+      className="flex items-center justify-center gap-2 w-full rounded-2xl py-4 font-black text-sm tracking-wide transition-all duration-150 hover:scale-[1.01] active:scale-[0.98]"
+      style={{
+        background: '#22c55e', color: '#fff',
+        border: '2px solid #16a34a',
+        boxShadow: '0 4px 16px rgba(34,197,94,0.25)',
+        opacity: busy ? 0.6 : 1,
+      }}>
+      <span style={{ fontSize: '1.3rem' }}>🚗</span>
+      <span>{busy ? "Letting them know…" : "I'm here!"}</span>
+    </button>
   )
 }

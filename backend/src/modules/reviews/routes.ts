@@ -44,12 +44,23 @@ export async function reviewRoutes(fastify: FastifyInstance) {
     return { reviews, average: avg ? Math.round(avg * 10) / 10 : null, total: reviews.length }
   })
 
-  // POST /reviews — customer submits review after order
+  // POST /reviews — customer submits review after order. Auto-credits a
+  // 50-point loyalty bonus when submitted within 24h of completion (a small
+  // "thanks for caring" gesture that lifts review rate dramatically).
   fastify.post('/', { preHandler: requireCustomerAuth }, async (req, reply) => {
     const body = z.object({
       orderId: z.string().uuid(),
       rating: z.number().int().min(1).max(5),
       comment: z.string().max(1000).optional(),
+      // Optional sub-ratings — { food?, service?, value?, speed? }, each 1..5
+      categoryRatings: z.object({
+        food:    z.number().int().min(1).max(5).optional(),
+        service: z.number().int().min(1).max(5).optional(),
+        value:   z.number().int().min(1).max(5).optional(),
+        speed:   z.number().int().min(1).max(5).optional(),
+      }).optional(),
+      // Quick-tap chips: 'Loved the bread', 'Quick service', etc.
+      tags:    z.array(z.string().min(1).max(60)).max(10).optional(),
     }).parse(req.body)
 
     const order = await prisma.order.findFirst({
@@ -60,17 +71,58 @@ export async function reviewRoutes(fastify: FastifyInstance) {
     const existing = await prisma.orderReview.findUnique({ where: { orderId: body.orderId } })
     if (existing) throw new ConflictError('Order already reviewed')
 
-    const review = await prisma.orderReview.create({
-      data: {
-        orderId: body.orderId,
-        customerId: req.customer!.id,
-        conceptId: order.conceptId,
-        rating: body.rating,
-        comment: body.comment,
-        source: 'storefront',
-      },
+    // 50pt bonus if submitted within 24h of completion. Skipped if no
+    // loyalty account (rare guest path), still allows the review.
+    const within24h = order.completedAt
+      ? (Date.now() - order.completedAt.getTime()) < 24 * 3600_000
+      : false
+    const bonusPoints = within24h ? 50 : 0
+
+    const review = await prisma.$transaction(async (tx) => {
+      const r = await tx.orderReview.create({
+        data: {
+          orderId: body.orderId,
+          customerId: req.customer!.id,
+          conceptId: order.conceptId,
+          rating: body.rating,
+          comment: body.comment,
+          source: 'storefront',
+          categoryRatings: body.categoryRatings ?? undefined,
+          tags: body.tags ?? [],
+          isPositive: body.rating >= 4,
+          bonusPointsAwarded: bonusPoints,
+        },
+      })
+      if (bonusPoints > 0) {
+        const account = await tx.loyaltyAccount.findUnique({ where: { customerId: req.customer!.id } })
+        if (account) {
+          await tx.loyaltyAccount.update({
+            where: { id: account.id },
+            data: {
+              pointsBalance: { increment: bonusPoints },
+              lifetimePoints: { increment: bonusPoints },
+            },
+          })
+          await tx.loyaltyTransaction.create({
+            data: {
+              loyaltyAccountId: account.id,
+              orderId: body.orderId,
+              type: 'earn',
+              pointsDelta: bonusPoints,
+              description: 'Bonus: posted review within 24h',
+            },
+          })
+        }
+      }
+      return r
     })
-    return reply.status(201).send(review)
+
+    // Cross-module: refresh customer rollups so reviewCount/avgRating are
+    // accurate everywhere immediately.
+    const { bumpCustomerRollups } = await import('../../lib/customerRollups.js')
+    bumpCustomerRollups(req.customer!.id)
+
+    return reply.status(201).send({ ...review, bonusPointsAwarded: bonusPoints })
   })
 
   // POST /reviews/manual — staff creates review manually (e.g. from phone call)

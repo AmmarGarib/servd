@@ -83,6 +83,12 @@ export async function complaintRoutes(fastify: FastifyInstance) {
   }, async (req, reply) => {
     const body = createSchema.parse(req.body)
     const complaint = await prisma.orderComplaint.create({ data: body })
+    // Cross-module: refresh the customer's rollups so the host stand sees
+    // the complaint reflected on their next reservation render.
+    if (complaint.customerId) {
+      const { bumpCustomerRollups } = await import('../../lib/customerRollups.js')
+      bumpCustomerRollups(complaint.customerId)
+    }
     return reply.status(201).send(complaint)
   })
 

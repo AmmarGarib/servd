@@ -9,7 +9,7 @@ declare module 'fastify' {
     // tenantId is the *active* tenant — whichever the user has switched to.
     // Routes scope their queries by this so a logged-in operator viewing
     // company A doesn't see data from company B that they also own.
-    staffUser?: { id: string; email: string; role: UserRole; tenantId: string | null }
+    staffUser?: { id: string; email: string; name: string | null; role: UserRole; tenantId: string | null }
     customer?: { id: string }
   }
 }
@@ -32,12 +32,13 @@ export function requireAuth(...allowedRoles: UserRole[]) {
     // rotation when the user switches tenants in the UI.
     const u = await prisma.user.findUnique({
       where: { id: payload.sub },
-      select: { tenantId: true },
+      select: { tenantId: true, name: true },
     })
 
     req.staffUser = {
       id:       payload.sub,
       email:    payload.email,
+      name:     u?.name ?? null,
       role:     payload.role as UserRole,
       tenantId: u?.tenantId ?? null,
     }

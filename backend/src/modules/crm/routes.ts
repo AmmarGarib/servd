@@ -135,6 +135,111 @@ export async function crmRoutes(fastify: FastifyInstance) {
     },
   )
 
+  // GET /crm/customers/:id/context — one call returns everything the host
+  // / cashier / kitchen need to know about a customer in one render. Used by
+  // the CustomerContextSidebar component on /reservations and /orders.
+  // Pulls: profile + rollups + recent orders + recent reservations + open
+  // complaints + recent reviews + loyalty + segments. Trimmed selects and
+  // small limits so this is cheap to call inline.
+  fastify.get<{ Params: { id: string } }>(
+    '/customers/:id/context',
+    { preHandler: requireAuth(...ALL_STAFF) },
+    async (req) => {
+      const customer = await prisma.customer.findFirst({
+        where: { id: req.params.id, deletedAt: null },
+        select: {
+          id: true, name: true, email: true, phone: true, isBlacklisted: true,
+          blacklistReason: true, birthdayMmDd: true,
+          firstOrderAt: true, lastOrderAt: true, lastVisitAt: true,
+          totalSpentCents: true, walletBalance: true, staffNotes: true,
+          // Rollup fields — denormalized so this endpoint is fast.
+          noShowCount: true, complaintCount: true, reviewCount: true,
+          avgReviewRating: true, lastNoShowAt: true, lastComplaintAt: true,
+          lastReviewedAt: true,
+          // Naughty list — surfaced front-and-center so a host opening a
+          // reservation immediately sees risk + recent strike history.
+          strikeCount: true, bannedAt: true,
+          loyaltyAccount: { select: { tier: true, pointsBalance: true, lifetimePoints: true } },
+          preferredConcept: { select: { name: true, slug: true } },
+        },
+      })
+      if (!customer) throw new NotFoundError('Customer', req.params.id)
+
+      // Pull recent activity in parallel for snappy response.
+      const [orders, reservations, complaints, reviews, segments, recentStrikes] = await Promise.all([
+        prisma.order.findMany({
+          where: { customerId: customer.id, deletedAt: null },
+          orderBy: { placedAt: 'desc' },
+          take: 10,
+          select: {
+            id: true, status: true, totalCents: true, placedAt: true, source: true,
+            concept: { select: { name: true, slug: true } },
+          },
+        }),
+        prisma.reservation.findMany({
+          where: { customerId: customer.id },
+          orderBy: { startTime: 'desc' },
+          take: 10,
+          select: {
+            id: true, status: true, partySize: true, startTime: true, isVip: true,
+            concept: { select: { name: true, slug: true } },
+          },
+        }),
+        prisma.orderComplaint.findMany({
+          where: { customerId: customer.id, status: { in: ['open', 'in_progress'] } },
+          orderBy: { createdAt: 'desc' },
+          take: 5,
+          select: {
+            id: true, title: true, category: true, status: true, priority: true,
+            createdAt: true, concept: { select: { name: true } },
+          },
+        }),
+        prisma.orderReview.findMany({
+          where: { customerId: customer.id },
+          orderBy: { createdAt: 'desc' },
+          take: 5,
+          select: {
+            id: true, rating: true, comment: true, tags: true, createdAt: true,
+            concept: { select: { name: true } },
+          },
+        }),
+        prisma.customerSegmentMembership.findMany({
+          where: { customerId: customer.id },
+          select: { segment: { select: { name: true } } },
+        }).catch(() => [] as Array<{ segment: { name: string } | null }>),
+        prisma.customerStrike.findMany({
+          where: { customerId: customer.id },
+          orderBy: { recordedAt: 'desc' },
+          take: 5,
+          select: { id: true, kind: true, severity: true, reason: true, recordedAt: true, reversedAt: true, expiresAt: true },
+        }),
+      ])
+
+      return {
+        ...customer,
+        recent: { orders, reservations, openComplaints: complaints, reviews, strikes: recentStrikes },
+        segments: segments.map((s) => s.segment?.name).filter((n): n is string => n != null),
+      }
+    },
+  )
+
+  // PATCH /crm/customers/:id/notes — host-curated free-form notes that stick
+  // around on every reservation/order view. "Allergy: shellfish", "Always
+  // takes window seat", "Big tipper", that kind of thing.
+  fastify.patch<{ Params: { id: string } }>(
+    '/customers/:id/notes',
+    { preHandler: requireAuth(...ALL_STAFF) },
+    async (req) => {
+      const body = z.object({ staffNotes: z.string().max(2000).nullable() }).parse(req.body)
+      const updated = await prisma.customer.update({
+        where: { id: req.params.id },
+        data: { staffNotes: body.staffNotes },
+        select: { id: true, staffNotes: true },
+      })
+      return updated
+    },
+  )
+
   // POST /crm/segments
   fastify.post('/segments', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
     const body = z
@@ -551,6 +656,221 @@ export async function crmRoutes(fastify: FastifyInstance) {
       }).catch((err) => console.error(`[crm/chat] fan-out failed for conv=${conv.id}:`, (err as Error).message))
 
       return reply.status(201).send(message)
+    },
+  )
+
+  // ════════════════════════════════════════════════════════════════════════
+  // Naughty list — strikes + bans
+  // ════════════════════════════════════════════════════════════════════════
+
+  // GET /crm/naughty-list — operator inbox. Returns all customers who have
+  // active strikes OR are banned, sorted by severity. Default 60-day window
+  // for strikes (you don't usually care about a 6-month-old single strike
+  // on someone otherwise clean). Bans always shown regardless of age.
+  fastify.get<{ Querystring: { kind?: string; bannedOnly?: string } }>(
+    '/naughty-list',
+    { preHandler: requireAuth(...ALL_STAFF) },
+    async (req) => {
+      const now = new Date()
+      const bannedOnly = req.query.bannedOnly === '1' || req.query.bannedOnly === 'true'
+
+      const customers = await prisma.customer.findMany({
+        where: {
+          deletedAt: null,
+          OR: [
+            { bannedAt:    { not: null } },
+            { strikeCount: { gt: 0 } },
+            { isBlacklisted: true },
+          ],
+          ...(bannedOnly && { bannedAt: { not: null } }),
+        },
+        select: {
+          id: true, name: true, email: true, phone: true,
+          strikeCount: true, bannedAt: true,
+          isBlacklisted: true, blacklistReason: true,
+          totalSpentCents: true, lastOrderAt: true,
+        },
+        orderBy: [{ bannedAt: 'desc' }, { strikeCount: 'desc' }],
+        take: 200,
+      })
+
+      // Pull strike summary per customer in parallel — cheap because customer ids are bounded.
+      const ids = customers.map((c) => c.id)
+      const strikes = ids.length > 0 ? await prisma.customerStrike.findMany({
+        where: {
+          customerId: { in: ids },
+          ...(req.query.kind && { kind: req.query.kind }),
+        },
+        orderBy: { recordedAt: 'desc' },
+      }) : []
+
+      // Group + summarise per customer
+      const byCustomer = new Map<string, typeof strikes>()
+      for (const s of strikes) {
+        const list = byCustomer.get(s.customerId) ?? []
+        list.push(s)
+        byCustomer.set(s.customerId, list)
+      }
+
+      return customers.map((c) => {
+        const list = byCustomer.get(c.id) ?? []
+        const active = list.filter((s) => !s.reversedAt && (!s.expiresAt || s.expiresAt > now))
+        return {
+          customer: c,
+          activeStrikes: active.length,
+          totalStrikes:  list.length,
+          strikes: list.slice(0, 10),    // most recent 10 for the row
+        }
+      })
+    },
+  )
+
+  // POST /crm/strikes — manually record a strike (operator's call).
+  // Used when something happens IRL that the system can't auto-detect:
+  // verbal abuse to staff, dine-and-dash, etc.
+  fastify.post(
+    '/strikes',
+    { preHandler: requireAuth(...MANAGERS) },
+    async (req, reply) => {
+      const body = z.object({
+        customerId: z.string().uuid(),
+        kind:       z.enum(['reservation_no_show', 'cod_unpaid', 'cod_refused', 'chargeback', 'other']),
+        severity:   z.number().int().min(1).max(3).default(1),
+        reason:     z.string().max(500),
+      }).parse(req.body)
+
+      const { recordStrike } = await import('../../lib/strikes.js')
+      await recordStrike({
+        customerId:   body.customerId,
+        kind:         body.kind,
+        severity:     body.severity,
+        reason:       body.reason,
+        recordedById: req.staffUser?.id,
+      })
+      const customer = await prisma.customer.findUnique({
+        where: { id: body.customerId },
+        select: { strikeCount: true, bannedAt: true },
+      })
+      return reply.status(201).send({ ok: true, customer })
+    },
+  )
+
+  // POST /crm/strikes/:id/reverse — manager forgives a strike. If reversing
+  // drops the customer below the ban threshold, the auto-ban is auto-lifted.
+  fastify.post<{ Params: { id: string }; Body: { reason: string } }>(
+    '/strikes/:id/reverse',
+    { preHandler: requireAuth(...MANAGERS) },
+    async (req) => {
+      const body = z.object({ reason: z.string().max(500) }).parse(req.body)
+      const { reverseStrike } = await import('../../lib/strikes.js')
+      const result = await reverseStrike(req.params.id, req.staffUser!.id, body.reason)
+      return result
+    },
+  )
+
+  // GET /crm/bans — every ban, active + historical
+  fastify.get<{ Querystring: { activeOnly?: string } }>(
+    '/bans',
+    { preHandler: requireAuth(...ALL_STAFF) },
+    async (req) => {
+      const now = new Date()
+      const activeOnly = req.query.activeOnly === '1' || req.query.activeOnly === 'true'
+
+      return prisma.customerBan.findMany({
+        where: {
+          ...(activeOnly && {
+            liftedAt: null,
+            OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+          }),
+        },
+        include: {
+          customer: { select: { id: true, name: true, email: true, phone: true } },
+        },
+        orderBy: { bannedAt: 'desc' },
+        take: 200,
+      })
+    },
+  )
+
+  // POST /crm/bans/:id/lift — operator lifts a ban (forgives the customer).
+  // Requires a reason for the audit trail.
+  fastify.post<{ Params: { id: string }; Body: { reason: string } }>(
+    '/bans/:id/lift',
+    { preHandler: requireAuth(...MANAGERS) },
+    async (req) => {
+      const body = z.object({ reason: z.string().max(500) }).parse(req.body)
+      const ban = await prisma.customerBan.findUnique({ where: { id: req.params.id } })
+      if (!ban) throw new NotFoundError('Ban', req.params.id)
+      if (ban.liftedAt) return ban
+
+      const updated = await prisma.customerBan.update({
+        where: { id: ban.id },
+        data:  {
+          liftedAt:    new Date(),
+          liftedById:  req.staffUser!.id,
+          liftReason:  body.reason,
+        },
+      })
+      // Sync the denormalized customer flag.
+      if (ban.customerId) {
+        await prisma.customer.update({
+          where: { id: ban.customerId },
+          data:  { bannedAt: null, isBlacklisted: false, blacklistReason: null },
+        })
+      }
+      return updated
+    },
+  )
+
+  // POST /crm/bans — operator-initiated ban. For when a customer hasn't hit
+  // 3 strikes yet but they've done something egregious. Doesn't bypass the
+  // strikes — just creates the ban directly.
+  fastify.post(
+    '/bans',
+    { preHandler: requireAuth(...MANAGERS) },
+    async (req, reply) => {
+      const body = z.object({
+        customerId: z.string().uuid().optional(),
+        email:      z.string().email().optional(),
+        phone:      z.string().min(7).max(20).optional(),
+        reason:     z.string().min(3).max(500),
+        expiresAt:  z.string().datetime().optional(),
+      }).refine((v) => !!(v.customerId || v.email || v.phone), {
+        message: 'Provide at least one of customerId / email / phone',
+      }).parse(req.body)
+
+      // Resolve customerId from email/phone if not supplied
+      let customerId = body.customerId ?? null
+      if (!customerId && (body.email || body.phone)) {
+        const c = await prisma.customer.findFirst({
+          where: {
+            OR: [
+              ...(body.email ? [{ email: body.email.toLowerCase() }] : []),
+              ...(body.phone ? [{ phone: body.phone }] : []),
+            ],
+          },
+          select: { id: true },
+        })
+        if (c) customerId = c.id
+      }
+
+      const ban = await prisma.customerBan.create({
+        data: {
+          customerId,
+          email:      body.email?.toLowerCase() ?? null,
+          phone:      body.phone ?? null,
+          reason:     body.reason,
+          bannedById: req.staffUser!.id,
+          expiresAt:  body.expiresAt ? new Date(body.expiresAt) : null,
+        },
+      })
+      if (customerId) {
+        await prisma.customer.update({
+          where: { id: customerId },
+          data:  { bannedAt: new Date(), isBlacklisted: true, blacklistReason: body.reason },
+        })
+      }
+      return reply.status(201).send(ban)
     },
   )
 }

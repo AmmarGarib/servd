@@ -24,6 +24,7 @@ import { startLoyaltyTriggerWorker } from './workers/loyaltyTriggers.js'
 import { startLoyaltyExpirationWorker } from './workers/loyaltyExpiration.js'
 import { startReservationReminderWorker } from './workers/reservationReminders.js'
 import { startDailyDigestWorker } from './workers/dailyDigest.js'
+import { startReviewPromptWorker } from './workers/reviewPrompt.js'
 import { startFbrSubmissionWorker } from './workers/fbrSubmission.js'
 import { startWebhookDeliveryWorker } from './workers/webhookDelivery.js'
 import { startScheduledReportsWorker } from './workers/scheduledReports.js'
@@ -55,6 +56,8 @@ import { webhookRoutes } from './modules/webhooks/routes.js'
 import { financeRoutes } from './modules/finance/routes.js'
 import { reviewRoutes } from './modules/reviews/routes.js'
 import { complaintRoutes } from './modules/complaints/routes.js'
+import { feedbackRoutes } from './modules/feedback/routes.js'
+import { stockTransferRoutes } from './modules/stockTransfers/routes.js'
 import { riderRoutes } from './modules/riders/routes.js'
 import { promoRoutes } from './modules/promos/routes.js'
 import { walletRoutes } from './modules/wallet/routes.js'
@@ -148,11 +151,18 @@ async function build() {
 
   await fastify.register(helmet, { contentSecurityPolicy: false })
 
+  // CORS allowlist lives in lib/corsAllowlist.ts — handles the canonical
+  // servd hosts AND each brand's custom domain (eatstax.com, bukharirice.com,
+  // etc.) AND the *.localhost / *.servd.{app,pk} wildcard patterns. New brand
+  // domains: edit BRAND_HOSTS env (comma-separated), no code change needed.
+  const { isAllowedOrigin, describeAllowlist } = await import('./lib/corsAllowlist.js')
+  fastify.log.info(describeAllowlist())
   await fastify.register(cors, {
-    origin: [
-      process.env['WEB_URL'] ?? 'http://localhost:3000',
-      process.env['STOREFRONT_URL'] ?? 'http://localhost:3002',
-    ],
+    origin: (origin, cb) => {
+      if (isAllowedOrigin(origin)) return cb(null, true)
+      fastify.log.warn({ origin }, 'CORS rejected origin')
+      cb(null, false)
+    },
     credentials: true,
     maxAge: 3600,
   })
@@ -235,6 +245,8 @@ async function build() {
       await api.register(storefrontRoutes, { prefix: '/storefront' })
       await api.register(reviewRoutes, { prefix: '/reviews' })
       await api.register(complaintRoutes, { prefix: '/complaints' })
+      await api.register(feedbackRoutes, { prefix: '/feedback' })
+      await api.register(stockTransferRoutes, { prefix: '/stock-transfers' })
       await api.register(riderRoutes, { prefix: '/riders' })
       await api.register(promoRoutes, { prefix: '/promos' })
       await api.register(walletRoutes, { prefix: '/wallet' })
@@ -442,6 +454,7 @@ async function build() {
     startLoyaltyExpirationWorker()
     startReservationReminderWorker()
     startDailyDigestWorker()
+    startReviewPromptWorker()
     startFbrSubmissionWorker()
     startSegmentComputationWorker()
     startSocialPublishWorker()
