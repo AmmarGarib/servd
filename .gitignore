@@ -24,3 +24,4 @@ Thumbs.db
 
 # Legacy
 _legacy/
+.commit-msg.tmp
