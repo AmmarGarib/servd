@@ -1,0 +1,119 @@
+version: "3.9"
+
+# servd full-stack on a single AWS EC2 t3.micro.
+# Everything in one box: api + redis + admin + storefront + caddy.
+#
+# Why one box:
+#   - 100% on AWS (no Vercel, no Amplify)
+#   - Single bill, single SSH session, single update command
+#   - t3.micro 1GB RAM is tight but workable: redis 256MB cap, each Next.js
+#     ~250MB, fastify ~150MB. Add 1GB swap on the box for headroom.
+#
+# Memory budget on a 1GB box:
+#   redis:    256 MB cap
+#   api:     ~150 MB
+#   admin:   ~250 MB
+#   store:   ~250 MB
+#   caddy:    ~30 MB
+#   OS+misc: ~100 MB  → ~1036 MB total. Swap covers spikes.
+#   When you outgrow this, t3.small ($15/mo) doubles RAM.
+#
+# Update flow:
+#   cd /opt/servd && git pull   (or scp -r the new code up)
+#   cd infra && docker compose up -d --build
+
+services:
+  # ───────────────────────────── Redis ─────────────────────────────
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    networks:
+      - servd_net
+
+  # ───────────────────────────── API ───────────────────────────────
+  api:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - ./.env.production
+    environment:
+      REDIS_URL: "redis://redis:6379"
+      NODE_ENV: "production"
+      PORT: "3001"
+      ENABLE_WORKERS: "true"
+    depends_on:
+      - redis
+    networks:
+      - servd_net
+    command: sh -c "npx prisma migrate deploy && node dist/index.js"
+
+  # ───────────────────────────── Admin (Next.js) ──────────────────
+  # Build args read from a compose-level `.env` file (NOT .env.production).
+  # See infra/.env.example — copy to infra/.env and fill in your domain.
+  # NEXT_PUBLIC_* MUST be at build time so they're inlined into client JS.
+  admin:
+    build:
+      context: ../frontend/admin
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: "${PUBLIC_API_URL}"
+        NEXT_PUBLIC_WS_URL:  "${PUBLIC_WS_URL}"
+        NEXT_PUBLIC_SENTRY_DSN: "${SENTRY_DSN_ADMIN:-}"
+    restart: unless-stopped
+    environment:
+      NODE_ENV: "production"
+      PORT: "3000"
+    depends_on:
+      - api
+    networks:
+      - servd_net
+
+  # ───────────────────────────── Storefront (Next.js) ─────────────
+  storefront:
+    build:
+      context: ../frontend/storefront
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: "${PUBLIC_API_URL}"
+        NEXT_PUBLIC_WS_URL:  "${PUBLIC_WS_URL}"
+        NEXT_PUBLIC_SENTRY_DSN: "${SENTRY_DSN_STOREFRONT:-}"
+    restart: unless-stopped
+    environment:
+      NODE_ENV: "production"
+      PORT: "3000"
+    depends_on:
+      - api
+    networks:
+      - servd_net
+
+  # ───────────────────────────── Caddy (TLS + reverse proxy) ──────
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - api
+      - admin
+      - storefront
+    networks:
+      - servd_net
+
+networks:
+  servd_net:
+    driver: bridge
+
+volumes:
+  redis_data:
+  caddy_data:
+  caddy_config:

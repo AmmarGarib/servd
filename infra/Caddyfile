@@ -1,0 +1,80 @@
+# Caddyfile — TLS + reverse proxy for all 3 servd services on the same EC2 box.
+#
+# 3 subdomains, all auto-issued Let's Encrypt certs:
+#   api.servd.pk    → fastify backend (port 3001)
+#   admin.servd.pk  → next.js admin    (port 3000)
+#   app.servd.pk    → next.js storefront (port 3000 inside its container)
+#
+# DNS prerequisite (in Cloudflare, all DNS-only / grey cloud):
+#   A api    → <EC2 elastic IP>
+#   A admin  → <EC2 elastic IP>
+#   A app    → <EC2 elastic IP>
+
+# ───────────────────────────── API ──────────────────────────────────────
+api.servd.pk {
+	encode gzip zstd
+
+	reverse_proxy api:3001 {
+		header_up X-Real-IP {remote_host}
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Forwarded-Proto {scheme}
+		transport http {
+			read_timeout 5m
+			write_timeout 5m
+		}
+	}
+
+	header {
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Cache-Control "no-store"
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}
+
+# ───────────────────────────── Admin ────────────────────────────────────
+admin.servd.pk {
+	encode gzip zstd
+
+	reverse_proxy admin:3000 {
+		header_up X-Real-IP {remote_host}
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Forwarded-Proto {scheme}
+	}
+
+	header {
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}
+
+# ───────────────────────────── Storefront ───────────────────────────────
+app.servd.pk {
+	encode gzip zstd
+
+	reverse_proxy storefront:3000 {
+		header_up X-Real-IP {remote_host}
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Forwarded-Proto {scheme}
+	}
+
+	header {
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}
