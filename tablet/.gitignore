@@ -1,0 +1,46 @@
+# Dependencies
+node_modules/
+
+# Expo
+.expo/
+.expo-shared/
+dist/
+web-build/
+
+# Native
+*.orig.*
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+
+# Metro / bundler
+.metro-health-check*
+
+# Build output
+ios/build/
+android/build/
+android/app/build/
+
+# Logs
+*.log
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+
+# Editor / OS
+.DS_Store
+*.swp
+.idea/
+.vscode/
+.tsbuildinfo
+next-env.d.ts
+
+# Secrets (never commit)
+.env
+.env.local
+.env.*.local
+
+# EAS
+.easignore

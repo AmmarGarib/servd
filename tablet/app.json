@@ -1,0 +1,48 @@
+{
+  "expo": {
+    "name": "servd Staff",
+    "slug": "servd-tablet",
+    "version": "1.0.0",
+    "orientation": "landscape",
+    "scheme": "servd-staff",
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": true,
+    "assetBundlePatterns": ["**/*"],
+    "android": {
+      "package": "pk.servd.tablet",
+      "adaptiveIcon": { "backgroundColor": "#0C0D10" },
+      "permissions": [
+        "CAMERA",
+        "RECORD_AUDIO",
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "BLUETOOTH",
+        "BLUETOOTH_ADMIN",
+        "BLUETOOTH_CONNECT",
+        "BLUETOOTH_SCAN",
+        "VIBRATE",
+        "WAKE_LOCK"
+      ]
+    },
+    "ios": {
+      "supportsTablet": true,
+      "requireFullScreen": true,
+      "bundleIdentifier": "pk.servd.tablet",
+      "infoPlist": {
+        "NSCameraUsageDescription": "servd uses the camera for clock-in selfies and barcode scans during inventory counts.",
+        "NSLocationWhenInUseUsageDescription": "servd verifies you're on-site when clocking in or marking deliveries arrived."
+      }
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      ["expo-camera", { "cameraPermission": "Allow servd to use the camera for clock-in selfies and barcode scans." }],
+      ["expo-location", { "locationAlwaysAndWhenInUsePermission": "Allow servd to verify your on-site status when clocking in." }]
+    ],
+    "experiments": { "typedRoutes": true },
+    "extra": {
+      "apiUrl": "http://10.0.2.2:4000",
+      "wsUrl": "http://10.0.2.2:4000"
+    }
+  }
+}

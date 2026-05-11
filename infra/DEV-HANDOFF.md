@@ -202,26 +202,46 @@ Login at `https://admin.your.domain`.
 
 ---
 
-## 6. Mobile app deployment (separate from docker)
+## 6. Mobile + tablet app deployment (separate from docker)
 
-The mobile app at `mobile/` (inside this repo) is **Expo / React Native**. It does NOT deploy via docker. Two options:
+There are TWO Expo / React Native apps in this repo. Neither deploys via docker.
 
-### Option A — Expo Go (testing, no app store)
+### `mobile/` — customer-facing iOS + Android app
+Portrait, magic-link auth, ordering / reservations / order tracking.
+
+**Option A — Expo Go (internal testing, no app store)**
 - Customer installs Expo Go from app store
-- Run `npx expo start --tunnel` from the mobile project
-- Customer scans QR
-- App runs in Expo Go shell
+- Run `npx expo start --tunnel` from `mobile/`
+- Customer scans QR; app runs in Expo Go shell
 
-Good for internal testing right now — your kitchen staff can install Expo Go and test against your live API in 5 minutes.
-
-### Option B — EAS Build (real app store builds)
-- Sign up at expo.dev (free for hobby tier)
+**Option B — EAS Build (real app store builds)**
 - `npm install -g eas-cli`
 - `eas login` then `eas build:configure`
 - `eas build --platform ios` and `eas build --platform android`
 - Submit to App Store Connect / Google Play Console
 
-**Before either option:** edit `mobile/app.json` → `extra.apiUrl` to point at your production backend (`https://api.your.domain`).
+### `tablet/` — staff Android tablet app
+**Android-first**, landscape, PIN auth, keep-screen-awake, kiosk-ready.
+
+8 screens: KDS (expediter + per-station), POS with tender + receipt print,
+Reservations day view, Curbside queue, Time clock, Inventory counting
+(camera barcode), Customer context lookup, Dispatch / rider tracking.
+Real-time via Socket.IO. Cached menus survive Wi-Fi drops (React Query
+AsyncStorage persister).
+
+**Sideloading onto tablets:**
+- `cd tablet && eas build --platform android --profile preview` → APK
+- Distribute via MDM (Knox / Scalefusion / Hexnode) or push as APK directly
+
+**Bluetooth thermal printer (ESC/POS):** receipt-building logic is wired but
+the actual Bluetooth transport is **not** in Expo Go. Install
+`react-native-thermal-receipt-printer-image-qr` (or similar) in a custom dev
+client build and call `registerPrinterTransport(fn)` from
+`tablet/src/lib/printer.ts` at boot. Without a transport, receipts save
+digitally and the POS surfaces "printer offline" instead of dropping the sale.
+
+**Before any deploy:** edit `mobile/app.json` AND `tablet/app.json` →
+`extra.apiUrl` to point at your production backend (`https://api.your.domain`).
 
 ---
 

@@ -1,0 +1,43 @@
+{
+  "name": "servd-tablet",
+  "version": "1.0.0",
+  "main": "expo-router/entry",
+  "private": true,
+  "scripts": {
+    "start": "expo start",
+    "android": "expo start --android",
+    "tablet": "expo start --android --tunnel",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "expo": "~52.0.0",
+    "expo-router": "~4.0.0",
+    "expo-status-bar": "~2.0.0",
+    "expo-constants": "~17.0.0",
+    "expo-secure-store": "~14.0.0",
+    "expo-camera": "~16.0.0",
+    "expo-location": "~18.0.0",
+    "expo-screen-orientation": "~8.0.0",
+    "expo-keep-awake": "~14.0.0",
+    "expo-notifications": "~0.29.0",
+    "expo-haptics": "~14.0.0",
+    "expo-file-system": "~18.0.0",
+    "expo-network": "~7.0.0",
+    "react": "18.3.2",
+    "react-native": "0.76.3",
+    "@tanstack/react-query": "^5.62.2",
+    "@tanstack/query-async-storage-persister": "^5.62.2",
+    "@tanstack/react-query-persist-client": "^5.62.2",
+    "@react-native-async-storage/async-storage": "1.23.1",
+    "zustand": "^4.5.5",
+    "socket.io-client": "^4.7.5",
+    "react-native-safe-area-context": "4.12.0",
+    "react-native-screens": "~4.1.0",
+    "@react-navigation/native": "^6.1.18"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.25.2",
+    "typescript": "^5.3.3",
+    "@types/react": "~18.3.12"
+  }
+}
