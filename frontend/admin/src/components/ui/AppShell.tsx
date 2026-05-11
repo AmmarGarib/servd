@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { useAuthStore } from '../../store/auth'
 import { TenantSwitcher, useViewAllTenants } from './TenantSwitcher'
+import { PortfolioWriteGuardModal } from './PortfolioWriteGuardModal'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -47,9 +48,17 @@ const NAV: NavSection[] = [
         { href: '/pos/waiter', label: 'Waiter mode' },
         { href: '/pos/shift',  label: 'Shift / Till' },
       ]},
-      { href: '/scheduling', label: 'Scheduling', icon: '📅' },
-      { href: '/tables',     label: 'Floor Plan', icon: '🪑' },
-      { href: '/dispatch',   label: 'Dispatch',   icon: '🛵', children: [
+      { href: '/reservations', label: 'Reservations', icon: '🍽', children: [
+        { href: '/reservations/week',      label: 'Week view' },
+        { href: '/reservations/blockouts', label: 'Closures & blockouts' },
+        { href: '/reservations/hours',     label: 'Service hours' },
+        { href: '/reservations/analytics', label: 'Analytics' },
+        { href: '/kds/reservations',       label: 'Kitchen tracker' },
+      ]},
+      { href: '/orders/curbside', label: 'Curbside', icon: '🚗' },
+      { href: '/scheduling',  label: 'Scheduling', icon: '📅' },
+      { href: '/tables',      label: 'Floor Plan', icon: '🪑' },
+      { href: '/dispatch',    label: 'Dispatch',   icon: '🛵', children: [
         { href: '/riders', label: 'Riders' },
       ]},
     ],
@@ -64,33 +73,35 @@ const NAV: NavSection[] = [
     ],
   },
   {
-    title: 'Customers',
-    defaultCollapsed: true,
-    items: [
-      { href: '/crm',          label: 'CRM',         icon: '👥', children: [
-        { href: '/crm/conversations', label: 'Conversations' },
-        { href: '/crm/segments',      label: 'Segments' },
-      ]},
-      { href: '/complaints',   label: 'Complaints',  icon: '🎫' },
-      { href: '/reviews',      label: 'Reviews',     icon: '⭐' },
-    ],
-  },
-  {
+    // Single Marketing umbrella covers customer ops + outbound — for a
+    // single-team operator the host who handles a complaint is the same
+    // person sending the win-back. Higher-frequency engagement items
+    // (CRM, Campaigns, Complaints, Reviews) sit at the top of the group;
+    // creative/strategic items (Brands, Calendar, Media, Promotions,
+    // Analytics) below.
     title: 'Marketing',
     defaultCollapsed: true,
     items: [
       { href: '/marketing',         label: 'Workspace',   icon: '🚀', children: [
         { href: '/marketing/activity', label: 'Activity Log' },
       ]},
-      { href: '/marketing/brands',  label: 'Brands',      icon: '🏷', children: [
-        { href: '/marketing/storefront', label: 'Storefront Designer' },
-        { href: '/storefront',          label: 'Visual Layout' },
+      { href: '/crm',               label: 'CRM',         icon: '👥', children: [
+        { href: '/crm/conversations', label: 'Conversations' },
+        { href: '/crm/segments',      label: 'Segments' },
+        { href: '/crm/naughty-list',  label: 'Naughty list' },
       ]},
+      { href: '/crm/campaigns',     label: 'Campaigns',   icon: '✉️' },
+      { href: '/complaints',        label: 'Complaints',  icon: '🎫' },
+      { href: '/reviews',           label: 'Reviews',     icon: '⭐' },
       { href: '/calendar',          label: 'Calendar',    icon: '📅' },
       { href: '/media',             label: 'Media',       icon: '🖼' },
       { href: '/promos',            label: 'Promotions',  icon: '🎟', children: [
         { href: '/discounts', label: 'Discounts' },
         { href: '/qrcodes',   label: 'QR Codes' },
+      ]},
+      { href: '/marketing/brands',  label: 'Brands',      icon: '🏷', children: [
+        { href: '/marketing/storefront', label: 'Storefront Designer' },
+        { href: '/storefront',          label: 'Visual Layout' },
       ]},
       { href: '/analytics',         label: 'Analytics',   icon: '📊' },
     ],
@@ -624,6 +635,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           {children}
         </main>
       </div>
+
+      {/* Global guard — opens when any portfolio-mode write is attempted via
+          the useEnsureTenant hook. Mounted once at the shell so any page can
+          trigger it without a parent component plumbing it through. */}
+      <PortfolioWriteGuardModal />
     </div>
   )
 }
@@ -640,7 +656,7 @@ function PortfolioBanner() {
       }}>
       <span className="font-black">∞</span>
       <span className="font-bold">Portfolio view</span>
-      <span className="text-white/55">— viewing data across all your companies. Switch to a single company to make changes.</span>
+      <span className="text-white/55">— viewing across all your companies. We&rsquo;ll ask which company to use when you make a change.</span>
     </div>
   )
 }

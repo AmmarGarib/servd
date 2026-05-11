@@ -1,7 +1,13 @@
 {
-  "extends": "../../tsconfig.json",
   "compilerOptions": {
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": false,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
     "target": "ES2017",
     "lib": [
       "dom",
@@ -20,9 +26,6 @@
     "paths": {
       "@/*": [
         "./src/*"
-      ],
-      "@servd/types": [
-        "../../packages/types/src/index.ts"
       ]
     },
     "allowJs": true,

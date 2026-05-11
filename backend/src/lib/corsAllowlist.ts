@@ -1,0 +1,74 @@
+// Origin allowlist for the API.
+//
+// Background:
+//   The storefront is a single Next.js app served at multiple hostnames:
+//   - The canonical servd domain (servd.pk / servd.app) → STOREFRONT_URL
+//   - Each brand's custom domain (eatstax.com, bukharirice.com, etc.) — set up
+//     so the brand can build its own SEO authority and read as an independent
+//     restaurant. Middleware in storefront/src/middleware.ts rewrites a few
+//     paths into /brand/<slug> on those hosts; everything else passes through.
+//
+//   Customers placing orders OR booking reservations from a brand custom
+//   domain hit the SAME servd backend. Without listing those hosts, the
+//   browser blocks the cross-origin POST and the user sees a vague network
+//   error.
+//
+// Configure brand hosts via env so adding a new brand domain is one env-var
+// edit, no redeploy of the allowlist code needed:
+//
+//   BRAND_HOSTS=eatstax.com,eatflipd.com,bukharirice.com,...
+//
+// We also accept any *.localhost (dev) and any *.servd.{app,pk} (per-brand
+// subdomain pattern) without listing each one — wildcard regexes catch them.
+//
+// Server-to-server requests (no Origin header — curl, server-rendered fetch,
+// webhooks) are allowed through. Browsers always send Origin, so this only
+// gates browser traffic.
+
+const STATIC_FROM_ENV = [
+  process.env['WEB_URL'] ?? 'http://localhost:3000',
+  process.env['STOREFRONT_URL'] ?? 'http://localhost:3002',
+]
+
+const DEFAULT_BRAND_HOSTS = [
+  'eatstax.com',
+  'eatstrata.com',
+  'eatflipd.com',
+  'bukharirice.com',
+  'eatsimmer.com',
+  'craveman.pk',
+  'garnish.pk',
+]
+
+const BRAND_HOSTS = (process.env['BRAND_HOSTS'] ?? '')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean)
+
+const RESOLVED_BRAND_HOSTS = BRAND_HOSTS.length > 0 ? BRAND_HOSTS : DEFAULT_BRAND_HOSTS
+
+const STATIC_ALLOWED = new Set<string>([
+  ...STATIC_FROM_ENV,
+  ...RESOLVED_BRAND_HOSTS.flatMap((h) => [`https://${h}`, `https://www.${h}`]),
+])
+
+// Catch-alls for dev and brand subdomains.
+//   *.localhost           → dev: stax.localhost:3002, simmer.localhost:3002
+//   *.servd.app           → prod subdomain pattern: stax.servd.app
+//   *.servd.pk            → same on the .pk apex
+const WILDCARD_PATTERNS: RegExp[] = [
+  /^https?:\/\/[a-z0-9-]+\.localhost(:\d+)?$/i,
+  /^https:\/\/[a-z0-9-]+\.servd\.(app|pk)$/i,
+]
+
+export function isAllowedOrigin(origin: string | undefined): boolean {
+  if (!origin) return true                // server-to-server / curl / webhooks
+  if (STATIC_ALLOWED.has(origin)) return true
+  if (WILDCARD_PATTERNS.some((p) => p.test(origin))) return true
+  return false
+}
+
+// For diagnostics / boot logging.
+export function describeAllowlist(): string {
+  return `cors: ${STATIC_ALLOWED.size} static + ${WILDCARD_PATTERNS.length} wildcard patterns`
+}

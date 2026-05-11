@@ -36,8 +36,72 @@ async function refreshAccessToken(): Promise<string | null> {
   return _refreshing
 }
 
+// ─── Portfolio-write guard (auto-applied to every mutating request) ──────────
+//
+// When the user is in "Portfolio view" (viewing data aggregated across all
+// their companies), any attempt to write a new record is ambiguous — which
+// company should the new brand / order / promo go into? Rather than wire a
+// hook into all ~70 create flows individually, we intercept here: every
+// POST that's not on the exclusion list dispatches `servd:portfolio-write-
+// request` and waits for the global PortfolioWriteGuardModal to resolve
+// (user picks a tenant → session switches → request proceeds).
+//
+// Excluded paths fire normally even in portfolio mode — these are operations
+// that don't bind to a specific tenant (auth, tenant management, account-
+// level prefs, idempotent media uploads).
+const PORTFOLIO_GUARD_EXCLUSIONS: readonly RegExp[] = [
+  /^\/auth\b/,                  // login, refresh, PIN, magic link, clock in/out
+  /^\/tenants\b/,               // tenant primitives: switch, list, merge
+  /^\/me\b/,                    // self-prefs (theme, notifications)
+  /^\/media\/upload-url\b/,     // presigned URL is tenant-agnostic
+]
+
+function isPortfolioGuarded(path: string, method: string): boolean {
+  if (typeof window === 'undefined') return false
+  if (localStorage.getItem('servd_view_all_tenants') !== '1') return false
+  // Only mutating verbs need a tenant pinned. GET reads aggregate cleanly.
+  if (!['POST', 'PATCH', 'PUT', 'DELETE'].includes(method.toUpperCase())) return false
+  return !PORTFOLIO_GUARD_EXCLUSIONS.some((rx) => rx.test(path))
+}
+
+// Promise-based bridge to the global PortfolioWriteGuardModal. Resolves
+// when the user picks a tenant; rejects when they cancel. Used inside the
+// request fetcher so callers don't need to know the modal exists.
+function awaitPortfolioTenantPick(intent: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const onResolve = (e: Event) => {
+      window.removeEventListener('servd:portfolio-write-resolve', onResolve)
+      const detail = (e as CustomEvent<{ result: 'switched' | 'cancelled' }>).detail
+      if (detail.result === 'switched') resolve()
+      else reject(new ApiError(0, 'PORTFOLIO_WRITE_CANCELLED', 'You cancelled — write not sent.'))
+    }
+    window.addEventListener('servd:portfolio-write-resolve', onResolve)
+    window.dispatchEvent(new CustomEvent('servd:portfolio-write-request', {
+      detail: { intent },
+    }))
+  })
+}
+
+// Best-effort guess at what the user is doing, for the modal's copy.
+// Reads the path: e.g. POST /concepts → "create a brand". Falls back to a
+// generic phrasing if no rule matches.
+function describeIntent(method: string, path: string): string {
+  const verb = method === 'POST' ? 'create' : method === 'DELETE' ? 'delete' : 'update'
+  const seg = path.split('/').filter(Boolean)[0] ?? ''
+  const noun = seg.replace(/-/g, ' ')
+  return `${verb} ${noun}`
+}
+
 async function request<T>(path: string, options: RequestInit = {}, retry = true): Promise<T> {
   const token = typeof window !== 'undefined' ? localStorage.getItem('servd_token') : null
+  const method = (options.method ?? 'GET').toUpperCase()
+
+  // Portfolio safety net: pause and prompt for a target company before
+  // writing if the user is in cross-tenant view. Only fires once per
+  // session — after they pick, portfolio mode toggles off.
+  if (isPortfolioGuarded(path, method)) {
+    await awaitPortfolioTenantPick(describeIntent(method, path))
+  }
 
   const res = await fetch(`${API_URL}/api/v1${path}`, {
     ...options,

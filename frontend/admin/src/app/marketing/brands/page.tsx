@@ -17,6 +17,7 @@ interface Concept {
   taxRate: number
   isActive: boolean
   storefrontVisible: boolean
+  reservationsEnabled: boolean
   heroTagline: string | null
   announcementBanner: string | null
   latitude: number | null
@@ -131,6 +132,7 @@ function BrandForm({ concept }: { concept: Concept }) {
   const [heroTagline, setHeroTagline] = useState(concept.heroTagline ?? '')
   const [announcementBanner, setAnnouncementBanner] = useState(concept.announcementBanner ?? '')
   const [storefrontVisible, setStorefrontVisible] = useState(concept.storefrontVisible)
+  const [reservationsEnabled, setReservationsEnabled] = useState(concept.reservationsEnabled)
 
   const [latitude, setLatitude] = useState(concept.latitude !== null ? String(concept.latitude) : '')
   const [longitude, setLongitude] = useState(concept.longitude !== null ? String(concept.longitude) : '')
@@ -156,6 +158,7 @@ function BrandForm({ concept }: { concept: Concept }) {
     setPrimaryColor(concept.primaryColor ?? '#00D4B1'); setIsActive(concept.isActive)
     setHeroTagline(concept.heroTagline ?? ''); setAnnouncementBanner(concept.announcementBanner ?? '')
     setStorefrontVisible(concept.storefrontVisible)
+    setReservationsEnabled(concept.reservationsEnabled)
     setLatitude(concept.latitude !== null ? String(concept.latitude) : '')
     setLongitude(concept.longitude !== null ? String(concept.longitude) : '')
     setDeliveryRadiusKm(String(concept.deliveryRadiusKm))
@@ -173,6 +176,7 @@ function BrandForm({ concept }: { concept: Concept }) {
       primaryColor: primaryColor || null, isActive,
       heroTagline: heroTagline || null, announcementBanner: announcementBanner || null,
       storefrontVisible,
+      reservationsEnabled,
       latitude: latitude ? parseFloat(latitude) : null,
       longitude: longitude ? parseFloat(longitude) : null,
       deliveryRadiusKm: parseFloat(deliveryRadiusKm) || 0,
@@ -336,6 +340,13 @@ function BrandForm({ concept }: { concept: Concept }) {
                   Show on the customer ordering page
                 </label>
                 <p className="text-[10px] text-white/35 mt-1">Uncheck to hide from /browse without disabling the brand entirely.</p>
+              </Field>
+              <Field label="Reservations">
+                <label className="flex items-center gap-2 mt-2 text-xs text-white/65 cursor-pointer">
+                  <input type="checkbox" checked={reservationsEnabled} onChange={(e) => setReservationsEnabled(e.target.checked)} className="accent-kds-green" />
+                  Accept table reservations for this brand
+                </label>
+                <p className="text-[10px] text-white/35 mt-1">Uncheck for takeaway-only / ghost-kitchen brands. Hides the "Book a table" CTA on the storefront and brand microsite. Staff can still take phone bookings via the admin.</p>
               </Field>
             </div>
           </Section>
