@@ -112,15 +112,54 @@ export async function refreshStaffToken(refreshToken: string) {
 
 // ─── Customer auth (password-based) ──────────────────────────────────────────
 
-export async function customerRegister(name: string, email: string, password: string) {
+// Generate a fresh 8-char referral code. Hex from md5 of random + timestamp,
+// uppercase, with `1` and `0` swapped out for `Y`/`Z` to avoid the
+// 0/O / 1/I confusion when guests dictate the code over the phone.
+async function generateReferralCode(): Promise<string> {
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const raw = (await import('crypto')).default.randomBytes(8).toString('hex').slice(0, 8).toUpperCase()
+    const friendly = raw.replace(/0/g, 'Y').replace(/1/g, 'Z')
+    const taken = await prisma.customer.findUnique({ where: { referralCode: friendly } })
+    if (!taken) return friendly
+  }
+  // Astronomically unlikely after 5 retries; fall back to a longer code.
+  return (await import('crypto')).default.randomBytes(12).toString('hex').slice(0, 12).toUpperCase()
+}
+
+export async function customerRegister(
+  name: string,
+  email: string,
+  password: string,
+  referredByCode?: string,
+) {
   const existing = await prisma.customer.findFirst({ where: { email: email.toLowerCase() } })
+
+  // Resolve referral code (case-insensitive) — silently ignored if invalid
+  // so a typo doesn't block signup.
+  let referredById: string | null = null
+  if (referredByCode && referredByCode.trim().length > 0) {
+    const referrer = await prisma.customer.findFirst({
+      where: { referralCode: referredByCode.trim().toUpperCase() },
+      select: { id: true },
+    })
+    if (referrer) referredById = referrer.id
+  }
 
   // Orphaned magic-link account (no password set) — claim it by setting a password
   if (existing && !existing.password) {
     const hashed = await bcrypt.hash(password, 12)
     const customer = await prisma.customer.update({
       where: { id: existing.id },
-      data: { name: name.trim(), password: hashed },
+      data: {
+        name: name.trim(),
+        password: hashed,
+        // Claim the referral too if the orphaned account hasn't been claimed yet.
+        ...(referredById && !existing.referredById && {
+          referredById,
+          referredAt: new Date(),
+        }),
+        ...(!existing.referralCode && { referralCode: await generateReferralCode() }),
+      },
     })
     const token = jwt.sign(
       { sub: customer.id, type: 'customer' } satisfies CustomerTokenPayload,
@@ -134,7 +173,13 @@ export async function customerRegister(name: string, email: string, password: st
 
   const hashed = await bcrypt.hash(password, 12)
   const customer = await prisma.customer.create({
-    data: { name: name.trim(), email: email.toLowerCase(), password: hashed },
+    data: {
+      name: name.trim(),
+      email: email.toLowerCase(),
+      password: hashed,
+      referralCode: await generateReferralCode(),
+      ...(referredById && { referredById, referredAt: new Date() }),
+    },
   })
 
   const token = jwt.sign(

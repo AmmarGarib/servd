@@ -1,6 +1,6 @@
 'use client'
 import { useState, useEffect } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { useCustomerAuth } from '../../store/customerAuth'
 
@@ -27,6 +27,7 @@ const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
 export default function SignupPage() {
   const router  = useRouter()
+  const params  = useSearchParams()
   const setAuth = useCustomerAuth((s) => s.setAuth)
 
   const [name,     setName]     = useState('')
@@ -36,6 +37,9 @@ export default function SignupPage() {
   const [loading,  setLoading]  = useState(false)
   const [error,    setError]    = useState('')
   const [emailTaken, setEmailTaken] = useState(false)
+  // Referral code from ?ref=ABC12345 query param. Editable by user (in case
+  // they have someone else's code and arrived via a non-referral link).
+  const [referralCode, setReferralCode] = useState((params?.get('ref') ?? '').toUpperCase())
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -48,7 +52,12 @@ export default function SignupPage() {
       const res  = await fetch(`${API_URL}/api/v1/auth/customer/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: name.trim(), email: email.trim(), password }),
+        body: JSON.stringify({
+          name: name.trim(),
+          email: email.trim(),
+          password,
+          ...(referralCode.trim() && { referralCode: referralCode.trim().toUpperCase() }),
+        }),
       })
       const data = await res.json() as { token?: string; customer?: { id: string }; error?: { message?: string; code?: string } }
       if (!res.ok) {

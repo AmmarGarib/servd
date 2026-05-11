@@ -116,6 +116,78 @@ export async function inventoryRoutes(fastify: FastifyInstance) {
     },
   )
 
+  // GET /inventory/waste-analytics — aggregated waste for the dashboard.
+  // Returns:
+  //   - totalCostCents over the period
+  //   - byReason: cents per cause code (spoilage / over_prep / expired / damaged / other)
+  //   - topItems: top 10 most wasteful items (by cost) with qty + cost
+  //   - trend: daily cents for the chart
+  //   - reasonShare: cause share of total cost (% per reason)
+  fastify.get<{ Querystring: { from?: string; to?: string } }>(
+    '/waste-analytics',
+    { preHandler: requireAuth(...MANAGERS) },
+    async (req) => {
+      const to   = req.query.to   ? new Date(req.query.to)   : new Date()
+      const from = req.query.from ? new Date(req.query.from) : new Date(to.getTime() - 30 * 86_400_000)
+
+      const logs = await prisma.wasteLog.findMany({
+        where: { recordedAt: { gte: from, lte: to } },
+        select: {
+          quantity: true, reason: true, estimatedCostCents: true, recordedAt: true,
+          inventoryItem: { select: { id: true, name: true, unit: true, unitCostCents: true } },
+        },
+      })
+
+      const costFor = (l: { estimatedCostCents: number | null; quantity: number; inventoryItem: { unitCostCents: number | null } }) =>
+        l.estimatedCostCents ?? Math.round(l.quantity * (l.inventoryItem.unitCostCents ?? 0))
+
+      const totalCostCents = logs.reduce((s, l) => s + costFor(l), 0)
+      const totalQty       = logs.reduce((s, l) => s + l.quantity, 0)
+
+      // By reason
+      const byReason: Record<string, { count: number; quantity: number; costCents: number }> = {}
+      for (const l of logs) {
+        const r = byReason[l.reason] ?? { count: 0, quantity: 0, costCents: 0 }
+        r.count += 1
+        r.quantity += l.quantity
+        r.costCents += costFor(l)
+        byReason[l.reason] = r
+      }
+      const reasonShare = Object.fromEntries(
+        Object.entries(byReason).map(([k, v]) => [k, totalCostCents > 0 ? Number(((v.costCents / totalCostCents) * 100).toFixed(1)) : 0]),
+      )
+
+      // Top wasteful items
+      const itemMap = new Map<string, { id: string; name: string; unit: string; quantity: number; costCents: number; count: number }>()
+      for (const l of logs) {
+        const key = l.inventoryItem.id
+        const prev = itemMap.get(key) ?? { id: key, name: l.inventoryItem.name, unit: l.inventoryItem.unit, quantity: 0, costCents: 0, count: 0 }
+        prev.quantity += l.quantity
+        prev.costCents += costFor(l)
+        prev.count += 1
+        itemMap.set(key, prev)
+      }
+      const topItems = [...itemMap.values()].sort((a, b) => b.costCents - a.costCents).slice(0, 10)
+
+      // Daily trend
+      const trendMap: Record<string, number> = {}
+      for (const l of logs) {
+        const day = l.recordedAt.toISOString().slice(0, 10)
+        trendMap[day] = (trendMap[day] ?? 0) + costFor(l)
+      }
+      const trend = Object.entries(trendMap).sort(([a], [b]) => a.localeCompare(b)).map(([day, cents]) => ({ day, costCents: cents }))
+
+      return {
+        period: { from: from.toISOString().slice(0, 10), to: to.toISOString().slice(0, 10) },
+        totals: { logs: logs.length, totalCostCents, totalQty: Number(totalQty.toFixed(2)) },
+        byReason,
+        reasonShare,
+        topItems,
+        trend,
+      }
+    },
+  )
+
   // POST /inventory/:id/waste — record spoilage / wastage
   fastify.post<{ Params: { id: string } }>(
     '/:id/waste',

@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
-import { staffLogin, staffPinLogin, refreshStaffToken, customerRegister, customerLogin, verifyMagicLink, hashPassword, hashPin } from './service.js'
+import { staffLogin, staffPinLogin, refreshStaffToken, customerRegister, customerLogin, verifyMagicLink, requestMagicLink, hashPassword, hashPin } from './service.js'
 import { requireAuth, ADMIN_ONLY, MANAGERS, ALL_STAFF } from './middleware.js'
 import { prisma } from '../../lib/prisma.js'
 import { AppError } from '../../lib/errors.js'
@@ -278,10 +278,28 @@ export async function authRoutes(fastify: FastifyInstance) {
       name:     z.string().min(1).max(80),
       email:    z.string().email(),
       password: z.string().min(8, 'Password must be at least 8 characters'),
+      // Optional: 8-char referral code from another customer. If valid, links
+      // the two and primes the dual-bonus payout on the new customer's
+      // first order.
+      referralCode: z.string().min(4).max(16).optional(),
+      // Optional device fingerprint from JS. Captured if available — used by
+      // the naughty-list gate.
+      deviceFingerprint: z.string().max(120).optional(),
     }).parse(req.body)
 
+    // Naughty-list gate. Reject signup if the email or device matches an
+    // active ban. Throws AppError(403, 'BANNED') which the global error
+    // handler turns into a clean response.
+    const { assertNotBanned } = await import('../../lib/banCheck.js')
+    await assertNotBanned({
+      email: body.email,
+      ip: req.ip ?? null,
+      deviceFingerprint: body.deviceFingerprint ?? null,
+      intent: 'signup',
+    })
+
     try {
-      const result = await customerRegister(body.name, body.email, body.password)
+      const result = await customerRegister(body.name, body.email, body.password, body.referralCode)
       await clearFailures(CUSTOMER_PASSWORD_LIMIT, ip)
       return reply.status(201).send(result)
     } catch (err) {
@@ -363,6 +381,28 @@ export async function authRoutes(fastify: FastifyInstance) {
       return reply.status(204).send()
     },
   )
+
+  // POST /auth/customer/request — send a magic-link / OTP to the email or
+  // phone. Used by the mobile app login flow + the storefront magic-link
+  // sign-in. Always returns 200 to prevent enumeration.
+  fastify.post('/customer/request', {
+    config: { rateLimit: { max: 5, timeWindow: '5 minutes' } },
+  }, async (req, reply) => {
+    const body = z.object({
+      email: z.string().email().optional(),
+      phone: z.string().min(7).max(20).optional(),
+      name:  z.string().min(1).max(80).optional(),
+    }).refine((v) => !!(v.email || v.phone), { message: 'Provide email or phone' })
+      .parse(req.body)
+
+    try {
+      await requestMagicLink((body.email ?? body.phone)!, body.name)
+    } catch (err) {
+      // Log but always return 200 — don't leak whether the address exists.
+      req.log.warn({ err: (err as Error).message }, 'requestMagicLink failed')
+    }
+    return reply.status(200).send({ ok: true })
+  })
 
   // POST /auth/customer/verify — verify magic link token
   // Rate-limited per IP so a token-guessing bot can't spam the endpoint.

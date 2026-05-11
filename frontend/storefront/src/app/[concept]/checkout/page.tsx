@@ -50,6 +50,13 @@ export default function CheckoutPage() {
   const [useWallet,  setUseWallet]  = useState(false)
   const [loyaltyPts, setLoyaltyPts] = useState(0)
 
+  // Fulfilment type. Curbside is a customer convenience — they tap "I'm
+  // here" on arrival via /[concept]/order/[id], staff sees the queue at
+  // /orders/curbside in admin and runs the bag out.
+  const [fulfilmentType,   setFulfilmentType]   = useState<'pickup' | 'curbside'>('pickup')
+  const [curbsideVehicle,  setCurbsideVehicle]  = useState('')
+  const [curbsidePlate,    setCurbsidePlate]    = useState('')
+
   // Tip the rider — preset chips + custom amount. Cents.
   const [tipMode,   setTipMode]   = useState<'none' | '5' | '10' | '15' | '20' | 'custom'>('10')
   const [customTip, setCustomTip] = useState('')
@@ -115,8 +122,12 @@ export default function CheckoutPage() {
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
           body: JSON.stringify({
             conceptSlug: slug,
-            type: 'pickup',
+            type: fulfilmentType,
             deliveryAddress: notes.trim() || undefined,
+            ...(fulfilmentType === 'curbside' && {
+              curbsideVehicle: curbsideVehicle.trim(),
+              ...(curbsidePlate.trim() && { curbsidePlate: curbsidePlate.trim() }),
+            }),
             promoCode: promoCode.trim() || undefined,
             useWallet,
             loyaltyPointsToRedeem: loyaltyPts,
@@ -223,6 +234,44 @@ export default function CheckoutPage() {
               </div>
             ))}
           </div>
+          {/* How are you picking up? */}
+          <div className="rounded-xl p-3.5 mb-3" style={{ background: 'rgba(99,102,241,0.06)', border: '1px solid rgba(99,102,241,0.2)' }}>
+            <p className="text-xs font-bold tracking-wider uppercase mb-2" style={{ color: '#4338ca' }}>How are you getting it?</p>
+            <div className="flex gap-2 mb-2">
+              {(['pickup', 'curbside'] as const).map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => setFulfilmentType(m)}
+                  className="flex-1 rounded-lg px-3 py-2 text-xs font-bold transition-all"
+                  style={fulfilmentType === m
+                    ? { background: '#6366f1', color: '#fff', border: '1px solid #6366f1' }
+                    : { background: '#fff', color: 'rgba(24,22,15,0.65)', border: '1px solid rgba(0,0,0,0.08)' }}>
+                  {m === 'pickup' ? '🚶 Pickup' : '🚗 Curbside'}
+                </button>
+              ))}
+            </div>
+            {fulfilmentType === 'curbside' && (
+              <div className="space-y-2 mt-2">
+                <p className="text-[11px]" style={{ color: 'rgba(24,22,15,0.55)' }}>
+                  Tell us about your car so we can find you. Tap &ldquo;I&rsquo;m here&rdquo; on the order page when you arrive.
+                </p>
+                <input
+                  value={curbsideVehicle} onChange={(e) => setCurbsideVehicle(e.target.value)}
+                  placeholder="e.g. Blue Honda Civic"
+                  maxLength={80}
+                  className="w-full rounded-lg px-3 py-2 text-sm"
+                  style={{ background: '#fff', border: '1px solid rgba(0,0,0,0.08)' }} />
+                <input
+                  value={curbsidePlate} onChange={(e) => setCurbsidePlate(e.target.value)}
+                  placeholder="License plate (optional)"
+                  maxLength={20}
+                  className="w-full rounded-lg px-3 py-2 text-sm"
+                  style={{ background: '#fff', border: '1px solid rgba(0,0,0,0.08)' }} />
+              </div>
+            )}
+          </div>
+
           {/* Tip the rider */}
           <div className="rounded-xl p-3.5 mb-3" style={{ background: 'rgba(34,197,94,0.08)', border: '1px solid rgba(34,197,94,0.2)' }}>
             <p className="text-xs font-bold tracking-wider uppercase text-[color:var(--servd-green-dark)] mb-2">Tip the rider</p>

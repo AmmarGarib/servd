@@ -5,6 +5,7 @@ import { requireAuth, ALL_STAFF, MANAGERS } from '../auth/middleware.js'
 import { ingestOrder, listOrders, getOrder, updateOrderStatus, updateItemStatus } from './service.js'
 import { assertConceptAccess, filterConceptIdsForStaff } from '../../lib/conceptAccess.js'
 import { audit } from '../../lib/audit.js'
+import { AppError } from '../../lib/errors.js'
 import type { OrderDTO } from '@servd/types'
 
 const createOrderSchema = z.object({
@@ -118,6 +119,71 @@ export async function orderRoutes(fastify: FastifyInstance) {
     return reply.status(result.created ? 201 : 200).send(result.order)
   })
 
+  // GET /orders/curbside — active curbside queue. Cars-here-first, then
+  // cars-still-coming. Powers the admin /orders/curbside dashboard.
+  fastify.get<{ Querystring: { conceptId?: string } }>(
+    '/curbside',
+    { preHandler: requireAuth(...ALL_STAFF) },
+    async (req) => {
+      const { conceptId } = req.query
+      if (conceptId) await assertConceptAccess(req.staffUser!, conceptId)
+
+      const orders = await prisma.order.findMany({
+        where: {
+          ...(conceptId && { conceptId }),
+          // Tenant scope: through Concept relation
+          concept: { tenantId: req.staffUser!.tenantId, deletedAt: null },
+          curbsideVehicle: { not: null },
+          // Hide ones we already finished
+          curbsideRunnerOutAt: null,
+          status: { notIn: ['cancelled', 'refunded'] },
+          // Created in the last 12 hours (don't load ancient stale rows)
+          placedAt: { gte: new Date(Date.now() - 12 * 3_600_000) },
+        },
+        orderBy: [
+          // arrived first, sorted by arrival time
+          { curbsideArrivedAt: 'asc' },
+          // then en-route, sorted by placement
+          { placedAt: 'asc' },
+        ],
+        select: {
+          id: true, status: true, totalCents: true, placedAt: true,
+          customerName: true,
+          curbsideVehicle: true, curbsidePlate: true, curbsideSpot: true,
+          curbsideArrivedAt: true,
+          concept: { select: { name: true, slug: true } },
+        },
+      })
+
+      return {
+        arrived:  orders.filter((o) => o.curbsideArrivedAt != null),
+        enRoute:  orders.filter((o) => o.curbsideArrivedAt == null),
+      }
+    },
+  )
+
+  // POST /orders/:id/curbside/running-out — staff hits this when a runner
+  // grabs the bag and heads to the car. Stamps curbsideRunnerOutAt so the
+  // order drops off the curbside queue.
+  fastify.post<{ Params: { id: string } }>(
+    '/:id/curbside/running-out',
+    { preHandler: requireAuth(...ALL_STAFF) },
+    async (req) => {
+      const order = await prisma.order.findUnique({
+        where: { id: req.params.id },
+        select: { id: true, conceptId: true, curbsideVehicle: true },
+      })
+      if (!order) throw new AppError('NOT_FOUND', 'Order not found', 404)
+      if (!order.curbsideVehicle) throw new AppError('NOT_CURBSIDE', 'Order is not a curbside order', 422)
+      await assertConceptAccess(req.staffUser!, order.conceptId)
+
+      return prisma.order.update({
+        where: { id: order.id },
+        data: { curbsideRunnerOutAt: new Date() },
+      })
+    },
+  )
+
   // PATCH /orders/:id/status
   fastify.patch<{ Params: { id: string } }>(
     '/:id/status',
@@ -131,6 +197,94 @@ export async function orderRoutes(fastify: FastifyInstance) {
       })
       if (!concept) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Order not found in your active company' } })
       return updateOrderStatus(req.params.id, status as never)
+    },
+  )
+
+  // ─── Naughty list triggers ──────────────────────────────────────────────
+  // POST /orders/:id/cod-unpaid — staff/cashier marks a cash-on-delivery
+  // order as never paid (driver came back with food OR cash never collected).
+  // Records a strike + appends a note.
+  fastify.post<{ Params: { id: string }; Body: { reason?: string } }>(
+    '/:id/cod-unpaid',
+    { preHandler: requireAuth(...ALL_STAFF) },
+    async (req, reply) => {
+      const body = z.object({ reason: z.string().max(500).optional() }).parse(req.body ?? {})
+      const order = await prisma.order.findUnique({
+        where: { id: req.params.id },
+        select: { id: true, conceptId: true, customerId: true, totalCents: true },
+      })
+      if (!order) throw new AppError('NOT_FOUND', 'Order not found', 404)
+      await assertConceptAccess(req.staffUser!, order.conceptId)
+      if (!order.customerId) {
+        return reply.status(422).send({ error: { code: 'NO_CUSTOMER', message: 'Cash-unpaid strike requires a linked customer.' } })
+      }
+
+      const { recordStrike } = await import('../../lib/strikes.js')
+      // High-value orders sting more — sev=2 means 2 incidents → ban.
+      const severity = order.totalCents >= 500_000 /* PKR 5,000+ */ ? 2 : 1
+      await recordStrike({
+        customerId: order.customerId,
+        kind: 'cod_unpaid',
+        sourceType: 'order',
+        sourceId: order.id,
+        severity,
+        reason: body.reason ?? 'Cash on delivery — not paid',
+        recordedById: req.staffUser?.id,
+      })
+
+      await audit({
+        action: 'order.cod_unpaid', entity: 'Order', entityId: order.id,
+        userId: req.staffUser?.id ?? null, userEmail: req.staffUser?.email ?? null,
+        metadata: { reason: body.reason, severity, totalCents: order.totalCents },
+      })
+      return { ok: true, severity }
+    },
+  )
+
+  // POST /orders/:id/refused-at-door — driver/staff marks a delivery as
+  // refused on arrival. Order goes to 'cancelled' (food was prepared but
+  // refused), and the customer gets a strike. Optional `reason` captures
+  // what the driver was told ("looked rude", "different person at door", etc.)
+  fastify.post<{ Params: { id: string }; Body: { reason?: string } }>(
+    '/:id/refused-at-door',
+    { preHandler: requireAuth(...ALL_STAFF) },
+    async (req, reply) => {
+      const body = z.object({ reason: z.string().max(500).optional() }).parse(req.body ?? {})
+      const order = await prisma.order.findUnique({
+        where: { id: req.params.id },
+        select: { id: true, conceptId: true, customerId: true, totalCents: true, status: true },
+      })
+      if (!order) throw new AppError('NOT_FOUND', 'Order not found', 404)
+      await assertConceptAccess(req.staffUser!, order.conceptId)
+      if (!order.customerId) {
+        return reply.status(422).send({ error: { code: 'NO_CUSTOMER', message: 'Refused-at-door strike requires a linked customer.' } })
+      }
+
+      // Flip order to cancelled with reason — the food's already cooked, so
+      // accounting still records the COGS hit but no revenue.
+      await prisma.order.update({
+        where: { id: order.id },
+        data: { status: 'cancelled', completedAt: new Date() },
+      })
+
+      const { recordStrike } = await import('../../lib/strikes.js')
+      const severity = order.totalCents >= 500_000 ? 2 : 1
+      await recordStrike({
+        customerId: order.customerId,
+        kind: 'cod_refused',
+        sourceType: 'order',
+        sourceId: order.id,
+        severity,
+        reason: body.reason ?? 'Customer refused order at the door.',
+        recordedById: req.staffUser?.id,
+      })
+
+      await audit({
+        action: 'order.refused_at_door', entity: 'Order', entityId: order.id,
+        userId: req.staffUser?.id ?? null, userEmail: req.staffUser?.email ?? null,
+        metadata: { reason: body.reason, severity, totalCents: order.totalCents },
+      })
+      return { ok: true, severity }
     },
   )
 
