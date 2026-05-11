@@ -137,7 +137,7 @@ export function buildReceipt(order: ReceiptOrder): Uint8Array {
  * so the caller can spool them or hand off to a different printer later.
  */
 export async function printReceipt(orderId: string): Promise<Uint8Array> {
-  const order = await api.get<ReceiptOrder>(`/orders/${orderId}/receipt`)
+  const order = await api.get<ReceiptOrder>(`/pos/orders/${orderId}/receipt-data`)
   const bytes = buildReceipt(order)
   if (transport) {
     try {

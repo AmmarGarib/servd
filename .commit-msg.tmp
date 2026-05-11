@@ -1,0 +1,45 @@
+v4: split-tender + tips + mid-shift cash + receipt reprint + push
+
+Backend
+-------
+- New CashMovement model + 4-type enum (drop / add / payout / payin)
+  with shiftId + recordedById + reason + optional manager-override PIN.
+- New ExpoPushToken model — unique on (userId, token), tracked by
+  device + locationId so admin can target "all tablets at Gulberg".
+- Migration 20260511040000_v4_cash_movements_push — idempotent
+  (IF NOT EXISTS + DO NOTHING on enum dup).
+- /pos/shifts/:id/cash-movements (POST + GET).
+- /pos/orders/:id/receipt-data (JSON, mirrors the existing HTML
+  /pos/receipt/:orderId so the tablet thermal printer can fetch
+  structured data instead of parsing HTML).
+- getZReport extended with per-tender breakdown, cash-movement
+  aggregates, tipsCents from Order.tipCents, and tablet-friendly
+  field names (grossCents / netCents / byMethod / cashMovements /
+  expectedCashCents / varianceCents). Original field names kept
+  for back-compat with existing admin pages.
+- New /notifications module with /register (POST) + /register (DELETE)
+  for Expo push tokens. Upsert-by-(userId, token) so re-registers
+  don't bloat the table.
+
+Tablet
+------
+- POS tender screen rewritten:
+  - Tip selector (none / 10% / 15% / 20%) computed off subtotal,
+    passed to /pos/orders as tipCents.
+  - Split-tender: add multiple tender rows (any mix of cash / card /
+    jazzcash / easypaisa); each row tracks amountCents + tenderedCents
+    (cash overage = change owed). "EXACT" button on the cash keypad
+    fills the remaining balance. Fire is gated on fullyPaid.
+  - Backend payment call sends the full tenders array — multi-row
+    Payment creation already supported by /pos/payments.
+- Receipt fetch URL fixed (/pos/orders/:id/receipt-data, not the
+  non-existent /orders/:id/receipt).
+- Shift home gets a "Cash movement" button → opens new
+  CashMovementModal (drop / add / payout / payin with keypad +
+  reason). Movements list rendered inline with +/- coloring.
+- Active-orders gets a 🧾 Reprint button per order (calls
+  printReceipt(orderId) — same code path as tender-time print).
+- Z-report types in shift home aligned with the new backend response
+  shape (cashMovements block + tablet-friendly aliases).
+
+Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>

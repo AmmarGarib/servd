@@ -1,6 +1,7 @@
 // Shift home — open a new shift with opening float, OR shows current shift
 // with a "Close shift" button. Z-report visible alongside.
 
+import { useState } from 'react'
 import { View, Text, ScrollView } from 'react-native'
 import { useRouter } from 'expo-router'
 import { useQuery } from '@tanstack/react-query'
@@ -11,6 +12,16 @@ import { pkr, shortTime } from '../../../src/lib/format'
 import { Panel, Pill } from '../../../src/components/Panel'
 import { Button } from '../../../src/components/Button'
 import { useShift } from '../../../src/store/shift'
+import { CashMovementModal } from '../../../src/components/CashMovementModal'
+
+interface CashMovementRow {
+  id: string
+  type: 'drop' | 'add' | 'payout' | 'payin'
+  amountCents: number
+  reason: string
+  recordedAt: string
+  recordedBy?: { name: string }
+}
 
 interface ZReport {
   shiftId: string
@@ -28,6 +39,13 @@ interface ZReport {
   voidsCount: number
   refundsCents: number
   byMethod: Array<{ method: string; count: number; amountCents: number }>
+  cashMovements: {
+    drops: number
+    adds: number
+    payouts: number
+    payins: number
+    list: Array<{ id: string; type: string; amountCents: number; reason: string; recordedAt: string }>
+  }
   expectedCashCents: number
   varianceCents?: number | null
 }
@@ -35,12 +53,19 @@ interface ZReport {
 export default function ShiftHomeScreen() {
   const router = useRouter()
   const shift  = useShift()
+  const [cashMovementOpen, setCashMovementOpen] = useState(false)
 
   const z = useQuery({
     queryKey: ['shift', 'zreport', shift.shiftId],
     queryFn:  () => api.get<ZReport>(`/pos/shifts/${shift.shiftId}/zreport`),
     enabled:  !!shift.shiftId,
     refetchInterval: 30_000,
+  })
+
+  const movements = useQuery({
+    queryKey: ['cash-movements', shift.shiftId],
+    queryFn:  () => api.get<{ movements: CashMovementRow[] }>(`/pos/shifts/${shift.shiftId}/cash-movements`),
+    enabled:  !!shift.shiftId,
   })
 
   return (
@@ -79,11 +104,46 @@ export default function ShiftHomeScreen() {
                   <Row label="Refunds"     value={pkr(z.data.refundsCents)} />
                 </>
               )}
-              <View style={{ marginTop: 16 }}>
+              <View style={{ marginTop: 16, gap: 8 }}>
+                <Button label="Cash movement (drop / add / payout)" intent="ghost" full
+                  onPress={() => setCashMovementOpen(true)} />
                 <Button label="Close shift" intent="danger" full size="lg"
                   onPress={() => router.push('/(staff)/shift/close')} />
               </View>
             </Panel>
+
+            {/* Cash movements log */}
+            {(movements.data?.movements?.length ?? 0) > 0 && (
+              <Panel title="Cash movements">
+                {movements.data!.movements.map((m) => (
+                  <View key={m.id} style={{
+                    flexDirection: 'row', alignItems: 'center', gap: 10,
+                    paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: theme.border,
+                  }}>
+                    <Pill
+                      label={m.type.toUpperCase()}
+                      tone={
+                        m.type === 'drop'   ? 'info'    :
+                        m.type === 'add'    ? 'success' :
+                        m.type === 'payout' ? 'danger'  : 'warn'
+                      }
+                    />
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ color: theme.text, fontWeight: '700', fontSize: 13 }}>{m.reason}</Text>
+                      <Text style={{ color: theme.textDim, fontSize: 11 }}>
+                        {shortTime(m.recordedAt)}{m.recordedBy && ` · ${m.recordedBy.name}`}
+                      </Text>
+                    </View>
+                    <Text style={{
+                      color: m.type === 'add' || m.type === 'payin' ? theme.accent : theme.warn,
+                      fontWeight: '900', fontSize: 14,
+                    }}>
+                      {m.type === 'add' || m.type === 'payin' ? '+' : '−'}{pkr(m.amountCents)}
+                    </Text>
+                  </View>
+                ))}
+              </Panel>
+            )}
           </View>
 
           <View style={{ flex: 1, gap: 12 }}>
@@ -111,6 +171,12 @@ export default function ShiftHomeScreen() {
           </View>
         </View>
       )}
+
+      <CashMovementModal
+        visible={cashMovementOpen}
+        shiftId={shift.shiftId}
+        onClose={() => setCashMovementOpen(false)}
+      />
     </ScrollView>
   )
 }

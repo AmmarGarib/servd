@@ -205,6 +205,111 @@ export async function posRoutes(fastify: FastifyInstance) {
     },
   )
 
+  // ─── Mid-shift cash movements ──────────────────────────────────────────
+  // POST /pos/shifts/:id/cash-movements
+  // GET  /pos/shifts/:id/cash-movements
+  //
+  // Cashier can log a drop (cash to safe), add (small bills in), payout
+  // (paid a vendor from drawer), or payin (refund from vendor). Each
+  // affects the expected drawer total at close.
+  fastify.post<{ Params: { id: string } }>(
+    '/shifts/:id/cash-movements',
+    { preHandler: requireAuth(...CASHIERS) },
+    async (req, reply) => {
+      const body = z.object({
+        type:        z.enum(['drop', 'add', 'payout', 'payin']),
+        amountCents: z.number().int().min(1),
+        reason:      z.string().min(1).max(200),
+        managerOverridePin: z.string().min(4).max(8).optional(),
+      }).parse(req.body)
+
+      const shift = await prisma.shift.findFirst({
+        where: { id: req.params.id, user: { tenantId: req.staffUser!.tenantId } },
+      })
+      if (!shift) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Shift not found in your active company' } })
+      if (shift.status !== 'open') {
+        return reply.status(400).send({ error: { code: 'SHIFT_CLOSED', message: 'Cannot record cash movements on a closed shift' } })
+      }
+
+      const movement = await prisma.cashMovement.create({
+        data: {
+          shiftId: req.params.id,
+          type: body.type,
+          amountCents: body.amountCents,
+          reason: body.reason,
+          recordedById: req.staffUser!.id,
+          managerOverridePin: body.managerOverridePin,
+        },
+      })
+      return reply.status(201).send(movement)
+    },
+  )
+
+  fastify.get<{ Params: { id: string } }>(
+    '/shifts/:id/cash-movements',
+    { preHandler: requireAuth(...CASHIERS) },
+    async (req, reply) => {
+      const shift = await prisma.shift.findFirst({
+        where: { id: req.params.id, user: { tenantId: req.staffUser!.tenantId } },
+      })
+      if (!shift) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Shift not found in your active company' } })
+      const movements = await prisma.cashMovement.findMany({
+        where: { shiftId: req.params.id },
+        orderBy: { recordedAt: 'desc' },
+        include: { recordedBy: { select: { name: true } } },
+      })
+      return { movements }
+    },
+  )
+
+  // GET /pos/orders/:orderId/receipt-data — JSON receipt for tablet thermal
+  // printing. Mirror of /pos/receipt/:orderId (HTML version), shaped to match
+  // the ReceiptOrder interface in tablet/src/lib/printer.ts.
+  fastify.get<{ Params: { orderId: string } }>(
+    '/orders/:orderId/receipt-data',
+    { preHandler: requireAuth(...CASHIERS) },
+    async (req, reply) => {
+      const order = await prisma.order.findFirst({
+        where: {
+          id: req.params.orderId,
+          concept: { tenantId: req.staffUser!.tenantId, deletedAt: null },
+        },
+        include: {
+          items: { include: { modifiers: true } },
+          concept: { select: { name: true } },
+          customer: { select: { name: true } },
+          table: { select: { label: true } },
+          payments: { where: { status: 'paid' } },
+        },
+      })
+      if (!order) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Order not found in your active company' } })
+
+      const paidCents = order.payments.reduce((s, p) => s + p.amountCents, 0)
+      const primaryTender = order.payments[0]?.method ?? null
+      const subtotalCents = order.items.reduce((s, it) => s + it.unitPriceCents * it.quantity, 0)
+
+      return {
+        number:        order.id.slice(-6).toUpperCase(),
+        conceptName:   order.concept.name,
+        customerName:  order.customer?.name ?? order.customerName ?? null,
+        table:         order.table?.label ?? null,
+        source:        order.source,
+        items:         order.items.map((it) => ({
+          name:      it.name,
+          qty:       it.quantity,
+          price:     it.unitPriceCents,
+          modifiers: it.modifiers.map((m) => m.name).filter(Boolean),
+        })),
+        subtotalCents,
+        taxCents:      order.taxCents,
+        totalCents:    order.totalCents,
+        paidCents,
+        tenderType:    primaryTender,
+        placedAt:      order.placedAt.toISOString(),
+      }
+    },
+  )
+
   // POST /pos/orders/:orderId/refund — issue a refund against a paid order.
   fastify.post<{ Params: { orderId: string } }>(
     '/orders/:orderId/refund',

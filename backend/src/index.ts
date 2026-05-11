@@ -94,6 +94,7 @@ import { setupRoutes } from './modules/setup/routes.js'
 import { crosschecksRoutes } from './modules/crosschecks/routes.js'
 import { trustopsRoutes } from './modules/trustops/routes.js'
 import { opexRoutes } from './modules/opex/routes.js'
+import { notificationRoutes } from './modules/notifications/routes.js'
 
 const PORT = parseInt(process.env['PORT'] ?? '3001', 10)
 const HOST = '0.0.0.0'
@@ -284,7 +285,8 @@ async function build() {
       await api.register(crosschecksRoutes,       { prefix: '/crosschecks' })
       await api.register(trustopsRoutes,          { prefix: '/trustops' })
       await api.register(opexRoutes,              { prefix: '/opex' })
-      await api.register(supplierChatRoutes, { prefix: '/procurement' })
+      await api.register(supplierChatRoutes,      { prefix: '/procurement' })
+      await api.register(notificationRoutes,      { prefix: '/notifications' })
 
       // Meta OAuth: GET /api/v1/integrations/social/connect → redirect
       //             GET /api/v1/integrations/social/callback → exchange code + store tokens

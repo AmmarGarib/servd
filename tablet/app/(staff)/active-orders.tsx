@@ -14,6 +14,7 @@ import { pkr, shortTime } from '../../src/lib/format'
 import { Panel, Pill } from '../../src/components/Panel'
 import { Button } from '../../src/components/Button'
 import { useManagerOverridePrompt } from '../../src/components/ManagerOverridePin'
+import { printReceipt, isPrinterReady } from '../../src/lib/printer'
 
 interface OrderLine {
   id: string
@@ -179,6 +180,21 @@ function OrderActions({
   const [compReason, setCompReason] = useState('')
   const [refundAmt, setRefundAmt]   = useState('')
   const [refundReason, setRefundReason] = useState('')
+  const [reprintBusy, setReprintBusy] = useState(false)
+
+  async function reprint() {
+    setReprintBusy(true)
+    try {
+      await printReceipt(order.id)
+      if (!isPrinterReady()) {
+        Alert.alert('No printer paired', 'Receipt was rebuilt but no Bluetooth printer is set up. Pair one in Settings.')
+      }
+    } catch (err) {
+      Alert.alert('Reprint failed', (err as Error).message)
+    } finally {
+      setReprintBusy(false)
+    }
+  }
 
   function askVoid(line: OrderLine) {
     Alert.prompt?.('Reason for void', `Voiding ${line.name}`, (reason) => {
@@ -196,12 +212,23 @@ function OrderActions({
 
   return (
     <ScrollView>
-      <Text style={{ color: theme.text, fontWeight: '900', fontSize: 22 }}>
-        Order #{order.number}
-      </Text>
-      <Text style={{ color: theme.textDim, fontSize: 13, marginBottom: 16 }}>
-        {order.conceptName} · {pkr(order.totalCents)} · paid {pkr(order.paidCents)}
-      </Text>
+      <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+        <View style={{ flex: 1 }}>
+          <Text style={{ color: theme.text, fontWeight: '900', fontSize: 22 }}>
+            Order #{order.number}
+          </Text>
+          <Text style={{ color: theme.textDim, fontSize: 13, marginBottom: 16 }}>
+            {order.conceptName} · {pkr(order.totalCents)} · paid {pkr(order.paidCents)}
+          </Text>
+        </View>
+        <Button
+          label={reprintBusy ? 'Printing…' : '🧾 Reprint'}
+          intent="ghost"
+          size="md"
+          busy={reprintBusy}
+          onPress={reprint}
+        />
+      </View>
 
       <Text style={{ color: theme.textDim, fontWeight: '700', fontSize: 12, letterSpacing: 1, marginBottom: 6 }}>
         LINES

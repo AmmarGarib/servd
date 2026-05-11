@@ -699,6 +699,8 @@ model User {
   createdEvents         ContentEvent[]         @relation("EventCreatedBy")
   supplierConversations SupplierConversation[]
   customerConversations CustomerConversation[] @relation("CustomerConversationStaff")
+  cashMovementsRecorded CashMovement[]         @relation("CashMovementRecordedBy")
+  expoPushTokens        ExpoPushToken[]
   tenant                Tenant?                @relation(fields: [tenantId], references: [id])
   // Multi-tenant memberships — a user can own/manage multiple tenants. The
   // `tenantId` above acts as the *active* tenant; this list is the set of
@@ -726,9 +728,69 @@ model Shift {
   user     User       @relation(fields: [userId], references: [id])
   location Location?  @relation(fields: [locationId], references: [id])
   payments Payment[]
+  cashMovements CashMovement[]
 
   @@index([locationId, openedAt(sort: Desc)])
   @@map("shifts")
+}
+
+// ─── CashMovement ─────────────────────────────────────────────────────────────
+//
+// Mid-shift cash movements: cash drops (excess removed to safe), cash adds
+// (small bills brought in), pay-outs (vendor paid from drawer), pay-ins
+// (refund from vendor / employee cash back). All affect the expected cash
+// count at close. Stored separately from Payment so they don't pollute
+// sales analytics.
+
+enum CashMovementType {
+  drop      // cashier removes cash to safe — DECREASES expected cash
+  add       // cashier adds bills to drawer — INCREASES expected cash
+  payout    // pay a vendor / petty cash — DECREASES expected cash
+  payin     // money in (refund from vendor, etc) — INCREASES expected cash
+}
+
+model CashMovement {
+  id          String           @id @default(uuid())
+  shiftId     String
+  type        CashMovementType
+  amountCents Int              // always positive; sign comes from type
+  reason      String
+  recordedById String           // the user who logged it
+  managerOverridePin String?    // captured when above cashier cap
+  recordedAt  DateTime         @default(now())
+
+  shift       Shift @relation(fields: [shiftId], references: [id])
+  recordedBy  User  @relation("CashMovementRecordedBy", fields: [recordedById], references: [id])
+
+  @@index([shiftId, recordedAt])
+  @@map("cash_movements")
+}
+
+// ─── ExpoPushToken ────────────────────────────────────────────────────────────
+//
+// One row per device that registers with us. We key by (userId, token) and
+// upsert so the same device repeatedly registering doesn't blow up the table.
+// `device` distinguishes tablet vs mobile vs web for targeted broadcasts
+// ("send to all tablets at this location").
+
+model ExpoPushToken {
+  id        String   @id @default(uuid())
+  userId    String
+  token     String
+  platform  String   // "ios" | "android" | "web"
+  device    String   // "tablet" | "mobile" | "kiosk"
+  locationId String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  revokedAt DateTime?
+
+  user      User      @relation(fields: [userId], references: [id])
+  location  Location? @relation(fields: [locationId], references: [id])
+
+  @@unique([userId, token])
+  @@index([userId])
+  @@index([device, locationId])
+  @@map("expo_push_tokens")
 }
 
 // ─── ClockLog ─────────────────────────────────────────────────────────────────
@@ -3597,6 +3659,7 @@ model Location {
   financialEntries FinancialEntry[]
   transfersFrom    StockTransfer[]   @relation("TransferFrom")
   transfersTo      StockTransfer[]   @relation("TransferTo")
+  expoPushTokens   ExpoPushToken[]
 
   @@map("locations")
 }

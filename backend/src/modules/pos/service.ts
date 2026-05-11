@@ -367,7 +367,8 @@ export async function getZReport(shiftId: string) {
   const shift = await prisma.shift.findUnique({
     where: { id: shiftId },
     include: {
-      payments: { include: { order: { select: { totalCents: true, discountCents: true, taxCents: true } } } },
+      payments: { include: { order: { select: { totalCents: true, discountCents: true, taxCents: true, tipCents: true } } } },
+      cashMovements: true,
       user: { select: { name: true } },
     },
   })
@@ -400,17 +401,51 @@ export async function getZReport(shiftId: string) {
     .reduce((s, p) => s + p.amountCents, 0)
 
   const totalSales = cashSales + cardSales + walletSales
-  const uniqueOrders = new Map<string, { discountCents: number; taxCents: number }>()
+  const uniqueOrders = new Map<string, { discountCents: number; taxCents: number; tipCents: number }>()
   for (const p of payments) {
     if (p.order && !uniqueOrders.has(p.orderId)) {
-      uniqueOrders.set(p.orderId, { discountCents: p.order.discountCents, taxCents: p.order.taxCents })
+      uniqueOrders.set(p.orderId, {
+        discountCents: p.order.discountCents,
+        taxCents: p.order.taxCents,
+        tipCents: ('tipCents' in p.order && typeof p.order.tipCents === 'number') ? p.order.tipCents : 0,
+      })
     }
   }
   const totalOrders = uniqueOrders.size
   const totalDiscounts = Array.from(uniqueOrders.values()).reduce((s, o) => s + o.discountCents, 0)
   const totalTax       = Array.from(uniqueOrders.values()).reduce((s, o) => s + o.taxCents, 0)
+  const totalTips      = Array.from(uniqueOrders.values()).reduce((s, o) => s + o.tipCents, 0)
+
+  // Cash movement aggregates — affect the expected drawer total.
+  type CashMov = { type: string; amountCents: number }
+  const movements: CashMov[] = shift.cashMovements ?? []
+  const cashDrops   = movements.filter((m) => m.type === 'drop'  ).reduce((s, m) => s + m.amountCents, 0)
+  const cashAdds    = movements.filter((m) => m.type === 'add'   ).reduce((s, m) => s + m.amountCents, 0)
+  const cashPayouts = movements.filter((m) => m.type === 'payout').reduce((s, m) => s + m.amountCents, 0)
+  const cashPayins  = movements.filter((m) => m.type === 'payin' ).reduce((s, m) => s + m.amountCents, 0)
+
+  // Expected cash = opening + cash sales − cash voids/refunds − drops − payouts + adds + payins
+  const expectedCash = shift.openingFloatCents
+    + cashSales
+    - voids
+    - cashDrops
+    - cashPayouts
+    + cashAdds
+    + cashPayins
+
+  // Per-method breakdown for the tablet UI.
+  const byMethodMap = new Map<string, { method: string; count: number; amountCents: number }>()
+  for (const p of payments) {
+    if (p.status !== 'paid' && p.method !== 'comp') continue
+    const row = byMethodMap.get(p.method) ?? { method: p.method, count: 0, amountCents: 0 }
+    row.count       += 1
+    row.amountCents += p.amountCents
+    byMethodMap.set(p.method, row)
+  }
+  const byMethod = Array.from(byMethodMap.values()).sort((a, b) => b.amountCents - a.amountCents)
 
   return {
+    // ─── Original fields (kept for back-compat with existing admin pages) ───
     shiftId,
     staffName: shift.user.name,
     openedAt: shift.openedAt,
@@ -429,12 +464,32 @@ export async function getZReport(shiftId: string) {
     totalDiscounts,
     totalTax,
     netRevenue: totalSales - voids,
-    expectedCashInDrawer: shift.openingFloatCents + cashSales - voids,
+    expectedCashInDrawer: expectedCash,
     actualCashInDrawer: shift.closingFloatCents ?? null,
-    cashVariance:
-      shift.closingFloatCents !== null
-        ? shift.closingFloatCents - (shift.openingFloatCents + cashSales - voids)
-        : null,
+    cashVariance: shift.closingFloatCents !== null ? shift.closingFloatCents - expectedCash : null,
+
+    // ─── v4 additions — tablet POS consumes these directly ─────────────────
+    openingFloatCents:    shift.openingFloatCents,
+    closingFloatCents:    shift.closingFloatCents,
+    ordersCount:          totalOrders,
+    grossCents:           totalSales,
+    netCents:             totalSales - voids,
+    taxCents:             totalTax,
+    tipsCents:            totalTips,
+    discountCents:        totalDiscounts,
+    compCents:            compSales,
+    voidsCount:           payments.filter((p) => p.status === 'refunded').length,
+    refundsCents:         voids,
+    byMethod,
+    cashMovements: {
+      drops:  cashDrops,
+      adds:   cashAdds,
+      payouts: cashPayouts,
+      payins:  cashPayins,
+      list:   movements,
+    },
+    expectedCashCents:    expectedCash,
+    varianceCents:        shift.closingFloatCents !== null ? shift.closingFloatCents - expectedCash : null,
   }
 }
 
