@@ -12,6 +12,7 @@ import { api } from '../../../src/lib/api'
 import { theme } from '../../../src/lib/theme'
 import { pkr } from '../../../src/lib/format'
 import { usePos } from '../../../src/store/pos'
+import { useShift } from '../../../src/store/shift'
 import { Button } from '../../../src/components/Button'
 import { Keypad } from '../../../src/components/Keypad'
 import { Panel } from '../../../src/components/Panel'
@@ -19,9 +20,18 @@ import { printReceipt, isPrinterReady } from '../../../src/lib/printer'
 
 type Tender = 'cash' | 'card' | 'jazzcash' | 'easypaisa'
 
+// Maps tender ID to the backend's payment method enum.
+const METHOD_FOR_TENDER: Record<Tender, string> = {
+  cash:      'cash',
+  card:      'card',
+  jazzcash:  'jazzcash_wallet',
+  easypaisa: 'easypaisa_wallet',
+}
+
 export default function TenderScreen() {
   const router = useRouter()
   const pos = usePos()
+  const shift = useShift()
   const subtotal = pos.subtotalCents()
   // Tax is computed server-side; for the tender UI we show subtotal as the
   // amount due and let the backend's receipt response carry the actual total.
@@ -38,24 +48,38 @@ export default function TenderScreen() {
   const fire = useMutation({
     mutationFn: async () => {
       if (!pos.conceptId) throw new Error('Pick a brand first')
+      if (!shift.shiftId) throw new Error('Open a shift before taking payments')
 
-      const order = await api.post<{ id: string }>('/orders', {
+      // 1. Create the order via the cashier route — handles tax + discount
+      //    server-side and binds to the shift.
+      const order = await api.post<{ id: string }>('/pos/orders', {
         conceptId: pos.conceptId,
-        source: pos.channel === 'dinein' ? 'pos-dinein' : 'pos-takeaway',
         tableId: pos.tableId,
         customerId: pos.customerId,
+        shiftId: shift.shiftId,
         items: pos.lines.map(l => ({
           menuItemId: l.menuItemId,
+          name: l.name,
+          unitPriceCents: l.unitPriceCents,
           quantity: l.qty,
           notes: l.notes || undefined,
-          modifiers: l.modifiers.map(m => ({ modifierId: m.id })),
+          modifiers: l.modifiers.map(m => ({
+            name: m.name,
+            priceDeltaCents: m.priceDeltaCents,
+            modifierId: m.id,
+          })),
         })),
-        payment: {
-          tenders: [{
-            type: tender,
-            amountCents: tender === 'cash' ? tenderCents : due,
-          }],
-        },
+      })
+
+      // 2. Take payment in the same shift.
+      await api.post('/pos/payments', {
+        orderId: order.id,
+        shiftId: shift.shiftId,
+        payments: [{
+          method: METHOD_FOR_TENDER[tender],
+          amountCents: tender === 'cash' ? Math.min(tenderCents, due) : due,
+          tenderedCents: tender === 'cash' ? tenderCents : undefined,
+        }],
       })
       return order.id
     },

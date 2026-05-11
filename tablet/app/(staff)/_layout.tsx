@@ -3,7 +3,7 @@
 // connection persists across screen switches.
 
 import { useEffect } from 'react'
-import { View, Text, Pressable, Alert } from 'react-native'
+import { View, Text, Pressable, Alert, ScrollView } from 'react-native'
 import { Slot, useRouter, usePathname } from 'expo-router'
 
 import { theme } from '../../src/lib/theme'
@@ -13,14 +13,18 @@ import { StatusDot } from '../../src/components/StatusDot'
 import { initials } from '../../src/lib/format'
 
 const NAV = [
-  { key: 'kds',          label: 'KDS',          icon: '🍳', path: '/(staff)/kds' },
-  { key: 'pos',          label: 'POS',          icon: '🧾', path: '/(staff)/pos' },
-  { key: 'reservations', label: 'Reservations', icon: '📅', path: '/(staff)/reservations' },
-  { key: 'curbside',     label: 'Curbside',     icon: '🚗', path: '/(staff)/curbside' },
-  { key: 'dispatch',     label: 'Dispatch',     icon: '🛵', path: '/(staff)/dispatch' },
-  { key: 'inventory',    label: 'Inventory',    icon: '📦', path: '/(staff)/inventory' },
-  { key: 'customer',     label: 'Customer',     icon: '👤', path: '/(staff)/customer' },
-  { key: 'time-clock',   label: 'Time clock',   icon: '⏱️', path: '/(staff)/time-clock' },
+  { key: 'kds',           label: 'KDS',          icon: '🍳', path: '/(staff)/kds' },
+  { key: 'pos',           label: 'POS',          icon: '🧾', path: '/(staff)/pos' },
+  { key: 'active-orders', label: 'Active',       icon: '🔥', path: '/(staff)/active-orders' },
+  { key: 'floor',         label: 'Floor',        icon: '🪑', path: '/(staff)/floor' },
+  { key: 'reservations',  label: 'Bookings',     icon: '📅', path: '/(staff)/reservations' },
+  { key: 'curbside',      label: 'Curbside',     icon: '🚗', path: '/(staff)/curbside' },
+  { key: 'dispatch',      label: 'Dispatch',     icon: '🛵', path: '/(staff)/dispatch' },
+  { key: 'inventory',     label: 'Inventory',    icon: '📦', path: '/(staff)/inventory' },
+  { key: 'customer',      label: 'Customer',     icon: '👤', path: '/(staff)/customer' },
+  { key: 'shift',         label: 'Shift',        icon: '💰', path: '/(staff)/shift' },
+  { key: 'time-clock',    label: 'Time clock',   icon: '⏱️', path: '/(staff)/time-clock' },
+  { key: 'settings',      label: 'Settings',     icon: '⚙️', path: '/(staff)/settings' },
 ] as const
 
 export default function StaffLayout() {
@@ -56,30 +60,30 @@ export default function StaffLayout() {
 
         <View style={{ height: 1, backgroundColor: theme.border, marginVertical: 12 }} />
 
-        {NAV.map((item) => {
-          const active = pathname.startsWith(item.path)
-          return (
-            <Pressable
-              key={item.key}
-              onPress={() => router.push(item.path as never)}
-              style={({ pressed }) => ({
-                paddingVertical: 14, paddingHorizontal: 8,
-                marginHorizontal: 8, marginBottom: 6,
-                borderRadius: 12,
-                backgroundColor: active ? theme.accent : pressed ? 'rgba(255,255,255,0.06)' : 'transparent',
-                alignItems: 'center', gap: 4,
-              })}>
-              <Text style={{ fontSize: 22 }}>{item.icon}</Text>
-              <Text style={{
-                color: active ? '#0a0a0a' : theme.textDim,
-                fontSize: 11, fontWeight: '700', letterSpacing: 0.3,
-                textAlign: 'center',
-              }}>{item.label.toUpperCase()}</Text>
-            </Pressable>
-          )
-        })}
-
-        <View style={{ flex: 1 }} />
+        <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 12 }} showsVerticalScrollIndicator={false}>
+          {NAV.map((item) => {
+            const active = pathname.startsWith(item.path)
+            return (
+              <Pressable
+                key={item.key}
+                onPress={() => router.push(item.path as never)}
+                style={({ pressed }) => ({
+                  paddingVertical: 12, paddingHorizontal: 8,
+                  marginHorizontal: 8, marginBottom: 4,
+                  borderRadius: 12,
+                  backgroundColor: active ? theme.accent : pressed ? 'rgba(255,255,255,0.06)' : 'transparent',
+                  alignItems: 'center', gap: 4,
+                })}>
+                <Text style={{ fontSize: 20 }}>{item.icon}</Text>
+                <Text style={{
+                  color: active ? '#0a0a0a' : theme.textDim,
+                  fontSize: 10, fontWeight: '700', letterSpacing: 0.3,
+                  textAlign: 'center',
+                }}>{item.label.toUpperCase()}</Text>
+              </Pressable>
+            )
+          })}
+        </ScrollView>
 
         {/* User avatar + sign out */}
         <Pressable onPress={signOut} style={{ alignItems: 'center', paddingVertical: 12, gap: 6 }}>

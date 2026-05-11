@@ -16,6 +16,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage'
 
 import { sessionStore, useSessionStore } from '../src/store/session'
 import { theme } from '../src/lib/theme'
+import { initBluetoothTransport } from '../src/lib/printerTransport'
+import { attachLocalOrderAlerts } from '../src/lib/notifications'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -42,6 +44,16 @@ export default function RootLayout() {
   useEffect(() => {
     sessionStore.getState().hydrate().then(() => setHydrated(true))
   }, [])
+
+  // Hook up persistent printer transport + local order alerts once the session
+  // is ready. Both safe to call even if no token yet — they short-circuit.
+  useEffect(() => {
+    if (!hydrated) return
+    let cleanup: (() => void) | null = null
+    initBluetoothTransport()
+    attachLocalOrderAlerts().then((fn) => { cleanup = fn })
+    return () => { cleanup?.() }
+  }, [hydrated])
 
   if (!hydrated) {
     return (

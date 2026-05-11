@@ -10,8 +10,9 @@ import { api } from '../../../src/lib/api'
 import { theme } from '../../../src/lib/theme'
 import { pkr } from '../../../src/lib/format'
 import { usePos } from '../../../src/store/pos'
+import { useShift } from '../../../src/store/shift'
 import { Button } from '../../../src/components/Button'
-import { Pill } from '../../../src/components/Panel'
+import { Panel, Pill } from '../../../src/components/Panel'
 
 interface Concept { id: string; name: string }
 interface MenuItem {
@@ -26,8 +27,27 @@ interface MenuItem {
 export default function PosScreen() {
   const router = useRouter()
   const pos = usePos()
+  const shift = useShift()
   const [searchQuery, setSearchQuery] = useState('')
   const [activeCat, setActiveCat] = useState<string>('all')
+
+  // Hard gate: no shift = no POS. The backend rejects /pos/payments without a
+  // shiftId anyway; we just give a more useful UI than a 400.
+  if (!shift.shiftId) {
+    return (
+      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32 }}>
+        <Panel style={{ alignItems: 'center', padding: 48, gap: 20, maxWidth: 520 }}>
+          <Text style={{ color: theme.text, fontWeight: '900', fontSize: 24, textAlign: 'center' }}>
+            Open a shift first
+          </Text>
+          <Text style={{ color: theme.textDim, textAlign: 'center', lineHeight: 22 }}>
+            The till is closed. Count the opening float, open a shift, and you'll be back at POS in under a minute.
+          </Text>
+          <Button label="Open shift" size="xl" onPress={() => router.push('/(staff)/shift/open')} />
+        </Panel>
+      </View>
+    )
+  }
 
   const concepts = useQuery({
     queryKey: ['pos', 'concepts'],
