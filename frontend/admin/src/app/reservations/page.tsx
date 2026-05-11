@@ -15,6 +15,8 @@ import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { api } from '../../lib/api'
 import { todayPktIso } from '../../lib/money'
+import { useReservationSocket } from '../../hooks/useReservationSocket'
+import { CustomerContextSidebar } from '../../components/customer/CustomerContextSidebar'
 
 interface Concept { id: string; name: string }
 
@@ -51,6 +53,9 @@ export default function ReservationsPage() {
   const [conceptId, setConceptId] = useState('')
   const [date,      setDate]      = useState(todayPktIso())
   const [showNew,   setShowNew]   = useState(false)
+  // Customer context drawer: when set, the right-side drawer shows that
+  // customer's full cross-module history.
+  const [drawerCustomerId, setDrawerCustomerId] = useState<string | null>(null)
 
   const concepts = useQuery({ queryKey: ['concepts'], queryFn: () => api.get<Concept[]>('/concepts') })
 
@@ -83,6 +88,17 @@ export default function ReservationsPage() {
     queryFn: () => api.get<Array<{ id: string; partySize: number; startTime: string; guestName: string; guestPhone: string | null; notes: string | null; isVip: boolean; status: string; waitlist: boolean }>>(`/reservations/waitlist?conceptId=${conceptId}`),
     enabled: !!conceptId,
     refetchInterval: 30_000,
+  })
+
+  // Live updates: reservations day view + waitlist sidebar both refresh on
+  // any reservation event. Falls back to the 30s polling above if the
+  // socket dies.
+  useReservationSocket({
+    conceptId,
+    queryKeys: [
+      ['reservations', conceptId, date],
+      ['waitlist',     conceptId],
+    ],
   })
 
   // Group reservations by hour of day
@@ -152,6 +168,7 @@ export default function ReservationsPage() {
                     r={r}
                     tables={allTables}
                     onTransition={(action, body) => transition.mutate({ id: r.id, action, body })}
+                    onViewCustomer={(id) => setDrawerCustomerId(id)}
                   />
                 ))}
               </div>
@@ -211,6 +228,30 @@ export default function ReservationsPage() {
         <Link href="/reservations/analytics" className="text-s-teal hover:underline">📊 Analytics</Link>
         <Link href="/floorplan"              className="text-s-teal hover:underline">🪑 Floor plan</Link>
       </div>
+
+      {/* ── Customer-context drawer (right side, slides in when a customer
+            is selected via the "Profile" button on a reservation row) ── */}
+      {drawerCustomerId && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          className="fixed inset-0 z-50 flex justify-end"
+          style={{ background: 'rgba(0,0,0,0.4)' }}
+          onClick={() => setDrawerCustomerId(null)}>
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-md h-full overflow-y-auto p-5"
+            style={{ background: '#0e1014' }}>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-sm font-bold uppercase tracking-[0.18em] text-white/80">Customer context</h2>
+              <button
+                onClick={() => setDrawerCustomerId(null)}
+                className="text-white/40 hover:text-white/85 text-lg">×</button>
+            </div>
+            <CustomerContextSidebar customerId={drawerCustomerId} />
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -218,11 +259,12 @@ export default function ReservationsPage() {
 // ─── Row ──────────────────────────────────────────────────────────────────
 
 function ReservationRow({
-  r, tables, onTransition,
+  r, tables, onTransition, onViewCustomer,
 }: {
   r: Reservation
   tables: Array<{ id: string; label: string; capacity: number; floorName: string }>
   onTransition: (action: 'confirm' | 'seat' | 'complete' | 'cancel' | 'no-show', body?: Record<string, unknown>) => void
+  onViewCustomer: (id: string) => void
 }) {
   const badge = STATUS_BADGE[r.status]!
   const time = new Date(r.startTime).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false })
@@ -244,6 +286,12 @@ function ReservationRow({
         </p>
       </div>
       <div className="flex gap-1.5 flex-wrap justify-end">
+        {r.customer && (
+          <button onClick={() => onViewCustomer(r.customer!.id)}
+            className="text-[11px] font-bold px-2 py-1 rounded bg-indigo-50 text-indigo-700 border border-indigo-200">
+            👤 Profile
+          </button>
+        )}
         {r.status === 'booked' && (
           <button onClick={() => onTransition('confirm')} className="text-[11px] font-bold px-2 py-1 rounded bg-s-teal text-white">Confirm</button>
         )}

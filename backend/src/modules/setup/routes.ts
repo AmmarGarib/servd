@@ -447,13 +447,38 @@ export async function setupRoutes(fastify: FastifyInstance) {
       walkInsAllowed:             z.boolean().optional(),
       remindersEnabled:           z.boolean().optional(),
       reminderHoursBefore:        z.number().int().min(1).optional(),
+      // Slot generation: granularity (15 / 30 / 60), default booking duration
+      // (60 / 90 / 120 / 150 / 180), and the daypart grouping used by the
+      // public widget.
+      slotIntervalMin:            z.number().int().refine((n) => [15, 30, 60].includes(n)).optional(),
+      defaultDurationMin:         z.number().int().min(30).max(240).optional(),
+      dayparts:                   z.array(z.object({
+        label:     z.string().min(1).max(40),
+        startHour: z.number().int().min(0).max(23),
+        endHour:   z.number().int().min(1).max(24),
+      })).max(8).optional().refine((d) => {
+        if (!d) return true
+        // Validate ordering: each daypart must be a non-empty range, and the
+        // collection must cover non-overlapping hours sorted by startHour.
+        for (let i = 0; i < d.length; i++) {
+          const cur = d[i]!
+          if (cur.endHour <= cur.startHour) return false
+          if (i > 0 && cur.startHour < d[i - 1]!.endHour) return false
+        }
+        return true
+      }, { message: 'dayparts must be ordered, non-empty, non-overlapping' }),
       notes:                      z.string().nullable().optional(),
     }).parse(req.body)
     const policy = await findOrCreateSingleton<{ id: string }>('reservationPolicy', {})
-    return prisma.reservationPolicy.update({
+    const updated = await prisma.reservationPolicy.update({
       where: { id: policy.id },
       data: { ...body, updatedById: req.staffUser!.id },
     })
+    // Invalidate the 60-second cache so policy changes take effect on the
+    // next public availability fetch instead of waiting up to a minute.
+    const { invalidateSetupCache } = await import('../../lib/setup-config.js')
+    invalidateSetupCache()
+    return updated
   })
 
   // ════════════════════════════════════════════════════════════════════════

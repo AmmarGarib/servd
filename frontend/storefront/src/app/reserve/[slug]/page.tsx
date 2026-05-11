@@ -12,16 +12,34 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
+import { useBrandSlug } from '../../../lib/host'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
 interface Slot { time: string; available: boolean; tablesAvailable?: number; reason?: string }
+interface Daypart { label: string; startHour: number; endHour: number }
 interface AvailabilityResponse {
   concept: { id: string; name: string; slug: string; type: string }
   date: string
   partySize: number
+  // Operator-controlled, returned by the API. Older API versions may omit
+  // these — the storefront falls back to sensible defaults below.
+  slotIntervalMin?: number
+  defaultDurationMin?: number
+  dayparts?: Daypart[]
   slots: Slot[]
 }
+interface ApiErrorResponse { error: { code: string; message: string } }
+
+// Fallback grouping if the API didn't return dayparts (older deploy or
+// custom integration). Matches the original hardcoded thresholds so
+// behaviour is unchanged.
+const DEFAULT_DAYPARTS: Daypart[] = [
+  { label: 'Lunch',      startHour: 0,  endHour: 12 },
+  { label: 'Afternoon',  startHour: 12, endHour: 16 },
+  { label: 'Dinner',     startHour: 16, endHour: 22 },
+  { label: 'Late night', startHour: 22, endHour: 24 },
+]
 
 function todayPktIso(): string {
   const pkt = new Date(Date.now() + 5 * 3600_000)
@@ -35,6 +53,12 @@ function fmtSlot(iso: string): string {
 export default function ReservePage() {
   const { slug } = useParams<{ slug: string }>()
   const router = useRouter()
+  const brandHost = useBrandSlug()
+  // On a brand custom domain (e.g. eatstax.com), middleware rewrites `/` to
+  // `/brand/<slug>` — so "back to brand" should send the user to `/`. On the
+  // canonical servd host, we want them on the explicit `/brand/<slug>` page.
+  // brandHost is null until the client mounts; SSR pass treats it as servd.
+  const backToBrandHref = brandHost ? '/' : `/brand/${slug}`
 
   const [partySize, setPartySize] = useState(2)
   const [date, setDate] = useState(todayPktIso())
@@ -51,11 +75,27 @@ export default function ReservePage() {
   const [email, setEmail] = useState('')
   const [notes, setNotes] = useState('')
 
+  // Surfaced when the brand has reservationsEnabled=false. We treat this as
+  // "disabled at the brand", not a transient error — the user shouldn't see
+  // a retry CTA, just a polite "we're not taking bookings right now."
+  const [disabled, setDisabled] = useState(false)
+
   useEffect(() => {
     setLoading(true)
     setSelected(null)
+    setDisabled(false)
     fetch(`${API_URL}/api/v1/reservations/availability?conceptSlug=${slug}&date=${date}&partySize=${partySize}`)
-      .then((r) => r.ok ? r.json() : null)
+      .then(async (r) => {
+        if (r.ok) return r.json() as Promise<AvailabilityResponse>
+        if (r.status === 403) {
+          const body = (await r.json().catch(() => null)) as ApiErrorResponse | null
+          if (body?.error?.code === 'RESERVATIONS_DISABLED') {
+            setDisabled(true)
+            return null
+          }
+        }
+        return null
+      })
       .then((d) => setData(d))
       .catch(() => setData(null))
       .finally(() => setLoading(false))
@@ -63,16 +103,16 @@ export default function ReservePage() {
 
   const groupedSlots = useMemo(() => {
     if (!data) return []
-    const groups: Record<string, Slot[]> = { Lunch: [], Afternoon: [], Dinner: [], 'Late night': [] }
+    const dayparts = data.dayparts && data.dayparts.length > 0 ? data.dayparts : DEFAULT_DAYPARTS
+    const groups: Array<[string, Slot[]]> = dayparts.map((d) => [d.label, [] as Slot[]])
     for (const s of data.slots) {
       const h = new Date(s.time).getHours()
-      const key = h < 12 ? 'Lunch'
-                : h < 16 ? 'Afternoon'
-                : h < 22 ? 'Dinner'
-                :          'Late night'
-      groups[key]!.push(s)
+      // Find the first daypart whose [startHour, endHour) contains this hour.
+      const idx = dayparts.findIndex((d) => h >= d.startHour && h < d.endHour)
+      if (idx === -1) continue              // hour outside all dayparts — drop
+      groups[idx]![1].push(s)
     }
-    return Object.entries(groups).filter(([_, slots]) => slots.length > 0)
+    return groups.filter(([, slots]) => slots.length > 0)
   }, [data])
 
   const onSubmit = async (e: React.FormEvent) => {
@@ -118,7 +158,24 @@ export default function ReservePage() {
           <p style={{ color: 'var(--servd-mute)', marginBottom: '1.5rem' }}>
             Check your phone — we&rsquo;ve sent a confirmation link with your booking. {data?.concept.name} will see it in their dashboard.
           </p>
-          <Link href={`/brand/${slug}`} className="servd-btn-primary">Back to {data?.concept.name}</Link>
+          <Link href={backToBrandHref} className="servd-btn-primary">Back to {data?.concept.name}</Link>
+        </div>
+      </div>
+    )
+  }
+
+  if (disabled) {
+    return (
+      <div style={{ minHeight: '60vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2rem' }}>
+        <div style={{ textAlign: 'center', maxWidth: '32rem' }}>
+          <div style={{ fontSize: '3rem', marginBottom: '0.5rem' }}>🍽️</div>
+          <h1 style={{ fontSize: 'clamp(1.6rem, 4vw, 2.25rem)', fontWeight: 800, marginBottom: '0.75rem' }}>
+            Reservations not available right now.
+          </h1>
+          <p style={{ color: 'var(--servd-mute)', marginBottom: '1.5rem' }}>
+            This brand isn&rsquo;t accepting bookings online. Order ahead, or walk in — we&rsquo;ll seat you.
+          </p>
+          <Link href={backToBrandHref} className="servd-btn-primary">Back to brand</Link>
         </div>
       </div>
     )
@@ -128,7 +185,7 @@ export default function ReservePage() {
     <div style={{ background: '#fff', minHeight: '100vh' }}>
       <section className="section-tight" style={{ borderBottom: '1px solid var(--servd-line)' }}>
         <div className="container">
-          <Link href={`/brand/${slug}`} style={{ color: 'var(--servd-mute)', fontSize: '0.85rem', textDecoration: 'none' }}>
+          <Link href={backToBrandHref} style={{ color: 'var(--servd-mute)', fontSize: '0.85rem', textDecoration: 'none' }}>
             ← {data?.concept.name ?? 'Back'}
           </Link>
           <h1 style={{ fontSize: 'clamp(1.75rem, 4vw, 2.5rem)', fontWeight: 800, marginTop: '0.5rem', marginBottom: '0.5rem' }}>

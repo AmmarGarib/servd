@@ -101,6 +101,17 @@ export function initWebSocket(fastify: FastifyInstance): SocketIOServer {
     if (role === 'expediter' || role === 'admin' || role === 'manager') {
       void socket.join('all-orders')
     }
+    // Reservation events go to managers, admins, cashiers (the host stand)
+    // and kitchen/expediter (so the kitchen tracker page updates in real time).
+    if (role === 'admin' || role === 'manager' || role === 'cashier' || role === 'expediter' || role === 'kitchen') {
+      void socket.join('reservations:all')
+    }
+
+    // Allow clients to opt-into a specific reservation room from the page
+    // they're on (e.g. the admin reservation editor wants `concept:{id}`).
+    socket.on('reservations:join', (data: { conceptId?: string }) => {
+      if (data?.conceptId) void socket.join(`concept:${data.conceptId}`)
+    })
 
     // Client → Server events (KDS interactions)
     socket.on('kds:bump', (data: { itemId: string }) => {
@@ -202,4 +213,33 @@ export function emitAvailabilityChange(menuItemId: string, available: number) {
     return
   }
   io.emit('item:availability', { menuItemId, available })
+}
+
+// ─── Reservation events ───────────────────────────────────────────────────────
+//
+// Fired from the reservation routes whenever a booking changes. Admin clients
+// subscribe via the `reservations:all` room (joined automatically for staff
+// roles) plus the per-concept room `concept:{id}` if they specified one.
+//
+// Payload is intentionally minimal — clients refetch the list on receipt
+// instead of trying to merge incremental updates locally. That keeps the
+// event volume tiny and the client logic dumb.
+
+export type ReservationEvent =
+  | 'reservation:created'
+  | 'reservation:updated'
+  | 'reservation:cancelled'
+  | 'reservation:seated'
+  | 'reservation:no-show'
+  | 'reservation:confirmed'
+  | 'reservation:waitlist-promoted'
+
+export function emitReservationEvent(
+  event: ReservationEvent,
+  payload: { reservationId: string; conceptId: string; startTime?: string; status?: string },
+) {
+  safeEmit(event, (ws) => {
+    ws.to('reservations:all').emit(event, payload)
+    ws.to(`concept:${payload.conceptId}`).emit(event, payload)
+  })
 }

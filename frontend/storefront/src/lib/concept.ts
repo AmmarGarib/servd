@@ -8,6 +8,10 @@ export interface Concept {
   description: string | null
   logoUrl: string | null
   primaryColor: string | null
+  // Per-brand reservations master toggle. Controlled from
+  // admin → Marketing → Brands → Storefront. When false, customer-facing
+  // surfaces hide the "Book a table" CTA.
+  reservationsEnabled?: boolean
 }
 
 export function typeLabel(t: string): string {

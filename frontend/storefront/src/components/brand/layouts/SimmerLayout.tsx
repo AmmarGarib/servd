@@ -113,18 +113,20 @@ export function SimmerLayout({ concept, concepts }: Props) {
                 Twelve tables. A bar that doesn&rsquo;t serve spirits. Hand-built mocktails, seasonal small plates, and a kitchen that takes its time.
               </p>
               <div style={{ marginTop: '2.75rem', display: 'flex', gap: '0.85rem', flexWrap: 'wrap' }}>
-                <Link href={`/reserve/${concept.slug}`} style={{
-                  padding: '1.1rem 2.25rem',
-                  background: SIMMER_GOLD,
-                  color: SIMMER_INK,
-                  fontWeight: 700,
-                  fontSize: '0.9rem',
-                  letterSpacing: '0.2em',
-                  textTransform: 'uppercase',
-                  textDecoration: 'none',
-                }}>
-                  Reserve a table
-                </Link>
+                {concept.reservationsEnabled !== false && (
+                  <Link href={`/reserve/${concept.slug}`} style={{
+                    padding: '1.1rem 2.25rem',
+                    background: SIMMER_GOLD,
+                    color: SIMMER_INK,
+                    fontWeight: 700,
+                    fontSize: '0.9rem',
+                    letterSpacing: '0.2em',
+                    textTransform: 'uppercase',
+                    textDecoration: 'none',
+                  }}>
+                    Reserve a table
+                  </Link>
+                )}
                 <Link href={`/${concept.slug}`} style={{
                   padding: '1.1rem 2.25rem',
                   background: 'transparent',
@@ -334,19 +336,21 @@ export function SimmerLayout({ concept, concepts }: Props) {
           </p>
 
           <div style={{ marginTop: '3rem', display: 'flex', justifyContent: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
-            <Link href={`/reserve/${concept.slug}`} style={{
-              padding: '1.1rem 2.25rem',
-              border: `1px solid ${SIMMER_GOLD}`,
-              background: SIMMER_GOLD,
-              color: SIMMER_INK,
-              fontWeight: 700,
-              fontSize: '0.88rem',
-              letterSpacing: '0.2em',
-              textTransform: 'uppercase',
-              textDecoration: 'none',
-            }}>
-              Reserve a table
-            </Link>
+            {concept.reservationsEnabled !== false && (
+              <Link href={`/reserve/${concept.slug}`} style={{
+                padding: '1.1rem 2.25rem',
+                border: `1px solid ${SIMMER_GOLD}`,
+                background: SIMMER_GOLD,
+                color: SIMMER_INK,
+                fontWeight: 700,
+                fontSize: '0.88rem',
+                letterSpacing: '0.2em',
+                textTransform: 'uppercase',
+                textDecoration: 'none',
+              }}>
+                Reserve a table
+              </Link>
+            )}
             <Link href={`/${concept.slug}`} style={{
               padding: '1.1rem 2.25rem',
               background: 'transparent',

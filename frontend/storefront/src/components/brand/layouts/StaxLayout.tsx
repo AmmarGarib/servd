@@ -977,7 +977,7 @@ function makeRand(seed: number) {
 
 // Brioche — soft, warm-glow crumb. Field of elliptical "crumb pockets" over a
 // solid base + radial sheen so the card has a finished bun look.
-function briocheSvg(highlight: string, shadow: string, base: string): string {
+function briocheSvg(highlight: string, shadow: string, base: string = shadow): string {
   const rand = makeRand(0xB7C0E0 + highlight.length * 31 + shadow.length)
   const cells = []
   for (let i = 0; i < 80; i++) {

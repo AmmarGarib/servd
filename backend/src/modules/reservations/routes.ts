@@ -23,8 +23,38 @@ import { assertConceptAccess } from '../../lib/conceptAccess.js'
 import { audit } from '../../lib/audit.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { sendSms, sendEmail } from '../../lib/notify.js'
+import { emitReservationEvent } from '../../lib/ws.js'
+import { bumpCustomerRollups } from '../../lib/customerRollups.js'
 
 const DEFAULT_DURATION_MIN = 90
+
+/**
+ * Wraps a Prisma write that touches `reservations.tableId + startTime/endTime`.
+ * The DB-level exclusion constraint `reservations_no_table_overlap` makes
+ * double-booking *physically impossible* even under perfect concurrency: the
+ * application-level pre-check is just a friendly fast-path. If two concurrent
+ * inserts both pass the pre-check, postgres still rejects the loser with
+ * sqlstate 23P01 (exclusion_violation), which Prisma surfaces as P2010.
+ *
+ * This helper catches that and turns it into a clean 409 instead of a 500.
+ */
+async function withTableOverlapGuard<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn()
+  } catch (err) {
+    const e = err as { code?: string; meta?: { code?: string; message?: string } }
+    const isExclusion =
+      e?.code === 'P2010' && (e?.meta?.code === '23P01' || /reservations_no_table_overlap/i.test(e?.meta?.message ?? ''))
+    if (isExclusion) {
+      throw new AppError(
+        'TABLE_CONFLICT',
+        'Another reservation just claimed that table for the same time. Pick a different table or time.',
+        409,
+      )
+    }
+    throw err
+  }
+}
 
 const createSchema = z.object({
   conceptId:  z.string().uuid(),
@@ -129,8 +159,22 @@ export async function reservationRoutes(fastify: FastifyInstance) {
       if (hoursAhead < policy.minAdvanceHours) {
         throw new AppError('TOO_SOON', `Reservations must be made at least ${policy.minAdvanceHours} hours in advance.`, 400)
       }
-      if (daysAhead > policy.maxAdvanceDays) {
-        throw new AppError('TOO_FAR', `Reservations cannot be made more than ${policy.maxAdvanceDays} days ahead.`, 400)
+      // Tier perks: silver/gold can book further out than the standard window.
+      // Look up the customer's perks; bronze (or no customer) gets the default.
+      let extraDays = 0
+      if (body.customerId) {
+        const { getCustomerPerks } = await import('../../lib/tierPerks.js')
+        extraDays = (await getCustomerPerks(body.customerId)).priorityReservationDays
+      }
+      const effectiveMaxDays = policy.maxAdvanceDays + extraDays
+      if (daysAhead > effectiveMaxDays) {
+        throw new AppError(
+          'TOO_FAR',
+          extraDays > 0
+            ? `Reservations cannot be made more than ${effectiveMaxDays} days ahead (your tier gets ${extraDays} bonus days).`
+            : `Reservations cannot be made more than ${policy.maxAdvanceDays} days ahead.`,
+          400,
+        )
       }
 
       // Deposit requirement — flagged on the response so the caller can collect.
@@ -164,28 +208,30 @@ export async function reservationRoutes(fastify: FastifyInstance) {
       if (match) customerId = match.id
     }
 
-    const r = await prisma.reservation.create({
-      data: {
-        conceptId:  body.conceptId,
-        tableId:    body.tableId ?? null,
-        customerId,
-        partySize:  body.partySize,
-        startTime,
-        endTime,
-        guestName:  body.guestName,
-        guestPhone: body.guestPhone ?? null,
-        guestEmail: body.guestEmail ?? null,
-        notes:      body.notes ?? null,
-        isVip:      body.isVip ?? false,
-        source:     body.source as never,
-        waitlist:   body.waitlist ?? false,
-        createdById: req.staffUser?.id ?? null,
-      },
-      include: {
-        concept: { select: { name: true } },
-        table:   { select: { id: true, label: true } },
-      },
-    })
+    const r = await withTableOverlapGuard(() =>
+      prisma.reservation.create({
+        data: {
+          conceptId:  body.conceptId,
+          tableId:    body.tableId ?? null,
+          customerId,
+          partySize:  body.partySize,
+          startTime,
+          endTime,
+          guestName:  body.guestName,
+          guestPhone: body.guestPhone ?? null,
+          guestEmail: body.guestEmail ?? null,
+          notes:      body.notes ?? null,
+          isVip:      body.isVip ?? false,
+          source:     body.source as never,
+          waitlist:   body.waitlist ?? false,
+          createdById: req.staffUser?.id ?? null,
+        },
+        include: {
+          concept: { select: { name: true } },
+          table:   { select: { id: true, label: true } },
+        },
+      }),
+    )
 
     await audit({
       action: 'reservation.create',
@@ -195,6 +241,13 @@ export async function reservationRoutes(fastify: FastifyInstance) {
       userEmail: req.staffUser?.email ?? null,
       after: { partySize: r.partySize, startTime: r.startTime, status: r.status, guestName: r.guestName },
       metadata: { source: r.source, ip: req.ip },
+    })
+
+    emitReservationEvent('reservation:created', {
+      reservationId: r.id,
+      conceptId: r.conceptId,
+      startTime: r.startTime.toISOString(),
+      status: r.status,
     })
 
     // Best-effort confirmation
@@ -243,19 +296,27 @@ export async function reservationRoutes(fastify: FastifyInstance) {
         }
       }
 
-      const updated = await prisma.reservation.update({
-        where: { id: r.id },
-        data: {
-          ...(body.partySize  !== undefined && { partySize:  body.partySize }),
-          ...(body.guestName  !== undefined && { guestName:  body.guestName }),
-          ...(body.guestPhone !== undefined && { guestPhone: body.guestPhone }),
-          ...(body.guestEmail !== undefined && { guestEmail: body.guestEmail }),
-          ...(body.notes      !== undefined && { notes:      body.notes }),
-          ...(body.isVip      !== undefined && { isVip:      body.isVip }),
-          ...(body.waitlist   !== undefined && { waitlist:   body.waitlist }),
-          ...(body.startTime  !== undefined && { startTime,  endTime }),
-          tableId,
-        },
+      const updated = await withTableOverlapGuard(() =>
+        prisma.reservation.update({
+          where: { id: r.id },
+          data: {
+            ...(body.partySize  !== undefined && { partySize:  body.partySize }),
+            ...(body.guestName  !== undefined && { guestName:  body.guestName }),
+            ...(body.guestPhone !== undefined && { guestPhone: body.guestPhone }),
+            ...(body.guestEmail !== undefined && { guestEmail: body.guestEmail }),
+            ...(body.notes      !== undefined && { notes:      body.notes }),
+            ...(body.isVip      !== undefined && { isVip:      body.isVip }),
+            ...(body.waitlist   !== undefined && { waitlist:   body.waitlist }),
+            ...(body.startTime  !== undefined && { startTime,  endTime }),
+            tableId,
+          },
+        }),
+      )
+      emitReservationEvent('reservation:updated', {
+        reservationId: updated.id,
+        conceptId: updated.conceptId,
+        startTime: updated.startTime.toISOString(),
+        status: updated.status,
       })
       return updated
     },
@@ -283,14 +344,22 @@ export async function reservationRoutes(fastify: FastifyInstance) {
         throw new AppError('TABLE_CONFLICT', `Table is occupied (${overlap.with!.guestName})`, 409)
       }
 
-      return prisma.$transaction(async (tx) => {
-        const updated = await tx.reservation.update({
-          where: { id: r.id },
-          data: { status: 'seated', seatedAt: new Date(), tableId, waitlist: false },
-        })
-        await tx.table.update({ where: { id: tableId }, data: { status: 'seated' } })
-        return updated
+      const seated = await withTableOverlapGuard(() =>
+        prisma.$transaction(async (tx) => {
+          const updated = await tx.reservation.update({
+            where: { id: r.id },
+            data: { status: 'seated', seatedAt: new Date(), tableId, waitlist: false },
+          })
+          await tx.table.update({ where: { id: tableId }, data: { status: 'seated' } })
+          return updated
+        }),
+      )
+      emitReservationEvent('reservation:seated', {
+        reservationId: seated.id, conceptId: seated.conceptId,
+        startTime: seated.startTime.toISOString(), status: seated.status,
       })
+      bumpCustomerRollups(seated.customerId)
+      return seated
     },
   )
   fastify.post<{ Params: { id: string } }>(
@@ -300,7 +369,7 @@ export async function reservationRoutes(fastify: FastifyInstance) {
       const r = await prisma.reservation.findUnique({ where: { id: req.params.id } })
       if (!r) throw new NotFoundError('Reservation', req.params.id)
       await assertConceptAccess(req.staffUser!, r.conceptId)
-      return prisma.$transaction(async (tx) => {
+      const completed = await prisma.$transaction(async (tx) => {
         const updated = await tx.reservation.update({
           where: { id: r.id },
           data: { status: 'completed', completedAt: new Date() },
@@ -308,8 +377,38 @@ export async function reservationRoutes(fastify: FastifyInstance) {
         if (r.tableId) {
           await tx.table.update({ where: { id: r.tableId }, data: { status: 'cleaning' } })
         }
+        // Cross-module: completing a reservation earns the customer a flat
+        // 100 loyalty points. Distinct from order-driven points (which scale
+        // with spend). This is a "thank you for showing up" gesture and a
+        // hook into the same loyalty currency.
+        if (r.customerId) {
+          const account = await tx.loyaltyAccount.findUnique({ where: { customerId: r.customerId } })
+          if (account) {
+            const RES_BONUS = 100
+            await tx.loyaltyAccount.update({
+              where: { id: account.id },
+              data: {
+                pointsBalance:  { increment: RES_BONUS },
+                lifetimePoints: { increment: RES_BONUS },
+              },
+            })
+            await tx.loyaltyTransaction.create({
+              data: {
+                loyaltyAccountId: account.id,
+                type: 'earn',
+                pointsDelta: RES_BONUS,
+                description: `Completed reservation at ${r.conceptId}`,
+              },
+            })
+          }
+        }
         return updated
       })
+      emitReservationEvent('reservation:updated', {
+        reservationId: completed.id, conceptId: completed.conceptId,
+        startTime: completed.startTime.toISOString(), status: completed.status,
+      })
+      return completed
     },
   )
   fastify.post<{ Params: { id: string }; Body: { reason?: string } }>(
@@ -334,6 +433,18 @@ export async function reservationRoutes(fastify: FastifyInstance) {
         after:  { status: 'cancelled' },
         metadata: { reason: body.reason },
       })
+      emitReservationEvent('reservation:cancelled', {
+        reservationId: updated.id, conceptId: updated.conceptId,
+        startTime: updated.startTime.toISOString(), status: updated.status,
+      })
+      // A cancellation may free a table — fire the waitlist promoter.
+      // Lazy-imported to avoid a circular dep at module init.
+      void (async () => {
+        const { tryPromoteWaitlist } = await import('./waitlistPromotion.js')
+        tryPromoteWaitlist(r).catch((err) => req.log.warn(
+          { err: (err as Error).message }, 'waitlist promotion attempt failed',
+        ))
+      })()
       return updated
     },
   )
@@ -367,6 +478,99 @@ export async function reservationRoutes(fastify: FastifyInstance) {
           notes: true, isVip: true, status: true, waitlist: true,
         },
       })
+    },
+  )
+
+  // ─── Kitchen tracker — upcoming arrivals by quarter-hour bucket ────────
+  // Powers the kitchen / KDS reservation widget. Returns the next N hours of
+  // booked/confirmed reservations grouped by 15-min arrival buckets so the
+  // line cooks can see "we have 3 parties hitting at 7:30 = 12 covers" at a
+  // glance. Includes special notes (allergies/occasions) flagged on the row.
+  //
+  // Auth: any staff role — kitchen needs visibility too.
+  fastify.get<{ Querystring: { conceptId?: string; hours?: string } }>(
+    '/kitchen-tracker',
+    { preHandler: requireAuth(...ALL_STAFF) },
+    async (req) => {
+      const conceptId = req.query.conceptId
+      const horizonH = Math.min(12, Math.max(1, parseInt(req.query.hours ?? '4', 10)))
+      if (conceptId) await assertConceptAccess(req.staffUser!, conceptId)
+
+      const now = new Date()
+      const horizon = new Date(now.getTime() + horizonH * 3_600_000)
+
+      const rows = await prisma.reservation.findMany({
+        where: {
+          ...(conceptId && { conceptId }),
+          status: { in: ['booked', 'confirmed', 'seated'] },
+          startTime: { gte: now, lt: horizon },
+        },
+        orderBy: { startTime: 'asc' },
+        select: {
+          id: true,
+          partySize: true,
+          startTime: true,
+          guestName: true,
+          notes: true,
+          isVip: true,
+          status: true,
+          source: true,
+          table: { select: { id: true, label: true } },
+          concept: { select: { id: true, name: true } },
+        },
+      })
+
+      // Bucket arrivals into 15-min slots so the kitchen sees pacing.
+      // Key = ISO at the floor of the quarter-hour.
+      const buckets = new Map<string, {
+        slot: string
+        slotLabel: string
+        parties: number
+        covers: number
+        vip: number
+        hasNotes: boolean
+        rows: typeof rows
+      }>()
+      for (const r of rows) {
+        const t = r.startTime
+        const minute = Math.floor(t.getMinutes() / 15) * 15
+        const slotDate = new Date(t)
+        slotDate.setMinutes(minute, 0, 0)
+        const slot = slotDate.toISOString()
+        const slotLabel = slotDate.toLocaleString('en-GB', {
+          timeZone: 'Asia/Karachi',
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: false,
+        })
+        const b = buckets.get(slot) ?? {
+          slot,
+          slotLabel,
+          parties: 0,
+          covers: 0,
+          vip: 0,
+          hasNotes: false,
+          rows: [] as typeof rows,
+        }
+        b.parties += 1
+        b.covers += r.partySize
+        if (r.isVip) b.vip += 1
+        if (r.notes && r.notes.trim().length > 0) b.hasNotes = true
+        b.rows.push(r)
+        buckets.set(slot, b)
+      }
+
+      const sortedBuckets = [...buckets.values()].sort((a, b) => a.slot.localeCompare(b.slot))
+      const totalCovers   = rows.reduce((s, r) => s + r.partySize, 0)
+      const totalParties  = rows.length
+
+      return {
+        now: now.toISOString(),
+        horizonH,
+        totalParties,
+        totalCovers,
+        buckets: sortedBuckets,
+      }
     },
   )
 
@@ -439,9 +643,16 @@ export async function reservationRoutes(fastify: FastifyInstance) {
       }
       const concept = await prisma.concept.findFirst({
         where: { slug: req.query.conceptSlug, isActive: true, deletedAt: null },
-        select: { id: true, name: true, type: true },
+        select: { id: true, name: true, type: true, reservationsEnabled: true },
       })
       if (!concept) throw new NotFoundError('Concept', req.query.conceptSlug)
+      if (!concept.reservationsEnabled) {
+        throw new AppError(
+          'RESERVATIONS_DISABLED',
+          `${concept.name} isn't accepting reservations right now.`,
+          403,
+        )
+      }
 
       // Day in PKT
       const day = new Date(`${req.query.date.slice(0, 10)}T00:00:00+05:00`)
@@ -458,11 +669,18 @@ export async function reservationRoutes(fastify: FastifyInstance) {
         ? hours.map((h) => ({ openMin: h.openMin, closeMin: h.closeMin }))
         : [{ openMin: 11 * 60, closeMin: 23 * 60 }]
 
-      // Generate 30-minute slots within each window
-      const slotMs = 30 * 60_000
+      // Pull operator-configured time parameters from ReservationPolicy.
+      // The restaurant sets these on /configuration/reservation-policy.
+      const { getReservationPolicy } = await import('../../lib/setup-config.js')
+      const policy = await getReservationPolicy()
+      const slotIntervalMin    = policy?.slotIntervalMin    ?? 30
+      const defaultDurationMin = policy?.defaultDurationMin ?? 90
+
+      // Generate slots at the configured interval. Last possible slot must
+      // fit a full sitting before the close time.
       const candidateSlots: Date[] = []
       for (const w of windows) {
-        for (let m = w.openMin; m + 90 <= w.closeMin; m += 30) {
+        for (let m = w.openMin; m + defaultDurationMin <= w.closeMin; m += slotIntervalMin) {
           candidateSlots.push(new Date(day.getTime() + m * 60_000))
         }
       }
@@ -490,7 +708,7 @@ export async function reservationRoutes(fastify: FastifyInstance) {
         select: { startTime: true, endTime: true, tableId: true },
       })
 
-      const slotDuration = 90 * 60_000
+      const slotDuration = defaultDurationMin * 60_000
       const slots = candidateSlots.map((s) => {
         const e = new Date(s.getTime() + slotDuration)
         // Closed by blockout?
@@ -510,10 +728,21 @@ export async function reservationRoutes(fastify: FastifyInstance) {
         }
       })
 
+      // Daypart grouping comes from policy.dayparts. Storefront uses these
+      // to bucket slots under labelled headings (Lunch / Dinner / etc.).
+      // Schema is JSON in the DB; we shape it defensively.
+      const dayparts: Array<{ label: string; startHour: number; endHour: number }> =
+        Array.isArray(policy?.dayparts)
+          ? (policy.dayparts as Array<{ label: string; startHour: number; endHour: number }>)
+          : []
+
       return {
         concept: { id: concept.id, name: concept.name, slug: req.query.conceptSlug, type: concept.type },
         date: req.query.date.slice(0, 10),
         partySize,
+        slotIntervalMin,
+        defaultDurationMin,
+        dayparts,
         slots,
       }
     },
@@ -528,7 +757,10 @@ export async function reservationRoutes(fastify: FastifyInstance) {
         conceptSlug: z.string().min(1),
         partySize:   z.number().int().min(1).max(20),
         startTime:   z.string().datetime(),
-        durationMin: z.number().int().min(30).max(240).default(DEFAULT_DURATION_MIN),
+        // Optional — defaults to whatever the operator set on
+        // ReservationPolicy.defaultDurationMin. The storefront shouldn't
+        // hardcode a number.
+        durationMin: z.number().int().min(30).max(240).optional(),
         guestName:   z.string().min(1).max(120),
         guestPhone:  z.string().min(7).max(20),
         guestEmail:  z.string().email().nullable().optional(),
@@ -539,9 +771,31 @@ export async function reservationRoutes(fastify: FastifyInstance) {
         where: { slug: body.conceptSlug, isActive: true, deletedAt: null },
       })
       if (!concept) throw new NotFoundError('Concept', body.conceptSlug)
+      if (!concept.reservationsEnabled) {
+        throw new AppError(
+          'RESERVATIONS_DISABLED',
+          `${concept.name} isn't accepting reservations right now.`,
+          403,
+        )
+      }
+
+      // Naughty-list gate. Reject the booking outright if the guest's
+      // phone or email matches an active ban — they get the same clean
+      // 403 a banned signup gets.
+      const { assertNotBanned } = await import('../../lib/banCheck.js')
+      await assertNotBanned({
+        email: body.guestEmail ?? null,
+        phone: body.guestPhone,
+        ip:    req.ip ?? null,
+        intent: 'reservation',
+      })
+
+      const { getReservationPolicy: getPolicyForBook } = await import('../../lib/setup-config.js')
+      const bookPolicy = await getPolicyForBook()
+      const durationMin = body.durationMin ?? bookPolicy?.defaultDurationMin ?? DEFAULT_DURATION_MIN
 
       const startTime = new Date(body.startTime)
-      const endTime   = new Date(startTime.getTime() + body.durationMin * 60_000)
+      const endTime   = new Date(startTime.getTime() + durationMin * 60_000)
 
       // Refuse bookings into closures
       const closure = await prisma.conceptBlockout.findFirst({
@@ -571,24 +825,26 @@ export async function reservationRoutes(fastify: FastifyInstance) {
       // Generate confirmation token (32 chars)
       const confirmToken = Array.from({ length: 32 }, () => Math.floor(Math.random() * 36).toString(36)).join('')
 
-      const r = await prisma.reservation.create({
-        data: {
-          conceptId:  concept.id,
-          customerId,
-          partySize:  body.partySize,
-          startTime, endTime,
-          guestName:  body.guestName,
-          guestPhone: body.guestPhone,
-          guestEmail: body.guestEmail ?? null,
-          notes:      body.notes ?? null,
-          source:     'website',
-          status:     'booked',
-          confirmToken,
-          // Public bookings start without a table assignment — host assigns.
-          waitlist: false,
-        },
-        include: { concept: { select: { name: true } } },
-      })
+      const r = await withTableOverlapGuard(() =>
+        prisma.reservation.create({
+          data: {
+            conceptId:  concept.id,
+            customerId,
+            partySize:  body.partySize,
+            startTime, endTime,
+            guestName:  body.guestName,
+            guestPhone: body.guestPhone,
+            guestEmail: body.guestEmail ?? null,
+            notes:      body.notes ?? null,
+            source:     'website',
+            status:     'booked',
+            confirmToken,
+            // Public bookings start without a table assignment — host assigns.
+            waitlist: false,
+          },
+          include: { concept: { select: { name: true } } },
+        }),
+      )
 
       const storefrontUrl = process.env['STOREFRONT_URL'] ?? 'https://order.servd.pk'
       const confirmUrl = `${storefrontUrl}/reserve/confirm/${confirmToken}`
@@ -604,6 +860,11 @@ export async function reservationRoutes(fastify: FastifyInstance) {
         void sendEmail(body.guestEmail, `${r.concept.name} — confirm your reservation`, html)
           .catch((err) => req.log.error({ err: (err as Error).message }, 'public booking email failed'))
       }
+
+      emitReservationEvent('reservation:created', {
+        reservationId: r.id, conceptId: r.conceptId,
+        startTime: r.startTime.toISOString(), status: r.status,
+      })
 
       return reply.status(201).send({ id: r.id, confirmToken, startTime: r.startTime, status: r.status })
     },
@@ -622,6 +883,10 @@ export async function reservationRoutes(fastify: FastifyInstance) {
           where: { id: r.id },
           data: { status: 'confirmed', confirmedAt: new Date() },
         })
+        emitReservationEvent('reservation:confirmed', {
+          reservationId: updated.id, conceptId: updated.conceptId,
+          startTime: updated.startTime.toISOString(), status: updated.status,
+        })
         return { status: updated.status }
       }
       if (action === 'cancel') {
@@ -629,9 +894,114 @@ export async function reservationRoutes(fastify: FastifyInstance) {
           where: { id: r.id },
           data: { status: 'cancelled', cancelledAt: new Date(), cancelReason: 'Cancelled by guest' },
         })
+        emitReservationEvent('reservation:cancelled', {
+          reservationId: updated.id, conceptId: updated.conceptId,
+          startTime: updated.startTime.toISOString(), status: updated.status,
+        })
+        // Slot freed — try waitlist promotion.
+        void (async () => {
+          const { tryPromoteWaitlist } = await import('./waitlistPromotion.js')
+          tryPromoteWaitlist(r).catch(() => {})
+        })()
         return { status: updated.status }
       }
       return { status: r.status }
+    },
+  )
+
+  // ─── Waitlist promotion claim (public, no auth) ─────────────────────────
+  // Guest gets an SMS/email when a slot opens up. The link points at
+  // /reserve/claim/:token on the storefront. The storefront calls these
+  // routes to fetch the offer and to claim it.
+  fastify.get<{ Params: { token: string } }>(
+    '/claim/:token',
+    { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } },
+    async (req) => {
+      const r = await prisma.reservation.findUnique({
+        where: { promotionToken: req.params.token },
+        include: { concept: { select: { name: true, slug: true } } },
+      })
+      if (!r || !r.promotionExpiresAt) throw new NotFoundError('Promotion offer', req.params.token)
+      const expired = r.promotionExpiresAt < new Date()
+      return {
+        guestName:        r.guestName,
+        partySize:        r.partySize,
+        offeredStartTime: r.promotionOfferedStartTime,
+        offeredEndTime:   r.promotionOfferedEndTime,
+        expiresAt:        r.promotionExpiresAt,
+        expired,
+        alreadyClaimed:   r.promotedFromWaitlistAt != null && !r.promotionToken,
+        concept:          { name: r.concept.name, slug: r.concept.slug },
+      }
+    },
+  )
+
+  fastify.post<{ Params: { token: string } }>(
+    '/claim/:token',
+    { config: { rateLimit: { max: 5, timeWindow: '5 minutes' } } },
+    async (req, reply) => {
+      const r = await prisma.reservation.findUnique({
+        where: { promotionToken: req.params.token },
+      })
+      if (!r) throw new NotFoundError('Promotion offer', req.params.token)
+      if (!r.promotionExpiresAt || r.promotionExpiresAt < new Date()) {
+        throw new AppError('PROMOTION_EXPIRED', 'This offer has expired.', 410)
+      }
+      if (!r.promotionOfferedStartTime || !r.promotionOfferedEndTime) {
+        throw new AppError('PROMOTION_INVALID', 'Offer details missing — please contact the venue.', 422)
+      }
+
+      // Atomically apply the offer: copy promoted-* into live booking fields
+      // + clear the promotion. Wrapped in the overlap guard so we still
+      // reject if a concurrent staff write took the slot.
+      const updated = await withTableOverlapGuard(() =>
+        prisma.reservation.update({
+          where: { id: r.id },
+          data: {
+            startTime:                 r.promotionOfferedStartTime!,
+            endTime:                   r.promotionOfferedEndTime!,
+            tableId:                   r.promotionOfferedTableId,
+            waitlist:                  false,
+            status:                    'confirmed',
+            confirmedAt:               new Date(),
+            promotedFromWaitlistAt:    new Date(),
+            promotionToken:            null,
+            promotionExpiresAt:        null,
+            promotionOfferedStartTime: null,
+            promotionOfferedEndTime:   null,
+            promotionOfferedTableId:   null,
+          },
+          include: { concept: { select: { name: true } } },
+        }),
+      )
+
+      emitReservationEvent('reservation:waitlist-promoted', {
+        reservationId: updated.id,
+        conceptId:     updated.conceptId,
+        startTime:     updated.startTime.toISOString(),
+        status:        updated.status,
+      })
+
+      const when = updated.startTime.toLocaleString('en-GB', {
+        timeZone: 'Asia/Karachi', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit',
+      })
+      if (updated.guestPhone) {
+        void sendSms(updated.guestPhone, `${updated.concept.name}: confirmed for ${updated.partySize} on ${when} PKT. See you there.`).catch(() => {})
+      }
+      if (updated.guestEmail) {
+        void sendEmail(
+          updated.guestEmail,
+          `${updated.concept.name}: confirmed for ${when} PKT`,
+          `<p>Hi ${updated.guestName}, you're all set — table for ${updated.partySize} at <strong>${updated.concept.name}</strong> on <strong>${when} PKT</strong>. See you soon.</p>`,
+        ).catch(() => {})
+      }
+
+      return reply.send({
+        status: updated.status,
+        startTime: updated.startTime,
+        partySize: updated.partySize,
+        concept: { name: updated.concept.name },
+      })
     },
   )
 
@@ -803,35 +1173,31 @@ export async function reservationRoutes(fastify: FastifyInstance) {
 
   // Capture = no-show, charge the deposit. Posts a journal entry:
   // Dr Bank / Cr Service Charges Revenue (4100) since this is forfeit fee
-  // revenue, NOT a sale of food.
+  // revenue, NOT a sale of food. Implementation lives in depositCapture.ts
+  // so the auto-no-show worker can call the same path.
   fastify.post<{ Params: { id: string } }>(
     '/:id/deposit-capture',
     { preHandler: requireAuth(...MANAGERS) },
     async (req) => {
       const r = await prisma.reservation.findUnique({
         where: { id: req.params.id },
-        include: { concept: { select: { name: true } } },
+        select: { id: true, conceptId: true, depositCents: true },
       })
       if (!r) throw new NotFoundError('Reservation', req.params.id)
       if (r.depositCents <= 0) throw new AppError('NO_DEPOSIT', 'No deposit on file', 422)
       await assertConceptAccess(req.staffUser!, r.conceptId)
 
-      const { postJournalEntry, ACCT } = await import('../accounting/journal.js')
-      await postJournalEntry({
-        sourceType: 'reservation.deposit_capture',
-        sourceId: r.id,
-        description: `No-show fee · ${r.concept.name} · ${r.guestName}`,
+      const { captureReservationDeposit } = await import('./depositCapture.js')
+      const result = await captureReservationDeposit({
+        reservationId: r.id,
         postedBy: req.staffUser?.id ?? 'system',
-        lines: [
-          { accountCode: ACCT.BANK,                   type: 'debit',  amountCents: r.depositCents },
-          { accountCode: ACCT.SERVICE_CHARGE_REVENUE, type: 'credit', amountCents: r.depositCents, memo: 'No-show forfeit' },
-        ],
+        staffUser: req.staffUser ?? null,
       })
-
-      return prisma.reservation.update({
-        where: { id: r.id },
-        data: { status: 'no_show', cancelReason: 'No-show — deposit captured' },
-      })
+      if (!result.captured) {
+        // Should be unreachable given the pre-check above, but defensive.
+        throw new AppError('NO_DEPOSIT', 'Deposit not capturable', 422)
+      }
+      return prisma.reservation.findUnique({ where: { id: r.id } })
     },
   )
 }
@@ -844,8 +1210,28 @@ async function transition(
   const r = await prisma.reservation.findUnique({ where: { id: reservationId } })
   if (!r) throw new NotFoundError('Reservation', reservationId)
   await assertConceptAccess(req.staffUser!, r.conceptId)
-  return prisma.reservation.update({
+  const updated = await prisma.reservation.update({
     where: { id: r.id },
     data: { status, ...(status === 'no_show' && { cancelReason: 'No-show' }) },
   })
+  emitReservationEvent(
+    status === 'confirmed' ? 'reservation:confirmed' : 'reservation:no-show',
+    { reservationId: updated.id, conceptId: updated.conceptId, startTime: updated.startTime.toISOString(), status: updated.status },
+  )
+  if (status === 'no_show') {
+    bumpCustomerRollups(updated.customerId)
+    if (updated.customerId) {
+      // Manual no-show — staff explicitly marked it. Strike the customer.
+      const { recordStrike } = await import('../../lib/strikes.js')
+      recordStrike({
+        customerId: updated.customerId,
+        kind: 'reservation_no_show',
+        sourceType: 'reservation',
+        sourceId: updated.id,
+        reason: 'Staff marked as no-show.',
+        recordedById: req.staffUser?.id ?? null,
+      }).catch(() => {})
+    }
+  }
+  return updated
 }

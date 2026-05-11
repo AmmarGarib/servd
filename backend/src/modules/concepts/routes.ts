@@ -20,6 +20,8 @@ const createConceptSchema = z.object({
   storefrontVisible: z.boolean().optional(),
   heroTagline: z.string().max(120).optional().nullable(),
   announcementBanner: z.string().max(300).optional().nullable(),
+  // Per-brand reservations master toggle (false = brand isn't accepting bookings)
+  reservationsEnabled: z.boolean().optional(),
   // Brand strategy brief — captured during onboarding
   conceptStatement:    z.string().max(280).nullable().optional(),
   cuisine:             z.string().max(60).nullable().optional(),

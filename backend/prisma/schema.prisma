@@ -167,6 +167,13 @@ model Concept {
   announcementBanner String?                  // live message customers see (e.g. "Closed today")
   storefrontLayout   Json?                    // ordered array of page blocks (page builder)
 
+  // Reservation availability — per-brand master toggle. When false, public
+  // booking endpoints reject (RESERVATIONS_DISABLED) and customer-facing
+  // surfaces hide the "Book a table" CTA. Staff can still create reservations
+  // via the admin (e.g. take a phone booking) regardless. Useful for:
+  // takeaway-only brands, ghost kitchens, brands without floor service.
+  reservationsEnabled Boolean @default(true)
+
   // ── Brand strategy brief ──────────────────────────────────────────────
   // Captured during onboarding, reused in CRM segmentation, marketing copy,
   // and competitive analytics. Free-form fields so operators describe their
@@ -237,6 +244,7 @@ model Concept {
   locations          ConceptLocation[]
   tenant             Tenant?            @relation(fields: [tenantId], references: [id])
   componentUses      ComponentBrandUse[]
+  feedbackEntries    FeedbackEntry[]
 
   @@index([tenantId])
   @@map("concepts")
@@ -491,6 +499,22 @@ model Reservation {
   cancelledAt  DateTime?
   cancelReason String?
 
+  // ── Waitlist promotion ─────────────────────────────────────────────────
+  // When another reservation cancels or no-shows, the system can OFFER the
+  // freed slot to a matching waitlist row. The original waitlist row stays
+  // untouched until the guest claims; these fields hold the offer.
+  //   POST /api/v1/reservations/claim/:token  → applies offer to startTime,
+  //                                               endTime, tableId and clears
+  //                                               the promotion fields.
+  // Expired offers (promotionExpiresAt < now) get swept by the reservation
+  // reminder worker on its next tick.
+  promotionToken              String?   @unique
+  promotionExpiresAt          DateTime?
+  promotionOfferedStartTime   DateTime?
+  promotionOfferedEndTime     DateTime?
+  promotionOfferedTableId     String?
+  promotedFromWaitlistAt      DateTime?
+
   createdById  String?             // staff user, null if from public website
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
@@ -501,6 +525,7 @@ model Reservation {
 
   @@index([conceptId, startTime])
   @@index([tableId, startTime])
+  @@index([promotionExpiresAt])
   @@index([status, startTime])
   @@index([reminder24hSentAt])
   @@map("reservations")
@@ -797,9 +822,38 @@ model Customer {
   totalSpentCents   Int       @default(0)
   preferredConceptId String?
   walletBalance     Int       @default(0)
+
+  // ── Referral program ─────────────────────────────────────────────────────
+  // Each customer auto-gets a unique 8-char code on registration. New
+  // customers can supply someone's code at signup — when their first
+  // order completes, BOTH parties get a loyalty bonus (default 200 pts each).
+  // referredById and referredAt stay set forever for cohort analytics.
+  referralCode              String?   @unique
+  referredById              String?
+  referredAt                DateTime?
+  referralRewardCreditedAt  DateTime?       // null until the dual bonus has fired
   password          String?
   isBlacklisted     Boolean   @default(false)
   blacklistReason   String?
+
+  // ── Cross-module rollups (denormalized on every status change so the host
+  //    stand sees the customer's full risk/value picture without joining a
+  //    bunch of tables on every render) ─────────────────────────────────
+  noShowCount       Int       @default(0)   // lifetime no-show reservations
+  complaintCount    Int       @default(0)   // lifetime complaints filed
+  reviewCount       Int       @default(0)   // lifetime reviews left (any rating)
+  // Naughty list — strikes accumulate from no-show / cash-unpaid / refused-
+  // at-door incidents. At 3 active strikes, a CustomerBan row gets created
+  // and the customer (plus their email/phone/IP) is locked out of fresh
+  // signups + new orders + new reservations.
+  strikeCount       Int       @default(0)   // ACTIVE strikes (reversed/expired excluded)
+  bannedAt          DateTime?               // null = not banned. Mirror of CustomerBan.bannedAt for fast UI checks.
+  avgReviewRating   Float?                  // running average of their ratings
+  lastVisitAt       DateTime?               // most recent of (lastOrderAt, last seated reservation)
+  lastComplaintAt   DateTime?               // when they last raised an issue (host-relevant context)
+  lastReviewedAt    DateTime?               // when they last left a review
+  lastNoShowAt      DateTime?               // when they last failed to show
+  staffNotes        String?                 // free-form, manager-curated, shown on every host view
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
   deletedAt         DateTime?
@@ -817,8 +871,89 @@ model Customer {
   analyticsEvents    AnalyticsEvent[]
   segmentMemberships CustomerSegmentMembership[]
   conversations      CustomerConversation[]
+  feedbackEntries    FeedbackEntry[]
+
+  // Referral relation (self-relation: who referred me, who I've referred)
+  referredBy   Customer?  @relation("Referrals", fields: [referredById], references: [id])
+  referrals    Customer[] @relation("Referrals")
+
+  strikes      CustomerStrike[]
+  bans         CustomerBan[]
 
   @@map("customers")
+}
+
+// ─── Naughty list: strikes + bans ───────────────────────────────────────────
+//
+// Customer accountability layer. Every offense (reservation no-show, COD
+// not paid, COD refused at door) records a CustomerStrike. At 3 active
+// strikes (not expired, not reversed), the system promotes the customer to
+// a CustomerBan that locks out their email + phone + every IP we've seen.
+// New signups + reservations + guest orders that match an active ban are
+// rejected with a friendly error.
+//
+// Strikes auto-expire after 365 days (running tab — yesterday's no-show
+// shouldn't haunt them forever). A manager can also REVERSE a strike if
+// it was on them (kitchen mistake, address bug, etc.) — preserves data
+// integrity but doesn't count toward the 3-strike threshold.
+
+model CustomerStrike {
+  id          String   @id @default(uuid())
+  customerId  String
+  // Discriminated kind — extensible. Add new strike types here as patterns emerge.
+  kind        String   // 'reservation_no_show' | 'cod_unpaid' | 'cod_refused' | 'chargeback' | 'other'
+  // Source row. Order id for COD strikes, Reservation id for no-shows.
+  sourceType  String?  // 'reservation' | 'order'
+  sourceId    String?
+  // Severity defaults to 1; high-value incidents (>PKR 5k refused) can bump to 2 so 2 incidents trigger ban.
+  severity    Int      @default(1)
+  reason      String?  // operator-supplied note ("driver said customer was very rude, refused to come down")
+  // Strikes naturally decay after a year. expiresAt is set at insert time.
+  expiresAt   DateTime?
+  // Manager can forgive a strike. recordedAt + reversedAt define the audit window.
+  reversedAt     DateTime?
+  reversedById   String?
+  reversalReason String?
+  recordedById   String?  // staff user id (or null = system)
+  recordedAt     DateTime @default(now())
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId, recordedAt])
+  @@index([kind, recordedAt])
+  @@map("customer_strikes")
+}
+
+model CustomerBan {
+  id          String   @id @default(uuid())
+  customerId  String?            // the original offender. Null only for synthetic bans (e.g. operator-added watchlist entries).
+
+  // Identifier fingerprints captured at offense time. New signups / orders
+  // are checked against ALL of these. Phone + email are hard rejects;
+  // IP is a soft signal recorded for forensic correlation only (cafe / family
+  // shared-IP false-positive risk is too high for a hard block).
+  email              String?
+  phone              String?
+  ipAddresses        String[]  @default([])
+  deviceFingerprints String[]  @default([])
+
+  reason       String                       // free-form: "3 strikes — see strikes table"
+  bannedById   String?                      // null = auto-promoted by system at 3-strike threshold
+  bannedAt     DateTime @default(now())
+  // Bans are permanent by default. Operators can lift via /crm/bans/:id/lift.
+  liftedAt     DateTime?
+  liftedById   String?
+  liftReason   String?
+  // Optional TTL — null = permanent. Lets operator set "1-year cooldown" if they want.
+  expiresAt    DateTime?
+
+  customer Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+
+  @@index([email])
+  @@index([phone])
+  @@index([bannedAt])
+  @@index([liftedAt])
+  @@map("customer_bans")
 }
 
 // ─── CRM outreach: customer chat threads ──────────────────────────────────────
@@ -898,6 +1033,76 @@ model TriggerLog {
 
   @@index([customerId, triggerType, createdAt])
   @@map("trigger_logs")
+}
+
+// ─── Loyalty tier configuration ────────────────────────────────────────────
+//
+// One row per tier (bronze / silver / gold). Operator-tunable from admin
+// /configuration/tier-perks. Perks are checked at:
+//   - Order checkout: free delivery + minimum order
+//   - Reservation creation: extended-advance booking window
+//   - Birthday trigger: enhanced discount instead of default 25%
+//   - Storefront /account: rendered as "perks unlocked" list
+//
+// Sensible defaults are seeded on first read so the system works
+// out-of-the-box without any admin intervention.
+model TierConfig {
+  id                       String   @id @default(uuid())
+  tier                     String   @unique  // 'bronze' | 'silver' | 'gold'
+
+  // Delivery perks
+  alwaysFreeDelivery       Boolean  @default(false)
+  freeDeliveryAboveCents   Int?              // free delivery for orders >= this
+
+  // Birthday perks (override the default 25% off in the birthday trigger)
+  birthdayDiscountPct      Int?              // null = use default
+
+  // Reservation perks
+  priorityReservationDays  Int?              // can book N days ahead beyond ReservationPolicy.maxAdvanceDays
+  waitlistPriority         Boolean  @default(false)  // promoter loop offers them slots first
+
+  // Monthly comp credit (auto-credited as wallet balance on the 1st)
+  monthlyCompCents         Int?
+
+  // Misc flags
+  earlyMenuAccess          Boolean  @default(false)
+  freeBirthdayItem         Boolean  @default(false)
+
+  description              String?           // operator-facing rationale
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
+
+  @@map("tier_configs")
+}
+
+// ─── Customer feedback (NPS / one-question surveys) ────────────────────────
+//
+// Distinct from OrderReview (rating tied to a specific order) and
+// OrderComplaint (formal grievance with a status workflow). FeedbackEntry
+// is for one-tap NPS/CSAT signals: "would you recommend us?", "how was your
+// most recent experience?". Submitted via a global widget on the storefront.
+//
+// kind:
+//   nps        — "How likely are you to recommend us?" 0..10 score
+//   csat       — "How was your most recent experience?" 1..5 score
+//   open       — anonymous freeform suggestion box ("got an idea?")
+model FeedbackEntry {
+  id          String   @id @default(uuid())
+  customerId  String?
+  conceptId   String?               // null = brand-agnostic / servd-wide feedback
+  kind        String                // 'nps' | 'csat' | 'open'
+  score       Int?                  // 0..10 for nps, 1..5 for csat, null for open
+  comment     String?
+  context     Json?                 // { page, orderId, reservationId, etc. } — set by client
+  source      String   @default("storefront")
+  createdAt   DateTime @default(now())
+
+  customer Customer? @relation(fields: [customerId], references: [id])
+  concept  Concept?  @relation(fields: [conceptId], references: [id])
+
+  @@index([conceptId, createdAt])
+  @@index([customerId, createdAt])
+  @@map("feedback_entries")
 }
 
 // ─── MagicLink ────────────────────────────────────────────────────────────────
@@ -989,6 +1194,25 @@ model Order {
   deliveryOtpAttempts   Int         @default(0)
   placedAt             DateTime    @default(now())
   completedAt          DateTime?
+
+  // Post-order review prompt timestamps. Worker sends a "rate your meal"
+  // SMS+email 30 min after completion if the guest hasn't already reviewed.
+  // The flag prevents double-prompts.
+  reviewPromptSentAt   DateTime?
+
+  // ── Curbside / car-hopping fulfilment ────────────────────────────────
+  // When the customer chooses curbside at checkout, they're prompted for
+  // their vehicle description (and optionally plate). On arrival, they hit
+  // POST /storefront/orders/:id/arrived which stamps `curbsideArrivedAt`.
+  // The admin /orders/curbside queue lights up — staff runs food out.
+  // Presence of `curbsideVehicle` is the canonical "this is a curbside
+  // order" signal; nothing here clashes with delivery/pickup/dine-in.
+  curbsideVehicle      String?
+  curbsidePlate        String?
+  curbsideSpot         String?     // optional designated spot ("A3", "Front 2")
+  curbsideArrivedAt    DateTime?
+  curbsideRunnerOutAt  DateTime?   // when staff hit "running it out"
+
   createdAt            DateTime    @default(now())
   updatedAt            DateTime    @updatedAt
   deletedAt            DateTime?
@@ -1252,6 +1476,7 @@ model InventoryItem {
   billLines          SupplierBillLine[]
   wasteLogs          WasteLog[]
   components         Component[]
+  stockTransfers     StockTransfer[]
 
   @@map("inventory_items")
 }
@@ -2026,15 +2251,43 @@ model OrderReview {
   orderId    String   @unique
   customerId String?
   conceptId  String
-  rating     Int      // 1–5
+  rating     Int      // 1–5 overall
   comment    String?
   source     String   @default("storefront")
+
+  // Optional sub-ratings — guests can rate individual aspects without
+  // forcing all four. Schema is JSON `{ food?: 1..5, service?: 1..5,
+  // value?: 1..5, speed?: 1..5 }` so we can add more facets without a
+  // migration.
+  categoryRatings Json?
+
+  // Quick-tap chips: "Loved the bread", "Quick service", "Generous
+  // portions" etc. Powers segment + recommender training without forcing
+  // freeform text. Stored as plain strings; admin can rename/add tags.
+  tags     String[] @default([])
+
+  // True if the rating was 4 or 5 — denormalised for fast positive-leaning
+  // CRM queries (winback ignores them, NPS report counts them).
+  isPositive Boolean @default(false)
+
+  // Loyalty bonus tracking: we award 50 pts for reviewing within 24h. This
+  // flag prevents double-credit if the row gets re-saved.
+  bonusPointsAwarded Int @default(0)
+
+  // Manager response to a public review (shown on /brand/<slug>). Public
+  // accountability — guests see how the venue handles feedback.
+  managerResponse     String?
+  managerResponseAt   DateTime?
+  managerResponseById String?
+
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
   order   Order   @relation(fields: [orderId], references: [id])
   concept Concept @relation(fields: [conceptId], references: [id])
 
+  @@index([conceptId, createdAt])
+  @@index([conceptId, rating])
   @@map("order_reviews")
 }
 
@@ -2052,6 +2305,12 @@ model OrderComplaint {
   priority    ComplaintPriority @default(medium)
   resolvedAt  DateTime?
   resolution  String?
+
+  // Lifecycle worker stamp: when we sent the "did we make it right?"
+  // follow-up SMS+email after a complaint is marked resolved. Prevents
+  // duplicate follow-ups if the resolution is edited.
+  followUpSentAt DateTime?
+
   createdAt   DateTime          @default(now())
   updatedAt   DateTime          @updatedAt
 
@@ -2696,6 +2955,21 @@ model ReservationPolicy {
   walkInsAllowed              Boolean  @default(true)
   remindersEnabled            Boolean  @default(true)
   reminderHoursBefore         Int      @default(24)
+
+  // Slot generation — drives the public availability widget. The restaurant
+  // controls these from /configuration/reservation-policy. slotIntervalMin
+  // sets the granularity (15 / 30 / 60). defaultDurationMin is the booked
+  // window per slot (90 = standard dinner sitting).
+  slotIntervalMin             Int      @default(30)
+  defaultDurationMin          Int      @default(90)
+
+  // Daypart grouping — how the public widget buckets the slot grid into
+  // labelled sections (Lunch / Dinner / etc). JSON array of
+  //   { label: string, startHour: 0..23, endHour: 1..24 }
+  // Default mirrors the original hardcoded grouping so existing rows behave
+  // the same after migration.
+  dayparts                    Json     @default("[{\"label\":\"Lunch\",\"startHour\":0,\"endHour\":12},{\"label\":\"Afternoon\",\"startHour\":12,\"endHour\":16},{\"label\":\"Dinner\",\"startHour\":16,\"endHour\":22},{\"label\":\"Late night\",\"startHour\":22,\"endHour\":24}]")
+
   notes                       String?
   updatedAt                   DateTime @updatedAt
   updatedById                 String?
@@ -3321,8 +3595,59 @@ model Location {
   orders      Order[]
   shifts      Shift[]
   financialEntries FinancialEntry[]
+  transfersFrom    StockTransfer[]   @relation("TransferFrom")
+  transfersTo      StockTransfer[]   @relation("TransferTo")
 
   @@map("locations")
+}
+
+// ─── StockTransfer ───────────────────────────────────────────────────────────
+// Inter-location inventory movement. Records the request → approval →
+// in-transit → received workflow. Stock-level mutations live separately
+// (today inventory is one tenant-wide pool; per-location stock is queued
+// for a future migration). Until then, this model is the authoritative
+// audit trail of "who sent what to whom on what day."
+model StockTransfer {
+  id                 String   @id @default(uuid())
+  inventoryItemId    String
+  fromLocationId     String
+  toLocationId       String
+  quantity           Float
+  unit               String
+  // requested → approved → in_transit → received       (happy path)
+  //              ↓                       ↓
+  //          cancelled               (any time before received)
+  status             String   @default("requested")
+  reason             String?              // e.g. "low stock at DHA, surplus at Gulberg"
+  notes              String?              // free-form
+
+  // Audit trail of WHO did what
+  requestedById      String
+  approvedById       String?
+  shippedById        String?
+  receivedById       String?
+  cancelledById      String?
+
+  requestedAt        DateTime @default(now())
+  approvedAt         DateTime?
+  shippedAt          DateTime?
+  receivedAt         DateTime?
+  cancelledAt        DateTime?
+  cancelReason       String?
+
+  // Once per-location stock lands, this is where receivedQuantity might
+  // diverge from quantity (driver lost some, breakage, etc.).
+  receivedQuantity   Float?
+
+  inventoryItem InventoryItem @relation(fields: [inventoryItemId], references: [id])
+  fromLocation  Location      @relation("TransferFrom", fields: [fromLocationId], references: [id])
+  toLocation    Location      @relation("TransferTo",   fields: [toLocationId],   references: [id])
+
+  @@index([status, requestedAt])
+  @@index([inventoryItemId])
+  @@index([fromLocationId, status])
+  @@index([toLocationId, status])
+  @@map("stock_transfers")
 }
 
 // Many-to-many link between Concept (brand) and Location (place).

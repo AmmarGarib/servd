@@ -36,11 +36,16 @@ function BrandNav({ concept, onBrandHost }: { concept: Concept; onBrandHost: boo
   const base = `/brand/${concept.slug}`
   const servdHome = servdHref('/', onBrandHost)
 
+  // "Book" only appears when the brand explicitly accepts reservations
+  // (treat undefined as true for backward-compat with cached responses).
+  const acceptsReservations = concept.reservationsEnabled !== false
   const links = [
     { href: base,                       label: 'Home' },
     { href: `${base}/menu`,             label: 'Menu' },
     { href: `${base}/about`,            label: 'Story' },
-    { href: `/reserve/${concept.slug}`, label: 'Book' },
+    ...(acceptsReservations
+      ? [{ href: `/reserve/${concept.slug}`, label: 'Book' }]
+      : []),
     { href: `${base}/visit`,            label: 'Visit' },
   ]
 

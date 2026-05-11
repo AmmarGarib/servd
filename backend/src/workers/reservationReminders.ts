@@ -44,6 +44,15 @@ const STOREFRONT_URL = process.env['STOREFRONT_URL'] ?? 'https://order.servd.pk'
 async function runReminderSweep(): Promise<void> {
   const now = new Date()
 
+  // Sweep expired waitlist promotion offers first — clears the offer fields
+  // and tries to roll the slot to the next eligible candidate.
+  try {
+    const { sweepExpiredPromotions } = await import('../modules/reservations/waitlistPromotion.js')
+    await sweepExpiredPromotions()
+  } catch (err) {
+    console.error('[reservationReminders] promotion sweep failed:', (err as Error).message)
+  }
+
   // 24h reminders — startTime within (24h±2.5min)
   const window24Start = new Date(now.getTime() + 24 * 3600_000 - 150_000)
   const window24End   = new Date(now.getTime() + 24 * 3600_000 + 150_000)
@@ -76,7 +85,10 @@ async function runReminderSweep(): Promise<void> {
     await prisma.reservation.update({ where: { id: r.id }, data: { reminder2hSentAt: new Date() } })
   }
 
-  // No-show sweep — confirmed/booked, endTime > 30 min ago, never seated
+  // No-show sweep — confirmed/booked, endTime > 30 min ago, never seated.
+  // For any row with depositCents > 0, ALSO auto-capture the deposit (posts
+  // a journal entry crediting Service Charge Revenue). For zero-deposit
+  // rows, just flip the status.
   const noShowCutoff = new Date(now.getTime() - 30 * 60_000)
   const stale = await prisma.reservation.findMany({
     where: {
@@ -84,13 +96,66 @@ async function runReminderSweep(): Promise<void> {
       seatedAt: null,
       endTime: { lt: noShowCutoff },
     },
-    select: { id: true },
+    select: { id: true, depositCents: true },
   })
-  if (stale.length > 0) {
+
+  if (stale.length === 0) return
+
+  const withDeposit    = stale.filter((r) => r.depositCents > 0)
+  const withoutDeposit = stale.filter((r) => r.depositCents <= 0)
+
+  // Bulk-flip the cheap ones in one query.
+  if (withoutDeposit.length > 0) {
     await prisma.reservation.updateMany({
-      where: { id: { in: stale.map((r) => r.id) } },
+      where: { id: { in: withoutDeposit.map((r) => r.id) } },
       data: { status: 'no_show', cancelReason: 'Auto: no-show after window' },
     })
+    // Notify any open admin clients + try to promote waitlist into the
+    // freed slots + record a strike on the customer's account. All
+    // best-effort; failures don't block the sweep.
+    const { emitReservationEvent } = await import('../lib/ws.js')
+    const { tryPromoteWaitlist } = await import('../modules/reservations/waitlistPromotion.js')
+    const { recordStrike } = await import('../lib/strikes.js')
+    for (const r of withoutDeposit) {
+      const full = await prisma.reservation.findUnique({ where: { id: r.id } })
+      if (!full) continue
+      emitReservationEvent('reservation:no-show', {
+        reservationId: full.id, conceptId: full.conceptId,
+        startTime: full.startTime.toISOString(), status: full.status,
+      })
+      tryPromoteWaitlist(full).catch(() => {})
+      if (full.customerId) {
+        recordStrike({
+          customerId: full.customerId,
+          kind: 'reservation_no_show',
+          sourceType: 'reservation',
+          sourceId: full.id,
+          reason: 'Auto-detected no-show — booking expired without seating.',
+        }).catch(() => {})
+      }
+    }
+  }
+
+  // Capture deposits one-by-one — each posts a journal entry, which we want
+  // attributed individually for traceability. Failures don't block the sweep
+  // for the remaining rows.
+  for (const r of withDeposit) {
+    try {
+      const { captureReservationDeposit } = await import('../modules/reservations/depositCapture.js')
+      await captureReservationDeposit({
+        reservationId: r.id,
+        postedBy: 'system',
+        reason: 'Auto: no-show after window — deposit captured',
+      })
+    } catch (err) {
+      console.error(`[reservationReminders] auto-capture failed for ${r.id}:`, (err as Error).message)
+      // Even if capture fails (e.g. accounting glitch), still flip status so
+      // we don't keep retrying capture forever and the floor sees correct state.
+      await prisma.reservation.update({
+        where: { id: r.id },
+        data: { status: 'no_show', cancelReason: 'Auto: no-show after window (capture failed)' },
+      }).catch(() => {})
+    }
   }
 }
 
