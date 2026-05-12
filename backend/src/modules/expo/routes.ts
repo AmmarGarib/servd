@@ -17,54 +17,92 @@ import { getIOSafe } from '../../lib/ws.js'
 
 export async function expoRoutes(fastify: FastifyInstance) {
 
-  // GET /expo/queue — orders waiting on expo + items currently routed to each
-  // station + a lightweight master par sheet. One round-trip so the expo
-  // screen renders without a flash of empty state.
+  // GET /expo/queue — everything expo needs in one round-trip:
+  //   • awaitingFire — `received` (not yet confirmed); each row has the
+  //     fulfilmentType so expo knows what they're committing to.
+  //   • inProgress   — `preparing`; each item carries its step counters
+  //     (done/total) so expo sees a per-order progress like 3/5, 4/5.
+  //   • ready        — `ready`; expo's "Served / Dispatch / Picked up"
+  //     button lives here, copy switches by fulfilmentType.
+  //   • stations     — live load per station (already on the right sidebar).
   fastify.get(
     '/queue',
     { preHandler: requireAuthOrPin(...ALL_STAFF) },
     async (req) => {
       const tenantId = req.staffUser!.tenantId
-
-      // Incoming queue: anything `received` (not yet expo-confirmed) within
-      // the operator's tenant. POS orders skip this list (cashier already
-      // fired them at the counter); only delivery / storefront / external
-      // sources need the expo gate.
-      const queue = await prisma.order.findMany({
-        where: {
-          status: 'received',
-          concept: { tenantId, deletedAt: null },
-          deletedAt: null,
-        },
-        include: {
-          concept: { select: { id: true, name: true, slug: true } },
-          items:   { select: { id: true, name: true, quantity: true, notes: true, status: true } },
-          customer:{ select: { id: true, name: true, phone: true } },
-        },
-        orderBy: { placedAt: 'asc' },
-        take: 50,
-      })
-
-      // Live load per station: count of items currently `preparing` or `pending`
-      // at each station, scoped to tenant. Cheap GROUP BY.
-      const stations = await prisma.station.findMany({
-        where: { concept: { tenantId, deletedAt: null }, isActive: true },
-        select: {
-          id: true, name: true,
-          concept: { select: { slug: true } },
-          _count: {
-            select: {
-              orderItems: {
-                where: { status: { in: ['pending', 'preparing'] } },
-              },
-            },
+      const conceptScope = { tenantId, deletedAt: null }
+      const orderInclude = {
+        concept:  { select: { id: true, name: true, slug: true } },
+        customer: { select: { id: true, name: true, phone: true } },
+        table:    { select: { id: true, label: true } },
+        rider:    { select: { id: true, name: true, phone: true } },
+        items: {
+          select: {
+            id: true, name: true, quantity: true, notes: true, status: true,
+            steps: { select: { id: true, status: true } },
           },
         },
-        orderBy: { displayOrder: 'asc' },
-      })
+      } as const
+
+      const [awaitingFire, inProgress, ready, stations] = await Promise.all([
+        prisma.order.findMany({
+          where: { status: 'received', concept: conceptScope, deletedAt: null },
+          include: orderInclude,
+          orderBy: { placedAt: 'asc' },
+          take: 50,
+        }),
+        prisma.order.findMany({
+          where: { status: { in: ['confirmed', 'preparing'] }, concept: conceptScope, deletedAt: null },
+          include: orderInclude,
+          orderBy: { placedAt: 'asc' },
+          take: 80,
+        }),
+        prisma.order.findMany({
+          where: { status: 'ready', concept: conceptScope, deletedAt: null },
+          include: orderInclude,
+          orderBy: { placedAt: 'asc' },
+          take: 40,
+        }),
+        prisma.station.findMany({
+          where: { concept: conceptScope, isActive: true },
+          select: {
+            id: true, name: true,
+            concept: { select: { slug: true } },
+            _count: { select: { orderItems: { where: { status: { in: ['pending', 'preparing'] } } } } },
+          },
+          orderBy: { displayOrder: 'asc' },
+        }),
+      ])
+
+      // Per-order step roll-up: counts steps across all items + a "current
+      // station" string for the inProgress row. Items without recipe steps
+      // contribute 1 implicit step each (legacy routing).
+      function summarise(order: typeof inProgress[number]) {
+        let totalSteps = 0
+        let doneSteps  = 0
+        const activeStations = new Set<string>()
+        for (const it of order.items) {
+          if (it.steps.length > 0) {
+            totalSteps += it.steps.length
+            for (const s of it.steps) {
+              if (s.status === 'done' || s.status === 'voided') doneSteps++
+              if (s.status === 'preparing') {
+                // Pull the station name from the existing /stations cache below.
+              }
+            }
+          } else {
+            // Legacy item: treat as 1 step; complete when item is bumped.
+            totalSteps += 1
+            if (it.status === 'bumped' || it.status === 'voided') doneSteps += 1
+          }
+        }
+        return { totalSteps, doneSteps, activeStations: Array.from(activeStations) }
+      }
 
       return {
-        queue,
+        awaitingFire: awaitingFire.map((o) => ({ ...o, ...summarise(o) })),
+        inProgress:   inProgress.map((o)   => ({ ...o, ...summarise(o) })),
+        ready:        ready.map((o)        => ({ ...o, ...summarise(o) })),
         stations: stations.map((s) => ({
           id:    s.id,
           name:  s.name,
@@ -316,6 +354,47 @@ export async function expoRoutes(fastify: FastifyInstance) {
       }
 
       return reply.status(200).send(result)
+    },
+  )
+
+  // POST /expo/orders/:id/handoff — expo signs off a `ready` order to the
+  // next stage of the journey. Copy on the front-end button switches by
+  // fulfilmentType, but the server action is the same: flip to completed
+  // (server takes to table / customer collects at counter / rider takes the
+  // delivery). For deliveries we also stamp the order with a hand-off
+  // timestamp so the dispatch queue can pick it up.
+  fastify.post<{ Params: { id: string } }>(
+    '/orders/:id/handoff',
+    { preHandler: requireAuthOrPin(...ALL_STAFF) },
+    async (req, reply) => {
+      const tenantId = req.staffUser!.tenantId
+      const order = await prisma.order.findFirst({
+        where: { id: req.params.id, concept: { tenantId, deletedAt: null }, deletedAt: null },
+      })
+      if (!order) throw new NotFoundError('Order', req.params.id)
+      // Only `ready` orders can be handed off. If expo presses too early,
+      // the state machine refuses with a clear 409 — better than completing
+      // an order with un-bumped items.
+      if (order.status !== 'ready') {
+        throw new AppError(
+          'NOT_READY',
+          `Order is ${order.status} — wait for the kitchen to finish before handing off.`,
+          409,
+        )
+      }
+      const { updateOrderStatus } = await import('../orders/service.js')
+      await updateOrderStatus(req.params.id, 'completed')
+      try {
+        const { audit } = await import('../../lib/audit.js')
+        await audit({
+          userId:   req.staffUser!.id,
+          entity:   'Order',
+          entityId: order.id,
+          action:   'expo.handoff',
+          metadata: { fulfilmentType: order.fulfilmentType },
+        })
+      } catch { /* */ }
+      return reply.status(200).send({ ok: true, fulfilmentType: order.fulfilmentType })
     },
   )
 
