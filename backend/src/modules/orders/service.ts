@@ -136,12 +136,25 @@ export async function ingestOrder(dto: OrderDTO) {
     : []
   const stationMap = new Map(menuItemStations.map((m) => [m.id, m.stationId]))
 
+  // Decide fulfilment type once, up front. Upstream channels may have
+  // already told us (storefront, POS), but most won't — infer from the
+  // source + tableId combination. The CEO needs every ticket to clearly
+  // show plate vs package, so we never leave this null.
+  const fulfilmentType: 'dine_in' | 'takeout' | 'delivery' =
+    (dto as { fulfilment_type?: 'dine_in' | 'takeout' | 'delivery' }).fulfilment_type
+    ?? (
+      dto.table_id ? 'dine_in'
+      : (dto.source === 'foodpanda' || dto.source === 'careem') ? 'delivery'
+      : 'takeout'
+    )
+
   async function runTransaction() {
     return prisma.$transaction(async (tx) => {
       const newOrder = await tx.order.create({
         data: {
           conceptId: dto.concept_id,
           source: dto.source as never,
+          fulfilmentType,
           externalId: dto.external_id || null,
           status: 'received',
           customerId: dto.customer_id,

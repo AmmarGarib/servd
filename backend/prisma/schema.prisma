@@ -27,6 +27,15 @@ enum OrderSource {
   manual
 }
 
+// How an order leaves the kitchen. Drives plating (dine-in: real plate;
+// takeout/delivery: containers + lid + order label), end-of-pipeline handoff
+// (server vs counter vs rider), and the CTA copy on the expo "served" button.
+enum FulfilmentType {
+  dine_in    // plate it nice, server takes to table
+  takeout    // package for pickup, customer walks up to counter
+  delivery   // package + label + handoff to rider for the journey out
+}
+
 enum OrderStatus {
   received
   confirmed
@@ -1296,6 +1305,14 @@ model Order {
   conceptId       String
   locationId      String?     // physical place; nullable so existing rows still work — auto-set from Shift / cashier session
   source          OrderSource
+  // How does this order leave the kitchen? Drives plating (real plate vs.
+  // container), end-of-pipeline handoff (server / counter / rider), and the
+  // expo "Served" button copy. Inferred from source+tableId at ingestion if
+  // the upstream channel didn't tell us:
+  //   tableId set + source=pos      → dine_in
+  //   source in (foodpanda, careem) → delivery
+  //   source in (servd, cart, pos)  → takeout when no table, dine_in when table
+  fulfilmentType  FulfilmentType  @default(dine_in)
   externalId      String?     // platform-assigned ID; null for native orders
   status          OrderStatus @default(received)
   tableId         String?
