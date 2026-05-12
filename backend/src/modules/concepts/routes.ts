@@ -23,7 +23,7 @@ const createConceptSchema = z.object({
   announcementBanner: z.string().max(300).optional().nullable(),
   // Per-brand reservations master toggle (false = brand isn't accepting bookings)
   reservationsEnabled: z.boolean().optional(),
-  // Brand strategy brief — captured during onboarding
+  // Brand strategy brief â€” captured during onboarding
   conceptStatement:    z.string().max(280).nullable().optional(),
   cuisine:             z.string().max(60).nullable().optional(),
   heroProduct:         z.string().max(120).nullable().optional(),
@@ -37,7 +37,7 @@ const createConceptSchema = z.object({
 })
 
 // Full brand-edit schema. Adds geo, FBR / tax, and isActive on top of the
-// base creation fields. Slug is omitted intentionally — slug changes break
+// base creation fields. Slug is omitted intentionally â€” slug changes break
 // URLs + storefront SEO; expose it as a separate admin-only operation later.
 const updateConceptSchema = createConceptSchema.partial().omit({ slug: true }).extend({
   isActive: z.boolean().optional(),
@@ -59,11 +59,11 @@ const updateConceptSchema = createConceptSchema.partial().omit({ slug: true }).e
 })
 
 export async function conceptRoutes(fastify: FastifyInstance) {
-  // GET /concepts — list concepts under the active tenant
+  // GET /concepts â€” list concepts under the active tenant
   // Reads honour portfolio mode: when the operator has flipped to "All
   // companies", every tenant they're a member of is included via the
   // `x-servd-portfolio` header. Writes (POST/PATCH/DELETE below) stay
-  // scoped to the single active tenant — portfolio writes are gated at
+  // scoped to the single active tenant â€” portfolio writes are gated at
   // the client layer.
   fastify.get('/', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
     const scope = await resolveTenantScope(req)
@@ -73,30 +73,30 @@ export async function conceptRoutes(fastify: FastifyInstance) {
     })
   })
 
-  // GET /concepts/:id — must belong to the active tenant
+  // GET /concepts/:id â€” must belong to the active tenant
   fastify.get<{ Params: { id: string } }>('/:id', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
     const concept = await prisma.concept.findFirst({
-      where: { id: req.params.id, deletedAt: null, tenantId: req.staffUser!.tenantId },
+      where: { id: req.params.id, deletedAt: null, tenantId: req.staffUser!.tenantFilter },
     })
     if (!concept) throw new NotFoundError('Concept', req.params.id)
     return concept
   })
 
-  // POST /concepts — created under the active tenant
+  // POST /concepts â€” created under the active tenant
   fastify.post('/', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req, reply) => {
     const body = createConceptSchema.parse(req.body)
     const concept = await prisma.concept.create({
-      data: { ...body, tenantId: req.staffUser!.tenantId },
+      data: { ...body, tenantId: req.staffUser!.tenantId! },
     })
     return reply.status(201).send(concept)
   })
 
-  // PATCH /concepts/:id — managers can edit storefront content; admin-only for structural changes
+  // PATCH /concepts/:id â€” managers can edit storefront content; admin-only for structural changes
   fastify.patch<{ Params: { id: string } }>('/:id', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
     const body = updateConceptSchema.parse(req.body)
     // Verify the concept belongs to the active tenant before mutating.
     const owned = await prisma.concept.findFirst({
-      where: { id: req.params.id, tenantId: req.staffUser!.tenantId, deletedAt: null },
+      where: { id: req.params.id, tenantId: req.staffUser!.tenantFilter, deletedAt: null },
     })
     if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Concept not found in your active company' } })
     const { storefrontLayout, ...rest } = body
@@ -111,10 +111,10 @@ export async function conceptRoutes(fastify: FastifyInstance) {
     return concept
   })
 
-  // DELETE /concepts/:id (soft delete) — must belong to active tenant
+  // DELETE /concepts/:id (soft delete) â€” must belong to active tenant
   fastify.delete<{ Params: { id: string } }>('/:id', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req, reply) => {
     const owned = await prisma.concept.findFirst({
-      where: { id: req.params.id, tenantId: req.staffUser!.tenantId, deletedAt: null },
+      where: { id: req.params.id, tenantId: req.staffUser!.tenantFilter, deletedAt: null },
     })
     if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Concept not found in your active company' } })
     await prisma.concept.update({

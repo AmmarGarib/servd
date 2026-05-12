@@ -21,7 +21,7 @@ export async function stationRoutes(fastify: FastifyInstance) {
       return prisma.station.findMany({
         where: {
           deletedAt: null,
-          concept: { tenantId: req.staffUser!.tenantId, deletedAt: null },
+          concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
           ...(req.query.conceptId && { conceptId: req.query.conceptId }),
         },
         orderBy: [{ conceptId: 'asc' }, { displayOrder: 'asc' }],
@@ -36,7 +36,7 @@ export async function stationRoutes(fastify: FastifyInstance) {
       where: {
         id: req.params.id,
         deletedAt: null,
-        concept: { tenantId: req.staffUser!.tenantId, deletedAt: null },
+        concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
       },
     })
     if (!station) throw new NotFoundError('Station', req.params.id)
@@ -47,7 +47,7 @@ export async function stationRoutes(fastify: FastifyInstance) {
   fastify.post('/', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req, reply) => {
     const body = createStationSchema.parse(req.body)
     const concept = await prisma.concept.findFirst({
-      where: { id: body.conceptId, tenantId: req.staffUser!.tenantId, deletedAt: null },
+      where: { id: body.conceptId, tenantId: req.staffUser!.tenantFilter, deletedAt: null },
     })
     if (!concept) return reply.status(403).send({ error: { code: 'CROSS_TENANT', message: 'Concept does not belong to your active company' } })
     const station = await prisma.station.create({ data: body })
@@ -61,7 +61,7 @@ export async function stationRoutes(fastify: FastifyInstance) {
       where: {
         id: req.params.id,
         deletedAt: null,
-        concept: { tenantId: req.staffUser!.tenantId, deletedAt: null },
+        concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
       },
     })
     if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Station not found in your active company' } })
@@ -74,7 +74,7 @@ export async function stationRoutes(fastify: FastifyInstance) {
       where: {
         id: req.params.id,
         deletedAt: null,
-        concept: { tenantId: req.staffUser!.tenantId, deletedAt: null },
+        concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
       },
     })
     if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Station not found in your active company' } })

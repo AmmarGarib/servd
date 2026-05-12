@@ -60,7 +60,7 @@ export async function floorRoutes(fastify: FastifyInstance) {
           deletedAt: null,
           isActive: true,
           // Active-tenant scope: floor's concept must belong to the active tenant.
-          concept: { tenantId: req.staffUser!.tenantId, deletedAt: null },
+          concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
           ...(conceptId && { conceptId }),
         },
         include: {
@@ -76,7 +76,7 @@ export async function floorRoutes(fastify: FastifyInstance) {
     const body = floorSchema.parse(req.body)
     await assertConceptAccess(req.staffUser!, body.conceptId)
     const concept = await prisma.concept.findFirst({
-      where: { id: body.conceptId, tenantId: req.staffUser!.tenantId, deletedAt: null },
+      where: { id: body.conceptId, tenantId: req.staffUser!.tenantFilter, deletedAt: null },
     })
     if (!concept) return reply.status(403).send({ error: { code: 'CROSS_TENANT', message: 'Concept does not belong to your active company' } })
     const floor = await prisma.floor.create({ data: body })
@@ -92,7 +92,7 @@ export async function floorRoutes(fastify: FastifyInstance) {
       const existing = await prisma.floor.findFirst({
         where: {
           id: req.params.id,
-          concept: { tenantId: req.staffUser!.tenantId, deletedAt: null },
+          concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
         },
       })
       if (!existing) throw new NotFoundError('Floor', req.params.id)
@@ -109,7 +109,7 @@ export async function floorRoutes(fastify: FastifyInstance) {
       const existing = await prisma.floor.findFirst({
         where: {
           id: req.params.id,
-          concept: { tenantId: req.staffUser!.tenantId, deletedAt: null },
+          concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
         },
       })
       if (!existing) throw new NotFoundError('Floor', req.params.id)
@@ -131,7 +131,7 @@ export async function floorRoutes(fastify: FastifyInstance) {
       const existing = await prisma.table.findFirst({
         where: {
           id: req.params.id,
-          concept: { tenantId: req.staffUser!.tenantId, deletedAt: null },
+          concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
         },
       })
       if (!existing) throw new NotFoundError('Table', req.params.id)
@@ -165,7 +165,7 @@ export async function floorRoutes(fastify: FastifyInstance) {
       const floor = await prisma.floor.findFirst({
         where: {
           id: req.params.id,
-          concept: { tenantId: req.staffUser!.tenantId, deletedAt: null },
+          concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
         },
       })
       if (!floor) throw new NotFoundError('Floor', req.params.id)
@@ -200,7 +200,7 @@ export async function floorRoutes(fastify: FastifyInstance) {
     const floor = await prisma.floor.findFirst({
       where: {
         id: body.floorId,
-        concept: { tenantId: req.staffUser!.tenantId, deletedAt: null },
+        concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
       },
     })
     if (!floor) throw new NotFoundError('Floor', body.floorId)

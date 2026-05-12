@@ -21,7 +21,7 @@ export async function invoiceRoutes(fastify: FastifyInstance) {
     async (req) => {
       // Tenant scope: only invoices for concepts under the active tenant.
       const tenantConcepts = await prisma.concept.findMany({
-        where: { tenantId: req.staffUser!.tenantId, deletedAt: null },
+        where: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
         select: { id: true },
       })
       const tenantConceptIds = tenantConcepts.map((c) => c.id)
@@ -53,7 +53,7 @@ export async function invoiceRoutes(fastify: FastifyInstance) {
       const order = await prisma.order.findFirst({
         where: {
           id: req.params.orderId,
-          concept: { tenantId: req.staffUser!.tenantId, deletedAt: null },
+          concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
         },
       })
       if (!order) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Order not found in your active company' } })
@@ -74,7 +74,7 @@ export async function invoiceRoutes(fastify: FastifyInstance) {
       const order = await prisma.order.findFirst({
         where: {
           id: req.params.orderId,
-          concept: { tenantId: req.staffUser!.tenantId, deletedAt: null },
+          concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
         },
       })
       if (!order) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Order not found in your active company' } })
@@ -89,7 +89,7 @@ export async function invoiceRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuth(...ALL_STAFF) },
     async (req, reply) => {
       const tenantConcepts = await prisma.concept.findMany({
-        where: { tenantId: req.staffUser!.tenantId, deletedAt: null },
+        where: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
         select: { id: true },
       })
       const tenantConceptIds = tenantConcepts.map((c) => c.id)
@@ -110,7 +110,7 @@ export async function invoiceRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuth(...ALL_STAFF) },
     async (req, reply) => {
       const tenantConcepts = await prisma.concept.findMany({
-        where: { tenantId: req.staffUser!.tenantId, deletedAt: null },
+        where: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
         select: { id: true },
       })
       const tenantConceptIds = tenantConcepts.map((c) => c.id)

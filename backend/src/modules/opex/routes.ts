@@ -1,9 +1,9 @@
-// OpEx tracker — recurring operational expense management.
-// Categories (Rent, Payroll, Utilities, etc.) → Lines (specific vendors /
-// items) → Payments (per-period actuals). Variance vs budget fires flags.
+// OpEx tracker â€” recurring operational expense management.
+// Categories (Rent, Payroll, Utilities, etc.) â†’ Lines (specific vendors /
+// items) â†’ Payments (per-period actuals). Variance vs budget fires flags.
 //
 // Special: the Payroll category pulls live from PayrollRun + ClockLog data
-// rather than manual entry — that's wired in the GET /opex endpoint.
+// rather than manual entry â€” that's wired in the GET /opex endpoint.
 
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
@@ -31,7 +31,7 @@ const lineSchema = z.object({
 
 export async function opexRoutes(fastify: FastifyInstance) {
 
-  // ─── Categories ──────────────────────────────────────────────────────────
+  // â”€â”€â”€ Categories â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   fastify.get<{ Querystring: { projectId?: string; scope?: string } }>('/categories',
     { preHandler: requireAuth(...MANAGERS) },
@@ -44,7 +44,7 @@ export async function opexRoutes(fastify: FastifyInstance) {
       else if (scope === 'company')          lineFilter.projectId = null
 
       const categories = await prisma.opexCategory.findMany({
-        where: { deletedAt: null, isActive: true, tenantId: req.staffUser!.tenantId },
+        where: { deletedAt: null, isActive: true, tenantId: req.staffUser!.tenantFilter },
         include: { lines: { where: lineFilter, include: { payments: { orderBy: { periodStart: 'desc' }, take: 12 } } } },
         orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
       })
@@ -76,11 +76,11 @@ export async function opexRoutes(fastify: FastifyInstance) {
     }).parse(req.body)
     if (body.conceptId) {
       const concept = await prisma.concept.findFirst({
-        where: { id: body.conceptId, tenantId: req.staffUser!.tenantId, deletedAt: null },
+        where: { id: body.conceptId, tenantId: req.staffUser!.tenantFilter, deletedAt: null },
       })
       if (!concept) return reply.status(403).send({ error: { code: 'CROSS_TENANT', message: 'Concept does not belong to your active company' } })
     }
-    const cat = await prisma.opexCategory.create({ data: { ...body, tenantId: req.staffUser!.tenantId } })
+    const cat = await prisma.opexCategory.create({ data: { ...body, tenantId: req.staffUser!.tenantId! } })
     return reply.status(201).send(cat)
   })
 
@@ -94,7 +94,7 @@ export async function opexRoutes(fastify: FastifyInstance) {
       isActive:           z.boolean().optional(),
     }).parse(req.body)
     const owned = await prisma.opexCategory.findFirst({
-      where: { id: req.params.id, tenantId: req.staffUser!.tenantId, deletedAt: null },
+      where: { id: req.params.id, tenantId: req.staffUser!.tenantFilter, deletedAt: null },
     })
     if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Category not found in your active company' } })
     return prisma.opexCategory.update({ where: { id: req.params.id }, data: body })
@@ -102,7 +102,7 @@ export async function opexRoutes(fastify: FastifyInstance) {
 
   fastify.delete<{ Params: { id: string } }>('/categories/:id', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
     const owned = await prisma.opexCategory.findFirst({
-      where: { id: req.params.id, tenantId: req.staffUser!.tenantId, deletedAt: null },
+      where: { id: req.params.id, tenantId: req.staffUser!.tenantFilter, deletedAt: null },
     })
     if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Category not found in your active company' } })
     await prisma.opexCategory.update({
@@ -112,18 +112,18 @@ export async function opexRoutes(fastify: FastifyInstance) {
     return reply.status(204).send()
   })
 
-  // ─── Lines ───────────────────────────────────────────────────────────────
+  // â”€â”€â”€ Lines â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   fastify.post('/lines', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
     const body = lineSchema.parse(req.body)
     // Verify category belongs to active tenant.
     const cat = await prisma.opexCategory.findFirst({
-      where: { id: body.categoryId, tenantId: req.staffUser!.tenantId, deletedAt: null },
+      where: { id: body.categoryId, tenantId: req.staffUser!.tenantFilter, deletedAt: null },
     })
     if (!cat) return reply.status(403).send({ error: { code: 'CROSS_TENANT', message: 'Category does not belong to your active company' } })
     if (body.conceptId) {
       const concept = await prisma.concept.findFirst({
-        where: { id: body.conceptId, tenantId: req.staffUser!.tenantId, deletedAt: null },
+        where: { id: body.conceptId, tenantId: req.staffUser!.tenantFilter, deletedAt: null },
       })
       if (!concept) return reply.status(403).send({ error: { code: 'CROSS_TENANT', message: 'Concept does not belong to your active company' } })
     }
@@ -141,7 +141,7 @@ export async function opexRoutes(fastify: FastifyInstance) {
     const owned = await prisma.opexLine.findFirst({
       where: {
         id: req.params.id,
-        category: { tenantId: req.staffUser!.tenantId, deletedAt: null },
+        category: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
       },
     })
     if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Line not found in your active company' } })
@@ -158,7 +158,7 @@ export async function opexRoutes(fastify: FastifyInstance) {
     const owned = await prisma.opexLine.findFirst({
       where: {
         id: req.params.id,
-        category: { tenantId: req.staffUser!.tenantId, deletedAt: null },
+        category: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
       },
     })
     if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Line not found in your active company' } })
@@ -166,7 +166,7 @@ export async function opexRoutes(fastify: FastifyInstance) {
     return reply.status(204).send()
   })
 
-  // ─── Payments ────────────────────────────────────────────────────────────
+  // â”€â”€â”€ Payments â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   fastify.post('/payments', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
     const body = z.object({
@@ -183,7 +183,7 @@ export async function opexRoutes(fastify: FastifyInstance) {
     const ownedLine = await prisma.opexLine.findFirst({
       where: {
         id: body.lineId,
-        category: { tenantId: req.staffUser!.tenantId, deletedAt: null },
+        category: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
       },
     })
     if (!ownedLine) return reply.status(403).send({ error: { code: 'CROSS_TENANT', message: 'Line does not belong to your active company' } })
@@ -207,7 +207,7 @@ export async function opexRoutes(fastify: FastifyInstance) {
           kind: 'price_drift',
           severity: variancePct > 0.5 ? 'high' : 'medium',
           title: `OpEx jump: ${p.line.name} +${(variancePct * 100).toFixed(0)}%`,
-          description: `Expected PKR ${(body.expectedCents / 100).toLocaleString()}, vendor charged PKR ${((body.actualCents ?? 0) / 100).toLocaleString()} for ${new Date(body.periodStart).toLocaleDateString('en-GB')}–${new Date(body.periodEnd).toLocaleDateString('en-GB')}. Either the rate changed (negotiate) or it's a billing error (dispute).`,
+          description: `Expected PKR ${(body.expectedCents / 100).toLocaleString()}, vendor charged PKR ${((body.actualCents ?? 0) / 100).toLocaleString()} for ${new Date(body.periodStart).toLocaleDateString('en-GB')}â€“${new Date(body.periodEnd).toLocaleDateString('en-GB')}. Either the rate changed (negotiate) or it's a billing error (dispute).`,
           entityType: 'OpexPayment',
           entityId: p.id,
           actorId: req.staffUser!.id,
@@ -231,7 +231,7 @@ export async function opexRoutes(fastify: FastifyInstance) {
     const owned = await prisma.opexPayment.findFirst({
       where: {
         id: req.params.id,
-        line: { category: { tenantId: req.staffUser!.tenantId, deletedAt: null } },
+        line: { category: { tenantId: req.staffUser!.tenantFilter, deletedAt: null } },
       },
     })
     if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Payment not found in your active company' } })
@@ -244,7 +244,7 @@ export async function opexRoutes(fastify: FastifyInstance) {
     })
   })
 
-  // ─── Live data: payroll snapshot for the Payroll category ───────────────
+  // â”€â”€â”€ Live data: payroll snapshot for the Payroll category â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   fastify.get('/payroll-snapshot', { preHandler: requireAuth(...MANAGERS) }, async () => {
     // Return last 6 months of posted payroll runs; UI renders as a "live" line
@@ -257,7 +257,7 @@ export async function opexRoutes(fastify: FastifyInstance) {
       take: 12,
     })
 
-    // Also project this month — sum unposted clock logs × wage rates
+    // Also project this month â€” sum unposted clock logs Ã— wage rates
     const monthStart = new Date()
     monthStart.setDate(1); monthStart.setHours(0, 0, 0, 0)
     const monthEnd = new Date(monthStart); monthEnd.setMonth(monthEnd.getMonth() + 1)
@@ -275,7 +275,7 @@ export async function opexRoutes(fastify: FastifyInstance) {
     }
   })
 
-  // ─── Cash-flow forecast (next 90 days) ──────────────────────────────────
+  // â”€â”€â”€ Cash-flow forecast (next 90 days) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   fastify.get('/cashflow', { preHandler: requireAuth(...MANAGERS) }, async () => {
     const now = new Date()
@@ -299,7 +299,7 @@ export async function opexRoutes(fastify: FastifyInstance) {
   })
 }
 
-// Cadence → equivalent monthly cents for budget comparison.
+// Cadence â†’ equivalent monthly cents for budget comparison.
 function monthlyCents(amountCents: number, cadence: string): number {
   switch (cadence) {
     case 'quarterly': return Math.round(amountCents / 3)

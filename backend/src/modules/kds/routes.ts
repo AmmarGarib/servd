@@ -4,12 +4,12 @@ import { requireAuth, requireAuthOrPin, ALL_STAFF, MANAGERS } from '../auth/midd
 import { NotFoundError } from '../../lib/errors.js'
 import { getIOSafe } from '../../lib/ws.js'
 
-// ─── helpers ──────────────────────────────────────────────────────────────────
+// â”€â”€â”€ helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function safeEmitKds(label: string, tenantId: string | null, event: string, data: unknown) {
   const ws = getIOSafe()
   if (!ws) {
-    console.warn(`[kds-routes] ${label} skipped — WebSocket not initialised`)
+    console.warn(`[kds-routes] ${label} skipped â€” WebSocket not initialised`)
     return
   }
   try {
@@ -24,21 +24,25 @@ function safeEmitKds(label: string, tenantId: string | null, event: string, data
   }
 }
 
-// ─── routes ───────────────────────────────────────────────────────────────────
+// â”€â”€â”€ routes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function kdsRoutes(fastify: FastifyInstance) {
   // GET /kds/stations?conceptId=X
-  // List stations with live load — count of non-completed OrderItems per station.
+  // List stations with live load â€” count of non-completed OrderItems per station.
   fastify.get<{ Querystring: { conceptId?: string } }>(
     '/stations',
     { preHandler: requireAuthOrPin(...ALL_STAFF) },
     async (req) => {
+      // tenantId stays a single string so writes (safeEmit / order updates)
+      // can use it; reads filter via tenantFilter which expands to an IN-clause
+      // when the operator is in portfolio mode.
       const tenantId = req.staffUser!.tenantId
+      const tenantFilter = req.staffUser!.tenantFilter
 
       const stations = await prisma.station.findMany({
         where: {
           deletedAt: null,
-          concept: { tenantId, deletedAt: null },
+          concept: { tenantId: tenantFilter, deletedAt: null },
           ...(req.query.conceptId && { conceptId: req.query.conceptId }),
         },
         orderBy: [{ conceptId: 'asc' }, { displayOrder: 'asc' }],
@@ -75,14 +79,18 @@ export async function kdsRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuthOrPin(...ALL_STAFF) },
     async (req) => {
       const { stationId } = req.params
+      // tenantId stays a single string so writes (safeEmit / order updates)
+      // can use it; reads filter via tenantFilter which expands to an IN-clause
+      // when the operator is in portfolio mode.
       const tenantId = req.staffUser!.tenantId
+      const tenantFilter = req.staffUser!.tenantFilter
 
       // Verify station belongs to requester's tenant
       const station = await prisma.station.findFirst({
         where: {
           id: stationId,
           deletedAt: null,
-          concept: { tenantId, deletedAt: null },
+          concept: { tenantId: tenantFilter, deletedAt: null },
         },
       })
       if (!station) throw new NotFoundError('Station', stationId)
@@ -136,12 +144,16 @@ export async function kdsRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuthOrPin(...ALL_STAFF) },
     async (req) => {
       const { itemId } = req.params
+      // tenantId stays a single string so writes (safeEmit / order updates)
+      // can use it; reads filter via tenantFilter which expands to an IN-clause
+      // when the operator is in portfolio mode.
       const tenantId = req.staffUser!.tenantId
+      const tenantFilter = req.staffUser!.tenantFilter
 
       const existing = await prisma.orderItem.findFirst({
         where: {
           id: itemId,
-          order: { concept: { tenantId }, deletedAt: null },
+          order: { concept: { tenantId: tenantFilter }, deletedAt: null },
         },
         select: { id: true, stationId: true, status: true },
       })
@@ -172,12 +184,16 @@ export async function kdsRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuthOrPin(...ALL_STAFF) },
     async (req) => {
       const { itemId } = req.params
+      // tenantId stays a single string so writes (safeEmit / order updates)
+      // can use it; reads filter via tenantFilter which expands to an IN-clause
+      // when the operator is in portfolio mode.
       const tenantId = req.staffUser!.tenantId
+      const tenantFilter = req.staffUser!.tenantFilter
 
       const existing = await prisma.orderItem.findFirst({
         where: {
           id: itemId,
-          order: { concept: { tenantId }, deletedAt: null },
+          order: { concept: { tenantId: tenantFilter }, deletedAt: null },
         },
         select: { id: true, stationId: true, orderId: true },
       })
@@ -197,7 +213,7 @@ export async function kdsRoutes(fastify: FastifyInstance) {
         completedAt: updated.completedAt,
       })
 
-      // Check if all items in the order are now bumped or voided — if so the
+      // Check if all items in the order are now bumped or voided â€” if so the
       // order moves to 'completed' automatically. Best-effort only: a failure
       // here must never roll back the bump.
       try {
@@ -215,7 +231,7 @@ export async function kdsRoutes(fastify: FastifyInstance) {
           }
         }
       } catch {
-        // Non-fatal — order status will catch up via the polling fallback
+        // Non-fatal â€” order status will catch up via the polling fallback
       }
 
       return updated
@@ -229,12 +245,16 @@ export async function kdsRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuthOrPin(...ALL_STAFF) },
     async (req) => {
       const { itemId } = req.params
+      // tenantId stays a single string so writes (safeEmit / order updates)
+      // can use it; reads filter via tenantFilter which expands to an IN-clause
+      // when the operator is in portfolio mode.
       const tenantId = req.staffUser!.tenantId
+      const tenantFilter = req.staffUser!.tenantFilter
 
       const existing = await prisma.orderItem.findFirst({
         where: {
           id: itemId,
-          order: { concept: { tenantId }, deletedAt: null },
+          order: { concept: { tenantId: tenantFilter }, deletedAt: null },
         },
         select: { id: true, stationId: true },
       })
@@ -265,13 +285,17 @@ export async function kdsRoutes(fastify: FastifyInstance) {
     async (req) => {
       const { stationId } = req.params
       const hours = Math.min(Math.max(parseInt(req.query.hours ?? '2', 10) || 2, 1), 168)
+      // tenantId stays a single string so writes (safeEmit / order updates)
+      // can use it; reads filter via tenantFilter which expands to an IN-clause
+      // when the operator is in portfolio mode.
       const tenantId = req.staffUser!.tenantId
+      const tenantFilter = req.staffUser!.tenantFilter
 
       const station = await prisma.station.findFirst({
         where: {
           id: stationId,
           deletedAt: null,
-          concept: { tenantId, deletedAt: null },
+          concept: { tenantId: tenantFilter, deletedAt: null },
         },
         select: { name: true },
       })

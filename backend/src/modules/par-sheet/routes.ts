@@ -1,6 +1,6 @@
-// Par-sheet routes — daily prep tracking.
+// Par-sheet routes â€” daily prep tracking.
 //
-// One row per (tenant × component × date). The prep team updates `actualCount`
+// One row per (tenant Ã— component Ã— date). The prep team updates `actualCount`
 // throughout the morning; the orders pipeline decrements it as components
 // fire on the line. Expo sees the master sheet in red where actual < 25% of
 // target so they can shift labor before service starts.
@@ -28,6 +28,7 @@ export async function parSheetRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuthOrPin(...ALL_STAFF) },
     async (req) => {
       const tenantId = req.staffUser!.tenantId
+      const tenantFilter = req.staffUser!.tenantFilter
       if (!tenantId) return []
       const date = dayKey(req.query.date)
 
@@ -62,7 +63,7 @@ export async function parSheetRoutes(fastify: FastifyInstance) {
     },
   )
 
-  // PUT /par-sheet/:componentId — upsert today's row. Prep cooks call this
+  // PUT /par-sheet/:componentId â€” upsert today's row. Prep cooks call this
   // when they finish a batch; expo calls it in the morning to set targets.
   fastify.put<{ Params: { componentId: string }; Body: Record<string, unknown> }>(
     '/:componentId',
@@ -77,6 +78,7 @@ export async function parSheetRoutes(fastify: FastifyInstance) {
       }).parse(req.body)
 
       const tenantId = req.staffUser!.tenantId
+      const tenantFilter = req.staffUser!.tenantFilter
       if (!tenantId) return reply.status(400).send({ error: { code: 'NO_TENANT', message: 'No active tenant' } })
 
       const date = dayKey(body.date)
@@ -108,7 +110,7 @@ export async function parSheetRoutes(fastify: FastifyInstance) {
     },
   )
 
-  // POST /par-sheet/:componentId/adjust — atomic increment/decrement of
+  // POST /par-sheet/:componentId/adjust â€” atomic increment/decrement of
   // `actual`. Used by prep cooks to log "made 5 more trays" without a
   // read-modify-write race.
   fastify.post<{ Params: { componentId: string }; Body: { delta: number; date?: string } }>(
@@ -120,10 +122,11 @@ export async function parSheetRoutes(fastify: FastifyInstance) {
         date:  z.string().optional(),
       }).parse(req.body)
       const tenantId = req.staffUser!.tenantId
+      const tenantFilter = req.staffUser!.tenantFilter
       if (!tenantId) return reply.status(400).send({ error: { code: 'NO_TENANT', message: 'No active tenant' } })
       const date = dayKey(body.date)
 
-      // Upsert with the delta — if the row doesn't exist, create at delta;
+      // Upsert with the delta â€” if the row doesn't exist, create at delta;
       // else increment.
       const updated = await prisma.componentParLevel.upsert({
         where:  { tenantId_componentId_date: { tenantId, componentId: req.params.componentId, date } },
@@ -141,13 +144,14 @@ export async function parSheetRoutes(fastify: FastifyInstance) {
     },
   )
 
-  // POST /par-sheet/rollover — bulk-create today's rows by copying yesterday's
+  // POST /par-sheet/rollover â€” bulk-create today's rows by copying yesterday's
   // targets. Expo calls this once each morning. Idempotent.
   fastify.post(
     '/rollover',
     { preHandler: requireAuth(...MANAGERS) },
     async (req, reply) => {
       const tenantId = req.staffUser!.tenantId
+      const tenantFilter = req.staffUser!.tenantFilter
       if (!tenantId) return reply.status(400).send({ error: { code: 'NO_TENANT', message: 'No active tenant' } })
       const today = dayKey()
       const yest = new Date(today); yest.setUTCDate(yest.getUTCDate() - 1)
@@ -169,7 +173,7 @@ export async function parSheetRoutes(fastify: FastifyInstance) {
           })
           copied++
         } catch (e) {
-          // Unique constraint — row already exists for today, skip.
+          // Unique constraint â€” row already exists for today, skip.
           if ((e as { code?: string }).code !== 'P2002') throw e
         }
       }

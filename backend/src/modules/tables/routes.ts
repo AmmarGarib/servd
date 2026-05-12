@@ -35,7 +35,7 @@ export async function tableRoutes(fastify: FastifyInstance) {
           deletedAt: null,
           // Scope to active tenant — only return tables for concepts under
           // the user's currently-selected company.
-          concept: { tenantId: req.staffUser!.tenantId, deletedAt: null },
+          concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
           ...(req.query.conceptId && { conceptId: req.query.conceptId }),
         },
         include: { concept: { select: { name: true, slug: true } } },
@@ -70,7 +70,7 @@ export async function tableRoutes(fastify: FastifyInstance) {
   fastify.post('/', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
     const body = createTableSchema.parse(req.body)
     const concept = await prisma.concept.findFirst({
-      where: { id: body.conceptId, tenantId: req.staffUser!.tenantId, deletedAt: null },
+      where: { id: body.conceptId, tenantId: req.staffUser!.tenantFilter, deletedAt: null },
     })
     if (!concept) return reply.status(403).send({ error: { code: 'CROSS_TENANT', message: 'Concept does not belong to your active company' } })
     const table = await prisma.table.create({ data: body })

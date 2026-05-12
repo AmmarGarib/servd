@@ -62,7 +62,7 @@ export async function domainRoutes(fastify: FastifyInstance) {
     // active tenant so they can't bind a domain to someone else's brand.
     if (body.conceptId) {
       const concept = await prisma.concept.findFirst({
-        where: { id: body.conceptId, tenantId: req.staffUser!.tenantId, deletedAt: null },
+        where: { id: body.conceptId, tenantId: req.staffUser!.tenantFilter, deletedAt: null },
       })
       if (!concept) return reply.status(403).send({ error: { code: 'CROSS_TENANT', message: 'Concept does not belong to your active company' } })
     }
@@ -147,7 +147,7 @@ export async function domainRoutes(fastify: FastifyInstance) {
       if (!dom) throw new NotFoundError('Domain', req.params.id)
       if (body.conceptId) {
         const concept = await prisma.concept.findFirst({
-          where: { id: body.conceptId, tenantId: req.staffUser!.tenantId, deletedAt: null },
+          where: { id: body.conceptId, tenantId: req.staffUser!.tenantFilter, deletedAt: null },
         })
         if (!concept) return reply.status(403).send({ error: { code: 'CROSS_TENANT', message: 'Concept does not belong to your active company' } })
       }

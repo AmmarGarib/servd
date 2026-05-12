@@ -29,7 +29,7 @@ export async function giftCardRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuth(...MANAGERS) },
     async (req) => {
       const tenantConcepts = await prisma.concept.findMany({
-        where: { tenantId: req.staffUser!.tenantId, deletedAt: null },
+        where: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
         select: { id: true },
       })
       const tenantConceptIds = tenantConcepts.map((c) => c.id)
@@ -64,7 +64,7 @@ export async function giftCardRoutes(fastify: FastifyInstance) {
     // If issuing under a concept, verify it's in the active tenant.
     if (body.conceptId) {
       const concept = await prisma.concept.findFirst({
-        where: { id: body.conceptId, tenantId: req.staffUser!.tenantId, deletedAt: null },
+        where: { id: body.conceptId, tenantId: req.staffUser!.tenantFilter, deletedAt: null },
       })
       if (!concept) return reply.status(403).send({ error: { code: 'CROSS_TENANT', message: 'Concept does not belong to your active company' } })
     }
@@ -192,7 +192,7 @@ export async function giftCardRoutes(fastify: FastifyInstance) {
     async (req) => {
       const body = z.object({ reason: z.string().min(3).max(300) }).parse(req.body)
       const tenantConcepts = await prisma.concept.findMany({
-        where: { tenantId: req.staffUser!.tenantId, deletedAt: null },
+        where: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
         select: { id: true },
       })
       const tenantConceptIds = tenantConcepts.map((c) => c.id)

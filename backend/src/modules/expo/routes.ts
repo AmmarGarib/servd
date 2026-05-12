@@ -29,7 +29,7 @@ export async function expoRoutes(fastify: FastifyInstance) {
     '/queue',
     { preHandler: requireAuthOrPin(...ALL_STAFF) },
     async (req) => {
-      const tenantId = req.staffUser!.tenantId
+      const tenantId = req.staffUser!.tenantFilter
       const conceptScope = { tenantId, deletedAt: null }
       const orderInclude = {
         concept:  { select: { id: true, name: true, slug: true } },
@@ -122,7 +122,7 @@ export async function expoRoutes(fastify: FastifyInstance) {
     '/orders/:id/fire',
     { preHandler: requireAuth(...ALL_STAFF) },
     async (req, reply) => {
-      const tenantId = req.staffUser!.tenantId
+      const tenantId = req.staffUser!.tenantFilter
       const body = z.object({ note: z.string().max(280).optional() }).parse(req.body ?? {})
 
       const order = await prisma.order.findFirst({
@@ -232,7 +232,7 @@ export async function expoRoutes(fastify: FastifyInstance) {
     '/station/:stationId/queue',
     { preHandler: requireAuthOrPin(...ALL_STAFF) },
     async (req) => {
-      const tenantId = req.staffUser!.tenantId
+      const tenantId = req.staffUser!.tenantFilter
       const stationId = req.params.stationId
 
       const steps = await prisma.orderItemStep.findMany({
@@ -375,7 +375,7 @@ export async function expoRoutes(fastify: FastifyInstance) {
     '/orders/:id/handoff',
     { preHandler: requireAuthOrPin(...ALL_STAFF) },
     async (req, reply) => {
-      const tenantId = req.staffUser!.tenantId
+      const tenantId = req.staffUser!.tenantFilter
       const order = await prisma.order.findFirst({
         where: { id: req.params.id, concept: { tenantId, deletedAt: null }, deletedAt: null },
       })
@@ -414,7 +414,7 @@ export async function expoRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuth(...MANAGERS) },
     async (req, reply) => {
       const body = z.object({ reason: z.string().min(1).max(280) }).parse(req.body)
-      const tenantId = req.staffUser!.tenantId
+      const tenantId = req.staffUser!.tenantFilter
       const order = await prisma.order.findFirst({
         where: {
           id: req.params.id,

@@ -83,7 +83,7 @@ export async function notificationRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuth(...MANAGERS) },
     async (req, reply) => {
       const { title, body, data: pushData, filters } = broadcastSchema.parse(req.body)
-      const tenantId = req.staffUser!.tenantId
+      const tenantId = req.staffUser!.tenantFilter
 
       const tokenRows = await prisma.expoPushToken.findMany({
         where: {
@@ -149,7 +149,7 @@ export async function notificationRoutes(fastify: FastifyInstance) {
     '/tokens',
     { preHandler: requireAuth(...MANAGERS) },
     async (req) => {
-      const tenantId = req.staffUser!.tenantId
+      const tenantId = req.staffUser!.tenantFilter
 
       const tokenRows = await prisma.expoPushToken.findMany({
         where: {

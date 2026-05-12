@@ -72,7 +72,7 @@ export async function orderRoutes(fastify: FastifyInstance) {
     // belonging to the active tenant. Falls back to *only* tenant concepts
     // when the staff has no per-concept restriction (admin/manager bypass).
     const tenantConcepts = await prisma.concept.findMany({
-      where: { tenantId: req.staffUser!.tenantId, deletedAt: null },
+      where: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
       select: { id: true },
     })
     const tenantConceptIds = tenantConcepts.map((c) => c.id)
@@ -96,7 +96,7 @@ export async function orderRoutes(fastify: FastifyInstance) {
       await assertConceptAccess(req.staffUser!, order.conceptId)
       // Verify the order's concept is within the active tenant.
       const concept = await prisma.concept.findFirst({
-        where: { id: order.conceptId, tenantId: req.staffUser!.tenantId, deletedAt: null },
+        where: { id: order.conceptId, tenantId: req.staffUser!.tenantFilter, deletedAt: null },
       })
       if (!concept) {
         const { NotFoundError } = await import('../../lib/errors.js')
@@ -112,7 +112,7 @@ export async function orderRoutes(fastify: FastifyInstance) {
     await assertConceptAccess(req.staffUser!, dto.concept_id)
     // Verify concept belongs to active tenant before ingesting.
     const concept = await prisma.concept.findFirst({
-      where: { id: dto.concept_id, tenantId: req.staffUser!.tenantId, deletedAt: null },
+      where: { id: dto.concept_id, tenantId: req.staffUser!.tenantFilter, deletedAt: null },
     })
     if (!concept) return reply.status(403).send({ error: { code: 'CROSS_TENANT', message: 'Concept does not belong to your active company' } })
     const result = await ingestOrder(dto)
@@ -132,7 +132,7 @@ export async function orderRoutes(fastify: FastifyInstance) {
         where: {
           ...(conceptId && { conceptId }),
           // Tenant scope: through Concept relation
-          concept: { tenantId: req.staffUser!.tenantId, deletedAt: null },
+          concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
           curbsideVehicle: { not: null },
           // Hide ones we already finished
           curbsideRunnerOutAt: null,
@@ -193,7 +193,7 @@ export async function orderRoutes(fastify: FastifyInstance) {
       const order = await getOrder(req.params.id)
       await assertConceptAccess(req.staffUser!, order.conceptId)
       const concept = await prisma.concept.findFirst({
-        where: { id: order.conceptId, tenantId: req.staffUser!.tenantId, deletedAt: null },
+        where: { id: order.conceptId, tenantId: req.staffUser!.tenantFilter, deletedAt: null },
       })
       if (!concept) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Order not found in your active company' } })
       return updateOrderStatus(req.params.id, status as never)
@@ -315,7 +315,7 @@ export async function orderRoutes(fastify: FastifyInstance) {
       const order = await getOrder(req.params.id)
       await assertConceptAccess(req.staffUser!, order.conceptId)
       const concept = await prisma.concept.findFirst({
-        where: { id: order.conceptId, tenantId: req.staffUser!.tenantId, deletedAt: null },
+        where: { id: order.conceptId, tenantId: req.staffUser!.tenantFilter, deletedAt: null },
       })
       if (!concept) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Order not found in your active company' } })
 
@@ -352,7 +352,7 @@ export async function orderItemRoutes(fastify: FastifyInstance) {
       const item = await prisma.orderItem.findFirst({
         where: {
           id: req.params.id,
-          order: { concept: { tenantId: req.staffUser!.tenantId, deletedAt: null } },
+          order: { concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null } },
         },
         select: { order: { select: { conceptId: true } } },
       })
@@ -375,7 +375,7 @@ export async function orderItemRoutes(fastify: FastifyInstance) {
       const item = await prisma.orderItem.findFirst({
         where: {
           id: req.params.id,
-          order: { concept: { tenantId: req.staffUser!.tenantId, deletedAt: null } },
+          order: { concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null } },
         },
         select: { order: { select: { conceptId: true } } },
       })
@@ -408,7 +408,7 @@ export async function orderCourseRoutes(fastify: FastifyInstance) {
       const order = await prisma.order.findFirst({
         where: {
           id: req.params.id,
-          concept: { tenantId: req.staffUser!.tenantId, deletedAt: null },
+          concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
         },
       })
       if (!order) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Order not found in your active company' } })
@@ -436,7 +436,7 @@ export async function orderCourseRoutes(fastify: FastifyInstance) {
       const order = await prisma.order.findFirst({
         where: {
           id: req.params.id,
-          concept: { tenantId: req.staffUser!.tenantId, deletedAt: null },
+          concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
         },
       })
       if (!order) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Order not found in your active company' } })

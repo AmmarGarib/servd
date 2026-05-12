@@ -30,7 +30,7 @@ export async function checkSplitRoutes(fastify: FastifyInstance) {
       const order = await prisma.order.findFirst({
         where: {
           id: req.params.id,
-          concept: { tenantId: req.staffUser!.tenantId, deletedAt: null },
+          concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
         },
         include: { payments: true },
       })
@@ -84,7 +84,7 @@ export async function checkSplitRoutes(fastify: FastifyInstance) {
       const p = await prisma.payment.findFirst({
         where: {
           id: req.params.id,
-          order: { concept: { tenantId: req.staffUser!.tenantId, deletedAt: null } },
+          order: { concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null } },
         },
       })
       if (!p) throw new NotFoundError('Payment', req.params.id)
@@ -115,7 +115,7 @@ export async function checkSplitRoutes(fastify: FastifyInstance) {
       const order = await prisma.order.findFirst({
         where: {
           id: req.params.id,
-          concept: { tenantId: req.staffUser!.tenantId, deletedAt: null },
+          concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
         },
       })
       if (!order) throw new NotFoundError('Order', req.params.id)

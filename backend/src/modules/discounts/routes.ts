@@ -27,7 +27,7 @@ export async function discountRoutes(fastify: FastifyInstance) {
       const where: Record<string, unknown> = {
         // Only show discounts attached to a concept under the active tenant.
         // (Discounts with null conceptId would be cross-tenant and are excluded.)
-        concept: { tenantId: req.staffUser!.tenantId, deletedAt: null },
+        concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
       }
       if (req.query.conceptId) where.conceptId = req.query.conceptId
       if (req.query.active === 'true') {
@@ -56,7 +56,7 @@ export async function discountRoutes(fastify: FastifyInstance) {
       return reply.status(400).send({ error: { code: 'CONCEPT_REQUIRED', message: 'conceptId is required for tenant-scoped discounts' } })
     }
     const concept = await prisma.concept.findFirst({
-      where: { id: body.conceptId, tenantId: req.staffUser!.tenantId, deletedAt: null },
+      where: { id: body.conceptId, tenantId: req.staffUser!.tenantFilter, deletedAt: null },
     })
     if (!concept) return reply.status(403).send({ error: { code: 'CROSS_TENANT', message: 'Concept does not belong to your active company' } })
     const discount = await prisma.sectionDiscount.create({
@@ -73,7 +73,7 @@ export async function discountRoutes(fastify: FastifyInstance) {
       const owned = await prisma.sectionDiscount.findFirst({
         where: {
           id: req.params.id,
-          concept: { tenantId: req.staffUser!.tenantId, deletedAt: null },
+          concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
         },
       })
       if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Discount not found in your active company' } })
@@ -93,7 +93,7 @@ export async function discountRoutes(fastify: FastifyInstance) {
       const owned = await prisma.sectionDiscount.findFirst({
         where: {
           id: req.params.id,
-          concept: { tenantId: req.staffUser!.tenantId, deletedAt: null },
+          concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
         },
       })
       if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Discount not found in your active company' } })

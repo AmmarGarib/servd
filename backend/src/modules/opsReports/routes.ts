@@ -24,7 +24,7 @@ export async function opsReportRoutes(fastify: FastifyInstance) {
 
       // Tenant scope: requested concept must belong to the active tenant.
       const concept = await prisma.concept.findFirst({
-        where: { id: conceptId, tenantId: req.staffUser!.tenantId, deletedAt: null },
+        where: { id: conceptId, tenantId: req.staffUser!.tenantFilter, deletedAt: null },
       })
       if (!concept) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Concept not found in your active company' } })
 

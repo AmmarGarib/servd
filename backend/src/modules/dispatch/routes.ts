@@ -118,7 +118,7 @@ export async function dispatchRoutes(fastify: FastifyInstance) {
       const order = await prisma.order.findFirst({
         where: {
           id: req.params.id,
-          concept: { tenantId: req.staffUser!.tenantId, deletedAt: null },
+          concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
         },
       })
       if (!order) throw new NotFoundError('Order', req.params.id)
@@ -148,7 +148,7 @@ export async function dispatchRoutes(fastify: FastifyInstance) {
       const owned = await prisma.order.findFirst({
         where: {
           id: req.params.id,
-          concept: { tenantId: req.staffUser!.tenantId, deletedAt: null },
+          concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
         },
       })
       if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Order not found in your active company' } })

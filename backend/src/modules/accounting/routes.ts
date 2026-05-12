@@ -45,7 +45,7 @@ export async function accountingRoutes(fastify: FastifyInstance) {
       where: {
         ...(conceptId && { conceptId }),
         // Scope to active tenant via concept relation
-        concept: { tenantId: req.staffUser!.tenantId, deletedAt: null },
+        concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
         entryDate: { gte: from, ...(to && { lte: to }) },
       },
       include: { concept: { select: { name: true, slug: true } } },
@@ -320,7 +320,7 @@ export async function accountingRoutes(fastify: FastifyInstance) {
           where: {
             deletedAt: null,
             status: { in: ['completed', 'refunded', 'cancelled'] },
-            concept: { tenantId: req.staffUser!.tenantId, deletedAt: null },
+            concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
           },
           orderBy: { completedAt: 'desc' }, take: limit,
           select: {

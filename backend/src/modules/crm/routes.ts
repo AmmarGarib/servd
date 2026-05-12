@@ -68,7 +68,7 @@ export async function crmRoutes(fastify: FastifyInstance) {
         // Tenant scope: only customers who have ordered from a concept under
         // the active tenant. Customers are global, but the operator's view
         // should be limited to people they've actually served.
-        orders: { some: { concept: { tenantId: req.staffUser!.tenantId, deletedAt: null } } },
+        orders: { some: { concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null } } },
       },
       select: {
         ...safeCustomerSelect,
@@ -116,12 +116,12 @@ export async function crmRoutes(fastify: FastifyInstance) {
           deletedAt: null,
           // Only allow viewing if this customer has ordered from a concept
           // under the active tenant.
-          orders: { some: { concept: { tenantId: req.staffUser!.tenantId, deletedAt: null } } },
+          orders: { some: { concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null } } },
         },
         select: {
           ...safeCustomerSelect,
           orders: {
-            where: { concept: { tenantId: req.staffUser!.tenantId, deletedAt: null } },
+            where: { concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null } },
             orderBy: { placedAt: 'desc' },
             take: 20,
             include: { concept: { select: { name: true } } },
@@ -263,7 +263,7 @@ export async function crmRoutes(fastify: FastifyInstance) {
 
     // Tenant scope helper — only customers with at least one order in a
     // concept under the active tenant count toward the operator's segments.
-    const tenantOrderFilter = { orders: { some: { concept: { tenantId: req.staffUser!.tenantId, deletedAt: null } } } }
+    const tenantOrderFilter = { orders: { some: { concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null } } } }
 
     const [newCustomers, vipCustomers, repeatBuyers, zeroOrders, dormant, totalCustomers, totalRevAgg, totalWithOrders] = await Promise.all([
       prisma.customer.count({ where: { createdAt: { gte: d30 }, deletedAt: null, ...tenantOrderFilter } }),
@@ -366,7 +366,7 @@ export async function crmRoutes(fastify: FastifyInstance) {
       const owned = await prisma.customer.findFirst({
         where: {
           id: req.params.id,
-          orders: { some: { concept: { tenantId: req.staffUser!.tenantId, deletedAt: null } } },
+          orders: { some: { concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null } } },
         },
       })
       if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Customer not found in your active company' } })

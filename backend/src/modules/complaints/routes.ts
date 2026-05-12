@@ -26,7 +26,7 @@ export async function complaintRoutes(fastify: FastifyInstance) {
     const { conceptId, status, priority, dateFrom, dateTo, limit } = req.query
     const baseWhere = {
       // Tenant scope: only complaints under concepts in the active tenant.
-      concept: { tenantId: req.staffUser!.tenantId, deletedAt: null },
+      concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
       ...(conceptId && { conceptId }),
       ...(dateFrom || dateTo ? {
         createdAt: {
@@ -68,7 +68,7 @@ export async function complaintRoutes(fastify: FastifyInstance) {
 
   // GET /complaints/stats — quick summary for dashboard badge
   fastify.get('/stats', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
-    const tenantWhere = { concept: { tenantId: req.staffUser!.tenantId, deletedAt: null } }
+    const tenantWhere = { concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null } }
     const [open, inProgress] = await Promise.all([
       prisma.orderComplaint.count({ where: { ...tenantWhere, status: 'open' } }),
       prisma.orderComplaint.count({ where: { ...tenantWhere, status: 'in_progress' } }),
@@ -106,7 +106,7 @@ export async function complaintRoutes(fastify: FastifyInstance) {
       const complaint = await prisma.orderComplaint.findFirst({
         where: {
           id: req.params.id,
-          concept: { tenantId: req.staffUser!.tenantId, deletedAt: null },
+          concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
         },
       })
       if (!complaint) throw new NotFoundError('Complaint', req.params.id)

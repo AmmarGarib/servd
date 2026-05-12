@@ -7,9 +7,20 @@ import { prisma } from '../../lib/prisma.js'
 declare module 'fastify' {
   interface FastifyRequest {
     // tenantId is the *active* tenant — whichever the user has switched to.
-    // Routes scope their queries by this so a logged-in operator viewing
-    // company A doesn't see data from company B that they also own.
-    staffUser?: { id: string; email: string; name: string | null; role: UserRole; tenantId: string | null }
+    // Always a single string. Used for WRITES (data: { tenantId } in Prisma
+    // create) so writes always pin to one company even when the operator is
+    // browsing in portfolio mode.
+    //
+    // tenantFilter is the same value most of the time — except when the user
+    // is in portfolio mode (frontend sent `x-servd-portfolio: 1`), in which
+    // case it expands to `{ in: [tenant1, tenant2, ...] }`. Drop this into
+    // any Prisma `where: { tenantId: req.staffUser!.tenantFilter }` and the
+    // single endpoint works in both single-tenant and portfolio contexts.
+    staffUser?: {
+      id: string; email: string; name: string | null; role: UserRole
+      tenantId: string | null
+      tenantFilter: string | { in: string[] } | null
+    }
     customer?: { id: string }
   }
 }
@@ -26,12 +37,35 @@ async function attachStaffPrincipal(req: FastifyRequest, payload: { sub: string;
     where: { id: payload.sub },
     select: { tenantId: true, name: true },
   })
+
+  // Portfolio mode: when the frontend has flipped "All companies" on, every
+  // GET carries `x-servd-portfolio: 1`. Expand the tenant filter to every
+  // tenant the user is a member of so cross-tenant rollups (chain, expo
+  // queue across both kitchens, etc.) return the full picture.
+  // Writes never carry this header → tenantFilter falls back to the single
+  // active tenant, which is exactly what Prisma create expects.
+  const portfolio = req.headers['x-servd-portfolio'] === '1'
+                  && ['GET', 'HEAD'].includes(req.method?.toUpperCase() ?? 'GET')
+  let tenantFilter: string | { in: string[] } | null = u?.tenantId ?? null
+  if (portfolio) {
+    const memberships = await prisma.tenantMember.findMany({
+      where: { userId: payload.sub },
+      select: { tenantId: true },
+    })
+    const ids = new Set<string>(memberships.map((m) => m.tenantId))
+    if (u?.tenantId) ids.add(u.tenantId)
+    if (ids.size > 1) tenantFilter = { in: Array.from(ids) }
+    // If the user is only a member of one tenant we fall through and use
+    // the single-string form — no behaviour change.
+  }
+
   req.staffUser = {
     id:       payload.sub,
     email:    payload.email,
     name:     u?.name ?? null,
     role:     payload.role as UserRole,
     tenantId: u?.tenantId ?? null,
+    tenantFilter,
   }
 }
 

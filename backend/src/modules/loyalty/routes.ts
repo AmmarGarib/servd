@@ -107,7 +107,7 @@ export async function loyaltyRoutes(fastify: FastifyInstance) {
         where: {
           id: orderId,
           customerId,
-          concept: { tenantId: req.staffUser!.tenantId, deletedAt: null },
+          concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
         },
       })
       if (!order) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Order not found in your active company' } })

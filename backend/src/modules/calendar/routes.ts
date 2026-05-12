@@ -47,7 +47,7 @@ export async function calendarRoutes(fastify: FastifyInstance) {
         ...(assigneeId  ? { assigneeId }  : {}),
         OR: [
           { conceptId: null },
-          { concept: { tenantId: req.staffUser!.tenantId, deletedAt: null } },
+          { concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null } },
         ],
       },
       include: {
@@ -65,7 +65,7 @@ export async function calendarRoutes(fastify: FastifyInstance) {
     // If a concept is referenced, verify it's in the active tenant.
     if (body.conceptId) {
       const concept = await prisma.concept.findFirst({
-        where: { id: body.conceptId, tenantId: req.staffUser!.tenantId, deletedAt: null },
+        where: { id: body.conceptId, tenantId: req.staffUser!.tenantFilter, deletedAt: null },
       })
       if (!concept) return reply.status(403).send({ error: { code: 'CROSS_TENANT', message: 'Concept does not belong to your active company' } })
     }
@@ -105,7 +105,7 @@ export async function calendarRoutes(fastify: FastifyInstance) {
           id: req.params.id,
           OR: [
             { conceptId: null },
-            { concept: { tenantId: req.staffUser!.tenantId, deletedAt: null } },
+            { concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null } },
           ],
         },
       })
@@ -145,7 +145,7 @@ export async function calendarRoutes(fastify: FastifyInstance) {
           id: req.params.id,
           OR: [
             { conceptId: null },
-            { concept: { tenantId: req.staffUser!.tenantId, deletedAt: null } },
+            { concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null } },
           ],
         },
       })
@@ -166,7 +166,7 @@ export async function calendarRoutes(fastify: FastifyInstance) {
           id: req.params.id,
           OR: [
             { conceptId: null },
-            { concept: { tenantId: req.staffUser!.tenantId, deletedAt: null } },
+            { concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null } },
           ],
         },
       })
@@ -206,7 +206,7 @@ export async function calendarRoutes(fastify: FastifyInstance) {
         event: {
           OR: [
             { conceptId: null },
-            { concept: { tenantId: req.staffUser!.tenantId, deletedAt: null } },
+            { concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null } },
           ],
         },
       },
@@ -228,7 +228,7 @@ export async function calendarRoutes(fastify: FastifyInstance) {
           event: {
             OR: [
               { conceptId: null },
-              { concept: { tenantId: req.staffUser!.tenantId, deletedAt: null } },
+              { concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null } },
             ],
           },
         },

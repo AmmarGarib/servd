@@ -31,7 +31,7 @@ export async function promoRoutes(fastify: FastifyInstance) {
           // Cross-tenant null-conceptId promos are still surfaced (tenant-portable).
           OR: [
             { conceptId: null },
-            { concept: { tenantId: req.staffUser!.tenantId, deletedAt: null } },
+            { concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null } },
           ],
           ...(req.query.conceptId && { conceptId: req.query.conceptId }),
           ...(req.query.active === 'true' && { isActive: true }),
@@ -50,7 +50,7 @@ export async function promoRoutes(fastify: FastifyInstance) {
     }
     if (body.conceptId) {
       const concept = await prisma.concept.findFirst({
-        where: { id: body.conceptId, tenantId: req.staffUser!.tenantId, deletedAt: null },
+        where: { id: body.conceptId, tenantId: req.staffUser!.tenantFilter, deletedAt: null },
       })
       if (!concept) return reply.status(403).send({ error: { code: 'CROSS_TENANT', message: 'Concept does not belong to your active company' } })
     }
@@ -69,7 +69,7 @@ export async function promoRoutes(fastify: FastifyInstance) {
           id: req.params.id,
           OR: [
             { conceptId: null },
-            { concept: { tenantId: req.staffUser!.tenantId, deletedAt: null } },
+            { concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null } },
           ],
         },
       })
@@ -91,7 +91,7 @@ export async function promoRoutes(fastify: FastifyInstance) {
           id: req.params.id,
           OR: [
             { conceptId: null },
-            { concept: { tenantId: req.staffUser!.tenantId, deletedAt: null } },
+            { concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null } },
           ],
         },
       })
@@ -153,7 +153,7 @@ export async function promoRoutes(fastify: FastifyInstance) {
       return prisma.promoCodeUsage.findMany({
         where: {
           ...(req.query.promoCodeId ? { promoCodeId: req.query.promoCodeId } : {}),
-          order: { concept: { tenantId: req.staffUser!.tenantId, deletedAt: null } },
+          order: { concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null } },
         },
         include: { promoCode: { select: { code: true } }, order: { select: { id: true, placedAt: true } } },
         orderBy: { usedAt: 'desc' },

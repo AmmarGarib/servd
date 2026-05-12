@@ -13,7 +13,7 @@ export async function financeRoutes(fastify: FastifyInstance) {
     const entries = await prisma.financialEntry.findMany({
       where: {
         // Tenant scope: only entries in concepts under the active tenant.
-        concept: { tenantId: req.staffUser!.tenantId, deletedAt: null },
+        concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
         ...(conceptId && { conceptId }),
         ...(channel && { channel }),
         ...(dateFrom || dateTo

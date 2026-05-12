@@ -12,7 +12,7 @@ import { flagException } from '../../lib/exceptions.js'
 
 const STATUS_ENUM = ['not_quoted', 'quoted', 'ordered', 'partial_paid', 'delivered', 'installed', 'commissioned', 'snag', 'done'] as const
 
-// Scope is a free-form string per project — operators define their own
+// Scope is a free-form string per project â€” operators define their own
 // section headings via CapexProject.scopeConfig. We just enforce a sane
 // upper bound on length.
 const lineSchema = z.object({
@@ -78,7 +78,7 @@ async function recalcLinePaid(lineId: string): Promise<void> {
   const line = await prisma.capexLine.findUnique({ where: { id: lineId }, select: { negotiatedCents: true, status: true } })
   let status = line?.status ?? 'quoted'
   if (line?.negotiatedCents && paid >= line.negotiatedCents && status !== 'delivered' && status !== 'installed' && status !== 'commissioned' && status !== 'done') {
-    status = 'partial_paid'  // fully paid in money terms but not yet delivered → "ordered/paid"
+    status = 'partial_paid'  // fully paid in money terms but not yet delivered â†’ "ordered/paid"
   }
   await prisma.capexLine.update({ where: { id: lineId }, data: { paidCents: paid, status } })
 }
@@ -93,7 +93,7 @@ async function maybeFireOverBudgetFlag(projectId: string, lineId: string): Promi
   const committed = project.lines.reduce((s, l) => s + (l.negotiatedCents ?? l.unitCostCents * l.quantity), 0)
   if (committed <= project.budgetEnvelopeCents) return
   const overBy = committed - project.budgetEnvelopeCents
-  // Don't double-flag — only if no open over-budget flag exists for this project
+  // Don't double-flag â€” only if no open over-budget flag exists for this project
   const existing = await prisma.exceptionFlag.findFirst({
     where: { kind: 'high_value_void', status: 'open', entityType: 'CapexProject', entityId: projectId },
     select: { id: true },
@@ -113,9 +113,9 @@ async function maybeFireOverBudgetFlag(projectId: string, lineId: string): Promi
 
 export async function financePlanningRoutes(fastify: FastifyInstance) {
 
-  // ════════════════════════════════════════════════════════════════════════
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
   // Capital Ledger
-  // ════════════════════════════════════════════════════════════════════════
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
   fastify.get<{ Querystring: { conceptId?: string; projectId?: string; days?: string } }>(
     '/capital-ledger',
@@ -126,8 +126,7 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
       const since = new Date(Date.now() - days * 86_400_000)
       const entries = await prisma.capitalLedgerEntry.findMany({
         where: {
-          deletedAt: null,
-          tenantId: req.staffUser!.tenantId,
+          deletedAt: null, tenantId: req.staffUser!.tenantFilter,
           date: { gte: since },
           ...(conceptId && { conceptId }),
           ...(projectId && { projectId }),
@@ -156,12 +155,12 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
       // If a concept is referenced, verify it belongs to active tenant.
       if (body.conceptId) {
         const concept = await prisma.concept.findFirst({
-          where: { id: body.conceptId, tenantId: req.staffUser!.tenantId, deletedAt: null },
+          where: { id: body.conceptId, tenantId: req.staffUser!.tenantFilter, deletedAt: null },
         })
         if (!concept) return reply.status(403).send({ error: { code: 'CROSS_TENANT', message: 'Concept does not belong to your active company' } })
       }
       const entry = await prisma.capitalLedgerEntry.create({
-        data: { ...body, date: new Date(body.date), tenantId: req.staffUser!.tenantId, createdById: req.staffUser!.id },
+        data: { ...body, date: new Date(body.date), tenantId: req.staffUser!.tenantId!, createdById: req.staffUser!.id },
       })
       return reply.status(201).send(entry)
     },
@@ -180,7 +179,7 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
         invoiceUrl:  z.string().url().nullable().optional(),
       }).parse(req.body)
       const owned = await prisma.capitalLedgerEntry.findFirst({
-        where: { id: req.params.id, tenantId: req.staffUser!.tenantId, deletedAt: null },
+        where: { id: req.params.id, tenantId: req.staffUser!.tenantFilter, deletedAt: null },
       })
       if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Entry not found in your active company' } })
       return prisma.capitalLedgerEntry.update({
@@ -195,7 +194,7 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuth(...MANAGERS) },
     async (req, reply) => {
       const owned = await prisma.capitalLedgerEntry.findFirst({
-        where: { id: req.params.id, tenantId: req.staffUser!.tenantId, deletedAt: null },
+        where: { id: req.params.id, tenantId: req.staffUser!.tenantFilter, deletedAt: null },
       })
       if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Entry not found in your active company' } })
       await prisma.capitalLedgerEntry.update({ where: { id: req.params.id }, data: { deletedAt: new Date() } })
@@ -203,13 +202,13 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
     },
   )
 
-  // ════════════════════════════════════════════════════════════════════════
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
   // CapEx projects
-  // ════════════════════════════════════════════════════════════════════════
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
   fastify.get('/capex', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
     const projects = await prisma.capexProject.findMany({
-      where: { deletedAt: null, tenantId: req.staffUser!.tenantId },
+      where: { deletedAt: null, tenantId: req.staffUser!.tenantFilter },
       include: { lines: { orderBy: { sortOrder: 'asc' }, include: { quotes: true, payments: true } }, _count: { select: { lines: true } } },
       orderBy: { createdAt: 'desc' },
     })
@@ -221,7 +220,7 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuth(...MANAGERS) },
     async (req) => {
       const p = await prisma.capexProject.findFirst({
-        where: { id: req.params.id, tenantId: req.staffUser!.tenantId },
+        where: { id: req.params.id, tenantId: req.staffUser!.tenantFilter },
         include: {
           lines: {
             orderBy: [{ scope: 'asc' }, { sortOrder: 'asc' }],
@@ -253,14 +252,13 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
     }).parse(req.body)
     if (body.conceptId) {
       const concept = await prisma.concept.findFirst({
-        where: { id: body.conceptId, tenantId: req.staffUser!.tenantId, deletedAt: null },
+        where: { id: body.conceptId, tenantId: req.staffUser!.tenantFilter, deletedAt: null },
       })
       if (!concept) return reply.status(403).send({ error: { code: 'CROSS_TENANT', message: 'Concept does not belong to your active company' } })
     }
     const project = await prisma.capexProject.create({
       data: {
-        ...body,
-        tenantId: req.staffUser!.tenantId,
+        ...body, tenantId: req.staffUser!.tenantId!,
         targetOpeningDate: body.targetOpeningDate ? new Date(body.targetOpeningDate) : null,
       },
     })
@@ -287,7 +285,7 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
         ownerId:             z.string().uuid().nullable().optional(),
         status:              z.enum(['planning', 'in_progress', 'completed', 'on_hold']).optional(),
         notes:               z.string().nullable().optional(),
-        // Custom scope sections — array of { key, label, emoji?, hint? }.
+        // Custom scope sections â€” array of { key, label, emoji?, hint? }.
         // Validated shape but not the keys themselves so operators can name
         // sections however they want.
         scopeConfig:         z.array(z.object({
@@ -298,7 +296,7 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
         })).max(30).nullable().optional(),
       }).parse(req.body)
       const owned = await prisma.capexProject.findFirst({
-        where: { id: req.params.id, tenantId: req.staffUser!.tenantId, deletedAt: null },
+        where: { id: req.params.id, tenantId: req.staffUser!.tenantFilter, deletedAt: null },
       })
       if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'CapEx project not found in your active company' } })
       const { scopeConfig, ...rest } = body
@@ -324,7 +322,7 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuth(...MANAGERS) },
     async (req, reply) => {
       const owned = await prisma.capexProject.findFirst({
-        where: { id: req.params.id, tenantId: req.staffUser!.tenantId, deletedAt: null },
+        where: { id: req.params.id, tenantId: req.staffUser!.tenantFilter, deletedAt: null },
       })
       if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'CapEx project not found in your active company' } })
       await prisma.capexProject.update({
@@ -341,7 +339,7 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
     async (req, reply) => {
       const body = lineSchema.parse(req.body)
       const project = await prisma.capexProject.findFirst({
-        where: { id: req.params.id, tenantId: req.staffUser!.tenantId, deletedAt: null },
+        where: { id: req.params.id, tenantId: req.staffUser!.tenantFilter, deletedAt: null },
       })
       if (!project) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'CapEx project not found in your active company' } })
       const line = await prisma.capexLine.create({
@@ -356,7 +354,7 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
         },
       })
 
-      // Over-budget flag — when the line's negotiatedCents exceeds the project
+      // Over-budget flag â€” when the line's negotiatedCents exceeds the project
       // remaining envelope, fire so the operator sees it before they sign.
       await maybeFireOverBudgetFlag(req.params.id, line.id)
 
@@ -372,7 +370,7 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
       const owned = await prisma.capexLine.findFirst({
         where: {
           id: req.params.lineId,
-          project: { tenantId: req.staffUser!.tenantId, deletedAt: null },
+          project: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
         },
       })
       if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'CapEx line not found in your active company' } })
@@ -401,7 +399,7 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
       const owned = await prisma.capexLine.findFirst({
         where: {
           id: req.params.lineId,
-          project: { tenantId: req.staffUser!.tenantId, deletedAt: null },
+          project: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
         },
       })
       if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'CapEx line not found in your active company' } })
@@ -410,7 +408,7 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
     },
   )
 
-  // ─── Quotes ──────────────────────────────────────────────────────────────
+  // â”€â”€â”€ Quotes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   fastify.post<{ Params: { lineId: string } }>('/capex/lines/:lineId/quotes',
     { preHandler: requireAuth(...MANAGERS) },
@@ -428,7 +426,7 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
       const ownedLine = await prisma.capexLine.findFirst({
         where: {
           id: req.params.lineId,
-          project: { tenantId: req.staffUser!.tenantId, deletedAt: null },
+          project: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
         },
       })
       if (!ownedLine) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'CapEx line not found in your active company' } })
@@ -449,7 +447,7 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
       const q = await prisma.capexQuote.findFirst({
         where: {
           id: req.params.quoteId,
-          line: { project: { tenantId: req.staffUser!.tenantId, deletedAt: null } },
+          line: { project: { tenantId: req.staffUser!.tenantFilter, deletedAt: null } },
         },
       })
       if (!q) throw new NotFoundError('CapexQuote', req.params.quoteId)
@@ -477,7 +475,7 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
       const owned = await prisma.capexQuote.findFirst({
         where: {
           id: req.params.quoteId,
-          line: { project: { tenantId: req.staffUser!.tenantId, deletedAt: null } },
+          line: { project: { tenantId: req.staffUser!.tenantFilter, deletedAt: null } },
         },
       })
       if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Quote not found in your active company' } })
@@ -486,7 +484,7 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
     },
   )
 
-  // ─── Payments ────────────────────────────────────────────────────────────
+  // â”€â”€â”€ Payments â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   fastify.post<{ Params: { lineId: string } }>('/capex/lines/:lineId/payments',
     { preHandler: requireAuth(...MANAGERS) },
@@ -503,7 +501,7 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
       const ownedLine = await prisma.capexLine.findFirst({
         where: {
           id: req.params.lineId,
-          project: { tenantId: req.staffUser!.tenantId, deletedAt: null },
+          project: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
         },
       })
       if (!ownedLine) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'CapEx line not found in your active company' } })
@@ -533,7 +531,7 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
       const ownedPayment = await prisma.capexPayment.findFirst({
         where: {
           id: req.params.paymentId,
-          line: { project: { tenantId: req.staffUser!.tenantId, deletedAt: null } },
+          line: { project: { tenantId: req.staffUser!.tenantFilter, deletedAt: null } },
         },
       })
       if (!ownedPayment) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Payment not found in your active company' } })
@@ -555,7 +553,7 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
       const p = await prisma.capexPayment.findFirst({
         where: {
           id: req.params.paymentId,
-          line: { project: { tenantId: req.staffUser!.tenantId, deletedAt: null } },
+          line: { project: { tenantId: req.staffUser!.tenantFilter, deletedAt: null } },
         },
       })
       if (!p) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Payment not found in your active company' } })
@@ -565,13 +563,13 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
     },
   )
 
-  // ════════════════════════════════════════════════════════════════════════
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
   // Pro-forma projections
-  // ════════════════════════════════════════════════════════════════════════
+  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
   fastify.get('/projections', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
     return prisma.proForma.findMany({
-      where: { deletedAt: null, tenantId: req.staffUser!.tenantId },
+      where: { deletedAt: null, tenantId: req.staffUser!.tenantFilter },
       orderBy: { updatedAt: 'desc' },
     })
   })
@@ -581,7 +579,7 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuth(...MANAGERS) },
     async (req) => {
       const p = await prisma.proForma.findFirst({
-        where: { id: req.params.id, tenantId: req.staffUser!.tenantId },
+        where: { id: req.params.id, tenantId: req.staffUser!.tenantFilter },
         include: {
           channels:   { orderBy: { sortOrder: 'asc' } },
           fixedCosts: { orderBy: { sortOrder: 'asc' } },
@@ -656,16 +654,15 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
     }).parse(req.body)
     if (body.conceptId) {
       const concept = await prisma.concept.findFirst({
-        where: { id: body.conceptId, tenantId: req.staffUser!.tenantId, deletedAt: null },
+        where: { id: body.conceptId, tenantId: req.staffUser!.tenantFilter, deletedAt: null },
       })
       if (!concept) return reply.status(403).send({ error: { code: 'CROSS_TENANT', message: 'Concept does not belong to your active company' } })
     }
     const created = await prisma.proForma.create({
       data: {
-        ...body,
-        tenantId: req.staffUser!.tenantId,
+        ...body, tenantId: req.staffUser!.tenantId!,
         createdById: req.staffUser!.id,
-        // Default 12 months at 100% steady state — operator tunes after creation
+        // Default 12 months at 100% steady state â€” operator tunes after creation
         months: { create: Array.from({ length: 12 }, (_, i) => ({ monthIndex: i + 1, rampPct: 1.0 })) },
       },
       include: { months: true },
@@ -691,7 +688,7 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
         notes:                   z.string().nullable().optional(),
       }).parse(req.body)
       const owned = await prisma.proForma.findFirst({
-        where: { id: req.params.id, tenantId: req.staffUser!.tenantId, deletedAt: null },
+        where: { id: req.params.id, tenantId: req.staffUser!.tenantFilter, deletedAt: null },
       })
       if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Projection not found in your active company' } })
       return prisma.proForma.update({ where: { id: req.params.id }, data: body })
@@ -703,7 +700,7 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuth(...ADMIN_ONLY) },
     async (req, reply) => {
       const owned = await prisma.proForma.findFirst({
-        where: { id: req.params.id, tenantId: req.staffUser!.tenantId, deletedAt: null },
+        where: { id: req.params.id, tenantId: req.staffUser!.tenantFilter, deletedAt: null },
       })
       if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Projection not found in your active company' } })
       await prisma.proForma.update({ where: { id: req.params.id }, data: { deletedAt: new Date() } })
@@ -728,7 +725,7 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
         ordersSun:      z.number().int().nonnegative().default(0),
       }).parse(req.body)
       const owned = await prisma.proForma.findFirst({
-        where: { id: req.params.id, tenantId: req.staffUser!.tenantId, deletedAt: null },
+        where: { id: req.params.id, tenantId: req.staffUser!.tenantFilter, deletedAt: null },
       })
       if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Projection not found in your active company' } })
       const created = await prisma.proFormaChannel.create({ data: { ...body, proFormaId: req.params.id } })
@@ -754,7 +751,7 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
       const owned = await prisma.proFormaChannel.findFirst({
         where: {
           id: req.params.channelId,
-          proForma: { tenantId: req.staffUser!.tenantId, deletedAt: null },
+          proForma: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
         },
       })
       if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Channel not found in your active company' } })
@@ -769,7 +766,7 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
       const owned = await prisma.proFormaChannel.findFirst({
         where: {
           id: req.params.channelId,
-          proForma: { tenantId: req.staffUser!.tenantId, deletedAt: null },
+          proForma: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
         },
       })
       if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Channel not found in your active company' } })
@@ -789,7 +786,7 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
         notes:        z.string().optional(),
       }).parse(req.body)
       const owned = await prisma.proForma.findFirst({
-        where: { id: req.params.id, tenantId: req.staffUser!.tenantId, deletedAt: null },
+        where: { id: req.params.id, tenantId: req.staffUser!.tenantFilter, deletedAt: null },
       })
       if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Projection not found in your active company' } })
       const created = await prisma.proFormaFixedCost.create({ data: { ...body, proFormaId: req.params.id } })
@@ -809,7 +806,7 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
       const owned = await prisma.proFormaFixedCost.findFirst({
         where: {
           id: req.params.costId,
-          proForma: { tenantId: req.staffUser!.tenantId, deletedAt: null },
+          proForma: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
         },
       })
       if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Cost not found in your active company' } })
@@ -824,7 +821,7 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
       const owned = await prisma.proFormaFixedCost.findFirst({
         where: {
           id: req.params.costId,
-          proForma: { tenantId: req.staffUser!.tenantId, deletedAt: null },
+          proForma: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
         },
       })
       if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Cost not found in your active company' } })
@@ -841,7 +838,7 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
       const body = z.object({ rampPct: z.number().min(0).max(2) }).parse(req.body)
       const monthIndex = parseInt(req.params.monthIndex, 10)
       const owned = await prisma.proForma.findFirst({
-        where: { id: req.params.id, tenantId: req.staffUser!.tenantId, deletedAt: null },
+        where: { id: req.params.id, tenantId: req.staffUser!.tenantFilter, deletedAt: null },
       })
       if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Projection not found in your active company' } })
       return prisma.proFormaMonth.update({

@@ -62,7 +62,7 @@ export async function menuRoutes(fastify: FastifyInstance) {
     async (req, reply) => {
       // Tenant scope: requested concept must belong to the active tenant.
       const concept = await prisma.concept.findFirst({
-        where: { id: req.params.conceptId, tenantId: req.staffUser!.tenantId, deletedAt: null },
+        where: { id: req.params.conceptId, tenantId: req.staffUser!.tenantFilter, deletedAt: null },
       })
       if (!concept) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Concept not found in your active company' } })
       const categories = await prisma.category.findMany({
@@ -100,7 +100,7 @@ export async function menuRoutes(fastify: FastifyInstance) {
         where: {
           deletedAt: null,
           // Tenant scope via concept relation
-          concept: { tenantId: req.staffUser!.tenantId, deletedAt: null },
+          concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
           ...(req.query.conceptId && { conceptId: req.query.conceptId }),
         },
         select: {
@@ -119,7 +119,7 @@ export async function menuRoutes(fastify: FastifyInstance) {
   fastify.post('/items', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
     const body = createItemSchema.parse(req.body)
     const concept = await prisma.concept.findFirst({
-      where: { id: body.conceptId, tenantId: req.staffUser!.tenantId, deletedAt: null },
+      where: { id: body.conceptId, tenantId: req.staffUser!.tenantFilter, deletedAt: null },
     })
     if (!concept) return reply.status(403).send({ error: { code: 'CROSS_TENANT', message: 'Concept does not belong to your active company' } })
     const item = await prisma.menuItem.create({ data: body })
@@ -136,7 +136,7 @@ export async function menuRoutes(fastify: FastifyInstance) {
         where: {
           id: req.params.id,
           deletedAt: null,
-          concept: { tenantId: req.staffUser!.tenantId, deletedAt: null },
+          concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
         },
       })
       if (!item) throw new NotFoundError('MenuItem', req.params.id)
@@ -159,7 +159,7 @@ export async function menuRoutes(fastify: FastifyInstance) {
         where: {
           id: req.params.id,
           deletedAt: null,
-          concept: { tenantId: req.staffUser!.tenantId, deletedAt: null },
+          concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
         },
       })
       if (!item) throw new NotFoundError('MenuItem', req.params.id)
@@ -190,7 +190,7 @@ export async function menuRoutes(fastify: FastifyInstance) {
         where: {
           id: req.params.id,
           deletedAt: null,
-          concept: { tenantId: req.staffUser!.tenantId, deletedAt: null },
+          concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
         },
       })
       if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Item not found in your active company' } })
@@ -207,7 +207,7 @@ export async function menuRoutes(fastify: FastifyInstance) {
   fastify.post('/categories', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
     const body = createCategorySchema.parse(req.body)
     const concept = await prisma.concept.findFirst({
-      where: { id: body.conceptId, tenantId: req.staffUser!.tenantId, deletedAt: null },
+      where: { id: body.conceptId, tenantId: req.staffUser!.tenantFilter, deletedAt: null },
     })
     if (!concept) return reply.status(403).send({ error: { code: 'CROSS_TENANT', message: 'Concept does not belong to your active company' } })
     const category = await prisma.category.create({ data: body })
@@ -223,7 +223,7 @@ export async function menuRoutes(fastify: FastifyInstance) {
         where: {
           id: req.params.id,
           deletedAt: null,
-          concept: { tenantId: req.staffUser!.tenantId, deletedAt: null },
+          concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
         },
       })
       if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Category not found in your active company' } })
@@ -239,7 +239,7 @@ export async function menuRoutes(fastify: FastifyInstance) {
       where: {
         id: body.menuItemId,
         deletedAt: null,
-        concept: { tenantId: req.staffUser!.tenantId, deletedAt: null },
+        concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
       },
     })
     if (!ownedItem) return reply.status(403).send({ error: { code: 'CROSS_TENANT', message: 'Menu item does not belong to your active company' } })
@@ -259,7 +259,7 @@ export async function menuRoutes(fastify: FastifyInstance) {
         where: {
           id: req.params.id,
           deletedAt: null,
-          menuItem: { concept: { tenantId: req.staffUser!.tenantId, deletedAt: null } },
+          menuItem: { concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null } },
         },
       })
       if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Modifier group not found in your active company' } })

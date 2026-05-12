@@ -83,7 +83,7 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
         event: { in: [...FUNNEL_STEPS] as FunnelEvent[] },
         createdAt: { gte: from, lte: to },
         // Tenant scope: only events for concepts under the active tenant.
-        concept: { tenantId: req.staffUser!.tenantId, deletedAt: null },
+        concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
         ...(conceptId ? { conceptId } : {}),
       },
       _count: { event: true },
@@ -116,7 +116,7 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
 
     // Tenant scope: only consider concepts under the active tenant.
     const tenantConcepts = await prisma.concept.findMany({
-      where: { tenantId: req.staffUser!.tenantId, deletedAt: null },
+      where: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
       select: { id: true },
     })
     const tenantConceptIds = tenantConcepts.map((c) => c.id)
@@ -162,7 +162,7 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
 
     // Tenant scope: only consider concepts under the active tenant.
     const tenantConcepts = await prisma.concept.findMany({
-      where: { tenantId: req.staffUser!.tenantId, deletedAt: null },
+      where: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
       select: { id: true },
     })
     const tenantConceptIds = tenantConcepts.map((c) => c.id)
@@ -209,7 +209,7 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
         by: ['sessionId'],
         where: {
           createdAt: { gte: from, lte: to },
-          concept: { tenantId: req.staffUser!.tenantId, deletedAt: null },
+          concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
           ...(conceptId ? { conceptId } : {}),
         },
         _count: { sessionId: true },
@@ -218,7 +218,7 @@ export async function analyticsRoutes(fastify: FastifyInstance) {
         by: ['event'],
         where: {
           createdAt: { gte: from, lte: to },
-          concept: { tenantId: req.staffUser!.tenantId, deletedAt: null },
+          concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
           ...(conceptId ? { conceptId } : {}),
         },
         _count: { event: true },
