@@ -4,6 +4,7 @@ import type { Concept } from '../../../lib/concept'
 import { PromoBar } from '../parts/PromoBar'
 import { CrossBrandStrip } from '../parts/CrossBrandStrip'
 import { BottomCTA } from '../parts/BottomCTA'
+import { OpenStatusBadge, useHoursData } from '../parts/OpenStatusBadge'
 
 // Craveman — Pakistani desi comfort food ghost kitchen. Karachi street-food
 // energy meets delivery-first convenience. Karahi, kebabs, rice bowls.
@@ -35,6 +36,7 @@ const REVIEWS = [
 ]
 
 export function CravemanLayout({ concept, concepts }: Props) {
+  const hoursData = useHoursData(concept.slug)
   return (
     <div style={{ background: CRAVE_CREAM, color: CRAVE_DARK }}>
       <PromoBar brandName={concept.name} brandSlug={concept.slug} accent={CRAVE_SAFFRON} />
@@ -81,6 +83,9 @@ export function CravemanLayout({ concept, concepts }: Props) {
                 KEBAB.<br />
                 <span style={{ color: CRAVE_SAFFRON, textShadow: `3px 3px 0 ${CRAVE_RED}` }}>KARACHI.</span>
               </h1>
+              <div style={{ marginTop: '1.25rem' }}>
+                <OpenStatusBadge hoursData={hoursData} accentColor={CRAVE_SAFFRON} />
+              </div>
               <p style={{
                 marginTop: '2rem',
                 fontSize: 'clamp(1rem, 2vw, 1.2rem)',

@@ -8,12 +8,17 @@ import { buildReceiptHtml } from './receipt.js'
 
 const posOrderSchema = z.object({
   conceptId: z.string().uuid(),
-  tableId: z.string().nullable().optional(),
+  // B08: tighten FK fields. Sending "not-a-uuid" used to bubble up as a 500
+  // because Prisma rejected the value mid-transaction; now the Zod gate
+  // rejects with a clear 400.
+  tableId: z.string().uuid().nullable().optional(),
   customerId: z.string().uuid().nullable().optional(),
   shiftId: z.string().uuid().nullable().optional(),
   items: z.array(
     z.object({
-      menuItemId: z.string().nullable().default(null),
+      // menuItemId may legitimately be null for manual line items (open-priced
+      // walk-in orders); validate as uuid only when set.
+      menuItemId: z.string().uuid().nullable().default(null),
       name: z.string(),
       quantity: z.number().int().min(1),
       unitPriceCents: z.number().int().min(0),
@@ -40,7 +45,7 @@ const paymentSchema = z.object({
   shiftId: z.string().uuid(),
   payments: z.array(
     z.object({
-      method: z.enum(['cash', 'card', 'jazzcash_wallet', 'easypaisa_wallet', 'keenu_qr', 'split', 'comp']),
+      method: z.enum(['cash', 'card', 'keenu_qr', 'split', 'comp']),   // F-PAY02: dropped wallet methods
       amountCents: z.number().int().min(0),
       tenderedCents: z.number().int().optional(),
       gatewayRef: z.string().optional(),

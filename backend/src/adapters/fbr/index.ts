@@ -96,7 +96,7 @@ function fmtPralDate(d: Date): string {
 
 function mapPaymentMode(methods: string[]): number {
   if (methods.includes('cash')) return 2
-  if (methods.some(m => ['jazzcash_wallet', 'easypaisa_wallet', 'keenu_qr'].includes(m))) return 3
+  if (methods.includes('keenu_qr')) return 3                   // F-PAY02: wallets retired
   return 1 // card default
 }
 

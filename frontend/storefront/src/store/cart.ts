@@ -2,12 +2,19 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 
+export interface CartItemModifier {
+  modifierId?: string
+  name: string
+  priceDeltaCents: number
+}
+
 export interface CartItem {
   menuItemId: string
   name: string
   priceCents: number
   quantity: number
   notes?: string
+  modifiers?: CartItemModifier[]
 }
 
 function genCartId() {

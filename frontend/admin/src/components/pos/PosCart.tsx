@@ -46,32 +46,37 @@ export function PosCart({ taxRate, onCheckout }: PosCartProps) {
                   </div>
                 </div>
 
-                {/* Qty controls */}
+                {/* Qty controls — F13: bumped from h-8 to h-11 (44px Apple HIG
+                    minimum) so adjacent buttons no longer mistap on iPad. Added
+                    aria-labels so VoiceOver reads each button distinctly. */}
                 <div className="mt-2 flex items-center gap-2">
                   <button
                     onClick={() => updateItemQty(item.id, item.quantity - 1)}
-                    className="h-8 w-8 rounded bg-kds-border font-bold text-kds-text active:scale-90"
+                    aria-label={`Decrease quantity of ${item.name}`}
+                    className="h-11 w-11 rounded-lg bg-kds-border text-base font-bold text-kds-text active:bg-kds-border/70"
                   >
                     −
                   </button>
-                  <span className="w-6 text-center font-bold text-kds-text">{item.quantity}</span>
+                  <span className="w-8 text-center font-bold text-kds-text text-base" aria-live="polite">{item.quantity}</span>
                   <button
                     onClick={() => updateItemQty(item.id, item.quantity + 1)}
-                    className="h-8 w-8 rounded bg-kds-border font-bold text-kds-text active:scale-90"
+                    aria-label={`Increase quantity of ${item.name}`}
+                    className="h-11 w-11 rounded-lg bg-kds-border text-base font-bold text-kds-text active:bg-kds-border/70"
                   >
                     +
                   </button>
                   <input
                     type="text"
                     placeholder="Note…"
+                    aria-label={`Note for ${item.name}`}
                     value={item.notes}
                     onChange={(e) => updateItemNotes(item.id, e.target.value)}
                     className="flex-1 rounded border border-kds-border bg-transparent px-2 py-1 text-xs text-kds-text placeholder:text-kds-subtext"
                   />
                   <button
                     onClick={() => removeItem(item.id)}
-                    className="h-8 w-8 rounded bg-kds-red/20 text-kds-red font-bold active:scale-90"
-                    aria-label="Remove item"
+                    className="h-11 w-11 rounded-lg bg-kds-red/20 text-kds-red font-bold active:bg-kds-red/30"
+                    aria-label={`Remove ${item.name} from cart`}
                   >
                     ✕
                   </button>

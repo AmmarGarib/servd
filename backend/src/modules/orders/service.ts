@@ -1,6 +1,6 @@
 import { prisma } from '../../lib/prisma.js'
 import { emitOrderNew, emitOrderUpdated, emitItemUpdated, emitItem86d } from '../../lib/ws.js'
-import { ConflictError, NotFoundError } from '../../lib/errors.js'
+import { AppError, ConflictError, NotFoundError } from '../../lib/errors.js'
 import { sendOrderReceipt, sendOrderStatusUpdate } from '../../lib/notify.js'
 import { postOrderCompletion, postOrderRefund } from '../accounting/orderPosting.js'
 import type { OrderDTO } from '@servd/types'
@@ -243,6 +243,12 @@ export async function ingestOrder(dto: OrderDTO) {
   scheduleCoursePacing(orderId).catch((err) =>
     console.error(`[Pacing] Failed for order ${orderId}:`, (err as Error).message),
   )
+  // Bump customer rollups (lastOrderAt, visit counts, etc.) when order is placed.
+  if (txResult.order.customerId) {
+    import('../../lib/customerRollups.js')
+      .then(({ bumpCustomerRollups }) => bumpCustomerRollups(txResult.order.customerId))
+      .catch(() => {})
+  }
 
   return { order: txResult.order, created: true }
 }
@@ -417,13 +423,38 @@ export async function updateOrderStatus(id: string, status: OrderStatus) {
   const order = await prisma.order.findFirst({ where: { id, deletedAt: null } })
   if (!order) throw new NotFoundError('Order', id)
 
-  const updated = await prisma.order.update({
-    where: { id },
+  // B19: validate the transition. A retried Foodpanda webhook that tries to
+  // move a `completed` order back to `received` (or `confirmed`) used to
+  // silently succeed and re-fire all the side effects — financial entries,
+  // loyalty earns, FBR submission. The state machine rejects with a 409
+  // here so the caller can dedupe.
+  const { canTransitionOrder } = await import('../../lib/orderStateMachine.js')
+  if (!canTransitionOrder(order.status, status)) {
+    throw new AppError(
+      'INVALID_TRANSITION',
+      `Cannot move order ${id} from ${order.status} → ${status}`,
+      409,
+    )
+  }
+
+  // Conditional update so two parallel writers don't both succeed. Whoever
+  // gets through second sees count===0 and we no-op without re-firing side
+  // effects (still emit the WS event — same end-state, idempotent).
+  const result = await prisma.order.updateMany({
+    where: { id, status: order.status },
     data: {
       status,
       ...(status === 'completed' && { completedAt: new Date() }),
     },
   })
+  if (result.count === 0) {
+    // Lost the race; the other writer already moved us to (or past) this
+    // status. Treat as success but skip the side-effect cascade.
+    emitOrderUpdated(id, status)
+    const refreshed = await prisma.order.findUnique({ where: { id } })
+    return refreshed!
+  }
+  const updated = await prisma.order.update({ where: { id }, data: {} })   // refetch shape
 
   emitOrderUpdated(id, status)
 
@@ -441,6 +472,53 @@ export async function updateOrderStatus(id: string, status: OrderStatus) {
       emitDomainEvent(eventName, { orderId: id, status, conceptId: order.conceptId, totalCents: order.totalCents })
     }
   })()
+
+  // On completion: award loyalty points + refresh customer rollups.
+  // Both are fire-and-forget — a failure here must never block the kitchen bump.
+  if (status === 'completed' && order.customerId) {
+    const customerId = order.customerId
+
+    // ── Loyalty points earn ──────────────────────────────────────────────────
+    // Mirror the rate used in the loyalty routes: 1 point per PKR 1 (100 paisa).
+    const pointsToEarn = Math.floor(order.totalCents / 100)
+    if (pointsToEarn > 0) {
+      void (async () => {
+        try {
+          // Upsert account so guest-converted customers get one automatically.
+          let account = await prisma.loyaltyAccount.findUnique({ where: { customerId } })
+          if (!account) {
+            account = await prisma.loyaltyAccount.create({
+              data: { customerId, stampCounts: {} },
+            })
+          }
+          await prisma.$transaction([
+            prisma.loyaltyAccount.update({
+              where: { id: account.id },
+              data: {
+                pointsBalance:  { increment: pointsToEarn },
+                lifetimePoints: { increment: pointsToEarn },
+              },
+            }),
+            prisma.loyaltyTransaction.create({
+              data: {
+                loyaltyAccountId: account.id,
+                orderId:          id,
+                type:             'earn',
+                pointsDelta:      pointsToEarn,
+                description:      `Earned ${pointsToEarn} pts — order #${id.slice(0, 8)} completed`,
+              },
+            }),
+          ])
+        } catch (err) {
+          console.error('[loyalty] earn failed for order', id, ':', (err as Error).message)
+        }
+      })()
+    }
+
+    // ── Customer rollups ─────────────────────────────────────────────────────
+    const { bumpCustomerRollups } = await import('../../lib/customerRollups.js')
+    bumpCustomerRollups(customerId)
+  }
 
   // Notify customer on key status transitions
   if (['preparing', 'ready', 'completed', 'cancelled'].includes(status)) {
@@ -476,12 +554,25 @@ export async function updateItemStatus(itemId: string, status: ItemStatus, staff
   const item = await prisma.orderItem.findUnique({ where: { id: itemId } })
   if (!item) throw new NotFoundError('OrderItem', itemId)
 
+  // B19: validate the kitchen transition. Pre-fix, a recall on an already-
+  // bumped item that had a duplicate event in flight could leave the item in
+  // a "voided then revived" state that broke the all-done check below.
+  const { canTransitionItem } = await import('../../lib/orderStateMachine.js')
+  if (!canTransitionItem(item.status, status)) {
+    throw new AppError(
+      'INVALID_TRANSITION',
+      `Cannot move item ${itemId} from ${item.status} → ${status}`,
+      409,
+    )
+  }
+
   // Set completedAt when the item leaves active service (ready or bumped).
   // Bumped is the canonical "done" state — kitchens often skip 'ready' and go
   // straight from 'preparing' → 'bumped', so we treat both as completion.
   const isCompleting = status === 'ready' || status === 'bumped'
-  const updated = await prisma.orderItem.update({
-    where: { id: itemId },
+  // Conditional update prevents two parallel KDS bumps from both succeeding.
+  const result = await prisma.orderItem.updateMany({
+    where: { id: itemId, status: item.status },
     data: {
       status,
       ...(isCompleting && !item.completedAt && { completedAt: new Date() }),
@@ -489,6 +580,14 @@ export async function updateItemStatus(itemId: string, status: ItemStatus, staff
       ...(status === 'voided' && { voidedAt: new Date(), voidReason: 'staff void' }),
     },
   })
+  if (result.count === 0) {
+    // Race lost — somebody else already moved this item. Return the current
+    // shape so callers don't blow up; emit the event since the end state is
+    // already what they wanted.
+    emitItemUpdated(itemId, status, item.stationId)
+    return prisma.orderItem.findUnique({ where: { id: itemId } })
+  }
+  const updated = await prisma.orderItem.findUnique({ where: { id: itemId } })
 
   emitItemUpdated(itemId, status, item.stationId)
 
@@ -578,11 +677,18 @@ async function createFinancialEntry(orderId: string) {
   })
   if (!order || order.source === 'pos') return // POS handles its own via shift close
 
-  // Guard against duplicate entries from concurrent bumps
-  const existing = await prisma.financialEntry.findFirst({ where: { orderId } })
+  // B03: the unique index on (orderId) is the real guard now; this read-check
+  // is just a cheap fast-path to skip the round trip when we already have an
+  // entry. The catch block below handles the genuine race.
+  const existing = await prisma.financialEntry.findUnique({ where: { orderId } })
   if (existing) return
 
-  const commissionRate = order.source === 'foodpanda' ? 0.25 : 0
+  // B02: read the per-brand commission rate from the concept; falls back to
+  // 25% only if the concept hasn't been configured yet. Foodpanda actually
+  // varies the rate by brand + city — single hard-coded value loses money.
+  const commissionRate = order.source === 'foodpanda'
+    ? (order.concept.foodpandaCommissionRate ?? 0.25)
+    : 0
   const commissionCents = Math.round(order.totalCents * commissionRate)
 
   try {

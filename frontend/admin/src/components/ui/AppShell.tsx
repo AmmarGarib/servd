@@ -3,6 +3,10 @@ import { useState, useEffect, useMemo } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { useAuthStore } from '../../store/auth'
+import { useViewAsRole, type ViewAsRole } from '../../store/viewAsRole'
+import { useRoleModules, modulesForRole } from '../../store/roleModules'
+import { usePermissions } from '../../hooks/useCan'
+import { APP_ROLES, roleLabel, type AppRole, type ModuleId } from '../../lib/appRoles'
 import { TenantSwitcher, useViewAllTenants } from './TenantSwitcher'
 import { PortfolioWriteGuardModal } from './PortfolioWriteGuardModal'
 
@@ -16,60 +20,84 @@ const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 // - Items can have `children` — only revealed when the parent's pill is open.
 // - User can pin any item (★) — pinned items render in a sticky strip up top.
 
+// Each nav item carries a `module` ID drawn from src/lib/appRoles.ts. The role
+// → module mapping (with CEO-editable overrides) decides what each role sees.
+// Items without a module are visible to everyone. Sections also carry a
+// module — when *every* item in a section is hidden, the section header
+// disappears too.
+
 interface NavItem {
   href: string
   label: string
   icon: string
   badge?: string
-  children?: Array<{ href: string; label: string }>
+  children?: Array<{ href: string; label: string; module?: ModuleId }>
+  module?: ModuleId
 }
 
 interface NavSection {
   title: string
   items: NavItem[]
   defaultCollapsed?: boolean
+  module?: ModuleId
 }
 
 const NAV: NavSection[] = [
+  // ── Executive — CEO / Admin only by default. The CEO uses this section to
+  // decide what every other role sees in the rest of the sidebar. ──────
+  {
+    title: 'Executive',
+    items: [
+      { href: '/configuration',        label: 'CEO Overview',      icon: '👑', module: 'ceo_overview' },
+      { href: '/configuration/roles',  label: 'Roles & Permissions', icon: '🔐', module: 'role_management' },
+      { href: '/configuration/role-modules', label: 'Module Access', icon: '🗂', module: 'role_modules' },
+      { href: '/settings',             label: 'Tenants & Brands',  icon: '🏷', module: 'tenants' },
+    ],
+  },
   {
     title: 'Live',
     items: [
-      { href: '/dashboard', label: 'Dashboard',    icon: '⬡' },
-      { href: '/ops',       label: 'Ops Center',   icon: '⚡' },
-      { href: '/orders',    label: 'Orders',       icon: '📋' },
-      { href: '/kds/all',   label: 'Kitchen KDS',  icon: '🖥' },
-      { href: '/chain',     label: 'Chain Rollup', icon: '🏢' },
+      { href: '/dashboard', label: 'Dashboard',    icon: '⬡', module: 'dashboard' },
+      { href: '/ops',       label: 'Ops Center',   icon: '⚡', module: 'ops' },
+      { href: '/live',      label: 'Live Feed',    icon: '📡', module: 'live_feed' },
+      { href: '/orders',    label: 'Orders',       icon: '📋', module: 'orders', children: [
+        { href: '/refunds',         label: 'Refunds',  module: 'refunds' },
+        { href: '/orders/curbside', label: 'Curbside', module: 'curbside' },
+      ]},
+      { href: '/kds/all',   label: 'Kitchen KDS',  icon: '🖥', module: 'kds_all' },
+      { href: '/chain',     label: 'Chain Rollup', icon: '🏢', module: 'chain' },
     ],
   },
   {
     title: 'Service',
     items: [
-      { href: '/pos', label: 'Point of Sale', icon: '💳', children: [
-        { href: '/pos/waiter', label: 'Waiter mode' },
-        { href: '/pos/shift',  label: 'Shift / Till' },
+      { href: '/pos', label: 'Point of Sale', icon: '💳', module: 'pos', children: [
+        { href: '/pos/waiter', label: 'Waiter mode', module: 'pos' },
+        { href: '/pos/shift',  label: 'Shift / Till', module: 'pos' },
       ]},
-      { href: '/reservations', label: 'Reservations', icon: '🍽', children: [
-        { href: '/reservations/week',      label: 'Week view' },
-        { href: '/reservations/blockouts', label: 'Closures & blockouts' },
-        { href: '/reservations/hours',     label: 'Service hours' },
-        { href: '/reservations/analytics', label: 'Analytics' },
-        { href: '/kds/reservations',       label: 'Kitchen tracker' },
+      { href: '/reservations', label: 'Reservations', icon: '🍽', module: 'reservations', children: [
+        { href: '/reservations/week',      label: 'Week view',            module: 'reservations' },
+        { href: '/reservations/blockouts', label: 'Closures & blockouts', module: 'reservations_admin' },
+        { href: '/reservations/hours',     label: 'Service hours',        module: 'reservations_admin' },
+        { href: '/reservations/analytics', label: 'Analytics',            module: 'reservations_admin' },
+        { href: '/kds/reservations',       label: 'Kitchen tracker',      module: 'kds_all' },
       ]},
-      { href: '/orders/curbside', label: 'Curbside', icon: '🚗' },
-      { href: '/scheduling',  label: 'Scheduling', icon: '📅' },
-      { href: '/tables',      label: 'Floor Plan', icon: '🪑' },
-      { href: '/dispatch',    label: 'Dispatch',   icon: '🛵', children: [
-        { href: '/riders', label: 'Riders' },
+      { href: '/orders/curbside', label: 'Curbside',   icon: '🚗', module: 'curbside' },
+      { href: '/scheduling',      label: 'Scheduling', icon: '📅', module: 'scheduling' },
+      { href: '/tables',          label: 'Floor Plan', icon: '🪑', module: 'tables' },
+      { href: '/dispatch',        label: 'Dispatch',   icon: '🛵', module: 'dispatch', children: [
+        { href: '/riders', label: 'Riders', module: 'riders' },
       ]},
     ],
   },
   {
     title: 'Kitchen',
     items: [
-      { href: '/menu',                label: 'Menu',         icon: '📝' },
-      { href: '/components',          label: 'Components',   icon: '🧪' },
-      { href: '/accounting/recipes',  label: 'Recipes',      icon: '📐' },
-      { href: '/inventory',           label: 'Inventory',    icon: '📦' },
+      { href: '/menu',                label: 'Menu',         icon: '📝', module: 'menu' },
+      { href: '/components',          label: 'Components',   icon: '🧪', module: 'components' },
+      { href: '/accounting/recipes',  label: 'Recipes',      icon: '📐', module: 'recipes' },
+      { href: '/inventory',           label: 'Inventory',    icon: '📦', module: 'inventory' },
+      { href: '/kds/config',          label: 'KDS Config',   icon: '⚙️', module: 'kds_config' },
     ],
   },
   {
@@ -82,48 +110,67 @@ const NAV: NavSection[] = [
     title: 'Marketing',
     defaultCollapsed: true,
     items: [
-      { href: '/marketing',         label: 'Workspace',   icon: '🚀', children: [
-        { href: '/marketing/activity', label: 'Activity Log' },
+      { href: '/marketing',         label: 'Workspace',   icon: '🚀', module: 'marketing_workspace', children: [
+        { href: '/marketing/activity', label: 'Activity Log', module: 'marketing_workspace' },
       ]},
-      { href: '/crm',               label: 'CRM',         icon: '👥', children: [
-        { href: '/crm/conversations', label: 'Conversations' },
-        { href: '/crm/segments',      label: 'Segments' },
-        { href: '/crm/naughty-list',  label: 'Naughty list' },
+      { href: '/crm',               label: 'CRM',         icon: '👥', module: 'crm', children: [
+        { href: '/crm/conversations', label: 'Conversations', module: 'crm' },
+        { href: '/crm/segments',      label: 'Segments',      module: 'crm' },
+        { href: '/crm/naughty-list',  label: 'Naughty list',  module: 'crm' },
       ]},
-      { href: '/crm/campaigns',     label: 'Campaigns',   icon: '✉️' },
-      { href: '/complaints',        label: 'Complaints',  icon: '🎫' },
-      { href: '/reviews',           label: 'Reviews',     icon: '⭐' },
-      { href: '/calendar',          label: 'Calendar',    icon: '📅' },
-      { href: '/media',             label: 'Media',       icon: '🖼' },
-      { href: '/promos',            label: 'Promotions',  icon: '🎟', children: [
-        { href: '/discounts', label: 'Discounts' },
-        { href: '/qrcodes',   label: 'QR Codes' },
+      { href: '/crm/campaigns',     label: 'Campaigns',   icon: '✉️', module: 'campaigns' },
+      { href: '/complaints',        label: 'Complaints',  icon: '🎫', module: 'complaints' },
+      { href: '/reviews',           label: 'Reviews',     icon: '⭐', module: 'reviews' },
+      { href: '/calendar',          label: 'Calendar',    icon: '📅', module: 'calendar' },
+      { href: '/media',             label: 'Media',       icon: '🖼', module: 'media' },
+      { href: '/promos',            label: 'Promotions',  icon: '🎟', module: 'promos', children: [
+        { href: '/discounts', label: 'Discounts', module: 'promos' },
+        { href: '/qrcodes',   label: 'QR Codes',  module: 'promos' },
       ]},
-      { href: '/marketing/brands',  label: 'Brands',      icon: '🏷', children: [
-        { href: '/marketing/storefront', label: 'Storefront Designer' },
-        { href: '/storefront',          label: 'Visual Layout' },
+      { href: '/marketing/brands',  label: 'Brands',      icon: '🏷', module: 'brands', children: [
+        { href: '/marketing/storefront', label: 'Storefront Designer', module: 'brands' },
+        { href: '/storefront',           label: 'Visual Layout',       module: 'brands' },
       ]},
-      { href: '/analytics',         label: 'Analytics',   icon: '📊' },
+      { href: '/analytics',         label: 'Analytics',   icon: '📊', module: 'analytics' },
     ],
   },
   {
     title: 'Finance',
     defaultCollapsed: true,
     items: [
-      { href: '/finance',                label: 'P&L',          icon: '💰' },
-      { href: '/accounting',             label: 'Accounting',   icon: '📊', children: [
-        { href: '/accounting/food-cost',         label: 'Food Cost' },
-        { href: '/accounting/menu-engineering', label: 'Menu Engineering' },
+      { href: '/finance',                label: 'P&L',             icon: '💰', module: 'finance_pl' },
+      { href: '/payroll',                label: 'Payroll',         icon: '💰', module: 'payroll', children: [
+        { href: '/tip-pools', label: 'Tip Pools', module: 'payroll' },
       ]},
-      { href: '/finance/capital-ledger', label: 'Capital',      icon: '💸' },
-      { href: '/finance/capex',          label: 'Project Tracker', icon: '📊' },
-      { href: '/finance/projections',    label: 'Pro-Forma',    icon: '📈' },
-      { href: '/procurement',            label: 'Procurement',  icon: '🏭', children: [
-        { href: '/procurement/chat',    label: 'Supplier Chat' },
-        { href: '/procurement/monitor', label: 'Monitor' },
+      { href: '/accounting',             label: 'Accounting',      icon: '📊', module: 'accounting', children: [
+        { href: '/accounting/food-cost',        label: 'Food Cost',        module: 'accounting' },
+        { href: '/accounting/menu-engineering', label: 'Menu Engineering', module: 'accounting' },
+        { href: '/allocations',                 label: 'Allocations',      module: 'accounting' },
       ]},
-      { href: '/reports',                label: 'Reports',      icon: '📈', children: [
-        { href: '/analytics/forecast', label: 'Demand Forecast' },
+      { href: '/gift-cards',             label: 'Gift Cards',      icon: '🎁', module: 'gift_cards' },
+      { href: '/reconciliation',         label: 'Reconciliation',  icon: '⚖️', module: 'reconciliation' },
+      { href: '/exceptions',             label: 'Exceptions',      icon: '🚨', module: 'exceptions' },
+      { href: '/finance/capital-ledger', label: 'Capital',         icon: '💸', module: 'capital' },
+      { href: '/finance/capex',          label: 'Project Tracker', icon: '📊', module: 'capital' },
+      { href: '/finance/projections',    label: 'Pro-Forma',       icon: '📈', module: 'projections' },
+      { href: '/procurement',            label: 'Procurement',     icon: '🏭', module: 'procurement', children: [
+        { href: '/procurement/chat',    label: 'Supplier Chat', module: 'procurement' },
+        { href: '/procurement/monitor', label: 'Monitor',       module: 'procurement' },
+      ]},
+      { href: '/reports',                label: 'Reports',         icon: '📈', module: 'reports', children: [
+        { href: '/analytics/forecast', label: 'Demand Forecast', module: 'reports' },
+      ]},
+    ],
+  },
+  {
+    title: 'Workforce',
+    defaultCollapsed: true,
+    items: [
+      { href: '/kitchen-staff', label: 'Kitchen Staff', icon: '👨‍🍳', module: 'kitchen_staff', children: [
+        { href: '/kitchen-staff/schedule',   label: 'Schedule',   module: 'kitchen_staff' },
+        { href: '/kitchen-staff/attendance', label: 'Attendance', module: 'kitchen_staff' },
+        { href: '/kitchen-staff/payroll',    label: 'Payroll',    module: 'payroll' },
+        { href: '/kitchen-staff/compliance', label: 'Compliance', module: 'kitchen_staff' },
       ]},
     ],
   },
@@ -131,10 +178,10 @@ const NAV: NavSection[] = [
     title: 'Setup',
     defaultCollapsed: false,
     items: [
-      { href: '/setup',         label: 'First-run setup',   icon: '🚀' },
-      { href: '/configuration', label: 'Configuration Hub', icon: '🎛' },
-      { href: '/settings',      label: 'Brands & Stations', icon: '🏷' },
-      { href: '/help',          label: 'Help & Support',    icon: '❓' },
+      { href: '/onboarding',     label: 'Onboarding',        icon: '🚀', module: 'onboarding' },
+      { href: '/setup',          label: 'First-run setup',   icon: '🚀', module: 'onboarding' },
+      { href: '/notifications',  label: 'Notifications',     icon: '🔔', module: 'notifications' },
+      { href: '/help',           label: 'Help & Support',    icon: '❓', module: 'help' },
     ],
   },
 ]
@@ -176,6 +223,31 @@ function NavLinks({
   collapsed: boolean
   onNavigate?: () => void
 }) {
+  // Determine the role that drives nav visibility. Real role for everyone,
+  // overridden by the view-as switcher when admin/CEO is impersonating.
+  const { data: me } = usePermissions()
+  const viewAsRole = useViewAsRole((s) => s.role)
+  const overrides = useRoleModules((s) => s.overrides)
+  const isSuper = me?.role === 'admin'
+  const effectiveRole: AppRole = (
+    isSuper && viewAsRole
+      ? viewAsRole
+      : (me?.role ?? 'cashier')
+  ) as AppRole
+
+  // Modules the effective role is allowed to see, derived from the CEO-editable
+  // role→modules map. Memoised so we don't re-derive on every nav render.
+  const allowedModules = useMemo(() => {
+    if (isSuper && !viewAsRole) return null               // real admin/CEO sees everything
+    return new Set<ModuleId>(modulesForRole(effectiveRole, overrides))
+  }, [isSuper, viewAsRole, effectiveRole, overrides])
+
+  function visibleByModule(module?: ModuleId) {
+    if (!allowedModules) return true                      // real admin/CEO: full access
+    if (!module) return true                              // un-tagged items default visible
+    return allowedModules.has(module)
+  }
+
   // Section collapse state — defaults from NAV definition, persisted to localStorage
   const defaultCollapsedSet = useMemo(() => new Set(NAV.filter((s) => s.defaultCollapsed).map((s) => s.title)), [])
   const [collapsedSections, setCollapsedSections] = usePersistedSet('servd_nav_collapsed_v2', defaultCollapsedSet)
@@ -258,6 +330,12 @@ function NavLinks({
 
       {/* ── Sections ───────────────────────────────────────────────────── */}
       {NAV.map((section) => {
+        // Executive section: only ever shown to a real (not impersonating)
+        // admin/CEO so the role-management surface can't be tweaked by anyone
+        // pretending to be the admin via the view-as switcher.
+        if (section.title === 'Executive' && !(isSuper && !viewAsRole)) return null
+        const sectionItems = section.items.filter((i) => visibleByModule(i.module))
+        if (sectionItems.length === 0) return null
         const isCollapsed = collapsedSections.has(section.title)
         return (
           <div key={section.title}>
@@ -268,9 +346,10 @@ function NavLinks({
             {collapsed && <div className="h-px mx-2 mb-2" style={{ background: 'rgba(255,255,255,0.04)' }} />}
             {(!isCollapsed || collapsed) && (
               <div className="space-y-0.5 px-1.5">
-                {section.items.map((item) => {
+                {sectionItems.map((item) => {
                   const active = isActive(pathname, item.href)
-                  const hasChildren = (item.children?.length ?? 0) > 0
+                  const visibleChildren = (item.children ?? []).filter((c) => visibleByModule(c.module))
+                  const hasChildren = visibleChildren.length > 0
                   const expanded = expandedParents.has(item.href)
                   return (
                     <div key={item.href}>
@@ -286,7 +365,7 @@ function NavLinks({
                         onToggleExpand={() => toggleParent(item.href)}
                       />
                       {/* Children */}
-                      {!collapsed && hasChildren && expanded && item.children!.map((c) => (
+                      {!collapsed && hasChildren && expanded && visibleChildren.map((c) => (
                         <Link key={c.href} href={c.href}
                           onClick={() => onNavigate?.()}
                           className="flex items-center gap-2 rounded-md transition-all duration-150 ml-7 mr-1.5 px-2.5 py-1.5 group"
@@ -479,21 +558,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </button>
         ) : (
           <div className="space-y-1.5">
-            <div className="flex items-center gap-2.5 rounded-xl px-2 py-1.5"
-              style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)' }}>
-              <div className="h-7 w-7 rounded-full shrink-0 flex items-center justify-center text-xs font-black"
-                style={{
-                  background: 'linear-gradient(135deg, #00D4B1, #6366F1)',
-                  color: '#000',
-                  boxShadow: '0 0 10px rgba(0,212,177,0.25)',
-                }}>
-                {initials}
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-xs font-semibold truncate" style={{ color: 'rgba(255,255,255,0.75)' }}>{user?.name ?? 'Staff'}</p>
-                <p className="text-[10px] capitalize" style={{ color: 'rgba(255,255,255,0.25)' }}>{user?.role ?? ''}</p>
-              </div>
-            </div>
+            <UserIdentityCard initials={initials} />
             <button onClick={() => void handleClockOut()} disabled={clockingOut}
               className="w-full flex items-center justify-center gap-1.5 rounded-xl py-1.5 text-xs font-semibold transition-all disabled:opacity-50"
               style={{ background: 'rgba(255,77,79,0.08)', border: '1px solid rgba(255,77,79,0.18)', color: '#FF4D4F' }}
@@ -505,6 +570,65 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               </svg>
               {clockingOut ? 'Clocking out…' : 'Clock out'}
             </button>
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  function UserIdentityCard({ initials }: { initials: string }) {
+    const { data: me } = usePermissions()
+    const viewAs = useViewAsRole((s) => s.role)
+    const setRole = useViewAsRole((s) => s.setRole)
+    // Both admin and CEO can impersonate; everyone else gets a passive card.
+    const isSuper = me?.role === 'admin'
+
+    // Drop admin/ceo from impersonation targets — viewing-as-self is the
+    // default state, no need to offer it as a discrete option.
+    const switchTargets = APP_ROLES.filter((r) => r.value !== 'admin')
+
+    return (
+      <div className="rounded-xl px-2 py-1.5"
+        style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)' }}>
+        <div className="flex items-center gap-2.5">
+          <div className="h-7 w-7 rounded-full shrink-0 flex items-center justify-center text-xs font-black"
+            style={{
+              background: 'linear-gradient(135deg, #00D4B1, #6366F1)',
+              color: '#000',
+              boxShadow: '0 0 10px rgba(0,212,177,0.25)',
+            }}>
+            {initials}
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-xs font-semibold truncate" style={{ color: 'rgba(255,255,255,0.75)' }}>
+              {user?.name ?? 'Staff'}
+            </p>
+            <p className="text-[10px]" style={{ color: isSuper ? '#FCD34D' : 'rgba(255,255,255,0.25)' }}>
+              {isSuper ? '👑 CEO' : roleLabel(user?.role)}
+            </p>
+          </div>
+        </div>
+
+        {isSuper && (
+          <div className="mt-1.5 pt-1.5 border-t border-white/[0.05] flex items-center gap-1.5">
+            <span className="text-[9px] uppercase tracking-wider font-bold shrink-0"
+              style={{ color: viewAs ? '#A5B4FC' : 'rgba(255,255,255,0.3)' }}>
+              {viewAs ? '🔭 As' : 'View as'}
+            </span>
+            <select
+              value={viewAs ?? ''}
+              onChange={(e) => setRole((e.target.value || null) as ViewAsRole)}
+              className="flex-1 text-[10.5px] font-semibold rounded-md px-1.5 py-1 cursor-pointer focus:outline-none"
+              style={{
+                background: viewAs ? 'rgba(99,102,241,0.12)' : 'rgba(0,0,0,0.3)',
+                color: viewAs ? '#A5B4FC' : 'rgba(255,255,255,0.6)',
+                border: `1px solid ${viewAs ? 'rgba(99,102,241,0.3)' : 'rgba(255,255,255,0.06)'}`,
+              }}>
+              <option value="">Myself</option>
+              {switchTargets.map((opt) => (
+                <option key={opt.value} value={opt.value}>{opt.emoji} {opt.label}</option>
+              ))}
+            </select>
           </div>
         )}
       </div>
@@ -631,6 +755,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </header>
 
         <PortfolioBanner />
+        <ImpersonationBanner />
         <main className="flex-1 min-h-0 overflow-y-auto animate-fade-in">
           {children}
         </main>
@@ -657,6 +782,42 @@ function PortfolioBanner() {
       <span className="font-black">∞</span>
       <span className="font-bold">Portfolio view</span>
       <span className="text-white/55">— viewing across all your companies. We&rsquo;ll ask which company to use when you make a change.</span>
+    </div>
+  )
+}
+
+// ─── Role impersonation options + banner ────────────────────────────────────
+//
+// Admin / CEO can preview the app as any other role using the dropdown inside
+// the user identity card. When engaged, useCan() and the sidebar nav resolve
+// against the chosen role's CEO-defined module allow-list. A banner across
+// the top reminds the operator they're impersonating.
+//
+// The dropdown options are drawn from APP_ROLES in src/lib/appRoles.ts so a
+// new role only needs to be added in one place.
+
+function ImpersonationBanner() {
+  const viewAs = useViewAsRole((s) => s.role)
+  const clear = useViewAsRole((s) => s.clear)
+  const { data: me } = usePermissions()
+  const isSuper = me?.role === 'admin'
+  if (!viewAs || !isSuper) return null
+  const opt = APP_ROLES.find((o) => o.value === viewAs)
+  return (
+    <div className="shrink-0 flex items-center gap-2 px-4 py-1.5 text-xs"
+      style={{
+        background: 'rgba(99,102,241,0.12)',
+        borderBottom: '1px solid rgba(99,102,241,0.3)',
+        color: '#A5B4FC',
+      }}>
+      <span className="font-black">{opt?.emoji ?? '🔭'}</span>
+      <span className="font-bold">Viewing as {opt?.label ?? viewAs}</span>
+      <span className="text-white/55">— sidebar & action buttons reflect what this role sees. Writes still run as you.</span>
+      <button onClick={() => clear()}
+        className="ml-auto rounded-md px-2 py-0.5 text-[10px] font-bold transition-colors"
+        style={{ background: 'rgba(99,102,241,0.2)', color: '#A5B4FC' }}>
+        Back to CEO view
+      </button>
     </div>
   )
 }

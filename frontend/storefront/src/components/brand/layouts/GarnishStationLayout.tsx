@@ -4,6 +4,7 @@ import type { Concept } from '../../../lib/concept'
 import { PromoBar } from '../parts/PromoBar'
 import { CrossBrandStrip } from '../parts/CrossBrandStrip'
 import { BottomCTA } from '../parts/BottomCTA'
+import { OpenStatusBadge, useHoursData } from '../parts/OpenStatusBadge'
 
 // Garnish Station — build-your-own bowls and wraps from an outdoor walk-up
 // cart. Fresh, market-garden energy. Physical cart at events and outdoor
@@ -38,6 +39,7 @@ const STEPS = [
 ]
 
 export function GarnishStationLayout({ concept, concepts }: Props) {
+  const hoursData = useHoursData(concept.slug)
   return (
     <div style={{ background: GARNISH_CREAM, color: GARNISH_INK }}>
       <PromoBar brandName={concept.name} brandSlug={concept.slug} accent={GARNISH_LIME} />
@@ -90,6 +92,9 @@ export function GarnishStationLayout({ concept, concepts }: Props) {
                 Your bowl.<br />
                 <span style={{ color: GARNISH_LIME }}>Fresh.</span>
               </h1>
+              <div style={{ marginTop: '1rem' }}>
+                <OpenStatusBadge hoursData={hoursData} accentColor={GARNISH_LIME} />
+              </div>
               <p style={{
                 marginTop: '1.75rem',
                 fontSize: '1.1rem',

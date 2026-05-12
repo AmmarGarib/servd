@@ -4,6 +4,7 @@ import type { Concept } from '../../../lib/concept'
 import { PromoBar } from '../parts/PromoBar'
 import { CrossBrandStrip } from '../parts/CrossBrandStrip'
 import { BottomCTA } from '../parts/BottomCTA'
+import { OpenStatusBadge, HoursGrid, useHoursData } from '../parts/OpenStatusBadge'
 
 // Simmer — fine-casual mocktail bar and small-plates kitchen. Dark green +
 // saffron gold. Warm, intimate, specific. Karachi evenings, plated softly.
@@ -59,6 +60,7 @@ const FEATURED_PLATES = [
 ]
 
 export function SimmerLayout({ concept, concepts }: Props) {
+  const hoursData = useHoursData(concept.slug)
   return (
     <div style={{ background: SIMMER_CREAM, color: SIMMER_INK }}>
       <PromoBar brandName={concept.name} brandSlug={concept.slug} accent={SIMMER_GOLD} />
@@ -102,6 +104,15 @@ export function SimmerLayout({ concept, concepts }: Props) {
                   doesn&rsquo;t hurry.
                 </em>
               </h1>
+              <div style={{ marginTop: '1.25rem', display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+                <OpenStatusBadge hoursData={hoursData} accentColor={SIMMER_GOLD} />
+              </div>
+              {hoursData && hoursData.hours.length > 0 && (
+                <div style={{ marginTop: '1.5rem' }}>
+                  <p style={{ fontSize: '0.62rem', fontWeight: 700, letterSpacing: '0.28em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.45)', marginBottom: '0.5rem' }}>Hours (PKT)</p>
+                  <HoursGrid hoursData={hoursData} accentColor={SIMMER_GOLD} />
+                </div>
+              )}
               <p style={{
                 marginTop: '2rem',
                 fontSize: 'clamp(1rem, 1.6vw, 1.25rem)',

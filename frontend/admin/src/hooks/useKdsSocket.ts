@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 // Louder, longer 4-tone alert chime designed to cut through kitchen noise.
 // Two repeats of an ascending C-E-G-C arpeggio at 0.7 gain.
@@ -37,8 +37,23 @@ interface UseKdsSocketOptions {
   role?: string
 }
 
-export function useKdsSocket(options: UseKdsSocketOptions = {}) {
+export interface KdsSocketState {
+  connected: boolean                                      // is the socket currently open?
+  lastOrderAt: Date | null                                // when did the last `order:new` arrive?
+}
+
+export function useKdsSocket(options: UseKdsSocketOptions = {}): KdsSocketState {
   const { addOrder, updateOrderStatus, updateItemStatus, mark86d, unmark86d, triggerNewOrderPulse } = useKdsStore()
+
+  // F05: surface live connection state to the KDS header. The header shows a
+  // green/red dot + the time of the last received order so a station can tell
+  // in two seconds whether the socket dropped (vs. just a quiet 5-minute lull).
+  // We also mirror these into the kds store so the header (which doesn't call
+  // this hook itself) can read them without prop-drilling.
+  const [connected, setConnected] = useState(false)
+  const [lastOrderAt, setLastOrderAt] = useState<Date | null>(null)
+  const setWsConnected   = useKdsStore((s) => s.setWsConnected)
+  const setStoreLastOrder = useKdsStore((s) => s.setLastOrderAt)
 
   // Store actions get fresh references on every parent re-render. If we used
   // them directly inside `useEffect` deps, the effect would tear-down + re-attach
@@ -51,7 +66,21 @@ export function useKdsSocket(options: UseKdsSocketOptions = {}) {
   useEffect(() => {
     const socket = getSocket(options)
 
+    setConnected(socket.connected)
+    setWsConnected(socket.connected)
+
+    const onConnect    = () => { setConnected(true); setWsConnected(true) }
+    const onDisconnect = () => { setConnected(false); setWsConnected(false) }
+    const onReconnectAttempt = () => { setConnected(false); setWsConnected(false) }
+
+    socket.on('connect', onConnect)
+    socket.on('disconnect', onDisconnect)
+    socket.io.on('reconnect_attempt', onReconnectAttempt)
+
     const onOrderNew = async (data: { orderId: string }) => {
+      const now = new Date()
+      setLastOrderAt(now)
+      setStoreLastOrder(now)
       // Sound + visual flash, both gated by user prefs (read live from store)
       const { soundEnabled } = useKdsStore.getState()
       if (soundEnabled) playNewOrderBeep()
@@ -80,6 +109,9 @@ export function useKdsSocket(options: UseKdsSocketOptions = {}) {
     socket.on('item:86d', on86d)
 
     return () => {
+      socket.off('connect', onConnect)
+      socket.off('disconnect', onDisconnect)
+      socket.io.off('reconnect_attempt', onReconnectAttempt)
       socket.off('order:new', onOrderNew)
       socket.off('order:updated', onOrderUpdated)
       socket.off('item:updated', onItemUpdated)
@@ -87,6 +119,8 @@ export function useKdsSocket(options: UseKdsSocketOptions = {}) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [options.stationId, options.conceptId, options.role])
+
+  return { connected, lastOrderAt }
 }
 
 export function useKdsActions() {

@@ -191,7 +191,9 @@ export async function processPayment(input: ProcessPaymentInput) {
   const result = await prisma.$transaction(async (tx) => {
     const order = await tx.order.findUnique({
       where: { id: input.orderId },
-      include: { payments: true },
+      // B02: concept needed for foodpandaCommissionRate. Loading it here means
+      // the financial entry write below doesn't need a second round-trip.
+      include: { payments: true, concept: { select: { foodpandaCommissionRate: true } } },
     })
     if (!order) throw new NotFoundError('Order', input.orderId)
 
@@ -268,7 +270,11 @@ export async function processPayment(input: ProcessPaymentInput) {
     if (allInstant) {
       const existingEntry = await tx.financialEntry.findFirst({ where: { orderId: order.id } })
       if (!existingEntry) {
-        const commission = order.source === 'foodpanda' ? Math.round(order.totalCents * 0.25) : 0
+        // B02: per-brand commission rate; safe fallback only if unconfigured.
+        const commissionRate = order.source === 'foodpanda'
+          ? (order.concept?.foodpandaCommissionRate ?? 0.25)
+          : 0
+        const commission = Math.round(order.totalCents * commissionRate)
         await tx.financialEntry.create({
           data: {
             orderId: order.id,
@@ -388,9 +394,10 @@ export async function getZReport(shiftId: string) {
     .filter((p) => ['card', 'keenu_qr'].includes(p.method) && p.status === 'pending')
     .reduce((s, p) => s + p.amountCents, 0)
 
-  const walletSales = payments
-    .filter((p) => ['jazzcash_wallet', 'easypaisa_wallet'].includes(p.method) && p.status === 'paid')
-    .reduce((s, p) => s + p.amountCents, 0)
+  // F-PAY02: wallet sales line stays at 0 until JazzCash/Easypaisa adapters
+  // are reintroduced. Z-reports still show the row so the shape of the
+  // close-out summary doesn't change between releases.
+  const walletSales = 0
 
   const compSales = payments
     .filter((p) => p.method === 'comp')

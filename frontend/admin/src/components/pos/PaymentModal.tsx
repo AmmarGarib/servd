@@ -3,13 +3,15 @@ import { useState } from 'react'
 import { useMutation } from '@tanstack/react-query'
 import { posApi } from '../../lib/api'
 import { usePosStore } from '../../store/pos'
+import { useAuthStore } from '../../store/auth'
 
 interface PaymentModalProps {
   taxRate: number
   onClose: () => void
 }
 
-type PaymentMethod = 'cash' | 'card' | 'jazzcash_wallet' | 'easypaisa_wallet' | 'keenu_qr' | 'comp'
+// F-PAY02: wallet methods removed in v1 — re-add when adapters ship.
+type PaymentMethod = 'cash' | 'card' | 'keenu_qr' | 'comp'
 
 export function PaymentModal({ taxRate, onClose }: PaymentModalProps) {
   const { cart, totalCents, discountCents, discountReason, conceptId, shiftId, tableId, customerId, clearCart } = usePosStore()
@@ -72,7 +74,7 @@ export function PaymentModal({ taxRate, onClose }: PaymentModalProps) {
 
   function printReceipt() {
     if (!createdOrderId) return
-    const token = typeof window !== 'undefined' ? localStorage.getItem('servd_token') : null
+    const token = useAuthStore.getState().token   // F43
     const win = window.open('', '_blank', 'width=400,height=600')
     if (!win) return
     win.document.write('<p style="font-family:monospace;padding:20px">Loading receipt…</p>')
@@ -90,11 +92,12 @@ export function PaymentModal({ taxRate, onClose }: PaymentModalProps) {
       .catch(() => win.close())
   }
 
+  // F-PAY02: JazzCash + Easypaisa tiles removed — no live adapter ships
+  // for either, so showing them in the UI would let a cashier accept a
+  // payment the server then rejects.
   const METHODS: Array<{ id: PaymentMethod; label: string; emoji: string }> = [
     { id: 'cash', label: 'Cash', emoji: '💵' },
     { id: 'card', label: 'Card / Keenu', emoji: '💳' },
-    { id: 'jazzcash_wallet', label: 'JazzCash', emoji: '📱' },
-    { id: 'easypaisa_wallet', label: 'Easypaisa', emoji: '📲' },
     { id: 'keenu_qr', label: 'Keenu QR', emoji: '⬜' },
     { id: 'comp', label: 'Comp', emoji: '🎁' },
   ]

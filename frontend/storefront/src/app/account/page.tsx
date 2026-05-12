@@ -13,6 +13,14 @@ interface Order {
   items: Array<{ name: string; quantity: number }>
 }
 interface LoyaltyAccount { pointsBalance: number; tier: string }
+interface LoyaltyTransaction {
+  id: string
+  type: 'earn' | 'redeem' | 'expire' | 'adjust'
+  pointsDelta: number
+  description: string | null
+  createdAt: string
+  orderId: string | null
+}
 interface CustomerProfile {
   name: string | null; email: string | null; phone: string | null
   referralCode?: string | null
@@ -36,11 +44,6 @@ const TIER_THRESHOLDS = [
   { name: 'silver', label: 'Silver', nextAt: 5000 },
   { name: 'gold',   label: 'Gold',   nextAt: null },
 ]
-const PERSONAL_OFFERS = [
-  { id: 'o1', emoji: '⚡', title: '2× Points',   desc: 'Earn double this weekend.' },
-  { id: 'o2', emoji: '🥤', title: 'Free Drink',   desc: 'Add to your next order.' },
-  { id: 'o3', emoji: '🎁', title: 'Loyalty Bonus', desc: '500 pts = Rs. 100 off.' },
-]
 
 export default function AccountPage() {
   const router = useRouter()
@@ -61,8 +64,8 @@ export default function AccountPage() {
       .catch(() => {})
   }, [token])
 
-  useEffect(() => {
-    if (!token) { router.replace('/login'); return }
+  const fetchAccount = useCallback(() => {
+    if (!token) return
     Promise.all([
       fetch(`${API_URL}/api/v1/storefront/account`, { headers: { Authorization: `Bearer ${token}` } })
         .then(async res => {
@@ -73,13 +76,25 @@ export default function AccountPage() {
       fetch(`${API_URL}/api/v1/storefront/addresses`, { headers: { Authorization: `Bearer ${token}` } })
         .then(r => r.ok ? r.json() : []),
     ])
-      .then(([profile, addrs]) => {
-        if (profile) setProfile(profile)
+      .then(([prof, addrs]) => {
+        if (prof) setProfile(prof)
         setAddresses(addrs as CustomerAddress[])
       })
       .catch((e: Error) => setError(e.message))
       .finally(() => setLoading(false))
   }, [token, router, clearAuth])
+
+  useEffect(() => {
+    if (!token) { router.replace('/login'); return }
+    fetchAccount()
+  }, [token, router, fetchAccount])
+
+  // Re-fetch loyalty balance when tab regains focus (catches post-checkout state).
+  useEffect(() => {
+    const handleFocus = () => { fetchAccount() }
+    window.addEventListener('focus', handleFocus)
+    return () => window.removeEventListener('focus', handleFocus)
+  }, [fetchAccount])
 
   async function saveAddress() {
     if (!token || !addrForm.label || !addrForm.address) return
@@ -134,10 +149,10 @@ export default function AccountPage() {
       style={{ background: 'transparent' }}>
       <div className="text-5xl">⚠</div>
       <p className="text-sm" style={{ color: '#dc2626' }}>{error || 'Account not found'}</p>
-      <Link href="/"
+      <Link href="/browse"
         className="rounded-2xl font-black px-8 py-3.5 text-sm transition-all hover:scale-[1.02]"
         style={{ background: 'linear-gradient(135deg, #00D4B1, #6366F1)', color: '#fff', boxShadow: '0 4px 20px rgba(0,212,177,0.3)' }}>
-        Back to menu
+        Browse brands
       </Link>
     </main>
   )
@@ -169,7 +184,7 @@ export default function AccountPage() {
       {/* Header */}
       <div className="relative z-10 px-4 pt-5 pb-4 flex items-center justify-between"
         style={{ borderBottom: '1px solid rgba(22,163,74,0.12)', background: 'rgba(240,253,244,0.96)', backdropFilter: 'blur(20px)' }}>
-        <Link href="/"
+        <Link href="/browse"
           className="flex items-center gap-1.5 text-sm font-semibold transition-colors"
           style={{ color: 'rgba(24,22,15,0.45)' }}
           onMouseEnter={e => (e.currentTarget.style.color = 'rgba(24,22,15,0.8)')}
@@ -177,9 +192,9 @@ export default function AccountPage() {
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
             <path d="M10 3L5 8l5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
           </svg>
-          Menu
+          Browse brands
         </Link>
-        <button onClick={() => { clearAuth(); router.replace('/') }}
+        <button onClick={() => { clearAuth(); router.replace('/browse') }}
           className="text-xs font-bold transition-colors px-3 py-1.5 rounded-xl"
           style={{ color: 'rgba(24,22,15,0.45)', background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.15)' }}
           onMouseEnter={e => { e.currentTarget.style.color = '#dc2626'; e.currentTarget.style.background = 'rgba(239,68,68,0.1)' }}
@@ -388,27 +403,29 @@ export default function AccountPage() {
           )}
         </div>
 
-        {/* ── Exclusive offers — 3-col bento ── */}
-        <div className="mb-3">
-          <div className="flex items-center gap-2 mb-2.5">
+        {/* ── How to earn more ── */}
+        <div className="mb-3 rounded-2xl p-4"
+          style={{ background: 'linear-gradient(135deg, rgba(34,197,94,0.06) 0%, rgba(0,212,177,0.06) 100%)', border: '1px solid rgba(34,197,94,0.15)' }}>
+          <div className="flex items-center gap-2 mb-2">
             <p className="text-[9px] font-black uppercase tracking-[0.28em]"
-              style={{ color: 'rgba(24,22,15,0.38)' }}>Exclusive for you</p>
-            <div className="h-px flex-1" style={{ background: 'rgba(0,0,0,0.07)' }} />
+              style={{ color: 'rgba(24,22,15,0.38)' }}>How to earn</p>
           </div>
           <div className="grid grid-cols-3 gap-2">
-            {PERSONAL_OFFERS.map((offer, i) => (
-              <div key={offer.id}
-                className="rounded-2xl p-3 cursor-pointer transition-all hover:scale-[1.03] flex flex-col gap-2"
+            {[
+              { emoji: '⭐', title: 'Order',     desc: '1 pt per Rs. 10 spent' },
+              { emoji: '📝', title: 'Review',    desc: '+50 pts per review'     },
+              { emoji: '👥', title: 'Refer',     desc: '+200 pts per friend'    },
+            ].map((tip, i) => (
+              <div key={tip.title}
+                className="rounded-xl p-3 flex flex-col gap-1.5"
                 style={{
-                  background: '#fff', border: '1px solid rgba(0,0,0,0.07)',
-                  boxShadow: '0 2px 8px rgba(0,0,0,0.04)',
+                  background: 'rgba(255,255,255,0.7)',
+                  border: '1px solid rgba(34,197,94,0.12)',
                   animation: `revealUp 0.4s ${i * 0.06}s both`,
                 }}>
-                <div className="text-xl" style={{ animation: `float ${3 + i * 0.5}s ease-in-out infinite` }}>
-                  {offer.emoji}
-                </div>
-                <p className="font-black text-[0.72rem] leading-tight" style={{ color: '#18160f' }}>{offer.title}</p>
-                <p className="text-[0.6rem] leading-snug" style={{ color: 'rgba(24,22,15,0.45)' }}>{offer.desc}</p>
+                <div className="text-xl">{tip.emoji}</div>
+                <p className="font-black text-[0.72rem] leading-tight" style={{ color: '#18160f' }}>{tip.title}</p>
+                <p className="text-[0.6rem] leading-snug" style={{ color: 'rgba(24,22,15,0.45)' }}>{tip.desc}</p>
               </div>
             ))}
           </div>
@@ -427,10 +444,10 @@ export default function AccountPage() {
               style={{ background: '#fff', border: '1px solid rgba(0,0,0,0.07)', boxShadow: '0 2px 8px rgba(0,0,0,0.04)' }}>
               <div className="text-4xl mb-3" style={{ animation: 'float 3s ease-in-out infinite' }}>🍽</div>
               <p className="text-sm" style={{ color: 'rgba(24,22,15,0.45)' }}>No orders yet</p>
-              <Link href="/"
+              <Link href="/browse"
                 className="inline-block mt-3 text-sm font-bold transition-colors"
                 style={{ color: '#00a896' }}>
-                Start ordering →
+                Browse brands →
               </Link>
             </div>
           ) : (
@@ -481,6 +498,9 @@ export default function AccountPage() {
 
         {/* ── Refer a friend ── */}
         <ReferralSection token={token} referralCode={profile.referralCode} customerName={profile.name} />
+
+        {/* ── Loyalty transaction history ── */}
+        {profile.loyaltyAccount && <LoyaltyTransactionsSection token={token} />}
 
         {/* ── My Bookings ── */}
         <MyBookingsSection token={token} />
@@ -624,6 +644,90 @@ function Stat({ n, label }: { n: number; label: string }) {
   )
 }
 
+// ─── Loyalty transaction history ─────────────────────────────────────────────
+// Fetches the full loyalty account (with transactions) from the loyalty module.
+// Shows last 10 transactions: earn (+green) / redeem (-red) / other.
+// Rendered as a collapsible panel below the referral section, only when the
+// customer has a loyalty account.
+
+interface LoyaltyAccountFull {
+  pointsBalance: number
+  tier: string
+  transactions: LoyaltyTransaction[]
+}
+
+function LoyaltyTransactionsSection({ token }: { token: string | null }) {
+  const [account, setAccount] = useState<LoyaltyAccountFull | null>(null)
+  const [open, setOpen] = useState(false)
+
+  useEffect(() => {
+    if (!token) return
+    fetch(`${API_URL}/api/v1/loyalty/account`, { headers: { Authorization: `Bearer ${token}` } })
+      .then((r) => (r.ok ? r.json() as Promise<LoyaltyAccountFull> : null))
+      .then((d) => setAccount(d))
+      .catch(() => {})
+  }, [token])
+
+  if (!account || account.transactions.length === 0) return null
+
+  const recent = account.transactions.slice(0, 10)
+
+  return (
+    <div className="mt-3">
+      <div className="flex items-center gap-2 mb-2.5">
+        <p className="text-[9px] font-black uppercase tracking-[0.28em]"
+          style={{ color: 'rgba(24,22,15,0.38)' }}>Points History</p>
+        <div className="h-px flex-1" style={{ background: 'rgba(0,0,0,0.07)' }} />
+        <button
+          onClick={() => setOpen(!open)}
+          className="text-[10px] font-black px-2.5 py-1 rounded-full transition-all"
+          style={{ background: 'rgba(34,197,94,0.1)', color: '#16a34a', border: '1px solid rgba(34,197,94,0.2)' }}>
+          {open ? 'Hide' : `Show ${recent.length}`}
+        </button>
+      </div>
+
+      {open && (
+        <div className="rounded-2xl overflow-hidden"
+          style={{ background: '#fff', border: '1px solid rgba(0,0,0,0.07)', boxShadow: '0 2px 8px rgba(0,0,0,0.04)' }}>
+          {recent.map((tx, i) => {
+            const isEarn   = tx.pointsDelta > 0
+            const isRedeem = tx.pointsDelta < 0
+            const pts      = Math.abs(tx.pointsDelta)
+            return (
+              <div key={tx.id}
+                className="flex items-center justify-between gap-3 px-4 py-3"
+                style={{
+                  borderBottom: i < recent.length - 1 ? '1px solid rgba(0,0,0,0.05)' : 'none',
+                }}>
+                <div className="flex items-center gap-3 min-w-0 flex-1">
+                  <div className="h-7 w-7 rounded-xl flex items-center justify-center shrink-0 text-xs"
+                    style={{
+                      background: isEarn ? 'rgba(34,197,94,0.1)' : isRedeem ? 'rgba(239,68,68,0.1)' : 'rgba(0,0,0,0.05)',
+                    }}>
+                    {isEarn ? '↑' : isRedeem ? '↓' : '~'}
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-xs font-semibold truncate" style={{ color: '#18160f' }}>
+                      {tx.description ?? (isEarn ? 'Points earned' : isRedeem ? 'Points redeemed' : 'Adjustment')}
+                    </p>
+                    <p className="text-[10px] font-mono mt-0.5" style={{ color: 'rgba(24,22,15,0.38)' }}>
+                      {new Date(tx.createdAt).toLocaleDateString('en-PK', { day: 'numeric', month: 'short', year: 'numeric' })}
+                    </p>
+                  </div>
+                </div>
+                <span className="font-black text-sm shrink-0 tabular-nums"
+                  style={{ color: isEarn ? '#16a34a' : isRedeem ? '#dc2626' : 'rgba(24,22,15,0.55)' }}>
+                  {isEarn ? '+' : isRedeem ? '−' : ''}{pts.toLocaleString()} pts
+                </span>
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── My Bookings (reservations) ──────────────────────────────────────────────
 // Hidden entirely when the customer has never made a reservation — keeps the
 // page from showing a hollow "you haven't booked yet" state.
@@ -642,6 +746,9 @@ interface MyReservationsResponse {
 
 function MyBookingsSection({ token }: { token: string | null }) {
   const [data, setData] = useState<MyReservationsResponse | null>(null)
+  const [cancelling, setCancelling] = useState<string | null>(null)  // reservationId being cancelled
+  const [cancelled,  setCancelled]  = useState<Set<string>>(new Set())
+
   useEffect(() => {
     if (!token) return
     fetch(`${API_URL}/api/v1/storefront/my-reservations`, { headers: { Authorization: `Bearer ${token}` } })
@@ -650,54 +757,98 @@ function MyBookingsSection({ token }: { token: string | null }) {
       .catch(() => {})
   }, [token])
 
+  async function cancelReservation(reservationId: string, confirmToken: string | null) {
+    if (!confirmToken) return
+    setCancelling(reservationId)
+    try {
+      const res = await fetch(`${API_URL}/api/v1/reservations/public/${confirmToken}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'cancel' }),
+      })
+      if (res.ok) {
+        setCancelled((prev) => new Set([...prev, reservationId]))
+      }
+    } catch { /* network error — silent */ }
+    finally { setCancelling(null) }
+  }
+
   if (!data) return null
   if (data.upcoming.length === 0 && data.past.length === 0) return null  // hide entirely if empty
 
-  const fmt = (iso: string) => new Date(iso).toLocaleString('en-GB', {
+  const fmtDate = (iso: string) => new Date(iso).toLocaleString('en-GB', {
     timeZone: 'Asia/Karachi', weekday: 'short', day: 'numeric', month: 'short',
     hour: '2-digit', minute: '2-digit', hour12: false,
   })
 
   return (
-    <div className="rounded-3xl p-5 sm:p-6" style={{ background: '#fff', border: '1px solid rgba(0,0,0,0.06)' }}>
+    <div className="rounded-3xl p-5 sm:p-6 mt-3" style={{ background: '#fff', border: '1px solid rgba(0,0,0,0.06)' }}>
       <p className="text-[9px] font-black uppercase tracking-[0.28em]" style={{ color: 'rgba(24,22,15,0.38)' }}>
         My bookings
       </p>
       <h3 className="text-lg font-black mt-1 mb-3" style={{ color: '#18160f' }}>
-        {data.upcoming.length > 0 ? `${data.upcoming.length} upcoming` : 'Past visits'}
+        {data.upcoming.filter((r) => !cancelled.has(r.id)).length > 0 ? `${data.upcoming.filter((r) => !cancelled.has(r.id)).length} upcoming` : 'Past visits'}
       </h3>
 
       {data.upcoming.length > 0 && (
         <div className="space-y-2 mb-4">
-          {data.upcoming.map((r) => (
-            <div key={r.id} className="rounded-xl p-3 flex items-center justify-between gap-3"
-              style={{ background: 'rgba(34,197,94,0.05)', border: '1px solid rgba(34,197,94,0.15)' }}>
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2">
-                  <span className="font-black text-sm">{r.concept.name}</span>
-                  {r.isVip && <span className="text-[10px] font-bold text-amber-600">★</span>}
-                  <span className="text-[10px] font-bold uppercase tracking-wider px-1.5 rounded-full"
-                    style={{
-                      background: r.status === 'confirmed' ? 'rgba(20,184,166,0.15)' : 'rgba(59,130,246,0.15)',
-                      color:      r.status === 'confirmed' ? '#0d9488' : '#2563eb',
-                    }}>
-                    {r.status}
-                  </span>
+          {data.upcoming.map((r) => {
+            const isCancelled = cancelled.has(r.id)
+            const isCancelling = cancelling === r.id
+            const canCancel = (r.status === 'booked' || r.status === 'confirmed') && !!r.confirmToken && !isCancelled
+
+            return (
+              <div key={r.id} className="rounded-xl p-3 flex items-start gap-3"
+                style={{
+                  background: isCancelled ? 'rgba(239,68,68,0.05)' : 'rgba(34,197,94,0.05)',
+                  border: isCancelled ? '1px solid rgba(239,68,68,0.15)' : '1px solid rgba(34,197,94,0.15)',
+                  opacity: isCancelled ? 0.65 : 1,
+                }}>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-black text-sm">{r.concept.name}</span>
+                    {r.isVip && <span className="text-[10px] font-bold text-amber-600">★ VIP</span>}
+                    <span className="text-[10px] font-bold uppercase tracking-wider px-1.5 rounded-full"
+                      style={{
+                        background: isCancelled
+                          ? 'rgba(239,68,68,0.15)'
+                          : r.status === 'confirmed' ? 'rgba(20,184,166,0.15)' : 'rgba(59,130,246,0.15)',
+                        color: isCancelled
+                          ? '#dc2626'
+                          : r.status === 'confirmed' ? '#0d9488' : '#2563eb',
+                      }}>
+                      {isCancelled ? 'Cancelled' : r.status}
+                    </span>
+                  </div>
+                  <div className="text-xs mt-0.5" style={{ color: 'rgba(24,22,15,0.55)' }}>
+                    Party of {r.partySize} · {fmtDate(r.startTime)}
+                    {r.table ? ` · table ${r.table.label}` : ''}
+                  </div>
+                  {r.notes && !isCancelled && (
+                    <div className="text-[10px] mt-1 italic" style={{ color: 'rgba(24,22,15,0.45)' }}>{r.notes}</div>
+                  )}
                 </div>
-                <div className="text-xs mt-0.5" style={{ color: 'rgba(24,22,15,0.55)' }}>
-                  Party of {r.partySize} · {fmt(r.startTime)}
-                  {r.table ? ` · table ${r.table.label}` : ''}
+                <div className="flex flex-col gap-1.5 shrink-0">
+                  {r.confirmToken && r.status === 'booked' && !isCancelled && (
+                    <Link href={`/reserve/confirm/${r.confirmToken}`}
+                      className="rounded-lg px-3 py-1.5 text-xs font-bold whitespace-nowrap text-center"
+                      style={{ background: '#22c55e', color: '#fff' }}>
+                      Confirm
+                    </Link>
+                  )}
+                  {canCancel && (
+                    <button
+                      onClick={() => void cancelReservation(r.id, r.confirmToken)}
+                      disabled={isCancelling}
+                      className="rounded-lg px-3 py-1.5 text-xs font-bold whitespace-nowrap transition-all disabled:opacity-50"
+                      style={{ background: 'rgba(239,68,68,0.08)', color: '#dc2626', border: '1px solid rgba(239,68,68,0.2)' }}>
+                      {isCancelling ? 'Cancelling…' : 'Cancel'}
+                    </button>
+                  )}
                 </div>
               </div>
-              {r.confirmToken && r.status === 'booked' && (
-                <Link href={`/reserve/confirm/${r.confirmToken}`}
-                  className="rounded-lg px-3 py-1.5 text-xs font-bold whitespace-nowrap"
-                  style={{ background: '#22c55e', color: '#fff' }}>
-                  Confirm
-                </Link>
-              )}
-            </div>
-          ))}
+            )
+          })}
         </div>
       )}
 
@@ -711,7 +862,7 @@ function MyBookingsSection({ token }: { token: string | null }) {
               <div key={r.id} className="text-xs flex items-center justify-between py-1"
                 style={{ color: 'rgba(24,22,15,0.55)' }}>
                 <span>{r.concept.name} · {r.partySize}px</span>
-                <span>{fmt(r.startTime)}</span>
+                <span>{fmtDate(r.startTime)}</span>
               </div>
             ))}
           </div>

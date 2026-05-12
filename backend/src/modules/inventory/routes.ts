@@ -76,10 +76,31 @@ export async function inventoryRoutes(fastify: FastifyInstance) {
       if (item.currentStock + delta < 0) {
         throw new AppError('NEGATIVE_STOCK', `Adjustment would leave ${item.name} at ${item.currentStock + delta} ${item.unit ?? ''} (have ${item.currentStock})`, 422)
       }
-      return prisma.inventoryItem.update({
+      const updated = await prisma.inventoryItem.update({
         where: { id: req.params.id },
         data: { currentStock: { increment: delta } },
       })
+
+      // Emit low-stock webhook if the adjustment pushed stock at or below par level.
+      // parLevel === 0 means "no threshold configured" — skip to avoid spurious alerts.
+      if (updated.parLevel > 0 && updated.currentStock <= updated.parLevel) {
+        void (async () => {
+          try {
+            const { emitDomainEvent } = await import('../../lib/webhook-events.js')
+            await emitDomainEvent('inventory.low_stock', {
+              itemId:       updated.id,
+              name:         updated.name,
+              currentStock: updated.currentStock,
+              parLevel:     updated.parLevel,
+              unit:         updated.unit,
+            })
+          } catch {
+            console.warn('[inventory] LOW STOCK:', updated.name, updated.currentStock, '/', updated.parLevel)
+          }
+        })()
+      }
+
+      return updated
     },
   )
 

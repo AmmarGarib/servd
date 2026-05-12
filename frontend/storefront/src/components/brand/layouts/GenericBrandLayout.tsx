@@ -5,6 +5,7 @@ import { brandStory, conceptHeroImage, typeIcon, typeLabel } from '../../../lib/
 import { PromoBar } from '../parts/PromoBar'
 import { CrossBrandStrip } from '../parts/CrossBrandStrip'
 import { BottomCTA } from '../parts/BottomCTA'
+import { OpenStatusBadge, HoursGrid, useHoursData } from '../parts/OpenStatusBadge'
 
 // Generic catch-all brand layout. Used for any concept slug that doesn't
 // have its own dedicated layout. Mirrors HomeClient's section depth scoped
@@ -32,6 +33,7 @@ export function GenericBrandLayout({ concept, concepts }: Props) {
   const accent    = concept.primaryColor || 'var(--servd-green-dark)'
   const story     = brandStory(concept.slug)
   const heroImage = conceptHeroImage(concept)
+  const hoursData = useHoursData(concept.slug)
 
   return (
     <div style={{ background: '#fff', color: 'var(--servd-ink)' }}>
@@ -54,16 +56,19 @@ export function GenericBrandLayout({ concept, concepts }: Props) {
           <p style={{ fontSize: '0.7rem', fontWeight: 700, letterSpacing: '0.32em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.78)', marginBottom: '0.85rem' }}>
             A servd kitchen · GS Foods · {typeIcon(concept.type)} {typeLabel(concept.type)}
           </p>
-          <h1 style={{
-            fontSize: 'clamp(3rem, 9vw, 7rem)',
-            fontWeight: 900,
-            letterSpacing: '-0.05em',
-            lineHeight: 0.92,
-            marginBottom: '1.25rem',
-            maxWidth: '62rem',
-          }}>
-            {concept.name}.
-          </h1>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem', marginBottom: '1rem', flexWrap: 'wrap' }}>
+            <h1 style={{
+              fontSize: 'clamp(3rem, 9vw, 7rem)',
+              fontWeight: 900,
+              letterSpacing: '-0.05em',
+              lineHeight: 0.92,
+              margin: 0,
+              maxWidth: '62rem',
+            }}>
+              {concept.name}.
+            </h1>
+            <OpenStatusBadge hoursData={hoursData} accentColor="#22c55e" size="md" />
+          </div>
           <p style={{ fontSize: 'clamp(1.15rem, 2vw, 1.6rem)', color: 'rgba(255,255,255,0.92)', maxWidth: '46rem', lineHeight: 1.4, fontWeight: 500 }}>
             {story.tagline}
           </p>
@@ -100,6 +105,14 @@ export function GenericBrandLayout({ concept, concepts }: Props) {
               }}>{h}</span>
             ))}
           </div>
+          {hoursData && hoursData.hours.length > 0 && (
+            <div style={{ marginTop: '2rem' }}>
+              <p style={{ fontSize: '0.65rem', fontWeight: 700, letterSpacing: '0.28em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.55)', marginBottom: '0.6rem' }}>
+                Hours (PKT)
+              </p>
+              <HoursGrid hoursData={hoursData} accentColor="#22c55e" />
+            </div>
+          )}
         </div>
       </section>
 

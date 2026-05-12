@@ -41,6 +41,8 @@ interface Category   { id: string; name: string; sortOrder: number; items: MenuI
 interface Concept    {
   id: string; name: string; slug: string; type: string
   description: string | null; logoUrl: string | null; primaryColor: string | null; taxRate: number
+  phone?: string | null; address?: string | null
+  latitude?: number | null; longitude?: number | null
 }
 
 function fmt(cents: number): string {

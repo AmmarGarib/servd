@@ -4,6 +4,7 @@ import type { Concept } from '../../../lib/concept'
 import { PromoBar } from '../parts/PromoBar'
 import { CrossBrandStrip } from '../parts/CrossBrandStrip'
 import { BottomCTA } from '../parts/BottomCTA'
+import { OpenStatusBadge, useHoursData } from '../parts/OpenStatusBadge'
 
 // Flipd — buttermilk-brined, hand-breaded fried chicken. Warm cream + mustard
 // yellow + smoke black. Friendly, slightly hand-drawn vibe via tilted cards
@@ -34,6 +35,7 @@ const BUCKETS = [
 ]
 
 export function FlipdLayout({ concept, concepts }: Props) {
+  const hoursData = useHoursData(concept.slug)
   return (
     <div style={{ background: FLIPD_CREAM, color: FLIPD_BLACK }}>
       <PromoBar brandName={concept.name} brandSlug={concept.slug} accent={FLIPD_MUSTARD} />
@@ -62,6 +64,9 @@ export function FlipdLayout({ concept, concepts }: Props) {
                 Hot. Crispy.<br />
                 <span style={{ color: FLIPD_MUSTARD, textShadow: `2px 2px 0 ${FLIPD_BLACK}` }}>Hand-breaded.</span>
               </h1>
+              <div style={{ marginTop: '1rem' }}>
+                <OpenStatusBadge hoursData={hoursData} accentColor={FLIPD_MUSTARD} />
+              </div>
               <p style={{ marginTop: '1.5rem', fontSize: '1.1rem', color: `${FLIPD_BLACK}cc`, lineHeight: 1.55, maxWidth: '34rem' }}>
                 Every piece made-to-order. Brioche pressed on the flat-top. Hot honey drizzled in front of you. {concept.name} doesn&rsquo;t reheat. {concept.name} doesn&rsquo;t apologise.
               </p>

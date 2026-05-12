@@ -46,6 +46,7 @@ const createDirectOrderSchema = z.object({
   ),
   loyaltyPointsToRedeem: z.number().int().min(0).default(0),
   paymentGateway: z.enum(['keenu', 'jazzcash', 'easypaisa', 'cash', 'wallet']).default('cash'),
+  paymentPhone: z.string().max(20).optional(),                      // JazzCash / EasyPaisa mobile wallet number
   tipCents: z.number().int().min(0).max(1_000_000).default(0),     // optional tip on top of bill
   giftCardCode: z.string().optional(),                              // redeem against this order
 })
@@ -202,7 +203,7 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
           quantity:      i.quantity,
           // Use TODAY's price, not the snapshotted historical price
           unitPriceCents: i.menuItem?.priceCents ?? i.unitPriceCents,
-          modifiers: i.modifiers.map((m) => ({ name: m.name, priceDeltaCents: m.priceDeltaCents })),
+          modifiers: i.modifiers.map((m) => ({ modifierId: m.modifierId ?? undefined, name: m.name, priceDeltaCents: m.priceDeltaCents })),
         }))
 
       const removed = original.items.length - items.length
@@ -344,6 +345,26 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
     return reply.send({ ok: true })
   })
 
+  // GET /storefront/brands/:slug/hours — service hours for the Open/Closed badge.
+  // Returns all ServiceHours rows for the concept, shaped as { dayOfWeek, openMin,
+  // closeMin, isReservable }. The frontend computes "is open now" in PKT (UTC+5).
+  // Public — no auth required.
+  fastify.get<{ Params: { slug: string } }>('/brands/:slug/hours', async (req) => {
+    const concept = await prisma.concept.findFirst({
+      where: { slug: req.params.slug, deletedAt: null },
+      select: { id: true, isActive: true },
+    })
+    if (!concept) throw new NotFoundError('Concept', req.params.slug)
+
+    const hours = await prisma.serviceHours.findMany({
+      where: { conceptId: concept.id },
+      select: { dayOfWeek: true, openMin: true, closeMin: true, isReservable: true },
+      orderBy: [{ dayOfWeek: 'asc' }, { openMin: 'asc' }],
+    })
+
+    return { isActive: concept.isActive, hours }
+  })
+
   // GET /storefront/concepts?lat=X&lng=Y — list active concepts within delivery radius
   fastify.get('/concepts', async (req) => {
     const { lat, lng } = req.query as { lat?: string; lng?: string }
@@ -355,6 +376,11 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
         logoUrl: true, primaryColor: true, heroTagline: true, announcementBanner: true,
         latitude: true, longitude: true, deliveryRadiusKm: true,
         reservationsEnabled: true,
+        phone: true, address: true,
+        serviceHours: {
+          select: { dayOfWeek: true, openMin: true, closeMin: true },
+          orderBy: [{ dayOfWeek: 'asc' }, { openMin: 'asc' }],
+        },
       },
     })
 
@@ -369,7 +395,7 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
         })
       : all
 
-    return filtered.map(({ latitude: _lat, longitude: _lng, deliveryRadiusKm: _r, ...rest }) => rest)
+    return filtered.map(({ deliveryRadiusKm: _r, ...rest }) => rest)
   })
 
   // POST /storefront/orders — direct order (customer auth required)
@@ -380,6 +406,15 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
     // Blacklist check
     const customer = await prisma.customer.findUnique({ where: { id: customerId } })
     if (customer?.isBlacklisted) throw new AppError('BLACKLISTED', 'Your account is not permitted to place orders', 403)
+
+    // Naughty-list ban check — blocks email + phone + device fingerprint matches.
+    const { assertNotBanned } = await import('../../lib/banCheck.js')
+    await assertNotBanned({
+      email:  customer?.email,
+      phone:  customer?.phone,
+      ip:     req.ip ?? null,
+      intent: 'order',
+    })
 
     const concept = await prisma.concept.findFirst({ where: { slug: body.conceptSlug, isActive: true } })
     if (!concept) throw new NotFoundError('Concept', body.conceptSlug)
@@ -529,6 +564,10 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
       orderPatch.curbsideVehicle = body.curbsideVehicle
       if (body.curbsidePlate) orderPatch.curbsidePlate = body.curbsidePlate
       if (body.curbsideSpot)  orderPatch.curbsideSpot = body.curbsideSpot
+    }
+    // Store payment phone (JazzCash/EasyPaisa) in rawPayload for later integration
+    if (body.paymentPhone && (body.paymentGateway === 'jazzcash' || body.paymentGateway === 'easypaisa')) {
+      orderPatch.rawPayload = { paymentPhone: body.paymentPhone, paymentGateway: body.paymentGateway }
     }
     if (Object.keys(orderPatch).length > 0) {
       await prisma.order.update({ where: { id: order.id }, data: orderPatch })
@@ -692,6 +731,7 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
         include: {
           items: { include: { modifiers: true } },
           concept: { select: { name: true, slug: true, primaryColor: true } },
+          rider: { select: { id: true, name: true, phone: true, vehicleType: true } },
         },
       })
       if (!order) throw new NotFoundError('Order', req.params.id)
@@ -699,7 +739,27 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
         where: { orderId: order.id },
         select: { id: true },
       })
-      return { ...order, alreadyReviewed: review != null }
+
+      // Attach the rider's last-known location if a rider is assigned
+      let riderInfo: {
+        id: string; name: string; phone: string; vehicleType: string
+        lastLat: number | null; lastLng: number | null; lastReportedAt: string | null
+      } | null = null
+      if (order.rider) {
+        const loc = await prisma.riderLocation.findFirst({
+          where: { riderId: order.rider.id },
+          orderBy: { recordedAt: 'desc' },
+          select: { lat: true, lng: true, recordedAt: true },
+        })
+        riderInfo = {
+          ...order.rider,
+          lastLat:        loc?.lat ?? null,
+          lastLng:        loc?.lng ?? null,
+          lastReportedAt: loc?.recordedAt.toISOString() ?? null,
+        }
+      }
+
+      return { ...order, rider: riderInfo, alreadyReviewed: review != null }
     },
   )
 
@@ -799,10 +859,31 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
       include: {
         items: true,
         concept: { select: { name: true, slug: true, primaryColor: true } },
+        rider: { select: { id: true, name: true, phone: true, vehicleType: true } },
       },
     })
     if (!order) throw new NotFoundError('Order', req.params.id)
-    return order
+
+    // Attach rider's last-known location
+    let riderInfo: {
+      id: string; name: string; phone: string; vehicleType: string
+      lastLat: number | null; lastLng: number | null; lastReportedAt: string | null
+    } | null = null
+    if (order.rider) {
+      const loc = await prisma.riderLocation.findFirst({
+        where: { riderId: order.rider.id },
+        orderBy: { recordedAt: 'desc' },
+        select: { lat: true, lng: true, recordedAt: true },
+      })
+      riderInfo = {
+        ...order.rider,
+        lastLat:        loc?.lat ?? null,
+        lastLng:        loc?.lng ?? null,
+        lastReportedAt: loc?.recordedAt.toISOString() ?? null,
+      }
+    }
+
+    return { ...order, rider: riderInfo }
   })
 
   // GET /storefront/account — customer profile + loyalty + wallet + referrals
@@ -1125,6 +1206,68 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
   })
 
   // ── Homepage Promos ────────────────────────────────────────────────────────
+
+  // GET /storefront/promo-preview — validate a promo code without consuming it.
+  // Used by the checkout page's "Apply" button to give real-time feedback.
+  fastify.get<{ Querystring: { code?: string; conceptSlug?: string; subtotalCents?: string } }>(
+    '/promo-preview',
+    { config: { rateLimit: { max: 20, timeWindow: '1 minute' } } },
+    async (req, reply) => {
+      const code = (req.query.code ?? '').trim().toUpperCase()
+      const conceptSlug = (req.query.conceptSlug ?? '').trim()
+      const subtotalCents = parseInt(req.query.subtotalCents ?? '0', 10) || 0
+
+      if (!code) return reply.send({ valid: false, reason: 'No code provided' })
+
+      // Resolve concept (optional — promo may be brand-wide)
+      let conceptId: string | null = null
+      if (conceptSlug) {
+        const concept = await prisma.concept.findFirst({ where: { slug: conceptSlug, isActive: true }, select: { id: true } })
+        conceptId = concept?.id ?? null
+      }
+
+      const promo = await prisma.promoCode.findFirst({
+        where: {
+          code,
+          isActive: true,
+          ...(conceptId ? { OR: [{ conceptId }, { conceptId: null }] } : {}),
+        },
+      })
+
+      if (!promo) return reply.send({ valid: false, reason: 'Code not found or inactive' })
+
+      const now = new Date()
+      if (promo.startAt > now) return reply.send({ valid: false, reason: 'Code is not yet active' })
+      if (promo.endAt   < now) return reply.send({ valid: false, reason: 'Code has expired' })
+      if (promo.minOrderCents != null && subtotalCents < promo.minOrderCents) {
+        const min = (promo.minOrderCents / 100).toFixed(0)
+        return reply.send({ valid: false, reason: `Minimum order of PKR ${min} required` })
+      }
+      if (promo.maxUsageCount != null && promo.usedCount >= promo.maxUsageCount) {
+        return reply.send({ valid: false, reason: 'Code usage limit reached' })
+      }
+
+      // Calculate discount
+      let discountCents: number
+      if (promo.discountType === 'percentage') {
+        discountCents = Math.round(subtotalCents * (promo.discountValue / 100))
+        if (promo.maxDiscountCents != null) discountCents = Math.min(discountCents, promo.maxDiscountCents)
+      } else {
+        discountCents = Math.min(Math.round(promo.discountValue * 100), subtotalCents)
+      }
+
+      // Build human-readable description
+      const expiryStr = promo.endAt.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+      const typeStr = promo.discountType === 'percentage'
+        ? `${promo.discountValue}% off`
+        : `PKR ${(promo.discountValue).toFixed(0)} off`
+      const description = promo.description
+        ? promo.description
+        : `${typeStr} · expires ${expiryStr}`
+
+      return reply.send({ valid: true, discountCents, description })
+    },
+  )
 
   // GET /storefront/promos — public, active promos for homepage deals strip
   fastify.get('/promos', async () => {

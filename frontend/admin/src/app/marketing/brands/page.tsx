@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api } from '../../../lib/api'
+import { useAuthStore } from '../../../store/auth'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -198,7 +199,7 @@ function BrandForm({ concept }: { concept: Concept }) {
     if (!file) return
     setUploading(true); setUploadError('')
     try {
-      const token = typeof window !== 'undefined' ? localStorage.getItem('servd_token') : null
+      const token = useAuthStore.getState().token   // F43
       const qs = new URLSearchParams({ filename: file.name, contentType: file.type, category: 'marketing' })
       const res = await fetch(`${API_URL}/api/v1/media/upload-url?${qs}`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},

@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { staffLogin, staffPinLogin, refreshStaffToken, customerRegister, customerLogin, verifyMagicLink, requestMagicLink, hashPassword, hashPin } from './service.js'
+import { requestOtp, verifyOtp, normalisePhone } from './otp.js'
 import { requireAuth, ADMIN_ONLY, MANAGERS, ALL_STAFF } from './middleware.js'
 import { prisma } from '../../lib/prisma.js'
 import { AppError } from '../../lib/errors.js'
@@ -278,6 +279,11 @@ export async function authRoutes(fastify: FastifyInstance) {
       name:     z.string().min(1).max(80),
       email:    z.string().email(),
       password: z.string().min(8, 'Password must be at least 8 characters'),
+      // F19: phone + OTP. Both optional today because legacy clients won't
+      // send them, but new web/storefront flows always do. Server validates
+      // the OTP one more time before stamping phoneVerifiedAt.
+      phone:    z.string().min(7).max(20).optional(),
+      otpCode:  z.string().regex(/^\d{4,6}$/).optional(),
       // Optional: 8-char referral code from another customer. If valid, links
       // the two and primes the dual-bonus payout on the new customer's
       // first order.
@@ -286,6 +292,15 @@ export async function authRoutes(fastify: FastifyInstance) {
       // the naughty-list gate.
       deviceFingerprint: z.string().max(120).optional(),
     }).parse(req.body)
+
+    // If phone + OTP supplied, verify the code now so phoneVerifiedAt can be
+    // stamped inside customerRegister. A bad OTP throws before we touch the
+    // customer table.
+    let otpVerified = false
+    if (body.phone && body.otpCode) {
+      await verifyOtp({ phone: body.phone, code: body.otpCode, purpose: 'signup' })
+      otpVerified = true
+    }
 
     // Naughty-list gate. Reject signup if the email or device matches an
     // active ban. Throws AppError(403, 'BANNED') which the global error
@@ -299,7 +314,12 @@ export async function authRoutes(fastify: FastifyInstance) {
     })
 
     try {
-      const result = await customerRegister(body.name, body.email, body.password, body.referralCode)
+      const result = await customerRegister(
+        body.name, body.email, body.password,
+        body.phone ? normalisePhone(body.phone) : undefined,
+        otpVerified,
+        body.referralCode,
+      )
       await clearFailures(CUSTOMER_PASSWORD_LIMIT, ip)
       return reply.status(201).send(result)
     } catch (err) {
@@ -310,6 +330,38 @@ export async function authRoutes(fastify: FastifyInstance) {
       await recordFailure(CUSTOMER_PASSWORD_LIMIT, ip)
       throw err
     }
+  })
+
+  // F19: POST /auth/customer/request-otp — sends a 6-digit code over WhatsApp.
+  // Rate-limited per-IP via the same customer-password limit so we don't get
+  // abused as a free SMS gateway. The `purpose` lets the same endpoint serve
+  // signup, phone-change, and password-reset later — front-end always sends
+  // the matching purpose to verify.
+  fastify.post('/customer/request-otp', async (req, reply) => {
+    const ip = req.ip ?? 'unknown'
+    await checkRateLimit(CUSTOMER_PASSWORD_LIMIT, ip)
+
+    const body = z.object({
+      phone:   z.string().min(7).max(20),
+      purpose: z.enum(['signup', 'phone_verify', 'password_reset']).default('signup'),
+    }).parse(req.body)
+
+    const result = await requestOtp({ phone: body.phone, purpose: body.purpose })
+    // Don't echo the code back; the client only needs to know it's on its way.
+    return reply.status(200).send({ phone: result.phone, expiresAt: result.expiresAt })
+  })
+
+  // POST /auth/customer/verify-otp — front-end uses this to validate before
+  // submitting the registration form, so the user gets immediate "✓ verified"
+  // feedback. The signup endpoint re-verifies server-side regardless.
+  fastify.post('/customer/verify-otp', async (req, reply) => {
+    const body = z.object({
+      phone:   z.string().min(7).max(20),
+      code:    z.string().regex(/^\d{4,6}$/),
+      purpose: z.enum(['signup', 'phone_verify', 'password_reset']).default('signup'),
+    }).parse(req.body)
+    await verifyOtp({ phone: body.phone, code: body.code, purpose: body.purpose })
+    return reply.status(200).send({ ok: true })
   })
 
   // GET /auth/users — list staff (admin/manager only)

@@ -20,6 +20,7 @@ export function startWebhookDeliveryWorker(): Worker<WebhookDeliveryJob> {
     'webhook-delivery',
     async (job) => {
       const { subscriptionId, event, payload, emittedAt } = job.data
+      const attemptNumber = (job.attemptsMade ?? 0) + 1
 
       const sub = await prisma.webhookSubscription.findUnique({ where: { id: subscriptionId } })
       if (!sub || !sub.isActive || sub.deletedAt) {
@@ -31,8 +32,11 @@ export function startWebhookDeliveryWorker(): Worker<WebhookDeliveryJob> {
 
       const controller = new AbortController()
       const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS)
+      const startMs = Date.now()
 
       let status: string
+      let responseCode: number | undefined
+      let responseBody: string | undefined
       try {
         const res = await fetch(sub.url, {
           method: 'POST',
@@ -47,22 +51,41 @@ export function startWebhookDeliveryWorker(): Worker<WebhookDeliveryJob> {
           signal: controller.signal,
         })
         clearTimeout(timeoutId)
+        const durationMs = Date.now() - startMs
+        responseCode = res.status
+        responseBody = (await res.text().catch(() => '')).slice(0, 1000)
+
         status = res.ok
           ? 'success'
           : res.status >= 500
           ? 'failed_5xx'
           : 'failed_4xx'
 
-        await prisma.webhookSubscription.update({
-          where: { id: sub.id },
-          data: {
-            lastSentAt: new Date(),
-            lastStatus: status,
-            ...(status === 'success'
-              ? { failureCount: 0 }
-              : { failureCount: { increment: 1 } }),
-          },
-        })
+        await Promise.all([
+          prisma.webhookSubscription.update({
+            where: { id: sub.id },
+            data: {
+              lastSentAt: new Date(),
+              lastStatus: status,
+              ...(status === 'success'
+                ? { failureCount: 0 }
+                : { failureCount: { increment: 1 } }),
+            },
+          }),
+          prisma.webhookDelivery.create({
+            data: {
+              subscriptionId: sub.id,
+              event,
+              url: sub.url,
+              requestBody: body,
+              responseCode,
+              responseBody,
+              status,
+              durationMs,
+              attemptNumber,
+            },
+          }),
+        ])
 
         if (!res.ok) {
           throw new Error(`Webhook ${sub.url} returned ${res.status}`)
@@ -70,12 +93,28 @@ export function startWebhookDeliveryWorker(): Worker<WebhookDeliveryJob> {
         return { delivered: true, status }
       } catch (err) {
         clearTimeout(timeoutId)
+        const durationMs = Date.now() - startMs
         if ((err as Error).name === 'AbortError') status = 'timeout'
         else status = 'error'
-        await prisma.webhookSubscription.update({
-          where: { id: sub.id },
-          data: { lastSentAt: new Date(), lastStatus: status, failureCount: { increment: 1 } },
-        }).catch(() => {})
+        await Promise.all([
+          prisma.webhookSubscription.update({
+            where: { id: sub.id },
+            data: { lastSentAt: new Date(), lastStatus: status, failureCount: { increment: 1 } },
+          }).catch(() => {}),
+          prisma.webhookDelivery.create({
+            data: {
+              subscriptionId: sub.id,
+              event,
+              url: sub.url,
+              requestBody: body,
+              responseCode,
+              responseBody,
+              status,
+              durationMs,
+              attemptNumber,
+            },
+          }).catch(() => {}),
+        ])
         throw err
       }
     },

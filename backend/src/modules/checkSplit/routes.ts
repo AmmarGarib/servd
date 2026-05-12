@@ -23,7 +23,7 @@ export async function checkSplitRoutes(fastify: FastifyInstance) {
         splits: z.array(z.object({
           label:       z.string().max(40).optional(),
           amountCents: z.number().int().min(1),
-          method:      z.enum(['cash', 'card', 'jazzcash_wallet', 'easypaisa_wallet', 'keenu_qr', 'split', 'comp']).default('card'),
+          method:      z.enum(['cash', 'card', 'keenu_qr', 'split', 'comp']).default('card'),   // F-PAY02
         })).min(2).max(20),
       }).parse(req.body)
 
@@ -110,7 +110,7 @@ export async function checkSplitRoutes(fastify: FastifyInstance) {
     async (req) => {
       const body = z.object({
         ways:   z.number().int().min(2).max(20),
-        method: z.enum(['cash', 'card', 'jazzcash_wallet', 'easypaisa_wallet', 'keenu_qr']).default('card'),
+        method: z.enum(['cash', 'card', 'keenu_qr']).default('card'),   // F-PAY02
       }).parse(req.body)
       const order = await prisma.order.findFirst({
         where: {

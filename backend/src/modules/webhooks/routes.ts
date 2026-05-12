@@ -1,12 +1,15 @@
 // Inbound webhook receivers
 // Each verifies HMAC signature, normalises payload, queues for ingestion.
+// Also: outbound webhook subscription management (MANAGERS).
 
 import type { FastifyInstance } from 'fastify'
 import crypto from 'crypto'
+import { z } from 'zod'
 import { orderIngestionQueue } from '../../lib/queue.js'
 import { AppError } from '../../lib/errors.js'
 import { prisma } from '../../lib/prisma.js'
 import { redis } from '../../lib/redis.js'
+import { requireAuth, MANAGERS } from '../auth/middleware.js'
 import { handleWaMessage, type WaIncomingMessage } from '../../adapters/whatsapp/conversation.js'
 import {
   parseConversationIdFromAddress,
@@ -22,27 +25,61 @@ import {
   hasOpenCustomerConversation,
 } from '../../lib/customer-channels.js'
 
-function verifyHmac(secret: string, signature: string, payload: string): boolean {
-  const expected = crypto.createHmac('sha256', secret).update(payload).digest('hex')
+// B04: gateways send signatures in a handful of shapes — `sha256=<hex>`,
+// `hmac-sha256=<hex>`, raw `<hex>`, sometimes uppercase. Compare bytes (not
+// hex strings) so a mixed-case signature still verifies, and decode to a
+// Buffer first so `timingSafeEqual` doesn't barf on differing string lengths.
+function verifyHmac(secret: string, signature: string | undefined, payload: string | Buffer): boolean {
+  if (!signature || !secret) return false
+  const cleaned = signature.toLowerCase()
+    .replace(/^sha256=/, '')
+    .replace(/^hmac-sha256=/, '')
+    .trim()
+  if (!/^[0-9a-f]+$/.test(cleaned)) return false
+  const body = typeof payload === 'string' ? Buffer.from(payload, 'utf8') : payload
+  const expected = crypto.createHmac('sha256', secret).update(body).digest('hex')
   try {
-    return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))
+    const a = Buffer.from(cleaned, 'hex')
+    const b = Buffer.from(expected, 'hex')
+    return a.length === b.length && crypto.timingSafeEqual(a, b)
   } catch {
     return false
   }
 }
 
 /**
- * Idempotency check using Redis SETNX with 24h TTL. Returns true if this is the
- * first time we've seen this key (caller should process), false if duplicate.
- * Fails open on Redis outage — better to risk a re-process than to drop a real
- * webhook. (Stateful side effects downstream are themselves idempotent on
- * source_externalId via the order ingestion queue.)
+ * B14: durable webhook idempotency. Redis is checked first (cache hit returns
+ * in <1ms), and on miss we insert a row in `webhook_events` — the unique
+ * (source, eventId) PK is what actually prevents reprocessing. If Redis is
+ * down, we fall through to Postgres alone (the comment "fails open" is
+ * wrong now: we fail *closed*, because losing exactly-once on webhooks
+ * means double-charging customers).
+ *
+ * `key` is "source:eventId". We split it back out at the boundary.
  */
 async function claimIdempotency(key: string): Promise<boolean> {
+  const [source, eventId] = key.includes(':') ? key.split(':', 2) : ['unknown', key]
+  if (!source || !eventId) return true                       // malformed → don't block legitimate webhook
+
+  // Fast path: Redis SETNX with 24h TTL. Hit = duplicate, miss = falls through
+  // to Postgres so we still record it durably.
   try {
-    const result = await redis.set(`webhook:dedup:${key}`, '1', 'EX', 24 * 60 * 60, 'NX')
-    return result === 'OK'
+    const cached = await redis.set(`webhook:dedup:${key}`, '1', 'EX', 24 * 60 * 60, 'NX')
+    if (cached !== 'OK') return false                         // Redis says we've seen it
   } catch {
+    // Redis down — proceed to Postgres without caching.
+  }
+
+  // Authoritative path: try to insert. P2002 on the composite PK means
+  // somebody else got there first (or the row's been seen before).
+  try {
+    await prisma.webhookEvent.create({ data: { source, eventId } })
+    return true
+  } catch (e: unknown) {
+    const code = (e as { code?: string }).code
+    if (code === 'P2002') return false                        // duplicate
+    // Some other DB error — let the webhook re-process rather than swallowing
+    // a real failure silently.
     return true
   }
 }
@@ -340,6 +377,209 @@ export async function webhookRoutes(fastify: FastifyInstance) {
     // No match anywhere. Drop with 200 (don't make Postmark retry forever).
     console.warn(`[postmark-inbound] No supplier or customer matched email=${fromEmail}; dropping message_id=${messageId}`)
     return reply.status(200).send({ received: true, ignored: 'no match on either side' })
+  })
+}
+
+// ─── Outbound webhook management (MANAGERS) ───────────────────────────────────
+// These endpoints let operators register, inspect and test the outbound
+// webhook subscriptions that fan out domain events to their own integrations.
+// They live here rather than /setup so they're accessible to managers (not
+// just admins) and co-located with the inbound webhook logic for discoverability.
+
+export async function webhookManagementRoutes(fastify: FastifyInstance) {
+  const ENDPOINT_EVENTS = [
+    'order.placed', 'order.confirmed', 'order.dispatched', 'order.delivered',
+    'order.refunded', 'shift.opened', 'shift.closed', 'inventory.low_stock',
+    'reservation.confirmed', 'reservation.no_show', 'payment.completed', 'payment.failed',
+  ]
+
+  // GET /webhooks/endpoints — list active subscriptions
+  fastify.get('/endpoints', { preHandler: requireAuth(...MANAGERS) }, async () => {
+    const list = await prisma.webhookSubscription.findMany({
+      where: { deletedAt: null },
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true, url: true, events: true, isActive: true,
+        lastSentAt: true, lastStatus: true, failureCount: true,
+        notes: true, createdAt: true,
+      },
+    })
+    return list
+  })
+
+  // POST /webhooks/endpoints — register a new endpoint
+  fastify.post('/endpoints', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
+    const body = z.object({
+      url:    z.string().url('Must be a valid HTTPS URL'),
+      events: z.array(z.string()).min(1, 'Subscribe to at least one event'),
+      secret: z.string().min(16).optional(),
+      notes:  z.string().max(200).nullable().optional(),
+    }).parse(req.body)
+
+    const secret = body.secret ?? crypto.randomBytes(32).toString('hex')
+    const endpoint = await prisma.webhookSubscription.create({
+      data: {
+        url: body.url,
+        events: body.events,
+        secret,
+        notes: body.notes ?? null,
+        createdById: req.staffUser!.id,
+      },
+    })
+    // Return the full secret on creation — shown once, then truncated in list
+    return reply.status(201).send({ ...endpoint, secret })
+  })
+
+  // PATCH /webhooks/endpoints/:id — update url / events / active state / notes
+  fastify.patch<{ Params: { id: string } }>(
+    '/endpoints/:id',
+    { preHandler: requireAuth(...MANAGERS) },
+    async (req, reply) => {
+      const body = z.object({
+        url:      z.string().url().optional(),
+        events:   z.array(z.string()).min(1).optional(),
+        isActive: z.boolean().optional(),
+        notes:    z.string().max(200).nullable().optional(),
+      }).parse(req.body)
+
+      const existing = await prisma.webhookSubscription.findFirst({
+        where: { id: req.params.id, deletedAt: null },
+      })
+      if (!existing) {
+        return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Endpoint not found' } })
+      }
+
+      const updated = await prisma.webhookSubscription.update({
+        where: { id: req.params.id },
+        data: body,
+        select: {
+          id: true, url: true, events: true, isActive: true,
+          lastSentAt: true, lastStatus: true, failureCount: true, notes: true,
+        },
+      })
+      return updated
+    },
+  )
+
+  // DELETE /webhooks/endpoints/:id — soft-delete (deactivate)
+  fastify.delete<{ Params: { id: string } }>(
+    '/endpoints/:id',
+    { preHandler: requireAuth(...MANAGERS) },
+    async (req, reply) => {
+      const existing = await prisma.webhookSubscription.findFirst({
+        where: { id: req.params.id, deletedAt: null },
+      })
+      if (!existing) {
+        return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Endpoint not found' } })
+      }
+      await prisma.webhookSubscription.update({
+        where: { id: req.params.id },
+        data: { deletedAt: new Date(), isActive: false },
+      })
+      return reply.status(204).send()
+    },
+  )
+
+  // POST /webhooks/endpoints/:id/test — send a signed ping payload
+  fastify.post<{ Params: { id: string } }>(
+    '/endpoints/:id/test',
+    { preHandler: requireAuth(...MANAGERS) },
+    async (req, reply) => {
+      const sub = await prisma.webhookSubscription.findFirst({
+        where: { id: req.params.id, deletedAt: null },
+      })
+      if (!sub) {
+        return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Endpoint not found' } })
+      }
+
+      const pingPayload = { event: 'ping', timestamp: new Date().toISOString(), subscriptionId: sub.id }
+      const body = JSON.stringify(pingPayload)
+      const signature = crypto.createHmac('sha256', sub.secret).update(body).digest('hex')
+
+      const controller = new AbortController()
+      const timeout    = setTimeout(() => controller.abort(), 10_000)
+      const startMs    = Date.now()
+
+      try {
+        const res = await fetch(sub.url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Servd-Event': 'ping',
+            'X-Servd-Signature': `sha256=${signature}`,
+            'X-Servd-Subscription': sub.id,
+          },
+          body,
+          signal: controller.signal,
+        })
+        clearTimeout(timeout)
+        const responseMs = Date.now() - startMs
+        const respBody   = (await res.text().catch(() => '')).slice(0, 500)
+
+        // Persist delivery record so it shows up in /deliveries
+        await prisma.webhookDelivery.create({
+          data: {
+            subscriptionId: sub.id,
+            event: 'ping',
+            url: sub.url,
+            requestBody: body,
+            responseCode: res.status,
+            responseBody: respBody,
+            status: res.ok ? 'success' : res.status >= 500 ? 'failed_5xx' : 'failed_4xx',
+            durationMs: responseMs,
+            attemptNumber: 1,
+          },
+        })
+
+        return { success: res.ok, statusCode: res.status, responseMs, responseBody: respBody }
+      } catch (err) {
+        clearTimeout(timeout)
+        const responseMs = Date.now() - startMs
+        const isTimeout = (err as Error).name === 'AbortError'
+
+        await prisma.webhookDelivery.create({
+          data: {
+            subscriptionId: sub.id,
+            event: 'ping',
+            url: sub.url,
+            requestBody: body,
+            status: isTimeout ? 'timeout' : 'error',
+            durationMs: responseMs,
+            attemptNumber: 1,
+          },
+        }).catch(() => {})
+
+        return {
+          success: false,
+          statusCode: null,
+          responseMs,
+          error: isTimeout ? 'timeout' : (err as Error).message,
+        }
+      }
+    },
+  )
+
+  // GET /webhooks/deliveries — last 50 delivery attempts across all endpoints
+  fastify.get('/deliveries', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
+    const { subscriptionId, limit } = (req.query as { subscriptionId?: string; limit?: string })
+    const take = Math.min(Number(limit ?? 50), 200)
+
+    const records = await prisma.webhookDelivery.findMany({
+      where: subscriptionId ? { subscriptionId } : undefined,
+      orderBy: { attemptedAt: 'desc' },
+      take,
+      select: {
+        id: true, event: true, url: true, responseCode: true,
+        status: true, durationMs: true, attemptNumber: true, attemptedAt: true,
+        subscriptionId: true,
+      },
+    })
+    return records
+  })
+
+  // GET /webhooks/events — list of supported event names (for UI dropdowns)
+  fastify.get('/events', { preHandler: requireAuth(...MANAGERS) }, async () => {
+    return { events: ENDPOINT_EVENTS }
   })
 }
 

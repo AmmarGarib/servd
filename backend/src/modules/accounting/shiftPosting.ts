@@ -37,7 +37,8 @@ export async function postShiftClose(shiftId: string): Promise<{ posted: boolean
 
     if (p.method === 'cash') cashSalesCents += p.amountCents
     else if (p.method === 'card' || p.method === 'keenu_qr') cardSalesCents += p.amountCents
-    else if (p.method === 'jazzcash_wallet' || p.method === 'easypaisa_wallet') walletGatewayCents += p.amountCents
+    // F-PAY02: wallet methods removed in v1 — `walletGatewayCents` stays at 0
+    // until JazzCash/Easypaisa adapters are reintroduced.
     else if (p.method === 'comp') compCents += p.amountCents
 
     const order = p.order

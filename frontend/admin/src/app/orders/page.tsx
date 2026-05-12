@@ -2,8 +2,31 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { ordersApi, api, type Order } from '../../lib/api'
+import { useAuthStore } from '../../store/auth'
 import { formatDistanceToNowStrict } from 'date-fns'
 import Link from 'next/link'
+
+const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
+
+async function reprintReceipt(orderId: string) {
+  const token = useAuthStore.getState().token       // F43
+  const res = await fetch(`${API_URL}/api/v1/pos/receipt/${orderId}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  })
+  if (!res.ok) { alert('Receipt not available for this order'); return }
+  const html = await res.text()
+  const blob = new Blob([html], { type: 'text/html' })
+  const url  = URL.createObjectURL(blob)
+  const win  = window.open(url, '_blank', 'width=420,height=600')
+  if (win) {
+    win.addEventListener('load', () => {
+      win.print()
+      URL.revokeObjectURL(url)
+    })
+  } else {
+    URL.revokeObjectURL(url)
+  }
+}
 
 function fmt(cents: number) { return `PKR ${(cents / 100).toFixed(0)}` }
 
@@ -41,6 +64,12 @@ export default function OrdersPage() {
   const [status, setStatus] = useState('')
   const [dateFrom, setDateFrom] = useState('')
   const [expandedId, setExpandedId] = useState<string | null>(null)
+
+  // Bulk selection state
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+
+  // Per-order note state: { [orderId]: { open, draft } }
+  const [notes, setNotes] = useState<Record<string, { open: boolean; draft: string }>>({})
 
   const { data: concepts = [] } = useQuery({
     queryKey: ['concepts'],
@@ -84,9 +113,48 @@ export default function OrdersPage() {
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['orders'] }),
   })
 
+  const bulkUpdate = useMutation({
+    mutationFn: async ({ ids, s }: { ids: string[]; s: string }) => {
+      await Promise.all(ids.map((id) => api.patch(`/orders/${id}/status`, { status: s })))
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['orders'] })
+      setSelected(new Set())
+    },
+  })
+
+  const saveNote = useMutation({
+    mutationFn: ({ id, note }: { id: string; note: string }) =>
+      api.patch(`/orders/${id}/notes`, { notes: note }),
+    onSuccess: (_d, vars) => {
+      void qc.invalidateQueries({ queryKey: ['orders'] })
+      setNotes((prev) => ({ ...prev, [vars.id]: { open: false, draft: '' } }))
+    },
+  })
+
   const liveOrders = liveData?.data ?? []
+  const histOrders = historyData?.data ?? []
   const grouped: Record<string, Order[]> = {}
   for (const s of LIVE_STATUSES) grouped[s] = liveOrders.filter((o) => o.status === s)
+
+  function toggleSelect(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  function toggleAll() {
+    if (selected.size === histOrders.length) {
+      setSelected(new Set())
+    } else {
+      setSelected(new Set(histOrders.map((o) => o.id)))
+    }
+  }
+
+  const selCount = selected.size
 
   return (
     <div className="h-screen flex flex-col bg-kds-bg overflow-hidden">
@@ -250,6 +318,7 @@ export default function OrdersPage() {
                       className="text-xs text-kds-subtext hover:text-kds-red">Clear filters</button>
                   )}
                 </div>
+
                 {histLoading ? (
                   <p className="text-kds-subtext text-sm">Loading…</p>
                 ) : (
@@ -257,61 +326,147 @@ export default function OrdersPage() {
                     <table className="w-full text-sm">
                       <thead className="bg-kds-card border-b border-kds-border">
                         <tr>
-                          {['#', 'Source', 'Concept', 'Customer', 'Items', 'Total', 'Status', 'When'].map((h) => (
-                            <th key={h} className="px-4 py-3 text-left font-semibold text-kds-subtext">{h}</th>
+                          <th className="px-3 py-3 w-10">
+                            <input
+                              type="checkbox"
+                              checked={histOrders.length > 0 && selected.size === histOrders.length}
+                              onChange={toggleAll}
+                              className="rounded border-kds-border accent-kds-green cursor-pointer"
+                            />
+                          </th>
+                          {['#', 'Source', 'Concept', 'Customer', 'Items', 'Total', 'Status', 'When', '', ''].map((h, i) => (
+                            <th key={`${h}-${i}`} className="px-4 py-3 text-left font-semibold text-kds-subtext">{h}</th>
                           ))}
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-kds-border">
-                        {(historyData?.data ?? []).map((order: Order) => (
-                          <>
-                            <tr key={order.id}
-                              className="hover:bg-kds-card/50 cursor-pointer"
-                              onClick={() => setExpandedId(expandedId === order.id ? null : order.id)}>
-                              <td className="px-4 py-3 font-mono text-xs text-kds-subtext">#{order.id.slice(-6).toUpperCase()}</td>
-                              <td className="px-4 py-3">
-                                <span className={`rounded px-2 py-0.5 text-xs font-bold uppercase ${SOURCE_COLORS[order.source] ?? ''}`}>
-                                  {order.source}
-                                </span>
-                              </td>
-                              <td className="px-4 py-3 text-kds-text">{order.concept.name}</td>
-                              <td className="px-4 py-3 text-kds-subtext">{order.customerName ?? order.table?.label ?? '—'}</td>
-                              <td className="px-4 py-3 text-kds-subtext">{order.items.length}</td>
-                              <td className="px-4 py-3 font-bold text-kds-green">{fmt(order.totalCents)}</td>
-                              <td className="px-4 py-3">
-                                <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${STATUS_COLORS[order.status] ?? ''}`}>
-                                  {order.status}
-                                </span>
-                              </td>
-                              <td className="px-4 py-3 text-kds-subtext text-xs">
-                                {formatDistanceToNowStrict(new Date(order.placedAt))} ago
-                              </td>
-                            </tr>
-                            {expandedId === order.id && (
-                              <tr key={`${order.id}-x`}>
-                                <td colSpan={8} className="px-6 py-3 bg-kds-card/40 border-b border-kds-border">
-                                  <div className="space-y-1">
-                                    {order.items.map((item) => (
-                                      <div key={item.id} className="flex items-center gap-3 text-xs">
-                                        <span className="text-kds-subtext">{item.quantity}×</span>
-                                        <span className="text-kds-text">{item.name}</span>
-                                        <span className="ml-auto text-kds-subtext">{fmt(item.unitPriceCents * item.quantity)}</span>
-                                      </div>
-                                    ))}
-                                    {order.deliveryNotes && (
-                                      <p className="text-xs text-kds-subtext pt-2 border-t border-kds-border/50 mt-1">
-                                        📍 {order.deliveryNotes}
-                                      </p>
+                        {histOrders.map((order: Order) => {
+                          const noteState = notes[order.id] ?? { open: false, draft: order.deliveryNotes ?? '' }
+                          const isSelected = selected.has(order.id)
+                          return (
+                            <>
+                              <tr key={order.id}
+                                className={`hover:bg-kds-card/50 cursor-pointer transition-colors ${isSelected ? 'bg-kds-green/5' : ''}`}
+                                onClick={() => setExpandedId(expandedId === order.id ? null : order.id)}>
+                                <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
+                                  <input
+                                    type="checkbox"
+                                    checked={isSelected}
+                                    onChange={() => toggleSelect(order.id)}
+                                    className="rounded border-kds-border accent-kds-green cursor-pointer"
+                                  />
+                                </td>
+                                <td className="px-4 py-3 font-mono text-xs text-kds-subtext">#{order.id.slice(-6).toUpperCase()}</td>
+                                <td className="px-4 py-3">
+                                  <span className={`rounded px-2 py-0.5 text-xs font-bold uppercase ${SOURCE_COLORS[order.source] ?? ''}`}>
+                                    {order.source}
+                                  </span>
+                                </td>
+                                <td className="px-4 py-3 text-kds-text">{order.concept.name}</td>
+                                <td className="px-4 py-3">
+                                  {order.customerName ? (
+                                    <Link
+                                      href={`/crm?search=${encodeURIComponent(order.customerName)}`}
+                                      onClick={(e) => e.stopPropagation()}
+                                      className="text-blue-400 hover:text-blue-300 hover:underline transition-colors text-sm">
+                                      {order.customerName}
+                                    </Link>
+                                  ) : (
+                                    <span className="text-kds-subtext">{order.table?.label ?? '—'}</span>
+                                  )}
+                                </td>
+                                <td className="px-4 py-3 text-kds-subtext">{order.items.length}</td>
+                                <td className="px-4 py-3 font-bold text-kds-green">{fmt(order.totalCents)}</td>
+                                <td className="px-4 py-3">
+                                  <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${STATUS_COLORS[order.status] ?? ''}`}>
+                                    {order.status}
+                                  </span>
+                                </td>
+                                <td className="px-4 py-3 text-kds-subtext text-xs">
+                                  {formatDistanceToNowStrict(new Date(order.placedAt))} ago
+                                </td>
+                                <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                                  <div className="flex items-center gap-1.5">
+                                    <button
+                                      onClick={() => setNotes((prev) => ({
+                                        ...prev,
+                                        [order.id]: { open: !prev[order.id]?.open, draft: prev[order.id]?.draft ?? order.deliveryNotes ?? '' },
+                                      }))}
+                                      className="text-xs px-2 py-1 rounded border border-kds-border/50 text-kds-subtext hover:border-kds-green hover:text-kds-green transition-colors whitespace-nowrap">
+                                      {order.deliveryNotes ? 'Edit note' : '+ Note'}
+                                    </button>
+                                    {(order.source === 'pos' || order.status === 'completed' || order.status === 'cancelled') && (
+                                      <button
+                                        onClick={() => void reprintReceipt(order.id)}
+                                        title="Reprint receipt"
+                                        className="text-xs px-2 py-1 rounded border border-kds-border/50 text-kds-subtext hover:border-purple-400 hover:text-purple-400 transition-colors whitespace-nowrap">
+                                        🖨 Reprint
+                                      </button>
                                     )}
                                   </div>
                                 </td>
+                                <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                                  <Link
+                                    href={`/orders/${order.id}`}
+                                    className="text-xs px-2 py-1 rounded border border-kds-border/50 text-kds-subtext hover:border-kds-green hover:text-kds-green transition-colors whitespace-nowrap">
+                                    View →
+                                  </Link>
+                                </td>
                               </tr>
-                            )}
-                          </>
-                        ))}
+                              {/* Note inline editor */}
+                              {noteState.open && (
+                                <tr key={`${order.id}-note`}>
+                                  <td colSpan={11} className="px-6 py-3 bg-kds-card/60 border-b border-kds-border">
+                                    <div className="flex items-center gap-3">
+                                      <input
+                                        value={noteState.draft}
+                                        onChange={(e) => setNotes((prev) => ({ ...prev, [order.id]: { ...noteState, draft: e.target.value } }))}
+                                        placeholder="Add a note about this order…"
+                                        className="flex-1 rounded-lg bg-kds-bg border border-kds-border px-3 py-1.5 text-sm text-kds-text focus:border-kds-green focus:outline-none"
+                                        autoFocus
+                                      />
+                                      <button
+                                        onClick={() => saveNote.mutate({ id: order.id, note: noteState.draft })}
+                                        disabled={saveNote.isPending}
+                                        className="rounded-lg bg-kds-green text-black font-bold px-3 py-1.5 text-xs hover:opacity-90 disabled:opacity-50 whitespace-nowrap">
+                                        {saveNote.isPending ? 'Saving…' : 'Save note'}
+                                      </button>
+                                      <button
+                                        onClick={() => setNotes((prev) => ({ ...prev, [order.id]: { ...noteState, open: false } }))}
+                                        className="text-xs text-kds-subtext hover:text-kds-text">
+                                        Cancel
+                                      </button>
+                                    </div>
+                                  </td>
+                                </tr>
+                              )}
+                              {/* Expanded items */}
+                              {expandedId === order.id && (
+                                <tr key={`${order.id}-x`}>
+                                  <td colSpan={11} className="px-6 py-3 bg-kds-card/40 border-b border-kds-border">
+                                    <div className="space-y-1">
+                                      {order.items.map((item) => (
+                                        <div key={item.id} className="flex items-center gap-3 text-xs">
+                                          <span className="text-kds-subtext">{item.quantity}×</span>
+                                          <span className="text-kds-text">{item.name}</span>
+                                          <span className="ml-auto text-kds-subtext">{fmt(item.unitPriceCents * item.quantity)}</span>
+                                        </div>
+                                      ))}
+                                      {order.deliveryNotes && (
+                                        <p className="text-xs text-kds-subtext pt-2 border-t border-kds-border/50 mt-1">
+                                          📍 {order.deliveryNotes}
+                                        </p>
+                                      )}
+                                    </div>
+                                  </td>
+                                </tr>
+                              )}
+                            </>
+                          )
+                        })}
                       </tbody>
                     </table>
-                    {(historyData?.data.length ?? 0) === 0 && !histLoading && (
+                    {histOrders.length === 0 && !histLoading && (
                       <div className="py-12 text-center text-kds-subtext">No orders found</div>
                     )}
                   </div>
@@ -361,6 +516,32 @@ export default function OrdersPage() {
           </div>
         </div>
       </div>
+
+      {/* ════ BULK ACTION FLOATING BAR ════ */}
+      {tab === 'history' && selCount >= 2 && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 rounded-2xl border border-kds-border bg-kds-card shadow-2xl px-5 py-3">
+          <span className="text-sm font-semibold text-kds-text">{selCount} selected</span>
+          <div className="w-px h-5 bg-kds-border" />
+          <button
+            onClick={() => bulkUpdate.mutate({ ids: Array.from(selected), s: 'cancelled' })}
+            disabled={bulkUpdate.isPending}
+            className="rounded-lg border border-kds-red/40 bg-kds-red/10 text-kds-red font-semibold px-4 py-1.5 text-sm hover:bg-kds-red/20 transition-colors disabled:opacity-50">
+            {bulkUpdate.isPending ? 'Updating…' : 'Cancel'}
+          </button>
+          <button
+            onClick={() => bulkUpdate.mutate({ ids: Array.from(selected), s: 'completed' })}
+            disabled={bulkUpdate.isPending}
+            className="rounded-lg border border-kds-green/40 bg-kds-green/10 text-kds-green font-semibold px-4 py-1.5 text-sm hover:bg-kds-green/20 transition-colors disabled:opacity-50">
+            {bulkUpdate.isPending ? 'Updating…' : 'Complete'}
+          </button>
+          <div className="w-px h-5 bg-kds-border" />
+          <button
+            onClick={() => setSelected(new Set())}
+            className="text-xs text-kds-subtext hover:text-kds-text transition-colors">
+            Clear
+          </button>
+        </div>
+      )}
     </div>
   )
 }

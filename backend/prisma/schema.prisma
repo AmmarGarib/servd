@@ -57,11 +57,14 @@ enum UserRole {
   marketing       // outside agency / in-house marketing — scoped to /marketing operations
 }
 
+// F-PAY02: jazzcash_wallet + easypaisa_wallet removed in v1 — no live
+// adapter ships for either. Strip-script `scripts/strip-wallet-enum.ts`
+// backfills any existing rows to `card`. If you ever add the adapters back,
+// add the enum values *with* the corresponding adapter + webhook route in
+// the same release so the UI can't accept payments the system can't process.
 enum PaymentMethod {
   cash
   card
-  jazzcash_wallet
-  easypaisa_wallet
   keenu_qr
   split
   comp
@@ -188,6 +191,10 @@ model Concept {
   competitors         String[] @default([])   // up to 5 named competitors
   differentiator      String?                 // wedge — "in-house lamination, not bakery buns"
   brandVoice          String?                 // tone notes — "loud, urban, no-precious-paragraphs"
+
+  // Physical presence — phone + address shown on storefront /visit page
+  phone             String?                  // public contact number, E.164 preferred
+  address           String?                  // full street address shown on visit page
 
   // Delivery geography — null = no restriction (global / dine-in / pickup)
   latitude          Float?
@@ -327,6 +334,10 @@ model MenuItem {
   dietary   String[]  @default([])
   spiceLevel Int?     // 0–5; null = not applicable
 
+  // Third-party platform sync — set to null when isAvailable changes so the
+  // inventorySync worker picks up the change on its next tick.
+  lastSyncedAt DateTime?
+
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
   deletedAt    DateTime?
@@ -369,6 +380,7 @@ model Modifier {
   priceDeltaCents Int      @default(0)
   isDefault      Boolean   @default(false)
   sortOrder      Int       @default(0)
+  allergens      String[]  @default([])  // e.g. ["nuts", "dairy", "gluten"]
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
   deletedAt      DateTime?
@@ -406,6 +418,10 @@ model Table {
   width        Int        @default(120)
   height       Int        @default(80)
   rotation     Int        @default(0)    // degrees, 0–359
+  // Live occupancy — set when a party is seated, cleared on checkout.
+  currentPartySize     Int?
+  currentOrderId       String?
+  estimatedDepartureAt DateTime?
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
   deletedAt    DateTime?
@@ -895,6 +911,10 @@ model Customer {
   referredAt                DateTime?
   referralRewardCreditedAt  DateTime?       // null until the dual bonus has fired
   password          String?
+  // F19: signup collects email + password + phone, and verifies phone via a
+  // WhatsApp OTP (cheaper than Twilio SMS). phoneVerifiedAt stays null until
+  // the customer enters the right 6-digit code.
+  phoneVerifiedAt   DateTime?
   isBlacklisted     Boolean   @default(false)
   blacklistReason   String?
 
@@ -1182,6 +1202,42 @@ model MagicLink {
   @@map("magic_links")
 }
 
+// B14: durable webhook idempotency log. Pre-fix this was Redis-only, which
+// meant a Redis blip during a Foodpanda reconnect could replay an old order
+// (and re-fire all the side effects). Postgres unique-PK insert is the
+// source of truth now; Redis stays as a fast-path.
+model WebhookEvent {
+  source      String                                          // 'foodpanda' | 'careem' | 'keenu' | 'postmark' …
+  eventId     String                                          // gateway's idempotency key
+  receivedAt  DateTime @default(now())
+  payloadHash String?                                         // optional SHA-256 for forensics
+
+  @@id([source, eventId])
+  @@map("webhook_events")
+}
+
+// F19: short-lived OTP codes for phone verification, delivered over WhatsApp.
+// We avoid Twilio entirely — Meta's Cloud API is free for the first 1k convos
+// per month and we already maintain the integration for supplier chat.
+//
+// Lifecycle: signup creates a row with a 6-digit `code` and 5-minute `expiresAt`.
+// On verify, `consumedAt` is set so the same code can't be reused; failed
+// attempts increment `attempts` and lock at 5 (caller enforces).
+model PhoneOtp {
+  id          String   @id @default(uuid())
+  phone       String                                          // normalised E.164-ish (digits + leading country code, no +)
+  code        String                                          // 6-digit numeric
+  purpose     String                                          // 'signup' | 'phone_verify' | 'password_reset'
+  customerId  String?                                         // null for pre-signup OTPs
+  attempts    Int      @default(0)
+  consumedAt  DateTime?
+  expiresAt   DateTime
+  createdAt   DateTime @default(now())
+
+  @@index([phone, purpose, createdAt])
+  @@map("phone_otps")
+}
+
 // ─── LoyaltyAccount ───────────────────────────────────────────────────────────
 
 model LoyaltyAccount {
@@ -1274,6 +1330,11 @@ model Order {
   curbsideSpot         String?     // optional designated spot ("A3", "Front 2")
   curbsideArrivedAt    DateTime?
   curbsideRunnerOutAt  DateTime?   // when staff hit "running it out"
+
+  // Auto-cancellation: set by the orderAutoCancel worker when an order times
+  // out in 'received' (>30 min) or 'confirmed' (>2 h) without progressing.
+  cancelledAt          DateTime?
+  cancellationReason   String?
 
   createdAt            DateTime    @default(now())
   updatedAt            DateTime    @updatedAt
@@ -1382,6 +1443,10 @@ model Payment {
   splitGroup   Int?           // 1-based; null = single payment for whole bill
   splitLabel   String?        // e.g. "Ali", "Sara", or "Half 1"
   processedAt  DateTime?
+  // Retry tracking for failed gateway payments. Worker increments retryCount
+  // up to 3 attempts; after that status flips to 'failed' permanently.
+  retryCount   Int            @default(0)
+  lastRetryAt  DateTime?
   createdAt    DateTime       @default(now())
   updatedAt    DateTime       @updatedAt
 
@@ -2173,7 +2238,11 @@ model PeriodLock {
 // Denormalised summary row per completed order (for fast reporting)
 model FinancialEntry {
   id              String    @id @default(uuid())
-  orderId         String
+  // B03: one financial entry per order, full stop. The race between two
+  // parallel bumps on the last items of an order used to create duplicate
+  // rows (and duplicate loyalty earns). The unique constraint forces the
+  // second writer to hit P2002 and bail, which the service layer ignores.
+  orderId         String    @unique
   conceptId       String
   locationId      String?   // physical place — copied from Order at posting time
   channel         String    // order source as string
@@ -2268,6 +2337,7 @@ model Rider {
   isActive    Boolean     @default(true)
   notes       String?
   totalDeliveries Int     @default(0)
+  avgRating       Float?  // recomputed after each new RiderRating
   // Last reported geolocation — also pushed to a per-order WebSocket channel
   // so customers see the live pin move on their tracking page.
   lastLat       Float?
@@ -2281,8 +2351,29 @@ model Rider {
 
   orders    Order[]
   locations RiderLocation[]
+  ratings   RiderRating[]
 
   @@map("riders")
+}
+
+// ─── RiderRating ──────────────────────────────────────────────────────────────
+//
+// One rating per delivered order. Staff rates on behalf of the customer at
+// the counter; future versions will accept direct customer auth. avgRating
+// on the Rider row is recomputed as a running average after each insert.
+
+model RiderRating {
+  id        String   @id @default(uuid())
+  riderId   String
+  orderId   String   @unique
+  rating    Int      // 1–5
+  comment   String?
+  createdAt DateTime @default(now())
+
+  rider Rider @relation(fields: [riderId], references: [id])
+
+  @@index([riderId, createdAt(sort: Desc)])
+  @@map("rider_ratings")
 }
 
 // Append-only location stream from rider devices. Keeps a 24h history for
@@ -2549,11 +2640,26 @@ model ScheduledShift {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  user    User    @relation(fields: [userId], references: [id])
-  concept Concept @relation(fields: [conceptId], references: [id])
+  user         User               @relation(fields: [userId], references: [id])
+  concept      Concept            @relation(fields: [conceptId], references: [id])
+  swapRequests ShiftSwapRequest[]
 
   @@index([conceptId, date])
   @@map("scheduled_shifts")
+}
+
+model ShiftSwapRequest {
+  id                  String         @id @default(cuid())
+  shiftId             String
+  requestedByUserId   String
+  requestedFromUserId String
+  status              String         @default("pending")
+  notes               String?
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+  shift               ScheduledShift @relation(fields: [shiftId], references: [id], onDelete: Cascade)
+
+  @@map("shift_swap_requests")
 }
 
 // ─── Analytics ───────────────────────────────────────────────────────────────
@@ -2881,6 +2987,9 @@ model BankAccount {
 // KDS device registry — physical screens distinct from logical Stations
 model KdsDevice {
   id                String   @id @default(cuid())
+  // B15: every device registration is owned by exactly one tenant so two
+  // operators on different companies can never see each other's stations.
+  tenantId          String?                                    // nullable for legacy rows; new rows always set it
   name              String                                    // "Grill Tablet 1"
   stationId         String?                                    // logical station this device displays
   conceptId         String?                                    // optional concept restriction
@@ -2893,6 +3002,7 @@ model KdsDevice {
   updatedAt         DateTime @updatedAt
 
   @@index([stationId])
+  @@index([tenantId])
   @@map("kds_devices")
 }
 
@@ -2912,7 +3022,32 @@ model WebhookSubscription {
   updatedAt   DateTime @updatedAt
   deletedAt   DateTime?
 
+  deliveries  WebhookDelivery[]
+
   @@map("webhook_subscriptions")
+}
+
+// Per-attempt delivery log — written by the webhookDelivery worker.
+// Gives operators a scrollable timeline of "what fired, when, did it succeed".
+// Pruned to last 90 days by a background sweep (future cron job).
+model WebhookDelivery {
+  id             String   @id @default(cuid())
+  subscriptionId String
+  event          String                                        // 'order.placed', 'ping', etc.
+  url            String                                        // snapshot of URL at time of delivery
+  requestBody    String                                        // JSON payload sent
+  responseCode   Int?                                          // HTTP status from subscriber
+  responseBody   String?                                       // first 1000 chars of response
+  status         String                                        // 'success' | 'failed_4xx' | 'failed_5xx' | 'timeout' | 'error'
+  durationMs     Int?                                          // round-trip latency
+  attemptNumber  Int      @default(1)                         // BullMQ attempt (1 = first try)
+  attemptedAt    DateTime @default(now())
+
+  subscription   WebhookSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  @@index([subscriptionId, attemptedAt(sort: Desc)])
+  @@index([event, attemptedAt(sort: Desc)])
+  @@map("webhook_deliveries")
 }
 
 // Custom fields — operator-defined extensions to core entities
@@ -3752,21 +3887,10 @@ model RolePermission {
 // once (at creation time). Revoke by setting revokedAt — never delete the row,
 // so audit lookups stay intact.
 
-model ApiToken {
-  id          String    @id @default(cuid())
-  name        String                  // human-readable label, e.g. "Mobile app prod"
-  tokenHash   String    @unique       // sha256 of the plaintext bearer
-  scopes      String[]  @default([])  // free-form permission scopes ("orders:read", "menu:read", "*")
-  conceptId   String?                 // null = all concepts
-  createdById String?                 // staff user who issued the token
-  lastUsedAt  DateTime?
-  expiresAt   DateTime?
-  revokedAt   DateTime?
-  createdAt   DateTime  @default(now())
-
-  @@index([tokenHash])
-  @@map("api_tokens")
-}
+// B07: ApiToken model removed — see FIXES.md. The table is dropped by the
+// schema sync; if you ever want partner integrations back, prefer scoped
+// OAuth2 (per-app credentials, refresh + revocation primitives) over the
+// long-lived bearer-token pattern that lived here.
 
 // ─── Media Library ────────────────────────────────────────────────────────────
 
@@ -4018,4 +4142,162 @@ model StaffMeal {
   @@index([staffId, consumedAt])
   @@index([conceptId, consumedAt])
   @@map("staff_meals")
+}
+
+// ─── Kitchen Staff Management ─────────────────────────────────────────────────
+
+enum KitchenStaffRole {
+  head_chef
+  sous_chef
+  cdp
+  demi_chef
+  commis
+  kitchen_helper
+  dishwasher
+  baker
+  tandoor_grill_cook
+}
+
+enum SkillLevel {
+  unskilled
+  semi_skilled
+  skilled
+  highly_skilled
+}
+
+enum EmploymentType {
+  permanent
+  probationary
+  temporary
+  contract
+}
+
+enum KitchenStaffStatus {
+  active
+  on_leave
+  terminated
+}
+
+model KitchenStaff {
+  id                    String             @id @default(uuid())
+  tenantId              String
+  fullName              String
+  cnic                  String             // XXXXX-XXXXXXX-X
+  phone                 String
+  kitchenRole           KitchenStaffRole
+  skillLevel            SkillLevel
+  employmentType        EmploymentType
+  dateJoined            DateTime
+  dateLeft              DateTime?
+  monthlySalaryCash     Int                // PKR
+  mealsProvided         Boolean            @default(false)
+  accommodationProvided Boolean            @default(false)
+  accommodationValue    Int                @default(0)
+  eobiRegistered        Boolean            @default(false)
+  sessiRegistered       Boolean            @default(false)
+  bankAccount           String?
+  emergencyContact      String
+  status                KitchenStaffStatus @default(active)
+  createdAt             DateTime           @default(now())
+  updatedAt             DateTime           @updatedAt
+
+  kitchenShifts        KitchenShift[]
+  payrollRuns          KitchenPayrollRun[]
+  complianceViolations ComplianceViolation[]
+
+  @@unique([tenantId, cnic])
+  @@index([tenantId, status])
+  @@map("kitchen_staff")
+}
+
+model KitchenShift {
+  id                String   @id @default(uuid())
+  staffId           String
+  date              DateTime // date portion only; time ignored
+  scheduledStart    String   // "HH:MM"
+  scheduledEnd      String   // "HH:MM"
+  actualStart       String?
+  actualEnd         String?
+  breakMinutes      Int      @default(60)
+  isWeeklyOff       Boolean  @default(false)
+  isFestivalHoliday Boolean  @default(false)
+  notes             String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  staff KitchenStaff @relation(fields: [staffId], references: [id], onDelete: Cascade)
+
+  @@unique([staffId, date])
+  @@index([date])
+  @@map("kitchen_shifts")
+}
+
+model WageSettings {
+  id                   String   @id @default(uuid())
+  tenantId             String   @unique
+  minWageUnskilled     Int      @default(40000)
+  minWageSemiSkilled   Int      @default(41280)
+  minWageSkilled       Int      @default(48910)
+  minWageHighlySkilled Int      @default(50868)
+  workingDaysPerMonth  Int      @default(26)
+  paidHoursPerDay      Int      @default(8)
+  otMultiplierRegular  Float    @default(2.0)
+  otMultiplierFestival Float    @default(3.0)
+  maxOtHoursPerWeek    Int      @default(12)
+  maxOtHoursPerYear    Int      @default(624)
+  eobiEmployerPct      Float    @default(0.01)
+  sessiEmployerPct     Float    @default(0.06)
+  updatedAt            DateTime @updatedAt
+
+  @@map("wage_settings")
+}
+
+model KitchenPayrollRun {
+  id                 String   @id @default(uuid())
+  staffId            String
+  tenantId           String
+  month              Int
+  year               Int
+  baseSalary         Int
+  regularHoursWorked Float    @default(0)
+  otHoursRegular     Float    @default(0)
+  otHoursFestival    Float    @default(0)
+  hourlyRate         Float
+  otPayRegular       Float    @default(0)
+  otPayFestival      Float    @default(0)
+  mealValue          Int      @default(0)
+  accommodationValue Int      @default(0)
+  grossPay           Float
+  eobiEmployee       Float    @default(0)
+  eobiEmployer       Float    @default(0)
+  sessiEmployer      Float    @default(0)
+  incomeTaxWithheld  Float    @default(0)
+  netPay             Float
+  trueCostToCompany  Float
+  status             String   @default("draft")
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  staff KitchenStaff @relation(fields: [staffId], references: [id], onDelete: Cascade)
+
+  @@unique([staffId, month, year])
+  @@index([tenantId, year, month])
+  @@map("kitchen_payroll_runs")
+}
+
+model ComplianceViolation {
+  id          String    @id @default(uuid())
+  staffId     String
+  tenantId    String
+  type        String    // 'below_min_wage'|'ot_week_exceeded'|'ot_ytd_exceeded'|'no_weekly_off'|'shift_too_long'|'insufficient_breaks'|'consecutive_days'
+  description String
+  detectedAt  DateTime  @default(now())
+  resolvedAt  DateTime?
+  resolvedBy  String?
+
+  staff KitchenStaff @relation(fields: [staffId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, detectedAt(sort: Desc)])
+  @@index([staffId])
+  @@map("compliance_violations")
 }

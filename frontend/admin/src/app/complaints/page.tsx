@@ -1,5 +1,5 @@
 'use client'
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../lib/api'
 import Link from 'next/link'
@@ -47,6 +47,41 @@ const PRIORITY_COLORS: Record<string, string> = {
 
 const CATEGORIES = ['wrong_item', 'missing_item', 'quality', 'service', 'delivery', 'other']
 
+const RESOLUTION_TEMPLATES = [
+  'Refund issued to customer',
+  'Replacement dispatched',
+  'Apologies sent + 10% off next order',
+  'Escalated to senior management',
+  'Customer contacted and issue resolved',
+]
+
+function AgeBadge({ createdAt, now }: { createdAt: string; now: number }) {
+  const diffMs = now - new Date(createdAt).getTime()
+  const diffMins = Math.floor(diffMs / 60000)
+  const diffHours = diffMs / 3600000
+  const diffDays = Math.floor(diffHours / 24)
+
+  if (diffMins < 120) {
+    return (
+      <span className="text-xs text-kds-subtext whitespace-nowrap">
+        {diffMins < 1 ? 'just now' : `${diffMins}m ago`}
+      </span>
+    )
+  }
+  if (diffHours < 24) {
+    return (
+      <span className="text-xs font-semibold text-kds-amber whitespace-nowrap">
+        ⚠ {Math.floor(diffHours)}h
+      </span>
+    )
+  }
+  return (
+    <span className="text-xs font-bold text-kds-red whitespace-nowrap">
+      🔥 {diffDays}d — overdue
+    </span>
+  )
+}
+
 export default function ComplaintsPage() {
   const qc = useQueryClient()
   const [statusFilter, setStatusFilter] = useState('')
@@ -60,6 +95,27 @@ export default function ComplaintsPage() {
     conceptId: '', title: '', description: '', category: 'quality',
     priority: 'medium', orderId: '',
   })
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [now, setNow] = useState(Date.now())
+  const [templateOpen, setTemplateOpen] = useState<string | null>(null)
+  const templateRef = useRef<HTMLDivElement>(null)
+
+  // Refresh age badges every minute
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 60000)
+    return () => clearInterval(t)
+  }, [])
+
+  // Close template dropdown on outside click
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (templateRef.current && !templateRef.current.contains(e.target as Node)) {
+        setTemplateOpen(null)
+      }
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [])
 
   const { data: concepts = [] } = useQuery({
     queryKey: ['concepts'],
@@ -97,11 +153,26 @@ export default function ComplaintsPage() {
     },
   })
 
+  async function bulkUpdate(status: string) {
+    await Promise.all([...selectedIds].map(id => api.patch(`/complaints/${id}`, { status })))
+    setSelectedIds(new Set())
+    void qc.invalidateQueries({ queryKey: ['complaints'] })
+  }
+
+  function toggleSelect(id: string) {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
   const complaints = data?.complaints ?? []
   const stats = data?.stats ?? { total: 0, open: 0, resolved: 0, inProgress: 0 }
 
   return (
-    <div className="min-h-screen bg-kds-bg p-6">
+    <div className="min-h-screen bg-kds-bg p-6 pb-24">
       <header className="mb-6 flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-black text-kds-text mt-1">Order Complaints</h1>
@@ -195,9 +266,15 @@ export default function ComplaintsPage() {
           <option value="">All priorities</option>
           {['urgent', 'high', 'medium', 'low'].map((p) => <option key={p} value={p}>{p}</option>)}
         </select>
+        {selectedIds.size > 0 && (
+          <button onClick={() => setSelectedIds(new Set())}
+            className="rounded-lg border border-kds-border text-kds-subtext px-3 py-2 text-xs hover:text-kds-red hover:border-kds-red transition-colors">
+            Clear selection ({selectedIds.size})
+          </button>
+        )}
       </div>
 
-      {/* Complaints table */}
+      {/* Complaints list */}
       <div className="rounded-xl border border-kds-border overflow-hidden">
         {isLoading && <p className="px-4 py-6 text-center text-kds-subtext">Loading…</p>}
         {!isLoading && complaints.length === 0 && (
@@ -206,8 +283,15 @@ export default function ComplaintsPage() {
         {complaints.map((c) => (
           <div key={c.id} className="px-4 py-4 border-b border-kds-border last:border-0 space-y-2">
             <div className="flex items-start gap-3 flex-wrap">
+              {/* Checkbox */}
+              <input
+                type="checkbox"
+                checked={selectedIds.has(c.id)}
+                onChange={() => toggleSelect(c.id)}
+                className="mt-2 h-3.5 w-3.5 shrink-0 cursor-pointer accent-kds-green"
+              />
               {/* Priority dot */}
-              <div className={`h-2 w-2 rounded-full mt-2 shrink-0 ${
+              <div className={`h-2 w-2 rounded-full mt-2.5 shrink-0 ${
                 c.priority === 'urgent' ? 'bg-kds-red' :
                 c.priority === 'high' ? 'bg-kds-amber' :
                 c.priority === 'medium' ? 'bg-kds-text' : 'bg-kds-border'
@@ -219,11 +303,25 @@ export default function ComplaintsPage() {
                     {c.status.replace('_', ' ')}
                   </span>
                   <span className={`text-xs ${PRIORITY_COLORS[c.priority]}`}>{c.priority}</span>
+                  <AgeBadge createdAt={c.createdAt} now={now} />
                 </div>
-                <div className="flex gap-3 mt-0.5 flex-wrap">
+                <div className="flex gap-3 mt-0.5 flex-wrap items-center">
                   <span className="text-xs text-kds-subtext">{c.concept.name}</span>
                   <span className="text-xs text-kds-subtext capitalize">{c.category.replace('_', ' ')}</span>
-                  {c.order?.customerName && <span className="text-xs text-kds-subtext">{c.order.customerName}</span>}
+                  {c.order?.customer ? (
+                    <Link href={`/crm/${c.order.customer.id}`} className="text-xs text-blue-400 hover:text-blue-300 hover:underline transition-colors">
+                      {c.order.customer.name}
+                    </Link>
+                  ) : c.order?.customerName ? (
+                    <Link href={`/crm?search=${encodeURIComponent(c.order.customerName)}`} className="text-xs text-blue-400 hover:text-blue-300 hover:underline transition-colors">
+                      {c.order.customerName}
+                    </Link>
+                  ) : null}
+                  {c.orderId && (
+                    <Link href={`/orders?search=${c.orderId.slice(0, 8)}`} className="text-xs text-kds-green hover:text-kds-green/80 hover:underline transition-colors font-mono">
+                      #{c.orderId.slice(-6).toUpperCase()} →
+                    </Link>
+                  )}
                   <span className="text-xs text-kds-subtext">{new Date(c.createdAt).toLocaleDateString()}</span>
                 </div>
                 <p className="text-sm text-kds-subtext mt-1">{c.description}</p>
@@ -233,10 +331,6 @@ export default function ComplaintsPage() {
               </div>
               {/* Actions */}
               <div className="flex gap-2 shrink-0">
-                {/* Reach out via email + WhatsApp — opens a CustomerConversation
-                    pre-filled with the complaint context. Only enabled when
-                    the order has a linked customer (anonymous orders have only
-                    a name string, no contact info to reach them on). */}
                 {c.order?.customer && (c.order.customer.email || c.order.customer.phone) && (
                   <button onClick={() => setReachingOut(c)}
                     className="rounded-lg border border-blue-400 text-blue-400 px-3 py-1 text-xs hover:bg-blue-400/10 transition-colors">
@@ -251,7 +345,7 @@ export default function ComplaintsPage() {
                         Start
                       </button>
                     )}
-                    <button onClick={() => { setResolving(c.id); setResolution('') }}
+                    <button onClick={() => { setResolving(c.id); setResolution(''); setTemplateOpen(null) }}
                       className="rounded-lg border border-kds-green text-kds-green px-3 py-1 text-xs hover:bg-kds-green/10 transition-colors">
                       Resolve
                     </button>
@@ -266,17 +360,44 @@ export default function ComplaintsPage() {
               </div>
             </div>
 
-            {/* Resolve inline */}
+            {/* Resolve inline with template dropdown */}
             {resolving === c.id && (
-              <div className="flex gap-2 mt-2 ml-5">
-                <input value={resolution} onChange={(e) => setResolution(e.target.value)}
-                  placeholder="Describe the resolution…" className={`${inp} flex-1`} />
+              <div className="flex gap-2 mt-2 ml-8 flex-wrap items-start">
+                <div className="flex-1 min-w-[200px] space-y-1.5">
+                  <div className="flex gap-2 items-center">
+                    <input value={resolution} onChange={(e) => setResolution(e.target.value)}
+                      placeholder="Describe the resolution…" className={`${inp} flex-1`} />
+                    {/* Templates dropdown */}
+                    <div className="relative" ref={templateRef}>
+                      <button
+                        type="button"
+                        onClick={() => setTemplateOpen(templateOpen === c.id ? null : c.id)}
+                        className="rounded-lg border border-kds-border text-kds-subtext px-3 py-2 text-xs hover:border-kds-green hover:text-kds-green transition-colors whitespace-nowrap">
+                        Templates ▾
+                      </button>
+                      {templateOpen === c.id && (
+                        <div className="absolute right-0 top-full mt-1 z-30 w-64 rounded-xl border border-kds-border bg-kds-card shadow-xl overflow-hidden">
+                          {RESOLUTION_TEMPLATES.map((tpl) => (
+                            <button
+                              key={tpl}
+                              type="button"
+                              onClick={() => { setResolution(tpl); setTemplateOpen(null) }}
+                              className="w-full text-left px-4 py-2.5 text-xs text-kds-text hover:bg-kds-green/10 hover:text-kds-green transition-colors border-b border-kds-border last:border-0">
+                              {tpl}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
                 <button onClick={() => updateMutation.mutate({ id: c.id, body: { status: 'resolved', resolution } })}
                   disabled={!resolution || updateMutation.isPending}
-                  className="rounded-lg bg-kds-green text-black font-bold px-3 py-1.5 text-xs disabled:opacity-50">
+                  className="rounded-lg bg-kds-green text-black font-bold px-3 py-1.5 text-xs disabled:opacity-50 self-start mt-0.5">
                   Save
                 </button>
-                <button onClick={() => setResolving(null)} className="rounded-lg border border-kds-border text-kds-subtext px-3 py-1.5 text-xs">
+                <button onClick={() => { setResolving(null); setTemplateOpen(null) }}
+                  className="rounded-lg border border-kds-border text-kds-subtext px-3 py-1.5 text-xs self-start mt-0.5">
                   Cancel
                 </button>
               </div>
@@ -284,6 +405,29 @@ export default function ComplaintsPage() {
           </div>
         ))}
       </div>
+
+      {/* Bulk action floating bar */}
+      {selectedIds.size >= 2 && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 flex items-center gap-3 px-5 py-3 rounded-2xl shadow-2xl"
+          style={{ background: '#1a1d27', border: '1px solid rgba(255,255,255,0.12)', boxShadow: '0 8px 32px rgba(0,0,0,0.5)' }}>
+          <span className="text-sm font-semibold text-kds-text whitespace-nowrap">
+            {selectedIds.size} selected
+          </span>
+          <span className="text-kds-border">·</span>
+          <button onClick={() => void bulkUpdate('in_progress')}
+            className="rounded-lg border border-kds-amber text-kds-amber px-3 py-1.5 text-xs font-semibold hover:bg-kds-amber/10 transition-colors">
+            In Progress
+          </button>
+          <button onClick={() => void bulkUpdate('resolved')}
+            className="rounded-lg border border-kds-green text-kds-green px-3 py-1.5 text-xs font-semibold hover:bg-kds-green/10 transition-colors">
+            Resolved
+          </button>
+          <button onClick={() => void bulkUpdate('closed')}
+            className="rounded-lg border border-kds-border text-kds-subtext px-3 py-1.5 text-xs font-semibold hover:border-kds-red hover:text-kds-red transition-colors">
+            Close
+          </button>
+        </div>
+      )}
 
       {reachingOut && reachingOut.order?.customer && (
         <ReachOutModal

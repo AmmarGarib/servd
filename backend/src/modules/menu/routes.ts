@@ -166,7 +166,12 @@ export async function menuRoutes(fastify: FastifyInstance) {
 
       const updated = await prisma.menuItem.update({
         where: { id: req.params.id },
-        data: { isAvailable },
+        data: {
+          isAvailable,
+          // Clear sync timestamp so the inventorySync worker picks up the
+          // change on its next tick (both directions — 86 and un-86).
+          lastSyncedAt: null,
+        },
       })
 
       // Broadcast 86 event to all KDS clients

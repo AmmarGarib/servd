@@ -18,6 +18,10 @@ const updateTableSchema = z.object({
   label: z.string().optional(),
   capacity: z.number().int().min(1).optional(),
   floorSection: z.string().optional(),
+  // Occupancy fields — set when seating a party, cleared on checkout
+  currentPartySize: z.number().int().min(1).nullable().optional(),
+  currentOrderId: z.string().uuid().nullable().optional(),
+  estimatedDepartureAt: z.string().datetime().nullable().optional(),
 })
 
 export async function tableRoutes(fastify: FastifyInstance) {
@@ -40,7 +44,7 @@ export async function tableRoutes(fastify: FastifyInstance) {
     },
   )
 
-  // PATCH /tables/:id — update status or details
+  // PATCH /tables/:id — update status, details, or live occupancy
   fastify.patch<{ Params: { id: string } }>(
     '/:id',
     { preHandler: requireAuth(...ALL_STAFF) },
@@ -48,7 +52,17 @@ export async function tableRoutes(fastify: FastifyInstance) {
       const body = updateTableSchema.parse(req.body)
       const table = await prisma.table.findFirst({ where: { id: req.params.id, deletedAt: null } })
       if (!table) throw new NotFoundError('Table', req.params.id)
-      return prisma.table.update({ where: { id: req.params.id }, data: body })
+      return prisma.table.update({
+        where: { id: req.params.id },
+        data: {
+          ...body,
+          estimatedDepartureAt: body.estimatedDepartureAt
+            ? new Date(body.estimatedDepartureAt)
+            : body.estimatedDepartureAt === null
+            ? null
+            : undefined,
+        },
+      })
     },
   )
 

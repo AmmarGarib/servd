@@ -1,6 +1,7 @@
 'use client'
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import Link from 'next/link'
 import { api } from '../../../lib/api'
 
 interface Supplier {
@@ -120,6 +121,7 @@ export default function ProcurementMonitorPage() {
     <div className="min-h-screen bg-kds-bg p-6">
       <div className="mb-6 flex items-center justify-between">
         <div>
+          <Link href="/procurement" className="text-xs text-kds-subtext hover:text-kds-text mb-0.5 inline-block">← Procurement</Link>
           <h1 className="text-2xl font-black text-kds-text">Procurement Monitor</h1>
           <p className="text-sm text-kds-subtext mt-0.5">Track all procurement staff, suppliers, and orders</p>
         </div>

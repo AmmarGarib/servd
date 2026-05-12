@@ -1,6 +1,22 @@
 // API client for servd operations frontend
+//
+// F43: read tokens through the auth store. zustand's `getState()` works in any
+// context (component, hook, plain TS module) so we don't need to keep two
+// copies of the token — one in the store and a mirror in localStorage. The
+// store's persist middleware already writes to localStorage under its own key
+// `servd-auth`.
+
+import { useAuthStore } from '../store/auth'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
+
+function getToken(): string | null {
+  return useAuthStore.getState().token
+}
+
+function getRefreshToken(): string | null {
+  return useAuthStore.getState().refreshToken
+}
 
 export class ApiError extends Error {
   constructor(
@@ -18,7 +34,7 @@ async function refreshAccessToken(): Promise<string | null> {
   if (_refreshing) return _refreshing
   _refreshing = (async () => {
     try {
-      const refreshToken = typeof window !== 'undefined' ? localStorage.getItem('servd_refresh_token') : null
+      const refreshToken = getRefreshToken()
       if (!refreshToken) return null
       const res = await fetch(`${API_URL}/api/v1/auth/refresh`, {
         method: 'POST',
@@ -27,7 +43,10 @@ async function refreshAccessToken(): Promise<string | null> {
       })
       if (!res.ok) return null
       const data = (await res.json()) as { accessToken: string }
-      if (typeof window !== 'undefined') localStorage.setItem('servd_token', data.accessToken)
+      // F43: write the new access token back through the store so persistence
+      // and any subscribers (e.g. the socket reconnect logic) see the update.
+      const cur = useAuthStore.getState()
+      if (cur.user) cur.setAuth(cur.user, data.accessToken, refreshToken)
       return data.accessToken
     } finally {
       _refreshing = null
@@ -93,7 +112,7 @@ function describeIntent(method: string, path: string): string {
 }
 
 async function request<T>(path: string, options: RequestInit = {}, retry = true): Promise<T> {
-  const token = typeof window !== 'undefined' ? localStorage.getItem('servd_token') : null
+  const token = getToken()
   const method = (options.method ?? 'GET').toUpperCase()
 
   // Portfolio safety net: pause and prompt for a target company before
@@ -117,11 +136,9 @@ async function request<T>(path: string, options: RequestInit = {}, retry = true)
     const newToken = await refreshAccessToken()
     if (newToken) return request<T>(path, options, false)
     // Refresh failed — clear auth and redirect to login
-    if (typeof window !== 'undefined') {
-      localStorage.removeItem('servd_token')
-      localStorage.removeItem('servd_refresh_token')
-      window.location.href = '/login'
-    }
+    // F43: clear via the store so all subscribers (UI, socket) react.
+    useAuthStore.getState().clearAuth()
+    if (typeof window !== 'undefined') window.location.href = '/login'
     throw new ApiError(401, 'UNAUTHORIZED', 'Session expired')
   }
 

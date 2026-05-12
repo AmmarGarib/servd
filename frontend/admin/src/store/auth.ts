@@ -23,15 +23,22 @@ export const useAuthStore = create<AuthState>()(
       user: null,
       token: null,
       refreshToken: null,
+      // F43: zustand-persist already mirrors `token` to localStorage under
+      // `servd-auth`. The duplicate mirror at `servd_token` was creating split
+      // sources of truth — code that read from one and code that wrote to the
+      // other could disagree across refresh-token rotations. We remove the
+      // legacy key on setAuth so any stale value goes away on next login.
       setAuth: (user, token, refreshToken) => {
         if (typeof window !== 'undefined') {
-          localStorage.setItem('servd_token', token)
-          if (refreshToken) localStorage.setItem('servd_refresh_token', refreshToken)
+          localStorage.removeItem('servd_token')           // cleanup legacy
+          localStorage.removeItem('servd_refresh_token')   // cleanup legacy
         }
         set({ user, token, refreshToken: refreshToken ?? null })
       },
       clearAuth: () => {
         if (typeof window !== 'undefined') {
+          // Belt-and-braces: nuke any pre-F43 keys too so a half-logged-out
+          // session doesn't linger after the user clicks "sign out".
           localStorage.removeItem('servd_token')
           localStorage.removeItem('servd_refresh_token')
         }

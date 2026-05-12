@@ -18,6 +18,25 @@ interface AccountInfo {
   loyaltyAccount: { pointsBalance: number } | null
 }
 
+interface CustomerAddress {
+  id: string; label: string; address: string; lat?: number | null; lng?: number | null; isDefault: boolean
+}
+
+type PaymentMethod = 'cash' | 'card' | 'jazzcash' | 'easypaisa' | 'keenu'
+
+const PAYMENT_OPTIONS: Array<{
+  id: PaymentMethod
+  icon: string
+  label: string
+  sub: string
+  phoneRequired: boolean
+}> = [
+  { id: 'cash',      icon: '💵', label: 'Cash on Delivery',  sub: 'Pay when you receive your order', phoneRequired: false },
+  { id: 'jazzcash',  icon: '📱', label: 'JazzCash Wallet',   sub: 'Enter your JazzCash number',      phoneRequired: true  },
+  { id: 'easypaisa', icon: '📲', label: 'EasyPaisa',         sub: 'Enter your EasyPaisa number',     phoneRequired: true  },
+  { id: 'keenu',     icon: '💳', label: 'Keenu (Card)',       sub: "You'll be redirected to Keenu after placing your order", phoneRequired: false },
+]
+
 export default function CheckoutPage() {
   const { concept: slug } = useParams<{ concept: string }>()
   const router = useRouter()
@@ -47,15 +66,25 @@ export default function CheckoutPage() {
 
   const [account,    setAccount]    = useState<AccountInfo | null>(null)
   const [promoCode,  setPromoCode]  = useState('')
+  const [promoStatus,       setPromoStatus]       = useState<'idle' | 'checking' | 'valid' | 'invalid'>('idle')
+  const [promoDiscountCents, setPromoDiscountCents] = useState(0)
+  const [promoMessage,      setPromoMessage]      = useState('')
   const [useWallet,  setUseWallet]  = useState(false)
   const [loyaltyPts, setLoyaltyPts] = useState(0)
 
   // Fulfilment type. Curbside is a customer convenience — they tap "I'm
   // here" on arrival via /[concept]/order/[id], staff sees the queue at
   // /orders/curbside in admin and runs the bag out.
-  const [fulfilmentType,   setFulfilmentType]   = useState<'pickup' | 'curbside'>('pickup')
+  const [fulfilmentType,   setFulfilmentType]   = useState<'pickup' | 'curbside' | 'delivery'>('pickup')
   const [curbsideVehicle,  setCurbsideVehicle]  = useState('')
   const [curbsidePlate,    setCurbsidePlate]    = useState('')
+  const [deliveryAddress,  setDeliveryAddress]  = useState('')
+  const [deliveryNotes,    setDeliveryNotes]    = useState('')
+
+  // Saved addresses for logged-in users
+  const [savedAddresses,      setSavedAddresses]      = useState<CustomerAddress[]>([])
+  const [selectedAddressId,   setSelectedAddressId]   = useState<string | null>(null)
+  const [showNewAddressInput, setShowNewAddressInput] = useState(false)
 
   // Tip the rider — preset chips + custom amount. Cents.
   const [tipMode,   setTipMode]   = useState<'none' | '5' | '10' | '15' | '20' | 'custom'>('10')
@@ -64,14 +93,34 @@ export default function CheckoutPage() {
   const tipPctTable: Record<string, number> = { none: 0, '5': 0.05, '10': 0.10, '15': 0.15, '20': 0.20 }
   const _orderPlaced = useRef(false)
 
+  // Payment method
+  const [paymentMethod,  setPaymentMethod]  = useState<PaymentMethod>('cash')
+  const [paymentPhone,   setPaymentPhone]   = useState('')
+
+  // Gift card balance check
+  const [giftCardStatus,  setGiftCardStatus]  = useState<'idle' | 'checking' | 'valid' | 'invalid'>('idle')
+  const [giftCardBalance, setGiftCardBalance] = useState(0)
+
   useEffect(() => {
     if (!token) return
-    fetch(`${API_URL}/api/v1/storefront/account`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-      .then(r => r.ok ? r.json() as Promise<AccountInfo> : null)
-      .then(data => { if (data) setAccount(data) })
-      .catch(() => {})
+    Promise.all([
+      fetch(`${API_URL}/api/v1/storefront/account`, {
+        headers: { Authorization: `Bearer ${token}` },
+      }).then(r => r.ok ? r.json() as Promise<AccountInfo> : null),
+      fetch(`${API_URL}/api/v1/storefront/addresses`, {
+        headers: { Authorization: `Bearer ${token}` },
+      }).then(r => r.ok ? r.json() as Promise<CustomerAddress[]> : []),
+    ]).then(([acct, addrs]) => {
+      if (acct) setAccount(acct)
+      const addresses = addrs ?? []
+      setSavedAddresses(addresses)
+      // Pre-select default address
+      const defaultAddr = addresses.find((a: CustomerAddress) => a.isDefault)
+      if (defaultAddr) {
+        setSelectedAddressId(defaultAddr.id)
+        setDeliveryAddress(defaultAddr.address)
+      }
+    }).catch(() => {})
   }, [token])
 
   useEffect(() => {
@@ -110,10 +159,79 @@ export default function CheckoutPage() {
   const tipCents         = tipMode === 'custom'
     ? Math.max(0, Math.round((parseFloat(customTip) || 0) * 100))
     : Math.round(totalCents() * (tipPctTable[tipMode] ?? 0))
-  const displayTotal     = Math.max(0, totalCents() - loyaltyDeduction - walletDeduction) + tipCents
+  // Gift card deduction — capped at order total
+  const giftCardDeduction = giftCardStatus === 'valid'
+    ? Math.min(giftCardBalance, Math.max(0, totalCents() - loyaltyDeduction - walletDeduction - promoDiscountCents))
+    : 0
+  const displayTotal     = Math.max(0, totalCents() - loyaltyDeduction - walletDeduction - promoDiscountCents - giftCardDeduction) + tipCents
+
+  const applyPromo = async () => {
+    const code = promoCode.trim().toUpperCase()
+    if (!code) return
+    setPromoStatus('checking')
+    setPromoDiscountCents(0)
+    setPromoMessage('')
+    try {
+      const params = new URLSearchParams({
+        code,
+        conceptSlug: slug,
+        subtotalCents: String(totalCents()),
+      })
+      const res = await fetch(`${API_URL}/api/v1/storefront/promo-preview?${params.toString()}`)
+      const data = await res.json() as
+        | { valid: true;  discountCents: number; description: string }
+        | { valid: false; reason: string }
+      if (data.valid) {
+        setPromoStatus('valid')
+        setPromoDiscountCents(data.discountCents)
+        setPromoMessage(data.description)
+      } else {
+        setPromoStatus('invalid')
+        setPromoMessage(data.reason)
+      }
+    } catch {
+      setPromoStatus('invalid')
+      setPromoMessage('Could not validate code. Try again.')
+    }
+  }
+
+  const checkGiftCardBalance = async () => {
+    const code = giftCard.trim().toUpperCase()
+    if (!code) return
+    setGiftCardStatus('checking')
+    setGiftCardBalance(0)
+    try {
+      const res = await fetch(`${API_URL}/api/v1/gift-cards/balance/${encodeURIComponent(code)}`)
+      if (!res.ok) {
+        setGiftCardStatus('invalid')
+        return
+      }
+      const data = await res.json() as { balanceCents: number; status: string; expiresAt?: string | null }
+      if (data.status !== 'active') {
+        setGiftCardStatus('invalid')
+        return
+      }
+      if (data.expiresAt && new Date(data.expiresAt) < new Date()) {
+        setGiftCardStatus('invalid')
+        return
+      }
+      setGiftCardBalance(data.balanceCents)
+      setGiftCardStatus('valid')
+    } catch {
+      setGiftCardStatus('invalid')
+    }
+  }
 
   const handlePlaceOrder = async () => {
     setError('')
+    if (fulfilmentType === 'delivery' && !deliveryAddress.trim()) {
+      setError('Please enter your delivery address')
+      return
+    }
+    if ((paymentMethod === 'jazzcash' || paymentMethod === 'easypaisa') && !paymentPhone.trim()) {
+      setError(`Please enter your ${paymentMethod === 'jazzcash' ? 'JazzCash' : 'EasyPaisa'} mobile number`)
+      return
+    }
     setLoading(true)
     try {
       if (token) {
@@ -123,7 +241,10 @@ export default function CheckoutPage() {
           body: JSON.stringify({
             conceptSlug: slug,
             type: fulfilmentType,
-            deliveryAddress: notes.trim() || undefined,
+            ...(fulfilmentType === 'delivery' && {
+              deliveryAddress: deliveryAddress.trim(),
+              ...(deliveryNotes.trim() && { notes: deliveryNotes.trim() }),
+            }),
             ...(fulfilmentType === 'curbside' && {
               curbsideVehicle: curbsideVehicle.trim(),
               ...(curbsidePlate.trim() && { curbsidePlate: curbsidePlate.trim() }),
@@ -131,14 +252,21 @@ export default function CheckoutPage() {
             promoCode: promoCode.trim() || undefined,
             useWallet,
             loyaltyPointsToRedeem: loyaltyPts,
-            paymentGateway: 'cash',
+            paymentGateway: paymentMethod,
+            ...(paymentPhone.trim() && (paymentMethod === 'jazzcash' || paymentMethod === 'easypaisa') && {
+              paymentPhone: paymentPhone.trim(),
+            }),
             tipCents,
             giftCardCode: giftCard.trim().toUpperCase() || undefined,
             items: items.map(i => ({
               menuItemId: i.menuItemId,
               quantity: i.quantity,
               notes: i.notes,
-              modifiers: [],
+              modifiers: (i.modifiers ?? []).map(m => ({
+                modifierId: m.modifierId ?? '',
+                name: m.name,
+                priceDeltaCents: m.priceDeltaCents,
+              })).filter(m => m.modifierId),
             })),
           }),
         })
@@ -149,7 +277,7 @@ export default function CheckoutPage() {
         const order = await res.json() as { id: string }
         if (promoCode.trim()) trackPromoApplied(promoCode.trim(), slug, subtotalCents() - displayTotal)
         _orderPlaced.current = true
-        trackOrderPlaced(order.id, slug, displayTotal, 'cash')
+        trackOrderPlaced(order.id, slug, displayTotal, paymentMethod)
         clearCart()
         router.push(`/${slug}/order/${order.id}`)
       } else {
@@ -187,6 +315,13 @@ export default function CheckoutPage() {
       setLoading(false)
     }
   }
+
+  // CTA label that reflects payment method
+  const ctaLabel = loading
+    ? 'Placing order…'
+    : paymentMethod === 'keenu'
+      ? 'Continue to Keenu'
+      : 'Place Order'
 
   return (
     <main className="min-h-screen pb-32 relative overflow-hidden" style={{ background: 'transparent' }}>
@@ -234,11 +369,11 @@ export default function CheckoutPage() {
               </div>
             ))}
           </div>
-          {/* How are you picking up? */}
+          {/* How are you getting it? */}
           <div className="rounded-xl p-3.5 mb-3" style={{ background: 'rgba(99,102,241,0.06)', border: '1px solid rgba(99,102,241,0.2)' }}>
             <p className="text-xs font-bold tracking-wider uppercase mb-2" style={{ color: '#4338ca' }}>How are you getting it?</p>
             <div className="flex gap-2 mb-2">
-              {(['pickup', 'curbside'] as const).map((m) => (
+              {(['pickup', 'curbside', 'delivery'] as const).map((m) => (
                 <button
                   key={m}
                   type="button"
@@ -247,7 +382,7 @@ export default function CheckoutPage() {
                   style={fulfilmentType === m
                     ? { background: '#6366f1', color: '#fff', border: '1px solid #6366f1' }
                     : { background: '#fff', color: 'rgba(24,22,15,0.65)', border: '1px solid rgba(0,0,0,0.08)' }}>
-                  {m === 'pickup' ? '🚶 Pickup' : '🚗 Curbside'}
+                  {m === 'pickup' ? '🚶 Pickup' : m === 'curbside' ? '🚗 Curbside' : '🛵 Delivery'}
                 </button>
               ))}
             </div>
@@ -266,6 +401,88 @@ export default function CheckoutPage() {
                   value={curbsidePlate} onChange={(e) => setCurbsidePlate(e.target.value)}
                   placeholder="License plate (optional)"
                   maxLength={20}
+                  className="w-full rounded-lg px-3 py-2 text-sm"
+                  style={{ background: '#fff', border: '1px solid rgba(0,0,0,0.08)' }} />
+              </div>
+            )}
+            {fulfilmentType === 'delivery' && (
+              <div className="space-y-2 mt-2">
+                <p className="text-[11px]" style={{ color: 'rgba(24,22,15,0.55)' }}>
+                  We&rsquo;ll bring it to your door.
+                </p>
+
+                {/* Saved address pills — only for logged-in users who have addresses */}
+                {token && savedAddresses.length > 0 && (
+                  <div className="space-y-1.5">
+                    {savedAddresses.map((addr) => {
+                      const isSelected = selectedAddressId === addr.id && !showNewAddressInput
+                      return (
+                        <button
+                          key={addr.id}
+                          type="button"
+                          onClick={() => {
+                            setSelectedAddressId(addr.id)
+                            setDeliveryAddress(addr.address)
+                            setShowNewAddressInput(false)
+                          }}
+                          className="w-full flex items-center gap-2.5 rounded-lg px-3 py-2 text-left transition-all"
+                          style={isSelected
+                            ? { background: 'rgba(99,102,241,0.1)', border: '1.5px solid #6366f1' }
+                            : { background: '#fff', border: '1px solid rgba(0,0,0,0.08)' }}>
+                          <span className="text-base shrink-0">📍</span>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-bold text-xs" style={{ color: '#18160f' }}>{addr.label}</span>
+                              {addr.isDefault && (
+                                <span className="text-[9px] font-black uppercase tracking-wide px-1.5 py-0.5 rounded-full"
+                                  style={{ background: 'rgba(99,102,241,0.12)', color: '#4338ca' }}>Default</span>
+                              )}
+                            </div>
+                            <p className="text-[11px] truncate mt-0.5" style={{ color: 'rgba(24,22,15,0.5)' }}>{addr.address}</p>
+                          </div>
+                          {isSelected && (
+                            <div className="h-4 w-4 rounded-full shrink-0 flex items-center justify-center"
+                              style={{ background: '#6366f1' }}>
+                              <svg width="8" height="8" viewBox="0 0 8 8" fill="none">
+                                <path d="M1.5 4L3.5 6L6.5 2" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                              </svg>
+                            </div>
+                          )}
+                        </button>
+                      )
+                    })}
+                    {/* Enter new address option */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowNewAddressInput(true)
+                        setSelectedAddressId(null)
+                        setDeliveryAddress('')
+                      }}
+                      className="w-full flex items-center gap-2 rounded-lg px-3 py-2 text-left transition-all"
+                      style={showNewAddressInput
+                        ? { background: 'rgba(99,102,241,0.1)', border: '1.5px solid #6366f1' }
+                        : { background: '#fff', border: '1px dashed rgba(0,0,0,0.12)' }}>
+                      <span className="text-base shrink-0">✏️</span>
+                      <span className="text-xs font-semibold" style={{ color: 'rgba(24,22,15,0.65)' }}>Enter a different address</span>
+                    </button>
+                  </div>
+                )}
+
+                {/* Show text input for: guests, or when "new address" is selected, or no saved addresses */}
+                {(!token || showNewAddressInput || savedAddresses.length === 0) && (
+                  <input
+                    value={deliveryAddress} onChange={(e) => setDeliveryAddress(e.target.value)}
+                    placeholder="Full delivery address"
+                    maxLength={200}
+                    className="w-full rounded-lg px-3 py-2 text-sm"
+                    style={{ background: '#fff', border: '1px solid rgba(0,0,0,0.08)' }} />
+                )}
+
+                <input
+                  value={deliveryNotes} onChange={(e) => setDeliveryNotes(e.target.value)}
+                  placeholder="Gate code, floor, landmark… (optional)"
+                  maxLength={120}
                   className="w-full rounded-lg px-3 py-2 text-sm"
                   style={{ background: '#fff', border: '1px solid rgba(0,0,0,0.08)' }} />
               </div>
@@ -312,13 +529,45 @@ export default function CheckoutPage() {
           {/* Gift card */}
           <div className="rounded-xl p-3.5 mb-3" style={{ background: 'rgba(0,0,0,0.03)', border: '1px solid rgba(0,0,0,0.06)' }}>
             <label className="text-xs font-bold tracking-wider uppercase text-[color:var(--servd-mute)] block mb-2">Gift card</label>
-            <input
-              value={giftCard}
-              onChange={(e) => setGiftCard(e.target.value.toUpperCase())}
-              placeholder="GS-XXXX-XXXX"
-              className="w-full text-sm rounded-lg px-3 py-1.5 border font-mono uppercase tracking-wider"
-              style={{ borderColor: 'rgba(0,0,0,0.1)' }}
-            />
+            <div className="flex gap-2">
+              <input
+                value={giftCard}
+                onChange={(e) => {
+                  setGiftCard(e.target.value.toUpperCase())
+                  // Reset validation when user edits the code
+                  if (giftCardStatus !== 'idle') {
+                    setGiftCardStatus('idle')
+                    setGiftCardBalance(0)
+                  }
+                }}
+                placeholder="GS-XXXX-XXXX"
+                className="flex-1 text-sm rounded-lg px-3 py-1.5 border font-mono uppercase tracking-wider"
+                style={{ borderColor: 'rgba(0,0,0,0.1)' }}
+              />
+              <button
+                type="button"
+                onClick={() => { void checkGiftCardBalance() }}
+                disabled={giftCardStatus === 'checking' || !giftCard.trim()}
+                className="shrink-0 rounded-lg px-3 py-1.5 text-xs font-black transition-all disabled:opacity-40"
+                style={{
+                  background: giftCardStatus === 'valid' ? '#16a34a' : 'rgba(0,0,0,0.07)',
+                  color: giftCardStatus === 'valid' ? '#fff' : 'rgba(24,22,15,0.65)',
+                  border: '1px solid rgba(0,0,0,0.08)',
+                }}>
+                {giftCardStatus === 'checking' ? '…' : giftCardStatus === 'valid' ? '✓' : 'Check'}
+              </button>
+            </div>
+            {giftCardStatus === 'valid' && (
+              <p className="text-xs font-semibold mt-1.5" style={{ color: '#16a34a' }}>
+                Balance: {fmt(giftCardBalance)}
+                {giftCardDeduction > 0 && ` · saving ${fmt(giftCardDeduction)} on this order`}
+              </p>
+            )}
+            {giftCardStatus === 'invalid' && (
+              <p className="text-xs font-semibold mt-1.5" style={{ color: '#dc2626' }}>
+                Invalid or expired card
+              </p>
+            )}
           </div>
 
           <div className="rounded-xl p-3.5 space-y-2"
@@ -333,6 +582,12 @@ export default function CheckoutPage() {
             )}
             {walletDeduction > 0 && (
               <PriceLine label="Wallet credit" value={`−${fmt(walletDeduction)}`} accent="#16a34a" />
+            )}
+            {promoDiscountCents > 0 && (
+              <PriceLine label={`Promo (${promoCode.trim().toUpperCase()})`} value={`−${fmt(promoDiscountCents)}`} accent="#16a34a" />
+            )}
+            {giftCardDeduction > 0 && (
+              <PriceLine label={`Gift card (${giftCard.trim().toUpperCase()})`} value={`−${fmt(giftCardDeduction)}`} accent="#16a34a" />
             )}
             <div className="flex justify-between items-center pt-2.5"
               style={{ borderTop: '1px solid rgba(0,0,0,0.08)' }}>
@@ -349,11 +604,45 @@ export default function CheckoutPage() {
           <>
             {/* Promo code */}
             <Panel icon="🎟" label="Promo Code">
-              <PremiumInput
-                type="text" value={promoCode}
-                onChange={e => setPromoCode(e.target.value.toUpperCase())}
-                placeholder="Enter code (applied at checkout)"
-              />
+              <div className="flex gap-2">
+                <div className="flex-1">
+                  <PremiumInput
+                    type="text" value={promoCode}
+                    onChange={e => {
+                      setPromoCode(e.target.value.toUpperCase())
+                      // Reset validation when user edits the code
+                      if (promoStatus !== 'idle') {
+                        setPromoStatus('idle')
+                        setPromoDiscountCents(0)
+                        setPromoMessage('')
+                      }
+                    }}
+                    placeholder="Enter promo code"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => { void applyPromo() }}
+                  disabled={promoStatus === 'checking' || !promoCode.trim()}
+                  className="shrink-0 rounded-xl px-4 py-3 text-sm font-black transition-all disabled:opacity-40"
+                  style={{
+                    background: promoStatus === 'valid' ? '#16a34a' : '#6366f1',
+                    color: '#fff',
+                  }}
+                >
+                  {promoStatus === 'checking' ? '…' : promoStatus === 'valid' ? '✓' : 'Apply'}
+                </button>
+              </div>
+              {promoStatus === 'valid' && promoMessage && (
+                <p className="text-xs font-semibold mt-1.5" style={{ color: '#16a34a' }}>
+                  ✓ {promoMessage} · saving {fmt(promoDiscountCents)}
+                </p>
+              )}
+              {promoStatus === 'invalid' && promoMessage && (
+                <p className="text-xs font-semibold mt-1.5" style={{ color: '#dc2626' }}>
+                  {promoMessage}
+                </p>
+              )}
             </Panel>
 
             {/* Wallet toggle */}
@@ -403,9 +692,9 @@ export default function CheckoutPage() {
             )}
 
             {/* Notes */}
-            <Panel icon="📝" label="Special Instructions">
+            <Panel icon="📝" label="Special Instructions for Kitchen">
               <PremiumTextarea value={notes} onChange={e => setNotes(e.target.value)}
-                placeholder="Allergies, preferences, extras…" rows={2} />
+                placeholder="Allergies, spice level, extras…" rows={2} />
             </Panel>
           </>
         ) : (
@@ -436,20 +725,67 @@ export default function CheckoutPage() {
           </Panel>
         )}
 
-        {/* Payment method */}
-        <div className="flex items-center gap-3 rounded-2xl p-4"
-          style={{ background: '#fff', border: '1px solid rgba(0,0,0,0.07)', boxShadow: '0 2px 8px rgba(0,0,0,0.04)' }}>
-          <div className="h-11 w-11 rounded-xl flex items-center justify-center text-xl shrink-0"
-            style={{ background: 'rgba(0,0,0,0.05)' }}>💵</div>
-          <div className="flex-1">
-            <p className="font-bold text-sm" style={{ color: '#18160f' }}>Cash on collection</p>
-            <p className="text-xs mt-0.5" style={{ color: 'rgba(24,22,15,0.45)' }}>Pay when you pick up</p>
+        {/* ── Payment Method ── */}
+        <Panel icon="💳" label="Payment Method">
+          <div className="space-y-2">
+            {PAYMENT_OPTIONS.map((opt) => {
+              const isSelected = paymentMethod === opt.id
+              return (
+                <div key={opt.id}>
+                  <button
+                    type="button"
+                    onClick={() => setPaymentMethod(opt.id)}
+                    className="w-full flex items-center gap-3 rounded-xl px-3.5 py-3 transition-all"
+                    style={isSelected
+                      ? { background: 'rgba(0,168,150,0.06)', border: '1.5px solid rgba(0,168,150,0.35)' }
+                      : { background: 'rgba(0,0,0,0.025)', border: '1px solid rgba(0,0,0,0.07)' }}>
+                    <span className="text-lg shrink-0">{opt.icon}</span>
+                    <div className="flex-1 text-left min-w-0">
+                      <p className="font-bold text-sm" style={{ color: '#18160f' }}>{opt.label}</p>
+                      {!opt.phoneRequired && (
+                        <p className="text-[11px] mt-0.5" style={{ color: 'rgba(24,22,15,0.45)' }}>{opt.sub}</p>
+                      )}
+                    </div>
+                    <div className="h-5 w-5 rounded-full shrink-0 flex items-center justify-center"
+                      style={isSelected
+                        ? { background: 'rgba(0,168,150,0.12)', border: '1.5px solid rgba(0,168,150,0.45)' }
+                        : { background: 'transparent', border: '1.5px solid rgba(0,0,0,0.15)' }}>
+                      {isSelected && <div className="h-2 w-2 rounded-full" style={{ background: '#00a896' }} />}
+                    </div>
+                  </button>
+
+                  {/* Phone number input for mobile wallets */}
+                  {isSelected && opt.phoneRequired && (
+                    <div className="mt-1.5 px-1">
+                      <input
+                        type="tel"
+                        value={paymentPhone}
+                        onChange={(e) => setPaymentPhone(e.target.value)}
+                        placeholder="03xx-xxxxxxx"
+                        maxLength={15}
+                        className="w-full rounded-lg px-3 py-2 text-sm"
+                        style={{ background: '#fff', border: '1.5px solid rgba(0,168,150,0.3)' }}
+                      />
+                      <p className="text-[11px] mt-1" style={{ color: 'rgba(24,22,15,0.45)' }}>
+                        Enter your {opt.label} number to process payment
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Keenu redirect note */}
+                  {isSelected && opt.id === 'keenu' && (
+                    <div className="mt-1.5 mx-1 rounded-lg px-3 py-2"
+                      style={{ background: 'rgba(99,102,241,0.06)', border: '1px solid rgba(99,102,241,0.15)' }}>
+                      <p className="text-[11px]" style={{ color: '#4338ca' }}>
+                        After placing your order you&rsquo;ll be redirected to Keenu&rsquo;s secure payment page to complete payment by card.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )
+            })}
           </div>
-          <div className="h-5 w-5 rounded-full flex items-center justify-center shrink-0"
-            style={{ background: 'rgba(0,168,150,0.12)', border: '1.5px solid rgba(0,168,150,0.45)' }}>
-            <div className="h-2 w-2 rounded-full" style={{ background: '#00a896' }} />
-          </div>
-        </div>
+        </Panel>
 
         {error && (
           <div className="flex items-start gap-2.5 rounded-xl px-4 py-3 text-sm font-medium"
@@ -471,7 +807,7 @@ export default function CheckoutPage() {
             color: loading ? 'rgba(24,22,15,0.4)' : '#fff',
             boxShadow: loading ? 'none' : '0 0 32px rgba(0,212,177,0.28)',
           }}>
-          <span>{loading ? 'Placing order…' : 'Place Order'}</span>
+          <span>{ctaLabel}</span>
           <span>{fmt(displayTotal)}</span>
         </button>
       </div>

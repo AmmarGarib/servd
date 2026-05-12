@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
-import { requireAuth, ALL_STAFF, MANAGERS } from '../auth/middleware.js'
+import { requireAuth, requireAuthOrPin, ALL_STAFF, MANAGERS } from '../auth/middleware.js'
 import { ingestOrder, listOrders, getOrder, updateOrderStatus, updateItemStatus } from './service.js'
 import { assertConceptAccess, filterConceptIdsForStaff } from '../../lib/conceptAccess.js'
 import { audit } from '../../lib/audit.js'
@@ -62,7 +62,7 @@ export async function orderRoutes(fastify: FastifyInstance) {
       cursor?: string
       limit?: string
     }
-  }>('/', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
+  }>('/', { preHandler: requireAuthOrPin(...ALL_STAFF) }, async (req) => {
     const { limit, conceptId, ...rest } = req.query
     const scopedConceptIds = await filterConceptIdsForStaff(
       req.staffUser!,
@@ -90,7 +90,7 @@ export async function orderRoutes(fastify: FastifyInstance) {
   // GET /orders/:id
   fastify.get<{ Params: { id: string } }>(
     '/:id',
-    { preHandler: requireAuth(...ALL_STAFF) },
+    { preHandler: requireAuthOrPin(...ALL_STAFF) },
     async (req) => {
       const order = await getOrder(req.params.id)
       await assertConceptAccess(req.staffUser!, order.conceptId)
@@ -107,7 +107,7 @@ export async function orderRoutes(fastify: FastifyInstance) {
   )
 
   // POST /orders — manual order creation
-  fastify.post('/', { preHandler: requireAuth(...ALL_STAFF) }, async (req, reply) => {
+  fastify.post('/', { preHandler: requireAuthOrPin(...ALL_STAFF) }, async (req, reply) => {
     const dto = createOrderSchema.parse(req.body) as OrderDTO
     await assertConceptAccess(req.staffUser!, dto.concept_id)
     // Verify concept belongs to active tenant before ingesting.
@@ -123,7 +123,7 @@ export async function orderRoutes(fastify: FastifyInstance) {
   // cars-still-coming. Powers the admin /orders/curbside dashboard.
   fastify.get<{ Querystring: { conceptId?: string } }>(
     '/curbside',
-    { preHandler: requireAuth(...ALL_STAFF) },
+    { preHandler: requireAuthOrPin(...ALL_STAFF) },
     async (req) => {
       const { conceptId } = req.query
       if (conceptId) await assertConceptAccess(req.staffUser!, conceptId)
@@ -167,7 +167,7 @@ export async function orderRoutes(fastify: FastifyInstance) {
   // order drops off the curbside queue.
   fastify.post<{ Params: { id: string } }>(
     '/:id/curbside/running-out',
-    { preHandler: requireAuth(...ALL_STAFF) },
+    { preHandler: requireAuthOrPin(...ALL_STAFF) },
     async (req) => {
       const order = await prisma.order.findUnique({
         where: { id: req.params.id },
@@ -187,7 +187,7 @@ export async function orderRoutes(fastify: FastifyInstance) {
   // PATCH /orders/:id/status
   fastify.patch<{ Params: { id: string } }>(
     '/:id/status',
-    { preHandler: requireAuth(...ALL_STAFF) },
+    { preHandler: requireAuthOrPin(...ALL_STAFF) },
     async (req, reply) => {
       const { status } = updateOrderStatusSchema.parse(req.body)
       const order = await getOrder(req.params.id)
@@ -200,13 +200,26 @@ export async function orderRoutes(fastify: FastifyInstance) {
     },
   )
 
+  // PATCH /orders/:id/notes — add/update an admin note on an order
+  fastify.patch<{ Params: { id: string }; Body: { notes: string } }>(
+    '/:id/notes',
+    { preHandler: requireAuthOrPin(...ALL_STAFF) },
+    async (req) => {
+      const { notes } = z.object({ notes: z.string().max(1000) }).parse(req.body)
+      const order = await prisma.order.findUnique({ where: { id: req.params.id }, select: { id: true, conceptId: true } })
+      if (!order) throw new AppError('NOT_FOUND', 'Order not found', 404)
+      await assertConceptAccess(req.staffUser!, order.conceptId)
+      return prisma.order.update({ where: { id: req.params.id }, data: { deliveryNotes: notes }, select: { id: true, deliveryNotes: true } })
+    },
+  )
+
   // ─── Naughty list triggers ──────────────────────────────────────────────
   // POST /orders/:id/cod-unpaid — staff/cashier marks a cash-on-delivery
   // order as never paid (driver came back with food OR cash never collected).
   // Records a strike + appends a note.
   fastify.post<{ Params: { id: string }; Body: { reason?: string } }>(
     '/:id/cod-unpaid',
-    { preHandler: requireAuth(...ALL_STAFF) },
+    { preHandler: requireAuthOrPin(...ALL_STAFF) },
     async (req, reply) => {
       const body = z.object({ reason: z.string().max(500).optional() }).parse(req.body ?? {})
       const order = await prisma.order.findUnique({
@@ -247,7 +260,7 @@ export async function orderRoutes(fastify: FastifyInstance) {
   // what the driver was told ("looked rude", "different person at door", etc.)
   fastify.post<{ Params: { id: string }; Body: { reason?: string } }>(
     '/:id/refused-at-door',
-    { preHandler: requireAuth(...ALL_STAFF) },
+    { preHandler: requireAuthOrPin(...ALL_STAFF) },
     async (req, reply) => {
       const body = z.object({ reason: z.string().max(500).optional() }).parse(req.body ?? {})
       const order = await prisma.order.findUnique({
@@ -332,7 +345,7 @@ export async function orderItemRoutes(fastify: FastifyInstance) {
   // ticket state for items in concept B by guessing/scraping the item id.
   fastify.patch<{ Params: { id: string } }>(
     '/:id/status',
-    { preHandler: requireAuth(...ALL_STAFF) },
+    { preHandler: requireAuthOrPin(...ALL_STAFF) },
     async (req) => {
       const { status } = updateItemStatusSchema.parse(req.body)
       const { prisma } = await import('../../lib/prisma.js')
@@ -355,7 +368,7 @@ export async function orderItemRoutes(fastify: FastifyInstance) {
   // PATCH /order-items/:id/bump-photo — attach plating photo URL after bump
   fastify.patch<{ Params: { id: string }; Body: { url: string } }>(
     '/:id/bump-photo',
-    { preHandler: requireAuth(...ALL_STAFF) },
+    { preHandler: requireAuthOrPin(...ALL_STAFF) },
     async (req, reply) => {
       const { url } = z.object({ url: z.string().url() }).parse(req.body)
       const { prisma } = await import('../../lib/prisma.js')
@@ -387,7 +400,7 @@ export async function orderCourseRoutes(fastify: FastifyInstance) {
   // POST /orders/:id/fire-course — body: { course: 2 } fires items at course 2.
   fastify.post<{ Params: { id: string }; Body: { course: number } }>(
     '/:id/fire-course',
-    { preHandler: requireAuth(...ALL_STAFF) },
+    { preHandler: requireAuthOrPin(...ALL_STAFF) },
     async (req, reply) => {
       const { course } = z.object({ course: z.number().int().min(1).max(20) }).parse(req.body)
       const { prisma } = await import('../../lib/prisma.js')
@@ -417,7 +430,7 @@ export async function orderCourseRoutes(fastify: FastifyInstance) {
   // GET /orders/:id/courses — summary of items per course + their status
   fastify.get<{ Params: { id: string } }>(
     '/:id/courses',
-    { preHandler: requireAuth(...ALL_STAFF) },
+    { preHandler: requireAuthOrPin(...ALL_STAFF) },
     async (req, reply) => {
       const { prisma } = await import('../../lib/prisma.js')
       const order = await prisma.order.findFirst({

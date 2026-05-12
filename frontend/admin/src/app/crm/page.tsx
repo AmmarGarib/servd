@@ -2,7 +2,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../lib/api'
-import Link from 'next/link'
 import { formatDistanceToNowStrict } from 'date-fns'
 
 function fmt(cents: number) { return `PKR ${(cents / 100).toLocaleString()}` }
@@ -21,7 +20,453 @@ interface SmartSegmentsResp {
   segments: SmartSegment[]
 }
 
+interface Segment { id: string; name: string; description?: string | null; filters: unknown }
+
+interface Campaign {
+  id: string
+  name: string
+  channel: 'email' | 'sms' | 'whatsapp'
+  status: 'draft' | 'scheduled' | 'sending' | 'sent'
+  subject: string | null
+  body: string
+  scheduledAt: string | null
+  sentAt: string | null
+  createdAt: string
+  segmentId: string | null
+  segment?: { name: string } | null
+}
+
 type Tab = 'customers' | 'segments' | 'campaigns'
+
+// ─── Character counter helper ────────────────────────────────────────────────
+function SmsCounter({ body }: { body: string }) {
+  const limit = 160
+  const count = body.length
+  const msgs = count === 0 ? 1 : Math.ceil(count / limit)
+  const color = count > limit * msgs ? 'text-kds-red' : count > limit * 0.85 ? 'text-kds-amber' : 'text-kds-subtext'
+  return (
+    <span className={`text-xs ${color}`}>
+      {count}/160 chars — will use {msgs} SMS
+    </span>
+  )
+}
+
+// ─── Message preview ─────────────────────────────────────────────────────────
+function MessagePreview({
+  channel, subject, body, campaignName,
+}: { channel: 'email' | 'sms' | 'whatsapp'; subject: string; body: string; campaignName: string }) {
+  if (channel === 'email') {
+    return (
+      <div className="rounded-xl border border-kds-border bg-kds-bg overflow-hidden text-sm">
+        <div className="bg-kds-card border-b border-kds-border px-4 py-3">
+          <p className="text-xs text-kds-subtext">From: <span className="text-kds-text">servd Restaurant</span></p>
+          <p className="text-xs text-kds-subtext">Subject: <span className="font-semibold text-kds-text">{subject || '(no subject)'}</span></p>
+        </div>
+        <div className="px-4 py-4 whitespace-pre-wrap text-kds-text leading-relaxed min-h-[80px]">
+          {body || <span className="text-kds-subtext italic">Message body will appear here</span>}
+        </div>
+      </div>
+    )
+  }
+  if (channel === 'whatsapp') {
+    return (
+      <div className="rounded-xl border border-kds-border bg-kds-bg p-4">
+        <div className="flex items-center gap-2 mb-3">
+          <div className="h-8 w-8 rounded-full bg-[#25d366]/20 flex items-center justify-center text-sm">💬</div>
+          <div>
+            <p className="text-xs font-semibold text-kds-text">{campaignName || 'Campaign'}</p>
+            <p className="text-[10px] text-kds-subtext">WhatsApp Business</p>
+          </div>
+        </div>
+        <div className="bg-[#25d366]/10 border border-[#25d366]/20 rounded-xl rounded-tl-none px-3 py-2 text-sm text-kds-text whitespace-pre-wrap leading-relaxed min-h-[60px]">
+          {body || <span className="text-kds-subtext italic">Message body will appear here</span>}
+        </div>
+      </div>
+    )
+  }
+  // SMS
+  return (
+    <div className="rounded-xl border border-kds-border bg-kds-bg p-4">
+      <div className="flex items-center gap-2 mb-3">
+        <div className="h-8 w-8 rounded-full bg-kds-blue/20 flex items-center justify-center text-sm">📱</div>
+        <div>
+          <p className="text-xs font-semibold text-kds-text">SMS</p>
+          <p className="text-[10px] text-kds-subtext">Text Message</p>
+        </div>
+      </div>
+      <div className="bg-kds-card border border-kds-border rounded-xl rounded-tl-none px-3 py-2 text-sm text-kds-text whitespace-pre-wrap leading-relaxed min-h-[60px]">
+        {body || <span className="text-kds-subtext italic">Message body will appear here</span>}
+      </div>
+    </div>
+  )
+}
+
+// ─── Status badge ─────────────────────────────────────────────────────────────
+function StatusBadge({ status }: { status: Campaign['status'] }) {
+  const map: Record<Campaign['status'], string> = {
+    draft: 'text-kds-subtext bg-kds-border/40',
+    scheduled: 'text-kds-amber bg-kds-amber/10',
+    sending: 'text-kds-blue bg-kds-blue/10',
+    sent: 'text-kds-green bg-kds-green/10',
+  }
+  return (
+    <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${map[status] ?? ''}`}>
+      {status}
+    </span>
+  )
+}
+
+// ─── Campaign composer ────────────────────────────────────────────────────────
+function CampaignComposer({
+  segments,
+  smartSegments,
+  onClose,
+  onSaved,
+}: {
+  segments: Segment[]
+  smartSegments: SmartSegment[]
+  onClose: () => void
+  onSaved: () => void
+}) {
+  const [name, setName] = useState('')
+  const [segmentId, setSegmentId] = useState<string>('')
+  const [channel, setChannel] = useState<'email' | 'sms' | 'whatsapp'>('email')
+  const [subject, setSubject] = useState('')
+  const [body, setBody] = useState('')
+  const [schedule, setSchedule] = useState<'now' | 'later'>('now')
+  const [scheduledAt, setScheduledAt] = useState('')
+  const [error, setError] = useState<string | null>(null)
+
+  const bodyLimit = channel === 'sms' ? 480 : 2000  // 3×160 soft cap for SMS, 2000 for email/WA
+
+  const segmentCount = segmentId
+    ? null  // DB segment — no live count available without an extra endpoint
+    : null
+
+  const saveDraft = useMutation({
+    mutationFn: () =>
+      api.post<Campaign>('/crm/campaigns', {
+        name,
+        segmentId: segmentId || null,
+        channel,
+        subject: channel === 'email' ? subject : undefined,
+        body,
+        scheduledAt: schedule === 'later' && scheduledAt ? new Date(scheduledAt).toISOString() : undefined,
+        status: 'draft',
+      }),
+    onSuccess: () => { onSaved(); onClose() },
+    onError: (e: Error) => setError(e.message),
+  })
+
+  const sendNow = useMutation({
+    mutationFn: async () => {
+      const campaign = await api.post<Campaign>('/crm/campaigns', {
+        name,
+        segmentId: segmentId || null,
+        channel,
+        subject: channel === 'email' ? subject : undefined,
+        body,
+        status: 'sending',
+      })
+      return api.post<{ message: string; campaignId: string; recipientCount: number }>(
+        `/crm/campaigns/${campaign.id}/send`,
+        {},
+      )
+    },
+    onSuccess: () => { onSaved(); onClose() },
+    onError: (e: Error) => setError(e.message),
+  })
+
+  const pending = saveDraft.isPending || sendNow.isPending
+
+  const inp = 'rounded-lg border border-kds-border bg-kds-bg px-3 py-2 text-sm text-kds-text focus:border-kds-green focus:outline-none w-full'
+
+  return (
+    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4 overflow-y-auto">
+      <div className="bg-kds-card border border-kds-border rounded-2xl w-full max-w-4xl my-4 flex flex-col max-h-[90vh]">
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-kds-border shrink-0">
+          <p className="font-bold text-kds-text text-lg">New Campaign</p>
+          <button onClick={onClose} className="text-kds-subtext hover:text-kds-text text-xl leading-none">✕</button>
+        </div>
+
+        <div className="flex flex-1 overflow-hidden min-h-0">
+          {/* ── Composer form (left) ── */}
+          <div className="flex-1 overflow-y-auto p-6 space-y-5 border-r border-kds-border">
+            {error && (
+              <div className="rounded-lg bg-kds-red/10 border border-kds-red/30 px-3 py-2 text-sm text-kds-red">
+                {error}
+              </div>
+            )}
+
+            {/* Campaign name */}
+            <div>
+              <label className="text-xs font-semibold text-kds-subtext uppercase tracking-wide block mb-1.5">Campaign Name</label>
+              <input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="e.g. Weekend Special Offer"
+                className={inp}
+              />
+            </div>
+
+            {/* Segment */}
+            <div>
+              <label className="text-xs font-semibold text-kds-subtext uppercase tracking-wide block mb-1.5">Target Segment</label>
+              <select value={segmentId} onChange={(e) => setSegmentId(e.target.value)} className={inp}>
+                <option value="">All opted-in customers</option>
+                {segments.map((s) => (
+                  <option key={s.id} value={s.id}>{s.name}</option>
+                ))}
+              </select>
+              {/* Segment size hints from smart segments */}
+              {!segmentId && (
+                <p className="text-xs text-kds-subtext mt-1.5">
+                  Sending to all customers who opted in to marketing
+                </p>
+              )}
+              {/* Smart segment count hints (informational) */}
+              {smartSegments.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {smartSegments.slice(0, 5).map((ss) => (
+                    <span key={ss.key} className="text-[10px] bg-kds-bg border border-kds-border rounded-full px-2 py-0.5 text-kds-subtext">
+                      {ss.label}: {ss.count}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Channel */}
+            <div>
+              <label className="text-xs font-semibold text-kds-subtext uppercase tracking-wide block mb-1.5">Channel</label>
+              <div className="flex gap-2">
+                {(['email', 'sms', 'whatsapp'] as const).map((ch) => (
+                  <button
+                    key={ch}
+                    type="button"
+                    onClick={() => setChannel(ch)}
+                    className={`flex-1 py-2 rounded-lg text-sm font-semibold border transition-colors ${
+                      channel === ch
+                        ? 'bg-kds-green text-black border-kds-green'
+                        : 'bg-kds-bg border-kds-border text-kds-subtext hover:text-kds-text'
+                    }`}>
+                    {ch === 'email' ? '✉ Email' : ch === 'sms' ? '📱 SMS' : '💬 WhatsApp'}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Subject (email only) */}
+            {channel === 'email' && (
+              <div>
+                <label className="text-xs font-semibold text-kds-subtext uppercase tracking-wide block mb-1.5">Subject Line</label>
+                <input
+                  value={subject}
+                  onChange={(e) => setSubject(e.target.value)}
+                  placeholder="Your subject line…"
+                  className={inp}
+                />
+              </div>
+            )}
+
+            {/* Message body */}
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="text-xs font-semibold text-kds-subtext uppercase tracking-wide">Message</label>
+                {channel === 'sms'
+                  ? <SmsCounter body={body} />
+                  : <span className="text-xs text-kds-subtext">{body.length}/{bodyLimit}</span>
+                }
+              </div>
+              <textarea
+                value={body}
+                onChange={(e) => setBody(e.target.value.slice(0, bodyLimit))}
+                placeholder={channel === 'sms' ? 'Keep it short and punchy (160 chars = 1 SMS)' : 'Write your message…'}
+                rows={6}
+                className={`${inp} resize-y`}
+              />
+            </div>
+
+            {/* Schedule */}
+            <div>
+              <label className="text-xs font-semibold text-kds-subtext uppercase tracking-wide block mb-1.5">Send Timing</label>
+              <div className="flex gap-2">
+                {(['now', 'later'] as const).map((s) => (
+                  <button
+                    key={s}
+                    type="button"
+                    onClick={() => setSchedule(s)}
+                    className={`flex-1 py-2 rounded-lg text-sm font-semibold border transition-colors ${
+                      schedule === s
+                        ? 'bg-kds-green text-black border-kds-green'
+                        : 'bg-kds-bg border-kds-border text-kds-subtext hover:text-kds-text'
+                    }`}>
+                    {s === 'now' ? 'Send now' : 'Schedule for later'}
+                  </button>
+                ))}
+              </div>
+              {schedule === 'later' && (
+                <input
+                  type="datetime-local"
+                  value={scheduledAt}
+                  onChange={(e) => setScheduledAt(e.target.value)}
+                  className={`${inp} mt-2`}
+                />
+              )}
+            </div>
+          </div>
+
+          {/* ── Preview panel (right) ── */}
+          <div className="w-72 shrink-0 overflow-y-auto p-5 flex flex-col gap-4">
+            <p className="text-xs font-semibold text-kds-subtext uppercase tracking-wide">Preview</p>
+            <MessagePreview channel={channel} subject={subject} body={body} campaignName={name} />
+            <div className="rounded-lg bg-kds-bg border border-kds-border p-3 text-xs text-kds-subtext space-y-1">
+              <p className="font-semibold text-kds-text text-[11px] uppercase tracking-wide mb-1">Summary</p>
+              <p>Channel: <span className="text-kds-text font-medium capitalize">{channel}</span></p>
+              {segmentId ? (
+                <p>Segment: <span className="text-kds-text font-medium">{segments.find((s) => s.id === segmentId)?.name ?? '—'}</span></p>
+              ) : (
+                <p>Audience: <span className="text-kds-text font-medium">All opted-in</span></p>
+              )}
+              <p>Schedule: <span className="text-kds-text font-medium capitalize">{schedule === 'now' ? 'Send immediately' : scheduledAt || 'Not set'}</span></p>
+            </div>
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-between gap-3 px-6 py-4 border-t border-kds-border shrink-0">
+          <button onClick={onClose} className="rounded-xl border border-kds-border text-kds-subtext text-sm px-4 py-2 hover:border-kds-text">
+            Cancel
+          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={() => { setError(null); saveDraft.mutate() }}
+              disabled={pending || !name || !body}
+              className="rounded-xl border border-kds-border text-kds-subtext text-sm px-4 py-2 hover:border-kds-text hover:text-kds-text disabled:opacity-40 transition-colors">
+              {saveDraft.isPending ? 'Saving…' : 'Save as Draft'}
+            </button>
+            <button
+              onClick={() => { setError(null); sendNow.mutate() }}
+              disabled={pending || !name || !body || (channel === 'email' && !subject)}
+              className="rounded-xl bg-kds-green text-black text-sm font-bold px-4 py-2 hover:opacity-90 disabled:opacity-40 transition-opacity">
+              {sendNow.isPending ? 'Sending…' : 'Send Now'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Campaigns tab content ────────────────────────────────────────────────────
+function CampaignsPanel() {
+  const qc = useQueryClient()
+  const [composerOpen, setComposerOpen] = useState(false)
+
+  const { data: campaigns = [], isLoading } = useQuery<Campaign[]>({
+    queryKey: ['crm-campaigns'],
+    queryFn: () => api.get<Campaign[]>('/crm/campaigns'),
+  })
+
+  const { data: segments = [] } = useQuery<Segment[]>({
+    queryKey: ['crm-segments'],
+    queryFn: () => api.get<Segment[]>('/crm/segments'),
+  })
+
+  const { data: smartData } = useQuery<SmartSegmentsResp>({
+    queryKey: ['smart-segments'],
+    queryFn: () => api.get<SmartSegmentsResp>('/crm/smart-segments'),
+  })
+
+  function handleSaved() {
+    void qc.invalidateQueries({ queryKey: ['crm-campaigns'] })
+  }
+
+  return (
+    <div className="p-6 space-y-5 max-w-4xl">
+      {composerOpen && (
+        <CampaignComposer
+          segments={segments}
+          smartSegments={smartData?.segments ?? []}
+          onClose={() => setComposerOpen(false)}
+          onSaved={handleSaved}
+        />
+      )}
+
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="text-xs font-bold text-kds-subtext uppercase tracking-widest">Campaigns</p>
+          <p className="text-sm text-kds-subtext mt-0.5">{campaigns.length} campaign{campaigns.length !== 1 ? 's' : ''}</p>
+        </div>
+        <button
+          onClick={() => setComposerOpen(true)}
+          className="rounded-xl bg-kds-green text-black text-sm font-bold px-4 py-2 hover:opacity-90 transition-opacity">
+          + New Campaign
+        </button>
+      </div>
+
+      {isLoading && (
+        <div className="space-y-2">
+          {[1, 2, 3].map((i) => (
+            <div key={i} className="h-16 rounded-xl bg-kds-card border border-kds-border animate-pulse" />
+          ))}
+        </div>
+      )}
+
+      {!isLoading && campaigns.length === 0 && (
+        <div className="rounded-xl border border-dashed border-kds-border p-12 text-center">
+          <p className="text-3xl mb-3">📣</p>
+          <p className="font-semibold text-kds-text">No campaigns yet</p>
+          <p className="text-sm text-kds-subtext mt-1">Create your first campaign to reach customers by email, SMS or WhatsApp.</p>
+          <button
+            onClick={() => setComposerOpen(true)}
+            className="mt-4 rounded-xl bg-kds-green text-black text-sm font-bold px-4 py-2 hover:opacity-90 transition-opacity">
+            Create Campaign
+          </button>
+        </div>
+      )}
+
+      {campaigns.length > 0 && (
+        <div className="rounded-xl border border-kds-border overflow-hidden">
+          <table className="w-full text-sm">
+            <thead className="bg-kds-card border-b border-kds-border">
+              <tr>
+                {['Campaign', 'Channel', 'Segment', 'Status', 'Created'].map((h) => (
+                  <th key={h} className="px-4 py-3 text-left text-xs font-bold text-kds-subtext uppercase tracking-wide">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-kds-border">
+              {campaigns.map((c) => (
+                <tr key={c.id} className="hover:bg-kds-card/40">
+                  <td className="px-4 py-3">
+                    <p className="font-semibold text-kds-text">{c.name}</p>
+                    {c.subject && <p className="text-xs text-kds-subtext truncate max-w-[200px]">{c.subject}</p>}
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className="text-xs font-medium text-kds-text capitalize">
+                      {c.channel === 'email' ? '✉ Email' : c.channel === 'sms' ? '📱 SMS' : '💬 WhatsApp'}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 text-xs text-kds-subtext">
+                    {c.segment?.name ?? 'All customers'}
+                  </td>
+                  <td className="px-4 py-3">
+                    <StatusBadge status={c.status} />
+                  </td>
+                  <td className="px-4 py-3 text-xs text-kds-subtext">
+                    {formatDistanceToNowStrict(new Date(c.createdAt))} ago
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )
+}
 
 export default function CRMPage() {
   const qc = useQueryClient()
@@ -236,11 +681,14 @@ export default function CRMPage() {
           )}
 
           {tab === 'campaigns' && (
-            <div className="flex-1 overflow-y-auto p-4">
-              <Link href="/crm/campaigns"
-                className="block rounded-xl border border-kds-border bg-kds-card p-3 text-sm text-center text-kds-subtext hover:border-kds-green hover:text-kds-green transition-colors">
-                Open Campaigns →
-              </Link>
+            <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-3">
+              <p className="text-xs text-kds-subtext">Build and send targeted campaigns to your customer segments via email, SMS or WhatsApp.</p>
+              <div className="rounded-xl bg-kds-card border border-kds-border p-3 space-y-1.5 text-xs text-kds-subtext">
+                <p className="font-semibold text-kds-text text-[11px] uppercase tracking-wide">Quick facts</p>
+                <p>SMS: 160 chars = 1 message</p>
+                <p>Email: up to 2,000 chars</p>
+                <p>WhatsApp: same as email limit</p>
+              </div>
             </div>
           )}
 
@@ -259,6 +707,9 @@ export default function CRMPage() {
 
         {/* ── Right panel ── */}
         <div className="flex-1 overflow-y-auto">
+          {/* ── Campaigns tab ── */}
+          {tab === 'campaigns' && <CampaignsPanel />}
+
           {/* Segment customer list */}
           {tab === 'segments' && activeSegmentKey && (
             <div className="p-6">

@@ -7,6 +7,21 @@
 @layer base {
   * { -webkit-tap-highlight-color: transparent; }
 
+  /* F36 — global focus-visible ring. Keyboard users need an obvious indicator
+     on every interactive element; we use the brand teal so it reads as a
+     deliberate accent rather than a browser default. Mouse clicks don't trigger
+     focus-visible, so this is invisible to pointer-driven flows. */
+  *:focus-visible {
+    outline: 2px solid #00D4B1;
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  /* F09 — when a KDS ticket ages into hot/warm zones, lift the subtext
+     contrast further so prep notes stay legible against the colour wash. */
+  .ticket-card.age-hot  .kds-subtext { color: #EAEAEA; }
+  .ticket-card.age-warm .kds-subtext { color: #E4E4E4; }
+
   /* Native <select> dropdowns inherit OS-default white-on-white styling on
      dark themes. Force dark across the app so opened menus are readable. */
   select option {

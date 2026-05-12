@@ -2,6 +2,7 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { menuApi, api, type Category, type MenuItem } from '../../lib/api'
+import { useAuthStore } from '../../store/auth'
 import Link from 'next/link'
 import { EmptyStateGuide } from '../../components/ui/EmptyStateGuide'
 
@@ -320,7 +321,7 @@ function EditItemDrawer({ item, onClose, onSaved }: { item: MenuItem; onClose: (
     setUploading(true)
     setUploadError('')
     try {
-      const token = typeof window !== 'undefined' ? localStorage.getItem('servd_token') : null
+      const token = useAuthStore.getState().token   // F43
       const qs = new URLSearchParams({ filename: file.name, contentType: file.type, category: 'menu' })
       const res = await fetch(`${API_URL}/api/v1/media/upload-url?${qs}`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},

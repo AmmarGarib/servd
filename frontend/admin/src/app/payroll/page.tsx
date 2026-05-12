@@ -51,21 +51,30 @@ export default function PayrollHubPage() {
       <div className="p-6 max-w-5xl space-y-4">
         {/* Labour KPI */}
         <div className="s-card p-4">
-          <div className="flex items-center justify-between mb-3">
+          <div className="flex flex-wrap items-start justify-between gap-4 mb-3">
             <div>
-              <p className="text-xs text-s-muted">Labour as % of revenue</p>
-              {labour && (
-                <p className="text-2xl font-bold text-s-text">{labour.labourPct.toFixed(1)}%</p>
+              <p className="text-xs text-s-muted uppercase tracking-wide font-semibold">Labour as % of revenue</p>
+              {labour ? (
+                <div className="flex items-end gap-3 mt-1">
+                  <p className={`text-4xl font-black ${labour.labourPct > 35 ? 'text-s-red' : labour.labourPct > 28 ? 'text-s-amber' : 'text-s-teal'}`}>
+                    {labour.labourPct.toFixed(1)}%
+                  </p>
+                  <p className="text-xs text-s-muted mb-1.5">
+                    {labour.labourPct > 35 ? '⚠ Above healthy range' : labour.labourPct > 28 ? '~ Within range' : '✓ Healthy'}
+                  </p>
+                </div>
+              ) : (
+                <p className="text-3xl font-black text-s-muted mt-1">—</p>
               )}
             </div>
-            <div className="flex gap-2">
+            <div className="flex gap-2 items-center">
               <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="bg-s-card border border-s-border rounded px-2 py-1 text-sm text-s-text" />
-              <span className="text-s-muted text-xs self-center">→</span>
+              <span className="text-s-muted text-xs">→</span>
               <input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="bg-s-card border border-s-border rounded px-2 py-1 text-sm text-s-text" />
             </div>
           </div>
           {labour && (
-            <div className="grid grid-cols-2 gap-3 text-sm">
+            <div className="grid grid-cols-3 gap-3 text-sm border-t border-s-border pt-3 mt-1">
               <div>
                 <p className="text-xs text-s-muted">Revenue</p>
                 <p className="text-s-text font-semibold">{fmtPkr(labour.revenueCents)}</p>
@@ -74,6 +83,12 @@ export default function PayrollHubPage() {
                 <p className="text-xs text-s-muted">Labour cost</p>
                 <p className="text-s-text font-semibold">{fmtPkr(labour.labourCents)}</p>
               </div>
+              {labour.byWageAccount?.length > 0 && (
+                <div>
+                  <p className="text-xs text-s-muted">Accounts</p>
+                  <p className="text-s-text font-semibold">{labour.byWageAccount.length}</p>
+                </div>
+              )}
             </div>
           )}
         </div>

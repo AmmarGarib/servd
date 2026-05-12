@@ -162,9 +162,7 @@ export default function ConfigurationHubPage() {
       desc: 'R2 storage, SMTP, Twilio SMS, Sentry, Meta Ads.',
       category: 'platform', status: 'incomplete', hint: 'Most are optional' },
 
-    { href: '/configuration/api-tokens',  icon: '🔑', title: 'API Tokens',
-      desc: 'Bearer tokens for the customer mobile app, partner integrations.',
-      category: 'platform', status: 'optional', hint: 'Issue per-app, scoped, revocable' },
+    // B07: API tokens tile removed — no third-party integrations need them in v1.
 
     { href: '/configuration/billing',  icon: '💵', title: 'Subscription & Billing',
       desc: 'Plan tier, invoices, payment method.',

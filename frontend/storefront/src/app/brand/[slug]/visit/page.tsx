@@ -1,6 +1,6 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
-import type { Concept } from '../../../../lib/concept'
+import type { Concept, ServiceHourSlot } from '../../../../lib/concept'
 import { typeLabel } from '../../../../lib/concept'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
@@ -14,23 +14,44 @@ async function getConcept(slug: string) {
   } catch { return null }
 }
 
-const HOURS_DEFAULT = [
-  { day: 'Mon', open: '11:00', close: '23:00' },
-  { day: 'Tue', open: '11:00', close: '23:00' },
-  { day: 'Wed', open: '11:00', close: '23:00' },
-  { day: 'Thu', open: '11:00', close: '23:00' },
-  { day: 'Fri', open: '11:00', close: '00:00' },
-  { day: 'Sat', open: '11:00', close: '00:00' },
-  { day: 'Sun', open: '12:00', close: '23:00' },
-]
+const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+
+function minToTime(min: number): string {
+  const h = Math.floor(min / 60) % 24
+  const m = min % 60
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
+}
+
+// Collapse per-day slots into a readable table row per day-of-week.
+// If a concept has no serviceHours rows, return null (show nothing rather than fake data).
+function buildHoursTable(slots: ServiceHourSlot[]): Array<{ day: string; hours: string }> | null {
+  if (!slots || slots.length === 0) return null
+  const byDay: Record<number, ServiceHourSlot[]> = {}
+  for (const s of slots) {
+    ;(byDay[s.dayOfWeek] ??= []).push(s)
+  }
+  // Emit rows for every day 0-6; only days with entries get listed.
+  const rows: Array<{ day: string; hours: string }> = []
+  for (let d = 1; d <= 7; d++) {
+    const dow = d % 7  // 1=Mon … 6=Sat, 0=Sun
+    const daySlots = byDay[dow]
+    if (!daySlots) continue
+    const windows = daySlots
+      .sort((a, b) => a.openMin - b.openMin)
+      .map((s) => `${minToTime(s.openMin)} – ${minToTime(s.closeMin)}`)
+      .join(', ')
+    rows.push({ day: DAY_LABELS[dow]!, hours: windows })
+  }
+  return rows.length > 0 ? rows : null
+}
 
 export default async function BrandVisitPage({ params }: { params: Promise<{ slug: string }> | { slug: string } }) {
   const { slug } = await Promise.resolve(params as Promise<{ slug: string }>)
   const concept = await getConcept(slug)
   if (!concept) notFound()
 
-  const hasGeo = concept['latitude' as keyof Concept] && concept['longitude' as keyof Concept]
-  // Concept type doesn't currently include lat/lng in the storefront DTO; we fall through to a placeholder map.
+  const hasGeo = concept.latitude != null && concept.longitude != null
+  const hoursTable = buildHoursTable(concept.serviceHours ?? [])
 
   return (
     <>
@@ -51,52 +72,84 @@ export default async function BrandVisitPage({ params }: { params: Promise<{ slu
       <section className="section">
         <div className="container" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '2.5rem' }}>
 
-          {/* Address + map placeholder */}
+          {/* Address + map */}
           <div>
             <h2 style={{ fontSize: '1.25rem', marginBottom: '1rem' }}>Our address</h2>
-            <p style={{ color: 'var(--servd-ink)', fontSize: '1rem', lineHeight: 1.6, marginBottom: '0.5rem' }}>
-              Plot 42, Industrial Area<br />
-              Lahore, Pakistan
-            </p>
-            <p style={{ color: 'var(--servd-mute)', fontSize: '0.9rem' }}>
-              <a href="tel:+9242XXXXXXXX" style={{ color: 'var(--servd-green-dark)', fontWeight: 600 }}>+92 42 XXX XXXX</a><br />
-              <a href="mailto:hello@servd.pk" style={{ color: 'var(--servd-green-dark)', fontWeight: 600 }}>hello@servd.pk</a>
-            </p>
 
-            <div style={{
-              marginTop: '1.5rem',
-              aspectRatio: '4/3',
-              borderRadius: '1rem',
-              border: '1px solid var(--servd-line)',
-              background: `linear-gradient(135deg, var(--servd-green-soft) 0%, white 100%)`,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              color: 'var(--servd-mute)',
-              fontSize: '0.85rem',
-              textAlign: 'center',
-              padding: '1.5rem',
-            }}>
-              <span>📍 Map placeholder<br /><span style={{ fontSize: '0.75rem', opacity: 0.7 }}>Wire up Google Maps / Mapbox once geo is set on this concept.</span></span>
+            {concept.address ? (
+              <p style={{ color: 'var(--servd-ink)', fontSize: '1rem', lineHeight: 1.6, marginBottom: '0.75rem' }}>
+                {concept.address.split('\n').map((line, i) => (
+                  <span key={i}>{line}{i < concept.address!.split('\n').length - 1 && <br />}</span>
+                ))}
+              </p>
+            ) : (
+              <p style={{ color: 'var(--servd-mute)', fontSize: '0.9rem', marginBottom: '0.75rem' }}>
+                Address not set — check our socials for directions.
+              </p>
+            )}
+
+            {concept.phone && (
+              <p style={{ marginBottom: '0.5rem' }}>
+                <a href={`tel:${concept.phone}`}
+                  style={{ color: 'var(--servd-green-dark)', fontWeight: 600, fontSize: '0.95rem' }}>
+                  {concept.phone}
+                </a>
+              </p>
+            )}
+
+            {/* Map — real embed when geo is set, address text otherwise */}
+            <div style={{ marginTop: '1.5rem' }}>
+              {hasGeo ? (
+                <iframe
+                  src={`https://maps.google.com/maps?q=${concept.latitude},${concept.longitude}&z=15&output=embed`}
+                  width="100%"
+                  height="300"
+                  style={{ border: 0, borderRadius: '1rem', display: 'block' }}
+                  allowFullScreen
+                  loading="lazy"
+                  title={`${concept.name} location`}
+                />
+              ) : concept.address ? (
+                <div style={{
+                  padding: '1.25rem',
+                  borderRadius: '1rem',
+                  border: '1px solid var(--servd-line)',
+                  background: 'var(--servd-green-soft)',
+                  fontSize: '0.95rem',
+                  color: 'var(--servd-ink)',
+                }}>
+                  <span style={{ fontSize: '1.25rem', marginRight: '0.5rem' }}>📍</span>
+                  {concept.address}
+                </div>
+              ) : null}
             </div>
           </div>
 
           {/* Hours */}
           <div>
             <h2 style={{ fontSize: '1.25rem', marginBottom: '1rem' }}>Opening hours</h2>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.95rem' }}>
-              <tbody>
-                {HOURS_DEFAULT.map((h) => (
-                  <tr key={h.day} style={{ borderBottom: '1px solid var(--servd-line)' }}>
-                    <td style={{ padding: '0.7rem 0', color: 'var(--servd-mute)', fontWeight: 600, width: '6rem' }}>{h.day}</td>
-                    <td style={{ padding: '0.7rem 0', color: 'var(--servd-ink)' }}>{h.open} – {h.close}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            <p style={{ color: 'var(--servd-dim)', fontSize: '0.8rem', marginTop: '0.85rem' }}>
-              Times shown for delivery and pickup; dine-in may differ. We&rsquo;ll show live availability when you start an order.
-            </p>
+
+            {hoursTable ? (
+              <>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.95rem' }}>
+                  <tbody>
+                    {hoursTable.map((h) => (
+                      <tr key={h.day} style={{ borderBottom: '1px solid var(--servd-line)' }}>
+                        <td style={{ padding: '0.7rem 0', color: 'var(--servd-mute)', fontWeight: 600, width: '6rem' }}>{h.day}</td>
+                        <td style={{ padding: '0.7rem 0', color: 'var(--servd-ink)' }}>{h.hours}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <p style={{ color: 'var(--servd-dim)', fontSize: '0.8rem', marginTop: '0.85rem' }}>
+                  Times shown for delivery and pickup; dine-in may differ. We&rsquo;ll show live availability when you start an order.
+                </p>
+              </>
+            ) : (
+              <p style={{ color: 'var(--servd-mute)', fontSize: '0.95rem' }}>
+                Hours not configured yet — start an order to see live availability.
+              </p>
+            )}
           </div>
         </div>
 

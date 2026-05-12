@@ -1,6 +1,7 @@
 'use client'
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { useAuthStore } from '../../store/auth'
 
 const API_URL = typeof window !== 'undefined'
   ? (process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001')
@@ -71,7 +72,7 @@ export function PhotoBumpModal({ itemId, itemName, isUrdu, onClose }: Props) {
     try {
       const blob = await (await fetch(snapped)).blob()
       const filename = `bump-${itemId}-${Date.now()}.jpg`
-      const token = localStorage.getItem('servd_token')
+      const token = useAuthStore.getState().token   // F43
 
       const presignRes = await fetch(
         `${API_URL}/api/v1/media/upload-url?filename=${encodeURIComponent(filename)}&contentType=image/jpeg&category=kds`,

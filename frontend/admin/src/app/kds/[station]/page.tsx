@@ -2,6 +2,7 @@
 import { useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useParams } from 'next/navigation'
+import Link from 'next/link'
 import { useKdsStore } from '../../../store/kds'
 import { useKdsSocket } from '../../../hooks/useKdsSocket'
 import { ordersApi } from '../../../lib/api'
@@ -35,6 +36,11 @@ export default function StationKdsPage() {
   return (
     <div className="flex h-screen flex-col bg-kds-bg">
       <NewOrderFlash />
+      <div className="shrink-0 px-4 pt-3 pb-1">
+        <Link href="/kds/all" className="text-sm text-gray-500 hover:text-gray-300 flex items-center gap-1 transition-colors">
+          ← All Stations
+        </Link>
+      </div>
       <KdsHeader title={`${stationName} Station`} stationId={station} />
 
       <div className="flex-1 overflow-y-auto p-4">

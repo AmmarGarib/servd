@@ -4,6 +4,7 @@ import type { Concept } from '../../../lib/concept'
 import { PromoBar } from '../parts/PromoBar'
 import { CrossBrandStrip } from '../parts/CrossBrandStrip'
 import { BottomCTA } from '../parts/BottomCTA'
+import { OpenStatusBadge, HoursGrid, useHoursData } from '../parts/OpenStatusBadge'
 
 // Stax — Pakistani build-your-own brand. Bases (brioche, focaccia, croissant)
 // + toppings (18 in-house) = your stack. Loud, urban, dark, slab type.
@@ -233,6 +234,7 @@ function HeatPips({ level }: { level: number }) {
 }
 
 export function StaxLayout({ concept, concepts }: Props) {
+  const hoursData = useHoursData(concept.slug)
   return (
     <div style={{ background: STAX_CREAM, color: STAX_DARK }}>
       <style>{`
@@ -298,6 +300,15 @@ export function StaxLayout({ concept, concepts }: Props) {
                 STACK IT.<br/>
                 <span style={{ color: STAX_FIRE }}>SAUCE IT.</span>
               </h1>
+              <div style={{ marginTop: '1.25rem', display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+                <OpenStatusBadge hoursData={hoursData} accentColor={STAX_FIRE} />
+              </div>
+              {hoursData && hoursData.hours.length > 0 && (
+                <div style={{ marginTop: '1.25rem' }}>
+                  <p style={{ fontSize: '0.62rem', fontWeight: 700, letterSpacing: '0.28em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.45)', marginBottom: '0.5rem' }}>Hours (PKT)</p>
+                  <HoursGrid hoursData={hoursData} accentColor={STAX_FIRE} />
+                </div>
+              )}
               <p style={{ marginTop: '2rem', fontSize: 'clamp(1.05rem, 1.6vw, 1.25rem)', maxWidth: '38rem', lineHeight: 1.4, color: 'rgba(255,255,255,0.78)' }}>
                 Brioche, focaccia, or 27-layer croissant. Smash patty or pub patty. <strong style={{ color: 'white' }}>18 in-house toppings.</strong> Pile them how you want — we cook the second you tap order.
               </p>

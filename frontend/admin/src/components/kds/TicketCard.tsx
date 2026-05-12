@@ -5,6 +5,7 @@ import { formatDistanceToNowStrict } from 'date-fns'
 import type { Order, OrderItem } from '../../lib/api'
 import { useKdsActions } from '../../hooks/useKdsSocket'
 import { useKdsStore } from '../../store/kds'
+import { useAuthStore } from '../../store/auth'
 import { PhotoBumpModal } from './PhotoBumpModal'
 
 const SOURCE_COLORS: Record<string, string> = {
@@ -69,7 +70,7 @@ interface RecipeData {
 }
 
 async function fetchRecipe(menuItemId: string): Promise<RecipeData | null> {
-  const token = typeof window !== 'undefined' ? localStorage.getItem('servd_token') : null
+  const token = useAuthStore.getState().token   // F43
   const res = await fetch(`${API_URL}/api/v1/recipes/by-item/${menuItemId}`, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   })

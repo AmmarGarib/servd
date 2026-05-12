@@ -1,6 +1,7 @@
 'use client'
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import Link from 'next/link'
 import { api } from '../../../lib/api'
 
 interface Segment {
@@ -83,6 +84,7 @@ export default function SegmentsPage() {
       {/* Header */}
       <div className="flex items-center justify-between px-6 py-4 border-b border-neutral-200">
         <div>
+          <Link href="/crm" className="text-xs text-neutral-400 hover:text-neutral-600 mb-1 inline-block">← CRM</Link>
           <h1 className="text-xl font-semibold text-neutral-900">Customer Segments</h1>
           <p className="text-sm text-neutral-500 mt-0.5">
             {totalMembers.toLocaleString()} memberships across {segments.length} behavioral groups

@@ -126,13 +126,27 @@ async function generateReferralCode(): Promise<string> {
   return (await import('crypto')).default.randomBytes(12).toString('hex').slice(0, 12).toUpperCase()
 }
 
+// F19: signup now requires email + password + phone. Phone gets verified via a
+// WhatsApp OTP — the front-end calls `POST /auth/customer/request-otp` first,
+// receives a 6-digit code, sends it back here. We re-verify the OTP server-side
+// (zero-trust the client) before committing the registration.
 export async function customerRegister(
   name: string,
   email: string,
   password: string,
+  phone: string | undefined,
+  otpVerified: boolean,                            // set true only after verifyOtp succeeded for this phone
   referredByCode?: string,
 ) {
-  const existing = await prisma.customer.findFirst({ where: { email: email.toLowerCase() } })
+  const normalisedPhone = phone?.trim() || undefined
+  const existing = await prisma.customer.findFirst({
+    where: {
+      OR: [
+        { email: email.toLowerCase() },
+        ...(normalisedPhone ? [{ phone: normalisedPhone }] as const : []),
+      ],
+    },
+  })
 
   // Resolve referral code (case-insensitive) — silently ignored if invalid
   // so a typo doesn't block signup.
@@ -153,6 +167,8 @@ export async function customerRegister(
       data: {
         name: name.trim(),
         password: hashed,
+        ...(normalisedPhone && { phone: normalisedPhone }),
+        ...(otpVerified && normalisedPhone && { phoneVerifiedAt: new Date() }),
         // Claim the referral too if the orphaned account hasn't been claimed yet.
         ...(referredById && !existing.referredById && {
           referredById,
@@ -169,7 +185,15 @@ export async function customerRegister(
     return { token, customer: { id: customer.id, name: customer.name, email: customer.email } }
   }
 
-  if (existing) throw new AppError('EMAIL_TAKEN', 'An account with this email already exists', 409)
+  if (existing) {
+    // F19: distinguish email collision from phone collision so the UI can
+    // point at the right field. Phone uniqueness is the rarer case and
+    // usually means another user already verified that number.
+    if (normalisedPhone && existing.phone === normalisedPhone && existing.email?.toLowerCase() !== email.toLowerCase()) {
+      throw new AppError('PHONE_TAKEN', 'A different account already uses this phone number', 409)
+    }
+    throw new AppError('EMAIL_TAKEN', 'An account with this email already exists', 409)
+  }
 
   const hashed = await bcrypt.hash(password, 12)
   const customer = await prisma.customer.create({
@@ -177,6 +201,11 @@ export async function customerRegister(
       name: name.trim(),
       email: email.toLowerCase(),
       password: hashed,
+      // Phone is optional in the schema but the new signup flow always supplies
+      // it. If OTP verification succeeded we also stamp phoneVerifiedAt so
+      // delivery + WhatsApp marketing flows can rely on it.
+      ...(normalisedPhone && { phone: normalisedPhone }),
+      ...(otpVerified && normalisedPhone && { phoneVerifiedAt: new Date() }),
       referralCode: await generateReferralCode(),
       ...(referredById && { referredById, referredAt: new Date() }),
     },
@@ -288,26 +317,49 @@ export async function verifyMagicLink(token: string) {
 }
 
 // ─── Token verification (used by middleware) ──────────────────────────────────
+//
+// B01: every caller must declare which token type it expects. A PIN-session
+// token must not authenticate an `access`-only endpoint, a refresh token must
+// not pass `requireAuth`, etc. We throw a distinct `INVALID_TOKEN_TYPE` so the
+// audit log makes it obvious when a confused-deputy attempt happens.
 
-export function verifyStaffToken(token: string): StaffTokenPayload {
-  try {
-    const payload = jwt.verify(token, JWT_SECRET) as StaffTokenPayload
-    if (!['access', 'refresh', 'pin'].includes(payload.type)) {
-      throw new UnauthorizedError('Invalid token type')
-    }
-    return payload
-  } catch (err) {
-    if (err instanceof UnauthorizedError) throw err
-    throw new UnauthorizedError('Invalid or expired token')
-  }
-}
+type StaffTokenType = 'access' | 'refresh' | 'pin'
 
-export function verifyCustomerToken(token: string): CustomerTokenPayload {
+export function verifyStaffToken(token: string, expected: StaffTokenType): StaffTokenPayload {
+  let payload: StaffTokenPayload
   try {
-    return jwt.verify(token, JWT_SECRET) as CustomerTokenPayload
+    payload = jwt.verify(token, JWT_SECRET) as StaffTokenPayload
   } catch {
     throw new UnauthorizedError('Invalid or expired token')
   }
+  if (!['access', 'refresh', 'pin'].includes(payload.type)) {
+    throw new UnauthorizedError('Invalid token type')
+  }
+  if (payload.type !== expected) {
+    // Distinct code so an attacker shoving a refresh token at a regular API
+    // endpoint shows up clearly in the logs / response.
+    const err = new UnauthorizedError('Wrong token type for this endpoint') as UnauthorizedError & { code?: string }
+    err.code = 'INVALID_TOKEN_TYPE'
+    throw err
+  }
+  return payload
+}
+
+// B16: customer tokens must also carry `type: 'customer'`. Older tokens minted
+// before this check are now invalid — customers re-login once.
+export function verifyCustomerToken(token: string): CustomerTokenPayload {
+  let payload: CustomerTokenPayload
+  try {
+    payload = jwt.verify(token, JWT_SECRET) as CustomerTokenPayload
+  } catch {
+    throw new UnauthorizedError('Invalid or expired token')
+  }
+  if (payload.type !== 'customer') {
+    const err = new UnauthorizedError('Not a customer token') as UnauthorizedError & { code?: string }
+    err.code = 'INVALID_TOKEN_TYPE'
+    throw err
+  }
+  return payload
 }
 
 // ─── Password/PIN hashing ─────────────────────────────────────────────────────

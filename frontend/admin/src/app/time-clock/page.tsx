@@ -12,6 +12,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { api } from '../../lib/api'
+import { useAuthStore } from '../../store/auth'
 
 type Stage = 'idle' | 'pin' | 'capturing' | 'submitting' | 'success' | 'error'
 
@@ -124,11 +125,14 @@ export default function TimeClockPage() {
           ...(selfieUrl && { selfieUrl }),
         },
       )
-      // Persist token so manager can navigate elsewhere from the same browser
-      // if they want; otherwise the success message + clear is the UX.
-      if (typeof window !== 'undefined') {
-        localStorage.setItem('servd_token', result.accessToken)
-      }
+      // F43: persist via the auth store so token + user + WebSocket stay in
+      // sync. Manager can navigate elsewhere from the same browser and the
+      // session works everywhere; otherwise the success message + clear is
+      // the only UX.
+      useAuthStore.getState().setAuth(
+        { id: '', name: result.user.name, role: result.user.role },
+        result.accessToken,
+      )
       setFeedback(`Welcome, ${result.user.name}. You're clocked in.`)
       setStage('success')
       setPin('')

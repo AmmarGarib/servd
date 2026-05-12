@@ -47,6 +47,17 @@ const TAB_LABELS: Record<Tab, string> = {
   transactions: 'Transactions',
 }
 
+function exportToCsv(rows: Record<string, unknown>[], filename: string) {
+  if (!rows.length) return
+  const headers = Object.keys(rows[0]!)
+  const escape = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`
+  const csv = [headers.map(escape).join(','), ...rows.map(r => headers.map(h => escape(r[h])).join(','))].join('\n')
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a'); a.href = url; a.download = filename; a.click()
+  URL.revokeObjectURL(url)
+}
+
 export default function FinancePage() {
   const [tab, setTab] = useState<Tab>('summary')
   const [preset, setPreset] = useState<number | null>(30)
@@ -66,6 +77,7 @@ export default function FinancePage() {
 
   const fromISO = `${dateFrom}T00:00:00Z`
   const toISO   = `${dateTo}T23:59:59Z`
+  const slug    = `${dateFrom}_${dateTo}`
 
   const { data: pl, isLoading: plLoading } = useQuery<PLData>({
     queryKey: ['pl', fromISO, toISO],
@@ -265,46 +277,69 @@ export default function FinancePage() {
           entriesLoading ? (
             <div className="skeleton h-64 rounded-xl" />
           ) : (
-            <div className="s-card overflow-hidden">
-              <div className="overflow-x-auto">
-                <table className="s-table w-full">
-                  <thead>
-                    <tr>
-                      <th>Order</th>
-                      <th>Concept</th>
-                      <th>Channel</th>
-                      <th className="text-right">Gross</th>
-                      <th className="text-right">Commission</th>
-                      <th className="text-right">Tax</th>
-                      <th className="text-right">Net</th>
-                      <th className="text-right">Date</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(entries ?? []).length === 0 ? (
+            <div className="space-y-3">
+              {(entries ?? []).length > 0 && (
+                <div className="flex justify-end">
+                  <button
+                    onClick={() => {
+                      const rows = (entries ?? []).map(e => ({
+                        order_id: `#${e.order.id.slice(-6).toUpperCase()}`,
+                        concept: e.concept.name,
+                        channel: e.channel,
+                        gross_pkr: Math.round(e.grossCents / 100),
+                        commission_pkr: Math.round(e.commissionCents / 100),
+                        tax_pkr: Math.round(e.taxCents / 100),
+                        net_pkr: Math.round(e.netCents / 100),
+                        date: new Date(e.createdAt).toLocaleDateString(),
+                      }))
+                      exportToCsv(rows as Record<string, unknown>[], `transactions_${slug}.csv`)
+                    }}
+                    className="rounded-lg px-3 py-1.5 text-xs font-semibold bg-s-surface border border-s-border text-s-muted hover:text-s-teal hover:border-s-teal/40 transition-colors">
+                    Export CSV
+                  </button>
+                </div>
+              )}
+              <div className="s-card overflow-hidden">
+                <div className="overflow-x-auto">
+                  <table className="s-table w-full">
+                    <thead>
                       <tr>
-                        <td colSpan={8} className="text-center text-s-dim py-10">
-                          No transactions in this period
-                        </td>
+                        <th>Order</th>
+                        <th>Concept</th>
+                        <th>Channel</th>
+                        <th className="text-right">Gross</th>
+                        <th className="text-right">Commission</th>
+                        <th className="text-right">Tax</th>
+                        <th className="text-right">Net</th>
+                        <th className="text-right">Date</th>
                       </tr>
-                    ) : (entries ?? []).map((e) => (
-                      <tr key={e.id}>
-                        <td className="font-mono text-xs text-s-dim">#{e.order.id.slice(-6).toUpperCase()}</td>
-                        <td className="text-s-text text-sm">{e.concept.name}</td>
-                        <td>
-                          <span className="s-badge s-badge-muted text-[10px] uppercase">{e.channel}</span>
-                        </td>
-                        <td className="text-right text-s-text">{fmt(e.grossCents)}</td>
-                        <td className="text-right text-s-red">{e.commissionCents > 0 ? `−${fmt(e.commissionCents)}` : '—'}</td>
-                        <td className="text-right text-s-muted">{fmt(e.taxCents)}</td>
-                        <td className="text-right font-bold text-s-teal">{fmt(e.netCents)}</td>
-                        <td className="text-right text-xs text-s-dim">
-                          {new Date(e.createdAt).toLocaleDateString()}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {(entries ?? []).length === 0 ? (
+                        <tr>
+                          <td colSpan={8} className="text-center text-s-dim py-10">
+                            No transactions in this period
+                          </td>
+                        </tr>
+                      ) : (entries ?? []).map((e) => (
+                        <tr key={e.id}>
+                          <td className="font-mono text-xs text-s-dim">#{e.order.id.slice(-6).toUpperCase()}</td>
+                          <td className="text-s-text text-sm">{e.concept.name}</td>
+                          <td>
+                            <span className="s-badge s-badge-muted text-[10px] uppercase">{e.channel}</span>
+                          </td>
+                          <td className="text-right text-s-text">{fmt(e.grossCents)}</td>
+                          <td className="text-right text-s-red">{e.commissionCents > 0 ? `−${fmt(e.commissionCents)}` : '—'}</td>
+                          <td className="text-right text-s-muted">{fmt(e.taxCents)}</td>
+                          <td className="text-right font-bold text-s-teal">{fmt(e.netCents)}</td>
+                          <td className="text-right text-xs text-s-dim">
+                            {new Date(e.createdAt).toLocaleDateString()}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             </div>
           )

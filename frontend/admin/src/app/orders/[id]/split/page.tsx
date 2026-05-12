@@ -21,7 +21,7 @@ interface Order {
 
 interface SplitDraft { label: string; amountCents: number; method: string }
 
-const METHODS = ['card', 'cash', 'jazzcash_wallet', 'easypaisa_wallet', 'keenu_qr'] as const
+const METHODS = ['card', 'cash', 'keenu_qr'] as const                   // F-PAY02
 
 export default function SplitPage() {
   const { id } = useParams<{ id: string }>()

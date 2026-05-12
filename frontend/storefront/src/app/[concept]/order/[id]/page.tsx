@@ -154,7 +154,17 @@ export default function OrderStatusPage() {
       {/* Header */}
       <div className="relative z-10 px-4 pt-5 pb-4 flex items-center gap-2.5"
         style={{ borderBottom: '1px solid rgba(0,0,0,0.08)', background: 'rgba(193,191,187,0.95)', backdropFilter: 'blur(12px)' }}>
-        <span className="font-black text-lg tracking-tighter text-shimmer">servd</span>
+        {token ? (
+          <Link href="/account" className="flex items-center gap-1 text-xs font-bold mr-1 transition-opacity hover:opacity-60"
+            style={{ color: 'rgba(24,22,15,0.45)' }}>
+            ← My orders
+          </Link>
+        ) : (
+          <Link href={`/${slug}`} className="flex items-center gap-1 text-xs font-bold mr-1 transition-opacity hover:opacity-60"
+            style={{ color: 'rgba(24,22,15,0.45)' }}>
+            ← Menu
+          </Link>
+        )}
         <span style={{ color: 'rgba(24,22,15,0.2)' }}>·</span>
         <span className="text-sm font-semibold" style={{ color: 'rgba(24,22,15,0.5)' }}>
           {order.concept.name}
@@ -348,17 +358,25 @@ export default function OrderStatusPage() {
         )}
 
         {/* ── Rate-your-meal CTA (completed orders only) ────────────────── */}
-        {order.status === 'completed' && (
+        {order.status === 'completed' && token && (
           <Link href={`/orders/${order.id}/review`}
-            className="flex items-center justify-center gap-2 w-full rounded-2xl py-3.5 font-bold text-sm transition-all duration-150 hover:scale-[1.01] active:scale-[0.98]"
+            className="block w-full rounded-3xl overflow-hidden transition-all duration-200 hover:scale-[1.01] active:scale-[0.98]"
             style={{
-              background: 'linear-gradient(135deg, #fef3c7 0%, #fde68a 100%)',
-              color: '#78350f',
-              border: '1px solid #fbbf24',
-              boxShadow: '0 1px 3px rgba(251,191,36,0.2)',
+              background: 'linear-gradient(135deg, #16a34a 0%, #00a896 100%)',
+              boxShadow: '0 4px 24px rgba(22,163,74,0.32)',
             }}>
-            <span style={{ fontSize: '1.1rem' }}>★</span>
-            <span>Rate your meal · +50 loyalty pts</span>
+            <div className="px-6 py-5 flex items-center justify-between gap-4">
+              <div>
+                <p className="font-black text-lg leading-tight text-white">How was it?</p>
+                <p className="text-sm mt-0.5" style={{ color: 'rgba(255,255,255,0.78)' }}>
+                  Leave a review and earn <span className="font-black text-white">+50 loyalty pts</span>
+                </p>
+              </div>
+              <div className="shrink-0 h-12 w-12 rounded-2xl flex items-center justify-center"
+                style={{ background: 'rgba(255,255,255,0.18)' }}>
+                <span className="text-2xl leading-none">★</span>
+              </div>
+            </div>
           </Link>
         )}
 

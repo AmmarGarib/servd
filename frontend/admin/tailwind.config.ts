@@ -38,7 +38,10 @@ const config: Config = {
           card:    '#242424',
           border:  '#333333',
           text:    '#FFFFFF',
-          subtext: '#999999',
+          // F09: lifted from #999 to #C9C9C9 so secondary text passes WCAG AA
+          // contrast on the #242424 ticket-card background (was 3.4:1, now 7:1).
+          // A hot/warm ticket flashes the subtext further (see globals.css).
+          subtext: '#C9C9C9',
           amber:   '#F59E0B',
           red:     '#EF4444',
           green:   '#22C55E',

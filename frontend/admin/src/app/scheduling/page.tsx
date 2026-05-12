@@ -1,5 +1,5 @@
 'use client'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../lib/api'
 
@@ -20,6 +20,15 @@ interface WeekViewData {
   weekStart: string
   staff: StaffMember[]
   shifts: ScheduledShift[]
+}
+interface LaborCostData {
+  totalCents: number
+  totalHours: number
+  byUser: { userId: string; name: string; hours: number; costCents: number; rateUnset: boolean }[]
+}
+interface CopyWeekResult {
+  copied: number
+  skipped: number
 }
 
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
@@ -44,6 +53,10 @@ function fmtDisplayDate(iso: string) {
   return new Date(iso).toLocaleDateString('en-PK', { month: 'short', day: 'numeric' })
 }
 
+function fmtPKR(cents: number) {
+  return `PKR ${Math.round(cents / 100).toLocaleString()}`
+}
+
 export default function SchedulingPage() {
   const today = getMondayOfWeek(new Date())
   const [weekStart, setWeekStart] = useState(toDateStr(today))
@@ -51,6 +64,8 @@ export default function SchedulingPage() {
   const [showModal, setShowModal] = useState(false)
   const [editShift, setEditShift] = useState<ScheduledShift | null>(null)
   const [form, setForm] = useState({ userId: '', date: '', startTime: '09:00', endTime: '17:00', role: '', notes: '' })
+  const [copyResult, setCopyResult] = useState<string | null>(null)
+  const [conflictError, setConflictError] = useState<string | null>(null)
   const qc = useQueryClient()
 
   const { data: concepts } = useQuery({ queryKey: ['concepts'], queryFn: () => api.get<Concept[]>('/concepts') })
@@ -61,6 +76,12 @@ export default function SchedulingPage() {
     enabled: !!conceptId,
   })
 
+  const { data: laborCost } = useQuery({
+    queryKey: ['laborCost', conceptId, weekStart],
+    queryFn: () => api.get<LaborCostData>(`/scheduling/labor-cost?conceptId=${conceptId}&weekStart=${weekStart}`),
+    enabled: !!conceptId,
+  })
+
   const saveMutation = useMutation({
     mutationFn: (body: typeof form & { conceptId: string }) =>
       editShift
@@ -68,24 +89,57 @@ export default function SchedulingPage() {
         : api.post('/scheduling', body),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['scheduling'] })
+      void qc.invalidateQueries({ queryKey: ['laborCost'] })
       setShowModal(false)
       setEditShift(null)
+      setConflictError(null)
+    },
+    onError: (error: Error) => {
+      if (error.message.includes('SHIFT_CONFLICT')) {
+        setConflictError('This shift conflicts with an existing shift for this staff member.')
+      } else {
+        setConflictError(error.message)
+      }
     },
   })
 
   const deleteMutation = useMutation({
     mutationFn: (id: string) => api.delete(`/scheduling/${id}`),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ['scheduling'] }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['scheduling'] })
+      void qc.invalidateQueries({ queryKey: ['laborCost'] })
+    },
+  })
+
+  const copyWeekMutation = useMutation({
+    mutationFn: ({ sourceWeekStart, targetWeekStart }: { sourceWeekStart: string; targetWeekStart: string }) =>
+      api.post<CopyWeekResult>('/scheduling/copy-week', { conceptId, sourceWeekStart, targetWeekStart }),
+    onSuccess: (result) => {
+      void qc.invalidateQueries({ queryKey: ['scheduling'] })
+      void qc.invalidateQueries({ queryKey: ['laborCost'] })
+      if (result.skipped > 0) {
+        setCopyResult(`${result.copied} shifts copied, ${result.skipped} skipped (conflicts)`)
+      } else {
+        setCopyResult(`Copied ${result.copied} shifts`)
+      }
+      setTimeout(() => setCopyResult(null), 5000)
+    },
+    onError: (error: Error) => {
+      setCopyResult(`Error: ${error.message}`)
+      setTimeout(() => setCopyResult(null), 5000)
+    },
   })
 
   function openCreate(date: string, userId?: string) {
     setEditShift(null)
+    setConflictError(null)
     setForm({ userId: userId ?? '', date, startTime: '09:00', endTime: '17:00', role: '', notes: '' })
     setShowModal(true)
   }
 
   function openEdit(shift: ScheduledShift) {
     setEditShift(shift)
+    setConflictError(null)
     setForm({ userId: shift.userId, date: shift.date, startTime: shift.startTime, endTime: shift.endTime, role: shift.role ?? '', notes: shift.notes ?? '' })
     setShowModal(true)
   }
@@ -102,11 +156,25 @@ export default function SchedulingPage() {
     setWeekStart(toDateStr(d))
   }
 
+  function handleCopyPrevWeek() {
+    const prevMonday = addDays(new Date(weekStart), -7)
+    const prevWeekStart = toDateStr(prevMonday)
+    const prevEnd = toDateStr(addDays(prevMonday, 6))
+    const currEnd = toDateStr(addDays(new Date(weekStart), 6))
+    const ok = confirm(
+      `Copy all shifts from ${fmtDisplayDate(prevWeekStart)}–${fmtDisplayDate(prevEnd)} to ${fmtDisplayDate(weekStart)}–${fmtDisplayDate(currEnd)}?`
+    )
+    if (ok) {
+      copyWeekMutation.mutate({ sourceWeekStart: prevWeekStart, targetWeekStart: weekStart })
+    }
+  }
+
   const weekDates = Array.from({ length: 7 }, (_, i) => toDateStr(addDays(new Date(weekStart), i)))
   const staff = data?.staff ?? []
   const shifts = data?.shifts ?? []
 
   const SHIFT_COLORS = ['rgba(0,212,177,0.15)', 'rgba(99,102,241,0.15)', 'rgba(245,158,11,0.15)', 'rgba(236,72,153,0.15)', 'rgba(34,211,238,0.15)']
+  const hasRateUnset = laborCost?.byUser.some(u => u.rateUnset) ?? false
 
   return (
     <div className="p-6 space-y-6">
@@ -146,8 +214,51 @@ export default function SchedulingPage() {
             style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)', color: 'rgba(255,255,255,0.4)' }}>
             Today
           </button>
+          {conceptId && (
+            <button
+              onClick={handleCopyPrevWeek}
+              disabled={copyWeekMutation.isPending}
+              className="px-3 py-1.5 rounded-xl text-xs font-semibold disabled:opacity-50 transition-opacity"
+              style={{ background: 'rgba(99,102,241,0.1)', border: '1px solid rgba(99,102,241,0.3)', color: 'rgba(165,168,255,0.9)' }}>
+              {copyWeekMutation.isPending ? 'Copying…' : 'Copy prev week'}
+            </button>
+          )}
         </div>
       </div>
+
+      {/* Copy week result toast */}
+      {copyResult && (
+        <div className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium"
+          style={{ background: 'rgba(0,212,177,0.08)', border: '1px solid rgba(0,212,177,0.25)', color: '#00D4B1' }}>
+          {copyResult}
+          <button onClick={() => setCopyResult(null)} className="ml-auto text-xs opacity-60 hover:opacity-100">✕</button>
+        </div>
+      )}
+
+      {/* Labor cost strip */}
+      {conceptId && laborCost && (
+        <div className="space-y-1.5">
+          <div className="flex items-center gap-4 px-4 py-2.5 rounded-xl text-sm"
+            style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.55)' }}>
+            <span>
+              Est. labor this week:{' '}
+              <span className="font-bold" style={{ color: 'rgba(255,255,255,0.85)' }}>
+                {fmtPKR(laborCost.totalCents)}
+              </span>
+              {' · '}
+              <span className="font-semibold" style={{ color: 'rgba(255,255,255,0.75)' }}>
+                {laborCost.totalHours.toFixed(1)} hrs total
+              </span>
+            </span>
+          </div>
+          {hasRateUnset && (
+            <div className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-medium"
+              style={{ background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.25)', color: '#F59E0B' }}>
+              ⚠ Some staff have no wage set — check Settings
+            </div>
+          )}
+        </div>
+      )}
 
       {!conceptId && (
         <div className="flex items-center justify-center h-48 rounded-2xl" style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)' }}>
@@ -239,7 +350,7 @@ export default function SchedulingPage() {
       {/* Add/Edit Modal */}
       {showModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.7)' }}
-          onClick={e => { if (e.target === e.currentTarget) setShowModal(false) }}>
+          onClick={e => { if (e.target === e.currentTarget) { setShowModal(false); setConflictError(null) } }}>
           <div className="w-full max-w-md rounded-2xl p-6 space-y-4" style={{ background: '#0d0f15', border: '1px solid rgba(255,255,255,0.1)' }}>
             <h2 className="text-base font-bold" style={{ color: 'rgba(255,255,255,0.9)' }}>
               {editShift ? 'Edit Shift' : 'Add Shift'}
@@ -284,15 +395,23 @@ export default function SchedulingPage() {
               </div>
             </div>
 
+            {/* Conflict error */}
+            {conflictError && (
+              <div className="flex items-center gap-2 px-3 py-2.5 rounded-xl text-xs font-medium"
+                style={{ background: 'rgba(255,77,79,0.1)', border: '1px solid rgba(255,77,79,0.3)', color: '#FF4D4F' }}>
+                ⚠ {conflictError}
+              </div>
+            )}
+
             <div className="flex gap-3">
-              <button onClick={() => setShowModal(false)}
+              <button onClick={() => { setShowModal(false); setConflictError(null) }}
                 className="flex-1 py-2.5 rounded-xl text-sm font-semibold"
                 style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.5)' }}>
                 Cancel
               </button>
               <button
                 disabled={!form.userId || !form.date || saveMutation.isPending}
-                onClick={() => saveMutation.mutate({ ...form, conceptId })}
+                onClick={() => { setConflictError(null); saveMutation.mutate({ ...form, conceptId }) }}
                 className="flex-1 py-2.5 rounded-xl text-sm font-bold disabled:opacity-50 transition-opacity"
                 style={{ background: 'rgba(0,212,177,0.12)', border: '1px solid rgba(0,212,177,0.3)', color: '#00D4B1' }}>
                 {saveMutation.isPending ? 'Saving…' : editShift ? 'Save Changes' : 'Add Shift'}

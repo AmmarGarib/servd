@@ -2,6 +2,7 @@
 import { useState, useRef } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../lib/api'
+import { useAuthStore } from '../../store/auth'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -39,7 +40,7 @@ export default function MediaLibraryPage() {
     setUploadError('')
 
     try {
-      const token = typeof window !== 'undefined' ? localStorage.getItem('servd_token') : null
+      const token = useAuthStore.getState().token   // F43
 
       for (const file of files) {
         const params = new URLSearchParams({ filename: file.name, contentType: file.type, category: uploadCat })

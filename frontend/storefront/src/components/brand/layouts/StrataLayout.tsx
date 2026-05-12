@@ -4,6 +4,7 @@ import type { Concept } from '../../../lib/concept'
 import { PromoBar } from '../parts/PromoBar'
 import { CrossBrandStrip } from '../parts/CrossBrandStrip'
 import { BottomCTA } from '../parts/BottomCTA'
+import { OpenStatusBadge, useHoursData } from '../parts/OpenStatusBadge'
 
 // Strata — premium chef-driven performance kitchen. Clean white + deep mint.
 // The goal-filter stays — but framed as "tonight's brief", not a gym tracker.
@@ -43,6 +44,7 @@ const GOAL_LABELS: Record<Goal, { label: string; sub: string }> = {
 }
 
 export function StrataLayout({ concept, concepts }: Props) {
+  const hoursData = useHoursData(concept.slug)
   return (
     <div style={{ background: '#fff', color: STRATA_INK }}>
       <PromoBar brandName={concept.name} brandSlug={concept.slug} accent={STRATA_MINT} />
@@ -72,6 +74,9 @@ export function StrataLayout({ concept, concepts }: Props) {
                 Cooked right.<br />
                 <span style={{ color: STRATA_MINT }}>Built for you.</span>
               </h1>
+              <div style={{ marginTop: '1rem' }}>
+                <OpenStatusBadge hoursData={hoursData} accentColor={STRATA_MINT} />
+              </div>
               <p style={{ marginTop: '1.75rem', fontSize: '1.1rem', color: `${STRATA_INK}99`, lineHeight: 1.6, maxWidth: '34rem' }}>
                 {concept.name} is a chef-run performance kitchen — high-protein, clean-label cooking that doesn&rsquo;t compromise on flavour. Every dish is engineered to hit your goal without tasting like it tried.
               </p>

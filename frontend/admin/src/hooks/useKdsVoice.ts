@@ -4,6 +4,11 @@ import { useKdsStore } from '../store/kds'
 import { useKdsActions } from './useKdsSocket'
 import type { Order } from '../lib/api'
 
+type SpeechRecognitionEvent = {
+  error?: string                              // 'not-allowed' | 'no-speech' | 'network' | 'aborted' | …
+  message?: string
+}
+
 type SpeechRecognitionAPI = new () => {
   continuous: boolean
   interimResults: boolean
@@ -11,7 +16,7 @@ type SpeechRecognitionAPI = new () => {
   start: () => void
   stop: () => void
   onresult: ((event: { results: ArrayLike<ArrayLike<{ transcript: string }>> & { length: number } }) => void) | null
-  onerror: ((event: unknown) => void) | null
+  onerror: ((event: SpeechRecognitionEvent) => void) | null
   onend: (() => void) | null
 }
 
@@ -58,6 +63,11 @@ export function useKdsVoice(): VoiceState {
     rec.interimResults = false
     rec.lang = 'en-US'
 
+    // Track fatal errors so onend doesn't loop-restart after permission denial.
+    // Some browsers fire 'no-speech' / 'aborted' constantly when the mic is idle —
+    // those are routine, not errors the operator needs to see.
+    let fatal = false
+
     rec.onresult = (event) => {
       const last = event.results[event.results.length - 1]
       if (!last) return
@@ -70,11 +80,40 @@ export function useKdsVoice(): VoiceState {
       })
     }
 
-    rec.onerror = () => setLastError('Voice error — restarting')
+    rec.onerror = (event) => {
+      const code = event?.error ?? 'unknown'
+      switch (code) {
+        case 'not-allowed':
+        case 'service-not-allowed':
+          // User denied mic permission — stop trying, surface a useful message
+          fatal = true
+          setLastError('🎙 Mic permission denied — click the mic icon in your browser address bar to allow')
+          useKdsStore.getState().setVoiceEnabled(false)
+          break
+        case 'no-speech':
+        case 'aborted':
+          // Routine: silence between commands, or the page unfocused.
+          // Don't surface; let the restart cycle handle it.
+          break
+        case 'network':
+          setLastError('🎙 Network issue — voice paused')
+          break
+        case 'audio-capture':
+          fatal = true
+          setLastError('🎙 No microphone detected on this device')
+          useKdsStore.getState().setVoiceEnabled(false)
+          break
+        default:
+          setLastError(`🎙 Voice paused (${code})`)
+      }
+    }
+
     rec.onend = () => {
-      // Auto-restart while toggle is on (Chrome auto-stops every ~60s)
+      // Auto-restart while toggle is on AND no fatal error.
+      // Chrome auto-stops the recognition every ~60s of silence.
+      if (fatal) { setActive(false); return }
       if (useKdsStore.getState().voiceEnabled) {
-        try { rec.start() } catch { /* already started */ }
+        try { rec.start() } catch { /* already running */ }
       } else {
         setActive(false)
       }
@@ -84,8 +123,10 @@ export function useKdsVoice(): VoiceState {
       rec.start()
       setActive(true)
       setLastError(null)
-    } catch {
-      setLastError('Failed to start voice recognition')
+    } catch (e) {
+      // Most likely "InvalidStateError: already started" — benign during HMR
+      const msg = (e as Error)?.message ?? ''
+      if (!msg.includes('already')) setLastError('🎙 Could not start voice recognition')
     }
 
     return () => {

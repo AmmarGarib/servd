@@ -13,6 +13,9 @@ export function KdsHeader({ title, stationId }: KdsHeaderProps) {
   const showImages = useKdsStore((s) => s.showImages)
   const soundEnabled = useKdsStore((s) => s.soundEnabled)
   const voiceEnabled = useKdsStore((s) => s.voiceEnabled)
+  // F05: live socket health, set by the useKdsSocket hook elsewhere on the page.
+  const wsConnected = useKdsStore((s) => s.wsConnected)
+  const lastOrderAt = useKdsStore((s) => s.lastOrderAt)
   const setLang = useKdsStore((s) => s.setLang)
   const setShowImages = useKdsStore((s) => s.setShowImages)
   const setSoundEnabled = useKdsStore((s) => s.setSoundEnabled)
@@ -36,6 +39,20 @@ export function KdsHeader({ title, stationId }: KdsHeaderProps) {
         <span className="rounded-full bg-kds-red px-2.5 py-0.5 text-sm font-bold text-white">
           {activeOrders.length}
         </span>
+        {/* F05: WS health pill — green dot + "Live" when connected, pulsing red
+            + "Reconnecting…" when the socket has dropped. Right of the count
+            badge so the operator's eye lands on it next. */}
+        <div className="flex items-center gap-1.5 ml-1" title={wsConnected ? 'Live updates connected' : 'Trying to reconnect — refresh if this persists'}>
+          <span className={`h-2.5 w-2.5 rounded-full ${wsConnected ? 'bg-kds-green' : 'bg-kds-red animate-pulse'}`} />
+          <span className="text-xs font-bold text-kds-subtext">
+            {wsConnected ? 'Live' : 'Reconnecting…'}
+          </span>
+          {lastOrderAt && wsConnected && (
+            <span className="text-xs text-kds-subtext ml-1">
+              · last order {lastOrderAt.toLocaleTimeString('en-PK', { hour: '2-digit', minute: '2-digit' })}
+            </span>
+          )}
+        </div>
         {voiceEnabled && voice.lastCommand && (
           <span className="rounded-md border border-kds-green/40 bg-kds-green/10 px-2 py-0.5 text-xs text-kds-green font-mono">
             🎙 {voice.lastCommand}

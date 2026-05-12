@@ -30,6 +30,10 @@ import { startWebhookDeliveryWorker } from './workers/webhookDelivery.js'
 import { startScheduledReportsWorker } from './workers/scheduledReports.js'
 import { startShrinkageTrendWorker } from './workers/shrinkageTrend.js'
 import { startRiderScoringWorker } from './workers/riderScoring.js'
+import { startOrderAutoCancelWorker } from './workers/orderAutoCancel.js'
+import { startPaymentRetryWorker } from './workers/paymentRetry.js'
+import { startInventorySyncWorker } from './workers/inventorySync.js'
+import { startRiderDispatchWorker } from './workers/riderDispatch.js'
 import { analyticsRoutes } from './modules/analytics/routes.js'
 import { startSegmentComputationWorker } from './workers/segmentComputation.js'
 import { calendarRoutes } from './modules/calendar/routes.js'
@@ -52,7 +56,7 @@ import { accountingRoutes } from './modules/accounting/routes.js'
 import { crmRoutes } from './modules/crm/routes.js'
 import { loyaltyRoutes } from './modules/loyalty/routes.js'
 import { storefrontRoutes } from './modules/storefront/routes.js'
-import { webhookRoutes } from './modules/webhooks/routes.js'
+import { webhookRoutes, webhookManagementRoutes } from './modules/webhooks/routes.js'
 import { financeRoutes } from './modules/finance/routes.js'
 import { reviewRoutes } from './modules/reviews/routes.js'
 import { complaintRoutes } from './modules/complaints/routes.js'
@@ -79,7 +83,9 @@ import { groupOrderRoutes } from './modules/groupOrders/routes.js'
 import { siteLayoutRoutes } from './modules/siteLayouts/routes.js'
 import { schedulingRoutes } from './modules/scheduling/routes.js'
 import { mediaRoutes } from './modules/media/routes.js'
-import { apiTokenRoutes } from './modules/apiTokens/routes.js'
+// B07: apiTokens module removed — no third-party integrations need this in v1.
+// If you re-introduce partner API access later, prefer a scoped OAuth2 flow
+// over long-lived bearer tokens.
 import { permissionRoutes } from './modules/permissions/routes.js'
 import { seedPermissions } from './lib/permissions.js'
 import { locationRoutes } from './modules/locations/routes.js'
@@ -95,6 +101,8 @@ import { crosschecksRoutes } from './modules/crosschecks/routes.js'
 import { trustopsRoutes } from './modules/trustops/routes.js'
 import { opexRoutes } from './modules/opex/routes.js'
 import { notificationRoutes } from './modules/notifications/routes.js'
+import { kdsRoutes } from './modules/kds/routes.js'
+import { kitchenStaffRoutes } from './modules/kitchen-staff/routes.js'
 
 const PORT = parseInt(process.env['PORT'] ?? '3001', 10)
 const HOST = '0.0.0.0'
@@ -271,7 +279,7 @@ async function build() {
       await api.register(analyticsRoutes,    { prefix: '/analytics' })
       await api.register(calendarRoutes,     { prefix: '/calendar' })
       await api.register(mediaRoutes,        { prefix: '/media' })
-      await api.register(apiTokenRoutes,     { prefix: '/api-tokens' })
+      // B07: apiTokens removed — see import-block note above.
       await api.register(permissionRoutes,   { prefix: '/permissions' })
       await api.register(locationRoutes,     { prefix: '/locations' })
       await api.register(paymentGatewayRoutes, { prefix: '/payment-gateways' })
@@ -287,6 +295,8 @@ async function build() {
       await api.register(opexRoutes,              { prefix: '/opex' })
       await api.register(supplierChatRoutes,      { prefix: '/procurement' })
       await api.register(notificationRoutes,      { prefix: '/notifications' })
+      await api.register(kdsRoutes,               { prefix: '/kds' })
+      await api.register(kitchenStaffRoutes,      { prefix: '/kitchen-staff' })
 
       // Meta OAuth: GET /api/v1/integrations/social/connect → redirect
       //             GET /api/v1/integrations/social/callback → exchange code + store tokens
@@ -309,7 +319,8 @@ async function build() {
           }
         },
       )
-      await api.register(webhookRoutes, { prefix: '/webhooks' })
+      await api.register(webhookRoutes,           { prefix: '/webhooks' })
+      await api.register(webhookManagementRoutes, { prefix: '/webhooks' })
     },
     { prefix: '/api/v1' },
   )
@@ -465,6 +476,10 @@ async function build() {
     startScheduledReportsWorker()
     startShrinkageTrendWorker()
     startRiderScoringWorker()
+    startOrderAutoCancelWorker()
+    startPaymentRetryWorker()
+    startInventorySyncWorker()
+    startRiderDispatchWorker()
   } else {
     fastify.log.warn('Background workers disabled (set ENABLE_WORKERS=true to run them)')
   }

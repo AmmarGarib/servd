@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useCustomerAuth } from '../../store/customerAuth'
-import { useCart } from '../../store/cart'
+import { useCart, type CartItemModifier } from '../../store/cart'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -36,10 +36,26 @@ function ReorderButton({ orderId, conceptSlug, token }: { orderId: string; conce
         headers: { Authorization: `Bearer ${token}` },
       })
       if (!res.ok) throw new Error(`Reorder failed (${res.status})`)
-      const data = await res.json() as { conceptSlug: string; items: Array<{ menuItemId: string | null; name: string; quantity: number; unitPriceCents: number }>; notice: string | null }
+      const data = await res.json() as {
+        conceptSlug: string
+        items: Array<{
+          menuItemId: string | null
+          name: string
+          quantity: number
+          unitPriceCents: number
+          modifiers?: CartItemModifier[]
+        }>
+        notice: string | null
+      }
       const items = data.items
         .filter((i) => i.menuItemId)
-        .map((i) => ({ menuItemId: i.menuItemId!, name: i.name, priceCents: i.unitPriceCents, quantity: i.quantity }))
+        .map((i) => ({
+          menuItemId: i.menuItemId!,
+          name: i.name,
+          priceCents: i.unitPriceCents,
+          quantity: i.quantity,
+          modifiers: i.modifiers ?? [],
+        }))
       if (items.length === 0) {
         alert('Sorry — none of the items from that order are available right now.')
         return

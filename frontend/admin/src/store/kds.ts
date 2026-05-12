@@ -12,6 +12,12 @@ interface KdsState {
   soundEnabled: boolean
   voiceEnabled: boolean
   newOrderPulse: number          // increments each time a new order arrives — drives flash overlay
+  // F05: live WebSocket health. KDS header surfaces these so a station can
+  // see the moment the link drops and know whether to refresh.
+  wsConnected: boolean
+  lastOrderAt: Date | null
+  setWsConnected: (v: boolean) => void
+  setLastOrderAt: (d: Date | null) => void
   setOrders: (orders: Order[]) => void
   addOrder: (order: Order) => void
   updateOrderStatus: (orderId: string, status: string) => void
@@ -45,6 +51,10 @@ export const useKdsStore = create<KdsState>()((set) => ({
   soundEnabled: loadPref<boolean>('kds_sound', true),
   voiceEnabled: loadPref<boolean>('kds_voice', false),
   newOrderPulse: 0,
+  wsConnected: false,
+  lastOrderAt: null,
+  setWsConnected: (v) => set({ wsConnected: v }),
+  setLastOrderAt: (d) => set({ lastOrderAt: d }),
 
   setOrders: (orders) => set({ orders }),
 

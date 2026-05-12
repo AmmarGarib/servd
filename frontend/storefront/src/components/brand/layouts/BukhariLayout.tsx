@@ -4,6 +4,7 @@ import type { Concept } from '../../../lib/concept'
 import { PromoBar } from '../parts/PromoBar'
 import { CrossBrandStrip } from '../parts/CrossBrandStrip'
 import { BottomCTA } from '../parts/BottomCTA'
+import { OpenStatusBadge, useHoursData } from '../parts/OpenStatusBadge'
 
 // Bukhari — heritage Pakistani. Saffron rice, lamb on the bone, family
 // portions. Deep maroon + cream + saffron palette; classical serif feel via
@@ -34,6 +35,7 @@ const HERITAGE = [
 ]
 
 export function BukhariLayout({ concept, concepts }: Props) {
+  const hoursData = useHoursData(concept.slug)
   return (
     <div style={{ background: BUKHARI_CREAM, color: BUKHARI_INK }}>
       <PromoBar brandName={concept.name} brandSlug={concept.slug} accent={BUKHARI_SAFFRON} />
@@ -72,6 +74,9 @@ export function BukhariLayout({ concept, concepts }: Props) {
               }}>
                 Saffron. Lamb.<br /><em style={{ fontStyle: 'italic', color: BUKHARI_SAFFRON }}>Heritage.</em>
               </h1>
+              <div style={{ marginTop: '1.25rem', display: 'flex', justifyContent: 'center' }}>
+                <OpenStatusBadge hoursData={hoursData} accentColor={BUKHARI_SAFFRON} />
+              </div>
               <p style={{ marginTop: '2rem', fontSize: 'clamp(1.05rem, 1.6vw, 1.3rem)', lineHeight: 1.7, color: 'rgba(251,243,227,0.78)', fontWeight: 300, maxWidth: '40rem', marginInline: 'auto' }}>
                 {concept.name} is the heritage menu — saffron rice, lamb on the bone, slow-cook patience. Built for the table. Served for the family. Made the way Apa made it, every time, without exception.
               </p>

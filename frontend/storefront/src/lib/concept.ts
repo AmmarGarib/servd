@@ -1,5 +1,11 @@
 // Concept-related shared utilities for storefront components.
 
+export interface ServiceHourSlot {
+  dayOfWeek: number   // 0 = Sun … 6 = Sat
+  openMin:   number   // minutes since midnight
+  closeMin:  number
+}
+
 export interface Concept {
   id: string
   name: string
@@ -8,6 +14,13 @@ export interface Concept {
   description: string | null
   logoUrl: string | null
   primaryColor: string | null
+  // Physical presence — included in /storefront/concepts response
+  phone?:    string | null
+  address?:  string | null
+  latitude?:  number | null
+  longitude?: number | null
+  // Service hours from DB
+  serviceHours?: ServiceHourSlot[]
   // Per-brand reservations master toggle. Controlled from
   // admin → Marketing → Brands → Storefront. When false, customer-facing
   // surfaces hide the "Book a table" CTA.

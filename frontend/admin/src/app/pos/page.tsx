@@ -239,61 +239,119 @@ function ModifierModal({
   onConfirm: (mods: Modifier[]) => void
   onClose: () => void
 }) {
-  const [selected, setSelected] = useState<Set<string>>(new Set())
+  // F14: track selections per-group so we can enforce minSelect/maxSelect.
+  // A flat selected set wasn't enough to tell "0 from required group" apart
+  // from "5 from a max-3 group" — the new structure makes both visible.
+  const [selectedByGroup, setSelectedByGroup] = useState<Record<string, Set<string>>>({})
 
-  function toggle(modId: string) {
-    setSelected((prev) => {
-      const next = new Set(prev)
-      if (next.has(modId)) next.delete(modId)
-      else next.add(modId)
-      return next
+  function toggle(groupId: string, modId: string, maxSelect: number) {
+    setSelectedByGroup((prev) => {
+      const current = new Set(prev[groupId] ?? [])
+      if (current.has(modId)) {
+        current.delete(modId)
+      } else {
+        // If adding would exceed maxSelect, drop the oldest pick first so
+        // single-select groups (max=1) behave like radio buttons naturally.
+        if (current.size >= maxSelect && maxSelect > 0) {
+          if (maxSelect === 1) current.clear()
+          else {
+            const oldest = current.values().next().value
+            if (oldest) current.delete(oldest)
+          }
+        }
+        current.add(modId)
+      }
+      return { ...prev, [groupId]: current }
     })
   }
 
+  // For each required group, the user must pick at least minSelect items.
+  // Compute a friendly message and a disabled state for the confirm button.
+  const groupErrors: Record<string, string | null> = {}
+  let canConfirm = true
+  for (const g of item.modifierGroups ?? []) {
+    const picked = selectedByGroup[g.id]?.size ?? 0
+    const min = g.minSelect ?? (g.isRequired ? 1 : 0)
+    const max = g.maxSelect ?? Infinity
+    if (picked < min) {
+      groupErrors[g.id] = min === 1 ? 'Please choose 1' : `Please choose at least ${min}`
+      canConfirm = false
+    } else if (picked > max) {
+      groupErrors[g.id] = `Choose at most ${max}`
+      canConfirm = false
+    } else {
+      groupErrors[g.id] = null
+    }
+  }
+
   function confirm() {
+    if (!canConfirm) return
+    const picked = new Set<string>()
+    for (const set of Object.values(selectedByGroup)) for (const id of set) picked.add(id)
     const allMods = item.modifierGroups.flatMap((g: ModifierGroup) => g.modifiers)
-    onConfirm(allMods.filter((m: Modifier) => selected.has(m.id)))
+    onConfirm(allMods.filter((m: Modifier) => picked.has(m.id)))
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/70 sm:items-center">
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/70 sm:items-center" role="dialog" aria-modal="true" aria-labelledby="modifier-modal-title">
       <div className="w-full max-w-md rounded-t-2xl bg-kds-card p-5 sm:rounded-2xl">
-        <h2 className="mb-4 text-lg font-bold">{item.name} — Options</h2>
+        <h2 id="modifier-modal-title" className="mb-4 text-lg font-bold">{item.name} — Options</h2>
 
-        {item.modifierGroups.map((group: ModifierGroup) => (
-          <div key={group.id} className="mb-4">
-            <p className="mb-2 text-sm font-semibold text-kds-subtext">
-              {group.name}
-              {group.isRequired && <span className="ml-1 text-kds-red">*</span>}
-            </p>
-            <div className="grid grid-cols-2 gap-2">
-              {group.modifiers.map((mod: Modifier) => (
-                <button
-                  key={mod.id}
-                  onClick={() => toggle(mod.id)}
-                  className={`rounded-lg border px-3 py-2 text-left text-sm transition-colors ${
-                    selected.has(mod.id)
-                      ? 'border-kds-green bg-kds-green/20 text-kds-green'
-                      : 'border-kds-border text-kds-text'
-                  }`}
-                >
-                  <span>{mod.name}</span>
-                  {mod.priceDeltaCents !== 0 && (
-                    <span className="ml-1 text-kds-subtext">
-                      +{(mod.priceDeltaCents / 100).toFixed(0)}
-                    </span>
-                  )}
-                </button>
-              ))}
+        {item.modifierGroups.map((group: ModifierGroup) => {
+          const picked = selectedByGroup[group.id]
+          const max = group.maxSelect ?? Infinity
+          const err = groupErrors[group.id]
+          return (
+            <div key={group.id} className="mb-4">
+              <div className="mb-2 flex items-baseline justify-between">
+                <p className="text-sm font-semibold text-kds-subtext">
+                  {group.name}
+                  {group.isRequired && <span className="ml-1 text-kds-red">*</span>}
+                </p>
+                {(group.minSelect > 0 || group.maxSelect < 99) && (
+                  <p className="text-[10px] uppercase tracking-wider text-kds-subtext">
+                    {group.minSelect === group.maxSelect
+                      ? `pick ${group.minSelect}`
+                      : `${group.minSelect}–${group.maxSelect}`}
+                  </p>
+                )}
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                {group.modifiers.map((mod: Modifier) => {
+                  const isOn = picked?.has(mod.id) ?? false
+                  return (
+                    <button
+                      key={mod.id}
+                      onClick={() => toggle(group.id, mod.id, max)}
+                      className={`rounded-lg border px-3 py-2 text-left text-sm transition-colors ${
+                        isOn
+                          ? 'border-kds-green bg-kds-green/20 text-kds-green'
+                          : 'border-kds-border text-kds-text hover:border-kds-subtext'
+                      }`}
+                    >
+                      <span>{mod.name}</span>
+                      {mod.priceDeltaCents !== 0 && (
+                        <span className="ml-1 text-kds-subtext">
+                          +{(mod.priceDeltaCents / 100).toFixed(0)}
+                        </span>
+                      )}
+                    </button>
+                  )
+                })}
+              </div>
+              {err && (
+                <p className="mt-1 text-xs font-semibold text-kds-amber">{err}</p>
+              )}
             </div>
-          </div>
-        ))}
+          )
+        })}
 
         <div className="flex gap-3 pt-2">
           <button onClick={onClose} className="kds-btn-ghost flex-1 py-3">
             Cancel
           </button>
-          <button onClick={confirm} className="kds-btn-primary flex-1 py-3">
+          <button onClick={confirm} disabled={!canConfirm}
+            className="kds-btn-primary flex-1 py-3 disabled:cursor-not-allowed disabled:opacity-40">
             Add to Order
           </button>
         </div>
