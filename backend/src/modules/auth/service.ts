@@ -58,8 +58,11 @@ export async function staffLogin(email: string, password: string) {
 }
 
 export async function staffPinLogin(pin: string) {
+  // Only `active` accounts can complete PIN login. `pending` (self-signed-up,
+  // waiting for CEO approval) and `suspended` (ex-staff) are filtered out so
+  // they can't bcrypt-collide their way into a session.
   const users = await prisma.user.findMany({
-    where: { isActive: true, pin: { not: null }, deletedAt: null },
+    where: { isActive: true, pin: { not: null }, deletedAt: null, accountStatus: 'active' },
   })
 
   // Run all bcrypt comparisons in parallel — O(n) sequential was ~100ms * n staff
@@ -71,7 +74,22 @@ export async function staffPinLogin(pin: string) {
   )
   const matchedUser = results.find((r) => r.match)?.user ?? null
 
-  if (!matchedUser) throw new UnauthorizedError('Invalid PIN')
+  if (!matchedUser) {
+    // Distinguish "wrong PIN" from "your account is still pending". Knowing
+    // approval is pending tells the new hire they're not crazy — without
+    // leaking which PINs belong to active vs pending users.
+    const pendingExists = await prisma.user.findFirst({
+      where: { isActive: true, pin: { not: null }, deletedAt: null, accountStatus: 'pending' },
+      select: { id: true },
+    })
+    if (pendingExists) {
+      // We can't tell if THIS pin matches a pending account without comparing,
+      // and that defeats the privacy goal. Surface a generic "wrong or pending"
+      // message — the new hire will understand from context, attackers learn
+      // nothing they couldn't already learn.
+    }
+    throw new UnauthorizedError('PIN not recognised — or your account is still awaiting approval')
+  }
 
   // Short-lived PIN session token (12h) — for KDS/POS devices
   const pinToken = jwt.sign(

@@ -1,8 +1,10 @@
 'use client'
 import { useState, useEffect, useMemo } from 'react'
 import Link from 'next/link'
+import { useQuery } from '@tanstack/react-query'
 import { usePathname, useRouter } from 'next/navigation'
 import { useAuthStore } from '../../store/auth'
+import { api } from '../../lib/api'
 import { useViewAsRole, type ViewAsRole } from '../../store/viewAsRole'
 import { useRoleModules, modulesForRole } from '../../store/roleModules'
 import { usePermissions } from '../../hooks/useCan'
@@ -48,10 +50,11 @@ const NAV: NavSection[] = [
   {
     title: 'Executive',
     items: [
-      { href: '/configuration',        label: 'CEO Overview',      icon: '👑', module: 'ceo_overview' },
-      { href: '/configuration/roles',  label: 'Roles & Permissions', icon: '🔐', module: 'role_management' },
-      { href: '/configuration/role-modules', label: 'Module Access', icon: '🗂', module: 'role_modules' },
-      { href: '/settings',             label: 'Tenants & Brands',  icon: '🏷', module: 'tenants' },
+      { href: '/configuration',                 label: 'CEO Overview',        icon: '👑', module: 'ceo_overview' },
+      { href: '/configuration/pending-approvals', label: 'Pending Signups',  icon: '⏳', module: 'role_management' },
+      { href: '/configuration/roles',           label: 'Roles & Permissions', icon: '🔐', module: 'role_management' },
+      { href: '/configuration/role-modules',    label: 'Module Access',       icon: '🗂', module: 'role_modules' },
+      { href: '/settings',                      label: 'Tenants & Brands',    icon: '🏷', module: 'tenants' },
     ],
   },
   {
@@ -580,10 +583,20 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     const { data: me } = usePermissions()
     const viewAs = useViewAsRole((s) => s.role)
     const setRole = useViewAsRole((s) => s.setRole)
-    // Both admin and CEO can impersonate; everyone else gets a passive card.
+    // Only the CEO (admin) can impersonate other roles + approve new staff.
     const isSuper = me?.role === 'admin'
 
-    // Drop admin/ceo from impersonation targets — viewing-as-self is the
+    // Pending-approvals badge — only fetched for the CEO. Polls every 30s so
+    // a new signup appears in the sidebar without a page refresh.
+    const { data: pending = [] } = useQuery<Array<{ id: string }>>({
+      queryKey: ['staff', 'pending'],
+      queryFn:  () => api.get('/auth/staff/pending'),
+      enabled:  isSuper,
+      refetchInterval: 30_000,
+      staleTime: 15_000,
+    })
+
+    // Drop admin/CEO from impersonation targets — viewing-as-self is the
     // default state, no need to offer it as a discrete option.
     const switchTargets = APP_ROLES.filter((r) => r.value !== 'admin')
 
@@ -609,8 +622,24 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </div>
         </div>
 
+        {/* CEO-only: live link to the pending-approvals queue with a badge
+            showing how many staff are waiting. Hidden when nothing is in
+            the queue so the card stays quiet. */}
+        {isSuper && pending.length > 0 && (
+          <Link href="/configuration/pending-approvals"
+            className="mt-1.5 pt-1.5 border-t border-white/[0.05] flex items-center gap-2 rounded-md px-1 py-1 -mx-1 transition-colors"
+            onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(245,158,11,0.06)')}
+            onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}>
+            <span className="h-1.5 w-1.5 rounded-full animate-pulse" style={{ background: '#F59E0B' }} />
+            <span className="text-[10px] font-bold flex-1" style={{ color: '#F59E0B' }}>
+              {pending.length} pending {pending.length === 1 ? 'signup' : 'signups'}
+            </span>
+            <span className="text-[10px]" style={{ color: 'rgba(255,255,255,0.4)' }}>→</span>
+          </Link>
+        )}
+
         {isSuper && (
-          <div className="mt-1.5 pt-1.5 border-t border-white/[0.05] flex items-center gap-1.5">
+          <div className={`${pending.length > 0 ? 'mt-1' : 'mt-1.5'} pt-1.5 border-t border-white/[0.05] flex items-center gap-1.5`}>
             <span className="text-[9px] uppercase tracking-wider font-bold shrink-0"
               style={{ color: viewAs ? '#A5B4FC' : 'rgba(255,255,255,0.3)' }}>
               {viewAs ? '🔭 As' : 'View as'}

@@ -57,6 +57,15 @@ enum UserRole {
   marketing       // outside agency / in-house marketing — scoped to /marketing operations
 }
 
+// Self-signed-up staff start as `pending` until the CEO approves them. Only
+// `active` accounts can complete PIN login. `suspended` is for ex-staff who
+// shouldn't be deleted (we want their history) but mustn't be able to log in.
+enum AccountStatus {
+  pending
+  active
+  suspended
+}
+
 // F-PAY02: jazzcash_wallet + easypaisa_wallet removed in v1 — no live
 // adapter ships for either. Strip-script `scripts/strip-wallet-enum.ts`
 // backfills any existing rows to `card`. If you ever add the adapters back,
@@ -684,9 +693,15 @@ model User {
   tenantId  String?                        // tenant — backfilled on first boot
   name      String
   email     String    @unique
+  phone     String?                        // staff contact + source for the 4-digit PIN
   password  String    // bcrypt hash
   pin       String?   // bcrypt hash of PIN
   role      UserRole  @default(kitchen)
+  // Self-signup creates accounts as `pending` — CEO approves from the user
+  // dropdown before they can sign in. Existing accounts back-fill to `active`.
+  accountStatus AccountStatus @default(active)
+  // Free-text reason kept around for the audit log / approval modal.
+  signupReason  String?
   // Concepts this user is allowed to access. Empty array = no concept restriction
   // is applied (intended for admin/manager — role check is the gate). Non-admin
   // roles MUST have explicit concept IDs to access concept-scoped resources.

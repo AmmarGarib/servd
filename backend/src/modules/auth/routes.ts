@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify'
+import bcrypt from 'bcryptjs'                  // PIN collision check on staff signup
 import { z } from 'zod'
 import { staffLogin, staffPinLogin, refreshStaffToken, customerRegister, customerLogin, verifyMagicLink, requestMagicLink, hashPassword, hashPin } from './service.js'
 import { requestOtp, verifyOtp, normalisePhone } from './otp.js'
@@ -363,6 +364,137 @@ export async function authRoutes(fastify: FastifyInstance) {
     await verifyOtp({ phone: body.phone, code: body.code, purpose: body.purpose })
     return reply.status(200).send({ ok: true })
   })
+
+  // ── Staff self-signup + CEO approval ───────────────────────────────────────
+  //
+  // Workflow:
+  //   1. New hire fills the signup form on /login (name, email, phone, role).
+  //   2. POST /auth/staff/signup creates a User row with status='pending'.
+  //      PIN is auto-derived from the last 4 digits of their phone (matches
+  //      every other staff member's PIN convention).
+  //   3. CEO reviews pending accounts under the user dropdown → /configuration/
+  //      pending-approvals and approves/rejects.
+  //   4. Until approved, PIN login is blocked at the service layer.
+
+  function pinFromPhone(phone: string): string {
+    const digits = phone.replace(/\D/g, '')
+    if (digits.length < 4) throw new AppError('PHONE_TOO_SHORT', 'Phone must have at least 4 digits to derive a PIN', 400)
+    return digits.slice(-4)
+  }
+
+  // POST /auth/staff/signup — public, IP-rate-limited. Creates a pending User.
+  fastify.post('/staff/signup', async (req, reply) => {
+    const ip = req.ip ?? 'unknown'
+    await checkRateLimit(STAFF_PASSWORD_LIMIT, ip)
+
+    const body = z.object({
+      name:    z.string().min(1).max(80),
+      email:   z.string().email(),
+      phone:   z.string().min(7).max(20),
+      role:    z.enum(['manager', 'cashier', 'kitchen', 'expediter', 'marketing']),
+      reason:  z.string().max(280).optional(),    // free-text "why I'm joining"
+    }).parse(req.body)
+
+    const email = body.email.toLowerCase()
+    // Duplicate email = nicer error than a 500 from the unique constraint.
+    const existing = await prisma.user.findUnique({ where: { email } })
+    if (existing) {
+      return reply.status(409).send({
+        error: { code: 'EMAIL_TAKEN', message: 'A staff account with this email already exists' },
+      })
+    }
+
+    const pinPlain = pinFromPhone(body.phone)
+    // PIN collision guard: another *active* user with the same last-4 would
+    // make PIN login ambiguous (the first bcrypt match wins). Reject before
+    // we create the row so the new hire can use a different phone.
+    const candidates = await prisma.user.findMany({
+      where: { isActive: true, pin: { not: null }, accountStatus: 'active' },
+    })
+    for (const c of candidates) {
+      if (c.pin && await bcrypt.compare(pinPlain, c.pin)) {
+        return reply.status(409).send({
+          error: {
+            code: 'PIN_COLLISION',
+            message: `The last 4 digits of your phone (${pinPlain}) clash with an existing PIN. Use a different number.`,
+          },
+        })
+      }
+    }
+
+    // Random unusable password hash — we don't use password login at all.
+    const password = await hashPassword(Math.random().toString(36) + Date.now())
+    const pin      = await hashPin(pinPlain)
+
+    const user = await prisma.user.create({
+      data: {
+        name: body.name.trim(),
+        email,
+        phone: body.phone.trim(),
+        password, pin,
+        role: body.role,
+        accountStatus: 'pending',
+        signupReason: body.reason ?? null,
+        // isActive stays true; accountStatus is the real gate. We keep isActive
+        // for legacy "soft disable" semantics.
+      },
+      select: { id: true, name: true, email: true, role: true, phone: true, accountStatus: true },
+    })
+
+    return reply.status(201).send({
+      ...user,
+      message: 'Account created. The CEO will review and activate your PIN shortly.',
+    })
+  })
+
+  // GET /auth/staff/pending — CEO lists everyone waiting for approval.
+  fastify.get('/staff/pending', { preHandler: requireAuth('admin') }, async () => {
+    const pending = await prisma.user.findMany({
+      where: { accountStatus: 'pending', deletedAt: null },
+      select: {
+        id: true, name: true, email: true, phone: true, role: true,
+        signupReason: true, createdAt: true,
+      },
+      orderBy: { createdAt: 'desc' },
+    })
+    return pending
+  })
+
+  // PATCH /auth/staff/:id/approve — CEO flips status to active. PIN was set
+  // at signup so they can log in immediately after approval.
+  fastify.patch<{ Params: { id: string } }>(
+    '/staff/:id/approve',
+    { preHandler: requireAuth('admin') },
+    async (req, reply) => {
+      const user = await prisma.user.findUnique({ where: { id: req.params.id } })
+      if (!user) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'No such staff' } })
+      if (user.accountStatus === 'active') {
+        return reply.status(200).send({ ...user, pin: undefined, password: undefined, message: 'Already active' })
+      }
+      const updated = await prisma.user.update({
+        where: { id: req.params.id },
+        data: { accountStatus: 'active' },
+        select: { id: true, name: true, email: true, role: true, accountStatus: true },
+      })
+      return reply.status(200).send(updated)
+    },
+  )
+
+  // PATCH /auth/staff/:id/reject — CEO rejects (soft-deletes). We keep the row
+  // for audit + so the same email can't re-sign-up without an admin first
+  // restoring it.
+  fastify.patch<{ Params: { id: string } }>(
+    '/staff/:id/reject',
+    { preHandler: requireAuth('admin') },
+    async (req, reply) => {
+      const updated = await prisma.user.update({
+        where: { id: req.params.id },
+        data: { accountStatus: 'suspended', isActive: false },
+        select: { id: true, name: true, accountStatus: true },
+      })
+      return reply.status(200).send(updated)
+    },
+  )
 
   // GET /auth/users — list staff (admin/manager only)
   fastify.get('/users', { preHandler: requireAuth(...MANAGERS) }, async () => {
