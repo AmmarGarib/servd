@@ -6,10 +6,15 @@ import { useAuthStore } from '../../store/auth'
 const API_URL         = process.env['NEXT_PUBLIC_API_URL']         ?? 'http://localhost:3001'
 const STOREFRONT_URL  = process.env['NEXT_PUBLIC_STOREFRONT_URL']  ?? 'http://localhost:3002'
 
+type Mode = 'pin' | 'email'
+
 export default function StaffLoginPage() {
   const router  = useRouter()
   const setAuth = useAuthStore((s) => s.setAuth)
+  const [mode,    setMode]    = useState<Mode>('pin')
   const [pin,     setPin]     = useState('')
+  const [email,   setEmail]   = useState('')
+  const [password,setPassword]= useState('')
   const [error,   setError]   = useState('')
   const [status,  setStatus]  = useState('')   // status line shown while loading
   const [loading, setLoading] = useState(false)
@@ -43,12 +48,40 @@ export default function StaffLoginPage() {
         const d = await res.json() as { error?: { message?: string } }
         throw new Error(d.error?.message ?? 'Invalid PIN')
       }
-      const data = await res.json() as { token: string; user: { id: string; name: string; role: string } }
-      setAuth(data.user, data.token)
+      const data = await res.json() as { token: string; accessToken?: string; user: { id: string; name: string; role: string } }
+      setAuth(data.user, data.accessToken ?? data.token)
       router.replace('/dashboard')
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Invalid PIN')
       setPin('')
+    } finally {
+      setLoading(false); setStatus('')
+    }
+  }
+
+  // Email + password is the CEO / back-office sign-in path. Kitchen + cashier
+  // staff use the PIN pad above. The page defaults to PIN since that's the
+  // far more frequent flow on shared screens — the email form sits behind a
+  // toggle to keep the visual weight on the numpad.
+  async function submitEmailPassword(e: React.FormEvent) {
+    e.preventDefault()
+    setError(''); setLoading(true); setStatus('Signing in…')
+    try {
+      const res = await fetch(`${API_URL}/api/v1/auth/login`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ email: email.trim(), password }),
+      })
+      if (!res.ok) {
+        const d = await res.json() as { error?: { message?: string } }
+        throw new Error(d.error?.message ?? 'Invalid email or password')
+      }
+      const data = await res.json() as { accessToken: string; refreshToken?: string; user: { id: string; name: string; role: string } }
+      setAuth(data.user, data.accessToken, data.refreshToken)
+      router.replace('/dashboard')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Sign-in failed')
+      setPassword('')
     } finally {
       setLoading(false); setStatus('')
     }
@@ -91,74 +124,136 @@ export default function StaffLoginPage() {
             <p className="text-[11px] font-bold text-s-muted uppercase tracking-[0.25em] mb-2">
               Staff Portal
             </p>
-            <h1 className="text-2xl font-black text-s-text">Enter your PIN</h1>
+            <h1 className="text-2xl font-black text-s-text">
+              {mode === 'pin' ? 'Enter your PIN' : 'Sign in'}
+            </h1>
             <p className="text-xs text-s-dim mt-1">Authorized personnel only</p>
           </div>
 
-          {/* PIN dots */}
-          <div className="flex justify-center gap-3 mb-2">
-            {Array.from({ length: 6 }).map((_, i) => (
-              <div key={i}
-                className="h-3 w-3 rounded-full border-2 transition-all duration-100"
+          {mode === 'pin' ? (
+            <>
+              {/* PIN dots */}
+              <div className="flex justify-center gap-3 mb-2">
+                {Array.from({ length: 6 }).map((_, i) => (
+                  <div key={i}
+                    className="h-3 w-3 rounded-full border-2 transition-all duration-100"
+                    style={{
+                      background:   i < pin.length ? '#00D4B1'             : 'transparent',
+                      borderColor:  i < pin.length ? '#00D4B1'             : 'rgba(255,255,255,0.15)',
+                      transform:    i < pin.length ? 'scale(1.15)'         : 'scale(1)',
+                      boxShadow:    i < pin.length ? '0 0 8px rgba(0,212,177,0.5)' : 'none',
+                    }} />
+                ))}
+              </div>
+
+              {/* Status / error */}
+              <div className="h-6 flex items-center justify-center mb-4">
+                {error ? (
+                  <p className="text-xs text-s-red font-semibold text-center px-2">{error}</p>
+                ) : status ? (
+                  <p className="text-xs text-s-muted">{status}</p>
+                ) : null}
+              </div>
+
+              {/* Numpad */}
+              <div className="grid grid-cols-3 gap-2.5">
+                {PAD.map((key, idx) => {
+                  if (key === '') return <div key={idx} />
+                  if (key === '⌫') return (
+                    <button key={idx} onClick={pressBack} disabled={loading || pin.length === 0}
+                      aria-label="Delete last digit"
+                      className="h-16 rounded-2xl border transition-all active:scale-95 select-none"
+                      style={{
+                        background:   'rgba(255,255,255,0.04)',
+                        borderColor:  'rgba(255,255,255,0.08)',
+                        color:        'rgba(255,255,255,0.35)',
+                        fontSize:     '18px',
+                      }}
+                      onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.07)'; e.currentTarget.style.color = 'rgba(255,255,255,0.65)' }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.04)'; e.currentTarget.style.color = 'rgba(255,255,255,0.35)' }}>
+                      ⌫
+                    </button>
+                  )
+                  return (
+                    <button key={idx} onClick={() => pressDigit(key)} disabled={loading}
+                      aria-label={`Digit ${key}`}
+                      className="h-16 rounded-2xl border font-bold text-xl transition-all active:scale-95 select-none disabled:opacity-30"
+                      style={{
+                        background:  'rgba(255,255,255,0.04)',
+                        borderColor: 'rgba(255,255,255,0.08)',
+                        color:       'rgba(255,255,255,0.82)',
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.background   = 'rgba(0,212,177,0.08)'
+                        e.currentTarget.style.borderColor  = 'rgba(0,212,177,0.25)'
+                        e.currentTarget.style.color        = '#00D4B1'
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.background   = 'rgba(255,255,255,0.04)'
+                        e.currentTarget.style.borderColor  = 'rgba(255,255,255,0.08)'
+                        e.currentTarget.style.color        = 'rgba(255,255,255,0.82)'
+                      }}>
+                      {key}
+                    </button>
+                  )
+                })}
+              </div>
+            </>
+          ) : (
+            <form onSubmit={(e) => { void submitEmailPassword(e) }} className="space-y-3">
+              <div className="h-6 flex items-center justify-center -mt-2 mb-2">
+                {error ? (
+                  <p className="text-xs text-s-red font-semibold text-center px-2">{error}</p>
+                ) : status ? (
+                  <p className="text-xs text-s-muted">{status}</p>
+                ) : null}
+              </div>
+
+              <div>
+                <label htmlFor="login-email" className="block text-[10px] font-black uppercase tracking-[0.2em] mb-1.5"
+                  style={{ color: 'rgba(255,255,255,0.4)' }}>Email</label>
+                <input id="login-email" type="email" autoComplete="username" required autoFocus
+                  value={email} onChange={(e) => setEmail(e.target.value)}
+                  placeholder="you@example.com"
+                  className="w-full rounded-xl px-4 py-3.5 text-sm font-semibold focus:outline-none transition-all"
+                  style={{ background: 'rgba(255,255,255,0.04)', border: '1.5px solid rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.9)' }} />
+              </div>
+
+              <div>
+                <label htmlFor="login-password" className="block text-[10px] font-black uppercase tracking-[0.2em] mb-1.5"
+                  style={{ color: 'rgba(255,255,255,0.4)' }}>Password</label>
+                <input id="login-password" type="password" autoComplete="current-password" required
+                  value={password} onChange={(e) => setPassword(e.target.value)}
+                  placeholder="••••••••"
+                  className="w-full rounded-xl px-4 py-3.5 text-sm font-semibold focus:outline-none transition-all"
+                  style={{ background: 'rgba(255,255,255,0.04)', border: '1.5px solid rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.9)' }} />
+              </div>
+
+              <button type="submit" disabled={loading || !email || !password}
+                className="w-full rounded-xl py-3.5 font-black text-sm transition-all disabled:opacity-40 active:scale-[0.98] mt-1"
                 style={{
-                  background:   i < pin.length ? '#00D4B1'             : 'transparent',
-                  borderColor:  i < pin.length ? '#00D4B1'             : 'rgba(255,255,255,0.15)',
-                  transform:    i < pin.length ? 'scale(1.15)'         : 'scale(1)',
-                  boxShadow:    i < pin.length ? '0 0 8px rgba(0,212,177,0.5)' : 'none',
-                }} />
-            ))}
-          </div>
+                  background: 'linear-gradient(135deg, #00D4B1 0%, #6366F1 100%)',
+                  color: '#000',
+                  boxShadow: '0 4px 20px rgba(0,212,177,0.25)',
+                }}>
+                {loading ? 'Signing in…' : 'Sign in'}
+              </button>
+            </form>
+          )}
 
-          {/* Status / error */}
-          <div className="h-6 flex items-center justify-center mb-4">
-            {error ? (
-              <p className="text-xs text-s-red font-semibold text-center px-2">{error}</p>
-            ) : status ? (
-              <p className="text-xs text-s-muted">{status}</p>
-            ) : null}
-          </div>
-
-          {/* Numpad */}
-          <div className="grid grid-cols-3 gap-2.5">
-            {PAD.map((key, idx) => {
-              if (key === '') return <div key={idx} />
-              if (key === '⌫') return (
-                <button key={idx} onClick={pressBack} disabled={loading || pin.length === 0}
-                  className="h-16 rounded-2xl border transition-all active:scale-95 select-none"
-                  style={{
-                    background:   'rgba(255,255,255,0.04)',
-                    borderColor:  'rgba(255,255,255,0.08)',
-                    color:        'rgba(255,255,255,0.35)',
-                    fontSize:     '18px',
-                  }}
-                  onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.07)'; e.currentTarget.style.color = 'rgba(255,255,255,0.65)' }}
-                  onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.04)'; e.currentTarget.style.color = 'rgba(255,255,255,0.35)' }}>
-                  ⌫
-                </button>
-              )
-              return (
-                <button key={idx} onClick={() => pressDigit(key)} disabled={loading}
-                  className="h-16 rounded-2xl border font-bold text-xl transition-all active:scale-95 select-none disabled:opacity-30"
-                  style={{
-                    background:  'rgba(255,255,255,0.04)',
-                    borderColor: 'rgba(255,255,255,0.08)',
-                    color:       'rgba(255,255,255,0.82)',
-                  }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.background   = 'rgba(0,212,177,0.08)'
-                    e.currentTarget.style.borderColor  = 'rgba(0,212,177,0.25)'
-                    e.currentTarget.style.color        = '#00D4B1'
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.background   = 'rgba(255,255,255,0.04)'
-                    e.currentTarget.style.borderColor  = 'rgba(255,255,255,0.08)'
-                    e.currentTarget.style.color        = 'rgba(255,255,255,0.82)'
-                  }}>
-                  {key}
-                </button>
-              )
-            })}
-          </div>
+          {/* Mode toggle — sits below the input area so it never steals the
+              eye from the primary CTA. Kitchen/cashier stays on PIN; admin /
+              CEO / back-office picks email. */}
+          <button type="button"
+            onClick={() => { setMode((m) => m === 'pin' ? 'email' : 'pin'); setError(''); setPin(''); setPassword('') }}
+            className="w-full mt-6 text-center text-xs font-bold transition-colors"
+            style={{ color: 'rgba(255,255,255,0.4)' }}
+            onMouseEnter={(e) => (e.currentTarget.style.color = '#00D4B1')}
+            onMouseLeave={(e) => (e.currentTarget.style.color = 'rgba(255,255,255,0.4)')}>
+            {mode === 'pin'
+              ? 'Admin / CEO? Sign in with email →'
+              : '← Back to PIN pad'}
+          </button>
 
         </div>
       </div>
