@@ -11,6 +11,9 @@ interface Customer {
   totalSpentCents: number; lastOrderAt: string | null; createdAt: string
   walletBalance: number; isBlacklisted: boolean; blacklistReason: string | null
   loyaltyAccount: { pointsBalance: number; tier: string | null } | null
+  // The brand this customer most often orders from. Drives the chip in the
+  // CRM list so the operator knows which company they're talking to.
+  preferredConcept: { name: string; slug: string } | null
   _count: { orders: number }
 }
 
@@ -651,7 +654,19 @@ export default function CRMPage() {
                     {c.isBlacklisted ? '⛔' : (c.name[0]?.toUpperCase() ?? '?')}
                   </div>
                   <div className="min-w-0 flex-1">
-                    <p className="text-sm font-semibold text-kds-text truncate">{c.name}</p>
+                    <div className="flex items-center gap-1.5 mb-0.5">
+                      <p className="text-sm font-semibold text-kds-text truncate">{c.name}</p>
+                      {/* Brand chip — so the CRM operator knows which
+                          company this customer typically belongs to before
+                          they pick up the conversation. Hidden when there's
+                          no preferred concept yet (one-off / guest checkout). */}
+                      {c.preferredConcept && (
+                        <span className="text-[9px] uppercase tracking-wider font-bold px-1.5 py-0.5 rounded shrink-0"
+                          style={{ background: 'rgba(99,102,241,0.15)', color: '#A5B4FC' }}>
+                          {c.preferredConcept.name}
+                        </span>
+                      )}
+                    </div>
                     <p className="text-xs text-kds-subtext truncate">{c.phone ?? c.email ?? 'No contact'}</p>
                     <p className="text-xs text-kds-subtext">{c._count.orders} orders · {fmt(c.totalSpentCents)}</p>
                   </div>

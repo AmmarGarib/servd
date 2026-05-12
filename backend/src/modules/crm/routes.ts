@@ -525,16 +525,31 @@ export async function crmRoutes(fastify: FastifyInstance) {
   // Symmetric to /procurement/conversations but with a `source` + `sourceRefId`
   // for linkage back to the originating complaint/review when applicable.
 
-  // GET /crm/conversations — all customer threads
+  // GET /crm/conversations — all customer threads, tenant-scoped via the
+  // customer's order history. Each row carries the customer's preferred
+  // brand so a centralised CRM operator can tell whether they're handling
+  // a Bukhari / Clifton / etc. customer before they reply.
   fastify.get<{ Querystring: { customerId?: string } }>(
     '/conversations',
     { preHandler: requireAuth(...ALL_STAFF) },
     async (req) => {
-      const where = req.query.customerId ? { customerId: req.query.customerId } : {}
+      const where = {
+        // Only conversations belonging to customers who've ordered from a
+        // concept inside the operator's tenant scope. Portfolio mode
+        // (x-servd-portfolio: 1) expands tenantFilter to every tenant the
+        // user owns, so the CRM operator sees the full picture.
+        customer: { orders: { some: { concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null } } } },
+        ...(req.query.customerId ? { customerId: req.query.customerId } : {}),
+      }
       return prisma.customerConversation.findMany({
         where,
         include: {
-          customer: { select: { id: true, name: true, email: true, phone: true } },
+          customer: {
+            select: {
+              id: true, name: true, email: true, phone: true,
+              preferredConcept: { select: { name: true, slug: true } },
+            },
+          },
           staff:    { select: { id: true, name: true } },
           messages: { orderBy: { createdAt: 'desc' }, take: 1 },
           _count:   { select: { messages: true } },

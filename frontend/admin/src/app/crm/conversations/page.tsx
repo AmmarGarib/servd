@@ -21,7 +21,12 @@ interface Conversation {
   source: 'complaint' | 'review' | 'manual'
   sourceRefId: string | null
   updatedAt: string
-  customer: { id: string; name: string; email: string | null; phone: string | null }
+  customer: {
+    id: string; name: string; email: string | null; phone: string | null
+    // Brand the customer typically orders from — drives the chip on each
+    // conversation row so the CRM operator sees which company they're on.
+    preferredConcept: { name: string; slug: string } | null
+  }
   staff: { id: string; name: string }
   messages: { id: string; body: string; fromStaff: boolean; createdAt: string; channel?: string }[]
   _count: { messages: number }
@@ -125,6 +130,16 @@ export default function CrmConversationsPage() {
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
                       <p className="font-semibold text-sm text-kds-text truncate">{c.customer.name}</p>
+                      {/* Brand chip so the centralised CRM operator can tell
+                          which company this thread belongs to before they
+                          reply. Hidden when the customer has no preferred
+                          brand yet (one-off guest). */}
+                      {c.customer.preferredConcept && (
+                        <span className="shrink-0 text-[9px] uppercase tracking-wider font-bold px-1.5 py-0.5 rounded"
+                          style={{ background: 'rgba(99,102,241,0.15)', color: '#A5B4FC' }}>
+                          {c.customer.preferredConcept.name}
+                        </span>
+                      )}
                       <span className="shrink-0 text-[10px] uppercase tracking-wider text-kds-subtext">
                         {meta.icon} {meta.label}
                       </span>
