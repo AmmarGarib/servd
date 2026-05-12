@@ -96,14 +96,11 @@ function ConceptsSection() {
   const [form, setForm] = useState<Partial<Concept>>({})
   const [saved, setSaved] = useState(false)
 
-  // Brand management is inherently cross-tenant for the CEO — pull every
-  // concept the operator owns regardless of which tenant the sidebar
-  // switcher is currently pointing at. Listed with tenant context per row
-  // so it's clear which company a brand belongs to.
-  const { data = [] } = useQuery({
-    queryKey: ['concepts', 'all-tenants'],
-    queryFn:  () => api.getAcrossTenants<Concept[]>('/concepts'),
-  })
+  // Brand list respects the sidebar tenant switcher — single tenant returns
+  // just that company's brands, "All companies" returns the full set. Each
+  // row still wears its tenant chip when portfolio mode is on so the CEO
+  // sees which company they're editing.
+  const { data = [] } = useQuery({ queryKey: ['concepts'], queryFn: () => api.get<Concept[]>('/concepts') })
 
   const updateMutation = useMutation({
     mutationFn: ({ id, body }: { id: string; body: Partial<Concept> }) => api.patch(`/concepts/${id}`, body),
