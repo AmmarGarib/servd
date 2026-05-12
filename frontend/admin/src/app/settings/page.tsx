@@ -14,6 +14,9 @@ interface Concept {
   taxRateCard: number
   storefrontVisible: boolean; heroTagline: string | null; announcementBanner: string | null
   logoUrl: string | null
+  // Present only when fetched via the portfolio endpoint — tells the CEO
+  // which company each brand belongs to in the listing.
+  tenant?: { id: string; name: string; slug: string } | null
 }
 interface Station { id: string; name: string; concept: { name: string } }
 interface User { id: string; name: string; email: string; role: string; isActive: boolean; hasPin: boolean }
@@ -93,7 +96,14 @@ function ConceptsSection() {
   const [form, setForm] = useState<Partial<Concept>>({})
   const [saved, setSaved] = useState(false)
 
-  const { data = [] } = useQuery({ queryKey: ['concepts'], queryFn: () => api.get<Concept[]>('/concepts') })
+  // Brand management is inherently cross-tenant for the CEO — pull every
+  // concept the operator owns regardless of which tenant the sidebar
+  // switcher is currently pointing at. Listed with tenant context per row
+  // so it's clear which company a brand belongs to.
+  const { data = [] } = useQuery({
+    queryKey: ['concepts', 'all-tenants'],
+    queryFn:  () => api.getAcrossTenants<Concept[]>('/concepts'),
+  })
 
   const updateMutation = useMutation({
     mutationFn: ({ id, body }: { id: string; body: Partial<Concept> }) => api.patch(`/concepts/${id}`, body),
@@ -161,7 +171,18 @@ function ConceptsSection() {
                 {c.logoUrl ? <img src={c.logoUrl} alt={c.name} className="h-full w-full object-cover" /> : c.name[0]}
               </div>
               <div>
-                <p className="text-sm font-semibold text-kds-text">{c.name}</p>
+                <div className="flex items-center gap-2">
+                  <p className="text-sm font-semibold text-kds-text">{c.name}</p>
+                  {/* Tenant chip — only when fetched in portfolio mode. Tells
+                      the CEO which company a brand belongs to (Stax + Simmer
+                      are GS Foods Bukhari; Flipd is GS x Viva Clifton, etc.). */}
+                  {c.tenant && (
+                    <span className="text-[9px] uppercase tracking-wider font-bold px-1.5 py-0.5 rounded"
+                      style={{ background: 'rgba(99,102,241,0.15)', color: '#A5B4FC' }}>
+                      {c.tenant.name}
+                    </span>
+                  )}
+                </div>
                 <div className="flex items-center gap-2 mt-0.5">
                   <span className="text-xs text-kds-subtext capitalize">{c.type}</span>
                   <span className="text-xs font-mono text-kds-subtext">{c.slug}</span>

@@ -72,10 +72,15 @@ export async function conceptRoutes(fastify: FastifyInstance) {
   // the client layer.
   fastify.get('/', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
     const scope = await resolveTenantScope(req)
-    return prisma.concept.findMany({
+    const concepts = await prisma.concept.findMany({
       where: { deletedAt: null, ...tenantWhere(scope) },
       orderBy: { name: 'asc' },
+      // Include tenant context in portfolio mode so the CEO can see which
+      // company each brand belongs to without an extra round-trip. Cheap
+      // join — Tenant is tiny.
+      include: scope.portfolio ? { tenant: { select: { id: true, name: true, slug: true } } } : undefined,
     })
+    return concepts
   })
 
   // GET /concepts/:id â€” must belong to the active tenant

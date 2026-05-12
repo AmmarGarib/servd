@@ -181,6 +181,12 @@ export const api = {
   patch: <T>(path: string, body: unknown) => request<T>(path, { method: 'PATCH', body: JSON.stringify(body) }),
   put: <T>(path: string, body: unknown) => request<T>(path, { method: 'PUT', body: JSON.stringify(body) }),
   delete: <T>(path: string) => request<T>(path, { method: 'DELETE' }),
+  // Same as `get` but force the portfolio header on. Use this from CEO
+  // management surfaces (e.g. /settings concepts list) where the user is
+  // managing every brand they own regardless of which tenant the sidebar
+  // switcher is currently pointing at.
+  getAcrossTenants: <T>(path: string) =>
+    request<T>(path, { headers: { 'x-servd-portfolio': '1' } }),
 }
 
 // ─── Auth ──────────────────────────────────────────────────────────────────────
