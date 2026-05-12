@@ -68,8 +68,13 @@ export default function StaffLoginPage() {
         const d = await res.json() as { error?: { message?: string } }
         throw new Error(d.error?.message ?? 'PIN not recognised')
       }
-      const data = await res.json() as { token: string; accessToken?: string; user: { id: string; name: string; role: string } }
-      setAuth(data.user, data.accessToken ?? data.token)
+      const data = await res.json() as {
+        token: string                                // alias of accessToken (legacy)
+        accessToken?: string
+        refreshToken?: string
+        user: { id: string; name: string; role: string }
+      }
+      setAuth(data.user, data.accessToken ?? data.token, data.refreshToken)
       router.replace('/dashboard')
     } catch (e) {
       setError(e instanceof Error ? e.message : 'PIN not recognised')

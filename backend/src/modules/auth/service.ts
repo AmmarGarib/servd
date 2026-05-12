@@ -91,7 +91,20 @@ export async function staffPinLogin(pin: string) {
     throw new UnauthorizedError('PIN not recognised — or your account is still awaiting approval')
   }
 
-  // Short-lived PIN session token (12h) — for KDS/POS devices
+  // PIN login is the primary admin login (per CEO decision), so it issues a
+  // full access + refresh pair just like password login does. The PIN-typed
+  // token still ships for KDS/POS shared-device flows that want a 12-hour
+  // station session that can't accidentally hit back-office routes.
+  const accessToken = jwt.sign(
+    { sub: matchedUser.id, email: matchedUser.email, role: matchedUser.role, type: 'access' } satisfies StaffTokenPayload,
+    JWT_SECRET,
+    { expiresIn: JWT_ACCESS_EXPIRY },
+  )
+  const refreshToken = jwt.sign(
+    { sub: matchedUser.id, email: matchedUser.email, role: matchedUser.role, type: 'refresh' } satisfies StaffTokenPayload,
+    JWT_REFRESH_SECRET,
+    { expiresIn: JWT_REFRESH_EXPIRY },
+  )
   const pinToken = jwt.sign(
     { sub: matchedUser.id, email: matchedUser.email, role: matchedUser.role, type: 'pin' } satisfies StaffTokenPayload,
     JWT_SECRET,
@@ -99,8 +112,14 @@ export async function staffPinLogin(pin: string) {
   )
 
   return {
-    token: pinToken,
-    user: { id: matchedUser.id, name: matchedUser.name, role: matchedUser.role },
+    accessToken,
+    refreshToken,
+    pinToken,
+    // `token` kept as an alias of accessToken so legacy clients reading
+    // `data.token` still work — every existing call site now lands on the
+    // access path, which is what they actually wanted.
+    token: accessToken,
+    user: { id: matchedUser.id, name: matchedUser.name, email: matchedUser.email, role: matchedUser.role },
   }
 }
 
