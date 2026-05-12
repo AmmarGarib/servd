@@ -6,7 +6,12 @@ import Link from 'next/link'
 
 interface Concept {
   id: string; name: string; slug: string; type: string
-  description: string | null; primaryColor: string | null; isActive: boolean; taxRate: number
+  description: string | null; primaryColor: string | null; isActive: boolean
+  // Legacy single rate (still on the schema for back-compat) + the new
+  // tender-split rates used by every fresh order's tax calc.
+  taxRate: number
+  taxRateCash: number
+  taxRateCard: number
   storefrontVisible: boolean; heroTagline: string | null; announcementBanner: string | null
   logoUrl: string | null
 }
@@ -117,7 +122,7 @@ function ConceptsSection() {
     setExpandedId(c.id)
     setForm({
       name: c.name, description: c.description ?? '', primaryColor: c.primaryColor ?? '#6366f1',
-      isActive: c.isActive, taxRate: c.taxRate, logoUrl: c.logoUrl ?? '',
+      isActive: c.isActive, taxRate: c.taxRate, taxRateCash: c.taxRateCash, taxRateCard: c.taxRateCard, logoUrl: c.logoUrl ?? '',
       storefrontVisible: c.storefrontVisible, heroTagline: c.heroTagline ?? '', announcementBanner: c.announcementBanner ?? '',
     })
     setSaved(false)
@@ -163,7 +168,7 @@ function ConceptsSection() {
                   <span className={`text-xs font-bold ${c.isActive ? 'text-kds-green' : 'text-kds-red'}`}>
                     {c.isActive ? '● Active' : '○ Off'}
                   </span>
-                  <span className="text-xs text-kds-subtext">GST {c.taxRate}%</span>
+                  <span className="text-xs text-kds-subtext">GST {c.taxRateCash ?? c.taxRate}/{c.taxRateCard ?? c.taxRate}%</span>
                 </div>
               </div>
             </div>
@@ -177,8 +182,23 @@ function ConceptsSection() {
                   <F label="Display name">
                     <input value={form.name ?? ''} onChange={(e) => setForm({ ...form, name: e.target.value })} className={fi} />
                   </F>
-                  <F label="Tax rate (%)">
-                    <input type="number" value={form.taxRate ?? 17} onChange={(e) => setForm({ ...form, taxRate: Number(e.target.value) })} className={fi} />
+                  {/* GST splits by tender per FBR — cashier rings up cash at
+                      the higher rate, card / digital at the discounted rate.
+                      Both editable so a brand can negotiate its own rates.
+                      The legacy single `taxRate` field is still on the
+                      schema for back-compat but no new orders read it. */}
+                  <F label="GST — Cash / Card (%)">
+                    <div className="flex items-center gap-2">
+                      <input type="number" step="0.5" min={0} max={50}
+                        value={form.taxRateCash ?? 15}
+                        onChange={(e) => setForm({ ...form, taxRateCash: Number(e.target.value) })}
+                        className={fi} aria-label="Cash GST rate %" />
+                      <span className="text-xs text-kds-subtext">/</span>
+                      <input type="number" step="0.5" min={0} max={50}
+                        value={form.taxRateCard ?? 8}
+                        onChange={(e) => setForm({ ...form, taxRateCard: Number(e.target.value) })}
+                        className={fi} aria-label="Card GST rate %" />
+                    </div>
                   </F>
                 </Row2>
                 <Row2>

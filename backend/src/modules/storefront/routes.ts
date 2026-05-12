@@ -187,7 +187,7 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
       const original = await prisma.order.findFirst({
         where: { id: req.params.id, customerId: req.customer!.id, deletedAt: null },
         include: {
-          concept: { select: { id: true, slug: true, taxRate: true } },
+          concept: { select: { id: true, slug: true, taxRate: true, taxRateCard: true, taxRateCash: true } },
           items:   { include: { modifiers: true, menuItem: { select: { id: true, isAvailable: true, priceCents: true, name: true } } } },
         },
       })
@@ -443,7 +443,12 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
       })
     }
 
-    const taxCents = Math.round(itemTotal * (concept.taxRate / 100))
+    // Storefront orders settle digitally (card / wallet / Keenu / cash-on-
+    // delivery via rider PIN). Default to the card GST rate per CEO policy.
+    // If the customer flips to cash-on-delivery during checkout, recompute
+    // server-side before the order row is created (TODO when COD lands).
+    const taxRateStorefront = (concept as { taxRateCard?: number }).taxRateCard ?? concept.taxRate
+    const taxCents = Math.round(itemTotal * (taxRateStorefront / 100))
 
     // Delivery fee — lookup zone by haversine distance from concept to drop point.
     // Only applies to delivery orders that supply lat/lng. Throws if order
@@ -813,8 +818,12 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
       })
     }
 
+    // Reservation deposit path — same rule as the main checkout: storefront
+    // tenders are digital by default, so use the card rate.
     const envTaxRate = Number(process.env['DEFAULT_TAX_RATE'])
-    const taxRate = concept.taxRate ?? (Number.isFinite(envTaxRate) ? envTaxRate : 17)
+    const taxRate = (concept as { taxRateCard?: number }).taxRateCard
+      ?? concept.taxRate
+      ?? (Number.isFinite(envTaxRate) ? envTaxRate : 8)
     const taxCents = Math.round(itemTotal * (taxRate / 100))
     const totalCents = itemTotal + taxCents
 

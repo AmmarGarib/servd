@@ -31,6 +31,11 @@ export interface PosOrderInput {
   }>
   discountCents?: number
   discountReason?: string
+  // CEO policy: GST splits by tender. Cashier picks the intended payment
+  // method when ringing up so the bill on the receipt matches what gets
+  // collected. 'cash' → taxRateCash (default 15%); anything else →
+  // taxRateCard (default 8%). Defaults to 'cash' if not specified.
+  paymentMethod?: 'cash' | 'card' | 'keenu_qr' | 'split' | 'comp'
 }
 
 export async function createPosOrder(input: PosOrderInput) {
@@ -115,7 +120,17 @@ export async function createPosOrder(input: PosOrderInput) {
     }
   }
 
-  const taxRate = concept.taxRate / 100
+  // CEO policy: GST is split by tender — cash @ taxRateCash, card/digital @
+  // taxRateCard. Cashier picks the method up front (`input.paymentMethod`);
+  // for unknown / pending methods we default to the cash rate so the
+  // customer never gets a smaller bill than they actually owe. Foodpanda /
+  // Careem orders ingested separately default to card rate (they always
+  // settle digitally) — see orders/service.ts ingestion.
+  const intendedMethod = input.paymentMethod ?? 'cash'
+  const effectiveRate = intendedMethod === 'cash'
+    ? (concept.taxRateCash ?? concept.taxRate)
+    : (concept.taxRateCard ?? concept.taxRate)
+  const taxRate = effectiveRate / 100
   const subtotal = itemTotal - discount
   const taxCents = Math.round(subtotal * taxRate)
   // Service charge applies to the post-tax subtotal so customers see the

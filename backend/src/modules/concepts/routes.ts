@@ -14,6 +14,11 @@ const createConceptSchema = z.object({
   logoUrl: z.string().url().optional().or(z.literal('')).transform(v => v || null),
   primaryColor: z.string().optional(),
   taxRate: z.number().min(0).max(100).default(17),
+  // Split GST rates per tender (FBR rule): cash @ taxRateCash, card / digital
+  // @ taxRateCard. The legacy taxRate above is still accepted for back-compat
+  // but every new order uses the split.
+  taxRateCash: z.number().min(0).max(100).default(15),
+  taxRateCard: z.number().min(0).max(100).default(8),
   // Province: drives default sales-tax rate via the provincial revenue authority.
   // Operator picks the province on creation; we auto-fill taxRate from it.
   province:         z.enum(['PB', 'SD', 'KP', 'BL', 'ICT', 'GB', 'AJK']).nullable().optional(),

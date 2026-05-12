@@ -180,7 +180,13 @@ model Concept {
   logoUrl     String?
   primaryColor String?
   isActive    Boolean     @default(true)
-  taxRate     Float       @default(17) // FBR GST %
+  taxRate     Float       @default(17) // FBR GST % — legacy single rate; kept for back-compat. New calc uses the split below.
+  // FBR allows a discounted GST rate on card / digital tenders to encourage
+  // banked payments. The split is per-brand because some concepts negotiate
+  // their own rates with the tax authority. Cash defaults to the higher rate
+  // (15% as of 2026), card to the lower (8%).
+  taxRateCash Float       @default(15)
+  taxRateCard Float       @default(8)
 
   // Storefront CMS — editable from ops admin
   storefrontVisible  Boolean  @default(true)  // show/hide on customer ordering page
