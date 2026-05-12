@@ -6,7 +6,7 @@ import { FeedbackWidget } from '../components/feedback/FeedbackWidget'
 
 export const metadata: Metadata = {
   title: { default: 'servd — order from your favourite kitchens', template: '%s · servd' },
-  description: 'Seven kitchens. One cart. Order direct from Simmer, Stax, Strata, Flipd, Craveman, Garnish Station and more — delivered fresh.',
+  description: 'Six kitchens. One cart. Order direct from Simmer, Stax, Flipd, Craveman, Garnish Station and more — delivered fresh.',
   applicationName: 'servd',
   formatDetection: { telephone: false, email: false, address: false },
   manifest: '/manifest.webmanifest',

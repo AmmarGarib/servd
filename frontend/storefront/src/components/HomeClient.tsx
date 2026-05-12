@@ -1,4 +1,5 @@
 'use client'
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import type { Concept } from '../lib/concept'
 import { typeLabel, typeIcon, conceptHeroImage } from '../lib/concept'
@@ -13,8 +14,9 @@ interface Props {
 
 // Food photography for featured dishes — real images, not emoji gradients.
 const FEATURED: Array<{ dish: string; brand: string; brandSlug: string; price: string; img: string; tag?: string }> = [
+  // Strata removed 2026-05-12 — concept retired from the DB; was leaving a
+  // dead "Performance Bowl" tile on the hero mosaic.
   { dish: 'The Stax Classic',      brand: 'Stax',            brandSlug: 'stax',            price: 'Rs. 1,200', img: 'https://images.unsplash.com/photo-1568901346375-23c9450c58cd?w=700&q=85', tag: 'Double smash' },
-  { dish: 'Performance Bowl',      brand: 'Strata',          brandSlug: 'strata',          price: 'Rs. 1,100', img: 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=700&q=85', tag: '45g protein' },
   { dish: 'Slow-Roast Lamb',       brand: 'Simmer',          brandSlug: 'simmer',          price: 'Rs. 1,950', img: 'https://images.unsplash.com/photo-1544025162-d76694265947?w=700&q=85', tag: '12 hours' },
   { dish: 'Hot Honey Tenders',     brand: 'Flipd',           brandSlug: 'flipd',           price: 'Rs. 950',   img: 'https://images.unsplash.com/photo-1598514983318-2f64f8f4796c?w=700&q=85', tag: '24h brine' },
   { dish: 'Seekh Kebab Bowl',      brand: 'Craveman',        brandSlug: 'craveman',        price: 'Rs. 1,300', img: 'https://images.unsplash.com/photo-1631452180519-c014fe946bc7?w=700&q=85', tag: 'Karachi-style' },
@@ -22,9 +24,10 @@ const FEATURED: Array<{ dish: string; brand: string; brandSlug: string; price: s
 ]
 
 const VOICES: Array<{ brand: string; slug: string; line: string; color: string }> = [
+  // Strata retired — same reason as above. Keep the array length ≥ 4 so the
+  // hero slice still has enough names to feature on top.
   { brand: 'Simmer',          slug: 'simmer',          line: 'Slow nights, plated softly.',                  color: '#2d4a3e' },
   { brand: 'Stax',            slug: 'stax',            line: 'Smashed, stacked, sauced.',                    color: '#D4581A' },
-  { brand: 'Strata',          slug: 'strata',          line: 'Clean, layered, performance-built.',           color: '#2D6A4F' },
   { brand: 'Flipd',           slug: 'flipd',           line: 'Buttermilk-brined, hand-breaded, hot.',        color: '#E5A100' },
   { brand: 'Craveman',        slug: 'craveman',        line: 'Karachi comfort food, sorted.',                color: '#F5A623' },
   { brand: 'Garnish Station', slug: 'garnish-station', line: 'You build it. We finish it.',                  color: '#8CB82A' },
@@ -39,6 +42,23 @@ const REVIEWS = [
 const INK = '#0a110e'
 
 export function HomeClient({ concepts }: Props) {
+  // Hero brand-names auto-cycle through their accent colour every 1.6s. The
+  // CEO liked the hover-highlight effect but wanted it to play on its own
+  // (no need to mouse over each name). Hovering still works AND pauses the
+  // auto-cycle for that name — manual interaction beats automation, but
+  // the rest of the time the page does its own little promo loop.
+  const heroNames = VOICES.slice(0, 4)
+  const [activeIdx, setActiveIdx] = useState(0)
+  const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
+  useEffect(() => {
+    // Pause auto-cycle while the user is hovering — they're driving the show.
+    if (hoveredIdx !== null) return
+    const t = setInterval(() => {
+      setActiveIdx((i) => (i + 1) % heroNames.length)
+    }, 1600)
+    return () => clearInterval(t)
+  }, [hoveredIdx, heroNames.length])
+
   return (
     <div style={{ background: '#fff', color: INK }}>
 
@@ -78,22 +98,30 @@ export function HomeClient({ concepts }: Props) {
               Karachi · direct from the kitchen
             </p>
 
-            {/* Brand names as the typographic hero */}
+            {/* Brand names as the typographic hero — auto-cycling colour
+                highlight. Each name lights up in its accent for 1.6s before
+                the spotlight moves to the next. Mouse hover overrides the
+                cycle for that name. */}
             <div style={{ marginBottom: '3rem' }}>
-              {VOICES.slice(0, 4).map((v) => (
-                <Link key={v.slug} href={`/brand/${v.slug}`} style={{
-                  display: 'block', textDecoration: 'none',
-                  fontSize: 'clamp(2.25rem, 5.5vw, 4.25rem)',
-                  fontWeight: 800, letterSpacing: '-0.04em', lineHeight: 1.05,
-                  color: 'rgba(255,255,255,0.22)',
-                  transition: 'color 150ms ease',
-                }}
-                  onMouseEnter={(e) => { (e.currentTarget as HTMLAnchorElement).style.color = v.color }}
-                  onMouseLeave={(e) => { (e.currentTarget as HTMLAnchorElement).style.color = 'rgba(255,255,255,0.22)' }}
-                >
-                  {v.brand}
-                </Link>
-              ))}
+              {heroNames.map((v, idx) => {
+                const isActive = hoveredIdx === idx || (hoveredIdx === null && activeIdx === idx)
+                return (
+                  <Link key={v.slug} href={`/brand/${v.slug}`} style={{
+                    display: 'block', textDecoration: 'none',
+                    fontSize: 'clamp(2.25rem, 5.5vw, 4.25rem)',
+                    fontWeight: 800, letterSpacing: '-0.04em', lineHeight: 1.05,
+                    color: isActive ? v.color : 'rgba(255,255,255,0.22)',
+                    // Slightly longer transition than the cycle interval's
+                    // step so colours bleed rather than snap.
+                    transition: 'color 400ms ease',
+                  }}
+                    onMouseEnter={() => setHoveredIdx(idx)}
+                    onMouseLeave={() => setHoveredIdx(null)}
+                  >
+                    {v.brand}
+                  </Link>
+                )
+              })}
               <p style={{
                 fontSize: 'clamp(2.25rem, 5.5vw, 4.25rem)',
                 fontWeight: 800, letterSpacing: '-0.04em', lineHeight: 1.05,
