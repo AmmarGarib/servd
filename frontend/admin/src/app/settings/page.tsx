@@ -98,6 +98,20 @@ function ConceptsSection() {
     },
   })
 
+  // Soft-delete a brand. Backend marks the row with deletedAt + isActive=false
+  // so historical orders/financial entries still resolve to a name; the brand
+  // just stops appearing in pickers, POS, and storefront. Reversible by
+  // an admin via the DB if the CEO ever wants it back.
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => api.delete(`/concepts/${id}`),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['concepts'] })
+      setConfirmDeleteId(null)
+      setExpandedId(null)
+    },
+  })
+
   function startEdit(c: Concept) {
     if (expandedId === c.id) { setExpandedId(null); return }
     setExpandedId(c.id)
@@ -211,7 +225,7 @@ function ConceptsSection() {
                 </F>
               </SubSection>
 
-              <div className="flex items-center gap-3 pt-1">
+              <div className="flex items-center gap-3 pt-1 flex-wrap">
                 <button onClick={() => updateMutation.mutate({ id: c.id, body: form })}
                   disabled={updateMutation.isPending}
                   className="rounded-xl bg-kds-green text-black font-bold px-5 py-2 text-sm hover:opacity-90 disabled:opacity-50">
@@ -220,6 +234,32 @@ function ConceptsSection() {
                 <button onClick={() => setExpandedId(null)}
                   className="rounded-xl border border-kds-border text-kds-subtext px-4 py-2 text-sm">Cancel</button>
                 {saved && <span className="text-sm text-kds-green">✓ Saved</span>}
+
+                {/* Delete moves to the right edge — destructive, two-step,
+                    requires explicit confirmation so the CEO can't nuke a
+                    brand by mistake. Soft-deletes server-side: history is
+                    preserved, just hidden from pickers and storefront. */}
+                <div className="ml-auto flex items-center gap-2">
+                  {confirmDeleteId === c.id ? (
+                    <>
+                      <span className="text-xs text-kds-amber">
+                        Delete <span className="font-bold">{c.name}</span>? This hides it from POS/storefront but keeps history.
+                      </span>
+                      <button onClick={() => setConfirmDeleteId(null)}
+                        className="rounded-xl border border-kds-border text-kds-subtext px-3 py-1.5 text-xs">Cancel</button>
+                      <button onClick={() => deleteMutation.mutate(c.id)}
+                        disabled={deleteMutation.isPending}
+                        className="rounded-xl bg-kds-red text-white font-bold px-3 py-1.5 text-xs hover:opacity-90 disabled:opacity-50">
+                        {deleteMutation.isPending ? 'Deleting…' : 'Yes, delete'}
+                      </button>
+                    </>
+                  ) : (
+                    <button onClick={() => setConfirmDeleteId(c.id)}
+                      className="rounded-xl border border-kds-red/40 text-kds-red px-3 py-1.5 text-xs hover:bg-kds-red/10">
+                      🗑 Delete brand
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
           )}
