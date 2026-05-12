@@ -73,6 +73,19 @@ const PORTFOLIO_GUARD_EXCLUSIONS: readonly RegExp[] = [
   /^\/tenants\b/,               // tenant primitives: switch, list, merge
   /^\/me\b/,                    // self-prefs (theme, notifications)
   /^\/media\/upload-url\b/,     // presigned URL is tenant-agnostic
+  // Transactional kitchen routes: tenant is deterministic from the order's
+  // conceptId. Prompting the operator to pick a company would be nonsense —
+  // an order at Stax always lands on Bukhari, an order at Flipd always lands
+  // on Clifton, period. (The backend re-derives + asserts this anyway.)
+  /^\/orders\b/,
+  /^\/pos\b/,
+  /^\/kds\b/,
+  /^\/kitchen-staff\b/,
+  /^\/storefront\b/,
+  /^\/reservations\b/,
+  /^\/inventory\b/,
+  /^\/recipes\b/,
+  /^\/components\b/,
 ]
 
 function isPortfolioGuarded(path: string, method: string): boolean {

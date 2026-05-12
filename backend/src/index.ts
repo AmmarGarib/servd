@@ -103,6 +103,7 @@ import { opexRoutes } from './modules/opex/routes.js'
 import { notificationRoutes } from './modules/notifications/routes.js'
 import { kdsRoutes } from './modules/kds/routes.js'
 import { kitchenStaffRoutes } from './modules/kitchen-staff/routes.js'
+import { expoRoutes } from './modules/expo/routes.js'
 
 const PORT = parseInt(process.env['PORT'] ?? '3001', 10)
 const HOST = '0.0.0.0'
@@ -297,6 +298,7 @@ async function build() {
       await api.register(notificationRoutes,      { prefix: '/notifications' })
       await api.register(kdsRoutes,               { prefix: '/kds' })
       await api.register(kitchenStaffRoutes,      { prefix: '/kitchen-staff' })
+      await api.register(expoRoutes,              { prefix: '/expo' })
 
       // Meta OAuth: GET /api/v1/integrations/social/connect → redirect
       //             GET /api/v1/integrations/social/callback → exchange code + store tokens

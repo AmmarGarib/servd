@@ -280,6 +280,7 @@ model Station {
 
   concept    Concept     @relation(fields: [conceptId], references: [id])
   orderItems OrderItem[]
+  recipeSteps RecipeStep[]
 
   @@map("stations")
 }
@@ -1717,6 +1718,7 @@ model Recipe {
 
   menuItem    MenuItem           @relation(fields: [menuItemId], references: [id])
   ingredients RecipeIngredient[]
+  recipeSteps RecipeStep[]
 
   @@index([isActive])
   @@map("recipes")
@@ -1735,6 +1737,48 @@ model RecipeIngredient {
   inventoryItem InventoryItem @relation(fields: [inventoryItemId], references: [id])
 
   @@map("recipe_ingredients")
+}
+
+// Phase tags for RecipeStep — see the four CEO-named phases below.
+enum RecipePhase {
+  prep_mep         // mise en place: dice, portion, pre-make sauces (pre-service)
+  prep_mop         // method of procedure: par-bake, marinate, sous-vide (pre-service)
+  service_cook     // hot-line cook step during service
+  service_assemble // final plating / wrap / box during service
+}
+
+// One ordered step in a recipe. The kitchen pipeline reads these to figure
+// out which station gets the ticket and when. `dependsOnIds` carries
+// step-IDs that must be completed first; an empty list means "fire on
+// expo-confirm". Parallel-then-converge flows naturally fall out of the
+// graph — `service_assemble` would list every preceding cook-step in
+// dependsOnIds so it only fires when all the proteins/sides are ready.
+model RecipeStep {
+  id              String      @id @default(uuid())
+  recipeId        String
+  phase           RecipePhase
+  // Display ordinal within phase — purely for the editor UI; the runtime
+  // pipeline uses `dependsOnIds` to decide what fires next.
+  ordinal         Int         @default(0)
+  // Which station picks up this step. Null = anyone (e.g. a prep note with no
+  // particular station). At service time we route the ticket to this station.
+  stationId       String?
+  // Free-text instruction the line cook sees on their KDS.
+  instruction     String
+  instructionUrdu String?
+  // Estimated time-to-completion. Drives ETAs + the prep-time forecast.
+  estimatedSeconds Int        @default(60)
+  // Either an array of step-IDs (from this recipe) that must all be `done`
+  // before this step can fire, OR an empty array meaning "fire immediately
+  // on expo-confirm". Postgres `text[]` is fine — we never query into it.
+  dependsOnIds    String[]    @default([])
+  createdAt       DateTime    @default(now())
+
+  recipe  Recipe   @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+  station Station? @relation(fields: [stationId], references: [id])
+
+  @@index([recipeId, phase, ordinal])
+  @@map("recipe_steps")
 }
 
 // ─── Purchase Orders ──────────────────────────────────────────────────────────
@@ -4213,6 +4257,11 @@ model KitchenStaff {
   bankAccount           String?
   emergencyContact      String
   status                KitchenStaffStatus @default(active)
+  // Each cook is assigned to one or more stations. The KDS station view
+  // filters live tickets by the cook's station set; the par sheet shows
+  // them only the components their station preps. Empty = "all stations"
+  // (head chef, expediter, etc.).
+  stationIds            String[]           @default([])
   createdAt             DateTime           @default(now())
   updatedAt             DateTime           @updatedAt
 

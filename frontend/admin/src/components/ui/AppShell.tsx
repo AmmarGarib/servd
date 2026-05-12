@@ -61,13 +61,16 @@ const NAV: NavSection[] = [
     title: 'Live',
     items: [
       { href: '/dashboard', label: 'Dashboard',    icon: '⬡', module: 'dashboard' },
-      { href: '/ops',       label: 'Ops Center',   icon: '⚡', module: 'ops' },
-      { href: '/live',      label: 'Live Feed',    icon: '📡', module: 'live_feed' },
-      { href: '/orders',    label: 'Orders',       icon: '📋', module: 'orders', children: [
+      // Expo Station is the new pass-station landing. Orders arrive here for
+      // human confirm; cooking is dispatched per-station from this screen.
+      { href: '/expo',      label: 'Expo Station', icon: '🪧', module: 'kds_all' },
+      { href: '/kds/all',   label: 'All Stations', icon: '🖥', module: 'kds_all' },
+      { href: '/orders',    label: 'Orders (history)', icon: '📋', module: 'orders', children: [
         { href: '/refunds',         label: 'Refunds',  module: 'refunds' },
         { href: '/orders/curbside', label: 'Curbside', module: 'curbside' },
       ]},
-      { href: '/kds/all',   label: 'Kitchen KDS',  icon: '🖥', module: 'kds_all' },
+      { href: '/ops',       label: 'Ops Center',   icon: '⚡', module: 'ops' },
+      { href: '/live',      label: 'Live Feed',    icon: '📡', module: 'live_feed' },
       { href: '/chain',     label: 'Chain Rollup', icon: '🏢', module: 'chain' },
     ],
   },
