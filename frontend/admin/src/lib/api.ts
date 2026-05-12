@@ -135,11 +135,22 @@ async function request<T>(path: string, options: RequestInit = {}, retry = true)
     await awaitPortfolioTenantPick(describeIntent(method, path))
   }
 
+  // Portfolio mode: when the operator has flipped the sidebar tenant
+  // switcher to "All companies", every read should aggregate across every
+  // tenant they own. We signal this to the backend via the
+  // `x-servd-portfolio` header rather than mutating the URL — keeps the
+  // existing route shapes intact, easy to toggle off centrally if it ever
+  // misbehaves.
+  const portfolio = typeof window !== 'undefined'
+    && localStorage.getItem('servd_view_all_tenants') === '1'
+    && ['GET', 'HEAD'].includes(method)
+
   const res = await fetch(`${API_URL}/api/v1${path}`, {
     ...options,
     headers: {
       'Content-Type': 'application/json',
       ...(token && { Authorization: `Bearer ${token}` }),
+      ...(portfolio && { 'x-servd-portfolio': '1' }),
       ...options.headers,
     },
   })

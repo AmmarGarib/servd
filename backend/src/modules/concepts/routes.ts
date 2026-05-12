@@ -4,6 +4,7 @@ import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, MANAGERS, ADMIN_ONLY } from '../auth/middleware.js'
 import { NotFoundError } from '../../lib/errors.js'
+import { resolveTenantScope, tenantWhere } from '../../lib/tenantScope.js'
 
 const createConceptSchema = z.object({
   name: z.string().min(1),
@@ -59,9 +60,15 @@ const updateConceptSchema = createConceptSchema.partial().omit({ slug: true }).e
 
 export async function conceptRoutes(fastify: FastifyInstance) {
   // GET /concepts — list concepts under the active tenant
+  // Reads honour portfolio mode: when the operator has flipped to "All
+  // companies", every tenant they're a member of is included via the
+  // `x-servd-portfolio` header. Writes (POST/PATCH/DELETE below) stay
+  // scoped to the single active tenant — portfolio writes are gated at
+  // the client layer.
   fastify.get('/', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
+    const scope = await resolveTenantScope(req)
     return prisma.concept.findMany({
-      where: { deletedAt: null, tenantId: req.staffUser!.tenantId },
+      where: { deletedAt: null, ...tenantWhere(scope) },
       orderBy: { name: 'asc' },
     })
   })
