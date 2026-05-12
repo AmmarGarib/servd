@@ -13,7 +13,7 @@ async function getConcepts(): Promise<Concept[]> {
 
 export const metadata = {
   title: 'All brands',
-  description: 'Browse every kitchen on servd — Simmer, Stax, Flipd, Bukhari and more.',
+  description: 'Browse every kitchen on servd — Simmer, Stax, and Flipd.',
 }
 
 export default async function BrowsePage() {

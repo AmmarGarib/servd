@@ -12,31 +12,27 @@ interface Props {
   concepts: Concept[]
 }
 
-// Food photography for featured dishes — real images, not emoji gradients.
+// Live brands as of 2026-05-12: Stax + Simmer + Flipd. Other names that
+// used to live here (Strata, Craveman, Garnish Station, Bukhari) have been
+// pulled — they don't have DB concept rows, so the home page was
+// promising kitchens the user couldn't actually order from. Add them back
+// here once they get concept rows + their own layouts.
 const FEATURED: Array<{ dish: string; brand: string; brandSlug: string; price: string; img: string; tag?: string }> = [
-  // Strata removed 2026-05-12 — concept retired from the DB; was leaving a
-  // dead "Performance Bowl" tile on the hero mosaic.
-  { dish: 'The Stax Classic',      brand: 'Stax',            brandSlug: 'stax',            price: 'Rs. 1,200', img: 'https://images.unsplash.com/photo-1568901346375-23c9450c58cd?w=700&q=85', tag: 'Double smash' },
-  { dish: 'Slow-Roast Lamb',       brand: 'Simmer',          brandSlug: 'simmer',          price: 'Rs. 1,950', img: 'https://images.unsplash.com/photo-1544025162-d76694265947?w=700&q=85', tag: '12 hours' },
-  { dish: 'Hot Honey Tenders',     brand: 'Flipd',           brandSlug: 'flipd',           price: 'Rs. 950',   img: 'https://images.unsplash.com/photo-1598514983318-2f64f8f4796c?w=700&q=85', tag: '24h brine' },
-  { dish: 'Seekh Kebab Bowl',      brand: 'Craveman',        brandSlug: 'craveman',        price: 'Rs. 1,300', img: 'https://images.unsplash.com/photo-1631452180519-c014fe946bc7?w=700&q=85', tag: 'Karachi-style' },
-  { dish: 'Loaded Bowl',           brand: 'Garnish Station', brandSlug: 'garnish-station', price: 'Rs. 900',   img: 'https://images.unsplash.com/photo-1512621776951-a57141f2eefd?w=700&q=85', tag: 'Build your own' },
+  { dish: 'The Stax Classic',  brand: 'Stax',   brandSlug: 'stax',   price: 'Rs. 1,200', img: 'https://images.unsplash.com/photo-1568901346375-23c9450c58cd?w=700&q=85', tag: 'Double smash' },
+  { dish: 'Slow-Roast Lamb',   brand: 'Simmer', brandSlug: 'simmer', price: 'Rs. 1,950', img: 'https://images.unsplash.com/photo-1544025162-d76694265947?w=700&q=85', tag: '12 hours' },
+  { dish: 'Hot Honey Tenders', brand: 'Flipd',  brandSlug: 'flipd',  price: 'Rs. 950',   img: 'https://images.unsplash.com/photo-1598514983318-2f64f8f4796c?w=700&q=85', tag: '24h brine' },
 ]
 
 const VOICES: Array<{ brand: string; slug: string; line: string; color: string }> = [
-  // Strata retired — same reason as above. Keep the array length ≥ 4 so the
-  // hero slice still has enough names to feature on top.
-  { brand: 'Simmer',          slug: 'simmer',          line: 'Slow nights, plated softly.',                  color: '#2d4a3e' },
-  { brand: 'Stax',            slug: 'stax',            line: 'Smashed, stacked, sauced.',                    color: '#D4581A' },
-  { brand: 'Flipd',           slug: 'flipd',           line: 'Buttermilk-brined, hand-breaded, hot.',        color: '#E5A100' },
-  { brand: 'Craveman',        slug: 'craveman',        line: 'Karachi comfort food, sorted.',                color: '#F5A623' },
-  { brand: 'Garnish Station', slug: 'garnish-station', line: 'You build it. We finish it.',                  color: '#8CB82A' },
+  { brand: 'Simmer', slug: 'simmer', line: 'Slow nights, plated softly.',           color: '#2d4a3e' },
+  { brand: 'Stax',   slug: 'stax',   line: 'Smashed, stacked, sauced.',             color: '#D4581A' },
+  { brand: 'Flipd',  slug: 'flipd',  line: 'Buttermilk-brined, hand-breaded, hot.', color: '#E5A100' },
 ]
 
 const REVIEWS = [
-  { text: '"Burgers from Stax, a bowl from Strata, tenders from Flipd — three kitchens in one cart. Both arrived hot, in one bag. The multi-kitchen thing actually works."', name: 'Sara K.',  area: 'DHA Phase 6'    },
-  { text: '"The Loaded Bowl from Garnish is the only reason my lunch isn\'t depressing anymore. Crisp, dressed right, never soggy."',                                        name: 'Imran R.', area: 'Clifton Block 4' },
-  { text: '"Ordered for a family of six — five kitchens in one order, one delivery, no chaos. They figured out the logistics so I didn\'t have to."',                        name: 'Hira M.',  area: 'Bahria Town'    },
+  { text: '"Burgers from Stax, a bowl from Simmer, tenders from Flipd — three kitchens in one cart. Everything arrived hot, in one bag. The multi-kitchen thing actually works."', name: 'Sara K.',  area: 'DHA Phase 6'    },
+  { text: '"The slow-roast lamb from Simmer is the only reason my lunch isn\'t depressing anymore. Falls apart at the touch of a fork."',                                          name: 'Imran R.', area: 'Clifton Block 4' },
+  { text: '"Ordered for a family of six — three kitchens in one order, one delivery, no chaos. They figured out the logistics so I didn\'t have to."',                              name: 'Hira M.',  area: 'Bahria Town'    },
 ]
 
 const INK = '#0a110e'
@@ -47,7 +43,8 @@ export function HomeClient({ concepts }: Props) {
   // (no need to mouse over each name). Hovering still works AND pauses the
   // auto-cycle for that name — manual interaction beats automation, but
   // the rest of the time the page does its own little promo loop.
-  const heroNames = VOICES.slice(0, 4)
+  // Show every live brand in the hero — there are only three right now.
+  const heroNames = VOICES
   const [activeIdx, setActiveIdx] = useState(0)
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
   useEffect(() => {
@@ -136,7 +133,7 @@ export function HomeClient({ concepts }: Props) {
               color: 'rgba(255,255,255,0.55)', lineHeight: 1.7, fontWeight: 300,
               maxWidth: '32rem', marginBottom: '2.5rem',
             }}>
-              Seven kitchens. One cart. Order from any of them together — we cook every dish fresh and deliver in a single bag.
+              Three kitchens. One cart. Order from any of them together — we cook every dish fresh and deliver in a single bag.
             </p>
 
             <div style={{ display: 'flex', gap: '0.85rem', flexWrap: 'wrap' }}>
@@ -166,7 +163,7 @@ export function HomeClient({ concepts }: Props) {
           <div className="container" style={{ marginTop: '4rem', maxWidth: '640px' }}>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 0, borderTop: '1px solid rgba(255,255,255,0.1)' }}>
               {[
-                { value: '7',    label: 'kitchens' },
+                { value: '3',    label: 'kitchens' },
                 { value: '4.8★', label: 'avg rating' },
                 { value: '~30m', label: 'avg delivery' },
               ].map((t, i) => (
@@ -219,7 +216,7 @@ export function HomeClient({ concepts }: Props) {
                 The kitchens
               </p>
               <h2 style={{ fontSize: 'clamp(2rem, 4vw, 3rem)', fontWeight: 300, letterSpacing: '0.02em', lineHeight: 1.1 }}>
-                Seven brands. One order.
+                Three brands. One order.
               </h2>
             </div>
             <Link href="/browse" style={{
@@ -335,7 +332,7 @@ export function HomeClient({ concepts }: Props) {
               { badge: 'MEMBER',   title: '2× points Tuesdays',      body: 'Every order, every kitchen, every Tuesday earns double servd points.',                   cta: 'Activate',        color: 'var(--servd-green)' },
               { badge: 'BUNDLE',   title: 'Family Feast',             body: '4 meals from any 3 kitchens · Rs. 2,499',                                               subtext: 'Save Rs. 600 vs ordering separately', cta: 'Build my feast',  color: '#f59e0b' },
               { badge: 'NEW',      title: 'Rs. 200 off first order',  body: 'Code FRESH200 · plus free delivery · plus 100 servd points to start.',                  cta: 'Use FRESH200',    color: 'var(--servd-green)' },
-              { badge: 'LATE',     title: 'After-10pm unlock',        body: 'Member-only late menu — extended hours from Stax, Garnish Station, and Craveman.',      cta: 'Join to unlock',  color: '#a855f7' },
+              { badge: 'LATE',     title: 'After-10pm unlock',        body: 'Member-only late menu — extended hours from Stax and Flipd.',                            cta: 'Join to unlock',  color: '#a855f7' },
               { badge: 'COMBO',    title: 'Mix Two, Free Side',       body: 'Any two mains across kitchens — fries / salad / kheer on the house.',                   cta: 'Mix & match',     color: '#0ea5e9' },
               { badge: 'BIRTHDAY', title: 'Free dessert, your week',  body: 'Dessert on us from any kitchen — every year, on your birthday week.',                   cta: 'Set my birthday', color: '#ec4899' },
             ].map((d) => (
@@ -497,7 +494,7 @@ export function HomeClient({ concepts }: Props) {
             {[
               { kicker: 'Delivery', title: 'Order in',  body: 'Direct from any kitchen.', cta: 'Browse kitchens', href: '/browse' },
               { kicker: 'Dine-in',  title: 'Come sit',  body: 'Table service at Simmer.',  cta: 'Reserve a table',  href: '/reserve/simmer' },
-              { kicker: 'Walk-up',  title: 'Walk up',   body: 'Garnish Station at events and the padel court.', cta: 'Find the cart', href: '/brand/garnish-station' },
+              { kicker: 'Walk-up',  title: 'Walk up',   body: 'Flipd kitchen at Padel Club Clifton.', cta: 'Visit Flipd', href: '/brand/flipd' },
             ].map((card, i) => (
               <Link key={card.title} href={card.href} style={{
                 padding: '2rem',
