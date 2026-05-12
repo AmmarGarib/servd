@@ -48,10 +48,18 @@ const SOURCE_COLORS: Record<string, string> = {
   manual:     'bg-kds-card text-kds-subtext',
 }
 
-const LIVE_STATUSES = ['received', 'confirmed', 'preparing', 'ready'] as const
-const STATUS_LABEL: Record<string, string> = { received: 'Received', confirmed: 'Confirmed', preparing: 'Preparing', ready: 'Ready' }
-const STATUS_NEXT:  Record<string, string> = { received: 'confirmed', confirmed: 'preparing', preparing: 'ready', ready: 'completed' }
-const STATUS_CTA:   Record<string, string> = { received: 'Confirm', confirmed: 'Fire →', preparing: 'Mark Ready', ready: 'Complete' }
+// Three live columns, not four. The CEO's flow has just two human actions on
+// any external order:
+//   1. Expo "Fire" — moves received straight to preparing (no separate confirm
+//      step; confirming an order IS firing it).
+//   2. Stations bump steps on per-station KDS — the cascade walks the order
+//      through ready → completed. The Orders page doesn't drive that path.
+const LIVE_STATUSES = ['received', 'preparing', 'ready'] as const
+const STATUS_LABEL: Record<string, string> = { received: 'Awaiting Fire', preparing: 'Preparing', ready: 'Ready' }
+// Only the Fire CTA lives on this screen. Preparing/Ready are info-only —
+// progression happens via station bumps on /kds/[station].
+const STATUS_NEXT:  Record<string, string> = { received: 'preparing' }
+const STATUS_CTA:   Record<string, string> = { received: 'Fire 🔥' }
 
 type Tab = 'live' | 'history' | 'channel'
 interface Concept { id: string; name: string; primaryColor: string | null }

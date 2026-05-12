@@ -140,28 +140,16 @@ export default function LiveOrdersPage() {
                         </ul>
                       </details>
                       <div className="flex gap-1.5 flex-wrap">
-                        {col.key === 'received' && o.status === 'received' && (
-                          <button onClick={() => advance.mutate({ id: o.id, status: 'confirmed' })}
-                            className="text-[11px] font-semibold px-2 py-1 rounded bg-blue-500 text-white">
-                            Confirm
-                          </button>
-                        )}
+                        {/* Single human action: Fire. Confirming an order IS
+                            firing it — moves received → preparing in one step
+                            and broadcasts items to their stations. Preparing
+                            and Ready columns are info-only; progression to
+                            ready/complete happens via station bumps on the
+                            per-station KDS, not from this screen. */}
                         {col.key === 'received' && (
                           <button onClick={() => advance.mutate({ id: o.id, status: 'preparing' })}
                             className="text-[11px] font-semibold px-2 py-1 rounded bg-amber-500 text-white">
-                            Fire →
-                          </button>
-                        )}
-                        {col.key === 'preparing' && (
-                          <button onClick={() => advance.mutate({ id: o.id, status: 'ready' })}
-                            className="text-[11px] font-semibold px-2 py-1 rounded bg-s-teal text-white">
-                            Ready ✓
-                          </button>
-                        )}
-                        {col.key === 'ready' && (
-                          <button onClick={() => advance.mutate({ id: o.id, status: 'completed' })}
-                            className="text-[11px] font-semibold px-2 py-1 rounded bg-black text-white">
-                            Complete
+                            Fire 🔥
                           </button>
                         )}
                         <Link href={`/orders/${o.id}`} className="text-[11px] text-s-muted hover:text-s-text px-2 py-1">
