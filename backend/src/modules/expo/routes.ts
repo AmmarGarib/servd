@@ -117,22 +117,36 @@ export async function expoRoutes(fastify: FastifyInstance) {
       const { updateOrderStatus } = await import('../orders/service.js')
       await updateOrderStatus(req.params.id, 'preparing')
 
-      // Per-item: route to the first ready step. "Ready" means
-      // `dependsOnIds` is empty (no prerequisites). For items without a
-      // recipe, fall back to the OrderItem.stationId set at order ingestion.
+      // Per-item: instantiate OrderItemSteps for every recipe step on the
+      // item, then flip the deps-clear ones to `preparing` and fire them to
+      // their station. The cascade engine (step-bump) walks the rest.
       const ws = getIOSafe()
       for (const item of order.items) {
         const steps = item.menuItem?.recipe?.recipeSteps ?? []
-        const firstSteps = steps.filter((s) => s.phase === 'service_cook' && s.dependsOnIds.length === 0)
-        if (firstSteps.length === 0) {
+        const serviceSteps = steps.filter((s) => s.phase === 'service_cook' || s.phase === 'service_assemble')
+        if (serviceSteps.length === 0) {
           // Legacy / no recipe steps — keep current routing.
           continue
         }
-        // Mark item as preparing and broadcast to each starting station.
         await prisma.orderItem.update({
           where: { id: item.id },
           data: { status: 'preparing', firedAt: new Date() },
         })
+        // Bulk-create the step rows. Deps-clear steps start `preparing`;
+        // the rest sit `waiting` until cascade fires them.
+        const now = new Date()
+        await prisma.orderItemStep.createMany({
+          data: serviceSteps.map((s) => ({
+            orderItemId:      item.id,
+            recipeStepId:     s.id,
+            stationId:        s.stationId,
+            dependsOnStepIds: s.dependsOnIds,
+            status:           s.dependsOnIds.length === 0 ? 'preparing' : 'waiting',
+            firedAt:          s.dependsOnIds.length === 0 ? now : null,
+          })),
+        })
+        // Broadcast to every station that just received work.
+        const firstSteps = serviceSteps.filter((s) => s.dependsOnIds.length === 0)
         for (const step of firstSteps) {
           if (!step.stationId || !ws) continue
           ws.to(`station:${step.stationId}`).emit('expo:fire', {
@@ -151,10 +165,10 @@ export async function expoRoutes(fastify: FastifyInstance) {
         try {
           const { audit } = await import('../../lib/audit.js')
           await audit({
-            actorId: req.staffUser!.id,
-            entity:  'Order',
+            userId:   req.staffUser!.id,
+            entity:   'Order',
             entityId: order.id,
-            action:  'expo.fire',
+            action:   'expo.fire',
             metadata: { note: body.note },
           })
         } catch {
@@ -164,6 +178,144 @@ export async function expoRoutes(fastify: FastifyInstance) {
       }
 
       return reply.status(200).send({ ok: true, fired: order.items.length })
+    },
+  )
+
+  // GET /expo/station/:stationId/queue — what does this station currently
+  // need to cook? Unions two things so the migration to step-routing can
+  // be gradual:
+  //
+  //   1. New flow: active OrderItemSteps fired to this station.
+  //   2. Legacy:   OrderItems whose `stationId` is this and status is still
+  //                pending/preparing (no recipe steps configured yet).
+  //
+  // Each entry carries enough order context for the KDS card to render.
+  fastify.get<{ Params: { stationId: string } }>(
+    '/station/:stationId/queue',
+    { preHandler: requireAuthOrPin(...ALL_STAFF) },
+    async (req) => {
+      const tenantId = req.staffUser!.tenantId
+      const stationId = req.params.stationId
+
+      const steps = await prisma.orderItemStep.findMany({
+        where: {
+          stationId,
+          status: { in: ['preparing', 'waiting'] },        // surface waiting too so the cook can see what's coming
+          orderItem: { order: { concept: { tenantId } } },
+        },
+        include: {
+          recipeStep: { select: { instruction: true, phase: true, estimatedSeconds: true } },
+          orderItem:  {
+            include: {
+              order: {
+                select: {
+                  id: true, customerName: true, source: true, placedAt: true,
+                  concept: { select: { name: true, slug: true } },
+                  customer: { select: { name: true } },
+                },
+              },
+            },
+          },
+        },
+        orderBy: { firedAt: 'asc' },
+      })
+
+      const legacy = await prisma.orderItem.findMany({
+        where: {
+          stationId,
+          status: { in: ['pending', 'preparing'] },
+          order: { concept: { tenantId } },
+          // Skip items that already have OrderItemStep rows — those are
+          // routed through the step engine, no double-counting.
+          steps: { none: {} },
+        },
+        include: {
+          order: {
+            select: {
+              id: true, customerName: true, source: true, placedAt: true,
+              concept: { select: { name: true, slug: true } },
+              customer: { select: { name: true } },
+            },
+          },
+        },
+        orderBy: { firedAt: 'asc' },
+      })
+
+      return {
+        steps: steps.map((s) => ({
+          stepId:           s.id,
+          itemId:           s.orderItemId,
+          itemName:         s.orderItem.name,
+          qty:              s.orderItem.quantity,
+          itemNotes:        s.orderItem.notes,
+          status:           s.status,
+          firedAt:          s.firedAt,
+          instruction:      s.recipeStep.instruction,
+          phase:            s.recipeStep.phase,
+          estimatedSeconds: s.recipeStep.estimatedSeconds,
+          order: {
+            id:           s.orderItem.order.id,
+            customerName: s.orderItem.order.customer?.name ?? s.orderItem.order.customerName,
+            source:       s.orderItem.order.source,
+            placedAt:     s.orderItem.order.placedAt,
+            concept:      s.orderItem.order.concept,
+          },
+        })),
+        legacy: legacy.map((it) => ({
+          itemId:    it.id,
+          itemName:  it.name,
+          qty:       it.quantity,
+          itemNotes: it.notes,
+          status:    it.status,
+          firedAt:   it.firedAt,
+          order: {
+            id:           it.order.id,
+            customerName: it.order.customer?.name ?? it.order.customerName,
+            source:       it.order.source,
+            placedAt:     it.order.placedAt,
+            concept:      it.order.concept,
+          },
+        })),
+      }
+    },
+  )
+
+  // POST /expo/steps/:id/bump — a station confirms its step. The cascade
+  // engine flips this step to `done`, promotes any newly-eligible
+  // dependants to `preparing`, and emits expo:fire to their stations.
+  fastify.post<{ Params: { id: string } }>(
+    '/steps/:id/bump',
+    { preHandler: requireAuthOrPin(...ALL_STAFF) },
+    async (req, reply) => {
+      const { bumpStep, broadcastCascade } = await import('./stepCascade.js')
+      const step = await prisma.orderItemStep.findUnique({
+        where: { id: req.params.id },
+        include: { orderItem: { include: { order: { include: { concept: true } } } } },
+      })
+      if (!step) throw new NotFoundError('OrderItemStep', req.params.id)
+      // Cross-tenant guard — a cook on the Bukhari tenant can't bump a step
+      // on a Clifton order even if they guessed the ID.
+      if (step.orderItem.order.concept.tenantId !== req.staffUser!.tenantId) {
+        return reply.status(403).send({ error: { code: 'CROSS_TENANT', message: 'Not your tenant' } })
+      }
+
+      const result = await bumpStep(req.params.id, req.staffUser!.id)
+      broadcastCascade(result, step.orderItemId)
+
+      // Item-level completion: if the cascade closed out the last step on
+      // the item, route through updateItemStatus so the existing order-
+      // complete + financial-entry side-effects fire.
+      if (result.itemBumped && step.orderItem.status !== 'bumped') {
+        const { updateItemStatus } = await import('../orders/service.js')
+        try {
+          await updateItemStatus(step.orderItemId, 'bumped', req.staffUser!.id)
+        } catch (e) {
+          // State-machine may reject if the item already moved — that's fine.
+          if ((e as { code?: string })?.code !== 'INVALID_TRANSITION') throw e
+        }
+      }
+
+      return reply.status(200).send(result)
     },
   )
 
@@ -189,10 +341,10 @@ export async function expoRoutes(fastify: FastifyInstance) {
       try {
         const { audit } = await import('../../lib/audit.js')
         await audit({
-          actorId: req.staffUser!.id,
-          entity:  'Order',
+          userId:   req.staffUser!.id,
+          entity:   'Order',
           entityId: order.id,
-          action:  'expo.reject',
+          action:   'expo.reject',
           metadata: { reason: body.reason },
         })
       } catch { /* */ }

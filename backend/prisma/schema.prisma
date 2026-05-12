@@ -1417,6 +1417,7 @@ model OrderItem {
   menuItem  MenuItem?           @relation(fields: [menuItemId], references: [id])
   station   Station?            @relation(fields: [stationId], references: [id])
   modifiers OrderItemModifier[]
+  steps     OrderItemStep[]
 
   @@index([orderId])
   @@index([stationId, status])
@@ -1747,6 +1748,17 @@ enum RecipePhase {
   service_assemble // final plating / wrap / box during service
 }
 
+// Runtime status of one step on one order item. Mirrors the ItemStatus enum
+// but lives at step granularity so the cascade engine can fire each station
+// independently as upstream deps clear.
+enum StepRunStatus {
+  pending     // recipe step exists, expo hasn't fired this item yet
+  waiting     // expo fired; deps not yet met
+  preparing   // station is actively cooking this step
+  done        // bumped — frees dependents
+  voided
+}
+
 // One ordered step in a recipe. The kitchen pipeline reads these to figure
 // out which station gets the ticket and when. `dependsOnIds` carries
 // step-IDs that must be completed first; an empty list means "fire on
@@ -1776,9 +1788,39 @@ model RecipeStep {
 
   recipe  Recipe   @relation(fields: [recipeId], references: [id], onDelete: Cascade)
   station Station? @relation(fields: [stationId], references: [id])
+  runs    OrderItemStep[]
 
   @@index([recipeId, phase, ordinal])
   @@map("recipe_steps")
+}
+
+// Instantiated step on a specific order item. Created when expo fires the
+// order — one row per (orderItem × recipeStep). Cascade engine walks these:
+// when a step flips to `done`, anything whose `dependsOnIds` is now fully
+// satisfied flips from `waiting` → `preparing` and broadcasts to its station.
+model OrderItemStep {
+  id           String        @id @default(uuid())
+  orderItemId  String
+  recipeStepId String
+  stationId    String?       // copied from recipeStep at creation — survives recipe edits
+  status       StepRunStatus @default(pending)
+  // Snapshot of the recipe step's dependency list at fire-time. Recipe edits
+  // mid-service don't disrupt in-flight orders.
+  dependsOnStepIds String[]  @default([])
+  // Same shape as OrderItem timing fields so the KDS card UI can reuse logic.
+  firedAt      DateTime?
+  startedAt    DateTime?
+  completedAt  DateTime?
+  bumpedById   String?       // KitchenStaff or User who confirmed
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  orderItem  OrderItem  @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+  recipeStep RecipeStep @relation(fields: [recipeStepId], references: [id])
+
+  @@index([stationId, status])
+  @@index([orderItemId])
+  @@map("order_item_steps")
 }
 
 // ─── Purchase Orders ──────────────────────────────────────────────────────────
@@ -3356,11 +3398,43 @@ model Component {
 
   baseIngredient     InventoryItem?      @relation(fields: [baseIngredientId], references: [id])
   brands             ComponentBrandUse[]
+  parLevels          ComponentParLevel[]
 
   @@index([baseIngredientId])
   @@index([type])
   @@index([isActive])
   @@map("components")
+}
+
+// Daily prep tracking. Each (component × tenant × date) gets one row created
+// in the morning by expo/prep — `targetCount` is what the team aims to make,
+// `actualCount` ticks up as prep cooks update it, and it ticks down as orders
+// fire the component on the line. The Expo screen highlights low-actual rows
+// in red so the floor manager can shift labor before service starts.
+model ComponentParLevel {
+  id          String   @id @default(uuid())
+  tenantId    String
+  componentId String
+  date        DateTime // midnight UTC of the service day
+  // Target prep — what we're aiming to have on hand at service start.
+  targetCount Float    @default(0)
+  // What's currently in the walk-in. Updated by prep staff as they work;
+  // decremented by the runtime as orders consume the component.
+  actualCount Float    @default(0)
+  // Unit label for readability ("portions", "trays", "ltr"). Falls back to
+  // the component's natural unit when blank.
+  unit        String?
+  notes       String?
+  // Who last touched the row — useful for the audit trail at par disputes.
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  component Component @relation(fields: [componentId], references: [id])
+
+  @@unique([tenantId, componentId, date])
+  @@index([tenantId, date])
+  @@map("component_par_levels")
 }
 
 model ComponentBrandUse {

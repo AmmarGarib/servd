@@ -50,6 +50,8 @@ const staffCreateSchema = z.object({
   bankAccount: z.string().optional().nullable(),
   emergencyContact: z.string().min(1),
   status: z.enum(['active', 'on_leave', 'terminated']).optional(),
+  // Stations this cook is assigned to. Empty = head-chef-style "all stations".
+  stationIds: z.array(z.string().uuid()).default([]),
 })
 
 const staffUpdateSchema = staffCreateSchema.partial()
@@ -323,6 +325,7 @@ export async function kitchenStaffRoutes(fastify: FastifyInstance) {
           bankAccount: body.bankAccount ?? null,
           emergencyContact: body.emergencyContact,
           status: (body.status as KitchenStaffStatus) ?? 'active',
+          stationIds: body.stationIds ?? [],
         },
       })
 

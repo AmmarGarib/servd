@@ -73,7 +73,7 @@ export type ModuleId =
   // Service
   | 'pos' | 'reservations' | 'reservations_admin' | 'scheduling' | 'tables' | 'dispatch' | 'riders'
   // Kitchen
-  | 'menu' | 'components' | 'recipes' | 'inventory' | 'kds_config'
+  | 'menu' | 'components' | 'recipes' | 'inventory' | 'kds_config' | 'par_sheet'
   // Marketing
   | 'marketing_workspace' | 'crm' | 'campaigns' | 'complaints' | 'reviews' | 'calendar' | 'media' | 'promos' | 'brands' | 'analytics'
   // Finance
@@ -118,6 +118,7 @@ export const MODULES: ModuleMeta[] = [
   { id: 'components',         label: 'Components',          section: 'Kitchen' },
   { id: 'recipes',            label: 'Recipes',             section: 'Kitchen' },
   { id: 'inventory',          label: 'Inventory',           section: 'Kitchen' },
+  { id: 'par_sheet',          label: 'Par Sheet',           section: 'Kitchen' },
   { id: 'kds_config',         label: 'KDS Config',          section: 'Kitchen' },
 
   { id: 'marketing_workspace', label: 'Marketing Workspace', section: 'Marketing' },
@@ -171,7 +172,7 @@ export const DEFAULT_MODULE_ACCESS: Record<AppRole, ModuleId[]> = {
   ],
   boh_management: [
     'dashboard', 'ops', 'orders', 'kds_all',
-    'menu', 'components', 'recipes', 'inventory', 'kds_config',
+    'menu', 'components', 'recipes', 'par_sheet', 'inventory', 'kds_config',
     'procurement', 'kitchen_staff',
     'reports',
   ],
@@ -179,10 +180,10 @@ export const DEFAULT_MODULE_ACCESS: Record<AppRole, ModuleId[]> = {
     'pos', 'reservations', 'tables', 'dispatch', 'orders', 'curbside',
   ],
   boh: [
-    'kds_all', 'inventory', 'recipes',
+    'kds_all', 'inventory', 'recipes', 'par_sheet',
   ],
-  kitchen:   ['kds_all'],
-  expediter: ['kds_all', 'orders'],
+  kitchen:   ['kds_all', 'par_sheet'],
+  expediter: ['kds_all', 'orders', 'par_sheet'],
   cashier:   ['dashboard', 'pos', 'orders', 'curbside', 'tables'],
 
   procurement: ['procurement', 'inventory', 'reports'],

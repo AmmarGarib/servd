@@ -104,6 +104,7 @@ import { notificationRoutes } from './modules/notifications/routes.js'
 import { kdsRoutes } from './modules/kds/routes.js'
 import { kitchenStaffRoutes } from './modules/kitchen-staff/routes.js'
 import { expoRoutes } from './modules/expo/routes.js'
+import { parSheetRoutes } from './modules/par-sheet/routes.js'
 
 const PORT = parseInt(process.env['PORT'] ?? '3001', 10)
 const HOST = '0.0.0.0'
@@ -299,6 +300,7 @@ async function build() {
       await api.register(kdsRoutes,               { prefix: '/kds' })
       await api.register(kitchenStaffRoutes,      { prefix: '/kitchen-staff' })
       await api.register(expoRoutes,              { prefix: '/expo' })
+      await api.register(parSheetRoutes,          { prefix: '/par-sheet' })
 
       // Meta OAuth: GET /api/v1/integrations/social/connect → redirect
       //             GET /api/v1/integrations/social/callback → exchange code + store tokens

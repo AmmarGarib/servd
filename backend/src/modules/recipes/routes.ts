@@ -559,4 +559,110 @@ export async function recipeRoutes(fastify: FastifyInstance) {
       })
     },
   )
+
+  // ─── Recipe steps (per-station service sequence) ────────────────────────
+  //
+  // A recipe has 0..n steps. Each step is tagged by phase (mise/MOP/cook/
+  // assemble), pinned to a station, has an instruction, an ETA, and may
+  // depend on prior steps. The expo-fire engine reads these on order
+  // confirmation; the cascade engine walks them on each bump.
+
+  // GET /recipes/:recipeId/steps — list ordered by phase then ordinal
+  fastify.get<{ Params: { recipeId: string } }>(
+    '/:recipeId/steps',
+    { preHandler: requireAuth(...ALL_STAFF) },
+    async (req) => {
+      return prisma.recipeStep.findMany({
+        where: { recipeId: req.params.recipeId },
+        orderBy: [{ phase: 'asc' }, { ordinal: 'asc' }],
+        include: { station: { select: { id: true, name: true } } },
+      })
+    },
+  )
+
+  const stepInputSchema = z.object({
+    phase:            z.enum(['prep_mep', 'prep_mop', 'service_cook', 'service_assemble']),
+    ordinal:          z.number().int().min(0).default(0),
+    stationId:        z.string().uuid().nullable().optional(),
+    instruction:      z.string().min(1).max(2000),
+    instructionUrdu:  z.string().max(2000).nullable().optional(),
+    estimatedSeconds: z.number().int().min(0).default(60),
+    // Other step IDs (from the same recipe) that must complete first.
+    dependsOnIds:     z.array(z.string().uuid()).default([]),
+  })
+
+  // POST /recipes/:recipeId/steps
+  fastify.post<{ Params: { recipeId: string } }>(
+    '/:recipeId/steps',
+    { preHandler: requireAuth(...MANAGERS) },
+    async (req, reply) => {
+      const body = stepInputSchema.parse(req.body)
+      const recipe = await prisma.recipe.findUnique({ where: { id: req.params.recipeId } })
+      if (!recipe) throw new NotFoundError('Recipe', req.params.recipeId)
+      // Dependency-self / cycle guard: only allow deps that already exist on
+      // this recipe. Future steps in the editor will be added one-at-a-time
+      // so cycles are impossible by construction.
+      if (body.dependsOnIds.length > 0) {
+        const valid = await prisma.recipeStep.findMany({
+          where: { recipeId: req.params.recipeId, id: { in: body.dependsOnIds } },
+          select: { id: true },
+        })
+        if (valid.length !== body.dependsOnIds.length) {
+          throw new AppError('INVALID_DEPS', 'One or more dependency step IDs do not belong to this recipe', 400)
+        }
+      }
+      const created = await prisma.recipeStep.create({
+        data: { ...body, recipeId: req.params.recipeId },
+        include: { station: { select: { id: true, name: true } } },
+      })
+      return reply.status(201).send(created)
+    },
+  )
+
+  // PATCH /recipes/steps/:stepId
+  fastify.patch<{ Params: { stepId: string } }>(
+    '/steps/:stepId',
+    { preHandler: requireAuth(...MANAGERS) },
+    async (req, reply) => {
+      const body = stepInputSchema.partial().parse(req.body)
+      const existing = await prisma.recipeStep.findUnique({ where: { id: req.params.stepId } })
+      if (!existing) throw new NotFoundError('RecipeStep', req.params.stepId)
+      // No self-dependency.
+      if (body.dependsOnIds?.includes(existing.id)) {
+        throw new AppError('SELF_DEP', 'A step cannot depend on itself', 400)
+      }
+      const updated = await prisma.recipeStep.update({
+        where: { id: req.params.stepId },
+        data:  body,
+        include: { station: { select: { id: true, name: true } } },
+      })
+      return reply.status(200).send(updated)
+    },
+  )
+
+  // DELETE /recipes/steps/:stepId — refuses if other steps depend on this one
+  // so the editor surfaces a clear "remove this dep first" error.
+  fastify.delete<{ Params: { stepId: string } }>(
+    '/steps/:stepId',
+    { preHandler: requireAuth(...MANAGERS) },
+    async (req, reply) => {
+      const step = await prisma.recipeStep.findUnique({ where: { id: req.params.stepId } })
+      if (!step) throw new NotFoundError('RecipeStep', req.params.stepId)
+      const dependents = await prisma.recipeStep.findMany({
+        where: { recipeId: step.recipeId, dependsOnIds: { has: req.params.stepId } },
+        select: { id: true, instruction: true },
+      })
+      if (dependents.length > 0) {
+        return reply.status(409).send({
+          error: {
+            code: 'HAS_DEPENDENTS',
+            message: `${dependents.length} other step(s) depend on this one — remove those deps first.`,
+            dependents,
+          },
+        })
+      }
+      await prisma.recipeStep.delete({ where: { id: req.params.stepId } })
+      return reply.status(204).send()
+    },
+  )
 }

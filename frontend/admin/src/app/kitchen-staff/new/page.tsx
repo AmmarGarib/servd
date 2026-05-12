@@ -1,6 +1,6 @@
 'use client'
 import { useState } from 'react'
-import { useMutation } from '@tanstack/react-query'
+import { useMutation, useQuery } from '@tanstack/react-query'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { api } from '../../../lib/api'
@@ -56,6 +56,8 @@ interface StaffForm {
   eobiRegistered: boolean
   sessiRegistered: boolean
   bankAccount: string
+  // Stations this cook works. Empty = "all stations" (expediter, head chef).
+  stationIds: string[]
 }
 
 const DEFAULT_FORM: StaffForm = {
@@ -74,6 +76,7 @@ const DEFAULT_FORM: StaffForm = {
   eobiRegistered: false,
   sessiRegistered: false,
   bankAccount: '',
+  stationIds: [],
 }
 
 function LabeledField({ label, children, hint }: { label: string; children: React.ReactNode; hint?: string }) {
@@ -121,6 +124,7 @@ export default function AddStaffPage() {
         eobiRegistered: form.eobiRegistered,
         sessiRegistered: form.sessiRegistered,
         bankAccount: form.bankAccount.trim() || undefined,
+        stationIds: form.stationIds,
       }
       return api.post('/kitchen-staff/staff', body)
     },
@@ -221,6 +225,12 @@ export default function AddStaffPage() {
             </LabeledField>
           </div>
         </div>
+
+        {/* Stations */}
+        <StationPicker
+          selected={form.stationIds}
+          onChange={(ids) => set('stationIds', ids)}
+        />
 
         {/* Compensation */}
         <div className="s-card p-5 space-y-4">
@@ -337,6 +347,71 @@ export default function AddStaffPage() {
           </button>
         </div>
       </form>
+    </div>
+  )
+}
+
+// Stations multi-select. Grouped by concept so the operator sees a clear
+// "Grill belongs to Stax / Hot Line belongs to Simmer" picture instead of an
+// unstructured 30-item dropdown.
+interface StationOption {
+  id: string; name: string
+  concept?: { id: string; slug: string; name: string } | null
+}
+
+function StationPicker({ selected, onChange }: { selected: string[]; onChange: (ids: string[]) => void }) {
+  const { data: stations = [] } = useQuery<StationOption[]>({
+    queryKey: ['stations'],
+    queryFn:  () => api.get<StationOption[]>('/kds/stations'),
+  })
+
+  const byConcept = stations.reduce<Record<string, StationOption[]>>((acc, s) => {
+    const slug = s.concept?.slug ?? 'unscoped'
+    ;(acc[slug] ??= []).push(s)
+    return acc
+  }, {})
+
+  function toggle(id: string) {
+    onChange(selected.includes(id) ? selected.filter((x) => x !== id) : [...selected, id])
+  }
+
+  return (
+    <div className="s-card p-5 space-y-3">
+      <div className="flex items-baseline justify-between">
+        <h2 className="text-sm font-bold text-s-text">Stations</h2>
+        <p className="text-[11px] text-s-dim">
+          {selected.length === 0 ? 'All stations (no restriction)' : `${selected.length} selected`}
+        </p>
+      </div>
+      <p className="text-[11px] text-s-dim leading-snug">
+        Which stations does this cook work? The KDS station view filters live tickets to their station set;
+        the par sheet highlights only components their station preps. Leave empty for expediter / head chef.
+      </p>
+      {Object.keys(byConcept).length === 0 ? (
+        <p className="text-xs text-s-dim italic">No stations defined yet — create them under Kitchen → Stations.</p>
+      ) : (
+        <div className="space-y-3">
+          {Object.entries(byConcept).map(([slug, list]) => (
+            <div key={slug}>
+              <p className="text-[10px] uppercase tracking-wider font-black text-s-muted mb-1.5 capitalize">{slug}</p>
+              <div className="flex flex-wrap gap-1.5">
+                {list.map((s) => {
+                  const on = selected.includes(s.id)
+                  return (
+                    <button key={s.id} type="button" onClick={() => toggle(s.id)}
+                      className="text-xs rounded-full px-3 py-1.5 font-semibold transition-colors"
+                      style={on
+                        ? { background: '#00D4B1', color: '#000' }
+                        : { background: 'rgba(255,255,255,0.04)', color: 'rgba(255,255,255,0.65)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                      {on ? '✓ ' : ''}{s.name}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

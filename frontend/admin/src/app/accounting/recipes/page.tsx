@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../../lib/api'
 import Link from 'next/link'
+import { RecipeStepsEditor } from '../../../components/recipe/RecipeStepsEditor'
 
 const Q_FACTOR = 0.05
 
@@ -793,6 +794,22 @@ export default function RecipesPage() {
               </div>
 
               {formErr && <p className="text-xs text-s-red">{formErr}</p>}
+
+              {/* Step graph editor — only on edit (needs a recipeId). New
+                  recipes can add steps right after creation; the modal
+                  re-opens automatically into edit mode. */}
+              {isEditing && (
+                <div className="space-y-2 pt-2 border-t border-s-border">
+                  <div>
+                    <p className="text-xs font-black text-s-muted uppercase tracking-wider">Kitchen routing</p>
+                    <p className="text-[11px] text-s-dim mt-0.5">
+                      Break the cook + assembly into ordered steps. Each step picks a station and may depend on earlier steps.
+                      Expo confirms an order → the first-ready steps fire to their stations; downstream steps cascade as deps clear.
+                    </p>
+                  </div>
+                  <RecipeStepsEditor recipeId={(modal as Recipe).id} />
+                </div>
+              )}
 
               <div className="flex justify-end gap-3 pt-2">
                 <button type="button" onClick={closeModal} className="s-btn-ghost text-sm">Cancel</button>
