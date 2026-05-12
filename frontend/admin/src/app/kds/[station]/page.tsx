@@ -24,6 +24,15 @@ import { NewOrderFlash } from '../../../components/kds/NewOrderFlash'
  *      status endpoint. As recipes get their steps, items naturally migrate.
  */
 
+type FulfilmentType = 'dine_in' | 'takeout' | 'delivery'
+
+// Loud per-card badge so the line cook sees plate-vs-package at a glance.
+const FULFILMENT_META: Record<FulfilmentType, { emoji: string; label: string; short: string; accent: string; bg: string }> = {
+  dine_in:  { emoji: '🍽',  label: 'Dine-in',  short: 'PLATE',    accent: '#22c55e', bg: 'rgba(34,197,94,0.12)' },
+  takeout:  { emoji: '🥡', label: 'Takeout',  short: 'PACK',     accent: '#f59e0b', bg: 'rgba(245,158,11,0.12)' },
+  delivery: { emoji: '🛵', label: 'Delivery', short: 'PACK+LBL', accent: '#ec4899', bg: 'rgba(236,72,153,0.12)' },
+}
+
 interface StepTicket {
   stepId:    string
   itemId:    string
@@ -37,6 +46,8 @@ interface StepTicket {
   estimatedSeconds: number
   order: {
     id: string; customerName: string | null; source: string; placedAt: string
+    fulfilmentType: FulfilmentType
+    tableLabel: string | null
     concept: { name: string; slug: string }
   }
 }
@@ -50,6 +61,8 @@ interface LegacyTicket {
   firedAt:   string | null
   order: {
     id: string; customerName: string | null; source: string; placedAt: string
+    fulfilmentType: FulfilmentType
+    tableLabel: string | null
     concept: { name: string; slug: string }
   }
 }
@@ -140,11 +153,19 @@ export default function StationKdsPage() {
                 ? formatDistanceToNowStrict(new Date(t.firedAt), { addSuffix: false })
                 : 'just now'
               const eta = !isLegacy ? (t as StepTicket).estimatedSeconds : 0
+              const fm = FULFILMENT_META[t.order.fulfilmentType] ?? FULFILMENT_META.dine_in
               return (
-                <div key={id} className="rounded-2xl p-4"
-                  style={{ background: '#1f2230', border: '1px solid rgba(255,255,255,0.06)' }}>
+                <div key={id} className="rounded-2xl p-4 relative"
+                  style={{ background: '#1f2230', border: `2px solid ${fm.accent}55` }}>
+                  {/* Loud fulfilment badge — the first thing the cook sees on
+                      every card so they know whether to plate or package. */}
+                  <div className="absolute -top-2 left-3 px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-[0.15em]"
+                    style={{ background: fm.bg, color: fm.accent, border: `1px solid ${fm.accent}50` }}>
+                    {fm.emoji} {fm.short}
+                    {t.order.tableLabel && <span className="ml-1 opacity-80">· {t.order.tableLabel}</span>}
+                  </div>
                   {/* Top row */}
-                  <div className="flex items-center justify-between mb-2 text-[10px] uppercase tracking-wider font-bold">
+                  <div className="flex items-center justify-between mb-2 mt-1 text-[10px] uppercase tracking-wider font-bold">
                     <span className="text-kds-subtext">{t.order.concept.name} · {t.order.source}</span>
                     <span className="text-kds-amber">{elapsed}</span>
                   </div>
@@ -193,21 +214,25 @@ export default function StationKdsPage() {
               On deck — waiting on prior steps ({waiting.length})
             </p>
             <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-3">
-              {waiting.map((t) => (
-                <div key={t.stepId} className="rounded-2xl p-4 opacity-50"
-                  style={{ background: 'rgba(255,255,255,0.02)', border: '1px dashed rgba(255,255,255,0.08)' }}>
-                  <p className="text-[10px] uppercase tracking-wider font-bold text-kds-subtext mb-2">
-                    {t.order.concept.name} · waiting
-                  </p>
-                  <p className="text-base font-bold text-kds-text/70 leading-tight">
-                    {t.qty > 1 && <span className="text-kds-subtext mr-1">{t.qty}×</span>}
-                    {t.itemName}
-                  </p>
-                  <p className="text-sm font-semibold mt-2 text-kds-subtext italic">
-                    → {t.instruction}
-                  </p>
-                </div>
-              ))}
+              {waiting.map((t) => {
+                const fm = FULFILMENT_META[t.order.fulfilmentType] ?? FULFILMENT_META.dine_in
+                return (
+                  <div key={t.stepId} className="rounded-2xl p-4 opacity-50"
+                    style={{ background: 'rgba(255,255,255,0.02)', border: '1px dashed rgba(255,255,255,0.08)' }}>
+                    <p className="text-[10px] uppercase tracking-wider font-bold mb-2"
+                      style={{ color: fm.accent }}>
+                      {fm.emoji} {fm.short} · {t.order.concept.name} · waiting
+                    </p>
+                    <p className="text-base font-bold text-kds-text/70 leading-tight">
+                      {t.qty > 1 && <span className="text-kds-subtext mr-1">{t.qty}×</span>}
+                      {t.itemName}
+                    </p>
+                    <p className="text-sm font-semibold mt-2 text-kds-subtext italic">
+                      → {t.instruction}
+                    </p>
+                  </div>
+                )
+              })}
             </div>
           </section>
         )}

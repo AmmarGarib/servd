@@ -248,8 +248,10 @@ export async function expoRoutes(fastify: FastifyInstance) {
               order: {
                 select: {
                   id: true, customerName: true, source: true, placedAt: true,
+                  fulfilmentType: true,
                   concept: { select: { name: true, slug: true } },
                   customer: { select: { name: true } },
+                  table:    { select: { label: true } },
                 },
               },
             },
@@ -271,8 +273,10 @@ export async function expoRoutes(fastify: FastifyInstance) {
           order: {
             select: {
               id: true, customerName: true, source: true, placedAt: true,
+              fulfilmentType: true,
               concept: { select: { name: true, slug: true } },
               customer: { select: { name: true } },
+              table:    { select: { label: true } },
             },
           },
         },
@@ -292,11 +296,13 @@ export async function expoRoutes(fastify: FastifyInstance) {
           phase:            s.recipeStep.phase,
           estimatedSeconds: s.recipeStep.estimatedSeconds,
           order: {
-            id:           s.orderItem.order.id,
-            customerName: s.orderItem.order.customer?.name ?? s.orderItem.order.customerName,
-            source:       s.orderItem.order.source,
-            placedAt:     s.orderItem.order.placedAt,
-            concept:      s.orderItem.order.concept,
+            id:             s.orderItem.order.id,
+            customerName:   s.orderItem.order.customer?.name ?? s.orderItem.order.customerName,
+            source:         s.orderItem.order.source,
+            placedAt:       s.orderItem.order.placedAt,
+            fulfilmentType: s.orderItem.order.fulfilmentType,
+            tableLabel:     s.orderItem.order.table?.label ?? null,
+            concept:        s.orderItem.order.concept,
           },
         })),
         legacy: legacy.map((it) => ({
@@ -307,11 +313,13 @@ export async function expoRoutes(fastify: FastifyInstance) {
           status:    it.status,
           firedAt:   it.firedAt,
           order: {
-            id:           it.order.id,
-            customerName: it.order.customer?.name ?? it.order.customerName,
-            source:       it.order.source,
-            placedAt:     it.order.placedAt,
-            concept:      it.order.concept,
+            id:             it.order.id,
+            customerName:   it.order.customer?.name ?? it.order.customerName,
+            source:         it.order.source,
+            placedAt:       it.order.placedAt,
+            fulfilmentType: it.order.fulfilmentType,
+            tableLabel:     it.order.table?.label ?? null,
+            concept:        it.order.concept,
           },
         })),
       }
