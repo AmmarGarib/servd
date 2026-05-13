@@ -157,8 +157,10 @@ const NAV: NavSection[] = [
       { href: '/gift-cards',             label: 'Gift Cards',      icon: '🎁', module: 'gift_cards' },
       { href: '/reconciliation',         label: 'Reconciliation',  icon: '⚖️', module: 'reconciliation' },
       { href: '/exceptions',             label: 'Exceptions',      icon: '🚨', module: 'exceptions' },
-      { href: '/finance/capital-ledger', label: 'Capital',         icon: '💸', module: 'capital' },
-      { href: '/finance/capex',          label: 'Project Tracker', icon: '📊', module: 'capital' },
+      // Investment Dashboard is a read-only roll-up of Project Tracker —
+      // every CapexLine + payment flows here. To log anything, use /capex.
+      { href: '/finance/capital-ledger', label: 'Investment',      icon: '📊', module: 'capital' },
+      { href: '/finance/capex',          label: 'Project Tracker', icon: '🏗', module: 'capital' },
       { href: '/finance/projections',    label: 'Pro-Forma',       icon: '📈', module: 'projections' },
       { href: '/procurement',            label: 'Procurement',     icon: '🏭', module: 'procurement', children: [
         { href: '/procurement/chat',    label: 'Supplier Chat', module: 'procurement' },

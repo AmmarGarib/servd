@@ -157,9 +157,14 @@ export default function CapexTrackerPage() {
         <Link href="/finance" className="text-xs text-white/40 hover:text-white/70">← Finance</Link>
         <div className="flex items-start justify-between gap-4 mt-1">
           <div>
-            <h1 className="text-2xl font-black text-white/90 flex items-center gap-2">📊 Project Tracker</h1>
+            <h1 className="text-2xl font-black text-white/90 flex items-center gap-2">🏗 Project Tracker</h1>
             <p className="text-sm text-white/40 mt-1 max-w-3xl">
-              CapEx + OpEx in one place per project. One-time build cost on the CapEx tab, recurring run-rate (rent, payroll, utilities) on the OpEx tab. Full total cost of ownership in one view.
+              CapEx + OpEx in one place per project. One-time build cost on the CapEx tab, recurring run-rate
+              (rent, payroll, utilities) on the OpEx tab. Full total cost of ownership in one view.
+              {' '}
+              <Link href="/finance/capital-ledger" className="text-kds-green font-bold hover:opacity-80">
+                See the roll-up in Investment Dashboard →
+              </Link>
             </p>
           </div>
           <button onClick={() => setCreating(true)} className="rounded-xl bg-kds-green px-4 py-2.5 text-sm font-black text-black hover:opacity-90">+ New project</button>
