@@ -34,6 +34,20 @@ const HANDOFF_LABEL: Record<FulfilmentType, string> = {
   delivery: '🛵 Hand to rider',
 }
 
+// Quick-pick rejection reasons. Ordered by frequency — 86 (out of an
+// ingredient) is by far the most common, followed by kitchen overload
+// and customer-side flags. Operator can still type a custom reason.
+const REJECT_REASONS = [
+  '86 — out of ingredient',
+  '86 — out of dish',
+  'Kitchen at capacity',
+  'Allergen risk',
+  'Wrong concept',
+  'Closed for service',
+  'Customer cancelled',
+  'Suspected bad order',
+] as const
+
 const SOURCE_BADGE: Record<string, { label: string; bg: string; fg: string }> = {
   servd:     { label: 'Storefront', bg: 'rgba(99,102,241,0.15)',  fg: '#A5B4FC' },
   foodpanda: { label: 'Foodpanda',  bg: 'rgba(236,72,153,0.18)',  fg: '#F9A8D4' },
@@ -213,8 +227,26 @@ export default function ExpoPage() {
                   </div>
                 ) : (
                   <div className="space-y-2">
+                    {/* Quick-reason chips — most rejects on the pass fall into
+                        a handful of buckets. Tap a chip → the reason fills in,
+                        edit before confirming if needed. Saves the expo from
+                        typing "86 sea bass" 12 times a service. */}
+                    <div className="flex flex-wrap gap-1.5">
+                      {REJECT_REASONS.map((preset) => (
+                        <button
+                          key={preset}
+                          type="button"
+                          onClick={() => setRejectReason(preset)}
+                          className="text-[11px] font-bold rounded-full px-2.5 py-1 transition-colors"
+                          style={rejectReason === preset
+                            ? { background: 'rgba(255,77,79,0.22)', color: '#FF8A8C', border: '1px solid rgba(255,77,79,0.5)' }
+                            : { background: 'rgba(255,255,255,0.04)', color: 'rgba(255,255,255,0.6)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                          {preset}
+                        </button>
+                      ))}
+                    </div>
                     <input value={rejectReason} onChange={(e) => setRejectReason(e.target.value)}
-                      placeholder="Reason (out of stock, blacklist, etc.)" autoFocus
+                      placeholder="…or type a custom reason"
                       className="w-full rounded-lg px-3 py-2 text-sm font-semibold focus:outline-none"
                       style={{ background: 'rgba(0,0,0,0.4)', border: '1px solid rgba(255,77,79,0.2)', color: 'rgba(255,255,255,0.9)' }} />
                     <div className="flex gap-2">
