@@ -665,11 +665,18 @@ export async function authRoutes(fastify: FastifyInstance) {
         // Mirror the primary tenant as a membership row too — keeps "is this
         // user a member of tenant X?" queries simple (just check TenantMember,
         // no UNION with User.tenantId needed).
+        //
+        // Nested writes use `tenant: { connect }` not raw `tenantId` — Prisma
+        // disallows the FK column inside a nested-create when the relation is
+        // already implicit from the parent.
         memberships: {
           create: dedupeStrings([
             ...(tenantId ? [tenantId] : []),
             ...extraIds,
-          ]).map((id) => ({ tenantId: id, role: 'member' })),
+          ]).map((id) => ({
+            tenant: { connect: { id } },
+            role: 'member',
+          })),
         },
       },
       select: {
