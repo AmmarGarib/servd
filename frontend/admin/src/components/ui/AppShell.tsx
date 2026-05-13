@@ -46,13 +46,26 @@ interface NavSection {
 
 const NAV: NavSection[] = [
   // ── Executive — CEO / Admin only by default. The CEO uses this section to
-  // decide what every other role sees in the rest of the sidebar. ──────
+  // decide what every other role sees in the rest of the sidebar.
+  //
+  // Staff Directory lives here (not under Workforce) because hiring + scoping
+  // permissions per role IS executive work. Roles & Permissions used to be
+  // its own page; it's now folded into the workforce edit panel — when you
+  // edit a staff row, you tick which permissions their role has.
   {
     title: 'Executive',
     items: [
       { href: '/configuration',                 label: 'CEO Overview',        icon: '👑', module: 'ceo_overview' },
+      { href: '/workforce',                     label: 'Staff Directory',     icon: '👥', module: 'staff_directory', children: [
+        { href: '/workforce?category=management',  label: 'Management',     module: 'staff_management' },
+        { href: '/workforce?category=foh',         label: 'Front of House', module: 'staff_foh' },
+        { href: '/workforce?category=boh',         label: 'Back of House',  module: 'staff_boh' },
+        { href: '/workforce?category=procurement', label: 'Procurement',    module: 'staff_procurement' },
+        { href: '/workforce?category=marketing',   label: 'Marketing',      module: 'staff_marketing' },
+        { href: '/workforce?category=finance',     label: 'Finance',        module: 'staff_finance' },
+        { href: '/workforce?category=hr',          label: 'HR',             module: 'staff_hr' },
+      ]},
       { href: '/configuration/pending-approvals', label: 'Pending Signups',  icon: '⏳', module: 'role_management' },
-      { href: '/configuration/roles',           label: 'Roles & Permissions', icon: '🔐', module: 'role_management' },
       { href: '/configuration/role-modules',    label: 'Module Access',       icon: '🗂', module: 'role_modules' },
       { href: '/settings',                      label: 'Tenants & Brands',    icon: '🏷', module: 'tenants' },
     ],
@@ -172,22 +185,12 @@ const NAV: NavSection[] = [
     ],
   },
   {
-    // Workforce hub at the top covers every staff category in one screen.
-    // The dedicated /kitchen-staff entry stays — that's the brigade view with
-    // payroll, EOBI, SESSI, compliance — features the generic User directory
-    // doesn't cover.
+    // Workforce ops — day-to-day staff operations. Staff Directory + Pending
+    // Signups moved up to Executive since they're hiring/permission decisions.
+    // What remains here is shift-floor work the manager runs every day.
     title: 'Workforce',
     defaultCollapsed: true,
     items: [
-      { href: '/workforce', label: 'Staff Directory', icon: '👥', module: 'staff_directory', children: [
-        { href: '/workforce?category=management',  label: 'Management',     module: 'staff_management' },
-        { href: '/workforce?category=foh',         label: 'Front of House', module: 'staff_foh' },
-        { href: '/workforce?category=boh',         label: 'Back of House',  module: 'staff_boh' },
-        { href: '/workforce?category=procurement', label: 'Procurement',    module: 'staff_procurement' },
-        { href: '/workforce?category=marketing',   label: 'Marketing',      module: 'staff_marketing' },
-        { href: '/workforce?category=finance',     label: 'Finance',        module: 'staff_finance' },
-        { href: '/workforce?category=hr',          label: 'HR',             module: 'staff_hr' },
-      ]},
       { href: '/kitchen-staff', label: 'Kitchen Brigade', icon: '👨‍🍳', module: 'kitchen_staff', children: [
         { href: '/kitchen-staff/schedule',   label: 'Schedule',   module: 'kitchen_staff' },
         { href: '/kitchen-staff/attendance', label: 'Attendance', module: 'kitchen_staff' },
@@ -196,7 +199,6 @@ const NAV: NavSection[] = [
       ]},
       { href: '/time-clock', label: 'Time Clock', icon: '⏱', module: 'staff_directory' },
       { href: '/scheduling', label: 'Scheduling', icon: '📅', module: 'scheduling' },
-      { href: '/configuration/pending-approvals', label: 'Pending Signups', icon: '⏳', module: 'role_management' },
     ],
   },
   {

@@ -22,6 +22,30 @@ import { useViewAllTenants } from '../../components/ui/TenantSwitcher'
 
 interface TenantLite { id: string; name: string; slug: string }
 
+interface PermissionMeta {
+  key: string
+  label: string
+  desc: string
+  category: 'live' | 'service' | 'kitchen' | 'menu' | 'finance' | 'crm' | 'platform'
+}
+interface PermissionsMatrix {
+  roles: string[]
+  matrix: Record<string, Record<string, boolean>>
+}
+
+const PERMISSION_CATEGORY_META: Record<PermissionMeta['category'], { label: string; emoji: string }> = {
+  live:     { label: 'Live operations',     emoji: '⚡' },
+  service:  { label: 'Service / floor',     emoji: '💳' },
+  kitchen:  { label: 'Kitchen',             emoji: '🍳' },
+  menu:     { label: 'Menu & storefront',   emoji: '📝' },
+  finance:  { label: 'Finance & reports',   emoji: '💰' },
+  crm:      { label: 'Customers & CRM',     emoji: '👥' },
+  platform: { label: 'Platform & settings', emoji: '🎛' },
+}
+const PERMISSION_CATEGORY_ORDER: PermissionMeta['category'][] = [
+  'live', 'service', 'kitchen', 'menu', 'finance', 'crm', 'platform',
+]
+
 interface StaffUser {
   id: string
   name: string
@@ -478,6 +502,7 @@ function InlineEditor({
   onChange: () => void
   onClose: () => void
 }) {
+  const qc = useQueryClient()
   const [name, setName]         = useState(user.name === 'Unnamed staff' ? '' : user.name)
   const [email, setEmail]       = useState(user.email ?? '')
   const [phone, setPhone]       = useState(user.phone ?? '')
@@ -507,10 +532,69 @@ function InlineEditor({
     }
   }, [category])  // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ── Role permissions — folded into the staff form so the CEO can subjectively
+  // tune what each role can do without leaving this panel. Edits apply to
+  // every staff member with this role (permissions are role-level, not user-
+  // level — per-user overrides would need a separate schema change).
+
+  const { data: permsCatalogue = [] } = useQuery<PermissionMeta[]>({
+    queryKey: ['permissions', 'catalogue'],
+    queryFn:  () => api.get('/permissions/catalogue'),
+    staleTime: 5 * 60_000,
+  })
+  const { data: permsMatrix } = useQuery<PermissionsMatrix>({
+    queryKey: ['permissions', 'matrix'],
+    queryFn:  () => api.get('/permissions/matrix'),
+    staleTime: 30_000,
+  })
+
+  // Local edit buffer for the *currently-selected* role. Keyed by role so
+  // switching the role dropdown doesn't lose pending changes for the other
+  // role you were on.
+  const [permsDraft, setPermsDraft] = useState<Record<string, Record<string, boolean>>>({})
+
+  // Effective permissions for this role: caller's pending edits over the
+  // server matrix. Empty object until the matrix loads.
+  const rolePerms: Record<string, boolean> = useMemo(() => {
+    const fromServer = permsMatrix?.matrix[role] ?? {}
+    const overrides = permsDraft[role] ?? {}
+    return { ...fromServer, ...overrides }
+  }, [permsMatrix, permsDraft, role])
+
+  function togglePerm(permKey: string) {
+    setPermsDraft((cur) => {
+      const next = { ...(cur[role] ?? {}) }
+      // Flip relative to current effective value.
+      const current = next[permKey] ?? permsMatrix?.matrix[role]?.[permKey] ?? false
+      next[permKey] = !current
+      return { ...cur, [role]: next }
+    })
+  }
+
+  // True when at least one permission has a draft value different from the
+  // server. Used to enable the "permissions changed" pill in the save bar.
+  const permsDirty = useMemo(() => {
+    if (!permsMatrix) return false
+    for (const r of Object.keys(permsDraft)) {
+      for (const k of Object.keys(permsDraft[r] ?? {})) {
+        if (permsDraft[r]?.[k] !== permsMatrix.matrix[r]?.[k]) return true
+      }
+    }
+    return false
+  }, [permsDraft, permsMatrix])
+
+  // Group catalogue permissions by category for the rendered list.
+  const permsByCategory = useMemo(() => {
+    const out: Record<string, PermissionMeta[]> = {}
+    for (const p of permsCatalogue) (out[p.category] ??= []).push(p)
+    return out
+  }, [permsCatalogue])
+
   const derivedPin = phone.replace(/\D/g, '').slice(-4)
 
   const save = useMutation({
-    mutationFn: () => {
+    mutationFn: async () => {
+      // 1. PATCH the user row (name / email / phone / role / company / PIN).
       const patch: Record<string, unknown> = {}
       if (name.trim() && name.trim() !== user.name) patch.name = name.trim()
       // Empty string is sent verbatim — backend treats that as "clear it".
@@ -524,9 +608,33 @@ function InlineEditor({
       const nextIds = [...tenantIds].sort().join(',')
       if (existingIds !== nextIds) patch.tenantIds = tenantIds
       if (pin.trim()) patch.pin = pin.trim()
-      return api.patch(`/auth/users/${user.id}`, patch)
+      if (Object.keys(patch).length > 0) {
+        await api.patch(`/auth/users/${user.id}`, patch)
+      }
+
+      // 2. Permission diffs across every role the operator touched. Edits
+      // here apply to *every* staff member with that role.
+      if (permsMatrix) {
+        const changes: Array<{ role: string; permission: string; enabled: boolean }> = []
+        for (const r of Object.keys(permsDraft)) {
+          for (const k of Object.keys(permsDraft[r] ?? {})) {
+            const draftVal = permsDraft[r]?.[k] ?? false
+            const serverVal = permsMatrix.matrix[r]?.[k] ?? false
+            if (draftVal !== serverVal) {
+              changes.push({ role: r, permission: k, enabled: draftVal })
+            }
+          }
+        }
+        if (changes.length > 0) {
+          await api.patch('/permissions/matrix', { changes })
+        }
+      }
     },
-    onSuccess: () => { onChange(); onClose() },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['permissions', 'matrix'] })
+      void qc.invalidateQueries({ queryKey: ['permissions', 'me'] })
+      onChange(); onClose()
+    },
     onError:   (e: unknown) => setErr(e instanceof Error ? e.message : 'Failed to save'),
   })
 
@@ -643,16 +751,63 @@ function InlineEditor({
         </Field>
       </div>
 
-      {/* Roles & permissions are config-level (they apply to *every* user
-          with this role) — link out instead of duplicating the matrix here. */}
-      <div className="flex items-center justify-between text-[11px] text-kds-subtext rounded-md border border-kds-border bg-kds-bg/60 px-3 py-2">
-        <span>
-          What this role can do is in <span className="text-kds-text font-semibold">Roles &amp; Permissions</span>.
-          Edits there apply to every {roleLabel(role)}.
-        </span>
-        <Link href="/configuration/roles" className="text-kds-green font-bold hover:opacity-80 whitespace-nowrap">
-          Open matrix →
-        </Link>
+      {/* ── Role permissions ──────────────────────────────────────────────
+          Inline matrix scoped to the staff member's current role. Edits here
+          apply to EVERY user assigned that role (permissions are role-level;
+          per-user overrides would need a separate schema column). Save flushes
+          both the user PATCH and the permission diffs in one click. */}
+      <div className="rounded-lg border border-kds-border bg-kds-bg/60 p-3 space-y-2.5">
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <div>
+            <p className="text-[11px] font-bold uppercase tracking-wider text-kds-subtext">
+              What {roleLabel(role)} can do
+            </p>
+            <p className="text-[10px] text-kds-subtext/70">
+              Applies to every {roleLabel(role).toLowerCase()} on staff — saved with the rest of the form.
+            </p>
+          </div>
+          {permsDirty && (
+            <span className="text-[10px] font-bold uppercase tracking-wider rounded px-1.5 py-0.5"
+              style={{ background: 'rgba(245,158,11,0.15)', color: '#F59E0B' }}>
+              Unsaved changes
+            </span>
+          )}
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-x-3 gap-y-1.5">
+          {PERMISSION_CATEGORY_ORDER.map((catKey) => {
+            const list = permsByCategory[catKey]
+            if (!list || list.length === 0) return null
+            const catMeta = PERMISSION_CATEGORY_META[catKey]
+            return (
+              <div key={catKey} className="rounded-md border border-kds-border/60 bg-kds-card/40 p-2">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-kds-subtext mb-1.5">
+                  {catMeta.emoji} {catMeta.label}
+                </p>
+                <div className="space-y-1">
+                  {list.map((perm) => {
+                    const enabled = rolePerms[perm.key] ?? false
+                    return (
+                      <label key={perm.key}
+                        className="flex items-start gap-2 cursor-pointer rounded px-1.5 py-1 hover:bg-kds-bg/70 transition-colors">
+                        <input type="checkbox" checked={enabled}
+                          onChange={() => togglePerm(perm.key)}
+                          className="mt-0.5 h-3.5 w-3.5 shrink-0 cursor-pointer accent-kds-green" />
+                        <div className="min-w-0 flex-1">
+                          <p className="text-[12px] font-semibold text-kds-text leading-tight">{perm.label}</p>
+                          {perm.desc && <p className="text-[10px] text-kds-subtext leading-tight mt-0.5">{perm.desc}</p>}
+                        </div>
+                      </label>
+                    )
+                  })}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+        {permsCatalogue.length === 0 && (
+          <p className="text-[11px] text-kds-subtext italic">Permissions catalogue loading…</p>
+        )}
       </div>
 
       {err && <p className="text-xs font-bold text-red-400">{err}</p>}
@@ -823,10 +978,9 @@ function AddStaffModal({
         </div>
 
         <p className="mt-3 text-[11px] text-kds-subtext">
-          What each role can <em>do</em> is configured in{' '}
-          <Link href="/configuration/roles" className="text-kds-green font-bold hover:opacity-80">
-            Roles &amp; Permissions →
-          </Link>
+          Tick the company / category / role title now. You can fine-tune what this role
+          <em> does</em> inside the row's edit panel — every staff form has the permission
+          matrix folded in.
         </p>
 
         {err && <p className="mt-2 text-xs font-bold text-red-400">{err}</p>}
