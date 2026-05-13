@@ -16,7 +16,7 @@ import Link from 'next/link'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../lib/api'
-import { roleLabel, APP_ROLES, type AppRole } from '../../lib/appRoles'
+import { roleLabel, type AppRole } from '../../lib/appRoles'
 import { usePermissions } from '../../hooks/useCan'
 import { useViewAllTenants } from '../../components/ui/TenantSwitcher'
 
@@ -655,9 +655,6 @@ function InlineEditor({
     onSuccess:  () => onChange(),
   })
 
-  const currentCategory = CATEGORIES.find((c) => c.key === category)
-  const roleOptions = currentCategory ? currentCategory.roles : []
-
   return (
     <div className="bg-kds-bg/30 border-t border-kds-border px-4 py-4 space-y-3">
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -684,35 +681,11 @@ function InlineEditor({
             ))}
           </select>
         </Field>
-        {/* Specific role — only meaningful when the picked category has more
-            than one role under it. For Procurement / Marketing / Finance / HR
-            there's exactly one role per category, so the dropdown was just
-            duplicating the Category label — hide it. */}
-        {roleOptions.length > 1 ? (
-          <Field label="Specific role"
-            hint="Picks which sidebar areas they see by default.">
-            <select value={role} onChange={(e) => setRole(e.target.value as AppRole)} className={inputCls}>
-              {roleOptions.map((r) => {
-                const meta = APP_ROLES.find((rr) => rr.value === r)
-                return (
-                  <option key={r} value={r}>
-                    {meta?.emoji} {roleLabel(r)} — {meta?.description ?? ''}
-                  </option>
-                )
-              })}
-            </select>
-          </Field>
-        ) : (
-          // Render a disabled-looking summary chip so the operator still sees
-          // what they got (instead of an empty grid cell).
-          <Field label="Role"
-            hint="Single role under this category — fine-tune permissions below.">
-            <div className={`${inputCls} flex items-center gap-2 opacity-80 cursor-default`}>
-              <span>{APP_ROLES.find((rr) => rr.value === role)?.emoji}</span>
-              <span className="font-semibold">{roleLabel(role)}</span>
-            </div>
-          </Field>
-        )}
+        {/* Specific-role picker removed — Category alone decides the bucket,
+            and the permission matrix below decides what they can do. The
+            underlying `role` enum still tracks the category's primary value
+            (kept in state via the useEffect above) so backend writes still
+            carry a valid role. */}
         {tenants.length > 0 && (
           <div className="md:col-span-2">
             <div className="flex items-center justify-between mb-1">
