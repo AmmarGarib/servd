@@ -206,10 +206,14 @@ export async function menuRoutes(fastify: FastifyInstance) {
 
   fastify.post('/categories', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
     const body = createCategorySchema.parse(req.body)
+    // CREATE pins to the operator's active tenant; PATCH/DELETE on existing
+    // rows below use memberTenantIds because the operator might be editing a
+    // row in a company that isn't their primary (head-office staff servicing
+    // multiple restaurants — common pattern for procurement + finance).
     const concept = await prisma.concept.findFirst({
-      where: { id: body.conceptId, tenantId: req.staffUser!.tenantFilter, deletedAt: null },
+      where: { id: body.conceptId, tenantId: { in: req.staffUser!.memberTenantIds }, deletedAt: null },
     })
-    if (!concept) return reply.status(403).send({ error: { code: 'CROSS_TENANT', message: 'Concept does not belong to your active company' } })
+    if (!concept) return reply.status(403).send({ error: { code: 'CROSS_TENANT', message: 'Concept does not belong to a company you have access to' } })
     const category = await prisma.category.create({ data: body })
     return reply.status(201).send(category)
   })
@@ -223,10 +227,10 @@ export async function menuRoutes(fastify: FastifyInstance) {
         where: {
           id: req.params.id,
           deletedAt: null,
-          concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
+          concept: { tenantId: { in: req.staffUser!.memberTenantIds }, deletedAt: null },
         },
       })
-      if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Category not found in your active company' } })
+      if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Category not found in a company you have access to' } })
       return prisma.category.update({ where: { id: req.params.id }, data: body })
     },
   )
@@ -243,11 +247,11 @@ export async function menuRoutes(fastify: FastifyInstance) {
         where: {
           id: req.params.id,
           deletedAt: null,
-          concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
+          concept: { tenantId: { in: req.staffUser!.memberTenantIds }, deletedAt: null },
         },
         include: { _count: { select: { items: { where: { deletedAt: null } } } } },
       })
-      if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Category not found in your active company' } })
+      if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Category not found in a company you have access to' } })
       if (owned._count.items > 0) {
         return reply.status(409).send({ error: {
           code: 'CATEGORY_NOT_EMPTY',

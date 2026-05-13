@@ -22,6 +22,12 @@ declare module 'fastify' {
       id: string; email: string | null; name: string | null; role: UserRole
       tenantId: string | null
       tenantFilter: string | { in: string[] } | null
+      // Every tenant the user has access to — primary + TenantMember rows,
+      // deduped. Use this for PATCH/DELETE gating where the row's tenant is
+      // resolved via a relation (e.g. "this category belongs to a concept
+      // whose tenant should be one I can access"). `tenantFilter` is for
+      // SELECT filters; `memberTenantIds` is for "do I belong here?" checks.
+      memberTenantIds: string[]
     }
     customer?: { id: string }
   }
@@ -44,10 +50,8 @@ async function attachStaffPrincipal(req: FastifyRequest, payload: { sub: string;
   // GET carries `x-servd-portfolio: 1`. Expand the tenant filter to every
   // tenant the user is a member of so cross-tenant rollups (chain, expo
   // queue across both kitchens, etc.) return the full picture.
-  // Writes never carry this header → tenantFilter falls back to the single
-  // active tenant, which is exactly what Prisma create expects.
-  const portfolio = req.headers['x-servd-portfolio'] === '1'
-                  && ['GET', 'HEAD'].includes(req.method?.toUpperCase() ?? 'GET')
+  const isGet = ['GET', 'HEAD'].includes(req.method?.toUpperCase() ?? 'GET')
+  const portfolio = req.headers['x-servd-portfolio'] === '1' && isGet
 
   // Pull every tenant the operator is a member of — used both for portfolio
   // expansion AND for validating the per-request active-tenant header below.
@@ -58,8 +62,15 @@ async function attachStaffPrincipal(req: FastifyRequest, payload: { sub: string;
   const memberTenantIds = new Set<string>(memberships.map((m) => m.tenantId))
   if (u?.tenantId) memberTenantIds.add(u.tenantId)
 
+  // tenantFilter resolves differently for reads vs writes:
+  //   • GET in portfolio view → expand to every tenant I belong to
+  //   • GET single-tenant view → just my active tenant (view-aware)
+  //   • non-GET (PATCH/DELETE/POST gating) → ALWAYS expand to every tenant
+  //     I belong to. A head-office staffer editing a row in Bukhari's
+  //     concept shouldn't get a 404 just because their primary is Clifton
+  //     — they're a member of both, the write should land.
   let tenantFilter: string | { in: string[] } | null = u?.tenantId ?? null
-  if (portfolio && memberTenantIds.size > 1) {
+  if (memberTenantIds.size > 1 && (portfolio || !isGet)) {
     tenantFilter = { in: Array.from(memberTenantIds) }
   }
 
@@ -81,6 +92,7 @@ async function attachStaffPrincipal(req: FastifyRequest, payload: { sub: string;
     role:     payload.role as UserRole,
     tenantId: effectiveTenantId,
     tenantFilter,
+    memberTenantIds: Array.from(memberTenantIds),
   }
 }
 
