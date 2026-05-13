@@ -85,12 +85,21 @@ const NAV: NavSection[] = [
       // and the per-station screens — kept reachable for legacy bookmarks
       // but no longer in the sidebar.
       { href: '/expo',      label: 'Expo Station', icon: '🪧', module: 'kds_all' },
+      { href: '/chain',     label: 'Chain Rollup', icon: '🏢', module: 'chain' },
+    ],
+  },
+  {
+    // ── Management — the "look back / look across" surfaces. Live is what's
+    // happening RIGHT NOW; Management is the post-hoc + analytical layer:
+    // browse past orders, audit anomalies, see prep forecasts. Sits between
+    // Live and Service so the floor team can drop down for a quick lookup
+    // (refund last night's #1042) without leaving the operational area.
+    title: 'Management',
+    items: [
       { href: '/orders',    label: 'Orders (history)', icon: '📋', module: 'orders', children: [
         { href: '/refunds',         label: 'Refunds',  module: 'refunds' },
-        { href: '/orders/curbside', label: 'Curbside', module: 'curbside' },
       ]},
       { href: '/ops',       label: 'Ops Center',   icon: '⚡', module: 'ops' },
-      { href: '/chain',     label: 'Chain Rollup', icon: '🏢', module: 'chain' },
     ],
   },
   {
