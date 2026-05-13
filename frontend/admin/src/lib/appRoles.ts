@@ -149,7 +149,7 @@ export const MODULES: ModuleMeta[] = [
   { id: 'reconciliation',     label: 'Reconciliation',      section: 'Finance' },
   { id: 'exceptions',         label: 'Exceptions',          section: 'Finance' },
   { id: 'capital',            label: 'Capital',             section: 'Finance' },
-  { id: 'projections',        label: 'Pro-Forma',           section: 'Finance' },
+  { id: 'projections',        label: 'Projections',         section: 'Finance' },
   { id: 'procurement',        label: 'Procurement',         section: 'Finance' },
   { id: 'reports',            label: 'Reports',             section: 'Finance' },
 

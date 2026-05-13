@@ -161,7 +161,7 @@ const NAV: NavSection[] = [
       // every CapexLine + payment flows here. To log anything, use /capex.
       { href: '/finance/capital-ledger', label: 'Investment',      icon: '📊', module: 'capital' },
       { href: '/finance/capex',          label: 'Project Tracker', icon: '🏗', module: 'capital' },
-      { href: '/finance/projections',    label: 'Pro-Forma',       icon: '📈', module: 'projections' },
+      { href: '/finance/projections',    label: 'Projections',     icon: '📈', module: 'projections' },
       { href: '/procurement',            label: 'Procurement',     icon: '🏭', module: 'procurement', children: [
         { href: '/procurement/chat',    label: 'Supplier Chat', module: 'procurement' },
         { href: '/procurement/monitor', label: 'Monitor',       module: 'procurement' },

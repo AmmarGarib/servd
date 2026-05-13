@@ -78,7 +78,7 @@ export default function ProjectionsPage() {
         </div>
         <div className="flex items-start justify-between gap-4 flex-wrap">
           <div>
-            <h1 className="text-2xl font-black text-white/90">📈 Pro-Forma Projections</h1>
+            <h1 className="text-2xl font-black text-white/90">📈 Projections</h1>
             <p className="text-sm text-white/40 mt-1 max-w-2xl">
               Model a new unit. Enter capex, channels, fixed costs + ramp curve → see monthly P&L, cumulative cash flow, payback period. Replaces the &quot;Annual Projection&quot; tab in your Excel.
             </p>
