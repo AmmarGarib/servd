@@ -91,8 +91,11 @@ const PORTFOLIO_GUARD_EXCLUSIONS: readonly RegExp[] = [
 function isPortfolioGuarded(path: string, method: string): boolean {
   if (typeof window === 'undefined') return false
   if (localStorage.getItem('servd_view_all_tenants') !== '1') return false
-  // Only mutating verbs need a tenant pinned. GET reads aggregate cleanly.
-  if (!['POST', 'PATCH', 'PUT', 'DELETE'].includes(method.toUpperCase())) return false
+  // Only POST needs the guard. PATCH/PUT/DELETE target existing rows and the
+  // backend derives the tenant from the row itself — prompting the operator
+  // would be both wrong (could move the row cross-tenant accidentally) and
+  // disruptive (every brand-edit save would pop the modal).
+  if (method.toUpperCase() !== 'POST') return false
   return !PORTFOLIO_GUARD_EXCLUSIONS.some((rx) => rx.test(path))
 }
 
@@ -103,8 +106,8 @@ function awaitPortfolioTenantPick(intent: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const onResolve = (e: Event) => {
       window.removeEventListener('servd:portfolio-write-resolve', onResolve)
-      const detail = (e as CustomEvent<{ result: 'switched' | 'cancelled' }>).detail
-      if (detail.result === 'switched') resolve()
+      const detail = (e as CustomEvent<{ result: 'picked' | 'cancelled' }>).detail
+      if (detail.result === 'picked') resolve()
       else reject(new ApiError(0, 'PORTFOLIO_WRITE_CANCELLED', 'You cancelled — write not sent.'))
     }
     window.addEventListener('servd:portfolio-write-resolve', onResolve)
@@ -124,15 +127,35 @@ function describeIntent(method: string, path: string): string {
   return `${verb} ${noun}`
 }
 
-async function request<T>(path: string, options: RequestInit = {}, retry = true): Promise<T> {
+interface RequestExtra {
+  /**
+   * Pin this write to a specific tenant — sets `x-servd-active-tenant: <id>`.
+   * When provided, the global PortfolioWriteGuardModal is bypassed because
+   * the caller has already resolved which company the write targets (e.g.
+   * via an inline picker in the create modal). Reads aren't affected: GETs
+   * stay in portfolio view via `x-servd-portfolio` regardless of this.
+   */
+  tenantId?: string
+}
+
+async function request<T>(path: string, options: RequestInit = {}, retry = true, extra: RequestExtra = {}): Promise<T> {
   const token = getToken()
   const method = (options.method ?? 'GET').toUpperCase()
 
-  // Portfolio safety net: pause and prompt for a target company before
-  // writing if the user is in cross-tenant view. Only fires once per
-  // session — after they pick, portfolio mode toggles off.
-  if (isPortfolioGuarded(path, method)) {
+  // Inline-picker path: caller passed an explicit tenantId. Skip the global
+  // guard prompt — the user already picked. Header is read by the backend
+  // auth middleware and overrides req.staffUser.tenantId for this request.
+  //
+  // Fallback path: portfolio view + no explicit tenantId → fire the global
+  // modal, wait for the user to pick. Modal sets a module-level slot on
+  // useEnsureTenant; we consume it here and forward as the header.
+  let resolvedTenantId = extra.tenantId
+  if (isPortfolioGuarded(path, method) && !resolvedTenantId) {
     await awaitPortfolioTenantPick(describeIntent(method, path))
+    // Side-effect: modal stashed the picked id. Pull + clear so the next
+    // unrelated write doesn't accidentally inherit it.
+    const { consumePickedTenantId } = await import('../hooks/useEnsureTenant')
+    resolvedTenantId = consumePickedTenantId() ?? undefined
   }
 
   // Portfolio mode: when the operator has flipped the sidebar tenant
@@ -151,6 +174,7 @@ async function request<T>(path: string, options: RequestInit = {}, retry = true)
       'Content-Type': 'application/json',
       ...(token && { Authorization: `Bearer ${token}` }),
       ...(portfolio && { 'x-servd-portfolio': '1' }),
+      ...(resolvedTenantId && { 'x-servd-active-tenant': resolvedTenantId }),
       ...options.headers,
     },
   })
@@ -158,7 +182,7 @@ async function request<T>(path: string, options: RequestInit = {}, retry = true)
   // Auto-refresh on 401 then retry once
   if (res.status === 401 && retry) {
     const newToken = await refreshAccessToken()
-    if (newToken) return request<T>(path, options, false)
+    if (newToken) return request<T>(path, options, false, extra)
     // Refresh failed — clear auth and redirect to login
     // F43: clear via the store so all subscribers (UI, socket) react.
     useAuthStore.getState().clearAuth()
@@ -176,11 +200,19 @@ async function request<T>(path: string, options: RequestInit = {}, retry = true)
 }
 
 export const api = {
-  get: <T>(path: string) => request<T>(path),
-  post: <T>(path: string, body: unknown) => request<T>(path, { method: 'POST', body: JSON.stringify(body) }),
-  patch: <T>(path: string, body: unknown) => request<T>(path, { method: 'PATCH', body: JSON.stringify(body) }),
-  put: <T>(path: string, body: unknown) => request<T>(path, { method: 'PUT', body: JSON.stringify(body) }),
-  delete: <T>(path: string) => request<T>(path, { method: 'DELETE' }),
+  get:    <T>(path: string) => request<T>(path),
+  // Mutations accept an optional second arg shape: either the body alone
+  // (legacy callers) or `{ tenantId }` to pin the write to a specific company
+  // — used by inline pickers in /workforce, /procurement, /settings etc. so
+  // the operator stays in portfolio view while writing.
+  post:   <T>(path: string, body: unknown, extra?: RequestExtra) =>
+    request<T>(path, { method: 'POST', body: JSON.stringify(body) }, true, extra),
+  patch:  <T>(path: string, body: unknown, extra?: RequestExtra) =>
+    request<T>(path, { method: 'PATCH', body: JSON.stringify(body) }, true, extra),
+  put:    <T>(path: string, body: unknown, extra?: RequestExtra) =>
+    request<T>(path, { method: 'PUT', body: JSON.stringify(body) }, true, extra),
+  delete: <T>(path: string, extra?: RequestExtra) =>
+    request<T>(path, { method: 'DELETE' }, true, extra),
   // Same as `get` but force the portfolio header on. Use this from CEO
   // management surfaces (e.g. /settings concepts list) where the user is
   // managing every brand they own regardless of which tenant the sidebar

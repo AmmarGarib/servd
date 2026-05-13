@@ -48,17 +48,30 @@ async function attachStaffPrincipal(req: FastifyRequest, payload: { sub: string;
   // active tenant, which is exactly what Prisma create expects.
   const portfolio = req.headers['x-servd-portfolio'] === '1'
                   && ['GET', 'HEAD'].includes(req.method?.toUpperCase() ?? 'GET')
+
+  // Pull every tenant the operator is a member of — used both for portfolio
+  // expansion AND for validating the per-request active-tenant header below.
+  const memberships = await prisma.tenantMember.findMany({
+    where: { userId: payload.sub },
+    select: { tenantId: true },
+  })
+  const memberTenantIds = new Set<string>(memberships.map((m) => m.tenantId))
+  if (u?.tenantId) memberTenantIds.add(u.tenantId)
+
   let tenantFilter: string | { in: string[] } | null = u?.tenantId ?? null
-  if (portfolio) {
-    const memberships = await prisma.tenantMember.findMany({
-      where: { userId: payload.sub },
-      select: { tenantId: true },
-    })
-    const ids = new Set<string>(memberships.map((m) => m.tenantId))
-    if (u?.tenantId) ids.add(u.tenantId)
-    if (ids.size > 1) tenantFilter = { in: Array.from(ids) }
-    // If the user is only a member of one tenant we fall through and use
-    // the single-string form — no behaviour change.
+  if (portfolio && memberTenantIds.size > 1) {
+    tenantFilter = { in: Array.from(memberTenantIds) }
+  }
+
+  // Per-request active-tenant override. When the operator is in portfolio
+  // view and uses an inline company picker on a create modal, the frontend
+  // sends `x-servd-active-tenant: <id>` so the WRITE lands in the picked
+  // company without forcing the session out of portfolio mode. Validated
+  // against the user's tenant memberships — silently ignored if invalid.
+  const headerActive = req.headers['x-servd-active-tenant']
+  let effectiveTenantId = u?.tenantId ?? null
+  if (typeof headerActive === 'string' && headerActive && memberTenantIds.has(headerActive)) {
+    effectiveTenantId = headerActive
   }
 
   req.staffUser = {
@@ -66,7 +79,7 @@ async function attachStaffPrincipal(req: FastifyRequest, payload: { sub: string;
     email:    payload.email,
     name:     u?.name ?? null,
     role:     payload.role as UserRole,
-    tenantId: u?.tenantId ?? null,
+    tenantId: effectiveTenantId,
     tenantFilter,
   }
 }

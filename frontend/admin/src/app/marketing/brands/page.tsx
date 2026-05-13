@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api } from '../../../lib/api'
 import { useAuthStore } from '../../../store/auth'
+import { TenantChip, useMyTenants } from '../../../components/ui/TenantPicker'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -32,6 +33,10 @@ interface Concept {
   invoiceAddress: string | null
   invoicePrefix: string | null
   fbrPosId: number | null
+  // Surfaced by the backend in portfolio mode so the operator can tell which
+  // company each brand belongs to without bouncing out of "All companies".
+  tenantId?: string | null
+  tenant?: { id: string; name: string; slug: string } | null
 }
 
 const PROVINCES = [
@@ -46,6 +51,7 @@ const PROVINCES = [
 
 export default function BrandEditorPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const { data: tenants = [] } = useMyTenants()
   const { data: concepts = [], isLoading } = useQuery<Concept[]>({
     queryKey: ['concepts'],
     queryFn: () => api.get('/concepts'),
@@ -91,9 +97,13 @@ export default function BrandEditorPage() {
                   </div>
                 )}
                 <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-1.5">
+                  <div className="flex items-center gap-1.5 flex-wrap">
                     <p className="font-bold text-sm text-white/85 truncate">{c.name}</p>
                     {!c.isActive && <span className="text-[9px] font-bold text-white/30 px-1 py-0.5 rounded bg-white/5">PAUSED</span>}
+                    {/* Indigo brand chip in portfolio view — shows which
+                        company this brand belongs to so the CEO doesn't have
+                        to flip out of "All companies" to know. */}
+                    <TenantChip tenant={c.tenant} tenantId={c.tenantId} tenants={tenants} />
                   </div>
                   <p className="text-[10px] text-white/35 font-mono">{c.slug} · {c.type}</p>
                 </div>

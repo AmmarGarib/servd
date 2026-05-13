@@ -5,6 +5,10 @@ import { menuApi, api, type Category, type MenuItem } from '../../lib/api'
 import { useAuthStore } from '../../store/auth'
 import Link from 'next/link'
 import { EmptyStateGuide } from '../../components/ui/EmptyStateGuide'
+import { TenantChip, useMyTenants } from '../../components/ui/TenantPicker'
+import { useViewAllTenants } from '../../components/ui/TenantSwitcher'
+
+interface ConceptTab { id: string; name: string; tenantId?: string | null; tenant?: { id: string; name: string } | null }
 
 function fmt(cents: number) { return `PKR ${(cents / 100).toFixed(0)}` }
 
@@ -15,9 +19,11 @@ export default function MenuPage() {
   const [addingCategory, setAddingCategory] = useState(false)
   const qc = useQueryClient()
 
+  const viewAll = useViewAllTenants()
+  const { data: tenants = [] } = useMyTenants()
   const { data: concepts = [] } = useQuery({
     queryKey: ['concepts'],
-    queryFn: () => api.get<{ id: string; name: string }[]>('/concepts'),
+    queryFn: () => api.get<ConceptTab[]>('/concepts'),
   })
 
   // Derive conceptId — no useEffect needed
@@ -55,17 +61,21 @@ export default function MenuPage() {
         </button>
       </header>
 
-      {/* Concept tabs */}
+      {/* Concept tabs — each tab shows its brand-chip in portfolio view so the
+          operator can tell which company they're editing the menu for. */}
       <div className="mb-6 flex gap-2 overflow-x-auto pb-1">
         {concepts.map((c) => (
           <button
             key={c.id}
             onClick={() => setSelectedConceptId(c.id)}
-            className={`shrink-0 rounded-lg px-4 py-2 font-semibold text-sm transition-colors ${
+            className={`shrink-0 rounded-lg px-4 py-2 font-semibold text-sm transition-colors flex items-center gap-2 ${
               c.id === conceptId ? 'bg-kds-green text-black' : 'bg-kds-card text-kds-subtext hover:text-kds-text'
             }`}
           >
-            {c.name}
+            <span>{c.name}</span>
+            {viewAll && (
+              <TenantChip tenant={c.tenant} tenantId={c.tenantId} tenants={tenants} />
+            )}
           </button>
         ))}
         {concepts.length === 0 && <p className="text-kds-subtext text-sm">Loading concepts…</p>}

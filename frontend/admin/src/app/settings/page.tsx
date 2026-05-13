@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../lib/api'
 import Link from 'next/link'
+import { TenantChip, useMyTenants } from '../../components/ui/TenantPicker'
 
 interface Concept {
   id: string; name: string; slug: string; type: string
@@ -16,6 +17,7 @@ interface Concept {
   logoUrl: string | null
   // Present only when fetched via the portfolio endpoint — tells the CEO
   // which company each brand belongs to in the listing.
+  tenantId?: string | null
   tenant?: { id: string; name: string; slug: string } | null
 }
 interface Station { id: string; name: string; concept: { name: string } }
@@ -95,6 +97,7 @@ function ConceptsSection() {
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [form, setForm] = useState<Partial<Concept>>({})
   const [saved, setSaved] = useState(false)
+  const { data: tenants = [] } = useMyTenants()
 
   // Brand list respects the sidebar tenant switcher — single tenant returns
   // just that company's brands, "All companies" returns the full set. Each
@@ -168,17 +171,9 @@ function ConceptsSection() {
                 {c.logoUrl ? <img src={c.logoUrl} alt={c.name} className="h-full w-full object-cover" /> : c.name[0]}
               </div>
               <div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   <p className="text-sm font-semibold text-kds-text">{c.name}</p>
-                  {/* Tenant chip — only when fetched in portfolio mode. Tells
-                      the CEO which company a brand belongs to (Stax + Simmer
-                      are GS Foods Bukhari; Flipd is GS x Viva Clifton, etc.). */}
-                  {c.tenant && (
-                    <span className="text-[9px] uppercase tracking-wider font-bold px-1.5 py-0.5 rounded"
-                      style={{ background: 'rgba(99,102,241,0.15)', color: '#A5B4FC' }}>
-                      {c.tenant.name}
-                    </span>
-                  )}
+                  <TenantChip tenant={c.tenant} tenantId={c.tenantId} tenants={tenants} />
                 </div>
                 <div className="flex items-center gap-2 mt-0.5">
                   <span className="text-xs text-kds-subtext capitalize">{c.type}</span>
