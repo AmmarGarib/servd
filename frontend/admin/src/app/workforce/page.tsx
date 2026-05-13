@@ -681,11 +681,23 @@ function InlineEditor({
             ))}
           </select>
         </Field>
-        {/* Specific-role picker removed — Category alone decides the bucket,
-            and the permission matrix below decides what they can do. The
-            underlying `role` enum still tracks the category's primary value
-            (kept in state via the useEffect above) so backend writes still
-            carry a valid role. */}
+        {/* PIN sits in the slot the old "Specific role" dropdown vacated —
+            keeps the form compact and surfaces the login gate next to the
+            role definition. Category alone decides the bucket; the
+            permission matrix below decides what the role can do. */}
+        <Field label="PIN" hint={user.hasPin ? 'Type a new PIN to replace.' : 'Set a 4-digit PIN to enable login.'}>
+          <div className="flex gap-2">
+            <input value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))}
+              maxLength={8} placeholder={user.hasPin ? '• • • •' : (derivedPin || '4-digit PIN')}
+              className={inputCls + ' flex-1'} />
+            {derivedPin && (
+              <button type="button" onClick={() => setPin(derivedPin)}
+                className="rounded-lg px-3 py-2 text-xs font-bold border border-kds-border text-kds-subtext hover:text-kds-text whitespace-nowrap">
+                Use {derivedPin}
+              </button>
+            )}
+          </div>
+        </Field>
         {tenants.length > 0 && (
           <div className="md:col-span-2">
             <div className="flex items-center justify-between mb-1">
@@ -731,19 +743,6 @@ function InlineEditor({
             )}
           </div>
         )}
-        <Field label="PIN" hint={user.hasPin ? 'Type a new PIN to replace.' : 'Set a 4-digit PIN to enable login.'}>
-          <div className="flex gap-2">
-            <input value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))}
-              maxLength={8} placeholder={user.hasPin ? '• • • •' : (derivedPin || '4-digit PIN')}
-              className={inputCls + ' flex-1'} />
-            {derivedPin && (
-              <button type="button" onClick={() => setPin(derivedPin)}
-                className="rounded-lg px-3 py-2 text-xs font-bold border border-kds-border text-kds-subtext hover:text-kds-text whitespace-nowrap">
-                Use {derivedPin}
-              </button>
-            )}
-          </div>
-        </Field>
       </div>
 
       {/* ── Role permissions ──────────────────────────────────────────────
