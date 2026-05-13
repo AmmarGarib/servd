@@ -16,7 +16,9 @@ const PIN_TOKEN_EXPIRY: SignOptions['expiresIn']   = (process.env['PIN_TOKEN_EXP
 
 export interface StaffTokenPayload {
   sub: string   // user ID
-  email: string
+  // Optional now that User.email can be null — stub staff rows created from
+  // /workforce don't have an address yet. Login mints empty string for those.
+  email: string | null
   role: string
   type: 'access' | 'refresh' | 'pin'
 }

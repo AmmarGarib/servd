@@ -2,30 +2,30 @@
 // ─── Workforce hub — every staff record in one place ──────────────────────────
 // The CEO wanted a single screen that surfaces every staff bucket (Management,
 // FOH, BOH, Procurement, Marketing, Finance, HR) — not just the kitchen-staff
-// brigade view. This page lists every User row, with category chips that
-// deep-link to a filtered view, plus a status filter for pending / active /
-// suspended and a "+ Add staff" modal. Kitchen brigade (with payroll / EOBI
-// / compliance) keeps its dedicated /kitchen-staff route — link out from
-// the BOH category card.
+// brigade view. Add Staff is intentionally minimal: pick a category, type the
+// role title, optionally drop a name. Email / phone / PIN get filled in on the
+// row itself once the CEO knows them. Click a row to expand into the inline
+// editor.
 //
 // Sidebar deep-links pass `?role=foh,foh_management` so the chip highlights
 // itself on load. Roles are read from src/lib/appRoles.ts so a new role only
 // needs to be added in one place.
 
-import { useState, useMemo, Suspense } from 'react'
+import { useState, useMemo, Suspense, useEffect } from 'react'
 import Link from 'next/link'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../lib/api'
-import { APP_ROLES, roleLabel, type AppRole } from '../../lib/appRoles'
+import { roleLabel, type AppRole } from '../../lib/appRoles'
 import { usePermissions } from '../../hooks/useCan'
 
 interface StaffUser {
   id: string
   name: string
-  email: string
+  email: string | null
   phone: string | null
   role: AppRole
+  jobTitle: string | null
   isActive: boolean
   accountStatus: 'pending' | 'active' | 'suspended'
   createdAt: string
@@ -33,14 +33,15 @@ interface StaffUser {
   tenantId: string | null
 }
 
-// Category → which AppRole values fall under it. A single user has one role,
-// but the directory groups them so the CEO sees "Front of House" as a bucket
-// rather than the raw enum granularity.
+// Category → which AppRole values fall under it. A single user has one role
+// enum value, but the directory groups them so the CEO picks "Front of House"
+// once and we resolve to the primary enum value (the first in `roles`).
 interface Category {
   key: string
   label: string
   emoji: string
   blurb: string
+  /** First entry is the canonical/primary role enum value for new staff. */
   roles: AppRole[]
   /** Optional deep-link to a richer specialist view (kitchen-staff brigade). */
   specialistHref?: string
@@ -107,14 +108,7 @@ const STATUS_META: Record<StaffUser['accountStatus'], { label: string; color: st
   suspended: { label: 'Suspended', color: '#FF4D4F', bg: 'rgba(255,77,79,0.10)' },
 }
 
-// AppRoles minus admin — admins are managed through the existing CEO-only
-// surface. Showing "Admin" in the add-staff dropdown would mislead someone
-// into thinking creating a CEO is a routine workforce action.
-const ASSIGNABLE_ROLES = APP_ROLES.filter((r) => r.value !== 'admin')
-
 function statusOf(u: StaffUser): StaffUser['accountStatus'] {
-  // accountStatus is canonical; older rows that haven't been migrated may
-  // still be 'active' with isActive=false — treat that as suspended.
   if (!u.isActive) return 'suspended'
   return u.accountStatus
 }
@@ -132,8 +126,6 @@ function WorkforcePageInner() {
   const { data: me } = usePermissions()
   const canEdit = me?.role === 'admin'
 
-  // ?role=foh,cashier → highlight FOH category. We resolve by category key so
-  // the chip stays selected even when the URL contains the raw role values.
   const initialCategory = useMemo(() => {
     const raw = sp.get('category')
     if (raw) return raw
@@ -148,6 +140,8 @@ function WorkforcePageInner() {
   const [statusFilter, setStatusFilter] = useState<'all' | StaffUser['accountStatus']>('all')
   const [search, setSearch] = useState('')
   const [addOpen, setAddOpen] = useState(false)
+  // Inline edit: which row, if any, is in edit mode.
+  const [editingId, setEditingId] = useState<string | null>(null)
 
   const { data: users = [], isLoading } = useQuery<StaffUser[]>({
     queryKey: ['workforce', 'users'],
@@ -155,8 +149,6 @@ function WorkforcePageInner() {
     refetchInterval: 60_000,
   })
 
-  // Group + filter — do everything client-side so flipping category chips is
-  // instant. The user list is tiny (tens of rows, not thousands).
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
     return users.filter((u) => {
@@ -165,13 +157,14 @@ function WorkforcePageInner() {
         if (!cat || !cat.roles.includes(u.role)) return false
       }
       if (statusFilter !== 'all' && statusOf(u) !== statusFilter) return false
-      if (q && !(u.name.toLowerCase().includes(q) || u.email.toLowerCase().includes(q))) return false
+      if (q) {
+        const hay = `${u.name} ${u.email ?? ''} ${u.jobTitle ?? ''}`.toLowerCase()
+        if (!hay.includes(q)) return false
+      }
       return true
     })
   }, [users, activeCategory, statusFilter, search])
 
-  // Counts per category for the chip badges — derived from the *unfiltered*
-  // set so the chips show what you'd see if you clicked them.
   const countsByCategory = useMemo(() => {
     const m = new Map<string, number>()
     for (const u of users) {
@@ -185,7 +178,6 @@ function WorkforcePageInner() {
 
   return (
     <div className="min-h-screen bg-kds-bg text-kds-text">
-      {/* ── Header ─────────────────────────────────────────────────────── */}
       <div className="border-b border-kds-border bg-kds-card">
         <div className="max-w-6xl mx-auto px-6 py-5">
           <div className="flex items-start justify-between gap-4">
@@ -215,7 +207,6 @@ function WorkforcePageInner() {
         </div>
       </div>
 
-      {/* ── Category chips ─────────────────────────────────────────────── */}
       <div className="max-w-6xl mx-auto px-6 pt-5">
         <div className="flex flex-wrap gap-2">
           <CategoryChip
@@ -233,12 +224,10 @@ function WorkforcePageInner() {
           ))}
         </div>
 
-        {/* Category blurb + specialist link */}
         {activeCategory !== 'all' && (
           <CategoryBlurb category={CATEGORIES.find((c) => c.key === activeCategory)!} />
         )}
 
-        {/* ── Status filter + search ───────────────────────────────────── */}
         <div className="mt-4 flex flex-wrap items-center gap-2">
           {(['all', 'active', 'pending', 'suspended'] as const).map((s) => {
             const active = statusFilter === s
@@ -254,12 +243,11 @@ function WorkforcePageInner() {
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search name or email…"
+            placeholder="Search name, email or job title…"
             className="ml-auto rounded-lg px-3 py-1.5 text-sm bg-kds-card border border-kds-border focus:border-kds-green focus:outline-none w-64"
           />
         </div>
 
-        {/* ── Staff table ──────────────────────────────────────────────── */}
         <div className="mt-4 mb-12 rounded-xl border border-kds-border bg-kds-card overflow-hidden">
           {isLoading && <div className="p-8 text-center text-sm text-kds-subtext">Loading staff…</div>}
           {!isLoading && filtered.length === 0 && (
@@ -274,22 +262,34 @@ function WorkforcePageInner() {
             </div>
           )}
           {filtered.map((u) => (
-            <StaffRow key={u.id} user={u} canEdit={canEdit}
-              onChange={() => void qc.invalidateQueries({ queryKey: ['workforce'] })} />
+            <StaffRow
+              key={u.id} user={u} canEdit={canEdit}
+              expanded={editingId === u.id}
+              onExpand={() => setEditingId(editingId === u.id ? null : u.id)}
+              onClose={() => setEditingId(null)}
+              onChange={() => void qc.invalidateQueries({ queryKey: ['workforce'] })}
+            />
           ))}
         </div>
       </div>
 
       {addOpen && (
-        <AddStaffModal onClose={() => setAddOpen(false)}
-          onCreated={() => { setAddOpen(false); void qc.invalidateQueries({ queryKey: ['workforce'] }) }} />
+        <AddStaffModal
+          onClose={() => setAddOpen(false)}
+          onCreated={(created) => {
+            setAddOpen(false)
+            void qc.invalidateQueries({ queryKey: ['workforce'] })
+            // Pop the new row straight into edit mode so the CEO can fill in
+            // contact details + PIN without clicking through.
+            if (created?.id) setEditingId(created.id)
+          }}
+        />
       )}
     </div>
   )
 }
 
 export default function WorkforcePage() {
-  // useSearchParams must be inside Suspense per Next.js 14 app-router rules.
   return (
     <Suspense fallback={<div className="p-8 text-sm text-kds-subtext">Loading…</div>}>
       <WorkforcePageInner />
@@ -331,132 +331,280 @@ function CategoryBlurb({ category }: { category: Category }) {
   )
 }
 
+// ─── Staff row + inline editor ──────────────────────────────────────────────
+
 function StaffRow({
-  user, canEdit, onChange,
-}: { user: StaffUser; canEdit: boolean; onChange: () => void }) {
+  user, canEdit, expanded, onExpand, onClose, onChange,
+}: {
+  user: StaffUser; canEdit: boolean
+  expanded: boolean
+  onExpand: () => void
+  onClose: () => void
+  onChange: () => void
+}) {
   const status = statusOf(user)
   const statusM = STATUS_META[status]
   const cat = categoryOf(user.role)
+  const isUnnamed = !user.name || user.name === 'Unnamed staff'
 
+  return (
+    <div className="border-b border-kds-border last:border-b-0">
+      <button
+        type="button"
+        onClick={canEdit ? onExpand : undefined}
+        disabled={!canEdit}
+        className={`w-full flex items-center gap-3 px-4 py-3 text-left transition-colors ${
+          canEdit ? 'hover:bg-kds-bg/30 cursor-pointer' : 'cursor-default'
+        } ${expanded ? 'bg-kds-bg/40' : ''}`}>
+        <div className="h-9 w-9 shrink-0 rounded-full flex items-center justify-center text-sm font-black"
+          style={{
+            background: isUnnamed
+              ? 'rgba(255,255,255,0.06)'
+              : 'linear-gradient(135deg, rgba(0,212,177,0.4), rgba(99,102,241,0.4))',
+            color: isUnnamed ? 'rgba(255,255,255,0.4)' : '#000',
+          }}>
+          {isUnnamed ? '?' : user.name.charAt(0).toUpperCase()}
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <p className={`font-semibold text-sm truncate ${isUnnamed ? 'italic text-kds-subtext' : ''}`}>
+              {isUnnamed ? 'Unnamed staff — tap to fill in' : user.name}
+            </p>
+            <span className="shrink-0 text-[9px] uppercase tracking-wider font-bold rounded px-1.5 py-0.5"
+              style={{ background: statusM.bg, color: statusM.color }}>
+              {statusM.label}
+            </span>
+            {!user.hasPin && status === 'active' && (
+              <span className="shrink-0 text-[9px] uppercase tracking-wider font-bold rounded px-1.5 py-0.5"
+                style={{ background: 'rgba(255,77,79,0.10)', color: '#FF4D4F' }}>
+                No PIN
+              </span>
+            )}
+          </div>
+          <p className="text-xs text-kds-subtext truncate">
+            {user.jobTitle && <span className="text-kds-text font-medium">{user.jobTitle}</span>}
+            {user.jobTitle && (user.email || user.phone) && <span> · </span>}
+            {user.email}{user.email && user.phone ? ' · ' : ''}{user.phone}
+            {!user.jobTitle && !user.email && !user.phone && (
+              <span className="italic">No contact details yet</span>
+            )}
+          </p>
+        </div>
+        <div className="shrink-0 text-right">
+          <p className="text-[11px] font-bold text-kds-text">
+            {cat?.emoji ?? '·'} {cat?.label ?? roleLabel(user.role)}
+          </p>
+          <p className="text-[10px] text-kds-subtext mt-0.5">
+            {user.jobTitle ? roleLabel(user.role) : 'No role title set'}
+          </p>
+        </div>
+        {canEdit && (
+          <span className="shrink-0 text-kds-subtext"
+            style={{ transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 120ms' }}>
+            ▶
+          </span>
+        )}
+      </button>
+
+      {expanded && canEdit && (
+        <InlineEditor user={user} status={status}
+          onChange={onChange} onClose={onClose} />
+      )}
+    </div>
+  )
+}
+
+function InlineEditor({
+  user, status, onChange, onClose,
+}: {
+  user: StaffUser
+  status: StaffUser['accountStatus']
+  onChange: () => void
+  onClose: () => void
+}) {
+  const [name, setName]         = useState(user.name === 'Unnamed staff' ? '' : user.name)
+  const [email, setEmail]       = useState(user.email ?? '')
+  const [phone, setPhone]       = useState(user.phone ?? '')
+  const [jobTitle, setJobTitle] = useState(user.jobTitle ?? '')
+  const [category, setCategory] = useState<string>(categoryOf(user.role)?.key ?? 'management')
+  const [role, setRole]         = useState<AppRole>(user.role)
+  const [pin, setPin]           = useState('')
+  const [err, setErr]           = useState<string | null>(null)
+
+  // Keep role consistent with category: if the category changes and the
+  // current role doesn't fit the new category, fall back to its primary.
+  useEffect(() => {
+    const cat = CATEGORIES.find((c) => c.key === category)
+    if (cat && !cat.roles.includes(role)) {
+      setRole(cat.roles[0]!)
+    }
+  }, [category])  // eslint-disable-line react-hooks/exhaustive-deps
+
+  const derivedPin = phone.replace(/\D/g, '').slice(-4)
+
+  const save = useMutation({
+    mutationFn: () => {
+      const patch: Record<string, unknown> = {}
+      if (name.trim() && name.trim() !== user.name) patch.name = name.trim()
+      // Empty string is sent verbatim — backend treats that as "clear it".
+      if (email.trim() !== (user.email ?? '')) patch.email = email.trim()
+      if (phone.trim() !== (user.phone ?? '')) patch.phone = phone.trim()
+      if (jobTitle.trim() !== (user.jobTitle ?? '')) patch.jobTitle = jobTitle.trim()
+      if (role !== user.role) patch.role = role
+      if (pin.trim()) patch.pin = pin.trim()
+      return api.patch(`/auth/users/${user.id}`, patch)
+    },
+    onSuccess: () => { onChange(); onClose() },
+    onError:   (e: unknown) => setErr(e instanceof Error ? e.message : 'Failed to save'),
+  })
+
+  const remove = useMutation({
+    mutationFn: () => api.delete(`/auth/users/${user.id}`),
+    onSuccess:  () => { onChange(); onClose() },
+  })
   const approve = useMutation({
     mutationFn: () => api.patch(`/auth/staff/${user.id}/approve`, {}),
-    onSuccess:  onChange,
+    onSuccess:  () => onChange(),
   })
   const reject = useMutation({
     mutationFn: () => api.patch(`/auth/staff/${user.id}/reject`, {}),
-    onSuccess:  onChange,
+    onSuccess:  () => onChange(),
   })
   const toggleActive = useMutation({
     mutationFn: () => api.patch(`/auth/users/${user.id}`, { isActive: !user.isActive }),
-    onSuccess:  onChange,
-  })
-  const remove = useMutation({
-    mutationFn: () => api.delete(`/auth/users/${user.id}`),
-    onSuccess:  onChange,
+    onSuccess:  () => onChange(),
   })
 
+  const currentCategory = CATEGORIES.find((c) => c.key === category)
+  const roleOptions = currentCategory ? currentCategory.roles : []
+
   return (
-    <div className="flex items-center gap-3 px-4 py-3 border-b border-kds-border last:border-b-0 hover:bg-kds-bg/30">
-      <div className="h-9 w-9 shrink-0 rounded-full flex items-center justify-center text-sm font-black"
-        style={{ background: 'linear-gradient(135deg, rgba(0,212,177,0.4), rgba(99,102,241,0.4))', color: '#000' }}>
-        {user.name.charAt(0).toUpperCase()}
+    <div className="bg-kds-bg/30 border-t border-kds-border px-4 py-4 space-y-3">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <Field label="Name">
+          <input value={name} onChange={(e) => setName(e.target.value)}
+            placeholder="e.g. Ahmad Khan" className={inputCls} />
+        </Field>
+        <Field label="Job title" hint="What the role is called day-to-day.">
+          <input value={jobTitle} onChange={(e) => setJobTitle(e.target.value)}
+            placeholder="e.g. Sous Chef — Bukhari" className={inputCls} />
+        </Field>
+        <Field label="Email">
+          <input value={email} onChange={(e) => setEmail(e.target.value)} type="email"
+            placeholder="staff@gsfoods.pk" className={inputCls} />
+        </Field>
+        <Field label="Phone" hint={derivedPin ? `PIN can derive to ${derivedPin}.` : undefined}>
+          <input value={phone} onChange={(e) => setPhone(e.target.value)}
+            placeholder="03XX-XXXXXXX" className={inputCls} />
+        </Field>
+        <Field label="Category">
+          <select value={category} onChange={(e) => setCategory(e.target.value)} className={inputCls}>
+            {CATEGORIES.map((c) => (
+              <option key={c.key} value={c.key}>{c.emoji} {c.label}</option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Role enum" hint="Granular role inside the category — drives sidebar visibility.">
+          <select value={role} onChange={(e) => setRole(e.target.value as AppRole)} className={inputCls}>
+            {roleOptions.map((r) => (
+              <option key={r} value={r}>{roleLabel(r)}</option>
+            ))}
+          </select>
+        </Field>
+        <Field label="PIN" hint={user.hasPin ? 'Type a new PIN to replace.' : 'Set a 4-digit PIN to enable login.'}>
+          <div className="flex gap-2">
+            <input value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))}
+              maxLength={8} placeholder={user.hasPin ? '• • • •' : (derivedPin || '4-digit PIN')}
+              className={inputCls + ' flex-1'} />
+            {derivedPin && (
+              <button type="button" onClick={() => setPin(derivedPin)}
+                className="rounded-lg px-3 py-2 text-xs font-bold border border-kds-border text-kds-subtext hover:text-kds-text whitespace-nowrap">
+                Use {derivedPin}
+              </button>
+            )}
+          </div>
+        </Field>
       </div>
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
-          <p className="font-semibold text-sm truncate">{user.name}</p>
-          <span className="shrink-0 text-[9px] uppercase tracking-wider font-bold rounded px-1.5 py-0.5"
-            style={{ background: statusM.bg, color: statusM.color }}>
-            {statusM.label}
-          </span>
-          {!user.hasPin && status === 'active' && (
-            <span className="shrink-0 text-[9px] uppercase tracking-wider font-bold rounded px-1.5 py-0.5"
-              style={{ background: 'rgba(255,77,79,0.10)', color: '#FF4D4F' }}>
-              No PIN
-            </span>
-          )}
-        </div>
-        <p className="text-xs text-kds-subtext truncate">
-          {user.email}{user.phone ? ` · ${user.phone}` : ''}
-        </p>
-      </div>
-      <div className="shrink-0 text-right">
-        <p className="text-[11px] font-bold text-kds-text">
-          {cat?.emoji ?? '·'} {cat?.label ?? roleLabel(user.role)}
-        </p>
-        <p className="text-[10px] text-kds-subtext mt-0.5">{roleLabel(user.role)}</p>
-      </div>
-      {canEdit && (
-        <div className="shrink-0 flex items-center gap-1.5">
+
+      {err && <p className="text-xs font-bold text-red-400">{err}</p>}
+
+      <div className="flex flex-wrap items-center gap-2 pt-1">
+        <button onClick={() => save.mutate()} disabled={save.isPending}
+          className="rounded-lg px-3 py-2 text-xs font-black bg-kds-green text-black hover:opacity-90 disabled:opacity-50">
+          {save.isPending ? 'Saving…' : 'Save changes'}
+        </button>
+        <button onClick={onClose}
+          className="rounded-lg px-3 py-2 text-xs font-bold border border-kds-border text-kds-subtext hover:text-kds-text">
+          Cancel
+        </button>
+
+        {/* Lifecycle controls — pushed to the right */}
+        <div className="ml-auto flex flex-wrap items-center gap-1.5">
           {status === 'pending' && (
             <>
               <button onClick={() => approve.mutate()} disabled={approve.isPending}
-                className="rounded-md px-2 py-1 text-[11px] font-bold bg-kds-green text-black hover:opacity-90 disabled:opacity-50">
+                className="rounded-md px-2 py-1.5 text-[11px] font-bold bg-amber-400/15 border border-amber-400/30 text-amber-400 hover:bg-amber-400/25">
                 Approve
               </button>
               <button onClick={() => reject.mutate()} disabled={reject.isPending}
-                className="rounded-md px-2 py-1 text-[11px] font-bold border border-kds-border text-kds-subtext hover:text-red-400 hover:border-red-400/40">
+                className="rounded-md px-2 py-1.5 text-[11px] font-bold border border-kds-border text-kds-subtext hover:text-red-400 hover:border-red-400/40">
                 Reject
               </button>
             </>
           )}
           {status === 'active' && (
             <button onClick={() => toggleActive.mutate()} disabled={toggleActive.isPending}
-              className="rounded-md px-2 py-1 text-[11px] font-bold border border-kds-border text-kds-subtext hover:text-amber-400 hover:border-amber-400/40">
+              className="rounded-md px-2 py-1.5 text-[11px] font-bold border border-kds-border text-kds-subtext hover:text-amber-400 hover:border-amber-400/40">
               Suspend
             </button>
           )}
           {status === 'suspended' && (
             <button onClick={() => toggleActive.mutate()} disabled={toggleActive.isPending}
-              className="rounded-md px-2 py-1 text-[11px] font-bold border border-kds-border text-kds-subtext hover:text-emerald-400 hover:border-emerald-400/40">
+              className="rounded-md px-2 py-1.5 text-[11px] font-bold border border-kds-border text-kds-subtext hover:text-emerald-400 hover:border-emerald-400/40">
               Reactivate
             </button>
           )}
-          <button
-            onClick={() => {
-              if (window.confirm(`Delete ${user.name}? This soft-deletes — history is preserved.`)) {
-                remove.mutate()
-              }
-            }}
-            disabled={remove.isPending}
-            className="rounded-md px-2 py-1 text-[11px] font-bold border border-kds-border text-kds-subtext hover:text-red-400 hover:border-red-400/40"
-            title="Delete (soft)">
-            🗑
+          <button onClick={() => {
+              if (window.confirm(`Delete ${user.name}? This soft-deletes — history is preserved.`)) remove.mutate()
+            }} disabled={remove.isPending}
+            className="rounded-md px-2 py-1.5 text-[11px] font-bold border border-kds-border text-kds-subtext hover:text-red-400 hover:border-red-400/40">
+            🗑 Delete
           </button>
         </div>
-      )}
+      </div>
     </div>
   )
 }
 
-function AddStaffModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
-  const [name, setName]   = useState('')
-  const [email, setEmail] = useState('')
-  const [phone, setPhone] = useState('')
-  const [role, setRole]   = useState<AppRole>('cashier')
-  const [pin, setPin]     = useState('')
-  const [err, setErr]     = useState<string | null>(null)
+// ─── Add modal (minimal) ────────────────────────────────────────────────────
 
-  // Auto-derive PIN from the last 4 digits of phone, matching the self-signup
-  // convention. The CEO can override if they want.
-  const derivedPin = phone.replace(/\D/g, '').slice(-4)
-  const effectivePin = pin.trim() || derivedPin
+function AddStaffModal({
+  onClose, onCreated,
+}: { onClose: () => void; onCreated: (created: StaffUser | null) => void }) {
+  const [name, setName]         = useState('')
+  const [category, setCategory] = useState<string>('management')
+  const [jobTitle, setJobTitle] = useState('')
+  const [err, setErr]           = useState<string | null>(null)
+
+  // Category drives the primary role enum value — first entry in roles[].
+  const primaryRole = useMemo(() => {
+    const c = CATEGORIES.find((cc) => cc.key === category)
+    return c?.roles[0] ?? 'cashier'
+  }, [category])
 
   const create = useMutation({
-    mutationFn: () => api.post('/auth/users', {
-      name: name.trim(),
-      email: email.trim().toLowerCase(),
-      phone: phone.trim() || undefined,
-      role,
-      pin: effectivePin,
+    mutationFn: () => api.post<StaffUser>('/auth/users', {
+      ...(name.trim() ? { name: name.trim() } : {}),
+      role: primaryRole,
+      ...(jobTitle.trim() ? { jobTitle: jobTitle.trim() } : {}),
     }),
-    onSuccess: onCreated,
+    onSuccess: (created) => onCreated(created ?? null),
     onError:   (e: unknown) => setErr(e instanceof Error ? e.message : 'Failed to create staff'),
   })
 
   function submit() {
     setErr(null)
-    if (!name.trim() || !email.trim()) return setErr('Name and email are required')
-    if (effectivePin.length < 4) return setErr('PIN must be ≥4 digits (or enter a phone number ending in 4+ digits)')
+    if (!jobTitle.trim()) return setErr('Type a role / job title so you remember who this is.')
     create.mutate()
   }
 
@@ -466,29 +614,26 @@ function AddStaffModal({ onClose, onCreated }: { onClose: () => void; onCreated:
         onClick={(e) => e.stopPropagation()}>
         <h2 className="font-black text-lg mb-1">Add staff</h2>
         <p className="text-xs text-kds-subtext mb-4">
-          New accounts are active immediately — no approval needed when the CEO creates them directly.
+          Pick a category and type their role. You can fill in name, email, phone, and PIN
+          straight on the row right after.
         </p>
 
         <div className="space-y-2.5">
-          <Field label="Full name">
-            <input value={name} onChange={(e) => setName(e.target.value)} className={inputCls} />
-          </Field>
-          <Field label="Email">
-            <input value={email} onChange={(e) => setEmail(e.target.value)} type="email" className={inputCls} />
-          </Field>
-          <Field label="Phone (optional)" hint="Last 4 digits become their PIN.">
-            <input value={phone} onChange={(e) => setPhone(e.target.value)} className={inputCls} placeholder="e.g. 0301-1234567" />
-          </Field>
-          <Field label="Role">
-            <select value={role} onChange={(e) => setRole(e.target.value as AppRole)} className={inputCls}>
-              {ASSIGNABLE_ROLES.map((r) => (
-                <option key={r.value} value={r.value}>{r.emoji} {r.label} — {r.description}</option>
+          <Field label="Category">
+            <select value={category} onChange={(e) => setCategory(e.target.value)} className={inputCls}>
+              {CATEGORIES.map((c) => (
+                <option key={c.key} value={c.key}>{c.emoji} {c.label}</option>
               ))}
             </select>
           </Field>
-          <Field label="PIN" hint={derivedPin && !pin ? `Defaulting to ${derivedPin} from phone.` : '4–8 digits.'}>
-            <input value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))}
-              maxLength={8} className={inputCls} placeholder={derivedPin || '4-digit PIN'} />
+          <Field label="Role / job title" hint="Free text — what you actually call this role.">
+            <input value={jobTitle} onChange={(e) => setJobTitle(e.target.value)} autoFocus
+              placeholder="e.g. Sous Chef — Bukhari, Floor Manager — Clifton, Procurement Officer"
+              className={inputCls} />
+          </Field>
+          <Field label="Name (optional)" hint="Skip for now — fill in when you know who's joining.">
+            <input value={name} onChange={(e) => setName(e.target.value)}
+              placeholder="e.g. Ahmad Khan" className={inputCls} />
           </Field>
         </div>
 
@@ -501,13 +646,15 @@ function AddStaffModal({ onClose, onCreated }: { onClose: () => void; onCreated:
           </button>
           <button onClick={submit} disabled={create.isPending}
             className="rounded-lg px-3 py-2 text-xs font-black bg-kds-green text-black hover:opacity-90 disabled:opacity-50">
-            {create.isPending ? 'Creating…' : 'Create staff'}
+            {create.isPending ? 'Adding…' : 'Add staff →'}
           </button>
         </div>
       </div>
     </div>
   )
 }
+
+// ─── Small UI bits ───────────────────────────────────────────────────────────
 
 const inputCls =
   'w-full rounded-lg border border-kds-border bg-kds-bg px-3 py-2 text-sm focus:border-kds-green focus:outline-none'

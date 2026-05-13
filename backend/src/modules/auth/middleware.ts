@@ -17,7 +17,9 @@ declare module 'fastify' {
     // any Prisma `where: { tenantId: req.staffUser!.tenantFilter }` and the
     // single endpoint works in both single-tenant and portfolio contexts.
     staffUser?: {
-      id: string; email: string; name: string | null; role: UserRole
+      // email is nullable post 2026-05-13 — stub workforce rows have no
+      // address yet. Routes that fan out notifications must guard on null.
+      id: string; email: string | null; name: string | null; role: UserRole
       tenantId: string | null
       tenantFilter: string | { in: string[] } | null
     }
@@ -29,7 +31,7 @@ declare module 'fastify' {
 // token belongs at the KDS PIN gate (`requirePinSession`), and a refresh
 // token belongs at the refresh route (`requireRefresh`). The two helpers
 // below share the same role/tenant plumbing.
-async function attachStaffPrincipal(req: FastifyRequest, payload: { sub: string; email: string; role: string }, allowedRoles: UserRole[]) {
+async function attachStaffPrincipal(req: FastifyRequest, payload: { sub: string; email: string | null; role: string }, allowedRoles: UserRole[]) {
   if (allowedRoles.length > 0 && !allowedRoles.includes(payload.role as UserRole)) {
     throw new ForbiddenError(`Role '${payload.role}' is not allowed for this resource`)
   }

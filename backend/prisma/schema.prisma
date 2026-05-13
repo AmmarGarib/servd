@@ -720,11 +720,20 @@ model User {
   id              String        @id @default(uuid())
   tenantId        String? // tenant — backfilled on first boot
   name            String
-  email           String        @unique
+  // Email is nullable so the CEO can stub a staff row from the workforce hub
+  // (just a name + category) and fill the contact details in later. Postgres
+  // permits multiple NULLs on a @unique column, so the uniqueness guarantee
+  // still holds for real addresses. Login flows already gate on `email != null`.
+  email           String?       @unique
   phone           String? // staff contact + source for the 4-digit PIN
   password        String // bcrypt hash
   pin             String? // bcrypt hash of PIN
   role            UserRole      @default(kitchen)
+  // Free-text job title shown next to the role chip in /workforce. The role
+  // enum is the *category* (FOH / BOH / Procurement / etc); jobTitle is what
+  // the operator actually calls them ("Sous Chef Bukhari", "Floor manager —
+  // Clifton", "Pastry CDP"). Optional — falls back to the role label.
+  jobTitle        String?
   // Self-signup creates accounts as `pending` — CEO approves from the user
   // dropdown before they can sign in. Existing accounts back-fill to `active`.
   accountStatus   AccountStatus @default(active)

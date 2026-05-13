@@ -528,7 +528,7 @@ export async function authRoutes(fastify: FastifyInstance) {
     const users = await prisma.user.findMany({
       where,
       select: {
-        id: true, name: true, email: true, phone: true, role: true,
+        id: true, name: true, email: true, phone: true, role: true, jobTitle: true,
         isActive: true, accountStatus: true, createdAt: true, pin: true,
         tenantId: true,
       },
@@ -537,56 +537,80 @@ export async function authRoutes(fastify: FastifyInstance) {
     return users.map((u) => ({ ...u, hasPin: !!u.pin, pin: undefined }))
   })
 
-  // POST /auth/users — create staff member (admin only)
+  // POST /auth/users — create staff member (admin only).
+  //
+  // /workforce sends a "stub" payload (just name + role category + jobTitle)
+  // — the CEO fills in email / phone / PIN inline on the row afterward. So
+  // every field except role is optional at create time. PIN missing → the
+  // account can't log in until the CEO sets one (the row shows a 🚫 No PIN
+  // chip to make that obvious).
   fastify.post('/users', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req, reply) => {
     const body = z.object({
-      name:     z.string().min(1),
-      email:    z.string().email(),
-      phone:    z.string().min(7).max(20).optional(),
-      pin:      z.string().min(4).max(8),
+      name:     z.string().min(1).optional(),
+      email:    z.string().email().optional().or(z.literal('')),
+      phone:    z.string().min(7).max(20).optional().or(z.literal('')),
+      pin:      z.string().min(4).max(8).optional().or(z.literal('')),
       role:     STAFF_ROLE_WITH_ADMIN,
+      jobTitle: z.string().max(120).optional().or(z.literal('')),
     }).parse(req.body)
 
     // Password not used for login (PIN-only) — store a random unusable hash
     const password = await hashPassword(Math.random().toString(36) + Date.now())
-    const pin      = await hashPin(body.pin)
+    const pin      = body.pin ? await hashPin(body.pin) : null
 
     const user = await prisma.user.create({
       data: {
-        name: body.name,
-        email: body.email.toLowerCase(),
-        ...(body.phone ? { phone: body.phone } : {}),
-        password, pin, role: body.role as never,
+        name: body.name?.trim() || 'Unnamed staff',
+        ...(body.email ? { email: body.email.toLowerCase() } : {}),
+        ...(body.phone ? { phone: body.phone.trim() } : {}),
+        ...(body.jobTitle ? { jobTitle: body.jobTitle.trim() } : {}),
+        password,
+        ...(pin ? { pin } : {}),
+        role: body.role as never,
       },
-      select: { id: true, name: true, email: true, phone: true, role: true, isActive: true, pin: true },
+      select: {
+        id: true, name: true, email: true, phone: true, role: true, jobTitle: true,
+        isActive: true, accountStatus: true, createdAt: true, pin: true, tenantId: true,
+      },
     })
     return reply.status(201).send({ ...user, hasPin: !!user.pin, pin: undefined })
   })
 
-  // PATCH /auth/users/:id — update staff (admin only)
+  // PATCH /auth/users/:id — update staff (admin only).
+  // Used by both the /workforce inline editor and the legacy admin user
+  // editor. Every field is optional — only the ones supplied get written.
+  // Empty string is treated as "clear this field" so the CEO can wipe a
+  // wrong email or phone without deleting the whole row.
   fastify.patch<{ Params: { id: string } }>(
     '/users/:id',
     { preHandler: requireAuth(...ADMIN_ONLY) },
     async (req) => {
       const body = z.object({
         name:     z.string().min(1).optional(),
-        phone:    z.string().min(7).max(20).optional(),
+        email:    z.string().email().optional().or(z.literal('')),
+        phone:    z.string().min(7).max(20).optional().or(z.literal('')),
         role:     STAFF_ROLE_WITH_ADMIN.optional(),
-        pin:      z.string().min(4).max(8).optional(),
+        pin:      z.string().min(4).max(8).optional().or(z.literal('')),
         isActive: z.boolean().optional(),
+        jobTitle: z.string().max(120).optional().or(z.literal('')),
       }).parse(req.body)
 
       const data: Record<string, unknown> = {}
       if (body.name     != null) data.name      = body.name
-      if (body.phone    != null) data.phone     = body.phone
+      if (body.phone    != null) data.phone     = body.phone || null
+      if (body.email    != null) data.email     = body.email ? body.email.toLowerCase() : null
       if (body.role     != null) data.role      = body.role
       if (body.isActive != null) data.isActive  = body.isActive
-      if (body.pin      != null) data.pin       = await hashPin(body.pin)
+      if (body.jobTitle != null) data.jobTitle  = body.jobTitle || null
+      if (body.pin      != null) data.pin       = body.pin ? await hashPin(body.pin) : null
 
       const user = await prisma.user.update({
         where: { id: req.params.id },
         data,
-        select: { id: true, name: true, email: true, phone: true, role: true, isActive: true, pin: true },
+        select: {
+          id: true, name: true, email: true, phone: true, role: true, jobTitle: true,
+          isActive: true, accountStatus: true, createdAt: true, pin: true, tenantId: true,
+        },
       })
       return { ...user, hasPin: !!user.pin, pin: undefined }
     },
