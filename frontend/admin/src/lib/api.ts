@@ -258,6 +258,7 @@ export const menuApi = {
     api.post<Category>('/menu/categories', body),
   updateCategory: (id: string, body: Partial<{ name: string; sortOrder: number }>) =>
     api.patch<Category>(`/menu/categories/${id}`, body),
+  deleteCategory: (id: string) => api.delete<void>(`/menu/categories/${id}`),
   createItem: (body: unknown) => api.post<MenuItem>('/menu/items', body),
   updateItem: (id: string, body: unknown) => api.patch<MenuItem>(`/menu/items/${id}`, body),
   deleteItem: (id: string) => api.delete<void>(`/menu/items/${id}`),

@@ -46,6 +46,32 @@ export default function MenuPage() {
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['menu', conceptId] }),
   })
 
+  // ── Category edit / delete ─────────────────────────────────────────────
+  // Click the category name → inline rename input + Save / Delete buttons.
+  // Delete is gated server-side: if the category still has live items the
+  // backend returns 409 CATEGORY_NOT_EMPTY and we surface that to the user.
+  const [editingCatId, setEditingCatId]   = useState<string | null>(null)
+  const [editingCatName, setEditingCatName] = useState('')
+  const [catError, setCatError]           = useState<string | null>(null)
+
+  const renameCategory = useMutation({
+    mutationFn: ({ id, name }: { id: string; name: string }) =>
+      menuApi.updateCategory(id, { name }),
+    onSuccess: () => {
+      setEditingCatId(null); setCatError(null)
+      void qc.invalidateQueries({ queryKey: ['menu', conceptId] })
+    },
+    onError: (e: Error) => setCatError(e.message ?? 'Rename failed'),
+  })
+  const removeCategory = useMutation({
+    mutationFn: (id: string) => menuApi.deleteCategory(id),
+    onSuccess: () => {
+      setEditingCatId(null); setCatError(null)
+      void qc.invalidateQueries({ queryKey: ['menu', conceptId] })
+    },
+    onError: (e: Error) => setCatError(e.message ?? 'Delete failed'),
+  })
+
   return (
     <div className="min-h-screen bg-kds-bg p-6">
       <header className="mb-6 flex items-center justify-between">
@@ -97,14 +123,70 @@ export default function MenuPage() {
       <div className="space-y-8">
         {categories.map((cat) => (
           <section key={cat.id}>
-            <div className="flex items-center justify-between mb-3 border-b border-kds-border pb-2">
-              <h2 className="text-lg font-bold text-kds-text">{cat.name}</h2>
-              <button
-                onClick={() => setAddingItemToCat(addingItemToCat === cat.id ? null : cat.id)}
-                className="text-sm text-kds-green hover:underline font-medium"
-              >
-                {addingItemToCat === cat.id ? 'Cancel' : '+ Add Item'}
-              </button>
+            <div className="flex items-center justify-between mb-3 border-b border-kds-border pb-2 gap-3">
+              {editingCatId === cat.id ? (
+                /* Inline edit mode — rename input + Save/Cancel/Delete row. */
+                <div className="flex-1 flex items-center gap-2 flex-wrap">
+                  <input
+                    autoFocus
+                    value={editingCatName}
+                    onChange={(e) => setEditingCatName(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && editingCatName.trim()) {
+                        renameCategory.mutate({ id: cat.id, name: editingCatName.trim() })
+                      } else if (e.key === 'Escape') {
+                        setEditingCatId(null); setCatError(null)
+                      }
+                    }}
+                    className="rounded-lg bg-kds-bg border border-kds-border px-3 py-1.5 text-lg font-bold text-kds-text focus:border-kds-green focus:outline-none"
+                  />
+                  <button
+                    onClick={() => editingCatName.trim() && renameCategory.mutate({ id: cat.id, name: editingCatName.trim() })}
+                    disabled={!editingCatName.trim() || editingCatName.trim() === cat.name || renameCategory.isPending}
+                    className="rounded-lg bg-kds-green text-black font-bold px-3 py-1.5 text-xs hover:opacity-90 disabled:opacity-40">
+                    {renameCategory.isPending ? 'Saving…' : 'Save'}
+                  </button>
+                  <button
+                    onClick={() => { setEditingCatId(null); setCatError(null) }}
+                    className="rounded-lg border border-kds-border text-kds-subtext px-3 py-1.5 text-xs hover:text-kds-text">
+                    Cancel
+                  </button>
+                  <button
+                    onClick={() => {
+                      const itemCount = cat.items.filter((i) => !(i as { deletedAt?: string }).deletedAt).length
+                      if (itemCount > 0) {
+                        setCatError(`Delete or move the ${itemCount} item${itemCount === 1 ? '' : 's'} in this category first.`)
+                        return
+                      }
+                      if (confirm(`Delete category "${cat.name}"?`)) {
+                        removeCategory.mutate(cat.id)
+                      }
+                    }}
+                    disabled={removeCategory.isPending}
+                    className="rounded-lg border border-kds-red/40 text-kds-red px-3 py-1.5 text-xs hover:bg-kds-red/10 ml-auto">
+                    🗑 Delete category
+                  </button>
+                  {catError && <p className="basis-full text-xs text-kds-red font-semibold">{catError}</p>}
+                </div>
+              ) : (
+                <>
+                  <button
+                    onClick={() => { setEditingCatId(cat.id); setEditingCatName(cat.name); setCatError(null) }}
+                    className="group flex items-center gap-2 text-left hover:opacity-80"
+                    title="Click to rename or delete">
+                    <h2 className="text-lg font-bold text-kds-text">{cat.name}</h2>
+                    <span className="text-xs text-kds-subtext opacity-0 group-hover:opacity-100 transition-opacity">
+                      ✎ Edit
+                    </span>
+                  </button>
+                  <button
+                    onClick={() => setAddingItemToCat(addingItemToCat === cat.id ? null : cat.id)}
+                    className="text-sm text-kds-green hover:underline font-medium"
+                  >
+                    {addingItemToCat === cat.id ? 'Cancel' : '+ Add Item'}
+                  </button>
+                </>
+              )}
             </div>
 
             {addingItemToCat === cat.id && (

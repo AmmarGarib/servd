@@ -231,6 +231,34 @@ export async function menuRoutes(fastify: FastifyInstance) {
     },
   )
 
+  // DELETE /menu/categories/:id — soft-delete a category. Refuses if the
+  // category still has live menu items so the operator clears them first
+  // (otherwise the storefront would show orphans). Soft-deletes any items
+  // ALREADY soft-deleted are ignored — we only count active items.
+  fastify.delete<{ Params: { id: string } }>(
+    '/categories/:id',
+    { preHandler: requireAuth(...MANAGERS) },
+    async (req, reply) => {
+      const owned = await prisma.category.findFirst({
+        where: {
+          id: req.params.id,
+          deletedAt: null,
+          concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
+        },
+        include: { _count: { select: { items: { where: { deletedAt: null } } } } },
+      })
+      if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Category not found in your active company' } })
+      if (owned._count.items > 0) {
+        return reply.status(409).send({ error: {
+          code: 'CATEGORY_NOT_EMPTY',
+          message: `Delete or move the ${owned._count.items} item(s) in this category first.`,
+        }})
+      }
+      await prisma.category.update({ where: { id: req.params.id }, data: { deletedAt: new Date() } })
+      return reply.status(204).send()
+    },
+  )
+
   // ─── Modifier groups ───────────────────────────────────────────────────────
 
   fastify.post('/modifier-groups', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
