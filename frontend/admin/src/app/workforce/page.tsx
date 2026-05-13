@@ -298,6 +298,8 @@ function WorkforcePageInner() {
 
       {addOpen && (
         <AddStaffModal
+          tenants={tenants}
+          viewAll={viewAll}
           onClose={() => setAddOpen(false)}
           onCreated={(created) => {
             setAddOpen(false)
@@ -644,11 +646,20 @@ function InlineEditor({
 // ─── Add modal (minimal) ────────────────────────────────────────────────────
 
 function AddStaffModal({
-  onClose, onCreated,
-}: { onClose: () => void; onCreated: (created: StaffUser | null) => void }) {
+  tenants, viewAll, onClose, onCreated,
+}: {
+  tenants: TenantLite[]; viewAll: boolean
+  onClose: () => void; onCreated: (created: StaffUser | null) => void
+}) {
   const [name, setName]         = useState('')
   const [category, setCategory] = useState<string>('management')
   const [jobTitle, setJobTitle] = useState('')
+  // Tenant picker — required in portfolio view, defaults to the operator's
+  // first tenant when single-tenant view (modal still shows the field so the
+  // CEO always knows which company they're hiring for, but it's pre-selected).
+  const [tenantId, setTenantId] = useState<string>(
+    viewAll ? '' : (tenants[0]?.id ?? '')
+  )
   const [err, setErr]           = useState<string | null>(null)
 
   // Category drives the primary role enum value — first entry in roles[].
@@ -662,6 +673,7 @@ function AddStaffModal({
       ...(name.trim() ? { name: name.trim() } : {}),
       role: primaryRole,
       ...(jobTitle.trim() ? { jobTitle: jobTitle.trim() } : {}),
+      ...(tenantId ? { tenantId } : {}),
     }),
     onSuccess: (created) => onCreated(created ?? null),
     onError:   (e: unknown) => setErr(e instanceof Error ? e.message : 'Failed to create staff'),
@@ -670,6 +682,7 @@ function AddStaffModal({
   function submit() {
     setErr(null)
     if (!jobTitle.trim()) return setErr('Type a role / job title so you remember who this is.')
+    if (tenants.length > 0 && !tenantId) return setErr('Pick which company this hire is for.')
     create.mutate()
   }
 
@@ -679,11 +692,28 @@ function AddStaffModal({
         onClick={(e) => e.stopPropagation()}>
         <h2 className="font-black text-lg mb-1">Add staff</h2>
         <p className="text-xs text-kds-subtext mb-4">
-          Pick a category and type their role. You can fill in name, email, phone, and PIN
+          Pick a company and category, type their role. You can fill in name, email, phone, and PIN
           straight on the row right after.
         </p>
 
         <div className="space-y-2.5">
+          {/* Company picker — first, because in portfolio mode the operator
+              needs to anchor the new staff row before anything else makes
+              sense. Hidden only when the operator belongs to exactly one
+              tenant (single-tenant SaaS install). */}
+          {tenants.length > 1 && (
+            <Field label="Company"
+              hint={viewAll
+                ? 'Required — you\'re in portfolio view.'
+                : 'Defaults to your active company; switch if you\'re hiring elsewhere.'}>
+              <select value={tenantId} onChange={(e) => setTenantId(e.target.value)} className={inputCls}>
+                {viewAll && <option value="">— pick a company —</option>}
+                {tenants.map((t) => (
+                  <option key={t.id} value={t.id}>{t.name}</option>
+                ))}
+              </select>
+            </Field>
+          )}
           <Field label="Category">
             <select value={category} onChange={(e) => setCategory(e.target.value)} className={inputCls}>
               {CATEGORIES.map((c) => (

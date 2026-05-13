@@ -594,9 +594,18 @@ export async function allocatePayment(
 
 // ─── Aging Report ────────────────────────────────────────────────────────────
 
-export async function agingReport() {
+export async function agingReport(tenantIds?: string[]) {
+  // Optional tenant filter: when supplied, scope to bills whose supplier
+  // belongs to one of the listed tenants OR has no tenant assigned (legacy
+  // orphan rows — still surfaced so the CEO can clean them up).
+  const supplierFilter = tenantIds && tenantIds.length > 0
+    ? { OR: [{ tenantId: { in: tenantIds } }, { tenantId: null }] }
+    : {}
   const bills = await prisma.supplierBill.findMany({
-    where: { status: { in: ['open', 'partially_paid'] } },
+    where: {
+      status: { in: ['open', 'partially_paid'] },
+      ...(tenantIds && tenantIds.length > 0 ? { supplier: supplierFilter } : {}),
+    },
     include: { supplier: { select: { id: true, name: true } } },
   })
 
@@ -639,9 +648,19 @@ export async function agingReport() {
  * Items below par level, grouped by their primary supplier. Each group is a
  * draft PO ready to fire. Considers in-flight POs to avoid double-ordering.
  */
-export async function reorderSuggestions() {
+export async function reorderSuggestions(tenantIds?: string[]) {
+  // Tenant scope filters inventory items via their preferred supplier.
+  // Inventory items themselves don't carry a tenantId column — they're
+  // scoped indirectly through the supplier they're sourced from. Items with
+  // no preferred supplier come through unscoped (par-sheet defaults).
+  const supplierFilter = tenantIds && tenantIds.length > 0
+    ? { OR: [{ tenantId: { in: tenantIds } }, { tenantId: null }] }
+    : null
   const items = await prisma.inventoryItem.findMany({
-    where:   { deletedAt: null },
+    where:   {
+      deletedAt: null,
+      ...(supplierFilter ? { OR: [{ supplier: supplierFilter }, { supplierId: null }] } : {}),
+    },
     include: { supplier: { select: { id: true, name: true } } },
   })
 

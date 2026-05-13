@@ -574,17 +574,29 @@ export async function authRoutes(fastify: FastifyInstance) {
       pin:      z.string().min(4).max(8).optional().or(z.literal('')),
       role:     STAFF_ROLE_WITH_ADMIN,
       jobTitle: z.string().max(120).optional().or(z.literal('')),
+      // Explicit company picker from the create modal. In portfolio view the
+      // frontend renders a required dropdown and posts the chosen tenantId so
+      // the CEO doesn't have to bounce out of portfolio mode to add staff to
+      // one company. Falls back to req.staffUser.tenantId (the active tenant)
+      // when omitted — i.e. the legacy single-tenant flow.
+      tenantId: z.string().uuid().optional(),
     }).parse(req.body)
 
     // Password not used for login (PIN-only) — store a random unusable hash
     const password = await hashPassword(Math.random().toString(36) + Date.now())
     const pin      = body.pin ? await hashPin(body.pin) : null
 
-    // Anchor every new staff row to the CEO's currently active tenant so the
-    // /workforce hub doesn't end up with floating "no company" rows. Portfolio
-    // writes are gated client-side (PortfolioWriteGuardModal) — by the time
-    // this fires, `tenantId` is the single company the operator picked.
-    const tenantId = req.staffUser!.tenantId
+    // Resolve the target tenant: explicit body.tenantId wins; falls back to
+    // the operator's active tenantId. Validate either way — you can only
+    // create staff into a company you actually belong to.
+    const scope = await resolveTenantScope(req)
+    const tenantId = body.tenantId ?? req.staffUser!.tenantId
+    if (tenantId && scope.tenantIds.length > 0 && !scope.tenantIds.includes(tenantId)) {
+      return reply.status(403).send({ error: {
+        code: 'CROSS_TENANT',
+        message: 'You can only create staff inside a company you belong to.',
+      }})
+    }
 
     const user = await prisma.user.create({
       data: {

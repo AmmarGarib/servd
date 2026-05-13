@@ -130,13 +130,28 @@ export async function procurementRoutes(fastify: FastifyInstance) {
       paymentTermsDays:    z.number().int().min(0).max(365).optional(),
       leadTimeDays:        z.number().int().min(0).max(365).optional(),
       openingBalanceCents: z.number().int().nonnegative().optional(),
+      // Explicit company picker from the Add Supplier modal. In portfolio
+      // view the frontend renders a required dropdown so the CEO doesn't
+      // have to bounce out of portfolio to add suppliers per company.
+      // Falls back to req.staffUser.tenantId when omitted.
+      tenantId:            z.string().uuid().optional(),
     }).parse(req.body)
-    // Anchor every new supplier to the operator's currently-active tenant.
-    // Portfolio writes are gated client-side; by the time we get here,
-    // tenantId is the single company the CEO picked.
-    const tenantId = req.staffUser!.tenantId
+
+    const scope = await resolveTenantScope(req)
+    const tenantId = body.tenantId ?? req.staffUser!.tenantId
+    if (tenantId && scope.tenantIds.length > 0 && !scope.tenantIds.includes(tenantId)) {
+      throw new ForbiddenError('You can only create a supplier inside a company you belong to.')
+    }
+
+    // Strip body.tenantId before spreading — Prisma needs the resolved value,
+    // not the body field which may be undefined.
+    const { tenantId: _bodyTenantId, ...rest } = body
     const supplier = await prisma.supplier.create({
-      data: { ...body, ...(tenantId ? { tenantId } : {}) },
+      data: { ...rest, ...(tenantId ? { tenantId } : {}) },
+      include: {
+        assignedStaff: { select: { id: true, name: true } },
+        tenant:        { select: { id: true, name: true, slug: true } },
+      },
     })
     return reply.status(201).send(supplier)
   })
@@ -502,15 +517,16 @@ export async function procurementRoutes(fastify: FastifyInstance) {
   )
 
   // ── Aging + reorder + price history ────────────────────────────────────────
-  //
-  // agingReport / reorderSuggestions are implemented in service.ts and don't
-  // currently take a tenant filter. Wrapping them here would require lifting
-  // the filter into the service signature — left as a follow-up. For now
-  // they still aggregate across tenants; only managers can see them.
 
-  fastify.get('/aging', { preHandler: requireAuth(...MANAGERS) }, async () => agingReport())
+  fastify.get('/aging', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
+    const scope = await resolveTenantScope(req)
+    return agingReport(scope.tenantIds)
+  })
 
-  fastify.get('/reorder', { preHandler: requireAuth(...MANAGERS) }, async () => reorderSuggestions())
+  fastify.get('/reorder', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
+    const scope = await resolveTenantScope(req)
+    return reorderSuggestions(scope.tenantIds)
+  })
 
   fastify.get<{ Querystring: { itemId?: string; supplierId?: string; limit?: string } }>(
     '/price-history',

@@ -1,7 +1,8 @@
 'use client'
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../lib/api'
+import { useViewAllTenants } from '../../components/ui/TenantSwitcher'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -9,6 +10,8 @@ interface Supplier {
   id: string; name: string; phone?: string | null; email?: string | null
   address?: string | null; taxId?: string | null; notes?: string | null
   paymentTermsDays: number; leadTimeDays?: number | null; openingBalanceCents: number
+  tenantId?: string | null
+  tenant?: { id: string; name: string; slug: string } | null
   _count?: { purchaseOrders: number; inventoryItems: number; bills: number; payments: number }
 }
 
@@ -1122,12 +1125,37 @@ function SuppliersTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
 }
 
 function SupplierForm({ qc, supplier, onClose }: { qc: ReturnType<typeof useQueryClient>; supplier: Supplier | null; onClose: () => void }) {
+  // Tenant scoping for the create path. In portfolio view we force the
+  // operator to pick a company before the supplier is saved; single-tenant
+  // view defaults to the only / current tenant. Same coherent pattern as
+  // /workforce Add Staff. `useViewAllTenants` is the global hook that tells
+  // us whether portfolio mode is on.
+  const viewAll = useViewAllTenants()
+  const { data: tenants = [] } = useQuery<Array<{ id: string; name: string; slug: string }>>({
+    queryKey: ['my-tenants'],
+    queryFn:  () => api.get('/tenants/mine'),
+    staleTime: 5 * 60_000,
+  })
+
   const [form, setForm] = useState({
     name: supplier?.name ?? '', phone: supplier?.phone ?? '', email: supplier?.email ?? '',
     address: supplier?.address ?? '', taxId: supplier?.taxId ?? '', notes: supplier?.notes ?? '',
     paymentTermsDays: String(supplier?.paymentTermsDays ?? 30), leadTimeDays: String(supplier?.leadTimeDays ?? ''),
     openingBalanceCents: String(supplier?.openingBalanceCents ? supplier.openingBalanceCents / 100 : ''),
+    // Tenant chosen by the operator. Edit path locks to the existing tenantId
+    // (transfer happens via the Monitor edit drawer's Company dropdown).
+    tenantId: supplier?.tenantId ?? (viewAll ? '' : (tenants[0]?.id ?? '')),
   })
+
+  // Once tenants resolve, default-pick the first one in single-tenant mode so
+  // the user doesn't see an empty dropdown on a fresh form.
+  useEffect(() => {
+    if (!viewAll && !form.tenantId && tenants[0]) {
+      setForm((f) => ({ ...f, tenantId: tenants[0]!.id }))
+    }
+  }, [tenants, viewAll, form.tenantId])
+
+  const [err, setErr] = useState<string | null>(null)
 
   const mut = useMutation({
     mutationFn: () => {
@@ -1137,13 +1165,24 @@ function SupplierForm({ qc, supplier, onClose }: { qc: ReturnType<typeof useQuer
         paymentTermsDays: form.paymentTermsDays ? Number(form.paymentTermsDays) : undefined,
         leadTimeDays: form.leadTimeDays ? Number(form.leadTimeDays) : undefined,
         openingBalanceCents: form.openingBalanceCents ? Math.round(Number(form.openingBalanceCents) * 100) : 0,
+        ...(form.tenantId ? { tenantId: form.tenantId } : {}),
       }
       return supplier
         ? api.patch(`/procurement/suppliers/${supplier.id}`, data)
         : api.post('/procurement/suppliers', data)
     },
     onSuccess: () => { void qc.invalidateQueries({ queryKey: ['procurement', 'suppliers'] }); onClose() },
+    onError:   (e: unknown) => setErr(e instanceof Error ? e.message : 'Failed to save supplier'),
   })
+
+  function submit() {
+    setErr(null)
+    if (!form.name.trim()) return setErr('Supplier name is required.')
+    if (!supplier && tenants.length > 0 && !form.tenantId) {
+      return setErr('Pick which company this supplier is for.')
+    }
+    mut.mutate()
+  }
 
   return (
     <div className="rounded-xl border border-kds-green bg-kds-card p-5 space-y-4">
@@ -1155,6 +1194,17 @@ function SupplierForm({ qc, supplier, onClose }: { qc: ReturnType<typeof useQuer
         <Field label="Name *">
           <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className={fi} autoFocus />
         </Field>
+        {/* Company picker — required in portfolio mode for new suppliers,
+            hidden for edits (transfer happens via the Monitor edit drawer to
+            keep audit logging on the dedicated transfer surface). */}
+        {!supplier && tenants.length > 1 && (
+          <Field label="Company *">
+            <select value={form.tenantId} onChange={(e) => setForm({ ...form, tenantId: e.target.value })} className={fi}>
+              {viewAll && <option value="">— pick a company —</option>}
+              {tenants.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+            </select>
+          </Field>
+        )}
         <Field label="Phone">
           <input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} className={fi} />
         </Field>
@@ -1180,8 +1230,9 @@ function SupplierForm({ qc, supplier, onClose }: { qc: ReturnType<typeof useQuer
           <input value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} className={fi} />
         </Field>
       </div>
+      {err && <p className="text-xs font-bold text-red-400 pt-1">{err}</p>}
       <div className="flex gap-2 pt-2 border-t border-kds-border">
-        <button onClick={() => mut.mutate()} disabled={!form.name || mut.isPending}
+        <button onClick={submit} disabled={!form.name || mut.isPending}
           className="rounded-xl bg-kds-green text-black font-bold px-4 py-2 text-sm hover:opacity-90 disabled:opacity-50">
           {mut.isPending ? 'Saving…' : supplier ? 'Update' : 'Add Supplier'}
         </button>
