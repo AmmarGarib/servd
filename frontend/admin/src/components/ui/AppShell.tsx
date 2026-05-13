@@ -90,7 +90,6 @@ const NAV: NavSection[] = [
         { href: '/orders/curbside', label: 'Curbside', module: 'curbside' },
       ]},
       { href: '/ops',       label: 'Ops Center',   icon: '⚡', module: 'ops' },
-      { href: '/live',      label: 'Live Feed',    icon: '📡', module: 'live_feed' },
       { href: '/chain',     label: 'Chain Rollup', icon: '🏢', module: 'chain' },
     ],
   },

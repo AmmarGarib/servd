@@ -69,7 +69,7 @@ export type ModuleId =
   // Executive (CEO only by default)
   | 'ceo_overview' | 'role_management' | 'role_modules' | 'audit_log' | 'tenants'
   // Live
-  | 'dashboard' | 'ops' | 'live_feed' | 'orders' | 'refunds' | 'curbside' | 'kds_all' | 'chain'
+  | 'dashboard' | 'ops' | 'orders' | 'refunds' | 'curbside' | 'kds_all' | 'chain'
   // Service
   | 'pos' | 'reservations' | 'reservations_admin' | 'scheduling' | 'tables' | 'dispatch' | 'riders'
   // Kitchen
@@ -109,7 +109,6 @@ export const MODULES: ModuleMeta[] = [
 
   { id: 'dashboard',          label: 'Dashboard',           section: 'Live' },
   { id: 'ops',                label: 'Ops Center',          section: 'Live' },
-  { id: 'live_feed',          label: 'Live Feed',           section: 'Live' },
   { id: 'orders',             label: 'Orders',              section: 'Live' },
   { id: 'refunds',            label: 'Refunds',             section: 'Live' },
   { id: 'curbside',           label: 'Curbside',            section: 'Live' },
@@ -182,7 +181,7 @@ export const DEFAULT_MODULE_ACCESS: Record<AppRole, ModuleId[]> = {
   management: ALL_MODULE_IDS.filter((m) => !['chain'].includes(m)),
 
   foh_management: [
-    'dashboard', 'ops', 'live_feed', 'orders', 'refunds', 'curbside', 'kds_all',
+    'dashboard', 'ops', 'orders', 'refunds', 'curbside', 'kds_all',
     'pos', 'reservations', 'reservations_admin', 'scheduling', 'tables', 'dispatch', 'riders',
     'crm', 'complaints', 'reviews', 'campaigns',
     'staff_directory', 'staff_foh', 'kitchen_staff',
