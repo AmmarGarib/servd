@@ -150,10 +150,26 @@ export async function requireCustomerAuth(req: FastifyRequest, _reply: FastifyRe
   req.customer = { id: payload.sub }
 }
 
-// Roles hierarchy for convenience
-export const ADMIN_ONLY: UserRole[] = ['admin']
-export const MANAGERS: UserRole[] = ['admin', 'manager']
-export const CASHIERS: UserRole[] = ['admin', 'manager', 'cashier']
-export const KITCHEN_STAFF: UserRole[] = ['admin', 'manager', 'kitchen', 'expediter']
-export const MARKETING_TEAM: UserRole[] = ['admin', 'manager', 'marketing']
-export const ALL_STAFF: UserRole[] = ['admin', 'manager', 'cashier', 'kitchen', 'expediter', 'marketing']
+// Role groupings. `manager` is the legacy alias retained for back-compat with
+// accounts created before the enum expansion — every new "management"-tier
+// staff member should be either `management`, `foh_management`, or
+// `boh_management`. The groupings below all include `manager` so old accounts
+// keep working.
+//
+// `as UserRole[]` is needed at construction time because Prisma's generated
+// UserRole type only refreshes when `prisma generate` succeeds (which can fail
+// transiently on Windows if a dev process holds the DLL). The migration adds
+// the values; the cast keeps TS happy until the next clean generate.
+export const ADMIN_ONLY = ['admin'] as UserRole[]
+export const MANAGERS = ['admin', 'manager', 'management', 'foh_management', 'boh_management'] as UserRole[]
+export const CASHIERS = [...MANAGERS, 'cashier', 'foh'] as UserRole[]
+export const KITCHEN_STAFF = [...MANAGERS, 'kitchen', 'expediter', 'boh', 'boh_management'] as UserRole[]
+export const MARKETING_TEAM = [...MANAGERS, 'marketing'] as UserRole[]
+export const PROCUREMENT_TEAM = [...MANAGERS, 'procurement'] as UserRole[]
+export const FINANCE_TEAM = [...MANAGERS, 'finance'] as UserRole[]
+export const HR_TEAM = [...MANAGERS, 'hr'] as UserRole[]
+export const ALL_STAFF = [
+  'admin', 'manager', 'management', 'foh_management', 'boh_management',
+  'foh', 'boh', 'kitchen', 'expediter', 'cashier',
+  'procurement', 'marketing', 'finance', 'hr',
+] as UserRole[]

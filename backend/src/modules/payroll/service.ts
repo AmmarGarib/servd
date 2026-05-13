@@ -14,13 +14,27 @@ import { prisma } from '../../lib/prisma.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { ACCT, postJournalEntry, type JournalLineInput } from '../accounting/journal.js'
 
+// Maps every UserRole to the GL wage account its payroll posts to. New roles
+// added after 2026-05-13 default-route by team:
+//   management tiers   → WAGES_MANAGEMENT
+//   FOH-adjacent       → WAGES_FOH
+//   BOH-adjacent       → WAGES_KITCHEN
+//   procurement/finance/hr/marketing → WAGES_MANAGEMENT (office salaries)
 const ROLE_TO_WAGE_ACCOUNT: Record<UserRole, string> = {
-  admin:     ACCT.WAGES_MANAGEMENT,
-  manager:   ACCT.WAGES_MANAGEMENT,
-  cashier:   ACCT.WAGES_FOH,
-  expediter: ACCT.WAGES_FOH,
-  kitchen:   ACCT.WAGES_KITCHEN,
-  marketing: ACCT.WAGES_MANAGEMENT,    // outside agencies usually billed as professional services; this only fires if marketing is salaried in-house
+  admin:          ACCT.WAGES_MANAGEMENT,
+  manager:        ACCT.WAGES_MANAGEMENT,
+  management:     ACCT.WAGES_MANAGEMENT,
+  foh_management: ACCT.WAGES_MANAGEMENT,
+  boh_management: ACCT.WAGES_MANAGEMENT,
+  foh:            ACCT.WAGES_FOH,
+  cashier:        ACCT.WAGES_FOH,
+  expediter:      ACCT.WAGES_FOH,
+  boh:            ACCT.WAGES_KITCHEN,
+  kitchen:        ACCT.WAGES_KITCHEN,
+  procurement:    ACCT.WAGES_MANAGEMENT,
+  marketing:      ACCT.WAGES_MANAGEMENT,
+  finance:        ACCT.WAGES_MANAGEMENT,
+  hr:             ACCT.WAGES_MANAGEMENT,
 }
 
 function wageAccountFor(user: { role: UserRole; wageAccountCode: string | null }): string {

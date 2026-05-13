@@ -9,7 +9,15 @@ import {
   permissionsForRole,
 } from '../../lib/permissions.js'
 
-const ROLES: UserRole[] = ['admin', 'manager', 'cashier', 'kitchen', 'expediter', 'marketing']
+// Keep aligned with the UserRole enum in backend/prisma/schema.prisma and the
+// AppRole list in frontend/admin/src/lib/appRoles.ts. The matrix editor renders
+// one column per role in this order.
+const ROLES = [
+  'admin', 'manager', 'management', 'foh_management', 'boh_management',
+  'foh', 'boh', 'kitchen', 'expediter', 'cashier',
+  'procurement', 'marketing', 'finance', 'hr',
+] as UserRole[]
+const ROLE_VALUES = ROLES as readonly string[]
 
 export async function permissionRoutes(fastify: FastifyInstance) {
   // GET /permissions/catalogue — full list of permission keys + metadata.
@@ -46,7 +54,7 @@ export async function permissionRoutes(fastify: FastifyInstance) {
   fastify.patch('/matrix', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req, reply) => {
     const body = z.object({
       changes: z.array(z.object({
-        role: z.enum(['admin', 'manager', 'cashier', 'kitchen', 'expediter', 'marketing']),
+        role: z.string().refine((v) => ROLE_VALUES.includes(v), 'Unknown role'),
         permission: z.string().min(1),
         enabled: z.boolean(),
       })),

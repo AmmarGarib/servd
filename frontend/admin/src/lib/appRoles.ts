@@ -78,7 +78,17 @@ export type ModuleId =
   | 'marketing_workspace' | 'crm' | 'campaigns' | 'complaints' | 'reviews' | 'calendar' | 'media' | 'promos' | 'brands' | 'analytics'
   // Finance
   | 'finance_pl' | 'payroll' | 'accounting' | 'gift_cards' | 'reconciliation' | 'exceptions' | 'capital' | 'projections' | 'procurement' | 'reports'
-  // Workforce
+  // Workforce — `staff_directory` is the unified hub; the per-category ids
+  // gate the sidebar deep-links so the CEO can hide a whole category from a
+  // role without losing the directory itself.
+  | 'staff_directory'
+  | 'staff_management'
+  | 'staff_foh'
+  | 'staff_boh'
+  | 'staff_procurement'
+  | 'staff_marketing'
+  | 'staff_finance'
+  | 'staff_hr'
   | 'kitchen_staff'
   // Setup
   | 'settings'  | 'notifications' | 'help' | 'configuration' | 'onboarding'
@@ -143,7 +153,15 @@ export const MODULES: ModuleMeta[] = [
   { id: 'procurement',        label: 'Procurement',         section: 'Finance' },
   { id: 'reports',            label: 'Reports',             section: 'Finance' },
 
-  { id: 'kitchen_staff',      label: 'Kitchen Staff',       section: 'Workforce' },
+  { id: 'staff_directory',    label: 'Staff Directory',     section: 'Workforce' },
+  { id: 'staff_management',   label: 'Management',          section: 'Workforce' },
+  { id: 'staff_foh',          label: 'Front of House',      section: 'Workforce' },
+  { id: 'staff_boh',          label: 'Back of House',       section: 'Workforce' },
+  { id: 'staff_procurement',  label: 'Procurement',         section: 'Workforce' },
+  { id: 'staff_marketing',    label: 'Marketing',           section: 'Workforce' },
+  { id: 'staff_finance',      label: 'Finance',             section: 'Workforce' },
+  { id: 'staff_hr',           label: 'HR',                  section: 'Workforce' },
+  { id: 'kitchen_staff',      label: 'Kitchen Brigade',     section: 'Workforce' },
 
   { id: 'onboarding',         label: 'Onboarding',          section: 'Setup' },
   { id: 'configuration',      label: 'Configuration Hub',   section: 'Setup' },
@@ -167,13 +185,13 @@ export const DEFAULT_MODULE_ACCESS: Record<AppRole, ModuleId[]> = {
     'dashboard', 'ops', 'live_feed', 'orders', 'refunds', 'curbside', 'kds_all',
     'pos', 'reservations', 'reservations_admin', 'scheduling', 'tables', 'dispatch', 'riders',
     'crm', 'complaints', 'reviews', 'campaigns',
-    'kitchen_staff',
+    'staff_directory', 'staff_foh', 'kitchen_staff',
     'reports',
   ],
   boh_management: [
     'dashboard', 'ops', 'orders', 'kds_all',
     'menu', 'components', 'recipes', 'par_sheet', 'inventory', 'kds_config',
-    'procurement', 'kitchen_staff',
+    'procurement', 'staff_directory', 'staff_boh', 'staff_procurement', 'kitchen_staff',
     'reports',
   ],
   foh: [
@@ -200,6 +218,8 @@ export const DEFAULT_MODULE_ACCESS: Record<AppRole, ModuleId[]> = {
   ],
 
   hr: [
+    'staff_directory', 'staff_management', 'staff_foh', 'staff_boh',
+    'staff_procurement', 'staff_marketing', 'staff_finance', 'staff_hr',
     'kitchen_staff', 'payroll', 'scheduling',
   ],
 }

@@ -2,7 +2,13 @@ import type { UserRole } from '@prisma/client'
 import { prisma } from './prisma.js'
 import { ForbiddenError } from './errors.js'
 
-const CONCEPT_BYPASS_ROLES: UserRole[] = ['admin', 'manager']
+// Roles that bypass the per-concept ACL — admin/CEO + every management tier.
+// Management is still scoped by `tenantFilter` so a floor or head chef only
+// sees their own brand's concepts; the bypass just skips the extra
+// concept-id whitelist check on writes.
+const CONCEPT_BYPASS_ROLES = [
+  'admin', 'manager', 'management', 'foh_management', 'boh_management',
+] as UserRole[]
 
 const cache = new Map<string, { ids: Set<string>; expires: number }>()
 const CACHE_TTL_MS = 30_000

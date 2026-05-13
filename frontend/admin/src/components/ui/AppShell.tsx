@@ -170,15 +170,31 @@ const NAV: NavSection[] = [
     ],
   },
   {
+    // Workforce hub at the top covers every staff category in one screen.
+    // The dedicated /kitchen-staff entry stays — that's the brigade view with
+    // payroll, EOBI, SESSI, compliance — features the generic User directory
+    // doesn't cover.
     title: 'Workforce',
     defaultCollapsed: true,
     items: [
-      { href: '/kitchen-staff', label: 'Kitchen Staff', icon: '👨‍🍳', module: 'kitchen_staff', children: [
+      { href: '/workforce', label: 'Staff Directory', icon: '👥', module: 'staff_directory', children: [
+        { href: '/workforce?category=management',  label: 'Management',     module: 'staff_management' },
+        { href: '/workforce?category=foh',         label: 'Front of House', module: 'staff_foh' },
+        { href: '/workforce?category=boh',         label: 'Back of House',  module: 'staff_boh' },
+        { href: '/workforce?category=procurement', label: 'Procurement',    module: 'staff_procurement' },
+        { href: '/workforce?category=marketing',   label: 'Marketing',      module: 'staff_marketing' },
+        { href: '/workforce?category=finance',     label: 'Finance',        module: 'staff_finance' },
+        { href: '/workforce?category=hr',          label: 'HR',             module: 'staff_hr' },
+      ]},
+      { href: '/kitchen-staff', label: 'Kitchen Brigade', icon: '👨‍🍳', module: 'kitchen_staff', children: [
         { href: '/kitchen-staff/schedule',   label: 'Schedule',   module: 'kitchen_staff' },
         { href: '/kitchen-staff/attendance', label: 'Attendance', module: 'kitchen_staff' },
         { href: '/kitchen-staff/payroll',    label: 'Payroll',    module: 'payroll' },
         { href: '/kitchen-staff/compliance', label: 'Compliance', module: 'kitchen_staff' },
       ]},
+      { href: '/time-clock', label: 'Time Clock', icon: '⏱', module: 'staff_directory' },
+      { href: '/scheduling', label: 'Scheduling', icon: '📅', module: 'scheduling' },
+      { href: '/configuration/pending-approvals', label: 'Pending Signups', icon: '⏳', module: 'role_management' },
     ],
   },
   {

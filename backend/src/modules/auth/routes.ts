@@ -33,6 +33,18 @@ const magicLinkVerifySchema = z.object({
   token: z.string().length(32),
 })
 
+// All UserRole enum values *except* admin — admin is reserved for the CEO and
+// can only be granted by another admin via PATCH /auth/users/:id; new staff
+// signing themselves up never get it. Keep in sync with backend/prisma/schema.prisma.
+const STAFF_ROLE_VALUES = [
+  'manager', 'management', 'foh_management', 'boh_management',
+  'foh', 'boh', 'kitchen', 'expediter', 'cashier',
+  'procurement', 'marketing', 'finance', 'hr',
+] as const
+const STAFF_ROLE = z.enum(STAFF_ROLE_VALUES)
+// CEO-only assignment includes `admin` so the founder can promote a successor.
+const STAFF_ROLE_WITH_ADMIN = z.enum(['admin', ...STAFF_ROLE_VALUES])
+
 function haversineMeters(lat1: number, lng1: number, lat2: number, lng2: number): number {
   const R = 6_371_000
   const toRad = (d: number) => (d * Math.PI) / 180
@@ -391,7 +403,7 @@ export async function authRoutes(fastify: FastifyInstance) {
       name:    z.string().min(1).max(80),
       email:   z.string().email(),
       phone:   z.string().min(7).max(20),
-      role:    z.enum(['manager', 'cashier', 'kitchen', 'expediter', 'marketing']),
+      role:    STAFF_ROLE,
       reason:  z.string().max(280).optional(),    // free-text "why I'm joining"
     }).parse(req.body)
 
@@ -496,11 +508,30 @@ export async function authRoutes(fastify: FastifyInstance) {
     },
   )
 
-  // GET /auth/users — list staff (admin/manager only)
-  fastify.get('/users', { preHandler: requireAuth(...MANAGERS) }, async () => {
+  // GET /auth/users — list staff (admin/manager only).
+  // Powers the /workforce hub. `?role=foh,boh,kitchen` filters by enum value
+  // so the sidebar's per-category entries can deep-link straight to the right
+  // slice. `?status=pending|active|suspended` filters on accountStatus.
+  fastify.get('/users', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
+    const q = z.object({
+      role:   z.string().optional(),  // comma-separated list of UserRole values
+      status: z.enum(['pending', 'active', 'suspended']).optional(),
+    }).parse(req.query)
+
+    const where: Record<string, unknown> = { deletedAt: null }
+    if (q.role) {
+      const roles = q.role.split(',').map((r) => r.trim()).filter(Boolean)
+      if (roles.length > 0) where.role = { in: roles }
+    }
+    if (q.status) where.accountStatus = q.status
+
     const users = await prisma.user.findMany({
-      where: { deletedAt: null },
-      select: { id: true, name: true, email: true, role: true, isActive: true, createdAt: true, pin: true },
+      where,
+      select: {
+        id: true, name: true, email: true, phone: true, role: true,
+        isActive: true, accountStatus: true, createdAt: true, pin: true,
+        tenantId: true,
+      },
       orderBy: { name: 'asc' },
     })
     return users.map((u) => ({ ...u, hasPin: !!u.pin, pin: undefined }))
@@ -511,8 +542,9 @@ export async function authRoutes(fastify: FastifyInstance) {
     const body = z.object({
       name:     z.string().min(1),
       email:    z.string().email(),
+      phone:    z.string().min(7).max(20).optional(),
       pin:      z.string().min(4).max(8),
-      role:     z.enum(['admin', 'manager', 'cashier', 'kitchen', 'expediter', 'marketing']),
+      role:     STAFF_ROLE_WITH_ADMIN,
     }).parse(req.body)
 
     // Password not used for login (PIN-only) — store a random unusable hash
@@ -520,8 +552,13 @@ export async function authRoutes(fastify: FastifyInstance) {
     const pin      = await hashPin(body.pin)
 
     const user = await prisma.user.create({
-      data: { name: body.name, email: body.email.toLowerCase(), password, pin, role: body.role as never },
-      select: { id: true, name: true, email: true, role: true, isActive: true, pin: true },
+      data: {
+        name: body.name,
+        email: body.email.toLowerCase(),
+        ...(body.phone ? { phone: body.phone } : {}),
+        password, pin, role: body.role as never,
+      },
+      select: { id: true, name: true, email: true, phone: true, role: true, isActive: true, pin: true },
     })
     return reply.status(201).send({ ...user, hasPin: !!user.pin, pin: undefined })
   })
@@ -533,13 +570,15 @@ export async function authRoutes(fastify: FastifyInstance) {
     async (req) => {
       const body = z.object({
         name:     z.string().min(1).optional(),
-        role:     z.enum(['admin', 'manager', 'cashier', 'kitchen', 'expediter', 'marketing']).optional(),
+        phone:    z.string().min(7).max(20).optional(),
+        role:     STAFF_ROLE_WITH_ADMIN.optional(),
         pin:      z.string().min(4).max(8).optional(),
         isActive: z.boolean().optional(),
       }).parse(req.body)
 
       const data: Record<string, unknown> = {}
-      if (body.name     != null) data.name     = body.name
+      if (body.name     != null) data.name      = body.name
+      if (body.phone    != null) data.phone     = body.phone
       if (body.role     != null) data.role      = body.role
       if (body.isActive != null) data.isActive  = body.isActive
       if (body.pin      != null) data.pin       = await hashPin(body.pin)
@@ -547,7 +586,7 @@ export async function authRoutes(fastify: FastifyInstance) {
       const user = await prisma.user.update({
         where: { id: req.params.id },
         data,
-        select: { id: true, name: true, email: true, role: true, isActive: true, pin: true },
+        select: { id: true, name: true, email: true, phone: true, role: true, isActive: true, pin: true },
       })
       return { ...user, hasPin: !!user.pin, pin: undefined }
     },

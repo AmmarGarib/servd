@@ -18,15 +18,54 @@ export interface Permission {
   defaultsByRole: Record<UserRole, boolean>
 }
 
-// Default-bundle helpers. Pattern: every bundle covers all 6 roles, so adding
-// a new role here automatically gives it sane defaults across the catalogue.
-const ON: Record<UserRole, boolean>      = { admin: true,  manager: true,  cashier: true,  kitchen: true,  expediter: true,  marketing: true  }
-const MGR: Record<UserRole, boolean>     = { admin: true,  manager: true,  cashier: false, kitchen: false, expediter: false, marketing: false }
-const ADMIN: Record<UserRole, boolean>   = { admin: true,  manager: false, cashier: false, kitchen: false, expediter: false, marketing: false }
-const KITCHEN: Record<UserRole, boolean> = { admin: true,  manager: true,  cashier: false, kitchen: true,  expediter: true,  marketing: false }
-const POS: Record<UserRole, boolean>     = { admin: true,  manager: true,  cashier: true,  kitchen: false, expediter: false, marketing: false }
-const MARKETING: Record<UserRole, boolean> = { admin: true, manager: true, cashier: false, kitchen: false, expediter: false, marketing: true }
-const NONE: Record<UserRole, boolean>    = { admin: true,  manager: false, cashier: false, kitchen: false, expediter: false, marketing: false }
+// Default-bundle helpers. Every bundle covers every role in UserRole — the
+// expanded enum (post 2026-05-13) has 14 values:
+//   admin (CEO), manager (legacy), management, foh_management, boh_management,
+//   foh, boh, kitchen, expediter, cashier, procurement, marketing, finance, hr.
+// Specialist roles (procurement / finance / hr) default to a tight allow-list
+// scoped to their domain; the CEO can edit the matrix at /configuration/roles.
+const ON: Record<UserRole, boolean> = {
+  admin: true,  manager: true,  management: true,  foh_management: true, boh_management: true,
+  foh: true,    boh: true,      kitchen: true,     expediter: true,      cashier: true,
+  procurement: true, marketing: true, finance: true, hr: true,
+}
+const MGR: Record<UserRole, boolean> = {
+  admin: true,  manager: true,  management: true,  foh_management: true, boh_management: true,
+  foh: false,   boh: false,     kitchen: false,    expediter: false,     cashier: false,
+  procurement: false, marketing: false, finance: false, hr: false,
+}
+const ADMIN: Record<UserRole, boolean> = {
+  admin: true,  manager: false, management: false, foh_management: false, boh_management: false,
+  foh: false,   boh: false,     kitchen: false,    expediter: false,      cashier: false,
+  procurement: false, marketing: false, finance: false, hr: false,
+}
+const KITCHEN: Record<UserRole, boolean> = {
+  admin: true,  manager: true,  management: true,  foh_management: false, boh_management: true,
+  foh: false,   boh: true,      kitchen: true,     expediter: true,       cashier: false,
+  procurement: false, marketing: false, finance: false, hr: false,
+}
+const POS: Record<UserRole, boolean> = {
+  admin: true,  manager: true,  management: true,  foh_management: true, boh_management: false,
+  foh: true,    boh: false,     kitchen: false,    expediter: false,     cashier: true,
+  procurement: false, marketing: false, finance: false, hr: false,
+}
+const MARKETING: Record<UserRole, boolean> = {
+  admin: true,  manager: true,  management: true,  foh_management: false, boh_management: false,
+  foh: false,   boh: false,     kitchen: false,    expediter: false,      cashier: false,
+  procurement: false, marketing: true,  finance: false, hr: false,
+}
+const FINANCE: Record<UserRole, boolean> = {
+  admin: true,  manager: true,  management: true,  foh_management: false, boh_management: false,
+  foh: false,   boh: false,     kitchen: false,    expediter: false,      cashier: false,
+  procurement: false, marketing: false, finance: true, hr: false,
+}
+const NONE: Record<UserRole, boolean> = {
+  admin: true,  manager: false, management: false, foh_management: false, boh_management: false,
+  foh: false,   boh: false,     kitchen: false,    expediter: false,      cashier: false,
+  procurement: false, marketing: false, finance: false, hr: false,
+}
+// Suppress unused warning when FINANCE isn't referenced in the catalogue yet.
+void FINANCE
 
 export const PERMISSIONS: Permission[] = [
   // Live / overview
@@ -113,7 +152,11 @@ export type PermissionKey = (typeof PERMISSION_KEYS)[number]
 import type { PrismaClient } from '@prisma/client'
 
 export async function seedPermissions(prisma: PrismaClient): Promise<{ inserted: number }> {
-  const ROLES: UserRole[] = ['admin', 'manager', 'cashier', 'kitchen', 'expediter', 'marketing']
+  const ROLES = [
+    'admin', 'manager', 'management', 'foh_management', 'boh_management',
+    'foh', 'boh', 'kitchen', 'expediter', 'cashier',
+    'procurement', 'marketing', 'finance', 'hr',
+  ] as UserRole[]
   const existing = await prisma.rolePermission.findMany({
     select: { role: true, permission: true },
   })
