@@ -1646,6 +1646,12 @@ model GroupOrderItem {
 
 model InventoryItem {
   id            String    @id @default(uuid())
+  // Tenant the ingredient stock belongs to. Critical: inventory is per-
+  // company — GS Foods Bukhari's chicken doesn't show up in GS x Viva
+  // Clifton's par sheet. Backfilled to the supplier's tenant where one
+  // exists; legacy rows with no supplier remain nullable until the CEO
+  // assigns them via the inventory edit drawer.
+  tenantId      String?
   name          String
   unit          String // e.g. "kg", "pcs", "litres"
   parLevel      Float     @default(0)
@@ -1658,6 +1664,7 @@ model InventoryItem {
   deletedAt     DateTime?
 
   supplier           Supplier?           @relation(fields: [supplierId], references: [id])
+  tenant             Tenant?             @relation("TenantInventoryItems", fields: [tenantId], references: [id], onDelete: SetNull)
   recipeIngredients  RecipeIngredient[]
   purchaseOrderLines PurchaseOrderLine[]
   priceHistory       ItemPriceHistory[]
@@ -1666,6 +1673,7 @@ model InventoryItem {
   components         Component[]
   stockTransfers     StockTransfer[]
 
+  @@index([tenantId])
   @@map("inventory_items")
 }
 
@@ -3898,10 +3906,11 @@ model Tenant {
   updatedAt   DateTime  @updatedAt
   deletedAt   DateTime?
 
-  concepts  Concept[]
-  users     User[]
-  members   TenantMember[]
-  suppliers Supplier[] @relation("TenantSuppliers")
+  concepts       Concept[]
+  users          User[]
+  members        TenantMember[]
+  suppliers      Supplier[]      @relation("TenantSuppliers")
+  inventoryItems InventoryItem[] @relation("TenantInventoryItems")
 
   @@map("tenants")
 }

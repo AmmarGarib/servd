@@ -34,6 +34,25 @@ const magicLinkVerifySchema = z.object({
   token: z.string().length(32),
 })
 
+interface TenantLite { id: string; name: string; slug: string }
+
+// Drop duplicate tenants (a user's primary is also in their memberships list).
+// Order-preserving so the primary shows first in the UI's chip group.
+function dedupeTenants(list: Array<TenantLite | null | undefined>): TenantLite[] {
+  const seen = new Set<string>()
+  const out: TenantLite[] = []
+  for (const t of list) {
+    if (!t) continue
+    if (seen.has(t.id)) continue
+    seen.add(t.id)
+    out.push(t)
+  }
+  return out
+}
+function dedupeStrings(list: string[]): string[] {
+  return Array.from(new Set(list))
+}
+
 // All UserRole enum values *except* admin — admin is reserved for the CEO and
 // can only be granted by another admin via PATCH /auth/users/:id; new staff
 // signing themselves up never get it. Keep in sync with backend/prisma/schema.prisma.
@@ -550,13 +569,36 @@ export async function authRoutes(fastify: FastifyInstance) {
         id: true, name: true, email: true, phone: true, role: true, jobTitle: true,
         isActive: true, accountStatus: true, createdAt: true, pin: true,
         tenantId: true,
-        // Include the tenant relation in portfolio mode so the frontend can
-        // show which company each staff member belongs to.
+        // Include the primary tenant relation in portfolio mode so the
+        // frontend can render the indigo chip on each row.
         ...(scope.portfolio ? { tenant: { select: { id: true, name: true, slug: true } } } : {}),
+        // Additional tenant memberships — surfaced as chips next to the
+        // primary so the operator can see when a staff member works across
+        // companies (the "head office team" pattern — procurement, finance,
+        // HR people typically span both restaurants).
+        memberships: {
+          select: {
+            tenantId: true,
+            role: true,
+            tenant: { select: { id: true, name: true, slug: true } },
+          },
+        },
       },
       orderBy: { name: 'asc' },
     })
-    return users.map((u) => ({ ...u, hasPin: !!u.pin, pin: undefined }))
+    return users.map((u) => ({
+      ...u,
+      hasPin: !!u.pin,
+      pin: undefined,
+      // Flatten memberships into a `tenants` array — primary tenant first,
+      // then any TenantMember-only tenants. The frontend uses this to render
+      // the multi-tenant chip group + populate the multi-select on edit.
+      tenants: dedupeTenants([
+        ...(u.tenantId && (u as { tenant?: TenantLite | null }).tenant ? [(u as { tenant: TenantLite }).tenant] : []),
+        ...u.memberships.map((m) => m.tenant),
+      ]),
+      memberships: undefined,
+    }))
   })
 
   // POST /auth/users — create staff member (admin only).
@@ -574,12 +616,13 @@ export async function authRoutes(fastify: FastifyInstance) {
       pin:      z.string().min(4).max(8).optional().or(z.literal('')),
       role:     STAFF_ROLE_WITH_ADMIN,
       jobTitle: z.string().max(120).optional().or(z.literal('')),
-      // Explicit company picker from the create modal. In portfolio view the
-      // frontend renders a required dropdown and posts the chosen tenantId so
-      // the CEO doesn't have to bounce out of portfolio mode to add staff to
-      // one company. Falls back to req.staffUser.tenantId (the active tenant)
-      // when omitted — i.e. the legacy single-tenant flow.
-      tenantId: z.string().uuid().optional(),
+      // Primary tenant — anchors User.tenantId. Required-ish: falls back to
+      // the operator's active tenant when omitted. CUID, not UUID.
+      tenantId:  z.string().min(1).optional(),
+      // Additional tenants this staff member also works for (head-office
+      // pattern: one procurement officer servicing both restaurants).
+      // Backed by TenantMember rows. Primary tenantId is auto-included.
+      tenantIds: z.array(z.string().min(1)).optional(),
     }).parse(req.body)
 
     // Password not used for login (PIN-only) — store a random unusable hash
@@ -598,6 +641,17 @@ export async function authRoutes(fastify: FastifyInstance) {
       }})
     }
 
+    // Validate every extra tenant the body wants this user added to.
+    const extraIds = (body.tenantIds ?? []).filter((id) => id !== tenantId)
+    for (const id of extraIds) {
+      if (scope.tenantIds.length > 0 && !scope.tenantIds.includes(id)) {
+        return reply.status(403).send({ error: {
+          code: 'CROSS_TENANT',
+          message: 'You can only add staff to companies you belong to.',
+        }})
+      }
+    }
+
     const user = await prisma.user.create({
       data: {
         name: body.name?.trim() || 'Unnamed staff',
@@ -608,14 +662,33 @@ export async function authRoutes(fastify: FastifyInstance) {
         ...(pin ? { pin } : {}),
         ...(tenantId ? { tenantId } : {}),
         role: body.role as never,
+        // Mirror the primary tenant as a membership row too — keeps "is this
+        // user a member of tenant X?" queries simple (just check TenantMember,
+        // no UNION with User.tenantId needed).
+        memberships: {
+          create: dedupeStrings([
+            ...(tenantId ? [tenantId] : []),
+            ...extraIds,
+          ]).map((id) => ({ tenantId: id, role: 'member' })),
+        },
       },
       select: {
         id: true, name: true, email: true, phone: true, role: true, jobTitle: true,
         isActive: true, accountStatus: true, createdAt: true, pin: true, tenantId: true,
         tenant: { select: { id: true, name: true, slug: true } },
+        memberships: { select: { tenantId: true, tenant: { select: { id: true, name: true, slug: true } } } },
       },
     })
-    return reply.status(201).send({ ...user, hasPin: !!user.pin, pin: undefined })
+    return reply.status(201).send({
+      ...user,
+      hasPin: !!user.pin,
+      pin: undefined,
+      tenants: dedupeTenants([
+        user.tenant ?? null,
+        ...user.memberships.map((m) => m.tenant),
+      ]),
+      memberships: undefined,
+    })
   })
 
   // PATCH /auth/users/:id — update staff (admin only).
@@ -635,10 +708,13 @@ export async function authRoutes(fastify: FastifyInstance) {
         pin:      z.string().min(4).max(8).optional().or(z.literal('')),
         isActive: z.boolean().optional(),
         jobTitle: z.string().max(120).optional().or(z.literal('')),
-        // Explicit cross-tenant transfer. Validated against the editor's
-        // tenant memberships — you can only move a staff member to a company
-        // you actually belong to.
-        tenantId: z.string().uuid().optional(),
+        // Primary tenant transfer. CUID, not UUID.
+        tenantId:  z.string().min(1).optional(),
+        // Full multi-tenant membership rewrite — when present, replaces the
+        // user's TenantMember rows with exactly these tenants. First entry
+        // is treated as the primary (also sets User.tenantId) unless
+        // tenantId is also explicitly supplied above.
+        tenantIds: z.array(z.string().min(1)).optional(),
       }).parse(req.body)
 
       // Cross-tenant guard: when the operator is single-tenant (not in
@@ -665,6 +741,20 @@ export async function authRoutes(fastify: FastifyInstance) {
           message: 'You can only transfer staff into a company you belong to.',
         }})
       }
+      if (body.tenantIds) {
+        for (const id of body.tenantIds) {
+          if (!scope.tenantIds.includes(id)) {
+            return reply.status(403).send({ error: {
+              code: 'CROSS_TENANT',
+              message: 'One or more selected companies aren\'t accessible to you.',
+            }})
+          }
+        }
+      }
+
+      // Resolve final primary tenantId — explicit tenantId wins; otherwise
+      // first entry of tenantIds; otherwise leave existing value alone.
+      const finalPrimary = body.tenantId ?? body.tenantIds?.[0]
 
       const data: Record<string, unknown> = {}
       if (body.name     != null) data.name      = body.name
@@ -674,18 +764,46 @@ export async function authRoutes(fastify: FastifyInstance) {
       if (body.isActive != null) data.isActive  = body.isActive
       if (body.jobTitle != null) data.jobTitle  = body.jobTitle || null
       if (body.pin      != null) data.pin       = body.pin ? await hashPin(body.pin) : null
-      if (body.tenantId != null) data.tenantId  = body.tenantId
+      if (finalPrimary)          data.tenantId  = finalPrimary
 
-      const user = await prisma.user.update({
-        where: { id: req.params.id },
-        data,
-        select: {
-          id: true, name: true, email: true, phone: true, role: true, jobTitle: true,
-          isActive: true, accountStatus: true, createdAt: true, pin: true, tenantId: true,
-          tenant: { select: { id: true, name: true, slug: true } },
-        },
+      const user = await prisma.$transaction(async (tx) => {
+        const updated = await tx.user.update({ where: { id: req.params.id }, data })
+        // Membership rewrite — only when the caller supplied tenantIds.
+        // Treat the request as the source of truth: drop old rows, recreate
+        // the union of (final primary + body.tenantIds).
+        if (body.tenantIds) {
+          const desired = dedupeStrings([
+            ...(finalPrimary ? [finalPrimary] : []),
+            ...body.tenantIds,
+          ])
+          await tx.tenantMember.deleteMany({ where: { userId: req.params.id } })
+          if (desired.length > 0) {
+            await tx.tenantMember.createMany({
+              data: desired.map((tid) => ({ userId: req.params.id, tenantId: tid, role: 'member' })),
+            })
+          }
+        }
+        return tx.user.findUnique({
+          where: { id: req.params.id },
+          select: {
+            id: true, name: true, email: true, phone: true, role: true, jobTitle: true,
+            isActive: true, accountStatus: true, createdAt: true, pin: true, tenantId: true,
+            tenant: { select: { id: true, name: true, slug: true } },
+            memberships: { select: { tenantId: true, tenant: { select: { id: true, name: true, slug: true } } } },
+          },
+        })
       })
-      return { ...user, hasPin: !!user.pin, pin: undefined }
+      if (!user) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'No such staff' } })
+      return {
+        ...user,
+        hasPin: !!user.pin,
+        pin: undefined,
+        tenants: dedupeTenants([
+          user.tenant ?? null,
+          ...user.memberships.map((m) => m.tenant),
+        ]),
+        memberships: undefined,
+      }
     },
   )
 

@@ -1,12 +1,19 @@
 'use client'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../lib/api'
 import { EmptyStateGuide } from '../../components/ui/EmptyStateGuide'
+import { TenantChip, TenantField, useMyTenants } from '../../components/ui/TenantPicker'
+import { useViewAllTenants } from '../../components/ui/TenantSwitcher'
 
 interface InventoryItem {
   id: string; name: string; unit: string; currentStock: number; parLevel: number
   unitCostCents: number | null; supplierId: string | null; notes: string | null
+  // Tenant scoping added 2026-05-13. Backfilled via supplier where one
+  // exists; legacy rows with no supplier come through with tenantId=null
+  // and wear the "⚠ No company" badge until the CEO assigns them.
+  tenantId?: string | null
+  tenant?: { id: string; name: string; slug: string } | null
 }
 
 interface WasteLog {
@@ -58,7 +65,16 @@ export default function InventoryPage() {
   const [tab, setTab] = useState<Tab>('stock')
   const [showAdd, setShowAdd] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
-  const [addForm, setAddForm] = useState({ name: '', unit: 'kg', parLevel: '', currentStock: '', notes: '' })
+  const [addForm, setAddForm] = useState({ name: '', unit: 'kg', parLevel: '', currentStock: '', notes: '', tenantId: '' })
+  const { data: tenants = [] } = useMyTenants()
+  const viewAll = useViewAllTenants()
+
+  // Default the picker to the operator's first tenant when single-tenant view.
+  useEffect(() => {
+    if (!viewAll && !addForm.tenantId && tenants[0]) {
+      setAddForm((f) => ({ ...f, tenantId: tenants[0]!.id }))
+    }
+  }, [tenants, viewAll, addForm.tenantId])
   const [adjustQty, setAdjustQty] = useState<Record<string, string>>({})
   const [wasteItemId, setWasteItemId] = useState<string | null>(null)
   const [wasteForm, setWasteForm] = useState({ quantity: '', unit: 'kg', reason: 'spoilage' as typeof WASTE_REASONS[number], notes: '' })
@@ -98,6 +114,7 @@ export default function InventoryPage() {
       parLevel: Number(addForm.parLevel),
       currentStock: addForm.currentStock ? Number(addForm.currentStock) : 0,
       notes: addForm.notes || undefined,
+      ...(addForm.tenantId ? { tenantId: addForm.tenantId } : {}),
     }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['inventory'] })
@@ -255,8 +272,19 @@ export default function InventoryPage() {
                     placeholder="Proteins, Veg, Dry goods…" className={fi} />
                 </F>
               </div>
+              {/* Tenant picker — hidden when the operator has one tenant
+                  (auto-defaults). In portfolio view it's required and
+                  prompts "— pick a company —". */}
+              <TenantField value={addForm.tenantId}
+                onChange={(id) => setAddForm({ ...addForm, tenantId: id })}
+                required={!addForm.tenantId} />
               <div className="flex gap-2">
-                <button onClick={() => addMutation.mutate()} disabled={!addForm.name || !addForm.parLevel || addMutation.isPending}
+                <button
+                  onClick={() => {
+                    if (tenants.length > 0 && !addForm.tenantId) return
+                    addMutation.mutate()
+                  }}
+                  disabled={!addForm.name || !addForm.parLevel || (tenants.length > 0 && !addForm.tenantId) || addMutation.isPending}
                   className="rounded-xl bg-kds-green text-black font-bold px-4 py-2 text-sm hover:opacity-90 disabled:opacity-50">
                   {addMutation.isPending ? 'Adding…' : 'Add item'}
                 </button>
@@ -374,12 +402,16 @@ export default function InventoryPage() {
                           <div key={item.id}
                             className={`border-b border-kds-border/50 last:border-0 transition-colors ${isLow ? 'bg-red-950/5' : ''}`}>
                             <div className="flex items-center justify-between px-4 py-3">
-                              <div className="flex items-center gap-3 min-w-0">
+                              <div className="flex items-center gap-3 min-w-0 flex-wrap">
                                 <button onClick={() => !bulkMode && setEditingId(isEditing ? null : item.id)}
                                   className={`text-sm font-semibold hover:text-kds-green transition-colors ${isLow ? 'text-kds-red' : 'text-kds-text'}`}>
                                   {item.name}
                                 </button>
                                 {isLow && <span className="text-xs font-bold text-kds-red bg-red-950/30 px-2 py-0.5 rounded-full">Low stock</span>}
+                                {/* Brand chip in portfolio view — every item
+                                    belongs to one company. Orphan rows always
+                                    show "⚠ No company". */}
+                                <TenantChip tenant={item.tenant} tenantId={item.tenantId} tenants={tenants} />
                               </div>
 
                               {bulkMode ? (

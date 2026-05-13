@@ -1,8 +1,34 @@
-import type { FastifyInstance } from 'fastify'
+import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, MANAGERS } from '../auth/middleware.js'
-import { AppError, NotFoundError } from '../../lib/errors.js'
+import { resolveTenantScope } from '../../lib/tenantScope.js'
+import { AppError, ForbiddenError, NotFoundError } from '../../lib/errors.js'
+
+// Tenant filter for inventory reads. NULL tenantId items still come through
+// so legacy / orphan rows stay visible — frontend tags them "⚠ No company".
+async function inventoryTenantWhere(req: FastifyRequest) {
+  const scope = await resolveTenantScope(req)
+  if (scope.tenantIds.length === 0) return {}
+  return {
+    OR: [
+      { tenantId: { in: scope.tenantIds } },
+      { tenantId: null },
+    ],
+  }
+}
+
+async function assertInventoryAccess(req: FastifyRequest, itemId: string) {
+  const scope = await resolveTenantScope(req)
+  const item = await prisma.inventoryItem.findUnique({
+    where: { id: itemId },
+    select: { tenantId: true },
+  })
+  if (!item) throw new NotFoundError('InventoryItem', itemId)
+  if (item.tenantId && scope.tenantIds.length > 0 && !scope.tenantIds.includes(item.tenantId)) {
+    throw new ForbiddenError('Inventory item belongs to a company you don\'t have access to.')
+  }
+}
 
 const wasteSchema = z.object({
   quantity: z.number().positive(),
@@ -20,6 +46,10 @@ const createItemSchema = z.object({
   currentStock: z.number().min(0).default(0),
   supplierId: z.string().uuid().nullable().optional(),
   notes: z.string().optional(),
+  // Tenant the item belongs to. Optional — falls back to the operator's
+  // active tenant. Mirrors the workforce/procurement pattern: in portfolio
+  // view the frontend renders a Company picker and posts the choice.
+  tenantId: z.string().min(1).optional(),
 })
 
 const updateStockSchema = z.object({
@@ -32,11 +62,17 @@ const adjustStockSchema = z.object({
 })
 
 export async function inventoryRoutes(fastify: FastifyInstance) {
-  // GET /inventory — list with low-stock alerts
-  fastify.get('/', { preHandler: requireAuth(...MANAGERS) }, async () => {
+  // GET /inventory — list with low-stock alerts. Scoped to the operator's
+  // visible tenants. Items with no tenant assigned (legacy orphan rows)
+  // come through tagged with a "⚠ No company" chip in the UI.
+  fastify.get('/', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
+    const tenantWhere = await inventoryTenantWhere(req)
     const items = await prisma.inventoryItem.findMany({
-      where: { deletedAt: null },
-      include: { supplier: { select: { name: true } } },
+      where: { deletedAt: null, ...tenantWhere },
+      include: {
+        supplier: { select: { name: true } },
+        tenant:   { select: { id: true, name: true, slug: true } },
+      },
       orderBy: { name: 'asc' },
     })
 
@@ -49,7 +85,16 @@ export async function inventoryRoutes(fastify: FastifyInstance) {
 
   fastify.post('/', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
     const body = createItemSchema.parse(req.body)
-    const item = await prisma.inventoryItem.create({ data: body })
+    const scope = await resolveTenantScope(req)
+    const tenantId = body.tenantId ?? req.staffUser!.tenantId
+    if (tenantId && scope.tenantIds.length > 0 && !scope.tenantIds.includes(tenantId)) {
+      throw new ForbiddenError('You can only create inventory inside a company you belong to.')
+    }
+    const { tenantId: _bodyTenantId, ...rest } = body
+    const item = await prisma.inventoryItem.create({
+      data: { ...rest, ...(tenantId ? { tenantId } : {}) },
+      include: { tenant: { select: { id: true, name: true, slug: true } } },
+    })
     return reply.status(201).send(item)
   })
 
@@ -58,6 +103,7 @@ export async function inventoryRoutes(fastify: FastifyInstance) {
     '/:id',
     { preHandler: requireAuth(...MANAGERS) },
     async (req) => {
+      await assertInventoryAccess(req, req.params.id)
       const { currentStock } = updateStockSchema.parse(req.body)
       const item = await prisma.inventoryItem.findFirst({ where: { id: req.params.id, deletedAt: null } })
       if (!item) throw new NotFoundError('InventoryItem', req.params.id)
@@ -70,6 +116,7 @@ export async function inventoryRoutes(fastify: FastifyInstance) {
     '/:id/adjust',
     { preHandler: requireAuth(...MANAGERS) },
     async (req) => {
+      await assertInventoryAccess(req, req.params.id)
       const { delta } = adjustStockSchema.parse(req.body)
       const item = await prisma.inventoryItem.findFirst({ where: { id: req.params.id, deletedAt: null } })
       if (!item) throw new NotFoundError('InventoryItem', req.params.id)
@@ -104,11 +151,15 @@ export async function inventoryRoutes(fastify: FastifyInstance) {
     },
   )
 
-  // GET /inventory/alerts — items at or below par level
-  fastify.get('/alerts', { preHandler: requireAuth(...MANAGERS) }, async () => {
+  // GET /inventory/alerts — items at or below par level (tenant-scoped)
+  fastify.get('/alerts', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
+    const tenantWhere = await inventoryTenantWhere(req)
     const all = await prisma.inventoryItem.findMany({
-      where: { deletedAt: null },
-      include: { supplier: { select: { name: true, phone: true } } },
+      where: { deletedAt: null, ...tenantWhere },
+      include: {
+        supplier: { select: { name: true, phone: true } },
+        tenant:   { select: { id: true, name: true, slug: true } },
+      },
       orderBy: { name: 'asc' },
     })
     return all.filter((item) => item.currentStock <= item.parLevel)

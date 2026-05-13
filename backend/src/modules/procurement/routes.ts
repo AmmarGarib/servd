@@ -134,7 +134,7 @@ export async function procurementRoutes(fastify: FastifyInstance) {
       // view the frontend renders a required dropdown so the CEO doesn't
       // have to bounce out of portfolio to add suppliers per company.
       // Falls back to req.staffUser.tenantId when omitted.
-      tenantId:            z.string().uuid().optional(),
+      tenantId:            z.string().min(1).optional(),
     }).parse(req.body)
 
     const scope = await resolveTenantScope(req)
@@ -173,7 +173,7 @@ export async function procurementRoutes(fastify: FastifyInstance) {
         assignedStaffId:     z.string().uuid().nullable().optional(),
         // Explicit company transfer — validated against the operator's
         // tenant memberships, mirrors the workforce hub pattern.
-        tenantId:            z.string().uuid().nullable().optional(),
+        tenantId:            z.string().min(1).nullable().optional(),
         paymentTermsDays:    z.number().int().min(0).max(365).optional(),
         leadTimeDays:        z.number().int().min(0).max(365).optional(),
         openingBalanceCents: z.number().int().nonnegative().optional(),

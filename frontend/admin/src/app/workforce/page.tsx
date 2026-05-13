@@ -38,6 +38,9 @@ interface StaffUser {
   // the indigo brand chip on each row so the CEO can tell which company a
   // staff member belongs to at a glance.
   tenant?: TenantLite | null
+  // Every tenant this user has access to (primary + TenantMember rows).
+  // Head-office staff like procurement/finance often span multiple companies.
+  tenants?: TenantLite[]
 }
 
 // Category → which AppRole values fall under it. A single user has one role
@@ -414,22 +417,21 @@ function StaffRow({
                 No PIN
               </span>
             )}
-            {/* Indigo brand chip in portfolio view — shows which company
-                each row belongs to. In single-tenant view we hide it because
-                every row is the same company. */}
-            {showTenantChip && tenant && (
-              <span className="shrink-0 text-[9px] uppercase tracking-wider font-bold rounded px-1.5 py-0.5"
+            {/* Brand chips — one per tenant the staff member is a member of.
+                Primary tenant first, additional memberships after. Hidden in
+                single-tenant view (every row would carry the same chips). */}
+            {showTenantChip && (user.tenants ?? (tenant ? [tenant] : [])).map((t) => (
+              <span key={t.id} className="shrink-0 text-[9px] uppercase tracking-wider font-bold rounded px-1.5 py-0.5"
                 style={{ background: 'rgba(99,102,241,0.15)', color: '#A5B4FC' }}>
-                {tenant.name}
+                {t.name}
               </span>
-            )}
+            ))}
             {/* Orphan warning — always shown, regardless of view mode. A row
-                with no company is a data bug; surface it everywhere so the
-                CEO can fix it via the inline editor's Company dropdown. */}
+                with no company is a data bug; surface it everywhere. */}
             {!user.tenantId && (
               <span className="shrink-0 text-[9px] uppercase tracking-wider font-bold rounded px-1.5 py-0.5"
                 style={{ background: 'rgba(255,77,79,0.10)', color: '#FF4D4F' }}
-                title="This staff row has no company assigned. Tap to transfer.">
+                title="This staff row has no company assigned. Tap to fix.">
                 ⚠ No company
               </span>
             )}
@@ -482,9 +484,19 @@ function InlineEditor({
   const [jobTitle, setJobTitle] = useState(user.jobTitle ?? '')
   const [category, setCategory] = useState<string>(categoryOf(user.role)?.key ?? 'management')
   const [role, setRole]         = useState<AppRole>(user.role)
+  // Primary company (anchor — drives User.tenantId).
   const [tenantId, setTenantId] = useState<string>(user.tenantId ?? '')
+  // Every company this user works for. Backend treats this as the source of
+  // truth for TenantMember rows. Primary is auto-included on save.
+  const [tenantIds, setTenantIds] = useState<string[]>(
+    (user.tenants ?? []).map((t) => t.id)
+  )
   const [pin, setPin]           = useState('')
   const [err, setErr]           = useState<string | null>(null)
+
+  function toggleTenant(id: string) {
+    setTenantIds((cur) => cur.includes(id) ? cur.filter((t) => t !== id) : [...cur, id])
+  }
 
   // Keep role consistent with category: if the category changes and the
   // current role doesn't fit the new category, fall back to its primary.
@@ -507,6 +519,10 @@ function InlineEditor({
       if (jobTitle.trim() !== (user.jobTitle ?? '')) patch.jobTitle = jobTitle.trim()
       if (role !== user.role) patch.role = role
       if (tenantId && tenantId !== (user.tenantId ?? '')) patch.tenantId = tenantId
+      // Compare arrays loosely — order doesn't matter for membership rewrite.
+      const existingIds = (user.tenants ?? []).map((t) => t.id).sort().join(',')
+      const nextIds = [...tenantIds].sort().join(',')
+      if (existingIds !== nextIds) patch.tenantIds = tenantIds
       if (pin.trim()) patch.pin = pin.trim()
       return api.patch(`/auth/users/${user.id}`, patch)
     },
@@ -568,15 +584,49 @@ function InlineEditor({
           </select>
         </Field>
         {tenants.length > 0 && (
-          <Field label="Company"
-            hint={!user.tenantId ? 'Orphan row — pick a company to fix.' : 'Transfer between companies if needed.'}>
-            <select value={tenantId} onChange={(e) => setTenantId(e.target.value)} className={inputCls}>
-              {!user.tenantId && <option value="">— pick a company —</option>}
-              {tenants.map((t) => (
-                <option key={t.id} value={t.id}>{t.name}</option>
-              ))}
-            </select>
-          </Field>
+          <div className="md:col-span-2">
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-kds-subtext">
+                Companies {!user.tenantId && <span className="text-red-400">— orphan, pick at least one</span>}
+              </span>
+              <span className="text-[10px] text-kds-subtext/70">
+                Tick every company this person works for. The first one is their primary.
+              </span>
+            </div>
+            <div className="flex flex-wrap gap-2 rounded-lg border border-kds-border bg-kds-bg p-2">
+              {tenants.map((t) => {
+                const checked = tenantIds.includes(t.id)
+                const isPrimary = tenantId === t.id
+                return (
+                  <button
+                    key={t.id}
+                    type="button"
+                    onClick={() => toggleTenant(t.id)}
+                    className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-bold transition-all ${
+                      checked
+                        ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/40'
+                        : 'bg-kds-card text-kds-subtext border border-kds-border hover:border-indigo-400/30'
+                    }`}>
+                    <span>{checked ? '✓' : '+'}</span>
+                    <span>{t.name}</span>
+                    {isPrimary && <span className="text-[9px] uppercase tracking-wider opacity-70">primary</span>}
+                  </button>
+                )
+              })}
+            </div>
+            {tenantIds.length > 1 && (
+              <div className="mt-2 flex items-center gap-2 text-[11px] text-kds-subtext">
+                <span>Primary company:</span>
+                <select value={tenantId} onChange={(e) => setTenantId(e.target.value)}
+                  className="rounded-md border border-kds-border bg-kds-bg px-2 py-1 text-xs focus:border-kds-green focus:outline-none">
+                  {tenantIds.map((id) => {
+                    const t = tenants.find((tt) => tt.id === id)
+                    return t ? <option key={id} value={id}>{t.name}</option> : null
+                  })}
+                </select>
+              </div>
+            )}
+          </div>
         )}
         <Field label="PIN" hint={user.hasPin ? 'Type a new PIN to replace.' : 'Set a 4-digit PIN to enable login.'}>
           <div className="flex gap-2">
@@ -591,6 +641,18 @@ function InlineEditor({
             )}
           </div>
         </Field>
+      </div>
+
+      {/* Roles & permissions are config-level (they apply to *every* user
+          with this role) — link out instead of duplicating the matrix here. */}
+      <div className="flex items-center justify-between text-[11px] text-kds-subtext rounded-md border border-kds-border bg-kds-bg/60 px-3 py-2">
+        <span>
+          What this role can do is in <span className="text-kds-text font-semibold">Roles &amp; Permissions</span>.
+          Edits there apply to every {roleLabel(role)}.
+        </span>
+        <Link href="/configuration/roles" className="text-kds-green font-bold hover:opacity-80 whitespace-nowrap">
+          Open matrix →
+        </Link>
       </div>
 
       {err && <p className="text-xs font-bold text-red-400">{err}</p>}
@@ -654,13 +716,21 @@ function AddStaffModal({
   const [name, setName]         = useState('')
   const [category, setCategory] = useState<string>('management')
   const [jobTitle, setJobTitle] = useState('')
-  // Tenant picker — required in portfolio view, defaults to the operator's
-  // first tenant when single-tenant view (modal still shows the field so the
-  // CEO always knows which company they're hiring for, but it's pre-selected).
-  const [tenantId, setTenantId] = useState<string>(
-    viewAll ? '' : (tenants[0]?.id ?? '')
+  // Multi-tenant from the get-go: head-office hires (procurement, finance,
+  // HR, marketing) typically work across every company. Default to the
+  // operator's currently active tenant when single-tenant; empty in
+  // portfolio view so the operator picks intentionally.
+  const [tenantIds, setTenantIds] = useState<string[]>(
+    viewAll ? [] : (tenants[0] ? [tenants[0].id] : [])
   )
-  const [err, setErr]           = useState<string | null>(null)
+  const [err, setErr] = useState<string | null>(null)
+
+  function toggleTenant(id: string) {
+    setTenantIds((cur) => cur.includes(id) ? cur.filter((t) => t !== id) : [...cur, id])
+  }
+
+  // Primary tenant is the first entry of tenantIds (drives User.tenantId).
+  const primaryTenantId = tenantIds[0] ?? ''
 
   // Category drives the primary role enum value — first entry in roles[].
   const primaryRole = useMemo(() => {
@@ -673,7 +743,8 @@ function AddStaffModal({
       ...(name.trim() ? { name: name.trim() } : {}),
       role: primaryRole,
       ...(jobTitle.trim() ? { jobTitle: jobTitle.trim() } : {}),
-      ...(tenantId ? { tenantId } : {}),
+      ...(primaryTenantId ? { tenantId: primaryTenantId } : {}),
+      ...(tenantIds.length > 0 ? { tenantIds } : {}),
     }),
     onSuccess: (created) => onCreated(created ?? null),
     onError:   (e: unknown) => setErr(e instanceof Error ? e.message : 'Failed to create staff'),
@@ -682,7 +753,7 @@ function AddStaffModal({
   function submit() {
     setErr(null)
     if (!jobTitle.trim()) return setErr('Type a role / job title so you remember who this is.')
-    if (tenants.length > 0 && !tenantId) return setErr('Pick which company this hire is for.')
+    if (tenants.length > 0 && tenantIds.length === 0) return setErr('Pick at least one company this hire works for.')
     create.mutate()
   }
 
@@ -692,27 +763,46 @@ function AddStaffModal({
         onClick={(e) => e.stopPropagation()}>
         <h2 className="font-black text-lg mb-1">Add staff</h2>
         <p className="text-xs text-kds-subtext mb-4">
-          Pick a company and category, type their role. You can fill in name, email, phone, and PIN
-          straight on the row right after.
+          Pick the companies they work for, their category, and a role title. Fill in name,
+          email, phone, and PIN on the row right after — no second click needed.
         </p>
 
         <div className="space-y-2.5">
-          {/* Company picker — first, because in portfolio mode the operator
-              needs to anchor the new staff row before anything else makes
-              sense. Hidden only when the operator belongs to exactly one
-              tenant (single-tenant SaaS install). */}
+          {/* Multi-tenant picker. Head-office staff (procurement, finance,
+              HR, marketing) typically work for every company — pick more than
+              one and the first becomes their primary. */}
           {tenants.length > 1 && (
-            <Field label="Company"
-              hint={viewAll
-                ? 'Required — you\'re in portfolio view.'
-                : 'Defaults to your active company; switch if you\'re hiring elsewhere.'}>
-              <select value={tenantId} onChange={(e) => setTenantId(e.target.value)} className={inputCls}>
-                {viewAll && <option value="">— pick a company —</option>}
-                {tenants.map((t) => (
-                  <option key={t.id} value={t.id}>{t.name}</option>
-                ))}
-              </select>
-            </Field>
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-kds-subtext">
+                  Companies <span className="text-red-400">*</span>
+                </span>
+                <span className="text-[10px] text-kds-subtext/70">
+                  Tick all that apply. First = primary.
+                </span>
+              </div>
+              <div className="flex flex-wrap gap-2 rounded-lg border border-kds-border bg-kds-bg p-2">
+                {tenants.map((t) => {
+                  const checked = tenantIds.includes(t.id)
+                  const isPrimary = primaryTenantId === t.id
+                  return (
+                    <button
+                      key={t.id}
+                      type="button"
+                      onClick={() => toggleTenant(t.id)}
+                      className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-bold transition-all ${
+                        checked
+                          ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/40'
+                          : 'bg-kds-card text-kds-subtext border border-kds-border hover:border-indigo-400/30'
+                      }`}>
+                      <span>{checked ? '✓' : '+'}</span>
+                      <span>{t.name}</span>
+                      {isPrimary && <span className="text-[9px] uppercase tracking-wider opacity-70">primary</span>}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
           )}
           <Field label="Category">
             <select value={category} onChange={(e) => setCategory(e.target.value)} className={inputCls}>
@@ -732,7 +822,14 @@ function AddStaffModal({
           </Field>
         </div>
 
-        {err && <p className="mt-3 text-xs font-bold text-red-400">{err}</p>}
+        <p className="mt-3 text-[11px] text-kds-subtext">
+          What each role can <em>do</em> is configured in{' '}
+          <Link href="/configuration/roles" className="text-kds-green font-bold hover:opacity-80">
+            Roles &amp; Permissions →
+          </Link>
+        </p>
+
+        {err && <p className="mt-2 text-xs font-bold text-red-400">{err}</p>}
 
         <div className="mt-5 flex justify-end gap-2">
           <button onClick={onClose}
