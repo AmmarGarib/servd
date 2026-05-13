@@ -46,6 +46,48 @@ const PERMISSION_CATEGORY_ORDER: PermissionMeta['category'][] = [
   'live', 'service', 'kitchen', 'menu', 'finance', 'crm', 'platform',
 ]
 
+// Hand-tuned labels for resource ids that don't title-case cleanly. Anything
+// missing falls back to a generic Capitalize(resource). Keep this small —
+// most catalogue keys are already nicely named ("orders", "menu", "tables").
+const RESOURCE_LABELS: Record<string, string> = {
+  pos:           'POS',
+  kds:           'KDS',
+  crm:           'CRM',
+  ap:            'Accounts payable',
+  ar:            'Accounts receivable',
+  storefront:    'Storefront',
+  procurement:   'Procurement',
+  reservations:  'Reservations',
+  inventory:     'Inventory',
+  reports:       'Reports',
+  accounting:    'Accounting',
+  riders:        'Riders / dispatch',
+  tables:        'Floor plan',
+  chain:         'Chain rollup',
+  recipes:       'Recipes',
+  dashboard:     'Dashboard',
+  orders:        'Orders',
+  menu:          'Menu',
+  campaigns:     'Campaigns',
+  customers:     'Customers',
+  discounts:     'Discounts',
+  payroll:       'Payroll',
+  settings:      'Settings',
+  permissions:   'Permissions',
+}
+function resourceLabel(resource: string): string {
+  return RESOURCE_LABELS[resource] ?? (resource.charAt(0).toUpperCase() + resource.slice(1))
+}
+
+// Pull the action half of a `resource:action` key and humanise it.
+// e.g. "orders:refund" → "Refund", "pos:open_shift" → "Open shift".
+function actionLabel(permKey: string): string {
+  const idx = permKey.indexOf(':')
+  if (idx < 0) return permKey
+  const action = permKey.slice(idx + 1).replace(/_/g, ' ')
+  return action.charAt(0).toUpperCase() + action.slice(1)
+}
+
 interface StaffUser {
   id: string
   name: string
@@ -583,11 +625,40 @@ function InlineEditor({
     return false
   }, [permsDraft, permsMatrix])
 
-  // Group catalogue permissions by category for the rendered list.
-  const permsByCategory = useMemo(() => {
-    const out: Record<string, PermissionMeta[]> = {}
-    for (const p of permsCatalogue) (out[p.category] ??= []).push(p)
-    return out
+  // Group catalogue permissions by category, then by resource within each
+  // category. Permission keys follow a `resource:action` convention
+  // (`orders:view`, `orders:refund`, `menu:edit`, …) so splitting on the
+  // colon gives us a natural "Orders → [View, Refund, Cancel]" structure
+  // — a per-action chip row per resource, which is what the operator
+  // actually thinks in.
+  interface ResourceGroup {
+    resource: string         // e.g. 'orders'
+    label: string            // operator-readable resource name
+    actions: PermissionMeta[] // each action on this resource
+  }
+  const groupedByCategory = useMemo(() => {
+    const cats: Record<string, ResourceGroup[]> = {}
+    const byCatThenRes = new Map<string, Map<string, PermissionMeta[]>>()
+    for (const p of permsCatalogue) {
+      const cat = byCatThenRes.get(p.category) ?? new Map<string, PermissionMeta[]>()
+      const [resource] = p.key.split(':')
+      const r = resource ?? p.key
+      const arr = cat.get(r) ?? []
+      arr.push(p)
+      cat.set(r, arr)
+      byCatThenRes.set(p.category, cat)
+    }
+    for (const [cat, resMap] of byCatThenRes) {
+      cats[cat] = Array.from(resMap.entries()).map(([resource, actions]) => ({
+        resource,
+        // Title-case the resource id ("orders" → "Orders") unless the only
+        // action's label happens to start with the resource (e.g. "Operate
+        // POS"), in which case fall back to a tidy name.
+        label: resourceLabel(resource),
+        actions: actions.sort((a, b) => a.key.localeCompare(b.key)),
+      }))
+    }
+    return cats
   }, [permsCatalogue])
 
   const derivedPin = phone.replace(/\D/g, '').slice(-4)
@@ -768,32 +839,51 @@ function InlineEditor({
           )}
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-x-3 gap-y-1.5">
+        <div className="space-y-3">
           {PERMISSION_CATEGORY_ORDER.map((catKey) => {
-            const list = permsByCategory[catKey]
-            if (!list || list.length === 0) return null
+            const resources = groupedByCategory[catKey]
+            if (!resources || resources.length === 0) return null
             const catMeta = PERMISSION_CATEGORY_META[catKey]
             return (
-              <div key={catKey} className="rounded-md border border-kds-border/60 bg-kds-card/40 p-2">
-                <p className="text-[10px] font-bold uppercase tracking-wider text-kds-subtext mb-1.5">
+              <div key={catKey} className="rounded-md border border-kds-border/60 bg-kds-card/40 p-2.5">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-kds-subtext mb-2">
                   {catMeta.emoji} {catMeta.label}
                 </p>
-                <div className="space-y-1">
-                  {list.map((perm) => {
-                    const enabled = rolePerms[perm.key] ?? false
-                    return (
-                      <label key={perm.key}
-                        className="flex items-start gap-2 cursor-pointer rounded px-1.5 py-1 hover:bg-kds-bg/70 transition-colors">
-                        <input type="checkbox" checked={enabled}
-                          onChange={() => togglePerm(perm.key)}
-                          className="mt-0.5 h-3.5 w-3.5 shrink-0 cursor-pointer accent-kds-green" />
-                        <div className="min-w-0 flex-1">
-                          <p className="text-[12px] font-semibold text-kds-text leading-tight">{perm.label}</p>
-                          {perm.desc && <p className="text-[10px] text-kds-subtext leading-tight mt-0.5">{perm.desc}</p>}
-                        </div>
-                      </label>
-                    )
-                  })}
+                <div className="space-y-1.5">
+                  {resources.map((res) => (
+                    <div key={res.resource}
+                      className="grid grid-cols-[140px_1fr] items-center gap-3 px-1.5 py-1 rounded hover:bg-kds-bg/40">
+                      <p className="text-[12px] font-semibold text-kds-text leading-tight truncate"
+                        title={res.actions.map((a) => a.desc).filter(Boolean).join(' · ')}>
+                        {res.label}
+                      </p>
+                      {/* One chip per action on this resource. Operator clicks
+                          to toggle. Green = allowed, neutral = denied. */}
+                      <div className="flex flex-wrap gap-1.5">
+                        {res.actions.map((perm) => {
+                          const enabled = rolePerms[perm.key] ?? false
+                          return (
+                            <button key={perm.key}
+                              type="button"
+                              onClick={() => togglePerm(perm.key)}
+                              title={perm.desc}
+                              className="text-[11px] font-bold rounded-full px-2.5 py-0.5 border transition-all"
+                              style={enabled ? {
+                                background: 'rgba(0,212,177,0.15)',
+                                color: '#00D4B1',
+                                borderColor: 'rgba(0,212,177,0.45)',
+                              } : {
+                                background: 'rgba(255,255,255,0.02)',
+                                color: 'rgba(255,255,255,0.4)',
+                                borderColor: 'rgba(255,255,255,0.08)',
+                              }}>
+                              {enabled ? '✓' : '+'} {actionLabel(perm.key)}
+                            </button>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </div>
             )
