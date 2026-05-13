@@ -575,8 +575,9 @@ export async function authRoutes(fastify: FastifyInstance) {
         // Additional tenant memberships — surfaced as chips next to the
         // primary so the operator can see when a staff member works across
         // companies (the "head office team" pattern — procurement, finance,
-        // HR people typically span both restaurants).
-        memberships: {
+        // HR people typically span both restaurants). The relation field is
+        // `tenantMemberships` on the User model.
+        tenantMemberships: {
           select: {
             tenantId: true,
             role: true,
@@ -595,9 +596,9 @@ export async function authRoutes(fastify: FastifyInstance) {
       // the multi-tenant chip group + populate the multi-select on edit.
       tenants: dedupeTenants([
         ...(u.tenantId && (u as { tenant?: TenantLite | null }).tenant ? [(u as { tenant: TenantLite }).tenant] : []),
-        ...u.memberships.map((m) => m.tenant),
+        ...u.tenantMemberships.map((m) => m.tenant),
       ]),
-      memberships: undefined,
+      tenantMemberships: undefined,
     }))
   })
 
@@ -669,7 +670,7 @@ export async function authRoutes(fastify: FastifyInstance) {
         // Nested writes use `tenant: { connect }` not raw `tenantId` — Prisma
         // disallows the FK column inside a nested-create when the relation is
         // already implicit from the parent.
-        memberships: {
+        tenantMemberships: {
           create: dedupeStrings([
             ...(tenantId ? [tenantId] : []),
             ...extraIds,
@@ -683,7 +684,7 @@ export async function authRoutes(fastify: FastifyInstance) {
         id: true, name: true, email: true, phone: true, role: true, jobTitle: true,
         isActive: true, accountStatus: true, createdAt: true, pin: true, tenantId: true,
         tenant: { select: { id: true, name: true, slug: true } },
-        memberships: { select: { tenantId: true, tenant: { select: { id: true, name: true, slug: true } } } },
+        tenantMemberships: { select: { tenantId: true, tenant: { select: { id: true, name: true, slug: true } } } },
       },
     })
     return reply.status(201).send({
@@ -692,9 +693,9 @@ export async function authRoutes(fastify: FastifyInstance) {
       pin: undefined,
       tenants: dedupeTenants([
         user.tenant ?? null,
-        ...user.memberships.map((m) => m.tenant),
+        ...user.tenantMemberships.map((m) => m.tenant),
       ]),
-      memberships: undefined,
+      tenantMemberships: undefined,
     })
   })
 
@@ -796,7 +797,7 @@ export async function authRoutes(fastify: FastifyInstance) {
             id: true, name: true, email: true, phone: true, role: true, jobTitle: true,
             isActive: true, accountStatus: true, createdAt: true, pin: true, tenantId: true,
             tenant: { select: { id: true, name: true, slug: true } },
-            memberships: { select: { tenantId: true, tenant: { select: { id: true, name: true, slug: true } } } },
+            tenantMemberships: { select: { tenantId: true, tenant: { select: { id: true, name: true, slug: true } } } },
           },
         })
       })
@@ -807,9 +808,9 @@ export async function authRoutes(fastify: FastifyInstance) {
         pin: undefined,
         tenants: dedupeTenants([
           user.tenant ?? null,
-          ...user.memberships.map((m) => m.tenant),
+          ...user.tenantMemberships.map((m) => m.tenant),
         ]),
-        memberships: undefined,
+        tenantMemberships: undefined,
       }
     },
   )
