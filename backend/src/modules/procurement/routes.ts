@@ -1,8 +1,39 @@
-import type { FastifyInstance } from 'fastify'
+import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, MANAGERS, ADMIN_ONLY, ALL_STAFF } from '../auth/middleware.js'
-import { NotFoundError } from '../../lib/errors.js'
+import { resolveTenantScope } from '../../lib/tenantScope.js'
+import { NotFoundError, ForbiddenError } from '../../lib/errors.js'
+
+// Tenant-aware supplier filter. Returns a Prisma where-clause fragment that
+// covers (a) suppliers belonging to one of the operator's tenants AND
+// (b) legacy/orphan suppliers with no tenantId — those still show up so a
+// CEO can transfer them, flagged by a "⚠ No company" badge in the UI.
+async function supplierTenantFilter(req: FastifyRequest) {
+  const scope = await resolveTenantScope(req)
+  if (scope.tenantIds.length === 0) return {}
+  return {
+    OR: [
+      { tenantId: { in: scope.tenantIds } },
+      { tenantId: null },
+    ],
+  }
+}
+
+// Guard for writes against a specific supplier — throws ForbiddenError if the
+// supplier belongs to a tenant the operator can't access. Orphan suppliers
+// (tenantId null) are editable so they can be claimed.
+async function assertSupplierAccess(req: FastifyRequest, supplierId: string) {
+  const scope = await resolveTenantScope(req)
+  const sup = await prisma.supplier.findUnique({
+    where: { id: supplierId },
+    select: { tenantId: true },
+  })
+  if (!sup) throw new NotFoundError('Supplier', supplierId)
+  if (sup.tenantId && scope.tenantIds.length > 0 && !scope.tenantIds.includes(sup.tenantId)) {
+    throw new ForbiddenError('Supplier belongs to a company you don\'t have access to.')
+  }
+}
 import {
   createPo, submitPo, approvePo, rejectPo, cancelPo, sendPoToSupplier, receivePo,
   createBill, voidBill, matchBill,
@@ -69,14 +100,18 @@ export async function procurementRoutes(fastify: FastifyInstance) {
 
   fastify.get('/suppliers', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
     const user = req.staffUser!
-    const isManager = ['admin', 'manager'].includes(user.role)
-    const where = isManager
-      ? { deletedAt: null }
-      : { deletedAt: null, assignedStaffId: user.id }
+    const isManager = ['admin', 'manager', 'management', 'foh_management', 'boh_management', 'procurement'].includes(user.role)
+    const tenantWhere = await supplierTenantFilter(req)
+    const scopeWhere = isManager
+      ? { deletedAt: null, ...tenantWhere }
+      : { deletedAt: null, assignedStaffId: user.id, ...tenantWhere }
     return prisma.supplier.findMany({
-      where,
+      where: scopeWhere,
       include: {
         assignedStaff: { select: { id: true, name: true } },
+        // Tenant relation in portfolio mode so the Monitor UI can render
+        // the indigo brand chip on each supplier card.
+        tenant: { select: { id: true, name: true, slug: true } },
         _count: { select: { purchaseOrders: true, inventoryItems: true, bills: true, payments: true, conversations: true } },
       },
       orderBy: [{ category: 'asc' }, { name: 'asc' }],
@@ -96,7 +131,13 @@ export async function procurementRoutes(fastify: FastifyInstance) {
       leadTimeDays:        z.number().int().min(0).max(365).optional(),
       openingBalanceCents: z.number().int().nonnegative().optional(),
     }).parse(req.body)
-    const supplier = await prisma.supplier.create({ data: body })
+    // Anchor every new supplier to the operator's currently-active tenant.
+    // Portfolio writes are gated client-side; by the time we get here,
+    // tenantId is the single company the CEO picked.
+    const tenantId = req.staffUser!.tenantId
+    const supplier = await prisma.supplier.create({
+      data: { ...body, ...(tenantId ? { tenantId } : {}) },
+    })
     return reply.status(201).send(supplier)
   })
 
@@ -104,6 +145,7 @@ export async function procurementRoutes(fastify: FastifyInstance) {
     '/suppliers/:id',
     { preHandler: requireAuth(...MANAGERS) },
     async (req) => {
+      await assertSupplierAccess(req, req.params.id)
       const body = z.object({
         name:                z.string().min(1).optional(),
         phone:               z.string().optional(),
@@ -114,14 +156,26 @@ export async function procurementRoutes(fastify: FastifyInstance) {
         notes:               z.string().optional(),
         category:            z.string().max(50).optional(),
         assignedStaffId:     z.string().uuid().nullable().optional(),
+        // Explicit company transfer — validated against the operator's
+        // tenant memberships, mirrors the workforce hub pattern.
+        tenantId:            z.string().uuid().nullable().optional(),
         paymentTermsDays:    z.number().int().min(0).max(365).optional(),
         leadTimeDays:        z.number().int().min(0).max(365).optional(),
         openingBalanceCents: z.number().int().nonnegative().optional(),
       }).parse(req.body)
+      if (body.tenantId) {
+        const scope = await resolveTenantScope(req)
+        if (!scope.tenantIds.includes(body.tenantId)) {
+          throw new ForbiddenError('You can only transfer a supplier into a company you belong to.')
+        }
+      }
       return prisma.supplier.update({
         where: { id: req.params.id },
         data:  body,
-        include: { assignedStaff: { select: { id: true, name: true } } },
+        include: {
+          assignedStaff: { select: { id: true, name: true } },
+          tenant:        { select: { id: true, name: true, slug: true } },
+        },
       })
     },
   )
@@ -130,6 +184,7 @@ export async function procurementRoutes(fastify: FastifyInstance) {
     '/suppliers/:id/statement',
     { preHandler: requireAuth(...MANAGERS) },
     async (req) => {
+      await assertSupplierAccess(req, req.params.id)
       const supplier = await prisma.supplier.findUnique({ where: { id: req.params.id } })
       if (!supplier) throw new NotFoundError('Supplier', req.params.id)
       const [bills, payments] = await Promise.all([
@@ -154,13 +209,18 @@ export async function procurementRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuth(...MANAGERS) },
     async (req) => {
       const limit = Math.min(parseInt(req.query.limit ?? '50', 10), 200)
+      // Scope by supplier.tenantId — that's the single tenant anchor for
+      // every procurement entity. PO returns include the supplier so the
+      // result already carries the tenant context downstream consumers need.
+      const tenantWhere = await supplierTenantFilter(req)
       return prisma.purchaseOrder.findMany({
         where: {
+          supplier: tenantWhere,
           ...(req.query.supplierId && { supplierId: req.query.supplierId }),
           ...(req.query.status     && { status: req.query.status }),
         },
         include: {
-          supplier: { select: { name: true, email: true } },
+          supplier: { select: { name: true, email: true, tenantId: true, tenant: { select: { id: true, name: true, slug: true } } } },
           lines:    { include: { inventoryItem: { select: { name: true, unit: true } } } },
         },
         orderBy: { createdAt: 'desc' },
@@ -176,39 +236,51 @@ export async function procurementRoutes(fastify: FastifyInstance) {
       const po = await prisma.purchaseOrder.findUnique({
         where: { id: req.params.id },
         include: {
-          supplier:    true,
+          supplier:    { include: { tenant: { select: { id: true, name: true, slug: true } } } },
           lines:       { include: { inventoryItem: true, discrepancies: true } },
           activityLog: { include: { user: { select: { name: true } } }, orderBy: { createdAt: 'desc' } },
           bills:       true,
         },
       })
       if (!po) throw new NotFoundError('PurchaseOrder', req.params.id)
+      await assertSupplierAccess(req, po.supplierId)
       return po
     },
   )
 
   fastify.post('/purchase-orders', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
     const body = poCreateSchema.parse(req.body)
+    // Don't let the operator post a PO against a supplier they can't see.
+    await assertSupplierAccess(req, body.supplierId)
     const po = await createPo({ ...body, createdBy: req.staffUser!.id })
     return reply.status(201).send(po)
   })
 
+  // Helper used by every PO lifecycle endpoint: resolve the PO's supplier
+  // first, then reuse `assertSupplierAccess` so tenant scoping is identical.
+  async function guardPo(req: FastifyRequest, poId: string) {
+    const po = await prisma.purchaseOrder.findUnique({ where: { id: poId }, select: { supplierId: true } })
+    if (!po) throw new NotFoundError('PurchaseOrder', poId)
+    await assertSupplierAccess(req, po.supplierId)
+  }
+
   fastify.post<{ Params: { id: string } }>(
     '/purchase-orders/:id/submit',
     { preHandler: requireAuth(...MANAGERS) },
-    async (req) => submitPo(req.params.id, req.staffUser!.id),
+    async (req) => { await guardPo(req, req.params.id); return submitPo(req.params.id, req.staffUser!.id) },
   )
 
   fastify.post<{ Params: { id: string } }>(
     '/purchase-orders/:id/approve',
     { preHandler: requireAuth(...ADMIN_ONLY) },
-    async (req) => approvePo(req.params.id, req.staffUser!.id),
+    async (req) => { await guardPo(req, req.params.id); return approvePo(req.params.id, req.staffUser!.id) },
   )
 
   fastify.post<{ Params: { id: string }; Body: { reason: string } }>(
     '/purchase-orders/:id/reject',
     { preHandler: requireAuth(...ADMIN_ONLY) },
     async (req) => {
+      await guardPo(req, req.params.id)
       const { reason } = z.object({ reason: z.string().min(1) }).parse(req.body)
       return rejectPo(req.params.id, req.staffUser!.id, reason)
     },
@@ -218,6 +290,7 @@ export async function procurementRoutes(fastify: FastifyInstance) {
     '/purchase-orders/:id/cancel',
     { preHandler: requireAuth(...MANAGERS) },
     async (req) => {
+      await guardPo(req, req.params.id)
       const { reason } = z.object({ reason: z.string().min(1) }).parse(req.body)
       return cancelPo(req.params.id, req.staffUser!.id, reason)
     },
@@ -226,13 +299,14 @@ export async function procurementRoutes(fastify: FastifyInstance) {
   fastify.post<{ Params: { id: string } }>(
     '/purchase-orders/:id/send',
     { preHandler: requireAuth(...MANAGERS) },
-    async (req) => sendPoToSupplier(req.params.id, req.staffUser!.id),
+    async (req) => { await guardPo(req, req.params.id); return sendPoToSupplier(req.params.id, req.staffUser!.id) },
   )
 
   fastify.post<{ Params: { id: string } }>(
     '/purchase-orders/:id/receive',
     { preHandler: requireAuth(...MANAGERS) },
     async (req) => {
+      await guardPo(req, req.params.id)
       const body = z.object({
         lines: z.array(z.object({
           poLineId:           z.string().uuid(),
@@ -249,10 +323,14 @@ export async function procurementRoutes(fastify: FastifyInstance) {
 
   // GET /procurement/ap-aging — accounts payable aging buckets
   // (current / 1-30 / 31-60 / 61-90 / 90+ days past due) by supplier.
-  fastify.get('/ap-aging', { preHandler: requireAuth(...MANAGERS) }, async () => {
+  fastify.get('/ap-aging', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
     const now = new Date()
+    const tenantWhere = await supplierTenantFilter(req)
     const open = await prisma.supplierBill.findMany({
-      where: { status: { in: ['open', 'partially_paid'] } },
+      where: {
+        status: { in: ['open', 'partially_paid'] },
+        supplier: tenantWhere,
+      },
       select: {
         id: true, billNumber: true, supplierId: true, dueDate: true,
         totalCents: true, paidCents: true,
@@ -301,8 +379,10 @@ export async function procurementRoutes(fastify: FastifyInstance) {
     '/bills',
     { preHandler: requireAuth(...MANAGERS) },
     async (req) => {
+      const tenantWhere = await supplierTenantFilter(req)
       return prisma.supplierBill.findMany({
         where: {
+          supplier: tenantWhere,
           ...(req.query.supplierId && { supplierId: req.query.supplierId }),
           ...(req.query.status     && { status: req.query.status }),
           ...(req.query.overdue === 'true' && {
@@ -331,12 +411,14 @@ export async function procurementRoutes(fastify: FastifyInstance) {
         },
       })
       if (!bill) throw new NotFoundError('SupplierBill', req.params.id)
+      await assertSupplierAccess(req, bill.supplierId)
       return bill
     },
   )
 
   fastify.post('/bills', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
     const body = billCreateSchema.parse(req.body)
+    await assertSupplierAccess(req, body.supplierId)
     const bill = await createBill({ ...body, createdBy: req.staffUser!.id })
     const { postSupplierBill } = await import('../accounting/supplierPosting.js')
     postSupplierBill(bill.id).catch((err) =>
@@ -345,10 +427,19 @@ export async function procurementRoutes(fastify: FastifyInstance) {
     return reply.status(201).send(bill)
   })
 
+  // Bill guard — used by void / match / payment-allocate. Looks up the bill,
+  // hands off to assertSupplierAccess via supplier relation.
+  async function guardBill(req: FastifyRequest, billId: string) {
+    const bill = await prisma.supplierBill.findUnique({ where: { id: billId }, select: { supplierId: true } })
+    if (!bill) throw new NotFoundError('SupplierBill', billId)
+    await assertSupplierAccess(req, bill.supplierId)
+  }
+
   fastify.post<{ Params: { id: string }; Body: { reason: string } }>(
     '/bills/:id/void',
     { preHandler: requireAuth(...MANAGERS) },
     async (req) => {
+      await guardBill(req, req.params.id)
       const { reason } = z.object({ reason: z.string().min(1) }).parse(req.body)
       const result = await voidBill(req.params.id, req.staffUser!.id, reason)
       const { postSupplierBillVoid } = await import('../accounting/supplierPosting.js')
@@ -362,7 +453,7 @@ export async function procurementRoutes(fastify: FastifyInstance) {
   fastify.get<{ Params: { id: string } }>(
     '/bills/:id/match',
     { preHandler: requireAuth(...MANAGERS) },
-    async (req) => matchBill(req.params.id),
+    async (req) => { await guardBill(req, req.params.id); return matchBill(req.params.id) },
   )
 
   // ── Supplier Payments ──────────────────────────────────────────────────────
@@ -371,8 +462,12 @@ export async function procurementRoutes(fastify: FastifyInstance) {
     '/payments',
     { preHandler: requireAuth(...MANAGERS) },
     async (req) => {
+      const tenantWhere = await supplierTenantFilter(req)
       return prisma.supplierPayment.findMany({
-        where: req.query.supplierId ? { supplierId: req.query.supplierId } : {},
+        where: {
+          supplier: tenantWhere,
+          ...(req.query.supplierId ? { supplierId: req.query.supplierId } : {}),
+        },
         include: {
           supplier:     { select: { name: true } },
           applications: { include: { bill: { select: { billNumber: true, totalCents: true } } } },
@@ -385,6 +480,7 @@ export async function procurementRoutes(fastify: FastifyInstance) {
 
   fastify.post('/payments', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
     const body = paymentCreateSchema.parse(req.body)
+    await assertSupplierAccess(req, body.supplierId)
     const payment = await createPayment({ ...body, createdBy: req.staffUser!.id })
     const { postSupplierPayment } = await import('../accounting/supplierPosting.js')
     postSupplierPayment(payment.id).catch((err) =>
@@ -397,12 +493,20 @@ export async function procurementRoutes(fastify: FastifyInstance) {
     '/payments/:id/allocate',
     { preHandler: requireAuth(...MANAGERS) },
     async (req) => {
+      const payment = await prisma.supplierPayment.findUnique({ where: { id: req.params.id }, select: { supplierId: true } })
+      if (!payment) throw new NotFoundError('SupplierPayment', req.params.id)
+      await assertSupplierAccess(req, payment.supplierId)
       const body = z.object({ applications: z.array(paymentApplicationSchema).min(1) }).parse(req.body)
       return allocatePayment(req.params.id, body.applications)
     },
   )
 
   // ── Aging + reorder + price history ────────────────────────────────────────
+  //
+  // agingReport / reorderSuggestions are implemented in service.ts and don't
+  // currently take a tenant filter. Wrapping them here would require lifting
+  // the filter into the service signature — left as a follow-up. For now
+  // they still aggregate across tenants; only managers can see them.
 
   fastify.get('/aging', { preHandler: requireAuth(...MANAGERS) }, async () => agingReport())
 
@@ -413,8 +517,16 @@ export async function procurementRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuth(...MANAGERS) },
     async (req) => {
       const limit = Math.min(parseInt(req.query.limit ?? '100', 10), 500)
+      // Scope via the supplier relation when present. Rows with a null
+      // supplierId (manual price entries unscoped to a vendor) still come
+      // through — those are tenant-agnostic.
+      const tenantWhere = await supplierTenantFilter(req)
       return prisma.itemPriceHistory.findMany({
         where: {
+          OR: [
+            { supplier: tenantWhere },
+            { supplierId: null },
+          ],
           ...(req.query.itemId     && { inventoryItemId: req.query.itemId }),
           ...(req.query.supplierId && { supplierId: req.query.supplierId }),
         },
@@ -430,9 +542,10 @@ export async function procurementRoutes(fastify: FastifyInstance) {
 
   // ── Approvals queue ────────────────────────────────────────────────────────
 
-  fastify.get('/approvals', { preHandler: requireAuth(...ADMIN_ONLY) }, async () => {
+  fastify.get('/approvals', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req) => {
+    const tenantWhere = await supplierTenantFilter(req)
     return prisma.purchaseOrder.findMany({
-      where: { status: 'pending_approval' },
+      where: { status: 'pending_approval', supplier: tenantWhere },
       include: {
         supplier: { select: { name: true } },
         lines:    { include: { inventoryItem: { select: { name: true, unit: true } } } },

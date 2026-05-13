@@ -3,6 +3,9 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api } from '../../../lib/api'
+import { useViewAllTenants } from '../../../components/ui/TenantSwitcher'
+
+interface TenantLite { id: string; name: string; slug: string }
 
 interface Supplier {
   id: string
@@ -13,6 +16,8 @@ interface Supplier {
   notes: string | null
   assignedStaffId: string | null
   assignedStaff: { id: string; name: string } | null
+  tenantId: string | null
+  tenant?: TenantLite | null
   _count: { purchaseOrders: number; conversations: number }
 }
 
@@ -61,6 +66,13 @@ export default function ProcurementMonitorPage() {
   const [selectedStaff, setSelectedStaff] = useState<string>('all')
   const [selectedCat, setSelectedCat] = useState<string>('all')
   const [editSupplier, setEditSupplier] = useState<Supplier | null>(null)
+  const viewAll = useViewAllTenants()
+
+  const { data: tenants = [] } = useQuery<TenantLite[]>({
+    queryKey: ['my-tenants'],
+    queryFn:  () => api.get('/tenants/mine'),
+    staleTime: 5 * 60_000,
+  })
 
   const { data: suppliers = [] } = useQuery<Supplier[]>({
     queryKey: ['procurement-suppliers'],
@@ -135,7 +147,15 @@ export default function ProcurementMonitorPage() {
         <select value={selectedStaff} onChange={(e) => setSelectedStaff(e.target.value)}
           className="rounded-lg border border-kds-border bg-kds-card px-3 py-2 text-sm text-kds-text">
           <option value="all">All Staff</option>
-          {staff.filter((u) => ['admin','manager','cashier'].includes(u.role)).map((u) => (
+          {/* Roles that plausibly own supplier accounts. Procurement, the
+              management tiers, and BOH-management (head chef) all touch
+              ordering — keep the list permissive so the CEO can assign
+              suppliers to whoever actually deals with them. */}
+          {staff.filter((u) => [
+            'admin', 'manager', 'management',
+            'foh_management', 'boh_management',
+            'procurement', 'cashier',
+          ].includes(u.role)).map((u) => (
             <option key={u.id} value={u.id}>{u.name}</option>
           ))}
         </select>
@@ -167,15 +187,37 @@ export default function ProcurementMonitorPage() {
               <div className="space-y-1.5">
                 {sups.map((s) => {
                   const catStyle = s.category ? (CATEGORY_COLORS[s.category] ?? 'bg-kds-border/30 text-kds-subtext') : ''
+                  // Resolve tenant chip the same way /workforce does — prefer
+                  // hydrated relation, fall back to a name lookup in the
+                  // operator's tenant list.
+                  const tenant: TenantLite | null =
+                    s.tenant ?? (s.tenantId ? tenants.find((t) => t.id === s.tenantId) ?? null : null)
                   return (
                     <div key={s.id} className="flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-2 min-w-0">
+                      <div className="flex items-center gap-2 min-w-0 flex-wrap">
                         {s.category && (
                           <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${catStyle}`}>
                             {s.category}
                           </span>
                         )}
                         <span className="truncate text-sm text-kds-text">{s.name}</span>
+                        {/* Indigo brand chip — shown only in portfolio view,
+                            mirrors the workforce hub. */}
+                        {viewAll && tenant && (
+                          <span className="shrink-0 text-[9px] uppercase tracking-wider font-bold px-1.5 py-0.5 rounded"
+                            style={{ background: 'rgba(99,102,241,0.15)', color: '#A5B4FC' }}>
+                            {tenant.name}
+                          </span>
+                        )}
+                        {/* Orphan warning always shows — broken row needing
+                            a company assignment via the edit drawer. */}
+                        {!s.tenantId && (
+                          <span className="shrink-0 text-[9px] uppercase tracking-wider font-bold px-1.5 py-0.5 rounded"
+                            style={{ background: 'rgba(255,77,79,0.10)', color: '#FF4D4F' }}
+                            title="No company assigned — click Edit to fix.">
+                            ⚠ No company
+                          </span>
+                        )}
                       </div>
                       <button onClick={() => setEditSupplier(s)}
                         className="shrink-0 text-xs text-kds-subtext hover:text-kds-text">Edit</button>
@@ -248,6 +290,7 @@ export default function ProcurementMonitorPage() {
         <SupplierEditDrawer
           supplier={editSupplier}
           staff={staff}
+          tenants={tenants}
           onClose={() => setEditSupplier(null)}
           onSaved={() => { setEditSupplier(null); void qc.invalidateQueries({ queryKey: ['procurement-suppliers'] }) }}
         />
@@ -257,21 +300,25 @@ export default function ProcurementMonitorPage() {
 }
 
 function SupplierEditDrawer({
-  supplier, staff, onClose, onSaved,
+  supplier, staff, tenants, onClose, onSaved,
 }: {
   supplier: Supplier
   staff: { id: string; name: string; role: string }[]
+  tenants: TenantLite[]
   onClose: () => void
   onSaved: () => void
 }) {
   const [category, setCategory] = useState(supplier.category ?? '')
   const [assignedStaffId, setAssignedStaff] = useState(supplier.assignedStaffId ?? '')
+  const [tenantId, setTenantId]   = useState(supplier.tenantId ?? '')
   const [notes, setNotes] = useState(supplier.notes ?? '')
 
   const save = useMutation({
     mutationFn: () => api.patch(`/procurement/suppliers/${supplier.id}`, {
       category: category || null,
       assignedStaffId: assignedStaffId || null,
+      // Only send tenantId if it changed (or is being set for an orphan).
+      ...(tenantId && tenantId !== (supplier.tenantId ?? '') ? { tenantId } : {}),
       notes: notes || undefined,
     }),
     onSuccess: onSaved,
@@ -299,6 +346,18 @@ function SupplierEditDrawer({
               {staff.map((u) => <option key={u.id} value={u.id}>{u.name} ({u.role})</option>)}
             </select>
           </div>
+          {tenants.length > 0 && (
+            <div>
+              <label className="text-xs text-kds-subtext">
+                Company {!supplier.tenantId && <span className="text-red-400">— orphan, pick one</span>}
+              </label>
+              <select value={tenantId} onChange={(e) => setTenantId(e.target.value)}
+                className="w-full mt-1 rounded-lg border border-kds-border bg-kds-bg px-3 py-2 text-kds-text focus:border-kds-green focus:outline-none text-sm">
+                {!supplier.tenantId && <option value="">— pick a company —</option>}
+                {tenants.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+              </select>
+            </div>
+          )}
           <div>
             <label className="text-xs text-kds-subtext">Notes</label>
             <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={3}

@@ -1696,6 +1696,12 @@ model WasteLog {
 
 model Supplier {
   id                  String    @id @default(uuid())
+  // Tenant the supplier belongs to. Procurement is multi-tenant — GS Foods
+  // Bukhari's chicken vendor isn't visible to GS x Viva Clifton. PurchaseOrder
+  // / SupplierBill / SupplierPayment all scope through this relation, so we
+  // only need the column on the root entity. Nullable for legacy rows; the
+  // workforce-style "no company" badge surfaces orphans in the UI.
+  tenantId            String?
   name                String
   category            String? // meat, fish, farm, dairy, dry-goods, etc.
   assignedStaffId     String? // procurement person responsible
@@ -1717,6 +1723,7 @@ model Supplier {
   deletedAt           DateTime?
 
   assignedStaff  User?                  @relation("SupplierAssignee", fields: [assignedStaffId], references: [id], onDelete: SetNull)
+  tenant         Tenant?                @relation("TenantSuppliers", fields: [tenantId], references: [id], onDelete: SetNull)
   inventoryItems InventoryItem[]
   purchaseOrders PurchaseOrder[]
   bills          SupplierBill[]
@@ -1725,6 +1732,7 @@ model Supplier {
   conversations  SupplierConversation[]
   portalTokens   SupplierPortalToken[]
 
+  @@index([tenantId])
   @@index([whatsappPhone])
   @@index([email])
   @@map("suppliers")
@@ -3890,9 +3898,10 @@ model Tenant {
   updatedAt   DateTime  @updatedAt
   deletedAt   DateTime?
 
-  concepts Concept[]
-  users    User[]
-  members  TenantMember[]
+  concepts  Concept[]
+  users     User[]
+  members   TenantMember[]
+  suppliers Supplier[] @relation("TenantSuppliers")
 
   @@map("tenants")
 }
