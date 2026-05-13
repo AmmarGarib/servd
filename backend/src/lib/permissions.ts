@@ -203,6 +203,26 @@ export async function userCan(prisma: PrismaClient, role: UserRole, permission: 
   return cache.byRole.get(role)?.has(permission) ?? false
 }
 
+/**
+ * Per-user permission check — same as userCan() but consults the user's
+ * permissionAllow / permissionDeny override arrays first. Use this in
+ * authorisation paths where the caller already has the user's ID; falls
+ * back to role-level when the user has no overrides set.
+ *
+ *   permissionDeny  wins over everything (force-revoke)
+ *   permissionAllow grants even if the role default says no
+ *   otherwise → role default from the matrix
+ */
+export async function userCanWithOverrides(
+  prisma: PrismaClient,
+  user: { id: string; role: UserRole; permissionAllow?: string[]; permissionDeny?: string[] },
+  permission: string,
+): Promise<boolean> {
+  if (user.permissionDeny?.includes(permission)) return false
+  if (user.permissionAllow?.includes(permission)) return true
+  return userCan(prisma, user.role, permission)
+}
+
 export function invalidatePermissionCache() {
   cache = null
 }
@@ -214,4 +234,20 @@ export async function permissionsForRole(prisma: PrismaClient, role: UserRole): 
     cache = { byRole: await loadPermissions(prisma), expiresAt: now + CACHE_TTL_MS }
   }
   return Array.from(cache.byRole.get(role) ?? [])
+}
+
+/**
+ * Effective permission list for one user — role default unioned with their
+ * permissionAllow array, minus their permissionDeny array. Used by the
+ * `/permissions/me` endpoint so the frontend useCan() hook sees the same
+ * effective set the backend enforces.
+ */
+export async function effectivePermissionsForUser(
+  prisma: PrismaClient,
+  user: { role: UserRole; permissionAllow?: string[]; permissionDeny?: string[] },
+): Promise<string[]> {
+  const base = new Set(await permissionsForRole(prisma, user.role))
+  for (const p of user.permissionAllow ?? []) base.add(p)
+  for (const p of user.permissionDeny  ?? []) base.delete(p)
+  return Array.from(base)
 }

@@ -16,8 +16,9 @@ import Link from 'next/link'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../lib/api'
-import { roleLabel, type AppRole } from '../../lib/appRoles'
+import { roleLabel, MODULES, type AppRole, type ModuleId } from '../../lib/appRoles'
 import { usePermissions } from '../../hooks/useCan'
+import { modulesForRole, useRoleModules } from '../../store/roleModules'
 import { useViewAllTenants } from '../../components/ui/TenantSwitcher'
 
 interface TenantLite { id: string; name: string; slug: string }
@@ -100,13 +101,15 @@ interface StaffUser {
   createdAt: string
   hasPin: boolean
   tenantId: string | null
-  // Hydrated by the backend in portfolio mode + after create/patch. Drives
-  // the indigo brand chip on each row so the CEO can tell which company a
-  // staff member belongs to at a glance.
   tenant?: TenantLite | null
-  // Every tenant this user has access to (primary + TenantMember rows).
-  // Head-office staff like procurement/finance often span multiple companies.
   tenants?: TenantLite[]
+  // Per-user overrides on top of the role's baseline. Empty arrays = follow
+  // the role default exactly. Resolution rule (matches backend):
+  //   effective = (role_default ∪ allow) \ deny
+  permissionAllow?: string[]
+  permissionDeny?:  string[]
+  moduleAllow?:     string[]
+  moduleDeny?:      string[]
 }
 
 // Category → which AppRole values fall under it. A single user has one role
@@ -574,10 +577,14 @@ function InlineEditor({
     }
   }, [category])  // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Role permissions — folded into the staff form so the CEO can subjectively
-  // tune what each role can do without leaving this panel. Edits apply to
-  // every staff member with this role (permissions are role-level, not user-
-  // level — per-user overrides would need a separate schema change).
+  // ── Per-user permission overrides ─────────────────────────────────────
+  // Each action chip is tri-state for THIS staff member:
+  //   - 'default': follow the role's baseline (set in /configuration/roles)
+  //   - 'allow':   force-grant (in user.permissionAllow)
+  //   - 'deny':    force-revoke (in user.permissionDeny)
+  // Click cycles: default → allow → deny → default.
+
+  type OverrideState = 'default' | 'allow' | 'deny'
 
   const { data: permsCatalogue = [] } = useQuery<PermissionMeta[]>({
     queryKey: ['permissions', 'catalogue'],
@@ -590,40 +597,50 @@ function InlineEditor({
     staleTime: 30_000,
   })
 
-  // Local edit buffer for the *currently-selected* role. Keyed by role so
-  // switching the role dropdown doesn't lose pending changes for the other
-  // role you were on.
-  const [permsDraft, setPermsDraft] = useState<Record<string, Record<string, boolean>>>({})
+  // Local edit buffer keyed by permission key. Tracks the user's override
+  // state — falls back to "default" when not in this map.
+  const [permOverrides, setPermOverrides] = useState<Record<string, OverrideState>>(() => {
+    const out: Record<string, OverrideState> = {}
+    for (const k of user.permissionAllow ?? []) out[k] = 'allow'
+    for (const k of user.permissionDeny  ?? []) out[k] = 'deny'
+    return out
+  })
 
-  // Effective permissions for this role: caller's pending edits over the
-  // server matrix. Empty object until the matrix loads.
-  const rolePerms: Record<string, boolean> = useMemo(() => {
-    const fromServer = permsMatrix?.matrix[role] ?? {}
-    const overrides = permsDraft[role] ?? {}
-    return { ...fromServer, ...overrides }
-  }, [permsMatrix, permsDraft, role])
-
-  function togglePerm(permKey: string) {
-    setPermsDraft((cur) => {
-      const next = { ...(cur[role] ?? {}) }
-      // Flip relative to current effective value.
-      const current = next[permKey] ?? permsMatrix?.matrix[role]?.[permKey] ?? false
-      next[permKey] = !current
-      return { ...cur, [role]: next }
+  function getPermState(permKey: string): OverrideState {
+    return permOverrides[permKey] ?? 'default'
+  }
+  function getRoleDefault(permKey: string): boolean {
+    return permsMatrix?.matrix[role]?.[permKey] ?? false
+  }
+  function getEffectivePerm(permKey: string): boolean {
+    const state = getPermState(permKey)
+    if (state === 'allow') return true
+    if (state === 'deny')  return false
+    return getRoleDefault(permKey)
+  }
+  function cyclePerm(permKey: string) {
+    setPermOverrides((cur) => {
+      const next = { ...cur }
+      const state = next[permKey] ?? 'default'
+      // default → allow → deny → default
+      const nextState: OverrideState = state === 'default' ? 'allow' : state === 'allow' ? 'deny' : 'default'
+      if (nextState === 'default') delete next[permKey]
+      else next[permKey] = nextState
+      return next
     })
   }
 
-  // True when at least one permission has a draft value different from the
-  // server. Used to enable the "permissions changed" pill in the save bar.
+  // Dirty when the override map diverges from what the server has on file.
   const permsDirty = useMemo(() => {
-    if (!permsMatrix) return false
-    for (const r of Object.keys(permsDraft)) {
-      for (const k of Object.keys(permsDraft[r] ?? {})) {
-        if (permsDraft[r]?.[k] !== permsMatrix.matrix[r]?.[k]) return true
-      }
-    }
+    const serverAllow = new Set(user.permissionAllow ?? [])
+    const serverDeny  = new Set(user.permissionDeny  ?? [])
+    const draftAllow  = new Set(Object.entries(permOverrides).filter(([, v]) => v === 'allow').map(([k]) => k))
+    const draftDeny   = new Set(Object.entries(permOverrides).filter(([, v]) => v === 'deny').map(([k]) => k))
+    if (serverAllow.size !== draftAllow.size || serverDeny.size !== draftDeny.size) return true
+    for (const k of draftAllow) if (!serverAllow.has(k)) return true
+    for (const k of draftDeny)  if (!serverDeny.has(k))  return true
     return false
-  }, [permsDraft, permsMatrix])
+  }, [permOverrides, user.permissionAllow, user.permissionDeny])
 
   // Group catalogue permissions by category, then by resource within each
   // category. Permission keys follow a `resource:action` convention
@@ -665,44 +682,33 @@ function InlineEditor({
 
   const save = useMutation({
     mutationFn: async () => {
-      // 1. PATCH the user row (name / email / phone / role / company / PIN).
       const patch: Record<string, unknown> = {}
       if (name.trim() && name.trim() !== user.name) patch.name = name.trim()
-      // Empty string is sent verbatim — backend treats that as "clear it".
       if (email.trim() !== (user.email ?? '')) patch.email = email.trim()
       if (phone.trim() !== (user.phone ?? '')) patch.phone = phone.trim()
       if (jobTitle.trim() !== (user.jobTitle ?? '')) patch.jobTitle = jobTitle.trim()
       if (role !== user.role) patch.role = role
       if (tenantId && tenantId !== (user.tenantId ?? '')) patch.tenantId = tenantId
-      // Compare arrays loosely — order doesn't matter for membership rewrite.
       const existingIds = (user.tenants ?? []).map((t) => t.id).sort().join(',')
       const nextIds = [...tenantIds].sort().join(',')
       if (existingIds !== nextIds) patch.tenantIds = tenantIds
       if (pin.trim()) patch.pin = pin.trim()
+
+      // Permission overrides — full replacement arrays. Backend stores the
+      // allow/deny lists verbatim; resolution against role baseline happens
+      // at read time (effectivePermissionsForUser).
+      if (permsDirty) {
+        patch.permissionAllow = Object.entries(permOverrides)
+          .filter(([, v]) => v === 'allow').map(([k]) => k)
+        patch.permissionDeny  = Object.entries(permOverrides)
+          .filter(([, v]) => v === 'deny').map(([k]) => k)
+      }
+
       if (Object.keys(patch).length > 0) {
         await api.patch(`/auth/users/${user.id}`, patch)
       }
-
-      // 2. Permission diffs across every role the operator touched. Edits
-      // here apply to *every* staff member with that role.
-      if (permsMatrix) {
-        const changes: Array<{ role: string; permission: string; enabled: boolean }> = []
-        for (const r of Object.keys(permsDraft)) {
-          for (const k of Object.keys(permsDraft[r] ?? {})) {
-            const draftVal = permsDraft[r]?.[k] ?? false
-            const serverVal = permsMatrix.matrix[r]?.[k] ?? false
-            if (draftVal !== serverVal) {
-              changes.push({ role: r, permission: k, enabled: draftVal })
-            }
-          }
-        }
-        if (changes.length > 0) {
-          await api.patch('/permissions/matrix', { changes })
-        }
-      }
     },
     onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ['permissions', 'matrix'] })
       void qc.invalidateQueries({ queryKey: ['permissions', 'me'] })
       onChange(); onClose()
     },
@@ -816,25 +822,33 @@ function InlineEditor({
         )}
       </div>
 
-      {/* ── Role permissions ──────────────────────────────────────────────
-          Inline matrix scoped to the staff member's current role. Edits here
-          apply to EVERY user assigned that role (permissions are role-level;
-          per-user overrides would need a separate schema column). Save flushes
-          both the user PATCH and the permission diffs in one click. */}
+      {/* ── Per-user permission overrides ───────────────────────────────
+          {roleLabel(role)} has a baseline matrix in /configuration/roles.
+          Use the chips below to subjectively grant or revoke actions for
+          THIS staff member without touching the role default. Click cycles:
+            • greyed = follow role default
+            • ★ teal = force-grant
+            • ✕ red  = force-revoke
+          Chip background also shows what the role default is (subtle), so
+          you can tell a default-allow + user-deny from a default-deny that
+          just hasn't been overridden. */}
       <div className="rounded-lg border border-kds-border bg-kds-bg/60 p-3 space-y-2.5">
         <div className="flex items-center justify-between flex-wrap gap-2">
           <div>
             <p className="text-[11px] font-bold uppercase tracking-wider text-kds-subtext">
-              What {roleLabel(role)} can do
+              Override actions for {user.name || 'this staff'}
             </p>
             <p className="text-[10px] text-kds-subtext/70">
-              Applies to every {roleLabel(role).toLowerCase()} on staff — saved with the rest of the form.
+              Baseline = {roleLabel(role)} role default. Click a chip to grant or revoke just for this person.
+              <Link href="/configuration/roles" className="text-kds-green font-bold hover:opacity-80 ml-1.5">
+                Edit role defaults →
+              </Link>
             </p>
           </div>
           {permsDirty && (
             <span className="text-[10px] font-bold uppercase tracking-wider rounded px-1.5 py-0.5"
               style={{ background: 'rgba(245,158,11,0.15)', color: '#F59E0B' }}>
-              Unsaved changes
+              Unsaved overrides
             </span>
           )}
         </div>
@@ -853,31 +867,42 @@ function InlineEditor({
                   {resources.map((res) => (
                     <div key={res.resource}
                       className="grid grid-cols-[140px_1fr] items-center gap-3 px-1.5 py-1 rounded hover:bg-kds-bg/40">
-                      <p className="text-[12px] font-semibold text-kds-text leading-tight truncate"
-                        title={res.actions.map((a) => a.desc).filter(Boolean).join(' · ')}>
+                      <p className="text-[12px] font-semibold text-kds-text leading-tight truncate">
                         {res.label}
                       </p>
-                      {/* One chip per action on this resource. Operator clicks
-                          to toggle. Green = allowed, neutral = denied. */}
                       <div className="flex flex-wrap gap-1.5">
                         {res.actions.map((perm) => {
-                          const enabled = rolePerms[perm.key] ?? false
+                          const state         = getPermState(perm.key)
+                          const roleDefault   = getRoleDefault(perm.key)
+                          const effective     = getEffectivePerm(perm.key)
+                          const tooltip = `${perm.desc ?? perm.label}\n— Role default: ${roleDefault ? 'allowed' : 'denied'}\n— This user: ${state === 'default' ? '(follows role)' : state}\n— Effective: ${effective ? 'allowed' : 'denied'}`
+                          // Style by the user's override state. The "default"
+                          // chip also reflects the role baseline (faint teal
+                          // when the role allows; faint grey when it denies)
+                          // so the operator sees the inherited state.
+                          let style: React.CSSProperties
+                          let prefix: string
+                          if (state === 'allow') {
+                            style  = { background: 'rgba(0,212,177,0.22)', color: '#00D4B1', borderColor: 'rgba(0,212,177,0.6)' }
+                            prefix = '★'
+                          } else if (state === 'deny') {
+                            style  = { background: 'rgba(255,77,79,0.18)', color: '#FF8A8C', borderColor: 'rgba(255,77,79,0.45)' }
+                            prefix = '✕'
+                          } else if (roleDefault) {
+                            style  = { background: 'rgba(0,212,177,0.06)', color: 'rgba(0,212,177,0.7)', borderColor: 'rgba(0,212,177,0.18)' }
+                            prefix = '✓'
+                          } else {
+                            style  = { background: 'rgba(255,255,255,0.02)', color: 'rgba(255,255,255,0.4)', borderColor: 'rgba(255,255,255,0.08)' }
+                            prefix = '·'
+                          }
                           return (
                             <button key={perm.key}
                               type="button"
-                              onClick={() => togglePerm(perm.key)}
-                              title={perm.desc}
+                              onClick={() => cyclePerm(perm.key)}
+                              title={tooltip}
                               className="text-[11px] font-bold rounded-full px-2.5 py-0.5 border transition-all"
-                              style={enabled ? {
-                                background: 'rgba(0,212,177,0.15)',
-                                color: '#00D4B1',
-                                borderColor: 'rgba(0,212,177,0.45)',
-                              } : {
-                                background: 'rgba(255,255,255,0.02)',
-                                color: 'rgba(255,255,255,0.4)',
-                                borderColor: 'rgba(255,255,255,0.08)',
-                              }}>
-                              {enabled ? '✓' : '+'} {actionLabel(perm.key)}
+                              style={style}>
+                              {prefix} {actionLabel(perm.key)}
                             </button>
                           )
                         })}

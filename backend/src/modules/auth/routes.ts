@@ -569,6 +569,9 @@ export async function authRoutes(fastify: FastifyInstance) {
         id: true, name: true, email: true, phone: true, role: true, jobTitle: true,
         isActive: true, accountStatus: true, createdAt: true, pin: true,
         tenantId: true,
+        // Per-user overrides — used by the inline editor's tri-state chips
+        // to show which actions/modules diverge from the role default.
+        permissionAllow: true, permissionDeny: true, moduleAllow: true, moduleDeny: true,
         // Include the primary tenant relation in portfolio mode so the
         // frontend can render the indigo chip on each row.
         ...(scope.portfolio ? { tenant: { select: { id: true, name: true, slug: true } } } : {}),
@@ -683,6 +686,7 @@ export async function authRoutes(fastify: FastifyInstance) {
       select: {
         id: true, name: true, email: true, phone: true, role: true, jobTitle: true,
         isActive: true, accountStatus: true, createdAt: true, pin: true, tenantId: true,
+        permissionAllow: true, permissionDeny: true, moduleAllow: true, moduleDeny: true,
         tenant: { select: { id: true, name: true, slug: true } },
         tenantMemberships: { select: { tenantId: true, tenant: { select: { id: true, name: true, slug: true } } } },
       },
@@ -723,6 +727,14 @@ export async function authRoutes(fastify: FastifyInstance) {
         // is treated as the primary (also sets User.tenantId) unless
         // tenantId is also explicitly supplied above.
         tenantIds: z.array(z.string().min(1)).optional(),
+        // Per-user permission + module overrides. Sent as full-replacement
+        // arrays — the frontend computes the delta against role defaults
+        // and posts the resulting allow/deny lists. Empty arrays = "follow
+        // role baseline exactly."
+        permissionAllow: z.array(z.string().min(1)).optional(),
+        permissionDeny:  z.array(z.string().min(1)).optional(),
+        moduleAllow:     z.array(z.string().min(1)).optional(),
+        moduleDeny:      z.array(z.string().min(1)).optional(),
       }).parse(req.body)
 
       // Cross-tenant guard: when the operator is single-tenant (not in
@@ -773,6 +785,14 @@ export async function authRoutes(fastify: FastifyInstance) {
       if (body.jobTitle != null) data.jobTitle  = body.jobTitle || null
       if (body.pin      != null) data.pin       = body.pin ? await hashPin(body.pin) : null
       if (finalPrimary)          data.tenantId  = finalPrimary
+      // Override arrays — full-replacement semantics. The frontend computes
+      // diffs against role defaults and posts the resulting state; if the
+      // operator clears every override the arrays come through as empty,
+      // which is also "back to role default."
+      if (body.permissionAllow != null) data.permissionAllow = body.permissionAllow
+      if (body.permissionDeny  != null) data.permissionDeny  = body.permissionDeny
+      if (body.moduleAllow     != null) data.moduleAllow     = body.moduleAllow
+      if (body.moduleDeny      != null) data.moduleDeny      = body.moduleDeny
 
       const user = await prisma.$transaction(async (tx) => {
         const updated = await tx.user.update({ where: { id: req.params.id }, data })
@@ -796,6 +816,7 @@ export async function authRoutes(fastify: FastifyInstance) {
           select: {
             id: true, name: true, email: true, phone: true, role: true, jobTitle: true,
             isActive: true, accountStatus: true, createdAt: true, pin: true, tenantId: true,
+            permissionAllow: true, permissionDeny: true, moduleAllow: true, moduleDeny: true,
             tenant: { select: { id: true, name: true, slug: true } },
             tenantMemberships: { select: { tenantId: true, tenant: { select: { id: true, name: true, slug: true } } } },
           },

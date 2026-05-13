@@ -45,13 +45,16 @@ interface NavSection {
 }
 
 const NAV: NavSection[] = [
-  // ── Executive — CEO / Admin only by default. The CEO uses this section to
-  // decide what every other role sees in the rest of the sidebar.
+  // ── Executive — CEO / Admin only by default.
   //
-  // Staff Directory lives here (not under Workforce) because hiring + scoping
-  // permissions per role IS executive work. Roles & Permissions used to be
-  // its own page; it's now folded into the workforce edit panel — when you
-  // edit a staff row, you tick which permissions their role has.
+  // Two layers of permission control:
+  //   /configuration/roles        → role-level DEFAULTS (what a Cashier can do)
+  //   /configuration/role-modules → role-level sidebar DEFAULTS
+  //   /workforce (Staff Directory) → per-USER overrides on top of those defaults
+  //
+  // The standalone pages set the rules for an entire role at once; the
+  // staff directory's row editor lets you make subjective per-person
+  // adjustments without touching the role baseline.
   {
     title: 'Executive',
     items: [
@@ -66,6 +69,7 @@ const NAV: NavSection[] = [
         { href: '/workforce?category=hr',          label: 'HR',             module: 'staff_hr' },
       ]},
       { href: '/configuration/pending-approvals', label: 'Pending Signups',  icon: '⏳', module: 'role_management' },
+      { href: '/configuration/roles',           label: 'Roles & Permissions', icon: '🔐', module: 'role_management' },
       { href: '/configuration/role-modules',    label: 'Module Access',       icon: '🗂', module: 'role_modules' },
       { href: '/settings',                      label: 'Tenants & Brands',    icon: '🏷', module: 'tenants' },
     ],

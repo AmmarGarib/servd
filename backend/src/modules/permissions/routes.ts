@@ -7,6 +7,7 @@ import {
   PERMISSIONS,
   invalidatePermissionCache,
   permissionsForRole,
+  effectivePermissionsForUser,
 } from '../../lib/permissions.js'
 
 // Keep aligned with the UserRole enum in backend/prisma/schema.prisma and the
@@ -28,11 +29,20 @@ export async function permissionRoutes(fastify: FastifyInstance) {
     }))
   })
 
-  // GET /permissions/me — the current user's effective permissions list.
-  // Used by the frontend useCan() hook on every page load.
+  // GET /permissions/me — the current user's EFFECTIVE permissions list.
+  // Used by the frontend useCan() hook on every page load. Resolves the
+  // role baseline against the user's permissionAllow/permissionDeny
+  // overrides so per-user grants/revokes ride through to the UI.
   fastify.get('/me', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
-    const role = req.staffUser!.role
-    return { role, permissions: await permissionsForRole(prisma, role) }
+    const me = await prisma.user.findUnique({
+      where:  { id: req.staffUser!.id },
+      select: { role: true, permissionAllow: true, permissionDeny: true },
+    })
+    if (!me) return { role: req.staffUser!.role, permissions: [] }
+    return {
+      role: me.role,
+      permissions: await effectivePermissionsForUser(prisma, me),
+    }
   })
 
   // GET /permissions/matrix — full role × permission grid for the editor.

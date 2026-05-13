@@ -743,6 +743,24 @@ model User {
   // is applied (intended for admin/manager — role check is the gate). Non-admin
   // roles MUST have explicit concept IDs to access concept-scoped resources.
   conceptIds      String[]      @default([])
+  // ─── Per-user permission + module overrides ─────────────────────────
+  // The role gives a baseline (set in /configuration/roles for actions and
+  // /configuration/role-modules for sidebar visibility). These four arrays
+  // let the CEO subjectively tune a single staff member: e.g. give Ahmad
+  // (a Cashier) access to /finance/p-and-l without making every other
+  // cashier see it.
+  //
+  //   - permissionAllow: action keys this user has DESPITE role saying no
+  //   - permissionDeny:  action keys this user can't do DESPITE role saying yes
+  //   - moduleAllow:     sidebar module IDs visible DESPITE role hiding them
+  //   - moduleDeny:      sidebar module IDs hidden DESPITE role showing them
+  //
+  // Effective access = role default ± user overrides. Resolution is in
+  // backend/src/lib/permissions.ts (userCan) and the frontend useCan hook.
+  permissionAllow String[]      @default([])
+  permissionDeny  String[]      @default([])
+  moduleAllow     String[]      @default([])
+  moduleDeny      String[]      @default([])
   // Payroll: hourly rate in paisa (PKR cents). Null = unpaid (volunteer/owner).
   hourlyRateCents Int?
   // Wage account this employee's labour posts to: 6030 kitchen / 6031 FOH /
