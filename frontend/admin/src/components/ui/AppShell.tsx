@@ -78,10 +78,13 @@ const NAV: NavSection[] = [
     title: 'Live',
     items: [
       { href: '/dashboard', label: 'Dashboard',    icon: '⬡', module: 'dashboard' },
-      // Expo Station is the new pass-station landing. Orders arrive here for
-      // human confirm; cooking is dispatched per-station from this screen.
+      // Expo Station is the pass-station screen. Orders arrive here, expo
+      // fires them, then each line cook works off their own per-station
+      // /kds/<id> URL (opened on the station's iPad — managed via KDS
+      // Config). The old "/kds/all" live-feed view is superseded by Expo
+      // and the per-station screens — kept reachable for legacy bookmarks
+      // but no longer in the sidebar.
       { href: '/expo',      label: 'Expo Station', icon: '🪧', module: 'kds_all' },
-      { href: '/kds/all',   label: 'All Stations', icon: '🖥', module: 'kds_all' },
       { href: '/orders',    label: 'Orders (history)', icon: '📋', module: 'orders', children: [
         { href: '/refunds',         label: 'Refunds',  module: 'refunds' },
         { href: '/orders/curbside', label: 'Curbside', module: 'curbside' },

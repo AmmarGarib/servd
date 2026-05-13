@@ -239,12 +239,26 @@ function StationsTab() {
                           </button>
                         </div>
                       ) : (
-                        <button
-                          onClick={() => startEdit(s)}
-                          className="rounded-lg border border-kds-border px-3 py-1 text-xs font-medium text-kds-subtext hover:border-kds-green hover:text-kds-green transition-colors"
-                        >
-                          Edit
-                        </button>
+                        <div className="flex items-center gap-2">
+                          {/* "Open KDS" launches the per-station screen — the
+                              URL each kitchen iPad permanently displays. CEO
+                              can preview from here; line cooks usually open
+                              it once and leave it pinned. */}
+                          <Link
+                            href={`/kds/${s.id}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="rounded-lg bg-kds-green px-3 py-1 text-xs font-bold text-black hover:opacity-90 inline-flex items-center gap-1"
+                          >
+                            ▶ Open KDS
+                          </Link>
+                          <button
+                            onClick={() => startEdit(s)}
+                            className="rounded-lg border border-kds-border px-3 py-1 text-xs font-medium text-kds-subtext hover:border-kds-green hover:text-kds-green transition-colors"
+                          >
+                            Edit
+                          </button>
+                        </div>
                       )}
                     </td>
                   </tr>
@@ -489,8 +503,8 @@ export default function KdsConfigPage() {
     <div className="h-screen flex flex-col bg-kds-bg overflow-hidden">
       <header className="border-b border-kds-border px-6 py-4 flex items-center justify-between gap-3 shrink-0">
         <div>
-          <Link href="/kds/all" className="text-sm text-gray-500 hover:text-gray-300 flex items-center gap-1 mb-1 transition-colors">
-            ← Back to KDS
+          <Link href="/expo" className="text-sm text-gray-500 hover:text-gray-300 flex items-center gap-1 mb-1 transition-colors">
+            ← Back to Expo
           </Link>
           <h1 className="text-2xl font-black text-kds-text">KDS Config</h1>
           <p className="text-sm text-kds-subtext">Manage kitchen stations and monitor live queues</p>
