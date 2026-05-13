@@ -36,22 +36,27 @@ export default function AllOrdersPage() {
       <KdsHeader title="All Orders — Expediter View" />
 
       <div
-        className="flex-1 overflow-x-auto"
+        className="flex-1 min-h-0 overflow-x-auto"
         style={{ scrollbarWidth: 'none' }}
       >
         <div className="flex h-full gap-4 p-4">
-          {/* Source columns */}
+          {/* Source columns — each one scrolls vertically inside its own
+              fixed-width track. Without overflow-y-auto + min-h-0, columns
+              with 20+ orders overflow the viewport and visually collide
+              with the next column's headers. */}
           {['pos', 'servd', 'ubereats', 'doordash', 'deliveroo', 'cart', 'manual'].map((source) => {
             const sourceOrders = activeOrders.filter((o) => o.source === source)
             if (sourceOrders.length === 0) return null
             return (
-              <div key={source} className="flex w-72 shrink-0 flex-col gap-3">
-                <div className="text-xs font-bold uppercase tracking-widest text-kds-subtext">
+              <div key={source} className="flex w-72 shrink-0 flex-col min-h-0 h-full">
+                <div className="text-xs font-bold uppercase tracking-widest text-kds-subtext pb-2 shrink-0">
                   {source} ({sourceOrders.length})
                 </div>
-                {sourceOrders.map((order) => (
-                  <TicketCard key={order.id} order={order} />
-                ))}
+                <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-3 pr-1">
+                  {sourceOrders.map((order) => (
+                    <TicketCard key={order.id} order={order} />
+                  ))}
+                </div>
               </div>
             )
           })}
