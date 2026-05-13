@@ -31,7 +31,12 @@ export async function reviewRoutes(fastify: FastifyInstance) {
             customer: { select: { id: true, name: true, email: true, phone: true } },
           },
         },
-        concept: { select: { name: true, slug: true } },
+        concept: {
+          select: {
+            name: true, slug: true, tenantId: true,
+            tenant: { select: { id: true, name: true, slug: true } },
+          },
+        },
       },
       orderBy: { createdAt: 'desc' },
       take: limit ? parseInt(limit, 10) : 50,

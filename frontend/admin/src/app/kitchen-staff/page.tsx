@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { api } from '../../lib/api'
 import { fmtPkr } from '../../lib/money'
+import { TenantChip, useMyTenants } from '../../components/ui/TenantPicker'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -24,6 +25,10 @@ interface KitchenStaff {
   status: StaffStatus
   dateJoined: string
   dateLeft: string | null
+  // Hydrated by the backend so portfolio view can render the brand chip
+  // next to each name without an extra fetch.
+  tenantId?: string | null
+  tenant?: { id: string; name: string } | null
   _count?: { complianceViolations: number }
   complianceViolations?: Array<{ resolved: boolean }>
 }
@@ -113,6 +118,7 @@ export default function KitchenStaffPage() {
   const [filterStatus, setFilterStatus] = useState('all')
   const [showBrigadeModal, setShowBrigadeModal] = useState(false)
   const [loadingTemplate, setLoadingTemplate] = useState<string | null>(null)
+  const { data: tenants = [] } = useMyTenants()
 
   const { data: staffList, isLoading } = useQuery({
     queryKey: ['kitchen-staff', filterStatus],
@@ -246,7 +252,13 @@ export default function KitchenStaffPage() {
                         onClick={() => router.push(`/kitchen-staff/${s.id}`)}
                       >
                         <td className="px-4 py-3">
-                          <div className="font-semibold" style={{ color: 'rgba(255,255,255,0.85)' }}>{s.fullName}</div>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <div className="font-semibold" style={{ color: 'rgba(255,255,255,0.85)' }}>{s.fullName}</div>
+                            {/* Brand chip in portfolio view so the operator can
+                                see which company each kitchen-staff row belongs
+                                to. Hidden in single-tenant view. */}
+                            <TenantChip tenant={s.tenant} tenantId={s.tenantId} tenants={tenants} />
+                          </div>
                           <div className="text-[11px]" style={{ color: 'rgba(255,255,255,0.3)' }}>
                             Joined {new Date(s.dateJoined).toLocaleDateString('en-PK', { month: 'short', year: 'numeric' })}
                           </div>

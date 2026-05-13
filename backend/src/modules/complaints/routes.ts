@@ -44,7 +44,14 @@ export async function complaintRoutes(fastify: FastifyInstance) {
           ...(priority && { priority: priority as never }),
         },
         include: {
-          concept: { select: { name: true, slug: true } },
+          // Concept relation also pulls the tenant so the frontend can render
+          // the indigo brand chip on each complaint row in portfolio view.
+          concept: {
+            select: {
+              name: true, slug: true, tenantId: true,
+              tenant: { select: { id: true, name: true, slug: true } },
+            },
+          },
           // Pull customer ids/contact through the order — the "Reach out" CTA
           // on the complaint card needs these to spawn a CustomerConversation
           // without an extra round-trip lookup.

@@ -95,7 +95,17 @@ export async function recipeRoutes(fastify: FastifyInstance) {
           }),
         },
         include: {
-          menuItem: { select: { id: true, name: true, priceCents: true, conceptId: true, concept: { select: { name: true } } } },
+          menuItem: {
+            select: {
+              id: true, name: true, priceCents: true, conceptId: true,
+              concept: {
+                select: {
+                  name: true, tenantId: true,
+                  tenant: { select: { id: true, name: true, slug: true } },
+                },
+              },
+            },
+          },
           ingredients: {
             include: { inventoryItem: { select: { name: true, unit: true, unitCostCents: true } } },
           },

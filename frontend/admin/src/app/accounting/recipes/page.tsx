@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../../lib/api'
 import Link from 'next/link'
 import { RecipeStepsEditor } from '../../../components/recipe/RecipeStepsEditor'
+import { TenantChip, useMyTenants } from '../../../components/ui/TenantPicker'
 
 const Q_FACTOR = 0.05
 
@@ -42,6 +43,8 @@ interface RecipeIngredient {
   ingredientCostCents: number   // computed by API
 }
 
+interface ConceptWithTenant { name: string; tenantId?: string | null; tenant?: { id: string; name: string } | null }
+
 interface Recipe {
   id: string
   menuItemId: string
@@ -55,7 +58,7 @@ interface Recipe {
   seasonStart: string | null
   seasonEnd: string | null
   isActive: boolean
-  menuItem: { id: string; name: string; priceCents: number; conceptId: string; concept: { name: string } }
+  menuItem: { id: string; name: string; priceCents: number; conceptId: string; concept: ConceptWithTenant }
   ingredients: RecipeIngredient[]
   ingredientCostCents: number
   qFactorCents: number
@@ -78,6 +81,7 @@ const BLANK_ING: IngRow = { inventoryItemId: '', quantity: '', yieldPct: '100', 
 
 export default function RecipesPage() {
   const qc = useQueryClient()
+  const { data: tenants = [] } = useMyTenants()
   const [conceptFilter, setConceptFilter] = useState('')
   const [search,        setSearch]        = useState('')
   const [expanded,      setExpanded]      = useState<string | null>(null)
@@ -363,7 +367,12 @@ export default function RecipesPage() {
                     </span>
 
                     <div className="flex-1 min-w-0">
-                      <p className="font-semibold text-s-text text-sm truncate">{r.menuItem.name}</p>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <p className="font-semibold text-s-text text-sm truncate">{r.menuItem.name}</p>
+                        {/* Brand chip in portfolio view so the operator can
+                            tell which company each recipe belongs to. */}
+                        <TenantChip tenant={r.menuItem.concept.tenant} tenantId={r.menuItem.concept.tenantId} tenants={tenants} />
+                      </div>
                       <p className="text-[10px] text-s-dim">
                         {r.menuItem.concept.name}
                         {r.servings > 1 && ` · ${r.servings} portions`}

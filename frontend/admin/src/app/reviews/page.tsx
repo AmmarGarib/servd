@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../lib/api'
 import Link from 'next/link'
 import { ReachOutModal } from '../../components/crm/ReachOutModal'
+import { TenantChip, useMyTenants } from '../../components/ui/TenantPicker'
 
 interface Review {
   id: string
@@ -18,7 +19,10 @@ interface Review {
     id: string; source: string; customerName: string | null; placedAt: string
     customer?: { id: string; name: string; email: string | null; phone: string | null } | null
   } | null
-  concept: { name: string; slug: string }
+  concept: {
+    name: string; slug: string; tenantId?: string | null
+    tenant?: { id: string; name: string; slug: string } | null
+  }
 }
 
 interface ReviewsResponse {
@@ -43,6 +47,7 @@ function StarRating({ rating }: { rating: number }) {
 
 export default function ReviewsPage() {
   const qc = useQueryClient()
+  const { data: tenants = [] } = useMyTenants()
   const [conceptId, setConceptId] = useState('')
   const [ratingFilter, setRatingFilter] = useState('')
   const [showManual, setShowManual] = useState(false)
@@ -189,6 +194,7 @@ export default function ReviewsPage() {
                 <StarRating rating={r.rating} />
                 <span className="text-xs text-kds-subtext">·</span>
                 <span className="text-xs font-medium text-kds-text">{r.concept.name}</span>
+                <TenantChip tenant={r.concept.tenant} tenantId={r.concept.tenantId} tenants={tenants} />
                 {r.order?.customerName && (
                   <>
                     <span className="text-xs text-kds-subtext">·</span>

@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../lib/api'
 import Link from 'next/link'
 import { ReachOutModal } from '../../components/crm/ReachOutModal'
+import { TenantChip, useMyTenants } from '../../components/ui/TenantPicker'
 
 interface Complaint {
   id: string
@@ -17,7 +18,12 @@ interface Complaint {
   resolution: string | null
   resolvedAt: string | null
   createdAt: string
-  concept: { name: string; slug: string }
+  // Concept comes with its tenant in portfolio mode — drives the indigo
+  // brand chip on each complaint row.
+  concept: {
+    name: string; slug: string; tenantId?: string | null
+    tenant?: { id: string; name: string; slug: string } | null
+  }
   order: {
     id: string; source: string; customerName: string | null; placedAt: string
     customer?: { id: string; name: string; email: string | null; phone: string | null } | null
@@ -84,6 +90,7 @@ function AgeBadge({ createdAt, now }: { createdAt: string; now: number }) {
 
 export default function ComplaintsPage() {
   const qc = useQueryClient()
+  const { data: tenants = [] } = useMyTenants()
   const [statusFilter, setStatusFilter] = useState('')
   const [priorityFilter, setPriorityFilter] = useState('')
   const [conceptFilter, setConceptFilter] = useState('')
@@ -307,6 +314,10 @@ export default function ComplaintsPage() {
                 </div>
                 <div className="flex gap-3 mt-0.5 flex-wrap items-center">
                   <span className="text-xs text-kds-subtext">{c.concept.name}</span>
+                  {/* Brand chip — in portfolio view shows which company this
+                      complaint's brand belongs to. Hidden in single-tenant
+                      view since every row would carry the same name. */}
+                  <TenantChip tenant={c.concept.tenant} tenantId={c.concept.tenantId} tenants={tenants} />
                   <span className="text-xs text-kds-subtext capitalize">{c.category.replace('_', ' ')}</span>
                   {c.order?.customer ? (
                     <Link href={`/crm/${c.order.customer.id}`} className="text-xs text-blue-400 hover:text-blue-300 hover:underline transition-colors">
