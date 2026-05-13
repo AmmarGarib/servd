@@ -282,6 +282,49 @@ function NavLinks({
     return allowedModules.has(module)
   }
 
+  // Live per-station KDS entries — sidebar injects one child under "Stations"
+  // for every station the operator has configured. Stations are concept-scoped
+  // and dynamic, so we fetch at runtime rather than hard-coding the NAV array.
+  // Visible only to staff who can see kds_all (the kitchen line + management).
+  const { data: stations = [] } = useQuery<Array<{ id: string; name: string; isActive: boolean }>>({
+    queryKey: ['nav-stations'],
+    queryFn:  () => api.get('/kds/stations'),
+    staleTime: 60_000,
+    // Skip the query for roles that don't see kitchen surfaces — the line cook,
+    // POS-only cashier, etc. don't need the sidebar to ask the server.
+    enabled:  !allowedModules || allowedModules.has('kds_all'),
+  })
+
+  // Build the rendered NAV — clone the static definition and inject station
+  // children into the Live section just after "Expo Station".
+  const renderedNav: NavSection[] = useMemo(() => {
+    if (stations.length === 0) return NAV
+    const activeStations = stations.filter((s) => s.isActive)
+    return NAV.map((section) => {
+      if (section.title !== 'Live') return section
+      const newItems: NavItem[] = []
+      for (const item of section.items) {
+        newItems.push(item)
+        if (item.href === '/expo') {
+          // Insert a Stations parent right after Expo Station. Children are
+          // tagged with module 'kds_all' so the same gate as the parent applies.
+          newItems.push({
+            href: '/kds/config',
+            label: 'Stations',
+            icon: '🍳',
+            module: 'kds_all',
+            children: activeStations.map((s) => ({
+              href:   `/kds/${s.id}`,
+              label:  s.name,
+              module: 'kds_all',
+            })),
+          })
+        }
+      }
+      return { ...section, items: newItems }
+    })
+  }, [stations])
+
   // Section collapse state — defaults from NAV definition, persisted to localStorage
   const defaultCollapsedSet = useMemo(() => new Set(NAV.filter((s) => s.defaultCollapsed).map((s) => s.title)), [])
   const [collapsedSections, setCollapsedSections] = usePersistedSet('servd_nav_collapsed_v2', defaultCollapsedSet)
@@ -311,7 +354,7 @@ function NavLinks({
   // Auto-expand parent if we're on a child route
   useEffect(() => {
     if (collapsed) return
-    for (const section of NAV) {
+    for (const section of renderedNav) {
       for (const item of section.items) {
         if (item.children?.some((c) => isActive(pathname, c.href))) {
           if (!expandedParents.has(item.href)) {
@@ -325,10 +368,12 @@ function NavLinks({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pathname])
 
-  // Flatten all items so we can resolve pinned hrefs to icon+label
+  // Flatten all items so we can resolve pinned hrefs to icon+label.
+  // Uses renderedNav so dynamically-injected station children also resolve
+  // when the operator pins one (otherwise they'd appear as orphans).
   const allItems = useMemo(() => {
     const map = new Map<string, NavItem>()
-    for (const s of NAV) {
+    for (const s of renderedNav) {
       for (const i of s.items) {
         map.set(i.href, i)
         for (const c of i.children ?? []) {
@@ -337,7 +382,7 @@ function NavLinks({
       }
     }
     return map
-  }, [])
+  }, [renderedNav])
 
   const pinnedItems = useMemo(() =>
     Array.from(pinned).map((h) => allItems.get(h)).filter((x): x is NavItem => !!x),
@@ -363,7 +408,7 @@ function NavLinks({
       )}
 
       {/* ── Sections ───────────────────────────────────────────────────── */}
-      {NAV.map((section) => {
+      {renderedNav.map((section) => {
         // Executive section: only ever shown to a real (not impersonating)
         // admin/CEO so the role-management surface can't be tweaked by anyone
         // pretending to be the admin via the view-as switcher.
