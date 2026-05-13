@@ -18,6 +18,9 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../lib/api'
 import { roleLabel, type AppRole } from '../../lib/appRoles'
 import { usePermissions } from '../../hooks/useCan'
+import { useViewAllTenants } from '../../components/ui/TenantSwitcher'
+
+interface TenantLite { id: string; name: string; slug: string }
 
 interface StaffUser {
   id: string
@@ -31,6 +34,10 @@ interface StaffUser {
   createdAt: string
   hasPin: boolean
   tenantId: string | null
+  // Hydrated by the backend in portfolio mode + after create/patch. Drives
+  // the indigo brand chip on each row so the CEO can tell which company a
+  // staff member belongs to at a glance.
+  tenant?: TenantLite | null
 }
 
 // Category → which AppRole values fall under it. A single user has one role
@@ -125,6 +132,16 @@ function WorkforcePageInner() {
   const sp = useSearchParams()
   const { data: me } = usePermissions()
   const canEdit = me?.role === 'admin'
+  const viewAll = useViewAllTenants()
+
+  // Tenants the operator belongs to — drives the "transfer" dropdown in the
+  // inline editor and lets the page show the brand chip even outside portfolio
+  // mode (a single-tenant operator should still see *their* company name).
+  const { data: tenants = [] } = useQuery<TenantLite[]>({
+    queryKey: ['my-tenants'],
+    queryFn:  () => api.get('/tenants/mine'),
+    staleTime: 5 * 60_000,
+  })
 
   const initialCategory = useMemo(() => {
     const raw = sp.get('category')
@@ -264,6 +281,12 @@ function WorkforcePageInner() {
           {filtered.map((u) => (
             <StaffRow
               key={u.id} user={u} canEdit={canEdit}
+              tenants={tenants}
+              // Chip is mostly noise in single-tenant view (every row belongs
+              // to the same company). Only render it when the operator is
+              // looking across companies, OR when the row is orphaned —
+              // those always need a "⚠ No company" badge.
+              showTenantChip={viewAll}
               expanded={editingId === u.id}
               onExpand={() => setEditingId(editingId === u.id ? null : u.id)}
               onClose={() => setEditingId(null)}
@@ -334,9 +357,12 @@ function CategoryBlurb({ category }: { category: Category }) {
 // ─── Staff row + inline editor ──────────────────────────────────────────────
 
 function StaffRow({
-  user, canEdit, expanded, onExpand, onClose, onChange,
+  user, canEdit, tenants, showTenantChip,
+  expanded, onExpand, onClose, onChange,
 }: {
   user: StaffUser; canEdit: boolean
+  tenants: TenantLite[]
+  showTenantChip: boolean
   expanded: boolean
   onExpand: () => void
   onClose: () => void
@@ -346,6 +372,12 @@ function StaffRow({
   const statusM = STATUS_META[status]
   const cat = categoryOf(user.role)
   const isUnnamed = !user.name || user.name === 'Unnamed staff'
+  // Tenant chip: prefer the hydrated `tenant` relation; fall back to looking
+  // up tenantId in the operator's tenant list (single-tenant view doesn't
+  // always include the relation). Null tenantId → "No company" warning.
+  const tenant: TenantLite | null =
+    user.tenant
+    ?? (user.tenantId ? tenants.find((t) => t.id === user.tenantId) ?? null : null)
 
   return (
     <div className="border-b border-kds-border last:border-b-0">
@@ -366,7 +398,7 @@ function StaffRow({
           {isUnnamed ? '?' : user.name.charAt(0).toUpperCase()}
         </div>
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <p className={`font-semibold text-sm truncate ${isUnnamed ? 'italic text-kds-subtext' : ''}`}>
               {isUnnamed ? 'Unnamed staff — tap to fill in' : user.name}
             </p>
@@ -378,6 +410,25 @@ function StaffRow({
               <span className="shrink-0 text-[9px] uppercase tracking-wider font-bold rounded px-1.5 py-0.5"
                 style={{ background: 'rgba(255,77,79,0.10)', color: '#FF4D4F' }}>
                 No PIN
+              </span>
+            )}
+            {/* Indigo brand chip in portfolio view — shows which company
+                each row belongs to. In single-tenant view we hide it because
+                every row is the same company. */}
+            {showTenantChip && tenant && (
+              <span className="shrink-0 text-[9px] uppercase tracking-wider font-bold rounded px-1.5 py-0.5"
+                style={{ background: 'rgba(99,102,241,0.15)', color: '#A5B4FC' }}>
+                {tenant.name}
+              </span>
+            )}
+            {/* Orphan warning — always shown, regardless of view mode. A row
+                with no company is a data bug; surface it everywhere so the
+                CEO can fix it via the inline editor's Company dropdown. */}
+            {!user.tenantId && (
+              <span className="shrink-0 text-[9px] uppercase tracking-wider font-bold rounded px-1.5 py-0.5"
+                style={{ background: 'rgba(255,77,79,0.10)', color: '#FF4D4F' }}
+                title="This staff row has no company assigned. Tap to transfer.">
+                ⚠ No company
               </span>
             )}
           </div>
@@ -407,7 +458,7 @@ function StaffRow({
       </button>
 
       {expanded && canEdit && (
-        <InlineEditor user={user} status={status}
+        <InlineEditor user={user} status={status} tenants={tenants}
           onChange={onChange} onClose={onClose} />
       )}
     </div>
@@ -415,10 +466,11 @@ function StaffRow({
 }
 
 function InlineEditor({
-  user, status, onChange, onClose,
+  user, status, tenants, onChange, onClose,
 }: {
   user: StaffUser
   status: StaffUser['accountStatus']
+  tenants: TenantLite[]
   onChange: () => void
   onClose: () => void
 }) {
@@ -428,6 +480,7 @@ function InlineEditor({
   const [jobTitle, setJobTitle] = useState(user.jobTitle ?? '')
   const [category, setCategory] = useState<string>(categoryOf(user.role)?.key ?? 'management')
   const [role, setRole]         = useState<AppRole>(user.role)
+  const [tenantId, setTenantId] = useState<string>(user.tenantId ?? '')
   const [pin, setPin]           = useState('')
   const [err, setErr]           = useState<string | null>(null)
 
@@ -451,6 +504,7 @@ function InlineEditor({
       if (phone.trim() !== (user.phone ?? '')) patch.phone = phone.trim()
       if (jobTitle.trim() !== (user.jobTitle ?? '')) patch.jobTitle = jobTitle.trim()
       if (role !== user.role) patch.role = role
+      if (tenantId && tenantId !== (user.tenantId ?? '')) patch.tenantId = tenantId
       if (pin.trim()) patch.pin = pin.trim()
       return api.patch(`/auth/users/${user.id}`, patch)
     },
@@ -511,6 +565,17 @@ function InlineEditor({
             ))}
           </select>
         </Field>
+        {tenants.length > 0 && (
+          <Field label="Company"
+            hint={!user.tenantId ? 'Orphan row — pick a company to fix.' : 'Transfer between companies if needed.'}>
+            <select value={tenantId} onChange={(e) => setTenantId(e.target.value)} className={inputCls}>
+              {!user.tenantId && <option value="">— pick a company —</option>}
+              {tenants.map((t) => (
+                <option key={t.id} value={t.id}>{t.name}</option>
+              ))}
+            </select>
+          </Field>
+        )}
         <Field label="PIN" hint={user.hasPin ? 'Type a new PIN to replace.' : 'Set a 4-digit PIN to enable login.'}>
           <div className="flex gap-2">
             <input value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))}

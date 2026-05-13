@@ -5,6 +5,7 @@ import { staffLogin, staffPinLogin, refreshStaffToken, customerRegister, custome
 import { requestOtp, verifyOtp, normalisePhone } from './otp.js'
 import { requireAuth, ADMIN_ONLY, MANAGERS, ALL_STAFF } from './middleware.js'
 import { prisma } from '../../lib/prisma.js'
+import { resolveTenantScope, tenantWhere } from '../../lib/tenantScope.js'
 import { AppError } from '../../lib/errors.js'
 import {
   check as checkRateLimit,
@@ -512,13 +513,31 @@ export async function authRoutes(fastify: FastifyInstance) {
   // Powers the /workforce hub. `?role=foh,boh,kitchen` filters by enum value
   // so the sidebar's per-category entries can deep-link straight to the right
   // slice. `?status=pending|active|suspended` filters on accountStatus.
+  //
+  // Tenant scope: single-tenant view returns only that tenant's staff;
+  // portfolio view (x-servd-portfolio: 1) unions every tenant the user is a
+  // member of and includes the tenant relation so the frontend can render
+  // the indigo brand chip per row. Rows with no tenantId (legacy back-fill
+  // gap) come through too, with `tenant: null`.
   fastify.get('/users', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
     const q = z.object({
       role:   z.string().optional(),  // comma-separated list of UserRole values
       status: z.enum(['pending', 'active', 'suspended']).optional(),
     }).parse(req.query)
 
+    const scope = await resolveTenantScope(req)
     const where: Record<string, unknown> = { deletedAt: null }
+
+    // Scope to current/visible tenant(s). We also accept rows where tenantId
+    // IS NULL so legacy/back-fill users don't vanish; the frontend tags them
+    // with a "No company" chip so the CEO can fix them up.
+    if (scope.tenantIds.length > 0) {
+      where.OR = [
+        { tenantId: { in: scope.tenantIds } },
+        { tenantId: null },
+      ]
+    }
+
     if (q.role) {
       const roles = q.role.split(',').map((r) => r.trim()).filter(Boolean)
       if (roles.length > 0) where.role = { in: roles }
@@ -531,6 +550,9 @@ export async function authRoutes(fastify: FastifyInstance) {
         id: true, name: true, email: true, phone: true, role: true, jobTitle: true,
         isActive: true, accountStatus: true, createdAt: true, pin: true,
         tenantId: true,
+        // Include the tenant relation in portfolio mode so the frontend can
+        // show which company each staff member belongs to.
+        ...(scope.portfolio ? { tenant: { select: { id: true, name: true, slug: true } } } : {}),
       },
       orderBy: { name: 'asc' },
     })
@@ -558,6 +580,12 @@ export async function authRoutes(fastify: FastifyInstance) {
     const password = await hashPassword(Math.random().toString(36) + Date.now())
     const pin      = body.pin ? await hashPin(body.pin) : null
 
+    // Anchor every new staff row to the CEO's currently active tenant so the
+    // /workforce hub doesn't end up with floating "no company" rows. Portfolio
+    // writes are gated client-side (PortfolioWriteGuardModal) — by the time
+    // this fires, `tenantId` is the single company the operator picked.
+    const tenantId = req.staffUser!.tenantId
+
     const user = await prisma.user.create({
       data: {
         name: body.name?.trim() || 'Unnamed staff',
@@ -566,11 +594,13 @@ export async function authRoutes(fastify: FastifyInstance) {
         ...(body.jobTitle ? { jobTitle: body.jobTitle.trim() } : {}),
         password,
         ...(pin ? { pin } : {}),
+        ...(tenantId ? { tenantId } : {}),
         role: body.role as never,
       },
       select: {
         id: true, name: true, email: true, phone: true, role: true, jobTitle: true,
         isActive: true, accountStatus: true, createdAt: true, pin: true, tenantId: true,
+        tenant: { select: { id: true, name: true, slug: true } },
       },
     })
     return reply.status(201).send({ ...user, hasPin: !!user.pin, pin: undefined })
@@ -584,7 +614,7 @@ export async function authRoutes(fastify: FastifyInstance) {
   fastify.patch<{ Params: { id: string } }>(
     '/users/:id',
     { preHandler: requireAuth(...ADMIN_ONLY) },
-    async (req) => {
+    async (req, reply) => {
       const body = z.object({
         name:     z.string().min(1).optional(),
         email:    z.string().email().optional().or(z.literal('')),
@@ -593,7 +623,36 @@ export async function authRoutes(fastify: FastifyInstance) {
         pin:      z.string().min(4).max(8).optional().or(z.literal('')),
         isActive: z.boolean().optional(),
         jobTitle: z.string().max(120).optional().or(z.literal('')),
+        // Explicit cross-tenant transfer. Validated against the editor's
+        // tenant memberships — you can only move a staff member to a company
+        // you actually belong to.
+        tenantId: z.string().uuid().optional(),
       }).parse(req.body)
+
+      // Cross-tenant guard: when the operator is single-tenant (not in
+      // portfolio mode), only allow edits to rows that belong to their
+      // active tenant OR have no tenant (legacy back-fill). Portfolio-mode
+      // operators are already gated by PortfolioWriteGuardModal client-side.
+      const scope = await resolveTenantScope(req)
+      const existing = await prisma.user.findUnique({
+        where: { id: req.params.id },
+        select: { tenantId: true },
+      })
+      if (!existing) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'No such staff' } })
+      if (existing.tenantId && scope.tenantIds.length > 0 && !scope.tenantIds.includes(existing.tenantId)) {
+        return reply.status(403).send({ error: {
+          code: 'CROSS_TENANT',
+          message: 'This staff member belongs to a company you don\'t have access to.',
+        }})
+      }
+
+      // Tenant transfer validation: target tenant must be one you belong to.
+      if (body.tenantId && !scope.tenantIds.includes(body.tenantId)) {
+        return reply.status(403).send({ error: {
+          code: 'CROSS_TENANT',
+          message: 'You can only transfer staff into a company you belong to.',
+        }})
+      }
 
       const data: Record<string, unknown> = {}
       if (body.name     != null) data.name      = body.name
@@ -603,6 +662,7 @@ export async function authRoutes(fastify: FastifyInstance) {
       if (body.isActive != null) data.isActive  = body.isActive
       if (body.jobTitle != null) data.jobTitle  = body.jobTitle || null
       if (body.pin      != null) data.pin       = body.pin ? await hashPin(body.pin) : null
+      if (body.tenantId != null) data.tenantId  = body.tenantId
 
       const user = await prisma.user.update({
         where: { id: req.params.id },
@@ -610,6 +670,7 @@ export async function authRoutes(fastify: FastifyInstance) {
         select: {
           id: true, name: true, email: true, phone: true, role: true, jobTitle: true,
           isActive: true, accountStatus: true, createdAt: true, pin: true, tenantId: true,
+          tenant: { select: { id: true, name: true, slug: true } },
         },
       })
       return { ...user, hasPin: !!user.pin, pin: undefined }
