@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { api } from '../../lib/api'
+import { useViewAsRole } from '../../store/viewAsRole'
 
 interface Tenant {
   id: string
@@ -52,9 +53,23 @@ export function TenantSwitcher({ collapsed }: { collapsed: boolean }) {
   const [open, setOpen] = useState(false)
   const [viewAll, setViewAll] = useState(false)
   const popRef = useRef<HTMLDivElement | null>(null)
+  // When the CEO impersonates a non-admin role, portfolio view is incoherent
+  // — that role wouldn't have multi-company access in production. Auto-clear
+  // it on impersonation, and hide the "All companies" entry from the popover.
+  const viewAsRole = useViewAsRole((s) => s.role)
+  const isImpersonating = viewAsRole !== null
 
   // Hydrate after mount so SSR doesn't mismatch
   useEffect(() => { setViewAll(readViewAll()) }, [])
+
+  // Auto-collapse portfolio when an impersonation starts.
+  useEffect(() => {
+    if (isImpersonating && readViewAll()) {
+      writeViewAll(false)
+      setViewAll(false)
+      qc.invalidateQueries()
+    }
+  }, [isImpersonating, qc])
 
   const { data: tenants = [] } = useQuery<Tenant[]>({
     queryKey: ['my-tenants'],
@@ -118,6 +133,7 @@ export function TenantSwitcher({ collapsed }: { collapsed: boolean }) {
             activeId={viewAll ? '__ALL__' : active.id}
             onSwitch={(id) => switchTo.mutate(id)}
             onActivateAll={activateViewAll}
+            allowPortfolio={!isImpersonating}
             switching={switchTo.isPending ? switchTo.variables ?? null : null}
             onClose={() => setOpen(false)}
             anchor="left" />
@@ -167,12 +183,13 @@ export function TenantSwitcher({ collapsed }: { collapsed: boolean }) {
   )
 }
 
-const SwitcherPopover = ({ ref, tenants, activeId, onSwitch, onActivateAll, switching, onClose, anchor }: {
+const SwitcherPopover = ({ ref, tenants, activeId, onSwitch, onActivateAll, allowPortfolio, switching, onClose, anchor }: {
   ref: React.Ref<HTMLDivElement>
   tenants: Tenant[]
   activeId: string                // tenant id, or '__ALL__' when in portfolio view
   onSwitch: (id: string) => void
   onActivateAll: () => void
+  allowPortfolio: boolean         // hide "All companies" when impersonating non-admin
   switching: string | null
   onClose: () => void
   anchor: 'below' | 'left'
@@ -194,28 +211,32 @@ const SwitcherPopover = ({ ref, tenants, activeId, onSwitch, onActivateAll, swit
         <p className="text-[10px] uppercase tracking-wider font-bold text-white/40">Your companies</p>
       </div>
       <div className="max-h-[280px] overflow-y-auto">
-        {/* Virtual "All companies" entry — portfolio view across every tenant */}
-        <button onClick={() => { if (!allActive) onActivateAll() }}
-          disabled={allActive || !!switching}
-          className={`w-full flex items-center gap-3 px-3 py-2.5 text-left transition-colors ${
-            allActive ? 'bg-[#00D4B1]/10' : 'hover:bg-white/[0.04]'
-          } disabled:cursor-default border-b border-white/[0.05]`}>
-          <div className="h-7 w-7 rounded-lg shrink-0 flex items-center justify-center text-[12px] font-black"
-            style={{
-              background: allActive ? 'rgba(0,212,177,0.18)' : 'rgba(255,255,255,0.05)',
-              border: `1px solid ${allActive ? 'rgba(0,212,177,0.4)' : 'rgba(255,255,255,0.08)'}`,
-              color: allActive ? '#00D4B1' : 'rgba(255,255,255,0.85)',
-            }}>
-            ∞
-          </div>
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2">
-              <p className="text-xs font-bold text-white/90 truncate">All companies</p>
-              {allActive && <span className="text-[9px] font-black uppercase tracking-wider text-[#00D4B1]">Active</span>}
+        {/* Virtual "All companies" entry — only shown when portfolio access is
+            allowed. While impersonating a non-admin role, the view-as target
+            wouldn't have portfolio in production, so the option is hidden. */}
+        {allowPortfolio && (
+          <button onClick={() => { if (!allActive) onActivateAll() }}
+            disabled={allActive || !!switching}
+            className={`w-full flex items-center gap-3 px-3 py-2.5 text-left transition-colors ${
+              allActive ? 'bg-[#00D4B1]/10' : 'hover:bg-white/[0.04]'
+            } disabled:cursor-default border-b border-white/[0.05]`}>
+            <div className="h-7 w-7 rounded-lg shrink-0 flex items-center justify-center text-[12px] font-black"
+              style={{
+                background: allActive ? 'rgba(0,212,177,0.18)' : 'rgba(255,255,255,0.05)',
+                border: `1px solid ${allActive ? 'rgba(0,212,177,0.4)' : 'rgba(255,255,255,0.08)'}`,
+                color: allActive ? '#00D4B1' : 'rgba(255,255,255,0.85)',
+              }}>
+              ∞
             </div>
-            <p className="text-[10px] text-white/40 truncate mt-0.5">Portfolio view · {tenants.length} compan{tenants.length === 1 ? 'y' : 'ies'}</p>
-          </div>
-        </button>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2">
+                <p className="text-xs font-bold text-white/90 truncate">All companies</p>
+                {allActive && <span className="text-[9px] font-black uppercase tracking-wider text-[#00D4B1]">Active</span>}
+              </div>
+              <p className="text-[10px] text-white/40 truncate mt-0.5">Portfolio view · {tenants.length} compan{tenants.length === 1 ? 'y' : 'ies'}</p>
+            </div>
+          </button>
+        )}
 
         {tenants.map((t) => {
           const isActive = !allActive && t.id === activeId

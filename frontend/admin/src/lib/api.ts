@@ -80,6 +80,7 @@ const PORTFOLIO_GUARD_EXCLUSIONS: readonly RegExp[] = [
   /^\/orders\b/,
   /^\/pos\b/,
   /^\/kds\b/,
+  /^\/expo\b/,                  // fire / reject / serve — order pins the tenant
   /^\/kitchen-staff\b/,
   /^\/storefront\b/,
   /^\/reservations\b/,
