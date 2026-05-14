@@ -3,8 +3,6 @@ import { useState, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../../../lib/api'
 
-const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
-
 interface SocialStatus {
   facebook: { connected: boolean; pageName?: string; pageId?: string }
   instagram: { connected: boolean; userId?: string }
@@ -35,8 +33,23 @@ export default function IntegrationsPage() {
     },
   })
 
-  function connectMeta() {
-    window.location.href = `${API_URL}/api/v1/integrations/social/connect`
+  const [connecting, setConnecting] = useState(false)
+  const [connectErr, setConnectErr] = useState<string | null>(null)
+
+  // The connect endpoint sits behind requireAuth — a plain top-level
+  // navigation drops the Authorization header and gets a 401 back. Fetch
+  // the OAuth URL via our authenticated api client, *then* navigate the
+  // browser to Facebook's dialog. Same UX, headers preserved.
+  async function connectMeta() {
+    setConnectErr(null)
+    setConnecting(true)
+    try {
+      const { url } = await api.get<{ url: string }>('/integrations/social/connect')
+      window.location.href = url
+    } catch (err) {
+      setConnecting(false)
+      setConnectErr(err instanceof Error ? err.message : 'Failed to start Meta connect')
+    }
   }
 
   return (
@@ -58,6 +71,16 @@ export default function IntegrationsPage() {
           <p className="text-sm text-kds-subtext mt-1">Try again or check your Facebook App settings.</p>
         </div>
       )}
+      {connectErr && (
+        <div className="mb-6 rounded-xl border border-kds-red bg-kds-red/10 p-4">
+          <p className="font-bold text-kds-red">⚠ Could not start Meta connect</p>
+          <p className="text-sm text-kds-subtext mt-1">{connectErr}</p>
+          <p className="text-xs text-kds-subtext/70 mt-2">
+            Most often this means <code className="bg-kds-border px-1 rounded">FACEBOOK_APP_ID</code> /
+            <code className="bg-kds-border px-1 rounded ml-1">FACEBOOK_APP_SECRET</code> aren&apos;t set in the backend .env.
+          </p>
+        </div>
+      )}
 
       <div className="space-y-4 max-w-2xl">
         {/* Meta / Facebook + Instagram */}
@@ -72,13 +95,14 @@ export default function IntegrationsPage() {
             </div>
             <button
               onClick={connectMeta}
-              className={`rounded-xl px-4 py-2 text-sm font-bold transition-colors ${
+              disabled={connecting}
+              className={`rounded-xl px-4 py-2 text-sm font-bold transition-colors disabled:opacity-60 ${
                 status?.facebook.connected
                   ? 'border border-kds-border text-kds-subtext hover:border-kds-red hover:text-kds-red'
                   : 'bg-blue-600 text-white hover:bg-blue-700'
               }`}
             >
-              {status?.facebook.connected ? 'Reconnect' : 'Connect'}
+              {connecting ? 'Opening Meta…' : status?.facebook.connected ? 'Reconnect' : 'Connect'}
             </button>
           </div>
 

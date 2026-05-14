@@ -302,12 +302,18 @@ async function build() {
       await api.register(expoRoutes,              { prefix: '/expo' })
       await api.register(parSheetRoutes,          { prefix: '/par-sheet' })
 
-      // Meta OAuth: GET /api/v1/integrations/social/connect → redirect
-      //             GET /api/v1/integrations/social/callback → exchange code + store tokens
-      api.get('/integrations/social/connect', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
+      // Meta OAuth.
+      //   GET /api/v1/integrations/social/connect   → returns { url } (authenticated JSON)
+      //   GET /api/v1/integrations/social/callback  → exchanges code + stores tokens (public — Facebook calls it)
+      //
+      // The connect step is JSON-not-redirect because the browser can't
+      // attach an Authorization header when navigating top-level — so the
+      // frontend fetches the OAuth URL with its bearer token, then
+      // window.location.hrefs the browser to Facebook directly.
+      api.get('/integrations/social/connect', { preHandler: requireAuth(...MANAGERS) }, async (_req) => {
         const redirectUri = `${process.env['API_URL'] ?? 'http://localhost:3001'}/api/v1/integrations/social/callback`
         const url = await getOAuthUrl(redirectUri)
-        return reply.redirect(url)
+        return { url }
       })
       api.get<{ Querystring: { code?: string; error?: string } }>(
         '/integrations/social/callback',
