@@ -303,6 +303,7 @@ async function build() {
       await api.register(parSheetRoutes,          { prefix: '/par-sheet' })
 
       // Meta OAuth.
+      //   GET /api/v1/integrations/social/status    → { configured, connected, page, ig } (authed)
       //   GET /api/v1/integrations/social/connect   → returns { url } (authenticated JSON)
       //   GET /api/v1/integrations/social/callback  → exchanges code + stores tokens (public — Facebook calls it)
       //
@@ -310,6 +311,28 @@ async function build() {
       // attach an Authorization header when navigating top-level — so the
       // frontend fetches the OAuth URL with its bearer token, then
       // window.location.hrefs the browser to Facebook directly.
+      api.get('/integrations/social/status', { preHandler: requireAuth(...MANAGERS) }, async () => {
+        // env-config check is what the operator forgets first — surfacing
+        // it explicitly lets the UI tell them "go fill .env" instead of
+        // hiding the failure behind a generic auth screen.
+        const configured = Boolean(process.env['FACEBOOK_APP_ID'] && process.env['FACEBOOK_APP_SECRET'])
+        const rows = await prisma.setting.findMany({
+          where: { key: { in: ['fb_page_id', 'fb_page_name', 'fb_page_token', 'ig_user_id'] } },
+          select: { key: true, value: true },
+        })
+        const map = new Map(rows.map((r) => [r.key, r.value]))
+        const pageId    = map.get('fb_page_id')    ?? null
+        const pageName  = map.get('fb_page_name')  ?? null
+        const pageToken = map.get('fb_page_token') ?? null
+        const igUserId  = map.get('ig_user_id')    ?? null
+        return {
+          configured,
+          connected: Boolean(pageId && pageToken),
+          page: pageId ? { id: pageId, name: pageName } : null,
+          ig:   igUserId ? { userId: igUserId } : null,
+          redirectUri: `${process.env['API_URL'] ?? 'http://localhost:3001'}/api/v1/integrations/social/callback`,
+        }
+      })
       api.get('/integrations/social/connect', { preHandler: requireAuth(...MANAGERS) }, async (_req) => {
         const redirectUri = `${process.env['API_URL'] ?? 'http://localhost:3001'}/api/v1/integrations/social/callback`
         const url = await getOAuthUrl(redirectUri)

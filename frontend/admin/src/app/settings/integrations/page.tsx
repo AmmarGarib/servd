@@ -3,9 +3,16 @@ import { useState, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../../../lib/api'
 
+// Mirrors GET /api/v1/integrations/social/status. `configured` tells us
+// whether the backend has FACEBOOK_APP_ID/SECRET set — the operator's
+// first failure mode — so the UI can route them to the env step instead
+// of pretending the integration is just "not connected yet".
 interface SocialStatus {
-  facebook: { connected: boolean; pageName?: string; pageId?: string }
-  instagram: { connected: boolean; userId?: string }
+  configured: boolean
+  connected:  boolean
+  page:        { id: string; name: string | null } | null
+  ig:          { userId: string } | null
+  redirectUri: string
 }
 
 export default function IntegrationsPage() {
@@ -20,17 +27,7 @@ export default function IntegrationsPage() {
 
   const { data: status } = useQuery<SocialStatus>({
     queryKey: ['social-status'],
-    queryFn: async () => {
-      const [fbPageId, fbPageName, igUserId] = await Promise.all([
-        api.get<{ value: string } | null>('/settings/fb_page_id').catch(() => null),
-        api.get<{ value: string } | null>('/settings/fb_page_name').catch(() => null),
-        api.get<{ value: string } | null>('/settings/ig_user_id').catch(() => null),
-      ])
-      return {
-        facebook:  { connected: !!fbPageId, pageName: fbPageName?.value, pageId: fbPageId?.value },
-        instagram: { connected: !!igUserId, userId: igUserId?.value },
-      }
-    },
+    queryFn: () => api.get<SocialStatus>('/integrations/social/status'),
   })
 
   const [connecting, setConnecting] = useState(false)
@@ -95,32 +92,61 @@ export default function IntegrationsPage() {
             </div>
             <button
               onClick={connectMeta}
-              disabled={connecting}
-              className={`rounded-xl px-4 py-2 text-sm font-bold transition-colors disabled:opacity-60 ${
-                status?.facebook.connected
+              disabled={connecting || status?.configured === false}
+              className={`rounded-xl px-4 py-2 text-sm font-bold transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                status?.connected
                   ? 'border border-kds-border text-kds-subtext hover:border-kds-red hover:text-kds-red'
                   : 'bg-blue-600 text-white hover:bg-blue-700'
               }`}
             >
-              {connecting ? 'Opening Meta…' : status?.facebook.connected ? 'Reconnect' : 'Connect'}
+              {connecting ? 'Opening Meta…' : status?.connected ? 'Reconnect' : 'Connect'}
             </button>
           </div>
 
-          {status?.facebook.connected && (
+          {/* Env-config gate — short-circuit before "not connected" so the
+              operator sees the actual blocker (missing .env values) rather
+              than discovering it on click. Links to the runbook. */}
+          {status && !status.configured && (
+            <div className="mt-4 rounded-lg border border-kds-amber/30 bg-kds-amber/5 p-3 text-xs space-y-1.5">
+              <p className="font-bold text-kds-amber">⚠ Meta App not configured</p>
+              <p className="text-kds-subtext">
+                <code className="bg-kds-border px-1 rounded">FACEBOOK_APP_ID</code> and
+                <code className="bg-kds-border px-1 rounded ml-1">FACEBOOK_APP_SECRET</code> aren&apos;t
+                set in <code className="bg-kds-border px-1 rounded">backend/.env</code>. You need
+                to create a Meta App at developers.facebook.com first — this is a one-time
+                manual step that has no programmatic path.
+              </p>
+              <p className="text-kds-subtext pt-1">
+                <a href="https://github.com/AmmarGarib/servd/blob/main/docs/META_SETUP.md"
+                  target="_blank" rel="noreferrer"
+                  className="text-kds-green underline">
+                  Follow the META_SETUP runbook →
+                </a>
+              </p>
+              <p className="text-kds-subtext pt-1">
+                Register this redirect URI in the Meta App:
+                <code className="bg-kds-border px-1 rounded ml-1 break-all">{status.redirectUri}</code>
+              </p>
+            </div>
+          )}
+
+          {status?.connected && (
             <div className="mt-4 space-y-2">
               <div className="flex items-center gap-3 rounded-lg bg-kds-bg p-3">
                 <span className="text-xl">📘</span>
                 <div>
                   <p className="text-sm font-semibold text-kds-text">Facebook Page</p>
-                  <p className="text-xs text-kds-green">✓ {status.facebook.pageName} (ID: {status.facebook.pageId})</p>
+                  <p className="text-xs text-kds-green">
+                    ✓ {status.page?.name ?? 'Page'} (ID: {status.page?.id})
+                  </p>
                 </div>
               </div>
               <div className="flex items-center gap-3 rounded-lg bg-kds-bg p-3">
                 <span className="text-xl">📸</span>
                 <div>
                   <p className="text-sm font-semibold text-kds-text">Instagram Business</p>
-                  {status.instagram.connected
-                    ? <p className="text-xs text-kds-green">✓ Connected (User ID: {status.instagram.userId})</p>
+                  {status.ig
+                    ? <p className="text-xs text-kds-green">✓ Connected (User ID: {status.ig.userId})</p>
                     : <p className="text-xs text-kds-amber">⚠ No Instagram Business account found on this Page</p>
                   }
                 </div>
@@ -128,13 +154,13 @@ export default function IntegrationsPage() {
             </div>
           )}
 
-          {!status?.facebook.connected && (
+          {status?.configured && !status.connected && (
             <div className="mt-4 rounded-lg bg-kds-bg p-3 text-xs text-kds-subtext space-y-1">
-              <p className="font-semibold text-kds-text">Requirements before connecting:</p>
+              <p className="font-semibold text-kds-text">Before clicking Connect:</p>
               <ul className="list-disc list-inside space-y-0.5">
-                <li>A Facebook Page for your restaurant</li>
+                <li>A Facebook Page for your restaurant (you must be Page admin)</li>
                 <li>An Instagram Business account linked to that Page</li>
-                <li>Set <code className="bg-kds-border px-1 rounded">FACEBOOK_APP_ID</code> and <code className="bg-kds-border px-1 rounded">FACEBOOK_APP_SECRET</code> in your backend .env</li>
+                <li>This redirect URI registered in your Meta App: <code className="bg-kds-border px-1 rounded break-all">{status.redirectUri}</code></li>
               </ul>
             </div>
           )}
