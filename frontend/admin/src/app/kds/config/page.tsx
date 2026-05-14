@@ -1,5 +1,5 @@
 'use client'
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../../lib/api'
 import { formatDistanceToNowStrict } from 'date-fns'
@@ -71,6 +71,9 @@ function StationsTab() {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [draftName, setDraftName] = useState('')
   const [draftOrder, setDraftOrder] = useState<number>(0)
+  // Which concept groups are expanded. Defaults to "all open" — operator
+  // can collapse the ones they're not actively configuring.
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
 
   const { data: concepts = [] } = useQuery({
     queryKey: ['concepts'],
@@ -84,6 +87,36 @@ function StationsTab() {
         conceptId === 'all' ? '/kds/stations' : `/kds/stations?conceptId=${conceptId}`,
       ),
   })
+
+  // Group stations by concept so duplicate names (Prep on Bukhari, Prep on
+  // Clifton, etc.) are visually disambiguated. Concepts with no stations
+  // are omitted entirely.
+  const groupedStations = useMemo(() => {
+    const conceptName = new Map<string, string>()
+    for (const c of concepts) conceptName.set(c.id, c.name)
+    const groups = new Map<string, { name: string; stations: Station[] }>()
+    for (const s of stations) {
+      const key  = s.conceptId
+      const name = conceptName.get(s.conceptId) ?? 'Unknown concept'
+      const arr  = groups.get(key) ?? { name, stations: [] }
+      arr.stations.push(s)
+      groups.set(key, arr)
+    }
+    // Order each concept's stations by displayOrder then name.
+    for (const g of groups.values()) {
+      g.stations.sort((a, b) => a.displayOrder - b.displayOrder || a.name.localeCompare(b.name))
+    }
+    return Array.from(groups.entries()).map(([id, g]) => ({ id, ...g }))
+      .sort((a, b) => a.name.localeCompare(b.name))
+  }, [stations, concepts])
+
+  function toggleGroup(id: string) {
+    setCollapsedGroups((cur) => {
+      const next = new Set(cur)
+      if (next.has(id)) next.delete(id); else next.add(id)
+      return next
+    })
+  }
 
   const patchStation = useMutation({
     mutationFn: ({ id, body }: { id: string; body: Partial<Station> }) =>
@@ -129,145 +162,132 @@ function StationsTab() {
         </select>
       </div>
 
-      {/* Table */}
-      <div className="rounded-xl border border-kds-border overflow-hidden">
-        <table className="w-full text-sm">
-          <thead className="bg-kds-card border-b border-kds-border">
-            <tr>
-              {['Station Name', 'Display Order', 'Live Load', 'Active', 'Actions'].map((h) => (
-                <th
-                  key={h}
-                  className="px-4 py-3 text-left font-semibold text-kds-subtext"
-                >
-                  {h}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-kds-border">
-            {isLoading ? (
-              <tr>
-                <td colSpan={5} className="px-4 py-8 text-center text-kds-subtext">
-                  Loading stations…
-                </td>
-              </tr>
-            ) : stations.length === 0 ? (
-              <tr>
-                <td colSpan={5} className="px-4 py-10 text-center text-kds-subtext">
-                  No stations found. Create stations in Brands &amp; Stations.
-                </td>
-              </tr>
-            ) : (
-              stations.map((s) => {
-                const isEditing = editingId === s.id
-                return (
-                  <tr key={s.id} className="hover:bg-kds-card/40 transition-colors">
-                    {/* Name */}
-                    <td className="px-4 py-3">
-                      {isEditing ? (
-                        <input
-                          value={draftName}
-                          onChange={(e) => setDraftName(e.target.value)}
-                          className="rounded border border-kds-green bg-kds-bg px-2 py-1 text-sm text-kds-text focus:outline-none w-40"
-                          autoFocus
-                        />
-                      ) : (
-                        <span className="font-medium text-kds-text">{s.name}</span>
-                      )}
-                    </td>
+      {/* Stations — grouped by concept as collapsible drop-downs. Each
+          concept card shows the per-station rows when expanded. */}
+      {isLoading ? (
+        <p className="rounded-xl border border-kds-border bg-kds-card px-4 py-10 text-center text-sm text-kds-subtext">
+          Loading stations…
+        </p>
+      ) : groupedStations.length === 0 ? (
+        <p className="rounded-xl border border-kds-border bg-kds-card px-4 py-10 text-center text-sm text-kds-subtext">
+          No stations found. Create stations in Brands &amp; Stations.
+        </p>
+      ) : (
+        <div className="space-y-3">
+          {groupedStations.map((group) => {
+            const isCollapsed = collapsedGroups.has(group.id)
+            const activeCount = group.stations.filter((s) => s.isActive).length
+            const totalLoad   = group.stations.reduce((sum, s) => sum + s.liveLoad, 0)
+            return (
+              <div key={group.id} className="rounded-xl border border-kds-border bg-kds-card overflow-hidden">
+                {/* Concept header — click to expand/collapse */}
+                <button onClick={() => toggleGroup(group.id)}
+                  className="w-full flex items-center gap-3 px-4 py-3 hover:bg-kds-bg/40 transition-colors">
+                  <span className="text-kds-subtext text-xs"
+                    style={{ display: 'inline-block', transition: 'transform 120ms', transform: isCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)' }}>
+                    ▼
+                  </span>
+                  <span className="font-bold text-kds-text">{group.name}</span>
+                  <span className="text-xs text-kds-subtext">
+                    {group.stations.length} station{group.stations.length === 1 ? '' : 's'} ·
+                    <span className={activeCount === group.stations.length ? ' text-kds-green' : ' text-kds-amber'}>
+                      {' '}{activeCount} active
+                    </span>
+                  </span>
+                  {totalLoad > 0 && (
+                    <span className="ml-auto inline-flex items-center justify-center h-5 min-w-[1.25rem] rounded-full text-[10px] font-bold px-1.5 bg-kds-amber/20 text-kds-amber">
+                      {totalLoad}
+                    </span>
+                  )}
+                </button>
 
-                    {/* Display order */}
-                    <td className="px-4 py-3">
-                      {isEditing ? (
-                        <input
-                          type="number"
-                          value={draftOrder}
-                          onChange={(e) => setDraftOrder(Number(e.target.value))}
-                          className="rounded border border-kds-green bg-kds-bg px-2 py-1 text-sm text-kds-text focus:outline-none w-20"
-                        />
-                      ) : (
-                        <span className="text-kds-subtext">{s.displayOrder}</span>
-                      )}
-                    </td>
-
-                    {/* Live load */}
-                    <td className="px-4 py-3">
-                      <span
-                        className={`inline-flex items-center justify-center h-6 min-w-[1.5rem] rounded-full text-xs font-bold px-2 ${
-                          s.liveLoad > 0
-                            ? 'bg-kds-amber/20 text-kds-amber'
-                            : 'bg-kds-card text-kds-subtext'
-                        }`}
-                      >
-                        {s.liveLoad}
-                      </span>
-                    </td>
-
-                    {/* Active toggle */}
-                    <td className="px-4 py-3">
-                      <button
-                        onClick={() => toggleActive(s)}
-                        disabled={patchStation.isPending}
-                        className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none disabled:opacity-50 ${
-                          s.isActive ? 'bg-kds-green' : 'bg-kds-border'
-                        }`}
-                      >
-                        <span
-                          className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform ${
-                            s.isActive ? 'translate-x-4' : 'translate-x-1'
-                          }`}
-                        />
-                      </button>
-                    </td>
-
-                    {/* Actions */}
-                    <td className="px-4 py-3">
-                      {isEditing ? (
-                        <div className="flex items-center gap-2">
-                          <button
-                            onClick={() => saveEdit(s.id)}
-                            disabled={patchStation.isPending || !draftName.trim()}
-                            className="rounded-lg bg-kds-green px-3 py-1 text-xs font-bold text-black hover:opacity-90 disabled:opacity-50"
-                          >
-                            Save
-                          </button>
-                          <button
-                            onClick={cancelEdit}
-                            className="rounded-lg border border-kds-border px-3 py-1 text-xs font-medium text-kds-subtext hover:text-kds-text"
-                          >
-                            Cancel
-                          </button>
+                {/* Station rows — hidden when the concept is collapsed */}
+                {!isCollapsed && (
+                  <div className="border-t border-kds-border divide-y divide-kds-border/70">
+                    {group.stations.map((s) => {
+                      const isEditing = editingId === s.id
+                      return (
+                        <div key={s.id} className="px-4 py-3 hover:bg-kds-bg/20 transition-colors">
+                          {isEditing ? (
+                            /* Edit mode — inline form */
+                            <div className="flex items-center gap-3 flex-wrap">
+                              <input
+                                value={draftName}
+                                onChange={(e) => setDraftName(e.target.value)}
+                                placeholder="Station name"
+                                className="rounded border border-kds-green bg-kds-bg px-2 py-1 text-sm text-kds-text focus:outline-none w-44"
+                                autoFocus
+                              />
+                              <label className="text-[11px] text-kds-subtext flex items-center gap-1.5">
+                                Order
+                                <input
+                                  type="number"
+                                  value={draftOrder}
+                                  onChange={(e) => setDraftOrder(Number(e.target.value))}
+                                  className="rounded border border-kds-green bg-kds-bg px-2 py-1 text-sm text-kds-text focus:outline-none w-16"
+                                />
+                              </label>
+                              <div className="ml-auto flex items-center gap-2">
+                                <button
+                                  onClick={() => saveEdit(s.id)}
+                                  disabled={patchStation.isPending || !draftName.trim()}
+                                  className="rounded-lg bg-kds-green px-3 py-1 text-xs font-bold text-black hover:opacity-90 disabled:opacity-50">
+                                  Save
+                                </button>
+                                <button
+                                  onClick={cancelEdit}
+                                  className="rounded-lg border border-kds-border px-3 py-1 text-xs font-medium text-kds-subtext hover:text-kds-text">
+                                  Cancel
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            /* Read mode — compact row */
+                            <div className="flex items-center gap-3 flex-wrap">
+                              <span className="font-medium text-kds-text">{s.name}</span>
+                              <span className="text-[11px] text-kds-subtext">order {s.displayOrder}</span>
+                              <span className={`inline-flex items-center justify-center h-5 min-w-[1.25rem] rounded-full text-[10px] font-bold px-1.5 ${
+                                s.liveLoad > 0 ? 'bg-kds-amber/20 text-kds-amber' : 'bg-kds-bg text-kds-subtext'
+                              }`}>
+                                load {s.liveLoad}
+                              </span>
+                              <button
+                                onClick={() => toggleActive(s)}
+                                disabled={patchStation.isPending}
+                                title={s.isActive ? 'Deactivate' : 'Activate'}
+                                className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none disabled:opacity-50 ${
+                                  s.isActive ? 'bg-kds-green' : 'bg-kds-border'
+                                }`}>
+                                <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform ${
+                                  s.isActive ? 'translate-x-4' : 'translate-x-1'
+                                }`} />
+                              </button>
+                              <div className="ml-auto flex items-center gap-2">
+                                <Link
+                                  href={`/kds/${s.id}`}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="rounded-lg bg-kds-green px-3 py-1 text-xs font-bold text-black hover:opacity-90 inline-flex items-center gap-1">
+                                  ▶ Open KDS
+                                </Link>
+                                <button
+                                  onClick={() => startEdit(s)}
+                                  className="rounded-lg border border-kds-border px-3 py-1 text-xs font-medium text-kds-subtext hover:border-kds-green hover:text-kds-green transition-colors">
+                                  Edit
+                                </button>
+                              </div>
+                            </div>
+                          )}
                         </div>
-                      ) : (
-                        <div className="flex items-center gap-2">
-                          {/* "Open KDS" launches the per-station screen — the
-                              URL each kitchen iPad permanently displays. CEO
-                              can preview from here; line cooks usually open
-                              it once and leave it pinned. */}
-                          <Link
-                            href={`/kds/${s.id}`}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="rounded-lg bg-kds-green px-3 py-1 text-xs font-bold text-black hover:opacity-90 inline-flex items-center gap-1"
-                          >
-                            ▶ Open KDS
-                          </Link>
-                          <button
-                            onClick={() => startEdit(s)}
-                            className="rounded-lg border border-kds-border px-3 py-1 text-xs font-medium text-kds-subtext hover:border-kds-green hover:text-kds-green transition-colors"
-                          >
-                            Edit
-                          </button>
-                        </div>
-                      )}
-                    </td>
-                  </tr>
-                )
-              })
-            )}
-          </tbody>
-        </table>
-      </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )}
     </div>
   )
 }
