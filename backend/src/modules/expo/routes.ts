@@ -155,47 +155,84 @@ export async function expoRoutes(fastify: FastifyInstance) {
       const { updateOrderStatus } = await import('../orders/service.js')
       await updateOrderStatus(req.params.id, 'preparing')
 
-      // Per-item: instantiate OrderItemSteps for every recipe step on the
-      // item, then flip the deps-clear ones to `preparing` and fire them to
-      // their station. The cascade engine (step-bump) walks the rest.
+      // Per-item: two flows.
+      //
+      //   Step flow (item has recipe steps)
+      //     Instantiate OrderItemStep rows; deps-clear ones start preparing,
+      //     the rest sit waiting until cascade fires them. Each preparing
+      //     step's station gets a socket event.
+      //
+      //   Legacy flow (item has no recipe steps yet)
+      //     Flip the item to `preparing`, set firedAt, and ping its station
+      //     so the line cook sees it land. Without this the item stayed at
+      //     `pending` and nothing rendered on the per-station KDS — looked
+      //     like fire was broken even though the order header advanced.
+      //
+      // Items with neither recipe steps NOR a stationId (menu item never got
+      // routed in /menu) end up tracked but unrouted — surfaced back to the
+      // operator below so they know why "nothing happened".
       const ws = getIOSafe()
+      const now = new Date()
+      const unroutedItems: Array<{ id: string; name: string }> = []
       for (const item of order.items) {
         const steps = item.menuItem?.recipe?.recipeSteps ?? []
         const serviceSteps = steps.filter((s) => s.phase === 'service_cook' || s.phase === 'service_assemble')
-        if (serviceSteps.length === 0) {
-          // Legacy / no recipe steps — keep current routing.
-          continue
-        }
-        await prisma.orderItem.update({
-          where: { id: item.id },
-          data: { status: 'preparing', firedAt: new Date() },
-        })
-        // Bulk-create the step rows. Deps-clear steps start `preparing`;
-        // the rest sit `waiting` until cascade fires them.
-        const now = new Date()
-        await prisma.orderItemStep.createMany({
-          data: serviceSteps.map((s) => ({
-            orderItemId:      item.id,
-            recipeStepId:     s.id,
-            stationId:        s.stationId,
-            dependsOnStepIds: s.dependsOnIds,
-            status:           s.dependsOnIds.length === 0 ? 'preparing' : 'waiting',
-            firedAt:          s.dependsOnIds.length === 0 ? now : null,
-          })),
-        })
-        // Broadcast to every station that just received work.
-        const firstSteps = serviceSteps.filter((s) => s.dependsOnIds.length === 0)
-        for (const step of firstSteps) {
-          if (!step.stationId || !ws) continue
-          ws.to(`station:${step.stationId}`).emit('expo:fire', {
-            orderId:    order.id,
-            itemId:     item.id,
-            stepId:     step.id,
-            stationId:  step.stationId,
-            instruction: step.instruction,
-            estimatedSeconds: step.estimatedSeconds,
+
+        if (serviceSteps.length > 0) {
+          // ─── Step flow ────────────────────────────────────────────────
+          await prisma.orderItem.update({
+            where: { id: item.id },
+            data: { status: 'preparing', firedAt: now },
           })
+          await prisma.orderItemStep.createMany({
+            data: serviceSteps.map((s) => ({
+              orderItemId:      item.id,
+              recipeStepId:     s.id,
+              stationId:        s.stationId,
+              dependsOnStepIds: s.dependsOnIds,
+              status:           s.dependsOnIds.length === 0 ? 'preparing' : 'waiting',
+              firedAt:          s.dependsOnIds.length === 0 ? now : null,
+            })),
+          })
+          const firstSteps = serviceSteps.filter((s) => s.dependsOnIds.length === 0)
+          for (const step of firstSteps) {
+            if (!step.stationId || !ws) continue
+            ws.to(`station:${step.stationId}`).emit('expo:fire', {
+              orderId:    order.id,
+              itemId:     item.id,
+              stepId:     step.id,
+              stationId:  step.stationId,
+              instruction: step.instruction,
+              estimatedSeconds: step.estimatedSeconds,
+            })
+          }
+        } else {
+          // ─── Legacy flow ──────────────────────────────────────────────
+          await prisma.orderItem.update({
+            where: { id: item.id },
+            data: { status: 'preparing', firedAt: now },
+          })
+          if (item.stationId && ws) {
+            ws.to(`station:${item.stationId}`).emit('expo:fire', {
+              orderId:    order.id,
+              itemId:     item.id,
+              stepId:     null,
+              stationId:  item.stationId,
+              instruction: item.name,
+              estimatedSeconds: null,
+            })
+          } else if (!item.stationId) {
+            unroutedItems.push({ id: item.id, name: item.name })
+          }
         }
+      }
+
+      // Soft warning back to the caller. The order DID fire (status flipped,
+      // legacy items are now preparing), but these specific items have no
+      // station so the line will never see them. Operator should fix the
+      // menu items' station assignment.
+      if (unroutedItems.length > 0) {
+        req.log.warn({ orderId: order.id, unroutedItems }, 'expo.fire: items have no station — fix in /menu')
       }
 
       // Audit trail picks up `expo.fire` events with the note for context.
@@ -215,7 +252,11 @@ export async function expoRoutes(fastify: FastifyInstance) {
         }
       }
 
-      return reply.status(200).send({ ok: true, fired: order.items.length })
+      return reply.status(200).send({
+        ok: true,
+        fired: order.items.length,
+        unroutedItems,   // empty array unless some items had no station
+      })
     },
   )
 

@@ -1,5 +1,5 @@
 'use client'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { formatDistanceToNowStrict } from 'date-fns'
@@ -103,9 +103,28 @@ export default function ExpoPage() {
     staleTime: 2_000,
   })
 
+  // Toast for items that fired but have no station assignment. Surfaces the
+  // 'I clicked Fire and nothing happened at the line' confusion — the order
+  // DID fire, those specific items just aren't routed because their menu
+  // item has no station. Stays up for 8s so the operator can read the names.
+  const [unroutedToast, setUnroutedToast] = useState<Array<{ id: string; name: string }>>([])
+  useEffect(() => {
+    if (unroutedToast.length === 0) return
+    const t = setTimeout(() => setUnroutedToast([]), 8_000)
+    return () => clearTimeout(t)
+  }, [unroutedToast])
+
   const fire = useMutation({
-    mutationFn: (orderId: string) => api.post(`/expo/orders/${orderId}/fire`, {}),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ['expo'] }),
+    mutationFn: (orderId: string) =>
+      api.post<{ ok: true; fired: number; unroutedItems: Array<{ id: string; name: string }> }>(
+        `/expo/orders/${orderId}/fire`, {},
+      ),
+    onSuccess: (resp) => {
+      if (resp?.unroutedItems && resp.unroutedItems.length > 0) {
+        setUnroutedToast(resp.unroutedItems)
+      }
+      void qc.invalidateQueries({ queryKey: ['expo'] })
+    },
   })
 
   const reject = useMutation({
@@ -133,6 +152,27 @@ export default function ExpoPage() {
 
   return (
     <div className="min-h-screen" style={{ background: '#0A0B0F' }}>
+      {/* Unrouted-items toast — fires when the order was confirmed but some
+          items have no station, so the line will never see them. */}
+      {unroutedToast.length > 0 && (
+        <div className="fixed top-4 right-4 z-50 max-w-sm rounded-xl p-4 shadow-2xl"
+          style={{ background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.45)' }}>
+          <p className="text-sm font-black text-amber-300">⚠ Fired, but {unroutedToast.length} item{unroutedToast.length === 1 ? '' : 's'} have no station</p>
+          <p className="text-[11px] text-amber-200/70 mt-1">
+            The line won't see these because their menu item has no station assigned. Open Menu Editor → Edit item → pick a station.
+          </p>
+          <ul className="mt-2 space-y-0.5">
+            {unroutedToast.slice(0, 6).map((it) => (
+              <li key={it.id} className="text-xs text-white/85">· {it.name}</li>
+            ))}
+            {unroutedToast.length > 6 && (
+              <li className="text-[11px] text-white/50">+ {unroutedToast.length - 6} more</li>
+            )}
+          </ul>
+          <button onClick={() => setUnroutedToast([])}
+            className="absolute top-2 right-2 text-amber-200/60 hover:text-amber-200 text-sm">✕</button>
+        </div>
+      )}
       <header className="px-6 py-4 border-b" style={{ borderColor: 'rgba(255,255,255,0.05)' }}>
         <div className="flex items-center justify-between flex-wrap gap-3">
           <div>
