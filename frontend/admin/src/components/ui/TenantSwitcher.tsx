@@ -195,6 +195,7 @@ export function TenantSwitcher({ collapsed }: { collapsed: boolean }) {
           activeId={viewAll ? '__ALL__' : active.id}
           onSwitch={(id) => switchTo.mutate(id)}
           onActivateAll={activateViewAll}
+          allowPortfolio={!isImpersonating}
           switching={switchTo.isPending ? switchTo.variables ?? null : null}
           onClose={() => setOpen(false)}
           anchor="below" />
