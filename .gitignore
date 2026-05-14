@@ -25,3 +25,4 @@ Thumbs.db
 # Legacy
 _legacy/
 .commit-msg.tmp
+/.git-commit-msg.tmp
