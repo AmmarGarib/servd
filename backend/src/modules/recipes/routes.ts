@@ -184,7 +184,11 @@ export async function recipeRoutes(fastify: FastifyInstance) {
     },
   )
 
-  // GET /recipes/by-item/:menuItemId — KDS instruction modal fetches this
+  // GET /recipes/by-item/:menuItemId — KDS instruction panel fetches this
+  // when the cook taps a card. Includes both the legacy free-text steps
+  // (steps / stepsUrdu) AND the structured per-step list (recipeSteps with
+  // station + estimated seconds), plus the menu item's photo for picture-
+  // mode kitchens.
   fastify.get<{ Params: { menuItemId: string } }>(
     '/by-item/:menuItemId',
     { preHandler: requireAuth(...ALL_STAFF) },
@@ -196,6 +200,11 @@ export async function recipeRoutes(fastify: FastifyInstance) {
             include: { inventoryItem: { select: { name: true, unit: true } } },
             orderBy: { inventoryItem: { name: 'asc' } },
           },
+          recipeSteps: {
+            include: { station: { select: { name: true } } },
+            orderBy: [{ phase: 'asc' }, { ordinal: 'asc' }],
+          },
+          menuItem: { select: { name: true, imageUrl: true } },
         },
       })
       if (!recipe) return null
@@ -214,6 +223,16 @@ export async function recipeRoutes(fastify: FastifyInstance) {
           notes:        ing.notes,
           name:         ing.inventoryItem.name,
         })),
+        recipeSteps: recipe.recipeSteps.map((s) => ({
+          id:               s.id,
+          phase:            s.phase,
+          ordinal:          s.ordinal,
+          instruction:      s.instruction,
+          instructionUrdu:  s.instructionUrdu,
+          estimatedSeconds: s.estimatedSeconds,
+          stationName:      s.station?.name ?? null,
+        })),
+        menuItem: { name: recipe.menuItem.name, imageUrl: recipe.menuItem.imageUrl },
       }
     },
   )

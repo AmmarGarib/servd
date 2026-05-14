@@ -328,12 +328,16 @@ export async function expoRoutes(fastify: FastifyInstance) {
         steps: steps.map((s) => ({
           stepId:           s.id,
           itemId:           s.orderItemId,
+          // MenuItem id is what /recipes/by-item/:id keys on — the expandable
+          // instruction panel on the card needs it to fetch the recipe.
+          menuItemId:       s.orderItem.menuItemId,
           itemName:         s.orderItem.name,
           qty:              s.orderItem.quantity,
           itemNotes:        s.orderItem.notes,
           status:           s.status,
           firedAt:          s.firedAt,
           instruction:      s.recipeStep.instruction,
+          instructionUrdu:  s.recipeStep.instructionUrdu,
           phase:            s.recipeStep.phase,
           estimatedSeconds: s.recipeStep.estimatedSeconds,
           order: {
@@ -348,6 +352,7 @@ export async function expoRoutes(fastify: FastifyInstance) {
         })),
         legacy: legacy.map((it) => ({
           itemId:    it.id,
+          menuItemId: it.menuItemId,
           itemName:  it.name,
           qty:       it.quantity,
           itemNotes: it.notes,
