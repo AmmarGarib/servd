@@ -72,6 +72,57 @@ export async function kdsRoutes(fastify: FastifyInstance) {
     },
   )
 
+  // GET /kds/my-stations
+  // Data source for the line-cook dashboard at /kds. Returns the stations
+  // the caller is *assigned* to (User.stationIds), or — if they have no
+  // explicit assignment (admin / management / expediter) — every active
+  // station in their tenant scope. Inactive stations are filtered out so the
+  // line cook doesn't see surfaces that aren't running today.
+  fastify.get(
+    '/my-stations',
+    { preHandler: requireAuthOrPin(...ALL_STAFF) },
+    async (req) => {
+      const tenantFilter = req.staffUser!.tenantFilter
+
+      // The middleware doesn't decorate the request with stationIds yet (it
+      // pre-dates this field); re-fetch the caller so we get the canonical
+      // assignment list. Cheap — one indexed lookup per /kds dashboard load.
+      const me = await prisma.user.findUnique({
+        where: { id: req.staffUser!.id },
+        select: { stationIds: true },
+      })
+      const assigned = me?.stationIds ?? []
+
+      const stations = await prisma.station.findMany({
+        where: {
+          deletedAt: null,
+          isActive: true,
+          concept: { tenantId: tenantFilter, deletedAt: null },
+          ...(assigned.length > 0 ? { id: { in: assigned } } : {}),
+        },
+        orderBy: [{ conceptId: 'asc' }, { displayOrder: 'asc' }],
+        include: {
+          concept: { select: { id: true, name: true, slug: true } },
+          _count: {
+            select: {
+              orderItems: { where: { status: { notIn: ['bumped', 'voided'] } } },
+            },
+          },
+        },
+      })
+
+      return stations.map((s) => ({
+        id: s.id,
+        conceptId: s.conceptId,
+        name: s.name,
+        displayOrder: s.displayOrder,
+        isActive: s.isActive,
+        concept: s.concept,
+        liveLoad: s._count.orderItems,
+      }))
+    },
+  )
+
   // GET /kds/queue/:stationId
   // All active OrderItems routed to this station (not bumped or voided).
   fastify.get<{ Params: { stationId: string } }>(

@@ -110,6 +110,10 @@ interface StaffUser {
   permissionDeny?:  string[]
   moduleAllow?:     string[]
   moduleDeny?:      string[]
+  // Stations this user is rostered to work. Drives /kds (Kitchen view) —
+  // empty array = "not station-restricted" (admin/management/expediter
+  // get every active station).
+  stationIds?:      string[]
 }
 
 // Category → which AppRole values fall under it. A single user has one role
@@ -563,10 +567,40 @@ function InlineEditor({
   )
   const [pin, setPin]           = useState('')
   const [err, setErr]           = useState<string | null>(null)
+  // Station assignments — drives /kds (Kitchen view). Empty list means
+  // "every active station" for unrestricted roles. We let the operator
+  // assign stations to anyone (not just kitchen) so an FOH manager can
+  // open Kitchen view scoped to one brand's stations if they want.
+  const [stationIds, setStationIds] = useState<string[]>(user.stationIds ?? [])
 
   function toggleTenant(id: string) {
     setTenantIds((cur) => cur.includes(id) ? cur.filter((t) => t !== id) : [...cur, id])
   }
+  function toggleStation(id: string) {
+    setStationIds((cur) => cur.includes(id) ? cur.filter((s) => s !== id) : [...cur, id])
+  }
+
+  // Pull the full station list once per drawer open so the picker can
+  // group by concept. We rely on the same /kds/stations endpoint the
+  // sidebar uses; managers always have access.
+  const { data: allStations = [] } = useQuery<Array<{ id: string; name: string; conceptId: string; isActive: boolean; concept: { name: string } }>>({
+    queryKey: ['kds-stations-all'],
+    queryFn:  () => api.get('/kds/stations'),
+    staleTime: 60_000,
+  })
+  const stationsByConcept = useMemo(() => {
+    const byConcept = new Map<string, { conceptName: string; stations: typeof allStations }>()
+    for (const s of allStations) {
+      if (!s.isActive) continue
+      const g = byConcept.get(s.conceptId) ?? { conceptName: s.concept.name, stations: [] }
+      g.stations.push(s)
+      byConcept.set(s.conceptId, g)
+    }
+    for (const g of byConcept.values()) g.stations.sort((a, b) => a.name.localeCompare(b.name))
+    return Array.from(byConcept.entries())
+      .map(([conceptId, g]) => ({ conceptId, ...g }))
+      .sort((a, b) => a.conceptName.localeCompare(b.conceptName))
+  }, [allStations])
 
   // Keep role consistent with category: if the category changes and the
   // current role doesn't fit the new category, fall back to its primary.
@@ -704,6 +738,12 @@ function InlineEditor({
           .filter(([, v]) => v === 'deny').map(([k]) => k)
       }
 
+      // Station assignments — full replacement. Compare sorted-joined strings
+      // so order-only diffs don't trigger a no-op PATCH.
+      const existingStations = (user.stationIds ?? []).slice().sort().join(',')
+      const nextStations     = stationIds.slice().sort().join(',')
+      if (existingStations !== nextStations) patch.stationIds = stationIds
+
       if (Object.keys(patch).length > 0) {
         await api.patch(`/auth/users/${user.id}`, patch)
       }
@@ -821,6 +861,59 @@ function InlineEditor({
           </div>
         )}
       </div>
+
+      {/* ── Station assignments ──────────────────────────────────────────
+          Drives /kds (Kitchen view) — empty means "every active station"
+          for unrestricted roles. Most useful on the line-cook role: tick
+          the stations this cook actually works (Grill, Tandoor) so they
+          land on a focused dashboard. Stations are grouped by concept so
+          duplicate names across brands stay distinguishable. */}
+      {stationsByConcept.length > 0 && (
+        <div className="rounded-lg border border-kds-border bg-kds-bg/60 p-3 space-y-2">
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <div>
+              <p className="text-[11px] font-bold uppercase tracking-wider text-kds-subtext">
+                Kitchen stations
+              </p>
+              <p className="text-[10px] text-kds-subtext/80 mt-0.5">
+                Stations this person works. Empty = not restricted (sees every active station in Kitchen view).
+              </p>
+            </div>
+            {stationIds.length > 0 && (
+              <button type="button" onClick={() => setStationIds([])}
+                className="text-[10px] text-kds-subtext hover:text-kds-text underline">
+                Clear all
+              </button>
+            )}
+          </div>
+          <div className="space-y-2">
+            {stationsByConcept.map((g) => (
+              <div key={g.conceptId}>
+                <p className="text-[10px] font-bold uppercase tracking-wider text-kds-subtext mb-1">{g.conceptName}</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {g.stations.map((s) => {
+                    const checked = stationIds.includes(s.id)
+                    return (
+                      <button
+                        key={s.id}
+                        type="button"
+                        onClick={() => toggleStation(s.id)}
+                        className={`flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-bold transition-all ${
+                          checked
+                            ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                            : 'bg-kds-card text-kds-subtext border border-kds-border hover:border-emerald-400/30'
+                        }`}>
+                        <span>{checked ? '✓' : '+'}</span>
+                        <span>{s.name}</span>
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* ── Per-user permission overrides ───────────────────────────────
           {roleLabel(role)} has a baseline matrix in /configuration/roles.

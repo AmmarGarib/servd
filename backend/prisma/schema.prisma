@@ -743,6 +743,12 @@ model User {
   // is applied (intended for admin/manager — role check is the gate). Non-admin
   // roles MUST have explicit concept IDs to access concept-scoped resources.
   conceptIds      String[]      @default([])
+  // Stations this user is assigned to work. Drives the /kds dashboard (line
+  // cook sees only their stations) and is the route the head chef uses to
+  // hand a tablet to a cook without showing them every station's queue.
+  // Empty = "not station-restricted" → admin / management / expediter see
+  // every station via the existing /kds/stations endpoint.
+  stationIds      String[]      @default([])
   // ─── Per-user permission + module overrides ─────────────────────────
   // The role gives a baseline (set in /configuration/roles for actions and
   // /configuration/role-modules for sidebar visibility). These four arrays

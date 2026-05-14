@@ -78,13 +78,17 @@ const NAV: NavSection[] = [
     title: 'Live',
     items: [
       { href: '/dashboard', label: 'Dashboard',    icon: '⬡', module: 'dashboard' },
-      // Expo Station is the pass-station screen. Orders arrive here, expo
-      // fires them, then each line cook works off their own per-station
-      // /kds/<id> URL (opened on the station's iPad — managed via KDS
-      // Config). The old "/kds/all" live-feed view is superseded by Expo
-      // and the per-station screens — kept reachable for legacy bookmarks
-      // but no longer in the sidebar.
-      { href: '/expo',      label: 'Expo Station', icon: '🪧', module: 'kds_all' },
+      // Expo Station is the pass-station screen — expediter/management
+      // territory. Orders arrive here, expo fires them, then each line cook
+      // works off their own per-station /kds/<id> URL (opened on the station's
+      // iPad — managed via KDS Config). Tagged with `expo_station` (not
+      // `kds_all`) so the kitchen role can't see it — they get the Kitchen
+      // view dashboard below instead.
+      { href: '/expo',      label: 'Expo Station', icon: '🪧', module: 'expo_station' },
+      // Kitchen view — the line cook's home. Lists their assigned stations
+      // with click-to-expand inline queues. Tagged with its own module so
+      // it can be shown to roles that don't get /expo.
+      { href: '/kds',       label: 'Kitchen view', icon: '🍳', module: 'kds_dashboard' },
       { href: '/chain',     label: 'Chain Rollup', icon: '🏢', module: 'chain' },
     ],
   },
@@ -314,10 +318,15 @@ function NavLinks({
       for (const item of section.items) {
         newItems.push(item)
         if (item.href === '/expo') {
-          // Insert a Stations parent right after Expo Station. Children are
-          // tagged with module 'kds_all' so the same gate as the parent applies.
+          // Insert a Stations parent right after Expo Station for expediters
+          // and managers — gives them a 1-tap jump into any station's
+          // full-screen view. The parent click lands on /kds (kitchen
+          // dashboard) since expediters don't have kds_config access;
+          // children open each station directly. The kitchen role doesn't
+          // have kds_all so this whole subtree filters out for them — they
+          // use the /kds dashboard cards instead.
           newItems.push({
-            href: '/kds/config',
+            href: '/kds',
             label: 'Stations',
             icon: '🍳',
             module: 'kds_all',

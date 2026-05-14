@@ -69,7 +69,7 @@ export type ModuleId =
   // Executive (CEO only by default)
   | 'ceo_overview' | 'role_management' | 'role_modules' | 'audit_log' | 'tenants'
   // Live
-  | 'dashboard' | 'ops' | 'orders' | 'refunds' | 'curbside' | 'kds_all' | 'chain'
+  | 'dashboard' | 'ops' | 'orders' | 'refunds' | 'curbside' | 'kds_all' | 'kds_dashboard' | 'expo_station' | 'chain'
   // Service
   | 'pos' | 'reservations' | 'reservations_admin' | 'scheduling' | 'tables' | 'dispatch' | 'riders'
   // Kitchen
@@ -113,6 +113,8 @@ export const MODULES: ModuleMeta[] = [
   { id: 'refunds',            label: 'Refunds',             section: 'Live' },
   { id: 'curbside',           label: 'Curbside',            section: 'Live' },
   { id: 'kds_all',            label: 'KDS — All Orders',    section: 'Live' },
+  { id: 'kds_dashboard',      label: 'Kitchen view',        section: 'Live' },
+  { id: 'expo_station',       label: 'Expo Station',        section: 'Live' },
   { id: 'chain',              label: 'Chain Rollup',        section: 'Live' },
 
   { id: 'pos',                label: 'Point of Sale',       section: 'Service' },
@@ -181,14 +183,14 @@ export const DEFAULT_MODULE_ACCESS: Record<AppRole, ModuleId[]> = {
   management: ALL_MODULE_IDS.filter((m) => !['chain'].includes(m)),
 
   foh_management: [
-    'dashboard', 'ops', 'orders', 'refunds', 'curbside', 'kds_all',
+    'dashboard', 'ops', 'orders', 'refunds', 'curbside', 'kds_all', 'expo_station',
     'pos', 'reservations', 'reservations_admin', 'scheduling', 'tables', 'dispatch', 'riders',
     'crm', 'complaints', 'reviews', 'campaigns',
     'staff_directory', 'staff_foh', 'kitchen_staff',
     'reports',
   ],
   boh_management: [
-    'dashboard', 'ops', 'orders', 'kds_all',
+    'dashboard', 'ops', 'orders', 'kds_all', 'kds_dashboard', 'expo_station',
     'menu', 'components', 'recipes', 'par_sheet', 'inventory', 'kds_config',
     'procurement', 'staff_directory', 'staff_boh', 'staff_procurement', 'kitchen_staff',
     'reports',
@@ -197,10 +199,15 @@ export const DEFAULT_MODULE_ACCESS: Record<AppRole, ModuleId[]> = {
     'pos', 'reservations', 'tables', 'dispatch', 'orders', 'curbside',
   ],
   boh: [
-    'kds_all', 'inventory', 'recipes', 'par_sheet',
+    'kds_all', 'kds_dashboard', 'inventory', 'recipes', 'par_sheet',
   ],
-  kitchen:   ['kds_all', 'par_sheet'],
-  expediter: ['kds_all', 'orders', 'par_sheet'],
+  // Line cook's surface: the Kitchen view dashboard + Par sheet. They do NOT
+  // get the Expo Station (that's the expediter's pass-station overview) and
+  // they do NOT get KDS Config (admin-only station CRUD). 2026-05-14: dropped
+  // kds_all so the per-station injections + Expo Station vanish from the cook's
+  // sidebar — /kds is now the single entry point.
+  kitchen:   ['kds_dashboard', 'par_sheet'],
+  expediter: ['kds_all', 'expo_station', 'orders', 'par_sheet'],
   cashier:   ['dashboard', 'pos', 'orders', 'curbside', 'tables'],
 
   procurement: ['procurement', 'inventory', 'reports'],

@@ -572,6 +572,8 @@ export async function authRoutes(fastify: FastifyInstance) {
         // Per-user overrides — used by the inline editor's tri-state chips
         // to show which actions/modules diverge from the role default.
         permissionAllow: true, permissionDeny: true, moduleAllow: true, moduleDeny: true,
+        // Station roster — drives Kitchen view (/kds) scoping.
+        stationIds: true,
         // Include the primary tenant relation in portfolio mode so the
         // frontend can render the indigo chip on each row.
         ...(scope.portfolio ? { tenant: { select: { id: true, name: true, slug: true } } } : {}),
@@ -735,6 +737,11 @@ export async function authRoutes(fastify: FastifyInstance) {
         permissionDeny:  z.array(z.string().min(1)).optional(),
         moduleAllow:     z.array(z.string().min(1)).optional(),
         moduleDeny:      z.array(z.string().min(1)).optional(),
+        // Station roster. Full-replacement array — empty means "not
+        // station-restricted" (Kitchen view falls back to every active
+        // station). The CRUD-only guarantees on /stations stay; assigning
+        // a station here just gates *visibility* on /kds.
+        stationIds:      z.array(z.string().min(1)).optional(),
       }).parse(req.body)
 
       // Cross-tenant guard: when the operator is single-tenant (not in
@@ -793,6 +800,7 @@ export async function authRoutes(fastify: FastifyInstance) {
       if (body.permissionDeny  != null) data.permissionDeny  = body.permissionDeny
       if (body.moduleAllow     != null) data.moduleAllow     = body.moduleAllow
       if (body.moduleDeny      != null) data.moduleDeny      = body.moduleDeny
+      if (body.stationIds      != null) data.stationIds      = body.stationIds
 
       const user = await prisma.$transaction(async (tx) => {
         const updated = await tx.user.update({ where: { id: req.params.id }, data })
@@ -817,6 +825,7 @@ export async function authRoutes(fastify: FastifyInstance) {
             id: true, name: true, email: true, phone: true, role: true, jobTitle: true,
             isActive: true, accountStatus: true, createdAt: true, pin: true, tenantId: true,
             permissionAllow: true, permissionDeny: true, moduleAllow: true, moduleDeny: true,
+            stationIds: true,
             tenant: { select: { id: true, name: true, slug: true } },
             tenantMemberships: { select: { tenantId: true, tenant: { select: { id: true, name: true, slug: true } } } },
           },
