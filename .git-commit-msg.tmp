@@ -1,0 +1,22 @@
+kds: CEO + management see every station; restricted flag on /my-stations
+
+Two fixes for the Kitchen view shipped in 4b92b58:
+
+1. CEO was being told "No stations assigned to you yet" — the endpoint
+   treated empty User.stationIds the same for everyone. Now /kds/my-stations
+   splits roles into two regimes:
+     - Unrestricted: admin/CEO, management, foh_management, boh_management,
+       expediter — always get every active station regardless of stationIds.
+     - Station-bound: kitchen / boh — get only their roster (empty → empty).
+
+2. Endpoint now returns `{ restricted, stations }` so the frontend can
+   pick the right empty-state copy. Restricted + empty → "ask your manager".
+   Unrestricted + empty (zero active stations in the tenant) → "open KDS
+   Config to add stations" instead of misleading the CEO about an
+   assignment he didn't need.
+
+Migration 20260514120000_user_station_ids — applied to the dev DB; the
+500 prior to this commit was Prisma client knowing the column but
+Postgres not having it yet.
+
+Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>

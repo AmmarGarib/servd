@@ -31,6 +31,15 @@ interface MyStation {
   liveLoad: number
 }
 
+// Endpoint returns the station list plus a flag telling us whether the
+// caller's scope was *restricted* by their User.stationIds roster. The flag
+// drives the empty-state copy: "ask your manager" only fires when the cook
+// is genuinely unassigned, not when the tenant has zero active stations.
+interface MyStationsResponse {
+  restricted: boolean
+  stations: MyStation[]
+}
+
 export default function KdsKitchenDashboard() {
   // Which station's queue is currently expanded. Only one open at a time so
   // the cook can focus — the same UX rule we use on the per-station view.
@@ -39,12 +48,14 @@ export default function KdsKitchenDashboard() {
   // to all-open so a single-concept shop sees their stations immediately.
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
 
-  const { data: stations = [], isLoading } = useQuery<MyStation[]>({
+  const { data, isLoading } = useQuery<MyStationsResponse>({
     queryKey: ['kds-my-stations'],
-    queryFn:  () => api.get<MyStation[]>('/kds/my-stations'),
+    queryFn:  () => api.get<MyStationsResponse>('/kds/my-stations'),
     refetchInterval: 10_000,    // load counters refresh while the page is open
     staleTime: 5_000,
   })
+  const stations   = data?.stations ?? []
+  const restricted = data?.restricted ?? false
 
   // Group by concept so the "Sandwich on Bukhari" vs "Sandwich on Clifton"
   // ambiguity is gone. Same shape as /kds/config so the visual language is
@@ -90,17 +101,29 @@ export default function KdsKitchenDashboard() {
             Loading your stations…
           </p>
         ) : stations.length === 0 ? (
-          // Empty-state CTAs differ by role. The line cook (no assignment yet)
-          // gets steered to their manager; an unrestricted role that genuinely
-          // has zero active stations gets pointed at KDS Config.
-          <div className="rounded-xl border border-kds-border bg-kds-card px-4 py-12 text-center">
-            <p className="text-3xl mb-2">🍳</p>
-            <p className="text-base font-bold text-kds-text">No stations assigned to you yet</p>
-            <p className="text-sm text-kds-subtext mt-1">
-              Ask your manager to add you in <Link href="/configuration/users" className="text-kds-green underline">Configuration → Users</Link>,
-              or — if you run the place — open <Link href="/kds/config" className="text-kds-green underline">KDS Config</Link> to add stations.
-            </p>
-          </div>
+          // Empty-state copy diverges by who's looking. A line cook with an
+          // empty roster (restricted = true) gets pointed at their manager;
+          // an unrestricted role (admin/management/expediter) looking at a
+          // tenant with zero active stations gets pointed at KDS Config to
+          // create some.
+          restricted ? (
+            <div className="rounded-xl border border-kds-border bg-kds-card px-4 py-12 text-center">
+              <p className="text-3xl mb-2">🍳</p>
+              <p className="text-base font-bold text-kds-text">No stations assigned to you yet</p>
+              <p className="text-sm text-kds-subtext mt-1">
+                Ask your manager to add you in <Link href="/configuration/users" className="text-kds-green underline">Configuration → Users</Link>.
+              </p>
+            </div>
+          ) : (
+            <div className="rounded-xl border border-kds-border bg-kds-card px-4 py-12 text-center">
+              <p className="text-3xl mb-2">🍳</p>
+              <p className="text-base font-bold text-kds-text">No active stations yet</p>
+              <p className="text-sm text-kds-subtext mt-1">
+                Open <Link href="/kds/config" className="text-kds-green underline">KDS Config</Link> to add stations,
+                then assign cooks in <Link href="/configuration/users" className="text-kds-green underline">Configuration → Users</Link>.
+              </p>
+            </div>
+          )
         ) : (
           <div className="space-y-3">
             {grouped.map((group) => {

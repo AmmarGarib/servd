@@ -73,32 +73,53 @@ export async function kdsRoutes(fastify: FastifyInstance) {
   )
 
   // GET /kds/my-stations
-  // Data source for the line-cook dashboard at /kds. Returns the stations
-  // the caller is *assigned* to (User.stationIds), or — if they have no
-  // explicit assignment (admin / management / expediter) — every active
-  // station in their tenant scope. Inactive stations are filtered out so the
-  // line cook doesn't see surfaces that aren't running today.
+  // Data source for the line-cook dashboard at /kds. Two regimes:
+  //
+  //   - "Unrestricted" roles (admin/CEO, management tiers, expediter) —
+  //     see every active station in their tenant scope regardless of what
+  //     User.stationIds contains. These roles are oversight surfaces, not
+  //     station-bound work.
+  //
+  //   - "Station-bound" roles (kitchen line, boh) — see ONLY their
+  //     assigned stations. Empty stationIds means the cook hasn't been
+  //     rostered yet, so the dashboard is intentionally empty and the UI
+  //     tells them to ask their manager.
+  //
+  // The response carries `restricted` so the frontend's empty-state copy
+  // can tell "no stations in this tenant" (unrestricted, zero rows) apart
+  // from "no stations assigned to you yet" (restricted, zero rows).
+  const UNRESTRICTED_ROLES = new Set<string>([
+    'admin', 'management', 'foh_management', 'boh_management', 'expediter',
+  ])
   fastify.get(
     '/my-stations',
     { preHandler: requireAuthOrPin(...ALL_STAFF) },
     async (req) => {
       const tenantFilter = req.staffUser!.tenantFilter
+      const role = req.staffUser!.role
+      const isUnrestricted = UNRESTRICTED_ROLES.has(role)
 
-      // The middleware doesn't decorate the request with stationIds yet (it
-      // pre-dates this field); re-fetch the caller so we get the canonical
-      // assignment list. Cheap — one indexed lookup per /kds dashboard load.
-      const me = await prisma.user.findUnique({
-        where: { id: req.staffUser!.id },
-        select: { stationIds: true },
-      })
-      const assigned = me?.stationIds ?? []
+      // Station-bound roles need their roster — refetch so we get the
+      // canonical list (the auth middleware doesn't decorate this field).
+      let assigned: string[] = []
+      if (!isUnrestricted) {
+        const me = await prisma.user.findUnique({
+          where: { id: req.staffUser!.id },
+          select: { stationIds: true },
+        })
+        assigned = me?.stationIds ?? []
+        // Roster empty → empty list, no point hitting Station at all.
+        if (assigned.length === 0) {
+          return { restricted: true, stations: [] }
+        }
+      }
 
       const stations = await prisma.station.findMany({
         where: {
           deletedAt: null,
           isActive: true,
           concept: { tenantId: tenantFilter, deletedAt: null },
-          ...(assigned.length > 0 ? { id: { in: assigned } } : {}),
+          ...(isUnrestricted ? {} : { id: { in: assigned } }),
         },
         orderBy: [{ conceptId: 'asc' }, { displayOrder: 'asc' }],
         include: {
@@ -111,15 +132,18 @@ export async function kdsRoutes(fastify: FastifyInstance) {
         },
       })
 
-      return stations.map((s) => ({
-        id: s.id,
-        conceptId: s.conceptId,
-        name: s.name,
-        displayOrder: s.displayOrder,
-        isActive: s.isActive,
-        concept: s.concept,
-        liveLoad: s._count.orderItems,
-      }))
+      return {
+        restricted: !isUnrestricted,
+        stations: stations.map((s) => ({
+          id: s.id,
+          conceptId: s.conceptId,
+          name: s.name,
+          displayOrder: s.displayOrder,
+          isActive: s.isActive,
+          concept: s.concept,
+          liveLoad: s._count.orderItems,
+        })),
+      }
     },
   )
 
