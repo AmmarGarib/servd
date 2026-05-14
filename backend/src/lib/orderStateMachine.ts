@@ -27,7 +27,13 @@ export const ITEM_TRANSITIONS: Record<ItemStatus, ItemStatus[]> = {
   // Standard kitchen flow. `held` and `recalled` are escape hatches for the
   // KDS — a held item can be unheld back to preparing, a bumped item can be
   // pulled back if the customer flags a problem.
-  pending:   ['preparing', 'held', 'voided'],
+  //
+  // pending → bumped / ready is allowed too: a line cook can finish an item
+  // before expo has formally fired it (or before the legacy-fire path got
+  // around to flipping its status), and we shouldn't punish them with a
+  // 409 when the physical food is already plated. Skipping `preparing` is
+  // harmless — `bumped` is still the canonical "done" state downstream.
+  pending:   ['preparing', 'ready', 'bumped', 'held', 'voided'],
   preparing: ['ready', 'bumped', 'held', 'voided'],
   ready:     ['bumped', 'recalled', 'voided'],
   bumped:    ['recalled'],
