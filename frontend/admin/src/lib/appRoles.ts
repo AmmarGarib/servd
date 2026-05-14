@@ -91,7 +91,7 @@ export type ModuleId =
   | 'staff_hr'
   | 'kitchen_staff'
   // Setup
-  | 'settings'  | 'notifications' | 'help' | 'configuration' | 'onboarding'
+  | 'settings'  | 'notifications' | 'help' | 'configuration' | 'onboarding' | 'integrations'
 
 export interface ModuleMeta {
   id: ModuleId
@@ -167,6 +167,7 @@ export const MODULES: ModuleMeta[] = [
   { id: 'onboarding',         label: 'Onboarding',          section: 'Setup' },
   { id: 'configuration',      label: 'Configuration Hub',   section: 'Setup' },
   { id: 'settings',           label: 'Brands & Stations',   section: 'Setup' },
+  { id: 'integrations',       label: 'Integrations',        section: 'Setup' },
   { id: 'notifications',      label: 'Notifications',       section: 'Setup' },
   { id: 'help',               label: 'Help & Support',      section: 'Setup' },
 ]
@@ -188,6 +189,7 @@ export const DEFAULT_MODULE_ACCESS: Record<AppRole, ModuleId[]> = {
     'crm', 'complaints', 'reviews', 'campaigns',
     'staff_directory', 'staff_foh', 'kitchen_staff',
     'reports',
+    'integrations',
   ],
   boh_management: [
     'dashboard', 'ops', 'orders', 'kds_all', 'kds_dashboard', 'expo_station',

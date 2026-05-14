@@ -224,10 +224,14 @@ const NAV: NavSection[] = [
     title: 'Setup',
     defaultCollapsed: false,
     items: [
-      { href: '/onboarding',     label: 'Onboarding',        icon: '🚀', module: 'onboarding' },
-      { href: '/setup',          label: 'First-run setup',   icon: '🚀', module: 'onboarding' },
-      { href: '/notifications',  label: 'Notifications',     icon: '🔔', module: 'notifications' },
-      { href: '/help',           label: 'Help & Support',    icon: '❓', module: 'help' },
+      { href: '/onboarding',           label: 'Onboarding',        icon: '🚀', module: 'onboarding' },
+      { href: '/setup',                label: 'First-run setup',   icon: '🚀', module: 'onboarding' },
+      // Integrations is where Meta (FB+IG), WhatsApp, FBR PRAL, and the
+      // Supplier Portal are connected. Lives under Setup because it's a
+      // one-time-per-account config surface, not a daily-use one.
+      { href: '/settings/integrations', label: 'Integrations',     icon: '🔌', module: 'integrations' },
+      { href: '/notifications',        label: 'Notifications',     icon: '🔔', module: 'notifications' },
+      { href: '/help',                 label: 'Help & Support',    icon: '❓', module: 'help' },
     ],
   },
 ]
