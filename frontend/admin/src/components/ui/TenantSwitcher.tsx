@@ -47,6 +47,13 @@ export function useViewAllTenants(): boolean {
   return on
 }
 
+// Stash for portfolio-on state across impersonation. When the CEO flips
+// view-as on while in portfolio view, we collapse portfolio (incoherent for
+// non-admin roles) but remember that they had it on so we can restore when
+// they exit impersonation. Lives in localStorage so a page refresh during
+// impersonation doesn't lose the original intent.
+const PORTFOLIO_STASH_KEY = 'servd_view_all_stash'
+
 export function TenantSwitcher({ collapsed }: { collapsed: boolean }) {
   const qc = useQueryClient()
   const router = useRouter()
@@ -62,12 +69,25 @@ export function TenantSwitcher({ collapsed }: { collapsed: boolean }) {
   // Hydrate after mount so SSR doesn't mismatch
   useEffect(() => { setViewAll(readViewAll()) }, [])
 
-  // Auto-collapse portfolio when an impersonation starts.
+  // Auto-collapse portfolio when impersonation starts; restore when it ends.
   useEffect(() => {
-    if (isImpersonating && readViewAll()) {
-      writeViewAll(false)
-      setViewAll(false)
-      qc.invalidateQueries()
+    if (typeof window === 'undefined') return
+    if (isImpersonating) {
+      // Entering view-as — if portfolio was on, stash that fact and turn it off.
+      if (readViewAll()) {
+        localStorage.setItem(PORTFOLIO_STASH_KEY, '1')
+        writeViewAll(false)
+        setViewAll(false)
+        qc.invalidateQueries()
+      }
+    } else {
+      // Leaving view-as — restore portfolio if we had stashed it.
+      if (localStorage.getItem(PORTFOLIO_STASH_KEY) === '1') {
+        localStorage.removeItem(PORTFOLIO_STASH_KEY)
+        writeViewAll(true)
+        setViewAll(true)
+        qc.invalidateQueries()
+      }
     }
   }, [isImpersonating, qc])
 
