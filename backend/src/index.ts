@@ -26,6 +26,7 @@ import { startReservationReminderWorker } from './workers/reservationReminders.j
 import { startDailyDigestWorker } from './workers/dailyDigest.js'
 import { startReviewPromptWorker } from './workers/reviewPrompt.js'
 import { startFbrSubmissionWorker } from './workers/fbrSubmission.js'
+import { startSrbSubmissionWorker } from './workers/srbSubmission.js'
 import { startWebhookDeliveryWorker } from './workers/webhookDelivery.js'
 import { startScheduledReportsWorker } from './workers/scheduledReports.js'
 import { startShrinkageTrendWorker } from './workers/shrinkageTrend.js'
@@ -311,34 +312,44 @@ async function build() {
       // attach an Authorization header when navigating top-level — so the
       // frontend fetches the OAuth URL with its bearer token, then
       // window.location.hrefs the browser to Facebook directly.
-      // GET /api/v1/integrations/fbr/status — honest state for the FBR PRAL
-      // card. The frontend was hardcoding an "Active" badge regardless of
-      // actual config, which is misleading on a fresh install where the
-      // operator hasn't registered with FBR yet. State is composed of:
+      // GET /api/v1/integrations/tax/status — honest state for FBR + SRB cards.
+      // Both authorities are reported in one payload so the integrations page
+      // can render parallel cards without two round-trips. Per authority:
       //   - configured: env vars present?
-      //   - mode: 'production' | 'sandbox' (default sandbox)
-      //   - conceptsRegistered: how many Concepts have an fbrPosId assigned
-      //   - invoicesSubmitted: how many TaxInvoice rows have an fbrInvoiceNumber
-      // The UI uses these to render one of: Not configured / Sandbox / Live.
-      api.get('/integrations/fbr/status', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
+      //   - mode: 'production' | 'sandbox' (defaults sandbox)
+      //   - conceptsRegistered: how many Concepts have a POSID for that authority
+      //   - invoicesSubmitted: how many Orders have an invoice number recorded
+      //     (fbrInvoiceNumber / srbInvoiceNumber lives on Order, not TaxInvoice
+      //     — the earlier draft of this endpoint had the wrong model)
+      api.get('/integrations/tax/status', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
         const tenantFilter = req.staffUser!.tenantFilter
-        const configured = Boolean(process.env['FBR_USERNAME'] && process.env['FBR_PASSWORD'])
-        const mode = process.env['FBR_ENV'] === 'production' ? 'production' : 'sandbox'
-        const conceptsRegistered = configured
-          ? await prisma.concept.count({
-              where: { tenantId: tenantFilter, deletedAt: null, fbrPosId: { not: null } },
-            })
-          : 0
-        // TaxInvoice has no direct tenantId — scope through the concept relation.
-        const invoicesSubmitted = configured
-          ? await prisma.taxInvoice.count({
-              where: {
-                fbrInvoiceNumber: { not: null },
-                order: { concept: { tenantId: tenantFilter } },
-              },
-            })
-          : 0
-        return { configured, mode, conceptsRegistered, invoicesSubmitted }
+        const conceptScope = { tenantId: tenantFilter, deletedAt: null } as const
+        const orderConcept = { concept: { tenantId: tenantFilter } } as const
+
+        const fbrConfigured = Boolean(process.env['FBR_USERNAME'] && process.env['FBR_PASSWORD'])
+        const srbConfigured = Boolean(process.env['SRB_USERNAME'] && process.env['SRB_PASSWORD'])
+
+        const [fbrConcepts, fbrInvoices, srbConcepts, srbInvoices] = await Promise.all([
+          fbrConfigured ? prisma.concept.count({ where: { ...conceptScope, fbrPosId: { not: null } } }) : 0,
+          fbrConfigured ? prisma.order.count({ where: { ...orderConcept, fbrInvoiceNumber: { not: null } } }) : 0,
+          srbConfigured ? prisma.concept.count({ where: { ...conceptScope, srbPosId: { not: null } } }) : 0,
+          srbConfigured ? prisma.order.count({ where: { ...orderConcept, srbInvoiceNumber: { not: null } } }) : 0,
+        ])
+
+        return {
+          fbr: {
+            configured: fbrConfigured,
+            mode:               process.env['FBR_ENV'] === 'production' ? 'production' : 'sandbox',
+            conceptsRegistered: fbrConcepts,
+            invoicesSubmitted:  fbrInvoices,
+          },
+          srb: {
+            configured: srbConfigured,
+            mode:               process.env['SRB_ENV'] === 'production' ? 'production' : 'sandbox',
+            conceptsRegistered: srbConcepts,
+            invoicesSubmitted:  srbInvoices,
+          },
+        }
       })
 
       api.get('/integrations/social/status', { preHandler: requireAuth(...MANAGERS) }, async () => {
@@ -532,6 +543,7 @@ async function build() {
     startDailyDigestWorker()
     startReviewPromptWorker()
     startFbrSubmissionWorker()
+    startSrbSubmissionWorker()
     startSegmentComputationWorker()
     startSocialPublishWorker()
     startCoursePacingWorker()

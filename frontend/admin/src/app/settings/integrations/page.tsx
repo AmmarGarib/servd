@@ -15,17 +15,20 @@ interface SocialStatus {
   redirectUri: string
 }
 
-// FBR PRAL — Pakistan tax invoicing. State unfolds in 3 stages:
-//   - not configured: env vars missing (FBR_USERNAME / FBR_PASSWORD)
-//   - configured, 0 concepts registered: env set but no concept has an
-//     fbrPosId yet (PRAL hasn't issued POSIDs for your brands)
-//   - configured + concepts registered: integration is genuinely usable;
-//     invoicesSubmitted tells you whether anything has flowed through.
-interface FbrStatus {
+// Tax-invoicing status — one payload, two authorities. Each unfolds in
+// three stages: not configured / configured but no concepts registered /
+// fully wired. SRB only applies to restaurants located in Sindh; an
+// operator outside Sindh will leave it not-configured indefinitely and
+// that's correct.
+interface TaxAuthorityStatus {
   configured:         boolean
   mode:               'production' | 'sandbox'
   conceptsRegistered: number
   invoicesSubmitted:  number
+}
+interface TaxStatus {
+  fbr: TaxAuthorityStatus
+  srb: TaxAuthorityStatus
 }
 
 export default function IntegrationsPage() {
@@ -42,10 +45,12 @@ export default function IntegrationsPage() {
     queryKey: ['social-status'],
     queryFn: () => api.get<SocialStatus>('/integrations/social/status'),
   })
-  const { data: fbr } = useQuery<FbrStatus>({
-    queryKey: ['fbr-status'],
-    queryFn: () => api.get<FbrStatus>('/integrations/fbr/status'),
+  const { data: tax } = useQuery<TaxStatus>({
+    queryKey: ['tax-status'],
+    queryFn: () => api.get<TaxStatus>('/integrations/tax/status'),
   })
+  const fbr = tax?.fbr
+  const srb = tax?.srb
 
   const [connecting, setConnecting] = useState(false)
   const [connectErr, setConnectErr] = useState<string | null>(null)
@@ -202,76 +207,35 @@ export default function IntegrationsPage() {
           </div>
         </div>
 
-        {/* FBR PRAL — status reflects real config + per-concept POSID
-            registration + actual submissions. No more hardcoded "Active". */}
-        <div className="rounded-xl border border-kds-border bg-kds-card p-5">
-          <div className="flex items-start justify-between gap-3">
-            <div className="flex items-center gap-3">
-              <span className="text-3xl">🧾</span>
-              <div>
-                <h2 className="font-bold text-kds-text">FBR PRAL (Tax Invoicing)</h2>
-                <p className="text-sm text-kds-subtext">Real-time electronic invoice submission to PRAL on every completed sale.</p>
-              </div>
-            </div>
-            {/* Badge — three states. Not configured = grey, Sandbox = amber,
-                Live = green (only if real production credentials are set). */}
-            {fbr && (
-              fbr.configured ? (
-                <span className={`shrink-0 rounded-full border px-3 py-1 text-xs font-bold ${
-                  fbr.mode === 'production'
-                    ? 'border-kds-green text-kds-green'
-                    : 'border-kds-amber text-kds-amber'
-                }`}>
-                  {fbr.mode === 'production' ? '✓ Live' : 'Sandbox'}
-                </span>
-              ) : (
-                <span className="shrink-0 rounded-full border border-kds-border px-3 py-1 text-xs text-kds-subtext font-bold">
-                  Not configured
-                </span>
-              )
-            )}
-          </div>
+        {/* FBR PRAL — federal sales tax on goods. */}
+        {fbr && (
+          <TaxAuthorityCard
+            icon="🧾"
+            title="FBR PRAL (Federal Tax Invoicing)"
+            subtitle="Real-time invoice submission to PRAL on every completed sale."
+            authority="FBR"
+            envPrefix="FBR"
+            portalUrl="https://e.fbr.gov.pk"
+            regulation="Required for Tier-1 businesses under SRO 1307(I)/2022."
+            status={fbr}
+          />
+        )}
 
-          {/* Truthful detail panel: tell the operator what's missing and
-              what's been done. */}
-          {fbr && !fbr.configured && (
-            <div className="mt-4 rounded-lg bg-kds-bg p-3 text-xs text-kds-subtext space-y-1">
-              <p className="font-semibold text-kds-text">Not registered with FBR yet</p>
-              <p>
-                Set <code className="bg-kds-border px-1 rounded">FBR_USERNAME</code> and
-                <code className="bg-kds-border px-1 rounded ml-1">FBR_PASSWORD</code> in
-                <code className="bg-kds-border px-1 rounded ml-1">backend/.env</code> after registering
-                your business with PRAL (https://e.fbr.gov.pk → POS Registration).
-                Defaults to sandbox; set <code className="bg-kds-border px-1 rounded">FBR_ENV=production</code> when you go live.
-              </p>
-              <p className="text-kds-subtext/80 pt-1">
-                Required for Tier-1 businesses under SRO 1307(I)/2022. Until configured,
-                completed orders run without electronic invoicing.
-              </p>
-            </div>
-          )}
-          {fbr && fbr.configured && (
-            <div className="mt-4 grid grid-cols-2 gap-2 text-xs">
-              <div className="rounded-lg bg-kds-bg p-3">
-                <p className="text-[10px] uppercase tracking-wider text-kds-subtext font-bold">Concepts registered</p>
-                <p className="text-lg font-black text-kds-text mt-0.5">
-                  {fbr.conceptsRegistered}
-                  {fbr.conceptsRegistered === 0 && <span className="text-xs font-normal text-kds-amber ml-2">⚠ none yet</span>}
-                </p>
-                <p className="text-[10px] text-kds-subtext/70 mt-0.5">
-                  Each Concept needs a POSID from PRAL to submit invoices.
-                </p>
-              </div>
-              <div className="rounded-lg bg-kds-bg p-3">
-                <p className="text-[10px] uppercase tracking-wider text-kds-subtext font-bold">Invoices submitted</p>
-                <p className="text-lg font-black text-kds-text mt-0.5">{fbr.invoicesSubmitted}</p>
-                <p className="text-[10px] text-kds-subtext/70 mt-0.5">
-                  Lifetime count with an FBR invoice number.
-                </p>
-              </div>
-            </div>
-          )}
-        </div>
+        {/* SRB — provincial Sindh sales tax on services. Restaurants in
+            Sindh must report to both FBR (federal) and SRB (provincial).
+            Operators outside Sindh leave this not-configured indefinitely. */}
+        {srb && (
+          <TaxAuthorityCard
+            icon="🏛"
+            title="SRB (Sindh Tax Invoicing)"
+            subtitle="Real-time invoice submission to the Sindh Revenue Board. Required for restaurants located in Sindh."
+            authority="SRB"
+            envPrefix="SRB"
+            portalUrl="https://e.srb.gos.pk"
+            regulation="Required for restaurants in Sindh under the Sindh Sales Tax on Services Act, 2011."
+            status={srb}
+          />
+        )}
 
         {/* Supplier Portal — SaaS pitch */}
         <div className="rounded-xl border border-purple-500/30 bg-purple-500/5 p-5">
@@ -295,6 +259,95 @@ export default function IntegrationsPage() {
           </a>
         </div>
       </div>
+    </div>
+  )
+}
+
+// ─── TaxAuthorityCard ─────────────────────────────────────────────────────────
+//
+// Shared card for FBR and SRB. Same data shape, same UX, only the labels
+// + env-var names + portal URL change. Factored so adding KPRA / PRA / BRA
+// later (for restaurants expanding beyond Sindh) is a 6-line copy of the
+// SRB block above, not 50 lines of duplicated JSX.
+
+function TaxAuthorityCard({
+  icon, title, subtitle, authority, envPrefix, portalUrl, regulation, status,
+}: {
+  icon:       string
+  title:      string
+  subtitle:   string
+  authority:  string                       // 'FBR' | 'SRB' — shown in the empty state
+  envPrefix:  string                       // 'FBR' | 'SRB' — drives env var names
+  portalUrl:  string                       // registration portal
+  regulation: string                       // one-line citation
+  status:     TaxAuthorityStatus
+}) {
+  return (
+    <div className="rounded-xl border border-kds-border bg-kds-card p-5">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <span className="text-3xl">{icon}</span>
+          <div>
+            <h2 className="font-bold text-kds-text">{title}</h2>
+            <p className="text-sm text-kds-subtext">{subtitle}</p>
+          </div>
+        </div>
+        {/* Tri-state badge — Not configured (grey) / Sandbox (amber) /
+            Live (green, only when real production creds are set). */}
+        {status.configured ? (
+          <span className={`shrink-0 rounded-full border px-3 py-1 text-xs font-bold ${
+            status.mode === 'production'
+              ? 'border-kds-green text-kds-green'
+              : 'border-kds-amber text-kds-amber'
+          }`}>
+            {status.mode === 'production' ? '✓ Live' : 'Sandbox'}
+          </span>
+        ) : (
+          <span className="shrink-0 rounded-full border border-kds-border px-3 py-1 text-xs text-kds-subtext font-bold">
+            Not configured
+          </span>
+        )}
+      </div>
+
+      {!status.configured ? (
+        <div className="mt-4 rounded-lg bg-kds-bg p-3 text-xs text-kds-subtext space-y-1">
+          <p className="font-semibold text-kds-text">Not registered with {authority} yet</p>
+          <p>
+            Set <code className="bg-kds-border px-1 rounded">{envPrefix}_USERNAME</code> and
+            <code className="bg-kds-border px-1 rounded ml-1">{envPrefix}_PASSWORD</code> in
+            <code className="bg-kds-border px-1 rounded ml-1">backend/.env</code> after registering
+            your business at <a href={portalUrl} target="_blank" rel="noreferrer" className="text-kds-green underline">{portalUrl}</a>.
+            Defaults to sandbox; set <code className="bg-kds-border px-1 rounded">{envPrefix}_ENV=production</code> when you go live.
+          </p>
+          <p className="text-kds-subtext/80 pt-1">
+            {regulation} Until configured, completed orders skip {authority} submission silently.
+          </p>
+          <p className="text-kds-subtext/80 pt-1">
+            See <a href="https://github.com/AmmarGarib/servd/blob/main/docs/TAX_SETUP.md"
+              target="_blank" rel="noreferrer" className="text-kds-green underline">docs/TAX_SETUP.md</a> for the registration runbook.
+          </p>
+        </div>
+      ) : (
+        <div className="mt-4 grid grid-cols-2 gap-2 text-xs">
+          <div className="rounded-lg bg-kds-bg p-3">
+            <p className="text-[10px] uppercase tracking-wider text-kds-subtext font-bold">Concepts registered</p>
+            <p className="text-lg font-black text-kds-text mt-0.5">
+              {status.conceptsRegistered}
+              {status.conceptsRegistered === 0 && <span className="text-xs font-normal text-kds-amber ml-2">⚠ none yet</span>}
+            </p>
+            <p className="text-[10px] text-kds-subtext/70 mt-0.5">
+              Each Concept needs a POSID from {authority} to submit invoices.
+            </p>
+          </div>
+          <div className="rounded-lg bg-kds-bg p-3">
+            <p className="text-[10px] uppercase tracking-wider text-kds-subtext font-bold">Invoices submitted</p>
+            <p className="text-lg font-black text-kds-text mt-0.5">{status.invoicesSubmitted}</p>
+            <p className="text-[10px] text-kds-subtext/70 mt-0.5">
+              Lifetime count with an {authority} invoice number.
+            </p>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

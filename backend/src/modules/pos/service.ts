@@ -2,7 +2,7 @@ import bcrypt from 'bcryptjs'
 import { prisma } from '../../lib/prisma.js'
 import { ingestOrder } from '../orders/service.js'
 import { NotFoundError, AppError } from '../../lib/errors.js'
-import { getFbrQueue } from '../../lib/queue.js'
+import { getFbrQueue, getSrbQueue } from '../../lib/queue.js'
 import { computeServiceCharge, getRefundPolicy, getReceiptConfig } from '../../lib/setup-config.js'
 import { audit } from '../../lib/audit.js'
 import { sendEmail } from '../../lib/notify.js'
@@ -308,14 +308,20 @@ export async function processPayment(input: ProcessPaymentInput) {
     return { payments: createdPayments }
   })
 
-  // FBR PRAL invoice submission — fire-and-forget, never blocks payment response.
-  // Only queued for instant-settle orders; card/wallet orders are queued from
-  // the gateway webhook once the payment is confirmed.
+  // Tax-invoicing fan-out — fire-and-forget, never blocks payment response.
+  // FBR (federal) and SRB (provincial Sindh) each get a job. Both workers
+  // silent-skip when the order's concept has no POSID for that authority,
+  // so concepts outside Sindh just don't queue SRB work. Only fired for
+  // instant-settle orders; card/wallet orders are queued from the gateway
+  // webhook once the payment confirms.
   const allInstantSettle = input.payments.every((p) => INSTANT_SETTLE.has(p.method))
   if (allInstantSettle) {
     getFbrQueue()
       ?.add('submit', { orderId: input.orderId })
       .catch((err: Error) => console.warn('[FBR] Failed to enqueue invoice submission:', err.message))
+    getSrbQueue()
+      ?.add('submit', { orderId: input.orderId })
+      .catch((err: Error) => console.warn('[SRB] Failed to enqueue invoice submission:', err.message))
   }
 
   return result

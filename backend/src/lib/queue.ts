@@ -65,6 +65,36 @@ export function getFbrQueue(): Queue<FbrSubmissionJob> | null {
   }
 }
 
+// ─── SRB Submission Queue ─────────────────────────────────────────────────────
+// Parallel to FBR. Same retry profile — 6 attempts, exponential backoff.
+// Separate queue so a stuck SRB submission can't block FBR (or vice versa);
+// each can fail / drain on its own without dragging the other down.
+
+export interface SrbSubmissionJob {
+  orderId: string
+}
+
+let _srbQueue: Queue<SrbSubmissionJob> | null = null
+
+export function getSrbQueue(): Queue<SrbSubmissionJob> | null {
+  if (_srbQueue) return _srbQueue
+  try {
+    _srbQueue = new Queue<SrbSubmissionJob>('srb-submission', {
+      connection,
+      defaultJobOptions: {
+        attempts: 6,
+        backoff: { type: 'exponential', delay: 5000 },
+        removeOnComplete: { count: 500 },
+        removeOnFail: { count: 500 },
+      },
+    })
+    return _srbQueue
+  } catch (err) {
+    console.warn('[queue] srbQueue init failed (Redis unavailable):', (err as Error).message)
+    return null
+  }
+}
+
 // ─── Webhook Delivery Queue ───────────────────────────────────────────────────
 // Outbound HMAC-signed webhooks to subscribers. Each subscription × event
 // gets its own job so a single bad endpoint can't hold up others.

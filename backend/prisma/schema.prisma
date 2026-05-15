@@ -258,6 +258,13 @@ model Concept {
   // is not registered for real-time invoice submission.
   fbrPosId Int?
 
+  // SRB (Sindh Revenue Board) Electronic Sales Invoicing — POSID assigned
+  // by SRB at restaurant registration. Required for restaurants located in
+  // Sindh (SRB has its own provincial sales tax regime separate from FBR).
+  // Null = concept is not registered with SRB (outside Sindh, or not yet
+  // registered).
+  srbPosId Int?
+
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
   deletedAt DateTime?
@@ -1427,6 +1434,11 @@ model Order {
   // FBR PRAL invoice number returned by PRAL after successful submission.
   // Null until the FBR worker processes the order (fire-and-forget).
   fbrInvoiceNumber String?
+
+  // SRB invoice number returned after successful submission to the Sindh
+  // Revenue Board e-invoicing API. Null = order's concept isn't SRB-registered
+  // (outside Sindh) OR the SRB worker hasn't processed the order yet.
+  srbInvoiceNumber String?
 
   // raw platform payload stored for audit/debug
   rawPayload Json?
