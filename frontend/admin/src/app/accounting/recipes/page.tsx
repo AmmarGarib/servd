@@ -136,9 +136,20 @@ export default function RecipesPage() {
   })
 
   const createMut = useMutation({
-    mutationFn: (body: unknown) => api.post('/recipes', body),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['recipes'] }); closeModal() },
-    onError:   (e: Error) => setFormErr(e.message),
+    mutationFn: (body: unknown) => api.post<Recipe>('/recipes', body),
+    // Re-open in edit mode after create so the operator can immediately
+    // add bump-steps (the structured editor needs a recipeId, so it can't
+    // mount during the initial create). The placeholder in the create
+    // form points users at this flow; if you change one, change both.
+    onSuccess: (created) => {
+      qc.invalidateQueries({ queryKey: ['recipes'] })
+      if (created && typeof created === 'object' && 'id' in created) {
+        setModal(created as Recipe)
+      } else {
+        closeModal()
+      }
+    },
+    onError: (e: Error) => setFormErr(e.message),
   })
   const updateMut = useMutation({
     mutationFn: ({ id, body }: { id: string; body: unknown }) =>
@@ -639,12 +650,21 @@ export default function RecipesPage() {
                   placeholder="Preparation notes for managers…" className="s-input w-full resize-none" />
               </div>
 
-              {/* Kitchen Steps — shown on KDS */}
+              {/* Cook's-notes free-text — fallback method shown on the
+                  KDS card when no structured bump-steps exist below. This
+                  is NOT the same as bump-able routing — see the "Bump-able
+                  steps (during service)" section further down for that. */}
               <div className="space-y-3 border border-s-border rounded-xl p-4"
                 style={{ background: 'rgba(0,212,177,0.03)' }}>
                 <div>
-                  <p className="text-xs font-black text-s-teal uppercase tracking-wider mb-0.5">Kitchen Steps (KDS)</p>
-                  <p className="text-[10px] text-s-dim">Shown to kitchen staff when they tap a dish on the KDS screen</p>
+                  <p className="text-xs font-black text-s-teal uppercase tracking-wider mb-0.5">
+                    Cook's notes (method)
+                  </p>
+                  <p className="text-[10px] text-s-dim">
+                    Free-text recipe shown on the KDS card when a cook taps for instructions.
+                    Used as a fallback when no structured bump-steps are configured below.
+                    <span className="text-s-dim/70"> Not bump-able — for the cascade routing, use the section at the bottom.</span>
+                  </p>
                 </div>
                 <div className="space-y-1.5">
                   <label className="text-xs font-black text-s-muted uppercase tracking-wider">Steps (English)</label>
@@ -804,21 +824,37 @@ export default function RecipesPage() {
 
               {formErr && <p className="text-xs text-s-red">{formErr}</p>}
 
-              {/* Step graph editor — only on edit (needs a recipeId). New
-                  recipes can add steps right after creation; the modal
-                  re-opens automatically into edit mode. */}
-              {isEditing && (
-                <div className="space-y-2 pt-2 border-t border-s-border">
-                  <div>
-                    <p className="text-xs font-black text-s-muted uppercase tracking-wider">Kitchen routing</p>
-                    <p className="text-[11px] text-s-dim mt-0.5">
-                      Break the cook + assembly into ordered steps. Each step picks a station and may depend on earlier steps.
-                      Expo confirms an order → the first-ready steps fire to their stations; downstream steps cascade as deps clear.
+              {/* Bump-able step graph — the structured editor needs a
+                  recipeId, so for NEW recipes we show a placeholder telling
+                  the operator to save first. On edit, the full editor
+                  mounts and the operator can build the per-station cascade
+                  that drives KDS bumping during service. */}
+              <div className="space-y-2 pt-2 border-t border-s-border">
+                <div>
+                  <p className="text-xs font-black uppercase tracking-wider" style={{ color: '#A5B4FC' }}>
+                    🍳 Bump-able steps (during service)
+                  </p>
+                  <p className="text-[11px] text-s-dim mt-0.5">
+                    Break the cook + assembly into ordered steps. Each step picks a station and may depend on earlier steps.
+                    Expo confirms an order → first-ready steps fire to their stations →
+                    each cook bumps when done → downstream steps cascade. This is what powers the per-station KDS bump flow.
+                  </p>
+                </div>
+                {isEditing ? (
+                  <RecipeStepsEditor recipeId={(modal as Recipe).id} />
+                ) : (
+                  <div className="rounded-lg p-4 text-center"
+                    style={{ background: 'rgba(99,102,241,0.05)', border: '1px dashed rgba(99,102,241,0.25)' }}>
+                    <p className="text-xs font-bold text-white/70">
+                      Save the recipe first to add bump-able steps
+                    </p>
+                    <p className="text-[10px] text-s-dim mt-1">
+                      The step graph attaches to a saved recipe. Click <strong>Create Recipe</strong> below — the modal will
+                      re-open in edit mode and this section will become an editor where you add per-station bump-steps.
                     </p>
                   </div>
-                  <RecipeStepsEditor recipeId={(modal as Recipe).id} />
-                </div>
-              )}
+                )}
+              </div>
 
               <div className="flex justify-end gap-3 pt-2">
                 <button type="button" onClick={closeModal} className="s-btn-ghost text-sm">Cancel</button>

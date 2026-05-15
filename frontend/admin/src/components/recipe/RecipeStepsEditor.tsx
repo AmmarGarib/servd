@@ -235,10 +235,26 @@ function StepForm({ draft, setDraft, stations, depCandidates, onSave, onCancel, 
   return (
     <div className="rounded-lg p-3 space-y-2"
       style={{ background: 'rgba(0,212,177,0.04)', border: '1px solid rgba(0,212,177,0.2)' }}>
-      <textarea value={draft.instruction ?? ''} onChange={(e) => setDraft({ ...draft, instruction: e.target.value })}
-        rows={2} placeholder="What does this step do? e.g. 'Sear steak medium rare on grill, 90s/side'"
-        className="w-full rounded-md px-3 py-2 text-sm focus:outline-none resize-none"
-        style={{ background: 'rgba(0,0,0,0.35)', border: '1px solid rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.92)' }} />
+      <div className="space-y-1">
+        <label className="block text-[9px] uppercase tracking-wider font-black text-white/45">Step instruction (English)</label>
+        <textarea value={draft.instruction ?? ''} onChange={(e) => setDraft({ ...draft, instruction: e.target.value })}
+          rows={2} placeholder="e.g. 'Sear steak medium rare on grill, 90s/side'"
+          className="w-full rounded-md px-3 py-2 text-sm focus:outline-none resize-none"
+          style={{ background: 'rgba(0,0,0,0.35)', border: '1px solid rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.92)' }} />
+      </div>
+
+      {/* Urdu instruction — backend schema supports per-step Urdu so a
+          line cook on Urdu mode sees their step text in Urdu. Optional;
+          falls back to the English instruction when blank. */}
+      <div className="space-y-1">
+        <label className="block text-[9px] uppercase tracking-wider font-black text-white/45">
+          ہدایت — Step instruction (اردو, optional)
+        </label>
+        <textarea value={draft.instructionUrdu ?? ''} onChange={(e) => setDraft({ ...draft, instructionUrdu: e.target.value })}
+          rows={2} dir="rtl" placeholder="مثلاً: گرل پر سٹیک ۹۰ سیکنڈ فی طرف بھونیں"
+          className="w-full rounded-md px-3 py-2 text-sm focus:outline-none resize-none"
+          style={{ background: 'rgba(0,0,0,0.35)', border: '1px solid rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.92)', fontFamily: 'sans-serif' }} />
+      </div>
 
       <div className="grid grid-cols-2 gap-2">
         <div>
