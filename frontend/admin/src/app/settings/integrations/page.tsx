@@ -15,6 +15,19 @@ interface SocialStatus {
   redirectUri: string
 }
 
+// FBR PRAL — Pakistan tax invoicing. State unfolds in 3 stages:
+//   - not configured: env vars missing (FBR_USERNAME / FBR_PASSWORD)
+//   - configured, 0 concepts registered: env set but no concept has an
+//     fbrPosId yet (PRAL hasn't issued POSIDs for your brands)
+//   - configured + concepts registered: integration is genuinely usable;
+//     invoicesSubmitted tells you whether anything has flowed through.
+interface FbrStatus {
+  configured:         boolean
+  mode:               'production' | 'sandbox'
+  conceptsRegistered: number
+  invoicesSubmitted:  number
+}
+
 export default function IntegrationsPage() {
   const [searchParams, setSearchParams] = useState<URLSearchParams | null>(null)
 
@@ -28,6 +41,10 @@ export default function IntegrationsPage() {
   const { data: status } = useQuery<SocialStatus>({
     queryKey: ['social-status'],
     queryFn: () => api.get<SocialStatus>('/integrations/social/status'),
+  })
+  const { data: fbr } = useQuery<FbrStatus>({
+    queryKey: ['fbr-status'],
+    queryFn: () => api.get<FbrStatus>('/integrations/fbr/status'),
   })
 
   const [connecting, setConnecting] = useState(false)
@@ -185,18 +202,75 @@ export default function IntegrationsPage() {
           </div>
         </div>
 
-        {/* FBR PRAL */}
+        {/* FBR PRAL — status reflects real config + per-concept POSID
+            registration + actual submissions. No more hardcoded "Active". */}
         <div className="rounded-xl border border-kds-border bg-kds-card p-5">
-          <div className="flex items-start justify-between">
+          <div className="flex items-start justify-between gap-3">
             <div className="flex items-center gap-3">
               <span className="text-3xl">🧾</span>
               <div>
                 <h2 className="font-bold text-kds-text">FBR PRAL (Tax Invoicing)</h2>
-                <p className="text-sm text-kds-subtext">Automatic electronic invoice submission on every completed sale.</p>
+                <p className="text-sm text-kds-subtext">Real-time electronic invoice submission to PRAL on every completed sale.</p>
               </div>
             </div>
-            <span className="rounded-full border border-kds-green px-3 py-1 text-xs text-kds-green font-bold">Active</span>
+            {/* Badge — three states. Not configured = grey, Sandbox = amber,
+                Live = green (only if real production credentials are set). */}
+            {fbr && (
+              fbr.configured ? (
+                <span className={`shrink-0 rounded-full border px-3 py-1 text-xs font-bold ${
+                  fbr.mode === 'production'
+                    ? 'border-kds-green text-kds-green'
+                    : 'border-kds-amber text-kds-amber'
+                }`}>
+                  {fbr.mode === 'production' ? '✓ Live' : 'Sandbox'}
+                </span>
+              ) : (
+                <span className="shrink-0 rounded-full border border-kds-border px-3 py-1 text-xs text-kds-subtext font-bold">
+                  Not configured
+                </span>
+              )
+            )}
           </div>
+
+          {/* Truthful detail panel: tell the operator what's missing and
+              what's been done. */}
+          {fbr && !fbr.configured && (
+            <div className="mt-4 rounded-lg bg-kds-bg p-3 text-xs text-kds-subtext space-y-1">
+              <p className="font-semibold text-kds-text">Not registered with FBR yet</p>
+              <p>
+                Set <code className="bg-kds-border px-1 rounded">FBR_USERNAME</code> and
+                <code className="bg-kds-border px-1 rounded ml-1">FBR_PASSWORD</code> in
+                <code className="bg-kds-border px-1 rounded ml-1">backend/.env</code> after registering
+                your business with PRAL (https://e.fbr.gov.pk → POS Registration).
+                Defaults to sandbox; set <code className="bg-kds-border px-1 rounded">FBR_ENV=production</code> when you go live.
+              </p>
+              <p className="text-kds-subtext/80 pt-1">
+                Required for Tier-1 businesses under SRO 1307(I)/2022. Until configured,
+                completed orders run without electronic invoicing.
+              </p>
+            </div>
+          )}
+          {fbr && fbr.configured && (
+            <div className="mt-4 grid grid-cols-2 gap-2 text-xs">
+              <div className="rounded-lg bg-kds-bg p-3">
+                <p className="text-[10px] uppercase tracking-wider text-kds-subtext font-bold">Concepts registered</p>
+                <p className="text-lg font-black text-kds-text mt-0.5">
+                  {fbr.conceptsRegistered}
+                  {fbr.conceptsRegistered === 0 && <span className="text-xs font-normal text-kds-amber ml-2">⚠ none yet</span>}
+                </p>
+                <p className="text-[10px] text-kds-subtext/70 mt-0.5">
+                  Each Concept needs a POSID from PRAL to submit invoices.
+                </p>
+              </div>
+              <div className="rounded-lg bg-kds-bg p-3">
+                <p className="text-[10px] uppercase tracking-wider text-kds-subtext font-bold">Invoices submitted</p>
+                <p className="text-lg font-black text-kds-text mt-0.5">{fbr.invoicesSubmitted}</p>
+                <p className="text-[10px] text-kds-subtext/70 mt-0.5">
+                  Lifetime count with an FBR invoice number.
+                </p>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Supplier Portal — SaaS pitch */}

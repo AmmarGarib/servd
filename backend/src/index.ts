@@ -311,6 +311,36 @@ async function build() {
       // attach an Authorization header when navigating top-level — so the
       // frontend fetches the OAuth URL with its bearer token, then
       // window.location.hrefs the browser to Facebook directly.
+      // GET /api/v1/integrations/fbr/status — honest state for the FBR PRAL
+      // card. The frontend was hardcoding an "Active" badge regardless of
+      // actual config, which is misleading on a fresh install where the
+      // operator hasn't registered with FBR yet. State is composed of:
+      //   - configured: env vars present?
+      //   - mode: 'production' | 'sandbox' (default sandbox)
+      //   - conceptsRegistered: how many Concepts have an fbrPosId assigned
+      //   - invoicesSubmitted: how many TaxInvoice rows have an fbrInvoiceNumber
+      // The UI uses these to render one of: Not configured / Sandbox / Live.
+      api.get('/integrations/fbr/status', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
+        const tenantFilter = req.staffUser!.tenantFilter
+        const configured = Boolean(process.env['FBR_USERNAME'] && process.env['FBR_PASSWORD'])
+        const mode = process.env['FBR_ENV'] === 'production' ? 'production' : 'sandbox'
+        const conceptsRegistered = configured
+          ? await prisma.concept.count({
+              where: { tenantId: tenantFilter, deletedAt: null, fbrPosId: { not: null } },
+            })
+          : 0
+        // TaxInvoice has no direct tenantId — scope through the concept relation.
+        const invoicesSubmitted = configured
+          ? await prisma.taxInvoice.count({
+              where: {
+                fbrInvoiceNumber: { not: null },
+                order: { concept: { tenantId: tenantFilter } },
+              },
+            })
+          : 0
+        return { configured, mode, conceptsRegistered, invoicesSubmitted }
+      })
+
       api.get('/integrations/social/status', { preHandler: requireAuth(...MANAGERS) }, async () => {
         // env-config check is what the operator forgets first — surfacing
         // it explicitly lets the UI tell them "go fill .env" instead of
