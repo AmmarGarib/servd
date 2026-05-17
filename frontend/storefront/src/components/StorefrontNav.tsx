@@ -3,11 +3,12 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useCustomerAuth } from '../store/customerAuth'
 
-// Pages that manage their own header (full-screen splashes, brand microsites
-// with their own nav, the per-concept ordering experience).
+// Pages that manage their own header (full-screen splashes, brand
+// microsites with their own nav, the per-concept ordering experience).
 const HIDDEN_PREFIXES = ['/auth', '/login', '/signup', '/brand/']
 
-// Use a transparent variant on the home page; solid on inner pages.
+// Hero pages keep the nav transparent so the kinetic floating shapes
+// behind it stay readable; everywhere else uses the blurred-glass look.
 const TRANSPARENT_PATHS = new Set(['/'])
 
 export function StorefrontNav() {
@@ -24,6 +25,7 @@ export function StorefrontNav() {
   }
 
   const transparent = TRANSPARENT_PATHS.has(pathname)
+  const onDarkHero  = transparent     // home page is ink-on-dark, nav goes white
 
   return (
     <nav
@@ -35,38 +37,50 @@ export function StorefrontNav() {
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
-        padding: '0.85rem clamp(1rem, 4vw, 2rem)',
-        background: transparent ? 'transparent' : 'rgba(255,255,255,0.92)',
-        backdropFilter: transparent ? undefined : 'blur(14px)',
-        WebkitBackdropFilter: transparent ? undefined : 'blur(14px)',
+        padding: '0.95rem clamp(1rem, 4vw, 2rem)',
+        // On the dark hero, nav stays transparent. On scroll the home
+        // page will naturally push the hero up and the nav re-renders
+        // against a white surface — same nav, but the transparent style
+        // doesn't fight the dark hero behind it.
+        background: transparent ? 'transparent' : 'rgba(255,255,255,0.88)',
+        backdropFilter: transparent ? undefined : 'blur(16px) saturate(160%)',
+        WebkitBackdropFilter: transparent ? undefined : 'blur(16px) saturate(160%)',
         borderBottom: transparent ? 'none' : '1px solid var(--servd-line)',
-        transition: 'background 200ms ease',
+        transition: 'background 220ms ease',
       }}
     >
+      {/* Wordmark — chunky display weight. On dark surfaces the dot
+          becomes the brand-accent (servd-green by default). */}
       <Link
         href="/"
         aria-label="servd home"
         style={{
-          fontSize: '1.5rem',
-          fontWeight: 900,
-          letterSpacing: '-0.04em',
-          color: 'var(--servd-black)',
+          fontFamily: 'var(--font-display)',
+          fontSize: '1.6rem',
+          fontWeight: 800,
+          letterSpacing: '-0.045em',
+          color: onDarkHero ? 'white' : 'var(--servd-black)',
           textDecoration: 'none',
+          display: 'inline-flex',
+          alignItems: 'baseline',
+          gap: '0.1rem',
         }}
       >
         servd
+        <span style={{ color: 'var(--servd-green)' }}>.</span>
       </Link>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
         <Link
           href="/browse"
           style={{
-            color: 'var(--servd-mute)',
+            color: onDarkHero ? 'rgba(255,255,255,0.75)' : 'var(--servd-mute)',
             fontWeight: 600,
-            fontSize: '0.9rem',
-            padding: '0.5rem 0.85rem',
+            fontSize: '0.92rem',
+            padding: '0.5rem 0.95rem',
             textDecoration: 'none',
-            borderRadius: '0.5rem',
+            borderRadius: '0.6rem',
+            transition: 'color 160ms ease',
           }}
         >
           Browse
@@ -79,33 +93,31 @@ export function StorefrontNav() {
               display: 'inline-flex',
               alignItems: 'center',
               gap: '0.5rem',
-              padding: '0.5rem 0.85rem',
+              padding: '0.5rem 1rem',
               borderRadius: '999px',
-              background: 'rgba(0,0,0,0.04)',
-              border: '1px solid var(--servd-line)',
-              color: 'var(--servd-ink)',
+              background: onDarkHero ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.04)',
+              border: onDarkHero ? '1px solid rgba(255,255,255,0.18)' : '1px solid var(--servd-line)',
+              color: onDarkHero ? 'white' : 'var(--servd-ink)',
               fontWeight: 600,
-              fontSize: '0.875rem',
+              fontSize: '0.88rem',
               textDecoration: 'none',
             }}
           >
             <span
               aria-hidden="true"
               style={{
-                width: '1.25rem',
-                height: '1.25rem',
+                width: '1.4rem',
+                height: '1.4rem',
                 borderRadius: '50%',
                 background: 'var(--servd-green)',
                 color: 'var(--servd-black)',
                 display: 'inline-flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                fontSize: '0.65rem',
+                fontSize: '0.7rem',
                 fontWeight: 900,
               }}
-            >
-              A
-            </span>
+            >A</span>
             Account
           </Link>
         ) : (
@@ -113,30 +125,29 @@ export function StorefrontNav() {
             <Link
               href="/login"
               style={{
-                color: 'var(--servd-mute)',
+                color: onDarkHero ? 'rgba(255,255,255,0.75)' : 'var(--servd-mute)',
                 fontWeight: 600,
-                fontSize: '0.875rem',
-                padding: '0.5rem 0.85rem',
+                fontSize: '0.88rem',
+                padding: '0.5rem 0.95rem',
                 textDecoration: 'none',
-                borderRadius: '0.5rem',
+                borderRadius: '0.6rem',
               }}
             >
               Sign in
             </Link>
+            {/* CTA — uses the kinetic brand-pill so it matches every
+                other "primary action" pill across the site. */}
             <Link
               href="/signup"
-              className="servd-cta"
+              className="brand-pill"
               style={{
-                background: 'var(--servd-green)',
-                color: 'var(--servd-black)',
-                fontWeight: 800,
-                fontSize: '0.875rem',
-                padding: '0.55rem 1.1rem',
-                borderRadius: '999px',
-                textDecoration: 'none',
+                ['--brand-accent' as string]: 'var(--servd-green)',
+                ['--brand-ink' as string]:    '#0a0a0a',
+                padding: '0.55rem 1.2rem',
+                fontSize: '0.92rem',
               }}
             >
-              Sign up
+              Sign up →
             </Link>
           </>
         )}

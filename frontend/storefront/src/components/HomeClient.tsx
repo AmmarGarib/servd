@@ -2,288 +2,304 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import type { Concept } from '../lib/concept'
-import { typeLabel, typeIcon, conceptHeroImage } from '../lib/concept'
+import { conceptHeroImage } from '../lib/concept'
+import { KineticShape } from './kinetic/KineticShape'
+import { DragRail } from './kinetic/DragRail'
+import { MarqueeText } from './kinetic/MarqueeStrip'
 
-// servd home — the platform, not a delivery app. The brands are the product.
-// Editorial, food-forward, brand-first. No gamification. No fake urgency.
-// Show the food. Show the kitchens. Get out of the way.
+// servd home — kinetic, agency-modern. The platform is the framing; the
+// three brands are the product. Big asymmetric typography, floating motifs,
+// drag carousels, marquee strips. Per-brand colour comes through inline
+// --brand-accent assignments so each section feels rooted in the brand it's
+// showcasing.
 
 interface Props {
   concepts: Concept[]
 }
 
-// Live brands as of 2026-05-12: Stax + Simmer + Flipd. Other names that
-// used to live here (Strata, Craveman, Garnish Station, Bukhari) have been
-// pulled — they don't have DB concept rows, so the home page was
-// promising kitchens the user couldn't actually order from. Add them back
-// here once they get concept rows + their own layouts.
-const FEATURED: Array<{ dish: string; brand: string; brandSlug: string; price: string; img: string; tag?: string }> = [
-  { dish: 'The Stax Classic',  brand: 'Stax',   brandSlug: 'stax',   price: 'Rs. 1,200', img: 'https://images.unsplash.com/photo-1568901346375-23c9450c58cd?w=700&q=85', tag: 'Double smash' },
-  { dish: 'Slow-Roast Lamb',   brand: 'Simmer', brandSlug: 'simmer', price: 'Rs. 1,950', img: 'https://images.unsplash.com/photo-1544025162-d76694265947?w=700&q=85', tag: '12 hours' },
-  { dish: 'Hot Honey Tenders', brand: 'Flipd',  brandSlug: 'flipd',  price: 'Rs. 950',   img: 'https://images.unsplash.com/photo-1598514983318-2f64f8f4796c?w=700&q=85', tag: '24h brine' },
+// Live brand voices — kept in code so the home page can showcase them even
+// before the operator wires content blocks via the CMS. Each carries the
+// brand's accent (lights up its name on hover + colours the brand card)
+// and a one-line voice that sells the kitchen in five words or less.
+const VOICES: Array<{ brand: string; slug: string; line: string; accent: string; emoji: string }> = [
+  { brand: 'Stax',   slug: 'stax',   line: 'Smashed, stacked, sauced.',             accent: '#FF6B35', emoji: '🍔' },
+  { brand: 'Simmer', slug: 'simmer', line: 'Slow nights, plated softly.',           accent: '#22c55e', emoji: '🍲' },
+  { brand: 'Flipd',  slug: 'flipd',  line: 'Buttermilk-brined, hand-breaded, hot.', accent: '#F5B700', emoji: '🍗' },
 ]
 
-const VOICES: Array<{ brand: string; slug: string; line: string; color: string }> = [
-  { brand: 'Simmer', slug: 'simmer', line: 'Slow nights, plated softly.',           color: '#2d4a3e' },
-  { brand: 'Stax',   slug: 'stax',   line: 'Smashed, stacked, sauced.',             color: '#D4581A' },
-  { brand: 'Flipd',  slug: 'flipd',  line: 'Buttermilk-brined, hand-breaded, hot.', color: '#E5A100' },
+const FEATURED: Array<{ dish: string; brand: string; brandSlug: string; price: string; img: string; tag?: string }> = [
+  { dish: 'The Stax Classic',  brand: 'Stax',   brandSlug: 'stax',   price: 'Rs. 1,200', img: 'https://images.unsplash.com/photo-1568901346375-23c9450c58cd?w=900&q=85', tag: 'Double smash' },
+  { dish: 'Slow-Roast Lamb',   brand: 'Simmer', brandSlug: 'simmer', price: 'Rs. 1,950', img: 'https://images.unsplash.com/photo-1544025162-d76694265947?w=900&q=85', tag: '12 hours' },
+  { dish: 'Hot Honey Tenders', brand: 'Flipd',  brandSlug: 'flipd',  price: 'Rs. 950',   img: 'https://images.unsplash.com/photo-1598514983318-2f64f8f4796c?w=900&q=85', tag: '24h brine' },
 ]
 
 const REVIEWS = [
-  { text: '"Burgers from Stax, a bowl from Simmer, tenders from Flipd — three kitchens in one cart. Everything arrived hot, in one bag. The multi-kitchen thing actually works."', name: 'Sara K.',  area: 'DHA Phase 6'    },
-  { text: '"The slow-roast lamb from Simmer is the only reason my lunch isn\'t depressing anymore. Falls apart at the touch of a fork."',                                          name: 'Imran R.', area: 'Clifton Block 4' },
-  { text: '"Ordered for a family of six — three kitchens in one order, one delivery, no chaos. They figured out the logistics so I didn\'t have to."',                              name: 'Hira M.',  area: 'Bahria Town'    },
+  { quote: 'Burgers from Stax, a bowl from Simmer, tenders from Flipd — three kitchens in one cart. Everything arrived hot.', name: 'Sara K.',  area: 'DHA Phase 6'    },
+  { quote: 'The slow-roast lamb from Simmer is the only reason my lunch isn\'t depressing anymore.',                          name: 'Imran R.', area: 'Clifton Block 4' },
+  { quote: 'Family of six. Three kitchens, one order, one delivery, no chaos. Logistics figured out.',                        name: 'Hira M.',  area: 'Bahria Town'    },
+  { quote: 'My kid won\'t shut up about the hot honey tenders. Solved a weekday-dinner problem permanently.',                  name: 'Adnan F.', area: 'Gulshan-e-Iqbal' },
 ]
 
-const INK = '#0a110e'
-
-export function HomeClient({ concepts }: Props) {
-  // Hero brand-names auto-cycle through their accent colour every 1.6s. The
-  // CEO liked the hover-highlight effect but wanted it to play on its own
-  // (no need to mouse over each name). Hovering still works AND pauses the
-  // auto-cycle for that name — manual interaction beats automation, but
-  // the rest of the time the page does its own little promo loop.
-  // Show every live brand in the hero — there are only three right now.
-  const heroNames = VOICES
+export function HomeClient({ concepts: _concepts }: Props) {
+  // Hero brand names auto-cycle through their accent every 1.8s. Hover
+  // overrides the auto-cycle for that name. The accent the page is
+  // currently spotlighting also drives the kinetic shapes behind the
+  // headline — the shape tinting tracks the active brand.
   const [activeIdx, setActiveIdx] = useState(0)
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
   useEffect(() => {
-    // Pause auto-cycle while the user is hovering — they're driving the show.
     if (hoveredIdx !== null) return
-    const t = setInterval(() => {
-      setActiveIdx((i) => (i + 1) % heroNames.length)
-    }, 1600)
+    const t = setInterval(() => setActiveIdx((i) => (i + 1) % VOICES.length), 1800)
     return () => clearInterval(t)
-  }, [hoveredIdx, heroNames.length])
+  }, [hoveredIdx])
+  const liveIdx = hoveredIdx ?? activeIdx
+  const liveAccent = VOICES[liveIdx]?.accent ?? '#22c55e'
 
   return (
-    <div style={{ background: '#fff', color: INK }}>
+    <div style={{ background: 'white', color: 'var(--servd-ink)' }}>
 
-      {/* ── Promo strip ──────────────────────────────────────────────────── */}
-      <div style={{
-        background: INK, color: 'white',
-        padding: '0.55rem 1rem', textAlign: 'center',
-        fontSize: '0.82rem', fontWeight: 500, letterSpacing: '0.02em',
-        borderBottom: '1px solid rgba(255,255,255,0.08)',
-      }}>
-        <span style={{ color: 'var(--servd-green)', fontWeight: 700 }}>RS. 200 OFF</span>
+      {/* ── Promo strip ─────────────────────────────────────────────── */}
+      <div className="surface-ink"
+        style={{
+          padding: '0.6rem 1rem', textAlign: 'center',
+          fontSize: '0.82rem', fontWeight: 500, letterSpacing: '0.02em',
+          borderBottom: '1px solid rgba(255,255,255,0.08)',
+        }}>
+        <span style={{ color: 'var(--servd-green)', fontWeight: 800 }}>RS. 200 OFF</span>
         {' '}your first order · code{' '}
-        <code style={{ background: 'rgba(34,197,94,0.15)', color: 'var(--servd-green)', padding: '0.1rem 0.4rem', borderRadius: '3px', fontWeight: 700 }}>FRESH200</code>
+        <code style={{ background: 'rgba(34,197,94,0.16)', color: 'var(--servd-green)', padding: '0.12rem 0.45rem', borderRadius: '4px', fontWeight: 800 }}>FRESH200</code>
         {' · '}
-        <Link href="/browse" style={{ color: 'rgba(255,255,255,0.6)', textDecoration: 'underline' }}>Order now</Link>
+        <Link href="/browse" style={{ color: 'rgba(255,255,255,0.7)', textDecoration: 'underline' }}>Order now →</Link>
       </div>
 
-      {/* ── HERO — editorial. Brands are the headline. ───────────────────── */}
-      <section style={{
-        background: INK, color: 'white',
-        minHeight: 'min(88vh, 820px)',
-        display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
-        alignItems: 'stretch',
-        overflow: 'hidden',
-      }}>
-        {/* Left — editorial copy */}
-        <div style={{
-          padding: 'clamp(3rem, 7vw, 6rem) 0 clamp(3rem, 6vw, 5rem)',
-          display: 'flex', flexDirection: 'column', justifyContent: 'space-between',
+      {/* ── HERO — asymmetric, kinetic. The accent tracks the brand
+            currently in the spotlight; floating shapes echo the same
+            accent so the page feels alive without being chaotic. ───── */}
+      <section className="surface-ink relative overflow-hidden"
+        style={{
+          minHeight: 'min(92vh, 920px)',
+          ['--brand-accent' as string]: liveAccent,
+          ['--brand-ink' as string]:    '#0a0a0a',
         }}>
-          <div className="container" style={{ maxWidth: '640px' }}>
-            <p style={{
-              fontSize: '0.72rem', fontWeight: 600, letterSpacing: '0.42em',
-              color: 'var(--servd-green)', textTransform: 'uppercase', marginBottom: '2.5rem',
+
+        {/* Floating kinetic motifs — abstract orbs + a food emoji that
+            cycles with the active brand. Positioned generously around the
+            viewport edges so they're atmospheric not distracting. */}
+        <KineticShape variant="blob"  size={420} style={{ top: '-12%', right: '-8%' }} />
+        <KineticShape variant="blob"  size={260} style={{ bottom: '8%', left: '-6%' }} />
+        <KineticShape variant="ring"  size={140} style={{ top: '18%', left: '6%' }} spin />
+        <KineticShape variant="crisp" size={64}  style={{ bottom: '22%', right: '12%' }} />
+        <KineticShape
+          variant="emoji"
+          emoji={VOICES[liveIdx]?.emoji ?? '🍔'}
+          size={180}
+          style={{
+            top: '14%', right: '7%',
+            transition: 'opacity 600ms ease',
+          }}
+        />
+
+        <div className="container relative z-10" style={{ paddingTop: 'clamp(4rem, 9vw, 7rem)', paddingBottom: 'clamp(4rem, 9vw, 7rem)' }}>
+
+          <p className="eyebrow"
+            style={{ color: 'var(--brand-accent)', marginBottom: 'clamp(2rem, 4vw, 3rem)' }}>
+            Karachi · three kitchens · one cart
+          </p>
+
+          {/* Display headline — chunky, asymmetric. Brand names sit in
+              their own line each, cycling colour. The italic word breaks
+              the rhythm so the layout doesn't read like a list. */}
+          <h1 className="display"
+            style={{
+              fontSize: 'clamp(3.2rem, 9.5vw, 8rem)',
+              color: 'white',
+              maxWidth: '1100px',
+              marginBottom: 'clamp(2rem, 4vw, 3rem)',
             }}>
-              Karachi · direct from the kitchen
-            </p>
+            Real kitchens. <span className="display-italic" style={{ color: 'var(--brand-accent)' }}>Real food.</span>
+            <br />
+            Built for the way<br />
+            you eat now.
+          </h1>
 
-            {/* Brand names as the typographic hero — auto-cycling colour
-                highlight. Each name lights up in its accent for 1.6s before
-                the spotlight moves to the next. Mouse hover overrides the
-                cycle for that name. */}
-            <div style={{ marginBottom: '3rem' }}>
-              {heroNames.map((v, idx) => {
-                const isActive = hoveredIdx === idx || (hoveredIdx === null && activeIdx === idx)
-                return (
-                  <Link key={v.slug} href={`/brand/${v.slug}`} style={{
-                    display: 'block', textDecoration: 'none',
-                    fontSize: 'clamp(2.25rem, 5.5vw, 4.25rem)',
-                    fontWeight: 800, letterSpacing: '-0.04em', lineHeight: 1.05,
-                    color: isActive ? v.color : 'rgba(255,255,255,0.22)',
-                    // Slightly longer transition than the cycle interval's
-                    // step so colours bleed rather than snap.
-                    transition: 'color 400ms ease',
-                  }}
-                    onMouseEnter={() => setHoveredIdx(idx)}
-                    onMouseLeave={() => setHoveredIdx(null)}
-                  >
-                    {v.brand}
-                  </Link>
-                )
-              })}
-              <p style={{
-                fontSize: 'clamp(2.25rem, 5.5vw, 4.25rem)',
-                fontWeight: 800, letterSpacing: '-0.04em', lineHeight: 1.05,
-                color: 'rgba(255,255,255,0.22)',
-              }}>
-                + more.
-              </p>
-            </div>
-
-            <p style={{
-              fontSize: 'clamp(1rem, 1.5vw, 1.2rem)',
-              color: 'rgba(255,255,255,0.55)', lineHeight: 1.7, fontWeight: 300,
-              maxWidth: '32rem', marginBottom: '2.5rem',
-            }}>
-              Three kitchens. One cart. Order from any of them together — we cook every dish fresh and deliver in a single bag.
-            </p>
-
-            <div style={{ display: 'flex', gap: '0.85rem', flexWrap: 'wrap' }}>
-              <Link href="/browse" style={{
-                padding: '1rem 2.25rem',
-                background: 'var(--servd-green)', color: INK,
-                fontWeight: 800, fontSize: '0.95rem',
-                letterSpacing: '0.02em', textDecoration: 'none',
-                borderRadius: '4px',
-              }}>
-                Browse kitchens →
-              </Link>
-              <Link href="#kitchens" style={{
-                padding: '1rem 2.25rem',
-                background: 'transparent', color: 'rgba(255,255,255,0.65)',
-                fontWeight: 600, fontSize: '0.95rem',
-                letterSpacing: '0.02em', textDecoration: 'none',
-                border: '1px solid rgba(255,255,255,0.2)',
-                borderRadius: '4px',
-              }}>
-                See the kitchens
-              </Link>
-            </div>
+          {/* Brand voice strip — each name lights up in its accent. The
+              spotlight cycles automatically; hovering pins. */}
+          <div style={{
+            display: 'flex', flexWrap: 'wrap', gap: '0.4rem 2.5rem',
+            marginBottom: 'clamp(2.5rem, 5vw, 4rem)',
+            fontSize: 'clamp(1.05rem, 1.8vw, 1.35rem)',
+            fontWeight: 600,
+            color: 'rgba(255,255,255,0.55)',
+          }}>
+            {VOICES.map((v, i) => {
+              const active = i === liveIdx
+              return (
+                <button
+                  key={v.slug}
+                  onMouseEnter={() => setHoveredIdx(i)}
+                  onMouseLeave={() => setHoveredIdx(null)}
+                  onFocus={() => setHoveredIdx(i)}
+                  onBlur={() => setHoveredIdx(null)}
+                  style={{
+                    background: 'transparent', border: 'none', padding: 0,
+                    color: active ? v.accent : 'rgba(255,255,255,0.55)',
+                    fontFamily: 'var(--font-display)',
+                    fontWeight: 800,
+                    letterSpacing: '-0.02em',
+                    fontSize: 'clamp(1.4rem, 2.6vw, 2.1rem)',
+                    cursor: 'pointer',
+                    transition: 'color 220ms ease',
+                  }}>
+                  {v.brand}<span style={{ opacity: 0.5 }}> — </span>
+                  <span style={{ fontWeight: 500, fontSize: '0.62em', verticalAlign: 'middle' }}>
+                    {v.line}
+                  </span>
+                </button>
+              )
+            })}
           </div>
 
-          {/* Trust figures */}
-          <div className="container" style={{ marginTop: '4rem', maxWidth: '640px' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 0, borderTop: '1px solid rgba(255,255,255,0.1)' }}>
-              {[
-                { value: '3',    label: 'kitchens' },
-                { value: '4.8★', label: 'avg rating' },
-                { value: '~30m', label: 'avg delivery' },
-              ].map((t, i) => (
-                <div key={t.label} style={{
-                  padding: '1.4rem 0 0',
-                  paddingLeft: i > 0 ? '1.5rem' : 0,
-                  borderLeft: i > 0 ? '1px solid rgba(255,255,255,0.1)' : 'none',
-                  paddingRight: i < 2 ? '1.5rem' : 0,
-                }}>
-                  <p style={{ fontSize: 'clamp(1.6rem, 3vw, 2.25rem)', fontWeight: 900, letterSpacing: '-0.04em', color: 'white', marginBottom: '0.2rem' }}>{t.value}</p>
-                  <p style={{ fontSize: '0.7rem', fontWeight: 600, color: 'rgba(255,255,255,0.35)', letterSpacing: '0.1em', textTransform: 'uppercase' }}>{t.label}</p>
-                </div>
-              ))}
-            </div>
+          {/* Dual CTA — Order Now (brand-accent pill) + Explore brands
+              (outline). Big targets, generous spacing. */}
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.9rem' }}>
+            <Link href="/browse" className="brand-pill">
+              Order now <span style={{ opacity: 0.65 }}>→</span>
+            </Link>
+            <Link href="#brands" className="brand-pill-outline">
+              Meet the kitchens
+            </Link>
+          </div>
+        </div>
+      </section>
+
+      {/* ── Marquee — section divider that gives the page a kinetic
+            heartbeat between blocks. ──────────────────────────────── */}
+      <MarqueeText
+        items={[
+          'Three kitchens',
+          'One bag',
+          'No chaos',
+          'Karachi-built',
+          'Direct from the kitchen',
+        ]}
+        accent
+      />
+
+      {/* ── BRANDS — drag carousel of the live brands. Each card carries
+            its accent + a featured photo. Click anywhere → brand
+            microsite. ───────────────────────────────────────────── */}
+      <section id="brands" className="section" style={{ background: 'white' }}>
+        <div className="container" style={{ marginBottom: 'clamp(2rem, 4vw, 3rem)' }}>
+          <p className="eyebrow eyebrow-accent">The kitchens</p>
+          <div className="asym-2" style={{ marginTop: '0.5rem' }}>
+            <h2 className="display" style={{ fontSize: 'clamp(2.5rem, 6vw, 4.5rem)' }}>
+              Three brands.<br />
+              <span className="display-italic">One household name.</span>
+            </h2>
+            <p style={{ fontSize: '1.05rem', color: 'var(--servd-mute)', maxWidth: '420px' }}>
+              Each kitchen does one thing properly — burgers, slow-cook, fried —
+              and shares a delivery bag. Pick from one, two, or all three.
+              We figure out the timing.
+            </p>
           </div>
         </div>
 
-        {/* Right — food photo mosaic */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gridTemplateRows: '1fr 1fr', minHeight: 'min(80vh, 720px)' }}>
-          {FEATURED.slice(0, 4).map((d, i) => (
-            <Link key={d.dish} href={`/brand/${d.brandSlug}`} style={{ position: 'relative', overflow: 'hidden', textDecoration: 'none', display: 'block' }}>
-              <img
-                src={d.img}
-                alt={d.dish}
-                style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', transition: 'transform 0.5s ease' }}
-                onMouseEnter={(e) => { (e.currentTarget as HTMLImageElement).style.transform = 'scale(1.06)' }}
-                onMouseLeave={(e) => { (e.currentTarget as HTMLImageElement).style.transform = 'scale(1)' }}
-              />
+        <DragRail>
+          {VOICES.map((v) => (
+            <Link
+              key={v.slug}
+              href={`/brand/${v.slug}`}
+              className="kinetic-card group"
+              style={{
+                width: 'min(420px, 80vw)',
+                ['--brand-accent' as string]: v.accent,
+                ['--brand-ink' as string]:    '#0a0a0a',
+                background: '#0a0a0a',
+                color: 'white',
+                textDecoration: 'none',
+              }}>
               <div style={{
-                position: 'absolute', inset: 0,
-                background: i % 2 === 0
-                  ? 'linear-gradient(135deg, rgba(0,0,0,0.3) 0%, transparent 60%)'
-                  : 'linear-gradient(315deg, rgba(0,0,0,0.35) 0%, transparent 60%)',
-              }} />
-              <div style={{ position: 'absolute', bottom: '0.85rem', left: '0.85rem' }}>
-                <p style={{ fontSize: '0.6rem', fontWeight: 700, color: 'rgba(255,255,255,0.65)', letterSpacing: '0.18em', textTransform: 'uppercase' }}>{d.brand}</p>
-                <p style={{ fontSize: '0.82rem', fontWeight: 700, color: 'white' }}>{d.dish}</p>
+                position: 'relative',
+                aspectRatio: '4 / 5',
+                background: `linear-gradient(135deg, ${v.accent}25, transparent 60%), #0a0a0a`,
+                overflow: 'hidden',
+              }}>
+                <KineticShape variant="blob"  size={300} color={v.accent} style={{ top: '-10%', right: '-15%' }} />
+                <KineticShape variant="emoji" emoji={v.emoji} size={170} style={{ bottom: '8%', right: '12%' }} />
+                <KineticShape variant="ring"  size={90}  color={v.accent} style={{ top: '18%', left: '14%' }} spin />
+                <div className="kinetic-arrow">→</div>
+                <div style={{
+                  position: 'absolute', left: '1.5rem', bottom: '1.5rem',
+                  zIndex: 2,
+                }}>
+                  <p className="eyebrow" style={{ color: v.accent, marginBottom: '0.5rem' }}>
+                    {v.slug}.servd.pk
+                  </p>
+                  <h3 className="display" style={{ fontSize: 'clamp(2.2rem, 4vw, 3.2rem)', color: 'white' }}>
+                    {v.brand}
+                  </h3>
+                  <p style={{ marginTop: '0.5rem', color: 'rgba(255,255,255,0.7)', fontSize: '1rem' }}>
+                    {v.line}
+                  </p>
+                </div>
               </div>
             </Link>
           ))}
-        </div>
+        </DragRail>
       </section>
 
-      {/* ── The kitchens — brands are the product ───────────────────────── */}
-      <section id="kitchens" style={{ padding: 'clamp(3rem, 7vw, 6rem) 0', borderBottom: '1px solid var(--servd-line)' }}>
+      {/* ── FEATURED DISHES — editorial photography grid. The headline
+            sits chunky on the left; the cards take the right. ─────── */}
+      <section className="section surface-warm">
         <div className="container">
-          <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: '2.5rem', flexWrap: 'wrap', gap: '1rem' }}>
-            <div>
-              <p style={{ color: 'var(--servd-green-dark)', fontWeight: 700, fontSize: '0.7rem', letterSpacing: '0.28em', textTransform: 'uppercase', marginBottom: '0.5rem' }}>
-                The kitchens
-              </p>
-              <h2 style={{ fontSize: 'clamp(2rem, 4vw, 3rem)', fontWeight: 300, letterSpacing: '0.02em', lineHeight: 1.1 }}>
-                Three brands. One order.
-              </h2>
-            </div>
-            <Link href="/browse" style={{
-              fontSize: '0.82rem', fontWeight: 600, letterSpacing: '0.22em',
-              textTransform: 'uppercase', color: INK, textDecoration: 'none',
-              borderBottom: '1px solid var(--servd-green)', paddingBottom: '0.2rem',
-            }}>
-              Browse all →
-            </Link>
+          <div className="asym-2 asym-2-flip" style={{ marginBottom: 'clamp(2rem, 4vw, 3rem)' }}>
+            <p className="display" style={{ fontSize: 'clamp(1.5rem, 2.5vw, 2rem)', color: 'var(--servd-mute)' }}>
+              <span className="eyebrow eyebrow-accent" style={{ display: 'block', marginBottom: '0.5rem' }}>What's good right now</span>
+              Hand-picked by the chefs running each line.
+              Pulled fresh on the next print.
+            </p>
+            <h2 className="display" style={{ fontSize: 'clamp(2.8rem, 6vw, 5rem)' }}>
+              The hits.<br />
+              <span className="display-italic">Plated.</span>
+            </h2>
           </div>
 
-          {concepts.length === 0 ? (
-            <div style={{ padding: '3rem', textAlign: 'center', border: '1px solid var(--servd-line)' }}>
-              <p style={{ color: 'var(--servd-mute)' }}>Loading kitchens…</p>
-            </div>
-          ) : (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '1.25rem' }}>
-              {concepts.map((c) => <BrandCard key={c.id} concept={c} />)}
-            </div>
-          )}
-        </div>
-      </section>
-
-      {/* ── Tonight's picks — food photography, no emoji ─────────────────── */}
-      <section style={{ padding: 'clamp(3rem, 7vw, 6rem) 0', background: '#fafaf9', borderBottom: '1px solid var(--servd-line)' }}>
-        <div className="container">
-          <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', flexWrap: 'wrap', gap: '1.5rem', marginBottom: '2.5rem' }}>
-            <div>
-              <p style={{ color: 'var(--servd-green-dark)', fontWeight: 700, fontSize: '0.7rem', letterSpacing: '0.28em', textTransform: 'uppercase', marginBottom: '0.5rem' }}>
-                Worth ordering tonight
-              </p>
-              <h2 style={{ fontSize: 'clamp(2rem, 4vw, 3rem)', fontWeight: 300, letterSpacing: '0.02em', lineHeight: 1.1 }}>
-                The food.
-              </h2>
-            </div>
-            <Link href="/browse" style={{ fontSize: '0.82rem', fontWeight: 600, letterSpacing: '0.22em', textTransform: 'uppercase', color: INK, textDecoration: 'none', borderBottom: '1px solid var(--servd-green)', paddingBottom: '0.2rem' }}>
-              Full menus →
-            </Link>
-          </div>
-
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1.25rem' }}>
-            {FEATURED.map((d) => (
-              <Link key={d.dish} href={`/brand/${d.brandSlug}`} style={{
-                textDecoration: 'none', color: 'inherit',
-                display: 'flex', flexDirection: 'column',
-                background: 'white', border: '1px solid var(--servd-line)',
-              }}>
-                <div style={{ aspectRatio: '4/3', overflow: 'hidden', position: 'relative' }}>
-                  <img src={d.img} alt={d.dish} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
-                  {d.tag && (
-                    <div style={{
-                      position: 'absolute', top: '0.75rem', left: '0.75rem',
-                      background: 'white', color: INK,
-                      fontSize: '0.65rem', fontWeight: 700, letterSpacing: '0.1em',
-                      textTransform: 'uppercase', padding: '0.25rem 0.6rem',
-                    }}>
-                      {d.tag}
-                    </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-5 md:gap-6">
+            {FEATURED.map((f) => (
+              <Link
+                key={f.dish}
+                href={`/brand/${f.brandSlug}/menu`}
+                className="kinetic-card"
+                style={{
+                  ['--brand-accent' as string]: VOICES.find((v) => v.slug === f.brandSlug)?.accent ?? 'var(--servd-green)',
+                  ['--brand-ink' as string]:    '#0a0a0a',
+                  background: 'white',
+                  textDecoration: 'none',
+                  color: 'var(--servd-ink)',
+                }}>
+                <div style={{
+                  position: 'relative',
+                  aspectRatio: '4 / 3',
+                  backgroundImage: `url(${f.img})`,
+                  backgroundSize: 'cover',
+                  backgroundPosition: 'center',
+                }}>
+                  <div className="kinetic-arrow">→</div>
+                  {f.tag && (
+                    <span style={{
+                      position: 'absolute', top: '1rem', left: '1rem',
+                      background: 'rgba(0,0,0,0.75)', color: 'white',
+                      padding: '0.3rem 0.7rem', borderRadius: '999px',
+                      fontSize: '0.72rem', fontWeight: 700, letterSpacing: '0.06em',
+                      textTransform: 'uppercase',
+                    }}>{f.tag}</span>
                   )}
                 </div>
-                <div style={{ padding: '1.25rem 1.4rem', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-                  <p style={{ fontSize: '0.68rem', fontWeight: 700, color: 'var(--servd-mute)', letterSpacing: '0.14em', textTransform: 'uppercase' }}>
-                    {d.brand}
-                  </p>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '0.5rem' }}>
-                    <h3 style={{ fontSize: '1.05rem', fontWeight: 600, letterSpacing: '-0.01em' }}>{d.dish}</h3>
-                    <span style={{ fontSize: '0.95rem', fontWeight: 700, color: INK, whiteSpace: 'nowrap' }}>{d.price}</span>
+                <div style={{ padding: '1.25rem' }}>
+                  <p className="eyebrow" style={{ color: 'var(--brand-accent)', marginBottom: '0.4rem' }}>{f.brand}</p>
+                  <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '1rem' }}>
+                    <p style={{ fontSize: '1.2rem', fontWeight: 800, letterSpacing: '-0.015em' }}>{f.dish}</p>
+                    <p style={{ fontWeight: 700, color: 'var(--servd-mute)' }}>{f.price}</p>
                   </div>
                 </div>
               </Link>
@@ -292,271 +308,128 @@ export function HomeClient({ concepts }: Props) {
         </div>
       </section>
 
-      {/* ── Insiders — platform-level perks and cross-kitchen deals ────── */}
-      <section style={{
-        padding: 'clamp(3rem, 7vw, 6rem) 0',
-        background: `linear-gradient(180deg, ${INK} 0%, #1a1f1a 100%)`,
-        color: 'white',
-        borderBottom: '1px solid rgba(255,255,255,0.06)',
-      }}>
-        <div className="container">
-          <div style={{ marginBottom: '2.5rem' }}>
-            <h2 style={{
-              fontSize: 'clamp(3.5rem, 12vw, 9rem)',
-              fontWeight: 900,
-              letterSpacing: '-0.05em',
-              lineHeight: 0.9,
-              color: 'var(--servd-green)',
-              textTransform: 'uppercase',
-              margin: 0,
-            }}>
-              INSIDERS.
-            </h2>
-            <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', marginTop: '1.5rem', flexWrap: 'wrap', gap: '1rem' }}>
-              <p style={{ color: 'rgba(255,255,255,0.6)', fontSize: '1rem', maxWidth: '36rem', lineHeight: 1.5 }}>
-                Cross-kitchen bundles, points multipliers, member-only unlocks. Earn at any kitchen, spend at any kitchen.{' '}
-                <Link href="/account" style={{ color: 'var(--servd-green)', textDecoration: 'underline' }}>Become a member →</Link>
-              </p>
-              <Link href="/browse" style={{
-                padding: '0.7rem 1.25rem', fontSize: '0.9rem', fontWeight: 800,
-                color: INK, background: 'var(--servd-green)',
-                borderRadius: '999px', textDecoration: 'none', whiteSpace: 'nowrap',
-              }}>
-                See all perks →
-              </Link>
-            </div>
-          </div>
+      {/* ── THE PROMISE — three pillars laid out asymmetric. The accent
+            shifts on each pillar so the section reads as multi-brand. ── */}
+      <section className="section relative overflow-hidden" style={{ background: 'white' }}>
+        <KineticShape variant="blob" size={380} color="#22c55e" style={{ top: '-10%', right: '-12%', opacity: 0.25 }} />
+        <KineticShape variant="blob" size={280} color="#FF6B35" style={{ bottom: '5%', left: '-8%', opacity: 0.2 }} />
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1rem' }}>
+        <div className="container relative">
+          <p className="eyebrow eyebrow-accent">The promise</p>
+          <h2 className="display" style={{ fontSize: 'clamp(2.8rem, 6vw, 5rem)', marginBottom: '2.5rem', maxWidth: '900px' }}>
+            We're not a delivery app.<br />
+            <span className="display-italic">We're the kitchen.</span>
+          </h2>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 md:gap-8">
             {[
-              { badge: 'MEMBER',   title: '2× points Tuesdays',      body: 'Every order, every kitchen, every Tuesday earns double servd points.',                   cta: 'Activate',        color: 'var(--servd-green)' },
-              { badge: 'BUNDLE',   title: 'Family Feast',             body: '4 meals from any 3 kitchens · Rs. 2,499',                                               subtext: 'Save Rs. 600 vs ordering separately', cta: 'Build my feast',  color: '#f59e0b' },
-              { badge: 'NEW',      title: 'Rs. 200 off first order',  body: 'Code FRESH200 · plus free delivery · plus 100 servd points to start.',                  cta: 'Use FRESH200',    color: 'var(--servd-green)' },
-              { badge: 'LATE',     title: 'After-10pm unlock',        body: 'Member-only late menu — extended hours from Stax and Flipd.',                            cta: 'Join to unlock',  color: '#a855f7' },
-              { badge: 'COMBO',    title: 'Mix Two, Free Side',       body: 'Any two mains across kitchens — fries / salad / kheer on the house.',                   cta: 'Mix & match',     color: '#0ea5e9' },
-              { badge: 'BIRTHDAY', title: 'Free dessert, your week',  body: 'Dessert on us from any kitchen — every year, on your birthday week.',                   cta: 'Set my birthday', color: '#ec4899' },
-            ].map((d) => (
-              <Link
-                key={d.title}
-                href="/browse"
-                style={{
-                  display: 'flex', flexDirection: 'column', gap: '0.6rem',
-                  padding: '1.5rem 1.4rem',
-                  background: 'rgba(255,255,255,0.04)',
-                  border: '1px solid rgba(255,255,255,0.1)',
-                  borderRadius: '12px',
-                  textDecoration: 'none', color: 'white',
-                }}
-                onMouseEnter={(e) => { e.currentTarget.style.borderColor = d.color; e.currentTarget.style.background = 'rgba(255,255,255,0.06)' }}
-                onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)'; e.currentTarget.style.background = 'rgba(255,255,255,0.04)' }}
-              >
+              { accent: '#FF6B35', label: 'Direct',   title: 'No middleman markup',  body: 'You order from us, we cook, we deliver. Same kitchen end to end. The price you pay is the price we charge.' },
+              { accent: '#22c55e', label: 'Hot',      title: 'One bag, three kitchens', body: 'Our riders wait for the slowest dish so everything arrives at the same temperature. The salad is cold; the burger is hot.' },
+              { accent: '#F5B700', label: 'Honest',   title: 'No fake urgency',      body: 'No "only 2 left", no countdown timers, no surge pricing on a rainy Tuesday. The menu is real, the price is real.' },
+            ].map((p, i) => (
+              <div key={i} style={{ ['--brand-accent' as string]: p.accent } as React.CSSProperties}>
                 <span style={{
-                  alignSelf: 'flex-start', fontSize: '0.62rem', fontWeight: 800,
-                  letterSpacing: '0.2em', color: d.color,
-                  border: `1px solid ${d.color}55`, padding: '0.2rem 0.55rem', borderRadius: '4px',
+                  display: 'inline-block',
+                  width: '3rem', height: '3rem', borderRadius: '999px',
+                  background: p.accent, marginBottom: '1.25rem',
+                  position: 'relative',
                 }}>
-                  {d.badge}
+                  <span style={{
+                    position: 'absolute', inset: 0,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    color: '#0a0a0a', fontWeight: 900, fontSize: '1.4rem',
+                  }}>{i + 1}</span>
                 </span>
-                <h3 style={{ fontSize: '1.1rem', fontWeight: 800, letterSpacing: '-0.01em', color: 'white' }}>{d.title}</h3>
-                <p style={{ fontSize: '0.88rem', color: 'rgba(255,255,255,0.65)', lineHeight: 1.45 }}>{d.body}</p>
-                {'subtext' in d && d.subtext && <p style={{ fontSize: '0.78rem', color: d.color, fontWeight: 700 }}>{d.subtext}</p>}
-                <span style={{ marginTop: 'auto', fontSize: '0.85rem', fontWeight: 800, color: d.color, paddingTop: '0.5rem' }}>{d.cta} →</span>
-              </Link>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* ── The brands, in their own words ───────────────────────────────── */}
-      <section style={{ padding: 'clamp(3rem, 7vw, 6rem) 0', background: INK, color: 'white', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
-        <div className="container">
-          <p style={{ color: 'var(--servd-green)', fontWeight: 600, fontSize: '0.7rem', letterSpacing: '0.32em', textTransform: 'uppercase', marginBottom: '2.5rem' }}>
-            Each kitchen, in its own words
-          </p>
-          <div>
-            {VOICES.map((v, i) => (
-              <Link
-                key={v.slug}
-                href={`/brand/${v.slug}`}
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'minmax(160px, 0.35fr) 1fr auto',
-                  gap: '1.5rem',
-                  alignItems: 'baseline',
-                  padding: '1.25rem 0',
-                  borderTop: '1px solid rgba(255,255,255,0.08)',
-                  borderBottom: i === VOICES.length - 1 ? '1px solid rgba(255,255,255,0.08)' : 'none',
-                  textDecoration: 'none',
-                  color: 'white',
-                }}
-              >
-                <h3 style={{ fontSize: 'clamp(1.5rem, 3vw, 2.25rem)', fontWeight: 700, letterSpacing: '-0.03em', color: v.color }}>
-                  {v.brand}
+                <p className="eyebrow eyebrow-accent" style={{ marginBottom: '0.5rem' }}>{p.label}</p>
+                <h3 className="display" style={{ fontSize: 'clamp(1.5rem, 2.5vw, 2rem)', marginBottom: '0.75rem' }}>
+                  {p.title}
                 </h3>
-                <p style={{ fontSize: 'clamp(0.9rem, 1.5vw, 1.1rem)', color: 'rgba(255,255,255,0.5)', fontStyle: 'italic', fontWeight: 300, lineHeight: 1.4 }}>
-                  {v.line}
-                </p>
-                <span style={{ fontSize: '0.78rem', fontWeight: 600, color: v.color, letterSpacing: '0.1em', whiteSpace: 'nowrap' }}>
-                  Order →
-                </span>
-              </Link>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* ── How servd works — three things, simply said ──────────────────── */}
-      <section style={{ padding: 'clamp(3rem, 7vw, 6rem) 0', borderBottom: '1px solid var(--servd-line)' }}>
-        <div className="container">
-          <p style={{ color: 'var(--servd-green-dark)', fontWeight: 700, fontSize: '0.7rem', letterSpacing: '0.28em', textTransform: 'uppercase', marginBottom: '0.75rem' }}>
-            How it works
-          </p>
-          <h2 style={{ fontSize: 'clamp(1.75rem, 3.5vw, 2.5rem)', fontWeight: 300, letterSpacing: '0.02em', marginBottom: '3rem', maxWidth: '32rem' }}>
-            One cart across as many kitchens as you want.
-          </h2>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '0' }}>
-            {[
-              { num: '01', title: 'Pick your kitchens', body: 'Browse seven brands. Add dishes from any of them to a single cart — there\'s no switching between apps.' },
-              { num: '02', title: 'One checkout', body: 'One order, one delivery fee, one driver. We coordinate the kitchen timing so everything arrives hot.' },
-              { num: '03', title: 'Fresh, to your door', body: 'Nothing leaves the kitchen early. Your order is cooked when it\'s time to go, not when it\'s convenient.' },
-            ].map((s, i) => (
-              <div key={s.num} style={{ padding: '0 3rem 0 0', borderLeft: i > 0 ? '1px solid var(--servd-line)' : 'none', paddingLeft: i > 0 ? '3rem' : 0 }}>
-                <p style={{ fontSize: '2.5rem', fontWeight: 900, color: 'var(--servd-green)', letterSpacing: '-0.06em', lineHeight: 1, marginBottom: '1.25rem' }}>{s.num}</p>
-                <h3 style={{ fontSize: '1.1rem', fontWeight: 700, letterSpacing: '-0.01em', marginBottom: '0.5rem' }}>{s.title}</h3>
-                <p style={{ color: 'var(--servd-mute)', fontSize: '0.92rem', lineHeight: 1.55 }}>{s.body}</p>
+                <p style={{ color: 'var(--servd-mute)', lineHeight: 1.55 }}>{p.body}</p>
               </div>
             ))}
           </div>
         </div>
       </section>
 
-      {/* ── Social proof ─────────────────────────────────────────────────── */}
-      <section style={{ padding: 'clamp(3rem, 7vw, 6rem) 0', borderBottom: '1px solid var(--servd-line)', background: '#fafaf9' }}>
-        <div className="container">
-          <p style={{ color: 'var(--servd-green-dark)', fontWeight: 700, fontSize: '0.7rem', letterSpacing: '0.28em', textTransform: 'uppercase', marginBottom: '0.5rem', textAlign: 'center' }}>
-            From regulars
-          </p>
-          <h2 style={{ fontSize: 'clamp(1.75rem, 3.5vw, 2.5rem)', fontWeight: 300, letterSpacing: '0.02em', textAlign: 'center', marginBottom: '2.5rem' }}>
-            What the table says.
+      {/* ── REVIEWS — drag carousel, each card heavy ink, brand-tinted
+            accent quote-mark. The marquee speeds up the read. ──────── */}
+      <section className="section" style={{ background: 'white' }}>
+        <div className="container" style={{ marginBottom: 'clamp(2rem, 4vw, 3rem)' }}>
+          <p className="eyebrow eyebrow-accent">From our regulars</p>
+          <h2 className="display" style={{ fontSize: 'clamp(2.5rem, 6vw, 4.5rem)', maxWidth: '900px' }}>
+            People are <span className="display-italic">extremely</span> normal about us.
           </h2>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '1.25rem' }}>
-            {REVIEWS.map((r, i) => (
-              <div key={i} style={{
-                background: 'white', border: '1px solid var(--servd-line)',
-                padding: '2rem 1.75rem', display: 'flex', flexDirection: 'column', gap: '1.25rem',
-              }}>
-                <div style={{ color: '#c9a961', letterSpacing: '0.1em', fontSize: '0.9rem' }} aria-label="5 stars">★★★★★</div>
-                <p style={{ fontSize: '0.97rem', lineHeight: 1.65, color: INK, fontStyle: 'italic' }}>{r.text}</p>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.7rem', marginTop: 'auto' }}>
-                  <div style={{ width: '2.2rem', height: '2.2rem', borderRadius: '50%', background: 'var(--servd-green-soft)', color: 'var(--servd-green-dark)', fontWeight: 800, display: 'grid', placeItems: 'center', fontSize: '0.85rem' }}>
-                    {r.name[0]}
-                  </div>
+        </div>
+
+        <DragRail>
+          {REVIEWS.map((r, i) => {
+            const accent = VOICES[i % VOICES.length]!.accent
+            return (
+              <div
+                key={i}
+                className="kinetic-card"
+                style={{
+                  width: 'min(440px, 82vw)',
+                  background: '#0a0a0a',
+                  color: 'white',
+                  padding: '2rem 1.75rem 1.75rem',
+                  display: 'flex', flexDirection: 'column', justifyContent: 'space-between',
+                  minHeight: '280px',
+                  ['--brand-accent' as string]: accent,
+                  ['--brand-ink' as string]:    '#0a0a0a',
+                }}>
+                <div>
+                  <span style={{ fontSize: '3rem', lineHeight: 1, color: accent, fontFamily: 'var(--font-display)', fontWeight: 800 }}>"</span>
+                  <p style={{ fontSize: '1.05rem', lineHeight: 1.5, color: 'rgba(255,255,255,0.92)', marginTop: '-0.5rem' }}>
+                    {r.quote}
+                  </p>
+                </div>
+                <div style={{ marginTop: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.7rem' }}>
+                  <span style={{
+                    width: '2.2rem', height: '2.2rem', borderRadius: '999px',
+                    background: accent, color: '#0a0a0a',
+                    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                    fontWeight: 900, fontSize: '0.95rem',
+                  }}>{r.name.charAt(0)}</span>
                   <div>
-                    <p style={{ fontSize: '0.85rem', fontWeight: 700 }}>{r.name}</p>
-                    <p style={{ fontSize: '0.78rem', color: 'var(--servd-mute)' }}>{r.area}</p>
+                    <p style={{ fontWeight: 700, fontSize: '0.95rem' }}>{r.name}</p>
+                    <p style={{ fontSize: '0.78rem', color: 'rgba(255,255,255,0.55)' }}>{r.area}</p>
                   </div>
                 </div>
               </div>
-            ))}
+            )
+          })}
+        </DragRail>
+      </section>
+
+      {/* ── FINAL CTA — ink surface, big type, single action. The
+            accent here is locked to servd-green since it's the
+            platform CTA, not a brand pitch. ───────────────────────── */}
+      <section className="surface-ink relative overflow-hidden"
+        style={{ ['--brand-accent' as string]: '#22c55e', ['--brand-ink' as string]: '#0a0a0a' }}>
+        <KineticShape variant="blob"  size={460} style={{ top: '-15%', left: '-10%' }} />
+        <KineticShape variant="ring"  size={180} style={{ bottom: '10%', right: '8%' }} spin />
+        <KineticShape variant="emoji" emoji="🥡" size={140} style={{ top: '20%', right: '12%' }} />
+
+        <div className="container relative z-10 text-center" style={{ paddingTop: 'clamp(5rem, 10vw, 8rem)', paddingBottom: 'clamp(5rem, 10vw, 8rem)' }}>
+          <p className="eyebrow" style={{ color: 'var(--brand-accent)', marginBottom: '1.5rem' }}>Ready when you are</p>
+          <h2 className="display" style={{
+            fontSize: 'clamp(3rem, 8.5vw, 6.5rem)',
+            color: 'white', marginBottom: '2rem',
+          }}>
+            Three kitchens.<br />
+            <span className="display-italic" style={{ color: 'var(--brand-accent)' }}>One bag.</span>
+          </h2>
+          <div style={{ display: 'inline-flex', flexWrap: 'wrap', gap: '0.9rem', justifyContent: 'center' }}>
+            <Link href="/browse" className="brand-pill">Order now →</Link>
+            <Link href="/account" className="brand-pill-outline">Sign in</Link>
           </div>
         </div>
       </section>
-
-      {/* ── Pull quote ───────────────────────────────────────────────────── */}
-      <section style={{ padding: 'clamp(4rem, 8vw, 7rem) 0', background: INK, color: 'white' }}>
-        <div className="container" style={{ textAlign: 'center', maxWidth: '48rem' }}>
-          <p style={{ color: 'var(--servd-green)', fontWeight: 600, fontSize: '0.7rem', letterSpacing: '0.28em', textTransform: 'uppercase', marginBottom: '1.75rem' }}>
-            The point of servd
-          </p>
-          <p style={{ fontSize: 'clamp(1.5rem, 3.5vw, 2.5rem)', fontWeight: 300, lineHeight: 1.45, letterSpacing: '0.01em', color: 'rgba(255,255,255,0.85)' }}>
-            Smashburger for you, karahi for your wife,<br />
-            grain bowl for the friend who&rsquo;s &ldquo;being good&rdquo;.<br />
-            <span style={{ color: 'var(--servd-green)', fontWeight: 600 }}>One cart. One driver. One bag.</span>
-          </p>
-          <div style={{ marginTop: '3rem', display: 'flex', justifyContent: 'center', gap: '0.85rem', flexWrap: 'wrap' }}>
-            <Link href="/browse" style={{
-              padding: '1rem 2.25rem',
-              background: 'var(--servd-green)', color: INK,
-              fontWeight: 700, fontSize: '0.9rem',
-              letterSpacing: '0.04em', textTransform: 'uppercase',
-              textDecoration: 'none', borderRadius: '4px',
-            }}>
-              Start an order →
-            </Link>
-          </div>
-        </div>
-      </section>
-
-      {/* ── How to reach us ──────────────────────────────────────────────── */}
-      <section style={{ padding: 'clamp(2.5rem, 5vw, 4rem) 0', borderTop: '1px solid var(--servd-line)' }}>
-        <div className="container">
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '0' }}>
-            {[
-              { kicker: 'Delivery', title: 'Order in',  body: 'Direct from any kitchen.', cta: 'Browse kitchens', href: '/browse' },
-              { kicker: 'Dine-in',  title: 'Come sit',  body: 'Table service at Simmer.',  cta: 'Reserve a table',  href: '/reserve/simmer' },
-              { kicker: 'Walk-up',  title: 'Walk up',   body: 'Flipd kitchen at Padel Club Clifton.', cta: 'Visit Flipd', href: '/brand/flipd' },
-            ].map((card, i) => (
-              <Link key={card.title} href={card.href} style={{
-                padding: '2rem',
-                paddingLeft: i === 0 ? 0 : '2rem',
-                borderLeft: i > 0 ? '1px solid var(--servd-line)' : 'none',
-                textDecoration: 'none', color: 'inherit',
-                display: 'flex', flexDirection: 'column', gap: '0.4rem',
-              }}>
-                <p style={{ fontSize: '0.68rem', fontWeight: 700, letterSpacing: '0.2em', color: 'var(--servd-mute)', textTransform: 'uppercase' }}>{card.kicker}</p>
-                <h3 style={{ fontSize: '1.3rem', fontWeight: 600, letterSpacing: '-0.02em' }}>{card.title}</h3>
-                <p style={{ color: 'var(--servd-mute)', fontSize: '0.88rem', lineHeight: 1.4 }}>{card.body}</p>
-                <span style={{ marginTop: '0.75rem', fontWeight: 700, color: 'var(--servd-green-dark)', fontSize: '0.82rem' }}>{card.cta} →</span>
-              </Link>
-            ))}
-          </div>
-        </div>
-      </section>
-
     </div>
   )
 }
 
-function BrandCard({ concept }: { concept: Concept }) {
-  return (
-    <Link
-      href={`/brand/${concept.slug}`}
-      aria-label={`Visit ${concept.name}`}
-      style={{
-        textDecoration: 'none', color: 'inherit',
-        display: 'flex', flexDirection: 'column',
-        border: '1px solid var(--servd-line)',
-        background: 'white',
-        overflow: 'hidden',
-      }}
-    >
-      <div style={{
-        aspectRatio: '4/3', position: 'relative', overflow: 'hidden',
-        background: `${concept.primaryColor ?? 'var(--servd-green-dark)'}`,
-      }}>
-        <img
-          src={conceptHeroImage(concept)}
-          alt={concept.name}
-          style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
-        />
-        <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, transparent 45%, rgba(0,0,0,0.6) 100%)' }} />
-        <div style={{
-          position: 'absolute', top: '0.85rem', left: '0.85rem',
-          background: 'rgba(255,255,255,0.92)', color: INK,
-          fontSize: '0.65rem', fontWeight: 700, letterSpacing: '0.12em',
-          textTransform: 'uppercase', padding: '0.25rem 0.6rem',
-        }}>
-          {typeIcon(concept.type)} {typeLabel(concept.type)}
-        </div>
-      </div>
-      <div style={{ padding: '1.25rem 1.4rem', display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
-        <h3 style={{ fontSize: '1.15rem', fontWeight: 700, letterSpacing: '-0.01em' }}>{concept.name}</h3>
-        {concept.description && (
-          <p style={{ color: 'var(--servd-mute)', fontSize: '0.875rem', lineHeight: 1.4 }}>
-            {concept.description}
-          </p>
-        )}
-      </div>
-    </Link>
-  )
-}
+// Keep the unused import alive — conceptHeroImage may be needed by future
+// blocks that pull hero photography per concept.
+void conceptHeroImage

@@ -1,4 +1,7 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
+/* Inter for body text, Bricolage Grotesque for the kinetic display headlines
+   that drive the new asymmetric / chunky look. Falls back to Inter Black if
+   the display family fails to load — keeps the bold weight intact. */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -16,6 +19,15 @@
   --servd-line:         rgba(0,0,0,0.08);
   --servd-bg:           #ffffff;
   --servd-surface:      #fafafa;
+  /* Per-brand accents — exposed as CSS vars so the kinetic components
+     (shapes, buttons, headlines) can pull whichever accent the page sets
+     via inline style. Defaults to servd-green when no brand is active. */
+  --brand-accent:       var(--servd-green);
+  --brand-accent-dark:  var(--servd-green-dark);
+  --brand-ink:          var(--servd-black);
+  /* Display font for the kinetic look — used on hero headlines, eyebrow
+     labels, marquee text, anywhere we want the "agency-modern" feel. */
+  --font-display:       'Bricolage Grotesque', 'Inter', system-ui, sans-serif;
 }
 
 html {
@@ -221,3 +233,225 @@ a { color: inherit; }
 }
 
 .fade-up { animation: fadeUp 600ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+
+/* ── Kinetic design system ────────────────────────────────────────────────
+   Shared visual language inspired by agency sites (Buzz Interactive et al):
+   big asymmetric headlines, atmospheric floating shapes, marquee strips,
+   drag carousels. Per-brand colour comes through --brand-accent so the
+   same components work for Stax (orange), Simmer (green), Flipd (yellow). */
+
+/* Display type — used for hero headlines and section openers. The
+   Bricolage Grotesque optical-size axis gives us bigger sizes a slightly
+   condensed, more editorial feel without swapping fonts. */
+.display {
+  font-family: var(--font-display);
+  font-weight: 800;
+  letter-spacing: -0.035em;
+  line-height: 0.92;
+  font-variation-settings: 'opsz' 96;
+}
+.display-italic {
+  font-family: var(--font-display);
+  font-style: italic;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.0;
+}
+
+/* Eyebrow — the tiny all-caps tracking-wide label that anchors most
+   section openers. Used everywhere as a structural anchor. */
+.eyebrow {
+  font-family: var(--font-display);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.32em;
+  text-transform: uppercase;
+  color: var(--servd-mute);
+}
+.eyebrow-accent { color: var(--brand-accent-dark); }
+
+/* Kinetic shape — atmospheric blob/orb/squiggle that floats in the
+   background of hero sections. Position absolutely + give it a colour via
+   `--shape-color` (defaults to brand-accent). The default soft blur look;
+   the `.shape-crisp` modifier kills the blur for solid 3D-like decals. */
+.kinetic-shape {
+  position: absolute;
+  pointer-events: none;
+  border-radius: 50%;
+  background: radial-gradient(circle at 30% 30%, var(--shape-color, var(--brand-accent)) 0%, transparent 70%);
+  filter: blur(40px);
+  opacity: 0.55;
+  z-index: 0;
+  animation: floatSlow 14s ease-in-out infinite alternate;
+}
+.kinetic-shape.shape-crisp {
+  filter: none;
+  background: var(--shape-color, var(--brand-accent));
+  opacity: 0.9;
+}
+.kinetic-shape.shape-ring {
+  background: transparent;
+  border: 2px solid var(--shape-color, var(--brand-accent));
+  filter: none;
+  opacity: 0.7;
+}
+@keyframes floatSlow {
+  0%   { transform: translate(0, 0) rotate(0deg) scale(1); }
+  50%  { transform: translate(20px, -25px) rotate(8deg) scale(1.05); }
+  100% { transform: translate(-15px, 15px) rotate(-6deg) scale(0.98); }
+}
+@keyframes spinSlow {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+.spin-slow { animation: spinSlow 24s linear infinite; }
+
+/* Marquee strip — horizontally scrolling text band used as a section
+   break (Buzz uses these between case studies). Set `--marquee-speed`
+   to control duration. Pause on hover so users can read it. */
+.marquee {
+  display: flex;
+  overflow: hidden;
+  user-select: none;
+  gap: 3rem;
+  -webkit-mask-image: linear-gradient(to right, transparent, black 6%, black 94%, transparent);
+          mask-image: linear-gradient(to right, transparent, black 6%, black 94%, transparent);
+}
+.marquee-track {
+  display: flex;
+  gap: 3rem;
+  flex-shrink: 0;
+  animation: marqueeScroll var(--marquee-speed, 32s) linear infinite;
+}
+.marquee:hover .marquee-track { animation-play-state: paused; }
+@keyframes marqueeScroll {
+  from { transform: translateX(0); }
+  to   { transform: translateX(-100%); }
+}
+
+/* Drag rail — horizontal scroll-snap carousel for showcasing brands /
+   menu items / press / reviews. Falls back to native scroll on touch;
+   pointer-cursor + grab affordance on desktop. */
+.drag-rail {
+  display: flex;
+  gap: 1rem;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  scroll-padding-left: 1.25rem;
+  scrollbar-width: none;
+  cursor: grab;
+  padding-bottom: 0.5rem;
+}
+.drag-rail::-webkit-scrollbar { display: none; }
+.drag-rail:active { cursor: grabbing; }
+.drag-rail > * {
+  flex: 0 0 auto;
+  scroll-snap-align: start;
+}
+
+/* Brand pill — chunky pill button using the page's --brand-accent. The
+   per-page accent gets set on a parent wrapper; this button just
+   inherits. Hover/active feedback baked in. */
+.brand-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 1rem 1.85rem;
+  background: var(--brand-accent);
+  color: var(--brand-ink);
+  font-family: var(--font-display);
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  font-size: 1.05rem;
+  border-radius: 999px;
+  border: none;
+  cursor: pointer;
+  text-decoration: none;
+  transition: transform 160ms cubic-bezier(0.22, 1, 0.36, 1),
+              box-shadow 160ms cubic-bezier(0.22, 1, 0.36, 1),
+              background 160ms ease;
+  box-shadow: 0 8px 24px -8px color-mix(in srgb, var(--brand-accent) 60%, transparent);
+}
+.brand-pill:hover {
+  transform: translateY(-2px) scale(1.02);
+  box-shadow: 0 16px 32px -10px color-mix(in srgb, var(--brand-accent) 70%, transparent);
+}
+.brand-pill:active { transform: translateY(0) scale(0.99); }
+
+.brand-pill-outline {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 1rem 1.85rem;
+  background: transparent;
+  color: var(--brand-accent);
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 1.05rem;
+  border-radius: 999px;
+  border: 1.5px solid var(--brand-accent);
+  cursor: pointer;
+  text-decoration: none;
+  transition: background 140ms ease, color 140ms ease;
+}
+.brand-pill-outline:hover {
+  background: var(--brand-accent);
+  color: var(--brand-ink);
+}
+
+/* Surface variants used by hero / section dividers in the new look. */
+.surface-ink { background: var(--servd-black); color: white; }
+.surface-warm { background: #faf6f1; color: var(--servd-ink); }
+
+/* Card hover — for the drag-rail brand cards, food shots, etc. */
+.kinetic-card {
+  position: relative;
+  border-radius: 1.5rem;
+  overflow: hidden;
+  background: var(--servd-surface);
+  transition: transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.kinetic-card:hover { transform: translateY(-4px); }
+.kinetic-card .kinetic-arrow {
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: 999px;
+  background: var(--brand-accent);
+  color: var(--brand-ink);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 900;
+  font-size: 1.1rem;
+  opacity: 0;
+  transform: translate(8px, -8px);
+  transition: opacity 220ms, transform 220ms;
+}
+.kinetic-card:hover .kinetic-arrow { opacity: 1; transform: translate(0, 0); }
+
+/* Text caret — used on hover-reveal headlines + CTAs to mimic the
+   playful "→" pointer Buzz uses everywhere. */
+.kinetic-caret::after {
+  content: '→';
+  display: inline-block;
+  margin-left: 0.4em;
+  transition: transform 180ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+a:hover > .kinetic-caret::after,
+button:hover > .kinetic-caret::after { transform: translateX(6px); }
+
+/* Asymmetric grid helper — two columns at md+ with intentional rough
+   alignment (left col taller / right col offset). Used on editorial
+   section pairings. */
+.asym-2 {
+  display: grid;
+  gap: 2rem;
+  grid-template-columns: 1fr;
+}
+@media (min-width: 768px) {
+  .asym-2 { grid-template-columns: 1.2fr 1fr; align-items: end; }
+  .asym-2-flip { grid-template-columns: 1fr 1.2fr; }
+}

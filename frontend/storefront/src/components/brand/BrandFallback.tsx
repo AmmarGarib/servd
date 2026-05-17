@@ -1,46 +1,29 @@
 'use client'
 import type { Concept } from '../../lib/concept'
-import { StaxLayout }           from './layouts/StaxLayout'
-import { SimmerLayout }         from './layouts/SimmerLayout'
-import { StrataLayout }         from './layouts/StrataLayout'
-import { FlipdLayout }          from './layouts/FlipdLayout'
-import { BukhariLayout }        from './layouts/BukhariLayout'
-import { CravemanLayout }       from './layouts/CravemanLayout'
-import { GarnishStationLayout } from './layouts/GarnishStationLayout'
-import { GenericBrandLayout }   from './layouts/GenericBrandLayout'
+import { KineticBrandLayout } from './layouts/KineticBrandLayout'
 
 // BrandFallback — dispatches to a per-brand layout when the operator hasn't
-// customised the CMS blocks for this brand yet. Each major brand has its own
-// opinionated layout (typography, colour palette, section composition, brand-
-// unique modules) so /brand/<slug> reads as that brand's website, not a
-// servd template with the colour swapped. Concepts without a dedicated layout
-// fall through to GenericBrandLayout.
+// customised the CMS blocks for this brand yet. As of the kinetic-redesign
+// every brand uses the shared KineticBrandLayout so the customer experience
+// reads as one design language across Stax / Simmer / Flipd. Per-brand
+// identity comes through:
+//   - concept.primaryColor → --brand-accent on BrandShell, used by every
+//     kinetic shape, pill, eyebrow label, and underline
+//   - BRAND_VOICE map inside KineticBrandLayout → per-brand emoji + signature
+//     dish list + voice line
 //
-// Add a new brand layout: drop a file under layouts/, import it, add a case.
+// The old per-brand bespoke layouts (Stax/Simmer/Flipd/etc) are still in
+// layouts/ — kept for reference and as fast-restore options if we ever want
+// a brand to reclaim its own bespoke microsite. They're not wired here.
+//
+// Add a per-brand override: import the bespoke layout and add a case above
+// the default return. That brand will diverge from the shared language.
 
 interface Props {
-  concept: Concept
+  concept:  Concept
   concepts: Concept[]
 }
 
 export function BrandFallback({ concept, concepts }: Props) {
-  switch (concept.slug) {
-    case 'stax':
-    case 'stax-padel':
-      return <StaxLayout    concept={concept} concepts={concepts} />
-    case 'simmer':
-      return <SimmerLayout  concept={concept} concepts={concepts} />
-    case 'strata':
-      return <StrataLayout  concept={concept} concepts={concepts} />
-    case 'flipd':
-      return <FlipdLayout   concept={concept} concepts={concepts} />
-    case 'bukhari':
-      return <BukhariLayout concept={concept} concepts={concepts} />
-    case 'craveman':
-      return <CravemanLayout concept={concept} concepts={concepts} />
-    case 'garnish-station':
-      return <GarnishStationLayout concept={concept} concepts={concepts} />
-    default:
-      return <GenericBrandLayout concept={concept} concepts={concepts} />
-  }
+  return <KineticBrandLayout concept={concept} concepts={concepts} />
 }
