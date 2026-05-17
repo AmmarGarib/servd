@@ -13,10 +13,13 @@ import { ACCT, postJournalEntry, reverseJournalEntry, revenueCodeForConcept, typ
 
 const Q_FACTOR = 0.05 // 5% recipe shrinkage uplift, mirrors recipes module
 
+// Loose typing on the ingredients because each row can carry either a raw
+// inventoryItem or a prepRecipe (with its own nested ingredients). Sticking
+// with the broad shape so the cost reducer below can pattern-match cleanly.
 interface OrderForPosting extends Order {
-  concept: Concept
+  concept:  Concept
   payments: Payment[]
-  items: (OrderItem & { menuItem?: { recipe?: (Recipe & { ingredients: (RecipeIngredient & { inventoryItem: InventoryItem })[] }) | null } | null })[]
+  items: (OrderItem & { menuItem?: { recipe?: (Recipe & { ingredients: (RecipeIngredient & { inventoryItem: InventoryItem | null })[] }) | null } | null })[]
 }
 
 async function loadOrderForPosting(orderId: string): Promise<OrderForPosting | null> {
@@ -31,7 +34,20 @@ async function loadOrderForPosting(orderId: string): Promise<OrderForPosting | n
             include: {
               recipe: {
                 include: {
-                  ingredients: { include: { inventoryItem: true } },
+                  ingredients: {
+                    include: {
+                      inventoryItem: true,
+                      // Nested cost-per-gram for prep components — one level
+                      // deep is enough; preps composed of preps would need
+                      // recursion, but we don't allow that for now (validated
+                      // at write time below).
+                      prepRecipe: {
+                        include: {
+                          ingredients: { include: { inventoryItem: { select: { unitCostCents: true } } } },
+                        },
+                      },
+                    },
+                  },
                 },
               },
             },
@@ -53,9 +69,26 @@ function computeOrderCogsCents(order: OrderForPosting): number {
     const recipe = item.menuItem?.recipe
     if (!recipe || recipe.servings < 1) continue
 
+    // Prep-recipe components carry their cost as cost-per-gram × quantity.
+    // Raw inventory items carry cost-per-unit × quantity ÷ yield. Rows missing
+    // both (shouldn't happen given the CHECK constraint) contribute zero.
     const ingCost = recipe.ingredients.reduce((s, ing) => {
       const yp = ing.yieldPct > 0 ? ing.yieldPct : 1
-      return s + Math.round((ing.inventoryItem.unitCostCents ?? 0) * (ing.quantity / yp))
+      if (ing.inventoryItem) {
+        return s + Math.round(ing.inventoryItem.unitCostCents ?? 0) * (ing.quantity / yp)
+      }
+      const prep = (ing as unknown as { prepRecipe?: { ingredients: { quantity: number; yieldPct: number; inventoryItem: { unitCostCents: number | null } | null }[]; laborMinutes: number; yieldGrams: number | null } }).prepRecipe
+      if (prep) {
+        const sub = prep.ingredients.reduce(
+          (s2, i2) => s2 + (i2.inventoryItem?.unitCostCents ?? 0) * (i2.quantity / (i2.yieldPct > 0 ? i2.yieldPct : 1)),
+          0,
+        )
+        const labor = (prep.laborMinutes / 60) * 50_00
+        const batch = sub * (1 + Q_FACTOR) + labor
+        const perGram = (prep.yieldGrams && prep.yieldGrams > 0) ? batch / prep.yieldGrams : 0
+        return s + Math.round(perGram * ing.quantity)
+      }
+      return s
     }, 0)
     const totalWithQ     = Math.round(ingCost * (1 + Q_FACTOR))
     const costPerPortion = Math.round(totalWithQ / recipe.servings)

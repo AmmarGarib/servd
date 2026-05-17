@@ -1784,12 +1784,33 @@ model Supplier {
 
 // ─── Recipe costing ───────────────────────────────────────────────────────────
 
+// Recipe kind drives the costing model + which fields are meaningful.
+//   plate — finished menu item. 1:1 with a MenuItem; costed as plate cost
+//           (total of all inputs ÷ servings) for margin analysis.
+//   prep  — sub-recipe / batch prep (sauces, marinades, dough). No MenuItem;
+//           costed as cost-per-gram so it can be consumed as an ingredient
+//           inside a plate recipe (quantity in grams × cost-per-gram).
+enum RecipeKind {
+  plate
+  prep
+}
+
 model Recipe {
-  id           String  @id @default(uuid())
-  menuItemId   String  @unique
-  servings     Int     @default(1) // portions per batch
-  portionSizeG Float? // grams per portion (display reference)
-  laborMinutes Int     @default(0)
+  id           String      @id @default(uuid())
+  kind         RecipeKind  @default(plate)
+  // PLATE recipes are 1:1 with a MenuItem. PREP recipes have menuItemId=null
+  // and are named via the `name` field below.
+  menuItemId   String?     @unique
+  // Display name for prep recipes (plate recipes inherit name from menuItem).
+  // Required when kind=prep; null when kind=plate (validated at the route layer).
+  name         String?
+  // Batch yield in grams — relevant only for prep recipes. Drives the
+  // cost-per-gram calculation: batchCost ÷ yieldGrams = costPerGram. Required
+  // when kind=prep; null when kind=plate (which uses portionSizeG instead).
+  yieldGrams   Float?
+  servings     Int         @default(1) // portions per batch (plate recipes)
+  portionSizeG Float? // grams per portion (display reference, plate recipes)
+  laborMinutes Int         @default(0)
   notes        String?
   steps        String? // cooking/assembly steps for kitchen staff (KDS)
   stepsUrdu    String? @map("steps_urdu")
@@ -1813,8 +1834,12 @@ model Recipe {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  menuItem    MenuItem           @relation(fields: [menuItemId], references: [id])
+  menuItem    MenuItem?          @relation(fields: [menuItemId], references: [id])
   ingredients RecipeIngredient[]
+  // Back-relation: rows where this recipe appears as a prep component on
+  // another recipe (only meaningful for prep recipes). Used to detect when
+  // editing/deleting a prep would affect plate recipes.
+  usedInPlates RecipeIngredient[] @relation("RecipeAsIngredient")
   recipeSteps RecipeStep[]
 
   @@index([isActive])
@@ -1824,14 +1849,23 @@ model Recipe {
 model RecipeIngredient {
   id              String  @id @default(uuid())
   recipeId        String
-  inventoryItemId String
+  // Exactly ONE of (inventoryItemId, prepRecipeId) is set on each row.
+  //   inventoryItemId → raw ingredient straight from inventory.
+  //   prepRecipeId    → a prep recipe used as a component (unit is typically
+  //                     'g' and quantity is grams consumed). Cost flows in
+  //                     at prepRecipe.costPerGram × quantity.
+  // A CHECK constraint in the migration enforces the mutual-exclusion;
+  // application code constructs one or the other based on the picker.
+  inventoryItemId String?
+  prepRecipeId    String?
   quantity        Float // usable recipe quantity (post-yield) in `unit`
-  yieldPct        Float   @default(1.0) // 0.01–1.0, e.g. 0.75 = 75% yield
+  yieldPct        Float   @default(1.0) // 0.01–1.0, e.g. 0.75 = 75% yield. N/A for prep components (already yielded by the prep batch); kept at 1.0.
   unit            String // unit label for display
   notes           String?
 
-  recipe        Recipe        @relation(fields: [recipeId], references: [id], onDelete: Cascade)
-  inventoryItem InventoryItem @relation(fields: [inventoryItemId], references: [id])
+  recipe        Recipe         @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+  inventoryItem InventoryItem? @relation(fields: [inventoryItemId], references: [id])
+  prepRecipe    Recipe?        @relation("RecipeAsIngredient", fields: [prepRecipeId], references: [id])
 
   @@map("recipe_ingredients")
 }

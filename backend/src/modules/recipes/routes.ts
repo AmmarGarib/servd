@@ -9,8 +9,37 @@ const Q_FACTOR = 0.05 // 5% miscellaneous surcharge (salt, oil, unmeasured items
 const SEASON_KEYS = ['spring', 'summer', 'monsoon', 'autumn', 'winter', 'ramadan', 'year-round'] as const
 const SEASON_DATE_RE = /^(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/
 
-const recipeSchema = z.object({
-  menuItemId:   z.string().uuid(),
+// Single schema for both kinds. The kind-specific requirements (plate
+// must have menuItemId, prep must have name + yieldGrams) are enforced
+// via .superRefine below — that lets us produce per-field error messages
+// instead of a generic "invalid payload".
+//
+// Ingredient rows are also disjoint: either inventoryItemId (raw stock)
+// or prepRecipeId (a prep sub-recipe as a component). The mutual exclusion
+// is checked client-side via the picker, server-side via the schema, and
+// at the DB layer via the CHECK constraint in the migration.
+const ingredientSchema = z.object({
+  inventoryItemId: z.string().uuid().optional(),
+  prepRecipeId:    z.string().uuid().optional(),
+  quantity:        z.number().positive(),
+  yieldPct:        z.number().min(0.01).max(1).default(1),
+  unit:            z.string().min(1),
+  notes:           z.string().optional(),
+}).refine(
+  (i) => Boolean(i.inventoryItemId) !== Boolean(i.prepRecipeId),
+  { message: 'Each ingredient must reference exactly one of inventoryItem or prepRecipe' },
+)
+
+// Split the schema into a plain object + a refined wrapper so PUT (full-replace
+// update) can use .partial() — zod's .superRefine wraps the schema in
+// ZodEffects, which doesn't expose .partial. We keep the refinement on POST
+// (where every required field is enforced) and skip it on PUT (where partial
+// edits are allowed by design).
+const recipeShape = {
+  kind:         z.enum(['plate', 'prep']).default('plate'),
+  menuItemId:   z.string().uuid().optional(),
+  name:         z.string().min(1).optional(),
+  yieldGrams:   z.number().positive().optional(),
   servings:     z.number().int().min(1).default(1),
   portionSizeG: z.number().positive().optional(),
   laborMinutes: z.number().int().min(0).default(0),
@@ -21,14 +50,28 @@ const recipeSchema = z.object({
   seasonStart:  z.string().regex(SEASON_DATE_RE, 'Use MM-DD format').nullable().optional(),
   seasonEnd:    z.string().regex(SEASON_DATE_RE, 'Use MM-DD format').nullable().optional(),
   isActive:     z.boolean().default(true),
-  ingredients: z.array(z.object({
-    inventoryItemId: z.string().uuid(),
-    quantity:        z.number().positive(),
-    yieldPct:        z.number().min(0.01).max(1).default(1),
-    unit:            z.string().min(1),
-    notes:           z.string().optional(),
-  })).min(1),
+  ingredients:  z.array(ingredientSchema).min(1),
+}
+const recipeBase = z.object(recipeShape)
+const recipeSchema = recipeBase.superRefine((r, ctx) => {
+  if (r.kind === 'plate' && !r.menuItemId) {
+    ctx.addIssue({ code: 'custom', path: ['menuItemId'], message: 'Plate recipes must link to a menu item' })
+  }
+  if (r.kind === 'prep') {
+    if (!r.name || !r.name.trim()) {
+      ctx.addIssue({ code: 'custom', path: ['name'], message: 'Prep recipes need a name' })
+    }
+    if (!r.yieldGrams || r.yieldGrams <= 0) {
+      ctx.addIssue({ code: 'custom', path: ['yieldGrams'], message: 'Prep recipes need a batch yield in grams (drives cost-per-gram)' })
+    }
+    if (r.menuItemId) {
+      ctx.addIssue({ code: 'custom', path: ['menuItemId'], message: 'Prep recipes do not link to a menu item' })
+    }
+  }
 })
+// PUT-time schema — same fields, but every one optional so partial updates
+// (e.g. just tweaking servings) don't require resending the whole recipe.
+const recipeUpdateSchema = recipeBase.partial()
 
 // Map a calendar month → the seasons that month belongs to. Pakistan-leaning
 // (no spring proper; monsoon is mid-Jun → Sep; summer = Apr → mid-Jun + post-monsoon).
@@ -107,10 +150,21 @@ export async function recipeRoutes(fastify: FastifyInstance) {
             },
           },
           ingredients: {
-            include: { inventoryItem: { select: { name: true, unit: true, unitCostCents: true } } },
+            include: {
+              inventoryItem: { select: { name: true, unit: true, unitCostCents: true } },
+              // Prep recipe components — pull enough to compute their cost-per-gram
+              // inline so plate recipes get accurate totals in one round-trip.
+              prepRecipe: {
+                include: {
+                  ingredients: { include: { inventoryItem: { select: { unitCostCents: true } } } },
+                },
+              },
+            },
           },
         },
-        orderBy: { menuItem: { name: 'asc' } },
+        // Order by either menuItem name (plate) or recipe name (prep). Postgres
+        // sorts NULLs last by default so plate recipes group naturally.
+        orderBy: [{ menuItem: { name: 'asc' } }, { name: 'asc' }],
       })
 
       // Recipe library is the operator's IP. Bulk reads above the threshold
@@ -134,21 +188,55 @@ export async function recipeRoutes(fastify: FastifyInstance) {
 
       return recipes.map((r) => {
         const ingDetails = r.ingredients.map((ing) => {
-          const costPerUnit  = ing.inventoryItem.unitCostCents ?? 0
-          const yp           = ing.yieldPct > 0 ? ing.yieldPct : 1
-          const purchaseQty  = ing.quantity / yp          // what you actually buy
-          const ingredientCostCents = Math.round(costPerUnit * purchaseQty)
-          return { ...ing, purchaseQty, ingredientCostCents }
+          let costPerUnit = 0
+          let ingredientCostCents = 0
+          const yp = ing.yieldPct > 0 ? ing.yieldPct : 1
+          const purchaseQty = ing.quantity / yp     // what you actually buy
+
+          if (ing.prepRecipe) {
+            // Prep component — cost = prep recipe's cost-per-gram × quantity.
+            // The prep's yieldGrams may be null on bad data; fall back to 0 so
+            // this row shows zero rather than poisoning the parent's total.
+            const prep = ing.prepRecipe
+            const prepCost = prep.ingredients.reduce(
+              (s, i2) => s + (i2.inventoryItem?.unitCostCents ?? 0) * (i2.quantity / (i2.yieldPct > 0 ? i2.yieldPct : 1)),
+              0,
+            )
+            const prepLabor = (prep.laborMinutes / 60) * 50_00
+            const prepTotal = prepCost * (1 + Q_FACTOR) + prepLabor
+            const costPerGram = (prep.yieldGrams && prep.yieldGrams > 0) ? prepTotal / prep.yieldGrams : 0
+            costPerUnit = costPerGram                       // "per unit" of this component = per gram
+            ingredientCostCents = Math.round(costPerGram * ing.quantity)
+          } else if (ing.inventoryItem) {
+            costPerUnit = ing.inventoryItem.unitCostCents ?? 0
+            ingredientCostCents = Math.round(costPerUnit * purchaseQty)
+          }
+          return { ...ing, purchaseQty, costPerUnit, ingredientCostCents }
         })
 
         const ingredientCostCents = ingDetails.reduce((s, i) => s + i.ingredientCostCents, 0)
         const qFactorCents        = Math.round(ingredientCostCents * Q_FACTOR)
         const laborCostCents      = Math.round((r.laborMinutes / 60) * 50_00) // PKR 50/hr
         const totalCostCents      = ingredientCostCents + qFactorCents + laborCostCents
-        const costPerPortionCents = r.servings > 0 ? Math.round(totalCostCents / r.servings) : totalCostCents
-        const priceCents          = r.menuItem.priceCents
-        const grossMarginPct      = priceCents > 0 ? Math.round(((priceCents - costPerPortionCents) / priceCents) * 100) : null
-        const foodCostPct         = priceCents > 0 ? Math.round((costPerPortionCents / priceCents) * 100) : null
+
+        // Per-kind headline numbers.
+        //   plate → plate cost (total ÷ servings) + margin vs. menu price.
+        //   prep  → cost per gram (total ÷ yieldGrams) + cost per batch.
+        // We keep both fields populated where they make sense so the frontend
+        // can read whichever it needs without conditional branching.
+        const costPerPortionCents = r.kind === 'plate' && r.servings > 0
+          ? Math.round(totalCostCents / r.servings)
+          : null
+        const costPerGramCents = r.kind === 'prep' && r.yieldGrams && r.yieldGrams > 0
+          ? totalCostCents / r.yieldGrams                          // sub-cent precision — fractions matter at gram scale
+          : null
+        const priceCents     = r.menuItem?.priceCents ?? null
+        const grossMarginPct = (priceCents && priceCents > 0 && costPerPortionCents !== null)
+          ? Math.round(((priceCents - costPerPortionCents) / priceCents) * 100)
+          : null
+        const foodCostPct    = (priceCents && priceCents > 0 && costPerPortionCents !== null)
+          ? Math.round((costPerPortionCents / priceCents) * 100)
+          : null
 
         return {
           ...r,
@@ -157,13 +245,45 @@ export async function recipeRoutes(fastify: FastifyInstance) {
           qFactorCents,
           laborCostCents,
           totalCostCents,
+          // Plate headline:
           costPerPortionCents,
           grossMarginPct,
           foodCostPct,
+          // Prep headline:
+          costPerGramCents,
+          batchCostCents: r.kind === 'prep' ? totalCostCents : null,
         }
       })
     },
   )
+
+  // GET /recipes/prep — compact list of prep recipes for the ingredient
+  // picker on plate-recipe forms. Returns precomputed cost-per-gram so the
+  // picker can preview "PKR 0.85/g" next to each option without N+1 queries.
+  fastify.get('/prep', { preHandler: requireAuth(...MANAGERS) }, async () => {
+    const preps = await prisma.recipe.findMany({
+      where: { kind: 'prep', isActive: true },
+      include: { ingredients: { include: { inventoryItem: { select: { unitCostCents: true } } } } },
+      orderBy: { name: 'asc' },
+    })
+
+    return preps.map((p) => {
+      const ingCost = p.ingredients.reduce(
+        (s, i) => s + (i.inventoryItem?.unitCostCents ?? 0) * (i.quantity / (i.yieldPct > 0 ? i.yieldPct : 1)),
+        0,
+      )
+      const labor = (p.laborMinutes / 60) * 50_00
+      const batchCost = ingCost * (1 + Q_FACTOR) + labor
+      const costPerGramCents = (p.yieldGrams && p.yieldGrams > 0) ? batchCost / p.yieldGrams : 0
+      return {
+        id:               p.id,
+        name:             p.name ?? '—',
+        yieldGrams:       p.yieldGrams,
+        batchCostCents:   Math.round(batchCost),
+        costPerGramCents,                 // sub-cent precision deliberately preserved
+      }
+    })
+  })
 
   // GET /recipes/:id
   fastify.get<{ Params: { id: string } }>(
@@ -197,7 +317,10 @@ export async function recipeRoutes(fastify: FastifyInstance) {
         where: { menuItemId: req.params.menuItemId },
         include: {
           ingredients: {
-            include: { inventoryItem: { select: { name: true, unit: true } } },
+            include: {
+              inventoryItem: { select: { name: true, unit: true } },
+              prepRecipe:    { select: { name: true } },
+            },
             orderBy: { inventoryItem: { name: 'asc' } },
           },
           recipeSteps: {
@@ -221,7 +344,9 @@ export async function recipeRoutes(fastify: FastifyInstance) {
           yieldPct:     ing.yieldPct,
           unit:         ing.unit,
           notes:        ing.notes,
-          name:         ing.inventoryItem.name,
+          // Component name comes from whichever source the row points at —
+          // a raw inventory item or a prep recipe used as a sub-component.
+          name:         ing.inventoryItem?.name ?? ing.prepRecipe?.name ?? '—',
         })),
         recipeSteps: recipe.recipeSteps.map((s) => ({
           id:               s.id,
@@ -232,20 +357,35 @@ export async function recipeRoutes(fastify: FastifyInstance) {
           estimatedSeconds: s.estimatedSeconds,
           stationName:      s.station?.name ?? null,
         })),
-        menuItem: { name: recipe.menuItem.name, imageUrl: recipe.menuItem.imageUrl },
+        // This endpoint is gated by menuItemId in the query above, so menuItem
+        // is always present here — but Prisma's type is now nullable since
+        // prep recipes leave it null. Fall back defensively just in case.
+        menuItem: recipe.menuItem
+          ? { name: recipe.menuItem.name, imageUrl: recipe.menuItem.imageUrl }
+          : { name: recipe.name ?? '—', imageUrl: null },
       }
     },
   )
 
-  // POST /recipes
+  // POST /recipes — handles both plate and prep recipes (kind defaults to plate).
   fastify.post('/', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
     const body = recipeSchema.parse(req.body)
-    const existing = await prisma.recipe.findUnique({ where: { menuItemId: body.menuItemId } })
-    if (existing) throw new AppError('RECIPE_EXISTS', 'Recipe for this menu item already exists', 409)
+
+    // Plate recipes are 1:1 with a MenuItem — check for an existing recipe on
+    // that menu item to surface a clean 409 instead of a Prisma unique-violation.
+    // Prep recipes have no menuItemId, so no uniqueness check needed (multiple
+    // preps with the same name are allowed; operator distinguishes by id).
+    if (body.kind === 'plate' && body.menuItemId) {
+      const existing = await prisma.recipe.findUnique({ where: { menuItemId: body.menuItemId } })
+      if (existing) throw new AppError('RECIPE_EXISTS', 'Recipe for this menu item already exists', 409)
+    }
 
     const recipe = await prisma.recipe.create({
       data: {
-        menuItemId:   body.menuItemId,
+        kind:         body.kind,
+        menuItemId:   body.kind === 'plate' ? body.menuItemId : null,
+        name:         body.kind === 'prep'  ? body.name       : null,
+        yieldGrams:   body.kind === 'prep'  ? body.yieldGrams : null,
         servings:     body.servings,
         portionSizeG: body.portionSizeG,
         laborMinutes: body.laborMinutes,
@@ -256,19 +396,35 @@ export async function recipeRoutes(fastify: FastifyInstance) {
         seasonStart:  body.seasonStart ?? null,
         seasonEnd:    body.seasonEnd ?? null,
         isActive:     body.isActive,
-        ingredients:  { create: body.ingredients },
+        ingredients:  { create: body.ingredients.map((i) => ({
+          quantity: i.quantity,
+          yieldPct: i.yieldPct,
+          unit:     i.unit,
+          notes:    i.notes,
+          inventoryItemId: i.inventoryItemId ?? null,
+          prepRecipeId:    i.prepRecipeId ?? null,
+        })) },
       },
-      include: { ingredients: { include: { inventoryItem: true } }, menuItem: true },
+      include: {
+        ingredients: { include: { inventoryItem: true, prepRecipe: { select: { id: true, name: true } } } },
+        menuItem: true,
+      },
     })
     return reply.status(201).send(recipe)
   })
 
-  // PUT /recipes/:id — full replace
+  // PUT /recipes/:id — full replace.
+  // .partial().parse() loses the superRefine cross-field validation (zod
+  // strips it). That's OK here because we accept partial updates — the
+  // operator might only be patching servings or one ingredient. Kind itself
+  // is treated as immutable from this endpoint; a plate can't become a prep
+  // without re-creation since downstream consumers (MenuItem unique, KDS
+  // pathway, FBR posting) assume the original shape.
   fastify.put<{ Params: { id: string } }>(
     '/:id',
     { preHandler: requireAuth(...MANAGERS) },
     async (req) => {
-      const body = recipeSchema.partial().parse(req.body)
+      const body = recipeUpdateSchema.parse(req.body)
       return prisma.$transaction(async (tx) => {
         if (body.ingredients) {
           await tx.recipeIngredient.deleteMany({ where: { recipeId: req.params.id } })
@@ -276,6 +432,8 @@ export async function recipeRoutes(fastify: FastifyInstance) {
         return tx.recipe.update({
           where: { id: req.params.id },
           data: {
+            ...(body.name         !== undefined && { name: body.name }),
+            ...(body.yieldGrams   !== undefined && { yieldGrams: body.yieldGrams }),
             ...(body.servings     != null && { servings: body.servings }),
             ...(body.portionSizeG != null && { portionSizeG: body.portionSizeG }),
             ...(body.laborMinutes != null && { laborMinutes: body.laborMinutes }),
@@ -286,9 +444,23 @@ export async function recipeRoutes(fastify: FastifyInstance) {
             ...(body.seasonStart  !== undefined && { seasonStart: body.seasonStart }),
             ...(body.seasonEnd    !== undefined && { seasonEnd: body.seasonEnd }),
             ...(body.isActive     != null && { isActive: body.isActive }),
-            ...(body.ingredients  && { ingredients: { create: body.ingredients } }),
+            ...(body.ingredients  && {
+              ingredients: {
+                create: body.ingredients.map((i) => ({
+                  quantity: i.quantity,
+                  yieldPct: i.yieldPct,
+                  unit:     i.unit,
+                  notes:    i.notes,
+                  inventoryItemId: i.inventoryItemId ?? null,
+                  prepRecipeId:    i.prepRecipeId ?? null,
+                })),
+              },
+            }),
           },
-          include: { ingredients: { include: { inventoryItem: true } }, menuItem: true },
+          include: {
+            ingredients: { include: { inventoryItem: true, prepRecipe: { select: { id: true, name: true } } } },
+            menuItem: true,
+          },
         })
       })
     },
@@ -367,12 +539,19 @@ export async function recipeRoutes(fastify: FastifyInstance) {
 
         const ingCost = recipe.ingredients.reduce((s, ing) => {
           const yp = ing.yieldPct > 0 ? ing.yieldPct : 1
+          // Only raw inventory rows count here — prep components are rare on
+          // a plate sold today (zero in the current dataset) and the food-cost
+          // endpoint is approximate by design (theoretical, not actual COGS).
+          if (!ing.inventoryItem) return s
           return s + Math.round((ing.inventoryItem.unitCostCents ?? 0) * (ing.quantity / yp))
         }, 0)
         const totalWithQ     = Math.round(ingCost * (1 + Q_FACTOR))
         const costPerPortion = recipe.servings > 0 ? Math.round(totalWithQ / recipe.servings) : totalWithQ
         const totalCost = costPerPortion * qty
-        const itemRevenue = recipe.menuItem.priceCents * qty
+        // recipe.menuItem can now be null on prep recipes — but a "sold"
+        // order item by definition has a menuItem, so this is a Prisma type
+        // narrowing concern, not a real null. Default to 0 revenue if absent.
+        const itemRevenue = (recipe.menuItem?.priceCents ?? 0) * qty
 
         theoreticalCostCents += totalCost
         byItem.push({
