@@ -40,11 +40,11 @@ interface Props {
   reserveHref: string
   /** Optional menu link for inside-the-speakeasy navigation. */
   menuHref?:   string
-  /** URL of the walk-in cooler interior photo shown when the door opens.
-   *  Default is a generic empty commercial cooler from Unsplash; swap
-   *  for your own asset (drop a 1600px wide JPG/WebP into /public and
-   *  pass the path here) whenever you have proper photography of the
-   *  actual Simmer space. */
+  /** Optional URL of a walk-in cooler interior photo to use as the
+   *  reveal backdrop. When omitted, the component renders a deliberate
+   *  dark stainless-steel fallback that won't surprise anyone — no
+   *  guessed stock photo. Drop a real photo (1600px wide JPG/WebP) at
+   *  `/public/simmer-cooler.jpg` and pass `/simmer-cooler.jpg` here. */
   coolerImageUrl?: string
 }
 
@@ -54,7 +54,7 @@ export function SpeakeasyFridgeHero({
   marble = '#22382f',
   cream  = '#f4ede0',
   reserveHref, menuHref,
-  coolerImageUrl = 'https://images.unsplash.com/photo-1556909114-f6e7ad7d3136?w=1600&q=85',
+  coolerImageUrl,
 }: Props) {
   const { ref } = useScrollProgress<HTMLDivElement>()
 
@@ -151,7 +151,7 @@ export function SpeakeasyFridgeHero({
               opacity: 'calc(var(--scroll-progress, 0) * 1.8)',
               transition: 'opacity 80ms linear',
             }}>
-            <CoolerInterior accent={accent} cream={cream} imageUrl={coolerImageUrl} />
+            <CoolerInterior accent={accent} cream={cream} imageUrl={coolerImageUrl ?? null} />
           </div>
 
           {/* ── THE DOOR — rotates open along its left hinge as scroll
@@ -413,56 +413,111 @@ function RealisticFridgeDoor({ cream }: { cream: string }) {
 }
 
 // ─── CoolerInterior ─────────────────────────────────────────────────
-// Real photograph of an empty walk-in cooler used as the backdrop
-// (operator can swap the URL via the coolerImageUrl prop). The text
-// overlays sit on top in the negative shelf spaces:
-//   - RESERVATIONS only.  — back wall, biggest
-//   - CRAFTED MOCKTAILS  — left rack gap
-//   - ELEGANT PLATES     — right rack gap
-//   - open 7pm — late · thu–sun — etched along the bottom
+// Backdrop behind the door when it opens. Two paths:
+//   1. imageUrl provided  → operator's real photo of the cooler.
+//                           Photo gets a brightness + cool-tone wash so
+//                           gold typography reads against it.
+//   2. imageUrl is null   → deliberate CSS-painted fallback that looks
+//                           like a dark stainless-steel cavity. No
+//                           random stock photo. Honest about being
+//                           "not a real photo yet" without breaking
+//                           the page.
 //
-// A subtle dark vignette around the edges keeps the typography readable
-// against any photo without flattening the image. Each word is fade-
-// staggered to scroll progress so they don't all pop in at once.
+// Typography overlays sit on top either way, fade-staggered to scroll
+// progress.
 
 function CoolerInterior({ accent, cream, imageUrl }: {
   accent:   string
   cream:    string
-  imageUrl: string
+  imageUrl: string | null
 }) {
   return (
     <div style={{ position: 'absolute', inset: 0 }}>
-      {/* The photo itself — sits behind everything. cover/center so it
-          fills whatever aspect the doorway is rendering at. */}
-      <div
-        aria-hidden="true"
-        style={{
-          position: 'absolute', inset: 0,
-          backgroundImage: `url(${imageUrl})`,
-          backgroundSize: 'cover',
-          backgroundPosition: 'center',
-          // Cool down the photo slightly + drop the brightness so the
-          // gold typography sits with confidence against it.
-          filter: 'brightness(0.72) saturate(0.85) contrast(1.05) hue-rotate(-6deg)',
-        }}
-      />
-
-      {/* Vignette — darker around the edges, neutral in the centre.
-          Keeps the text against the back wall punchy without nuking
-          the photo's tonal range. */}
-      <div
-        aria-hidden="true"
-        style={{
-          position: 'absolute', inset: 0,
-          background: `
-            radial-gradient(ellipse 75% 55% at 50% 40%, transparent 0%, transparent 40%, rgba(0,0,0,0.55) 100%),
-            linear-gradient(180deg, rgba(0,0,0,0.20) 0%, transparent 25%, transparent 75%, rgba(0,0,0,0.45) 100%)
-          `,
-        }}
-      />
+      {imageUrl ? (
+        <>
+          {/* OPERATOR-SUPPLIED PHOTO PATH ────────────────────────── */}
+          <div
+            aria-hidden="true"
+            style={{
+              position: 'absolute', inset: 0,
+              backgroundImage: `url(${imageUrl})`,
+              backgroundSize: 'cover',
+              backgroundPosition: 'center',
+              filter: 'brightness(0.72) saturate(0.85) contrast(1.05) hue-rotate(-6deg)',
+            }}
+          />
+          <div
+            aria-hidden="true"
+            style={{
+              position: 'absolute', inset: 0,
+              background: `
+                radial-gradient(ellipse 75% 55% at 50% 40%, transparent 0%, transparent 40%, rgba(0,0,0,0.55) 100%),
+                linear-gradient(180deg, rgba(0,0,0,0.20) 0%, transparent 25%, transparent 75%, rgba(0,0,0,0.45) 100%)
+              `,
+            }}
+          />
+        </>
+      ) : (
+        <>
+          {/* FALLBACK PATH ───────────────────────────────────────
+              No photo supplied yet. Paint a deliberate stainless-steel
+              cavity with CSS so the page looks intentional, not broken.
+              Drop a real photo at /public/simmer-cooler.jpg and pass
+              coolerImageUrl="/simmer-cooler.jpg" to swap in. */}
+          <div
+            aria-hidden="true"
+            style={{
+              position: 'absolute', inset: 0,
+              background: `
+                radial-gradient(ellipse 90% 55% at 50% 35%, #4a545b 0%, #2a3035 45%, #15191c 100%)
+              `,
+            }}
+          />
+          {/* Front-to-back lighter wash so the back of the room feels
+              recessed and lit, not flat */}
+          <div
+            aria-hidden="true"
+            style={{
+              position: 'absolute', inset: 0,
+              background: `
+                linear-gradient(180deg, rgba(255,255,255,0.05) 0%, transparent 30%, transparent 70%, rgba(0,0,0,0.45) 100%)
+              `,
+            }}
+          />
+          {/* Subtle brushed-steel vertical striations on the side walls */}
+          <div
+            aria-hidden="true"
+            style={{
+              position: 'absolute', inset: 0,
+              background: `
+                linear-gradient(90deg,
+                  rgba(255,255,255,0.06) 0%,
+                  rgba(255,255,255,0.06) 12%,
+                  transparent 25%,
+                  transparent 75%,
+                  rgba(255,255,255,0.06) 88%,
+                  rgba(255,255,255,0.06) 100%),
+                repeating-linear-gradient(90deg,
+                  rgba(255,255,255,0.025) 0 1px,
+                  transparent 1px 4px)
+              `,
+              mixBlendMode: 'overlay',
+            }}
+          />
+          {/* Soft cold-light from above */}
+          <div
+            aria-hidden="true"
+            style={{
+              position: 'absolute', inset: 0,
+              background: `radial-gradient(ellipse 50% 25% at 50% 5%, rgba(255,255,255,0.18) 0%, transparent 70%)`,
+            }}
+          />
+        </>
+      )}
 
       {/* Subtle accent wash at the centre — gold halo bleeding into the
-          back wall as if light is escaping from somewhere behind it. */}
+          back wall as if light is escaping from somewhere behind. Same
+          for both photo and fallback paths. */}
       <div
         aria-hidden="true"
         style={{
