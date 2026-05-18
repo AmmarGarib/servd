@@ -1213,7 +1213,30 @@ model TriggerLog {
 // out-of-the-box without any admin intervention.
 model TierConfig {
   id   String @id @default(uuid())
-  tier String @unique // 'bronze' | 'silver' | 'gold'
+  tier String @unique // 'bronze' | 'silver' | 'gold' | 'insider' | custom slug
+
+  // Display name shown on the storefront (e.g. "Insider Gold"). The `tier`
+  // field above is the immutable slug used by code; `displayName` is the
+  // operator-tunable label the customer actually sees.
+  displayName String?
+
+  // Ordering — lowest rank first (bronze < silver < gold). Used to sort
+  // tiers in the customer-facing perks list and the admin's tier list.
+  rank Int @default(0)
+
+  // Paid-tier support. Free tiers (bronze) get assigned automatically
+  // by lifetime spend; paid tiers (Insider Gold) are subscription-priced
+  // and assigned via /crm or by the customer subscribing.
+  isPaid           Boolean @default(false)
+  monthlyPriceCents Int?    // null when isPaid=false
+
+  // For FREE tiers, auto-upgrade once a customer's lifetime spend
+  // reaches this amount (in paisa). Null = no auto-upgrade.
+  unlockSpendCents Int?
+
+  // Operator can toggle a tier off without deleting it (cancels new
+  // assignments but keeps the row + historical assignments intact).
+  isActive Boolean @default(true)
 
   // Delivery perks
   alwaysFreeDelivery     Boolean @default(false)
@@ -1232,6 +1255,15 @@ model TierConfig {
   // Misc flags
   earlyMenuAccess  Boolean @default(false)
   freeBirthdayItem Boolean @default(false)
+
+  // Freeform perks — bullet-points the operator wants on this tier that
+  // don't fit the structured booleans above. Examples:
+  //   "Access to the off-menu Stax sandwiches"
+  //   "Priority WhatsApp line for orders"
+  //   "Invite-only omakase nights at Simmer"
+  // Stored as a string array; rendered as a bulleted list on the
+  // storefront /insiders page and inside the perks list on /account.
+  customPerks String[] @default([])
 
   description String? // operator-facing rationale
   createdAt   DateTime @default(now())
