@@ -5,6 +5,11 @@ import { PromoBar } from '../parts/PromoBar'
 import { CrossBrandStrip } from '../parts/CrossBrandStrip'
 import { BottomCTA } from '../parts/BottomCTA'
 import { OpenStatusBadge, HoursGrid, useHoursData } from '../parts/OpenStatusBadge'
+import {
+  PerforatedSphere, TwistedRibbon, ChromeBurst, SquiggleArrow,
+  GlossyPill, HoloRing, GlossySpring,
+} from '../../kinetic/Shapes3D'
+import { useScrollReveal } from '../../kinetic/motionHooks'
 
 // FlipdLayout — formerly StaxLayout. Per CEO 2026-05-12: the elaborate
 // build-your-own design originally drawn for Stax fits Flipd better, so the
@@ -239,8 +244,17 @@ function HeatPips({ level }: { level: number }) {
 
 export function FlipdLayout({ concept, concepts }: Props) {
   const hoursData = useHoursData(concept.slug)
+  const heroRef = useScrollReveal<HTMLElement>()
   return (
-    <div style={{ background: STAX_CREAM, color: STAX_DARK }}>
+    <div
+      style={{
+        background: STAX_CREAM,
+        color: STAX_DARK,
+        ['--brand-accent' as string]:      STAX_FIRE,
+        ['--brand-accent-dark' as string]: STAX_FIRE,
+        ['--brand-ink' as string]:         STAX_DARK,
+      } as React.CSSProperties}
+    >
       <style>{`
         @keyframes staxCardIn {
           from { opacity: 0; transform: translateY(20px); }
@@ -274,8 +288,12 @@ export function FlipdLayout({ concept, concepts }: Props) {
 
       <PromoBar brandName={concept.name} brandSlug={concept.slug} accent={STAX_FIRE} />
 
-      {/* HERO — slab type, off-balance, fire wash. Now leads with "build your own". */}
-      <section style={{
+      {/* HERO — slab type, off-balance, fire wash, kinetic 3D motifs.
+          Stax energy: chrome burst spinning, perforated sphere big in the
+          corner, ribbon slashing diagonally, squiggle arrow pointing at
+          the CTA. The shapes use the fire-orange accent so they feel
+          part of the brand world, not pasted on. */}
+      <section ref={heroRef} style={{
         position: 'relative',
         background: STAX_DARK,
         color: 'white',
@@ -286,7 +304,25 @@ export function FlipdLayout({ concept, concepts }: Props) {
           position: 'absolute', inset: 0,
           background: `radial-gradient(circle at 90% 10%, ${STAX_FIRE}66 0%, transparent 45%), radial-gradient(circle at 5% 90%, ${STAX_FIRE}33 0%, transparent 35%)`,
         }} />
-        <div className="container" style={{ position: 'relative', zIndex: 1 }}>
+
+        {/* Big 3D corner motif — perforated sphere up top-right, anchoring
+            the eye where the headline ends. */}
+        <PerforatedSphere color={STAX_FIRE} size={320} motion="float" sway={28}
+          style={{ top: '-10%', right: '-6%', zIndex: 1 }} />
+        <TwistedRibbon    color={STAX_FIRE} size={340} motion="float" sway={22}
+          style={{ bottom: '-15%', left: '-12%', zIndex: 1, opacity: 0.85 }} />
+        <ChromeBurst      color={STAX_FIRE} size={150} motion="spin"
+          style={{ top: '60%', right: '34%', zIndex: 1, opacity: 0.9 }} />
+        <GlossySpring     color={STAX_FIRE} size={170} motion="spin"
+          style={{ top: '18%', left: '-3%', zIndex: 1, opacity: 0.8 }} />
+        <SquiggleArrow    color="white"     size={130} motion="float" sway={10}
+          style={{ top: '48%', left: '8%', zIndex: 1, opacity: 0.7 }} />
+        <HoloRing         color={STAX_FIRE} size={110} motion="pulse"
+          style={{ bottom: '12%', right: '6%', zIndex: 1 }} />
+        <GlossyPill       color={STAX_FIRE} size={140} motion="float" sway={8}
+          style={{ top: '8%', left: '46%', zIndex: 1, opacity: 0.65 }} />
+
+        <div className="container" style={{ position: 'relative', zIndex: 2 }}>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '3rem', alignItems: 'center' }}>
             <div>
               <p style={{ fontSize: '0.7rem', fontWeight: 800, letterSpacing: '0.42em', color: STAX_FIRE, textTransform: 'uppercase', marginBottom: '1.25rem' }}>

@@ -5,6 +5,10 @@ import { PromoBar } from '../parts/PromoBar'
 import { CrossBrandStrip } from '../parts/CrossBrandStrip'
 import { BottomCTA } from '../parts/BottomCTA'
 import { OpenStatusBadge, HoursGrid, useHoursData } from '../parts/OpenStatusBadge'
+import {
+  LiquidBlob, GlossySpring, HoloRing, ChromeBurst, TwistedRibbon,
+} from '../../kinetic/Shapes3D'
+import { useScrollReveal } from '../../kinetic/motionHooks'
 
 // Simmer — fine-casual mocktail bar and small-plates kitchen. Dark green +
 // saffron gold. Warm, intimate, specific. Karachi evenings, plated softly.
@@ -61,17 +65,46 @@ const FEATURED_PLATES = [
 
 export function SimmerLayout({ concept, concepts }: Props) {
   const hoursData = useHoursData(concept.slug)
+  const heroRef = useScrollReveal<HTMLElement>()
   return (
-    <div style={{ background: SIMMER_CREAM, color: SIMMER_INK }}>
+    <div
+      style={{
+        background: SIMMER_CREAM,
+        color: SIMMER_INK,
+        // Push the gold accent into the kinetic CSS vars so every SVG
+        // shape on the page picks it up automatically. Ink stays the
+        // dark green so contrast pills sit right.
+        ['--brand-accent' as string]:      SIMMER_GOLD,
+        ['--brand-accent-dark' as string]: SIMMER_GOLD,
+        ['--brand-ink' as string]:         SIMMER_INK,
+      } as React.CSSProperties}
+    >
       <PromoBar brandName={concept.name} brandSlug={concept.slug} accent={SIMMER_GOLD} />
 
-      {/* HERO — food-split. Right panel: signature dish. Left panel: room copy. */}
-      <section style={{
+      {/* HERO — kinetic 3D motifs sit on top of the existing ambient
+          gradient. Simmer's vibe is intimate / candlelit, so we go
+          subtler with the shapes (no spinning chrome bursts here —
+          glossy liquid blobs + a slow holo ring instead). */}
+      <section ref={heroRef} style={{
         position: 'relative',
         background: `linear-gradient(170deg, ${SIMMER_INK} 0%, ${SIMMER_GREEN} 100%)`,
         color: 'white',
         overflow: 'hidden',
       }}>
+        {/* Kinetic decals — gold blobs glowing in the dark room. Behind
+            the ambient gradient div below but above the linear gradient. */}
+        <LiquidBlob   color={SIMMER_GOLD}  size={320} motion="float" sway={24}
+          style={{ top: '-12%', right: '-6%', zIndex: 1, opacity: 0.85 }} />
+        <LiquidBlob   color={SIMMER_GREEN} size={220} motion="float" sway={18}
+          style={{ bottom: '-8%', left: '-4%', zIndex: 1, opacity: 0.7 }} />
+        <HoloRing     color={SIMMER_GOLD}  size={130} motion="pulse"
+          style={{ top: '64%', right: '22%', zIndex: 1, opacity: 0.85 }} />
+        <TwistedRibbon color={SIMMER_GOLD} size={220} motion="float" sway={14}
+          style={{ top: '20%', left: '-2%', zIndex: 1, opacity: 0.65 }} />
+        <GlossySpring color={SIMMER_GOLD}  size={140} motion="spin"
+          style={{ bottom: '15%', right: '8%', zIndex: 1, opacity: 0.7 }} />
+        <ChromeBurst  color={SIMMER_GOLD}  size={90}  motion="spin"
+          style={{ top: '14%', right: '32%', zIndex: 1, opacity: 0.75 }} />
         {/* Warm ambient glow */}
         <div aria-hidden="true" style={{
           position: 'absolute', inset: 0,

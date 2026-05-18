@@ -5,6 +5,11 @@ import { PromoBar } from '../parts/PromoBar'
 import { CrossBrandStrip } from '../parts/CrossBrandStrip'
 import { BottomCTA } from '../parts/BottomCTA'
 import { OpenStatusBadge, useHoursData } from '../parts/OpenStatusBadge'
+import {
+  PerforatedSphere, TwistedRibbon, ChromeBurst, SquiggleArrow,
+  GlossyPill, HoloRing,
+} from '../../kinetic/Shapes3D'
+import { useScrollReveal } from '../../kinetic/motionHooks'
 
 // StaxLayout — formerly FlipdLayout. Per CEO 2026-05-12: the lighter,
 // hand-drawn cream + mustard design originally drawn for Flipd reads
@@ -43,20 +48,46 @@ const BUCKETS = [
 
 export function StaxLayout({ concept, concepts }: Props) {
   const hoursData = useHoursData(concept.slug)
+  // Scroll-reveal observer for the hero — children with .reveal-on-scroll
+  // (the headline + spec sheet) fade in as the section enters view.
+  const heroRef = useScrollReveal<HTMLElement>()
   return (
-    <div style={{ background: FLIPD_CREAM, color: FLIPD_BLACK }}>
+    <div
+      style={{
+        background: FLIPD_CREAM,
+        color: FLIPD_BLACK,
+        // Drive the kinetic CSS vars off the brand palette so every SVG
+        // shape inside the page picks up the right accent automatically.
+        ['--brand-accent' as string]:      FLIPD_MUSTARD,
+        ['--brand-accent-dark' as string]: FLIPD_MUSTARD,
+        ['--brand-ink' as string]:         FLIPD_BLACK,
+      } as React.CSSProperties}
+    >
       <PromoBar brandName={concept.name} brandSlug={concept.slug} accent={FLIPD_MUSTARD} />
 
-      {/* HERO — friendly slab + butcher-paper feel */}
-      <section style={{
+      {/* HERO — kinetic 3D motifs scattered through the butcher-paper
+          gradient. Shapes use the mustard accent so the page reads as a
+          coherent brand world, not "stax with a 3D ball pasted on top". */}
+      <section ref={heroRef} style={{
         position: 'relative',
         padding: 'clamp(3rem, 7vw, 5rem) 0 clamp(2.5rem, 5vw, 4rem)',
         background: `repeating-linear-gradient(45deg, ${FLIPD_CREAM} 0 12px, ${FLIPD_MUSTARD}0c 12px 24px)`,
         borderBottom: `3px solid ${FLIPD_BLACK}`,
+        overflow: 'hidden',
       }}>
-        <div className="container">
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '3rem', alignItems: 'center' }}>
-            <div>
+        {/* Kinetic decals — positioned around the corners + edges so they
+            frame the hero without colliding with the spec card. */}
+        <PerforatedSphere color={FLIPD_MUSTARD} size={260} motion="float" sway={26}
+          style={{ top: '-8%', right: '-4%', zIndex: 0 }} />
+        <TwistedRibbon    color={FLIPD_RED}     size={300} motion="float" sway={18}
+          style={{ bottom: '-12%', left: '-8%', opacity: 0.85, zIndex: 0 }} />
+        <ChromeBurst      color={FLIPD_MUSTARD} size={130} motion="spin"
+          style={{ top: '54%', right: '38%', zIndex: 0, opacity: 0.85 }} />
+        <SquiggleArrow    color={FLIPD_BLACK}   size={150} motion="float" sway={10}
+          style={{ top: '14%', left: '4%', opacity: 0.8, zIndex: 0 }} />
+        <div className="container relative z-10">
+          <div className="reveal-stagger" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '3rem', alignItems: 'center' }}>
+            <div className="reveal-on-scroll">
               <p style={{ color: FLIPD_RED, fontWeight: 800, fontSize: '0.78rem', letterSpacing: '0.24em', textTransform: 'uppercase', marginBottom: '1rem' }}>
                 Buttermilk · brined · for 24 hours · no shortcut
               </p>
@@ -111,14 +142,21 @@ export function StaxLayout({ concept, concepts }: Props) {
               </div>
             </div>
 
-            <div style={{
+            <div className="reveal-on-scroll" style={{
               background: 'white',
               border: `3px solid ${FLIPD_BLACK}`,
               borderRadius: '4px',
               padding: '2rem',
               transform: 'rotate(-1.2deg)',
               boxShadow: `8px 8px 0 0 ${FLIPD_MUSTARD}`,
+              position: 'relative',
             }}>
+              {/* Pinned 3D pill across the corner of the spec card — adds
+                  the playful "decal stuck on a notebook" quality. */}
+              <GlossyPill color={FLIPD_RED} size={120} motion="float" sway={6}
+                style={{ top: '-28px', right: '-32px', zIndex: 2 }} />
+              <HoloRing color={FLIPD_MUSTARD} size={80} motion="pulse"
+                style={{ bottom: '-20px', left: '-22px', zIndex: 2 }} />
               <p style={{ fontSize: '0.7rem', fontWeight: 800, letterSpacing: '0.32em', color: FLIPD_RED, textTransform: 'uppercase', marginBottom: '1rem' }}>
                 What&rsquo;s on the spec
               </p>
