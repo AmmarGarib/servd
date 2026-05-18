@@ -9,6 +9,7 @@ import {
   LiquidBlob, GlossySpring, HoloRing, ChromeBurst, TwistedRibbon,
 } from '../../kinetic/Shapes3D'
 import { useScrollReveal } from '../../kinetic/motionHooks'
+import { SlowCookHero } from '../../kinetic/SlowCookHero'
 
 // Simmer — fine-casual mocktail bar and small-plates kitchen. Dark green +
 // saffron gold. Warm, intimate, specific. Karachi evenings, plated softly.
@@ -80,6 +81,25 @@ export function SimmerLayout({ concept, concepts }: Props) {
       } as React.CSSProperties}
     >
       <PromoBar brandName={concept.name} brandSlug={concept.slug} accent={SIMMER_GOLD} />
+
+      {/* CINEMATIC SCROLL HERO — dark candlelit room. As the user
+          scrolls, five candles light one-by-one, steam rises from the
+          centerplate, the dish gradually emerges from shadow, and the
+          plates lineup slides up from below. By the bottom of the
+          sticky section the room is fully lit and the menu visible. */}
+      <SlowCookHero
+        brandName={concept.name}
+        accent={SIMMER_GOLD}
+        ink={SIMMER_INK}
+        green={SIMMER_GREEN}
+        cream={SIMMER_CREAM}
+        orderHref={`/reserve/${concept.slug}`}
+        menuHref={`/brand/${concept.slug}/menu`}
+        plates={FEATURED_PLATES.map((p) => ({
+          name: p.name, desc: p.desc, img: p.img,
+          price: `Rs. ${p.price.toLocaleString('en')}`,
+        }))}
+      />
 
       {/* HERO — kinetic 3D motifs sit on top of the existing ambient
           gradient. Simmer's vibe is intimate / candlelit, so we go

@@ -10,6 +10,7 @@ import {
   GlossyPill, HoloRing,
 } from '../../kinetic/Shapes3D'
 import { useScrollReveal } from '../../kinetic/motionHooks'
+import { BucketAssemblyHero } from '../../kinetic/BucketAssemblyHero'
 
 // StaxLayout — formerly FlipdLayout. Per CEO 2026-05-12: the lighter,
 // hand-drawn cream + mustard design originally drawn for Flipd reads
@@ -64,6 +65,25 @@ export function StaxLayout({ concept, concepts }: Props) {
       } as React.CSSProperties}
     >
       <PromoBar brandName={concept.name} brandSlug={concept.slug} accent={FLIPD_MUSTARD} />
+
+      {/* CINEMATIC SCROLL HERO — chicken pieces fly into a paper bucket
+          as the user scrolls. By the time they reach the bottom of the
+          sticky section the bucket is "full" and the family-bucket
+          lineup has faded in behind it. Sits above the existing butcher-
+          paper hero so the regular hero still reads when scroll continues. */}
+      <BucketAssemblyHero
+        brandName={concept.name}
+        accent={FLIPD_MUSTARD}
+        ink={FLIPD_BLACK}
+        cream={FLIPD_CREAM}
+        orderHref={`/${concept.slug}`}
+        menuHref={`/brand/${concept.slug}/menu`}
+        buckets={BUCKETS.map((b) => ({
+          name: b.name, feeds: b.feeds, body: b.body,
+          price: `Rs. ${b.price.toLocaleString('en')}`,
+          badge: b.badge,
+        }))}
+      />
 
       {/* HERO — kinetic 3D motifs scattered through the butcher-paper
           gradient. Shapes use the mustard accent so the page reads as a

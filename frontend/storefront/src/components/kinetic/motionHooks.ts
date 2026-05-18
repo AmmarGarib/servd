@@ -79,6 +79,73 @@ export function useScrollParallax<T extends HTMLElement = HTMLElement>() {
 }
 
 /**
+ * useScrollProgress — tracks 0..1 progress of how far the viewport has
+ * travelled through a tall sticky section.
+ *
+ * Mental model: you have a `<section style={{ height: '300vh' }}>`. Inside
+ * that section sits a single sticky child that pins for the full scroll
+ * (`position: sticky; top: 0; height: 100vh`). As the user scrolls, the
+ * outer section moves but the sticky child stays put. `progress` tells
+ * you what fraction of the section has scrolled past — 0 at section top,
+ * 1 at section bottom. Use the value to drive transforms / opacities on
+ * the pinned child for cinematic scroll-driven animation.
+ *
+ * The hook writes progress to a CSS custom property (--scroll-progress)
+ * on the ref'd element so plain CSS can read it without re-rendering.
+ * It also returns the numeric progress for components that want to
+ * branch behaviour (e.g. unmount the burger once progress > 0.9).
+ */
+export function useScrollProgress<T extends HTMLElement = HTMLElement>(options?: {
+  /** When to start the 0..1 mapping. Default 0 (section top hits viewport top). */
+  startAt?: number
+  /** When to clamp at 1. Default 1 (section bottom hits viewport top). */
+  endAt?: number
+}) {
+  const ref = useRef<T | null>(null)
+  const progressRef = useRef(0)
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const startAt = options?.startAt ?? 0
+    const endAt   = options?.endAt   ?? 1
+
+    let raf = 0
+    function update() {
+      raf = 0
+      const rect = el!.getBoundingClientRect()
+      const vh   = window.innerHeight
+      // section pinned-progress = (vh - rect.top) / (rect.height) clamped 0..1.
+      // rect.top starts at vh (section below viewport), goes negative as it scrolls past.
+      const total = rect.height - vh
+      if (total <= 0) {
+        el!.style.setProperty('--scroll-progress', '0')
+        progressRef.current = 0
+        return
+      }
+      const raw = Math.max(0, Math.min(1, -rect.top / total))
+      // Remap to the requested [startAt, endAt] band so callers can use
+      // the same hook for "starts a third of the way down" effects.
+      const remap = Math.max(0, Math.min(1, (raw - startAt) / (endAt - startAt)))
+      el!.style.setProperty('--scroll-progress', remap.toFixed(4))
+      progressRef.current = remap
+    }
+    function onScroll() {
+      if (raf) return
+      raf = requestAnimationFrame(update)
+    }
+    window.addEventListener('scroll', onScroll, { passive: true })
+    window.addEventListener('resize', onScroll, { passive: true })
+    update()
+    return () => {
+      window.removeEventListener('scroll', onScroll)
+      window.removeEventListener('resize', onScroll)
+      if (raf) cancelAnimationFrame(raf)
+    }
+  }, [options?.startAt, options?.endAt])
+  return { ref, progressRef }
+}
+
+/**
  * useCursorMagnet — element drifts toward the cursor when the cursor is
  * inside its bounding box. Pulled gently — divisor controls strength
  * (smaller = stronger pull).

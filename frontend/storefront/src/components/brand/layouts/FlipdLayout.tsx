@@ -10,6 +10,7 @@ import {
   GlossyPill, HoloRing, GlossySpring,
 } from '../../kinetic/Shapes3D'
 import { useScrollReveal } from '../../kinetic/motionHooks'
+import { BurgerSplitHero } from '../../kinetic/BurgerSplitHero'
 
 // FlipdLayout — formerly StaxLayout. Per CEO 2026-05-12: the elaborate
 // build-your-own design originally drawn for Stax fits Flipd better, so the
@@ -287,6 +288,28 @@ export function FlipdLayout({ concept, concepts }: Props) {
       `}</style>
 
       <PromoBar brandName={concept.name} brandSlug={concept.slug} accent={STAX_FIRE} />
+
+      {/* CINEMATIC SCROLL HERO — burger pinned at viewport center for
+          ~300vh of scroll. Each scroll-tick separates the six layers
+          further (bun lifts, lettuce floats, bottom bun drops). Behind
+          the burger, four menu cards fade into view as the gap widens.
+          By the time the user has scrolled out of this section the
+          burger has fully "split open" and the menu has been revealed. */}
+      <BurgerSplitHero
+        brandName={concept.name}
+        accent={STAX_FIRE}
+        ink={STAX_DARK}
+        orderHref={`/${concept.slug}`}
+        menuHref={`/brand/${concept.slug}/menu`}
+        headline="Stack it"
+        tagline="as wild as you want"
+        menuItems={[
+          { name: 'PUB Stax',     emoji: '🍔', price: 'Rs. 990',   desc: 'Pub patty, melted gouda, caramelised onion, brioche, secret sauce.' },
+          { name: 'Smash Stax',   emoji: '🔥', price: 'Rs. 1,150', desc: 'Double smash, american cheese, pickles, mustard, focaccia.' },
+          { name: 'Golden Stax',  emoji: '🥚', price: 'Rs. 1,250', desc: 'Crispy chicken, runny yolk, hot honey, 27-layer croissant.' },
+          { name: 'Flaky Stax',   emoji: '🥐', price: 'Rs. 1,100', desc: 'Beef brisket, gruyère, dijon, bacon jam, flaky croissant.' },
+        ]}
+      />
 
       {/* HERO — slab type, off-balance, fire wash, kinetic 3D motifs.
           Stax energy: chrome burst spinning, perforated sphere big in the
