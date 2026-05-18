@@ -239,20 +239,19 @@ export function SpeakeasyFridgeHero({
           </div>
 
           {/* ── FRAME — slim stainless steel framework around the
-                doorway. Heavy enough to read as commercial-grade but
-                NOT a fat black border. Polished steel with subtle
-                chrome highlights at the corners. */}
+                doorway. Just a ring; nothing filled in the middle. The
+                previous version had a `background` gradient that filled
+                everything inside the border, painting over the entire
+                door and interior (which is what you saw — "a metal
+                plate blocking everything"). Border-image alone draws
+                the steel ring without covering the contents. */}
           <div aria-hidden="true" style={{
             position: 'absolute',
             inset: '-12px',
             border: '12px solid transparent',
-            borderImage: 'linear-gradient(135deg, #cfd4d8 0%, #6a7077 50%, #cfd4d8 100%) 1',
-            background: `
-              linear-gradient(135deg, #cfd4d8 0%, #898f94 25%, #6a7077 50%, #898f94 75%, #cfd4d8 100%)
-            `,
-            backgroundClip: 'border-box',
+            borderImage: 'linear-gradient(135deg, #e5ebee 0%, #989fa4 25%, #6a7077 50%, #989fa4 75%, #e5ebee 100%) 1',
             borderRadius: '4px',
-            boxShadow: '0 28px 60px rgba(0,0,0,0.6), inset 0 0 0 1px rgba(255,255,255,0.18)',
+            boxShadow: '0 28px 60px rgba(0,0,0,0.6), inset 0 0 0 1px rgba(255,255,255,0.18), 0 0 0 1px rgba(0,0,0,0.25)',
             pointerEvents: 'none',
             zIndex: 4,
           }}>
