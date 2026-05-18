@@ -6,10 +6,6 @@ import { conceptHeroImage } from '../lib/concept'
 import { KineticShape } from './kinetic/KineticShape'
 import { DragRail } from './kinetic/DragRail'
 import { MarqueeText } from './kinetic/MarqueeStrip'
-import {
-  PerforatedSphere, LiquidBlob, TwistedRibbon, GlossySpring,
-  ChromeBurst, HoloRing, SquiggleArrow, GlossyPill,
-} from './kinetic/Shapes3D'
 import { useScrollReveal } from './kinetic/motionHooks'
 
 // servd home — kinetic, agency-modern. The platform is the framing; the
@@ -90,34 +86,26 @@ export function HomeClient({ concepts: _concepts }: Props) {
           ['--brand-ink' as string]:    '#0a0a0a',
         }}>
 
-        {/* Real SVG-3D motifs — perforated sphere, twisted ribbon, glossy
-            spring, holo ring. All tinted to the current spotlight accent
-            so they shift colour as the brand cycle progresses. The food
-            emoji (still useful as a brand cue) sits in front, smaller. */}
-        <PerforatedSphere color={liveAccent} size={360} motion="float" sway={32}
-          style={{ top: '-8%', right: '-4%', zIndex: 1 }} />
-        <TwistedRibbon    color={liveAccent} size={360} motion="float" sway={20}
-          style={{ bottom: '-10%', left: '-12%', zIndex: 1, opacity: 0.9 }} />
-        <GlossySpring     color={liveAccent} size={200} motion="spin"
-          style={{ top: '10%', left: '-2%', zIndex: 1, opacity: 0.8 }} />
-        <ChromeBurst      color={liveAccent} size={160} motion="spin"
-          style={{ top: '62%', right: '32%', zIndex: 1, opacity: 0.85 }} />
-        <HoloRing         color={liveAccent} size={140} motion="pulse"
-          style={{ bottom: '18%', right: '8%', zIndex: 1 }} />
-        <SquiggleArrow    color="white"      size={120} motion="float" sway={10}
-          style={{ top: '48%', left: '12%', zIndex: 1, opacity: 0.65 }} />
-        <GlossyPill       color={liveAccent} size={140} motion="float" sway={8}
-          style={{ top: '8%', left: '52%', zIndex: 1, opacity: 0.6 }} />
-        {/* Food emoji as a tertiary cue — smaller now, more decorative.
-            Still tracks the active brand. */}
+        {/* servd is the platform layer — discovery + order + delivery
+            tracking, like Uber for the kitchens. The hero is restrained:
+            a single soft ambient glow in the active brand's accent, no
+            scattered decoration. The food emoji stays as a single subtle
+            brand cue that tracks the spotlight. */}
+        <div aria-hidden="true" style={{
+          position: 'absolute', inset: 0, zIndex: 1,
+          background: `radial-gradient(ellipse 50% 50% at 70% 30%, ${liveAccent}30 0%, transparent 70%),
+                       radial-gradient(ellipse 50% 50% at 20% 80%, ${liveAccent}18 0%, transparent 70%)`,
+          transition: 'background 800ms ease',
+        }} />
         <KineticShape
           variant="emoji"
           emoji={VOICES[liveIdx]?.emoji ?? '🍔'}
-          size={140}
+          size={120}
           style={{
-            top: '20%', right: '14%',
+            top: '18%', right: '10%',
             transition: 'opacity 600ms ease',
             zIndex: 2,
+            opacity: 0.7,
           }}
         />
 
@@ -429,14 +417,12 @@ export function HomeClient({ concepts: _concepts }: Props) {
             platform CTA, not a brand pitch. ───────────────────────── */}
       <section className="surface-ink relative overflow-hidden"
         style={{ ['--brand-accent' as string]: '#22c55e', ['--brand-ink' as string]: '#0a0a0a' }}>
-        <PerforatedSphere color="#22c55e" size={320} motion="float" sway={24}
-          style={{ top: '-12%', left: '-6%', zIndex: 1 }} />
-        <TwistedRibbon    color="#22c55e" size={280} motion="float" sway={18}
-          style={{ bottom: '-15%', right: '-5%', zIndex: 1, opacity: 0.85 }} />
-        <HoloRing         color="#22c55e" size={170} motion="pulse"
-          style={{ top: '12%', right: '10%', zIndex: 1 }} />
-        <ChromeBurst      color="#22c55e" size={120} motion="spin"
-          style={{ bottom: '20%', left: '14%', zIndex: 1, opacity: 0.85 }} />
+        {/* Soft ambient — keeping the platform CTA clean, no kinetic
+            decoration. */}
+        <div aria-hidden="true" style={{
+          position: 'absolute', inset: 0,
+          background: `radial-gradient(circle at 50% 60%, rgba(34,197,94,0.18) 0%, transparent 60%)`,
+        }} />
 
         <div className="container relative z-10 text-center" style={{ paddingTop: 'clamp(5rem, 10vw, 8rem)', paddingBottom: 'clamp(5rem, 10vw, 8rem)' }}>
           <p className="eyebrow" style={{ color: 'var(--brand-accent)', marginBottom: '1.5rem' }}>Ready when you are</p>

@@ -5,11 +5,8 @@ import { PromoBar } from '../parts/PromoBar'
 import { CrossBrandStrip } from '../parts/CrossBrandStrip'
 import { BottomCTA } from '../parts/BottomCTA'
 import { OpenStatusBadge, HoursGrid, useHoursData } from '../parts/OpenStatusBadge'
-import {
-  LiquidBlob, GlossySpring, HoloRing, ChromeBurst, TwistedRibbon,
-} from '../../kinetic/Shapes3D'
 import { useScrollReveal } from '../../kinetic/motionHooks'
-import { SlowCookHero } from '../../kinetic/SlowCookHero'
+import { SpeakeasyFridgeHero } from '../../kinetic/SpeakeasyFridgeHero'
 
 // Simmer — fine-casual mocktail bar and small-plates kitchen. Dark green +
 // saffron gold. Warm, intimate, specific. Karachi evenings, plated softly.
@@ -82,49 +79,36 @@ export function SimmerLayout({ concept, concepts }: Props) {
     >
       <PromoBar brandName={concept.name} brandSlug={concept.slug} accent={SIMMER_GOLD} />
 
-      {/* CINEMATIC SCROLL HERO — dark candlelit room. As the user
-          scrolls, five candles light one-by-one, steam rises from the
-          centerplate, the dish gradually emerges from shadow, and the
-          plates lineup slides up from below. By the bottom of the
-          sticky section the room is fully lit and the menu visible. */}
-      <SlowCookHero
+      {/* SPEAKEASY ENTRANCE — the literal walk-in fridge door + pin pad
+          that customers see in the basement of Stax. Tap a 4-digit code
+          (or scroll past) to "enter" Simmer. Door swings open, revealing
+          the wood + green-marble interior with the menu categories. */}
+      <SpeakeasyFridgeHero
         brandName={concept.name}
         accent={SIMMER_GOLD}
         ink={SIMMER_INK}
-        green={SIMMER_GREEN}
+        wood="#2a1d12"
+        marble={SIMMER_GREEN}
         cream={SIMMER_CREAM}
-        orderHref={`/reserve/${concept.slug}`}
+        reserveHref={`/reserve/${concept.slug}`}
         menuHref={`/brand/${concept.slug}/menu`}
-        plates={FEATURED_PLATES.map((p) => ({
-          name: p.name, desc: p.desc, img: p.img,
-          price: `Rs. ${p.price.toLocaleString('en')}`,
-        }))}
+        categories={[
+          { label: 'Small plates', emoji: '🥄', href: `/brand/${concept.slug}/menu#small` },
+          { label: 'Large plates', emoji: '🍽',  href: `/brand/${concept.slug}/menu#large` },
+          { label: 'Desserts',     emoji: '🍰', href: `/brand/${concept.slug}/menu#desserts` },
+          { label: 'Drinks',       emoji: '🍸', href: `/brand/${concept.slug}/menu#drinks` },
+        ]}
       />
 
-      {/* HERO — kinetic 3D motifs sit on top of the existing ambient
-          gradient. Simmer's vibe is intimate / candlelit, so we go
-          subtler with the shapes (no spinning chrome bursts here —
-          glossy liquid blobs + a slow holo ring instead). */}
+      {/* AMBIENT HERO — picks up after the speakeasy door. Now that the
+          customer is "inside", the rest of the page is moody/intimate
+          editorial. Decorative noise removed. */}
       <section ref={heroRef} style={{
         position: 'relative',
         background: `linear-gradient(170deg, ${SIMMER_INK} 0%, ${SIMMER_GREEN} 100%)`,
         color: 'white',
         overflow: 'hidden',
       }}>
-        {/* Kinetic decals — gold blobs glowing in the dark room. Behind
-            the ambient gradient div below but above the linear gradient. */}
-        <LiquidBlob   color={SIMMER_GOLD}  size={320} motion="float" sway={24}
-          style={{ top: '-12%', right: '-6%', zIndex: 1, opacity: 0.85 }} />
-        <LiquidBlob   color={SIMMER_GREEN} size={220} motion="float" sway={18}
-          style={{ bottom: '-8%', left: '-4%', zIndex: 1, opacity: 0.7 }} />
-        <HoloRing     color={SIMMER_GOLD}  size={130} motion="pulse"
-          style={{ top: '64%', right: '22%', zIndex: 1, opacity: 0.85 }} />
-        <TwistedRibbon color={SIMMER_GOLD} size={220} motion="float" sway={14}
-          style={{ top: '20%', left: '-2%', zIndex: 1, opacity: 0.65 }} />
-        <GlossySpring color={SIMMER_GOLD}  size={140} motion="spin"
-          style={{ bottom: '15%', right: '8%', zIndex: 1, opacity: 0.7 }} />
-        <ChromeBurst  color={SIMMER_GOLD}  size={90}  motion="spin"
-          style={{ top: '14%', right: '32%', zIndex: 1, opacity: 0.75 }} />
         {/* Warm ambient glow */}
         <div aria-hidden="true" style={{
           position: 'absolute', inset: 0,

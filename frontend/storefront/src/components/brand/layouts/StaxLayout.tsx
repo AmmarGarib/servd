@@ -5,12 +5,8 @@ import { PromoBar } from '../parts/PromoBar'
 import { CrossBrandStrip } from '../parts/CrossBrandStrip'
 import { BottomCTA } from '../parts/BottomCTA'
 import { OpenStatusBadge, useHoursData } from '../parts/OpenStatusBadge'
-import {
-  PerforatedSphere, TwistedRibbon, ChromeBurst, SquiggleArrow,
-  GlossyPill, HoloRing,
-} from '../../kinetic/Shapes3D'
 import { useScrollReveal } from '../../kinetic/motionHooks'
-import { BucketAssemblyHero } from '../../kinetic/BucketAssemblyHero'
+import { StaxStackBuilderHero } from '../../kinetic/StaxStackBuilderHero'
 
 // StaxLayout — formerly FlipdLayout. Per CEO 2026-05-12: the lighter,
 // hand-drawn cream + mustard design originally drawn for Flipd reads
@@ -66,28 +62,22 @@ export function StaxLayout({ concept, concepts }: Props) {
     >
       <PromoBar brandName={concept.name} brandSlug={concept.slug} accent={FLIPD_MUSTARD} />
 
-      {/* CINEMATIC SCROLL HERO — chicken pieces fly into a paper bucket
-          as the user scrolls. By the time they reach the bottom of the
-          sticky section the bucket is "full" and the family-bucket
-          lineup has faded in behind it. Sits above the existing butcher-
-          paper hero so the regular hero still reads when scroll continues. */}
-      <BucketAssemblyHero
+      {/* CINEMATIC HERO — industrial chef's table. Ingredient layers
+          drop in from above as the user scrolls, each one labelled with
+          one of the Stax menu categories. By the time the top bun lands
+          the user has seen every category in motion. */}
+      <StaxStackBuilderHero
         brandName={concept.name}
         accent={FLIPD_MUSTARD}
         ink={FLIPD_BLACK}
         cream={FLIPD_CREAM}
         orderHref={`/${concept.slug}`}
         menuHref={`/brand/${concept.slug}/menu`}
-        buckets={BUCKETS.map((b) => ({
-          name: b.name, feeds: b.feeds, body: b.body,
-          price: `Rs. ${b.price.toLocaleString('en')}`,
-          badge: b.badge,
-        }))}
       />
 
-      {/* HERO — kinetic 3D motifs scattered through the butcher-paper
-          gradient. Shapes use the mustard accent so the page reads as a
-          coherent brand world, not "stax with a 3D ball pasted on top". */}
+      {/* HERO — butcher-paper slab. Decorative noise removed; the hero
+          now relies on its content + the stack-builder above for visual
+          weight. */}
       <section ref={heroRef} style={{
         position: 'relative',
         padding: 'clamp(3rem, 7vw, 5rem) 0 clamp(2.5rem, 5vw, 4rem)',
@@ -95,16 +85,6 @@ export function StaxLayout({ concept, concepts }: Props) {
         borderBottom: `3px solid ${FLIPD_BLACK}`,
         overflow: 'hidden',
       }}>
-        {/* Kinetic decals — positioned around the corners + edges so they
-            frame the hero without colliding with the spec card. */}
-        <PerforatedSphere color={FLIPD_MUSTARD} size={260} motion="float" sway={26}
-          style={{ top: '-8%', right: '-4%', zIndex: 0 }} />
-        <TwistedRibbon    color={FLIPD_RED}     size={300} motion="float" sway={18}
-          style={{ bottom: '-12%', left: '-8%', opacity: 0.85, zIndex: 0 }} />
-        <ChromeBurst      color={FLIPD_MUSTARD} size={130} motion="spin"
-          style={{ top: '54%', right: '38%', zIndex: 0, opacity: 0.85 }} />
-        <SquiggleArrow    color={FLIPD_BLACK}   size={150} motion="float" sway={10}
-          style={{ top: '14%', left: '4%', opacity: 0.8, zIndex: 0 }} />
         <div className="container relative z-10">
           <div className="reveal-stagger" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '3rem', alignItems: 'center' }}>
             <div className="reveal-on-scroll">
@@ -171,12 +151,6 @@ export function StaxLayout({ concept, concepts }: Props) {
               boxShadow: `8px 8px 0 0 ${FLIPD_MUSTARD}`,
               position: 'relative',
             }}>
-              {/* Pinned 3D pill across the corner of the spec card — adds
-                  the playful "decal stuck on a notebook" quality. */}
-              <GlossyPill color={FLIPD_RED} size={120} motion="float" sway={6}
-                style={{ top: '-28px', right: '-32px', zIndex: 2 }} />
-              <HoloRing color={FLIPD_MUSTARD} size={80} motion="pulse"
-                style={{ bottom: '-20px', left: '-22px', zIndex: 2 }} />
               <p style={{ fontSize: '0.7rem', fontWeight: 800, letterSpacing: '0.32em', color: FLIPD_RED, textTransform: 'uppercase', marginBottom: '1rem' }}>
                 What&rsquo;s on the spec
               </p>
@@ -299,8 +273,152 @@ export function StaxLayout({ concept, concepts }: Props) {
         </div>
       </section>
 
+      {/* The walk-in fridge — IRL the entrance to Simmer (basement
+          speakeasy). On the website it's a clickable section that links
+          to the Simmer microsite. The savvy customer notices; everyone
+          else scrolls past. */}
+      <SimmerFridgeTease />
+
       <CrossBrandStrip current={concept} concepts={concepts} accent={FLIPD_MUSTARD} kicker="In the same neighbourhood" heading="Other GS Foods kitchens you might like" />
       <BottomCTA brandName={concept.name} brandSlug={concept.slug} accent={FLIPD_MUSTARD} />
     </div>
+  )
+}
+
+// ─── Simmer fridge tease ──────────────────────────────────────────────
+// IRL Stax has a walk-in fridge door in the back wall — the entrance to
+// Simmer (the basement speakeasy). This section mirrors that on the
+// website: a brushed-steel fridge door visible above the cross-brand
+// strip. Clicking it links to /brand/simmer where the speakeasy fridge
+// hero takes over.
+function SimmerFridgeTease() {
+  return (
+    <section style={{
+      background: '#0a0a0a',
+      padding: 'clamp(4rem, 7vw, 6rem) 0',
+      position: 'relative',
+      overflow: 'hidden',
+    }}>
+      {/* Brushed steel wall backdrop */}
+      <div aria-hidden="true" style={{
+        position: 'absolute', inset: 0,
+        background: `
+          linear-gradient(180deg, #2a2f31 0%, #14171a 100%),
+          repeating-linear-gradient(90deg, rgba(255,255,255,0.04) 0 1px, transparent 1px 4px)
+        `,
+        backgroundBlendMode: 'overlay',
+      }} />
+
+      <div className="container relative z-10" style={{
+        display: 'flex', flexDirection: 'column', alignItems: 'center',
+        gap: '1.5rem', textAlign: 'center',
+      }}>
+        <p className="eyebrow" style={{ color: 'rgba(255,255,255,0.45)', letterSpacing: '0.5em' }}>
+          downstairs · members only
+        </p>
+        <h2 className="display" style={{
+          fontSize: 'clamp(2rem, 5vw, 3.5rem)',
+          color: '#f4ede0', maxWidth: '600px',
+        }}>
+          There's a door<span style={{ color: '#c9a961' }}>.</span>
+          {' '}
+          <span className="display-italic" style={{ color: '#c9a961', fontWeight: 500 }}>
+            You'll know when you find it.
+          </span>
+        </h2>
+        <p style={{ color: 'rgba(255,255,255,0.5)', maxWidth: '480px', fontSize: '0.95rem' }}>
+          Below Stax, in the basement, behind what looks like a walk-in fridge —
+          Simmer. Mocktails. Tapas. Reservations only.
+        </p>
+
+        {/* The fridge door — clickable, links to /brand/simmer */}
+        <Link
+          href="/brand/simmer"
+          aria-label="Enter Simmer — the basement speakeasy"
+          style={{
+            position: 'relative',
+            width: 'min(260px, 60vw)',
+            aspectRatio: '3 / 4.4',
+            borderRadius: '12px',
+            background: `
+              linear-gradient(180deg, #4a5054 0%, #2a2f31 50%, #1d2122 100%),
+              repeating-linear-gradient(90deg, rgba(255,255,255,0.05) 0 1px, transparent 1px 3px)
+            `,
+            backgroundBlendMode: 'overlay',
+            boxShadow: '0 0 0 1px rgba(255,255,255,0.08), 0 20px 50px rgba(0,0,0,0.6)',
+            display: 'block',
+            textDecoration: 'none',
+            overflow: 'hidden',
+            transition: 'transform 220ms ease, box-shadow 220ms ease',
+            border: '8px solid #0a0c0d',
+          }}
+          className="group"
+          onMouseEnter={(e) => {
+            e.currentTarget.style.transform = 'translateY(-4px)'
+            e.currentTarget.style.boxShadow = '0 0 0 1px rgba(201,169,97,0.4), 0 30px 64px rgba(201,169,97,0.18)'
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.transform = 'translateY(0)'
+            e.currentTarget.style.boxShadow = '0 0 0 1px rgba(255,255,255,0.08), 0 20px 50px rgba(0,0,0,0.6)'
+          }}
+        >
+          {/* Label plate */}
+          <div style={{
+            position: 'absolute', top: '7%', left: '12%', right: '32%',
+            padding: '0.45rem 0.7rem',
+            background: 'rgba(0,0,0,0.6)',
+            border: '1px solid rgba(255,255,255,0.1)',
+            borderRadius: '3px',
+            textAlign: 'left',
+          }}>
+            <p style={{ fontSize: '0.5rem', letterSpacing: '0.45em', color: 'rgba(255,255,255,0.5)', fontWeight: 700 }}>
+              WALK-IN · 002
+            </p>
+            <p style={{ fontSize: '0.72rem', fontWeight: 800, color: '#f4ede0', marginTop: '0.1rem' }}>
+              PROVISIONS
+            </p>
+          </div>
+          {/* Handle */}
+          <div style={{
+            position: 'absolute', top: '22%', bottom: '22%', right: '8%',
+            width: '8px',
+            background: 'linear-gradient(90deg, #5a5f62 0%, #c5c9cc 50%, #5a5f62 100%)',
+            borderRadius: '999px',
+            boxShadow: '0 3px 10px rgba(0,0,0,0.5)',
+          }} />
+          {/* Latch */}
+          <div style={{
+            position: 'absolute', top: '16%', right: '7%',
+            width: '12px', height: '24px',
+            background: 'linear-gradient(180deg, #8a9094 0%, #4a5054 100%)',
+            borderRadius: '2px',
+          }} />
+          {/* Vent slats */}
+          <div style={{
+            position: 'absolute', bottom: '10%', left: '14%', right: '14%',
+            height: '40px',
+            background: `repeating-linear-gradient(180deg, rgba(0,0,0,0.6) 0 3px, rgba(255,255,255,0.04) 3px 9px)`,
+            borderRadius: '4px',
+          }} />
+          {/* "Enter" hover hint */}
+          <div style={{
+            position: 'absolute', left: '50%', bottom: '38%',
+            transform: 'translateX(-50%)',
+            color: '#c9a961', fontFamily: 'var(--font-display)',
+            fontWeight: 800, fontSize: '0.78rem',
+            letterSpacing: '0.3em',
+            textTransform: 'uppercase',
+            textShadow: '0 0 12px rgba(201,169,97,0.7)',
+            opacity: 0,
+            transition: 'opacity 240ms ease',
+          }} className="fridge-enter-hint">
+            ENTER →
+          </div>
+          <style>{`
+            .group:hover .fridge-enter-hint { opacity: 1 !important; }
+          `}</style>
+        </Link>
+      </div>
+    </section>
   )
 }
