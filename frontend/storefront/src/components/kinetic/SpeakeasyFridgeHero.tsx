@@ -33,14 +33,19 @@ interface Props {
   accent:      string
   /** Outer ink — the brushed-steel wall colour. */
   ink:         string
-  /** Interior wood-tone. */
+  /** (legacy, ignored by the photo-backed interior — kept for prop compat) */
   wood?:       string
-  /** Green marble for the back-bar. */
   marble?:     string
   cream?:      string
   reserveHref: string
   /** Optional menu link for inside-the-speakeasy navigation. */
   menuHref?:   string
+  /** URL of the walk-in cooler interior photo shown when the door opens.
+   *  Default is a generic empty commercial cooler from Unsplash; swap
+   *  for your own asset (drop a 1600px wide JPG/WebP into /public and
+   *  pass the path here) whenever you have proper photography of the
+   *  actual Simmer space. */
+  coolerImageUrl?: string
 }
 
 export function SpeakeasyFridgeHero({
@@ -49,6 +54,7 @@ export function SpeakeasyFridgeHero({
   marble = '#22382f',
   cream  = '#f4ede0',
   reserveHref, menuHref,
+  coolerImageUrl = 'https://images.unsplash.com/photo-1556909114-f6e7ad7d3136?w=1600&q=85',
 }: Props) {
   const { ref } = useScrollProgress<HTMLDivElement>()
 
@@ -145,7 +151,7 @@ export function SpeakeasyFridgeHero({
               opacity: 'calc(var(--scroll-progress, 0) * 1.8)',
               transition: 'opacity 80ms linear',
             }}>
-            <CoolerInterior accent={accent} cream={cream} marble={marble} wood={wood} />
+            <CoolerInterior accent={accent} cream={cream} imageUrl={coolerImageUrl} />
           </div>
 
           {/* ── THE DOOR — rotates open along its left hinge as scroll
@@ -407,229 +413,110 @@ function RealisticFridgeDoor({ cream }: { cream: string }) {
 }
 
 // ─── CoolerInterior ─────────────────────────────────────────────────
-// 1-point perspective interior of an empty walk-in cooler. Vanishing
-// point at center back. Built from a single SVG so the rack geometry,
-// floor reflection, and ceiling refrigeration unit all stay aligned at
-// any size. Text overlays are absolutely-positioned divs on top so we
-// can stagger their reveal with scroll progress.
+// Real photograph of an empty walk-in cooler used as the backdrop
+// (operator can swap the URL via the coolerImageUrl prop). The text
+// overlays sit on top in the negative shelf spaces:
+//   - RESERVATIONS only.  — back wall, biggest
+//   - CRAFTED MOCKTAILS  — left rack gap
+//   - ELEGANT PLATES     — right rack gap
+//   - open 7pm — late · thu–sun — etched along the bottom
 //
-// The interior is COLD — cool blue-grey palette, polished aluminum
-// surfaces, a single overhead LED light. The only warmth is the gold
-// glow on the words themselves, hinting at what's beyond the cooler
-// without showing it.
+// A subtle dark vignette around the edges keeps the typography readable
+// against any photo without flattening the image. Each word is fade-
+// staggered to scroll progress so they don't all pop in at once.
 
-function CoolerInterior({ accent, cream, marble: _marble, wood: _wood }: {
-  accent: string
-  cream:  string
-  marble: string
-  wood:   string
+function CoolerInterior({ accent, cream, imageUrl }: {
+  accent:   string
+  cream:    string
+  imageUrl: string
 }) {
   return (
     <div style={{ position: 'absolute', inset: 0 }}>
-      {/* SVG renders the perspective room — walls, ceiling, floor,
-          racks, refrigeration unit. Text sits in a separate layer above. */}
-      <svg
-        viewBox="0 0 800 1100"
-        preserveAspectRatio="xMidYMid slice"
-        style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}
-      >
-        <defs>
-          {/* Cool aluminum wall gradient — bright at the light source, fades to dark */}
-          <linearGradient id="coolerWall" x1="0%" y1="0%" x2="0%" y2="100%">
-            <stop offset="0%"   stopColor="#dbe2e7" />
-            <stop offset="35%"  stopColor="#b1bcc3" />
-            <stop offset="100%" stopColor="#4d585f" />
-          </linearGradient>
-          {/* Floor — polished aluminum with deeper reflection */}
-          <linearGradient id="coolerFloor" x1="0%" y1="0%" x2="0%" y2="100%">
-            <stop offset="0%"   stopColor="#3a4348" />
-            <stop offset="50%"  stopColor="#252b2f" />
-            <stop offset="100%" stopColor="#1a1d20" />
-          </linearGradient>
-          {/* Ceiling — slightly brighter than walls */}
-          <linearGradient id="coolerCeiling" x1="0%" y1="0%" x2="0%" y2="100%">
-            <stop offset="0%"   stopColor="#9aa4ac" />
-            <stop offset="100%" stopColor="#cdd5da" />
-          </linearGradient>
-          {/* Back wall — picks up the light from the LED */}
-          <radialGradient id="coolerBack" cx="50%" cy="40%" r="70%">
-            <stop offset="0%"   stopColor="#e5ecf0" />
-            <stop offset="60%"  stopColor="#aab4bc" />
-            <stop offset="100%" stopColor="#5c6a72" />
-          </radialGradient>
-          {/* Aluminum rack pillar — vertical brushed metal */}
-          <linearGradient id="rackPillar" x1="0%" y1="0%" x2="100%" y2="0%">
-            <stop offset="0%"   stopColor="#5a646b" />
-            <stop offset="35%"  stopColor="#b5bec5" />
-            <stop offset="65%"  stopColor="#dbe2e7" />
-            <stop offset="100%" stopColor="#5a646b" />
-          </linearGradient>
-          {/* Rack shelf — horizontal brushed metal */}
-          <linearGradient id="rackShelf" x1="0%" y1="0%" x2="0%" y2="100%">
-            <stop offset="0%"   stopColor="#dbe2e7" />
-            <stop offset="50%"  stopColor="#a0aab2" />
-            <stop offset="100%" stopColor="#4a545b" />
-          </linearGradient>
-          {/* Refrigeration unit — darker steel */}
-          <linearGradient id="fridgeUnit" x1="0%" y1="0%" x2="0%" y2="100%">
-            <stop offset="0%"   stopColor="#5a646b" />
-            <stop offset="60%"  stopColor="#2a3035" />
-            <stop offset="100%" stopColor="#1a1d20" />
-          </linearGradient>
-          <filter id="ledGlow">
-            <feGaussianBlur stdDeviation="6" />
-          </filter>
-        </defs>
+      {/* The photo itself — sits behind everything. cover/center so it
+          fills whatever aspect the doorway is rendering at. */}
+      <div
+        aria-hidden="true"
+        style={{
+          position: 'absolute', inset: 0,
+          backgroundImage: `url(${imageUrl})`,
+          backgroundSize: 'cover',
+          backgroundPosition: 'center',
+          // Cool down the photo slightly + drop the brightness so the
+          // gold typography sits with confidence against it.
+          filter: 'brightness(0.72) saturate(0.85) contrast(1.05) hue-rotate(-6deg)',
+        }}
+      />
 
-        {/* Vanishing-point geometry. viewBox is 800 wide, 1100 tall.
-            Back wall is the central rectangle at x=170-630, y=240-720.
-            Everything else trapezoids out from there. */}
+      {/* Vignette — darker around the edges, neutral in the centre.
+          Keeps the text against the back wall punchy without nuking
+          the photo's tonal range. */}
+      <div
+        aria-hidden="true"
+        style={{
+          position: 'absolute', inset: 0,
+          background: `
+            radial-gradient(ellipse 75% 55% at 50% 40%, transparent 0%, transparent 40%, rgba(0,0,0,0.55) 100%),
+            linear-gradient(180deg, rgba(0,0,0,0.20) 0%, transparent 25%, transparent 75%, rgba(0,0,0,0.45) 100%)
+          `,
+        }}
+      />
 
-        {/* Ceiling — trapezoid from top edge to back-wall top */}
-        <polygon
-          points="0,0 800,0 630,240 170,240"
-          fill="url(#coolerCeiling)"
-        />
+      {/* Subtle accent wash at the centre — gold halo bleeding into the
+          back wall as if light is escaping from somewhere behind it. */}
+      <div
+        aria-hidden="true"
+        style={{
+          position: 'absolute', inset: 0,
+          background: `radial-gradient(ellipse 40% 30% at 50% 40%, ${accent}28 0%, transparent 70%)`,
+          mixBlendMode: 'screen',
+        }}
+      />
 
-        {/* Left wall — trapezoid */}
-        <polygon
-          points="0,0 170,240 170,720 0,1100"
-          fill="url(#coolerWall)"
-        />
+      {/* ── TYPOGRAPHY OVERLAYS sitting in the empty shelves of the
+            photo. Positions are tuned for a typical walk-in cooler shot
+            where racks sit on the left + right side and the back wall is
+            roughly centre. Each phrase is staggered to fade in at a
+            different scroll-progress threshold. Heavy drop shadows so
+            the type reads against any photo we swap in. */}
 
-        {/* Right wall — trapezoid (mirror of left) */}
-        <polygon
-          points="800,0 800,1100 630,720 630,240"
-          fill="url(#coolerWall)"
-        />
-
-        {/* Floor — bottom trapezoid */}
-        <polygon
-          points="0,1100 800,1100 630,720 170,720"
-          fill="url(#coolerFloor)"
-        />
-        {/* Floor reflection of the back wall light — soft elongated highlight */}
-        <ellipse cx="400" cy="850" rx="280" ry="40" fill="rgba(255,255,255,0.06)" />
-
-        {/* Back wall — the brightest surface */}
-        <rect x="170" y="240" width="460" height="480" fill="url(#coolerBack)" />
-        {/* Vertical seam line down the back wall — where two panels meet */}
-        <line x1="400" y1="240" x2="400" y2="720" stroke="rgba(0,0,0,0.1)" strokeWidth="1" />
-
-        {/* ── CEILING REFRIGERATION UNIT ──
-            Big square unit hanging from the centre of the ceiling, with
-            a fan grille below it. */}
-        <g transform="translate(400, 145)">
-          {/* Mounting plate */}
-          <rect x="-130" y="-45" width="260" height="90" rx="3" fill="url(#fridgeUnit)" />
-          {/* Fan grille — concentric circles + crosshatch */}
-          <circle cx="0" cy="55" r="36" fill="#0a0c0d" />
-          <circle cx="0" cy="55" r="34" fill="none" stroke="#5a646b" strokeWidth="1" />
-          {Array.from({ length: 8 }).map((_, i) => (
-            <line
-              key={i}
-              x1="0" y1="55"
-              x2={Math.cos((i * Math.PI) / 4) * 30}
-              y2={55 + Math.sin((i * Math.PI) / 4) * 30}
-              stroke="#5a646b" strokeWidth="1"
-            />
-          ))}
-          {/* Fan center hub */}
-          <circle cx="0" cy="55" r="6" fill="#3a4348" />
-          {/* Brand sticker on the unit */}
-          <rect x="-50" y="-30" width="100" height="14" rx="2" fill="rgba(255,255,255,0.08)" />
-        </g>
-
-        {/* ── LED CEILING LIGHT ──
-            Long horizontal strip across the ceiling, near the front. */}
-        <rect x="280" y="40" width="240" height="14" rx="3" fill="#f5fbff" />
-        <rect x="280" y="40" width="240" height="14" rx="3" fill="white" opacity="0.7" filter="url(#ledGlow)" />
-        {/* Light spill onto the ceiling around the strip */}
-        <ellipse cx="400" cy="60" rx="200" ry="32" fill="rgba(255,255,255,0.18)" />
-
-        {/* ── LEFT RACK ──
-            Two vertical pillars + three horizontal shelves on the left.
-            Front pillar near x=15, back pillar near x=160. Pillars
-            recede in perspective: front taller than back. */}
-        {/* Front pillar — full viewport height */}
-        <rect x="15" y="120" width="14" height="940" fill="url(#rackPillar)" />
-        {/* Back pillar — shorter (matches back-wall height) */}
-        <rect x="155" y="260" width="10" height="450" fill="url(#rackPillar)" />
-        {/* Top connector — runs front-back along the top of the rack */}
-        <polygon points="20,118 162,258 162,266 20,128" fill="url(#rackShelf)" opacity="0.85" />
-        {/* Three shelves — each a thin polygon spanning front to back at different y's */}
-        {([
-          [320, 380],   // top shelf (front-y, back-y)
-          [560, 480],   // middle shelf
-          [820, 600],   // bottom shelf
-        ] as Array<[number, number]>).map(([fy, by], i) => (
-          <g key={i}>
-            <polygon points={`20,${fy} 162,${by} 162,${by + 8} 20,${fy + 12}`} fill="url(#rackShelf)" />
-            {/* Shelf underside shadow */}
-            <polygon points={`20,${fy + 12} 162,${by + 8} 162,${by + 14} 20,${fy + 24}`} fill="rgba(0,0,0,0.35)" />
-          </g>
-        ))}
-
-        {/* ── RIGHT RACK ── mirror of left */}
-        <rect x="771" y="120" width="14" height="940" fill="url(#rackPillar)" />
-        <rect x="635" y="260" width="10" height="450" fill="url(#rackPillar)" />
-        <polygon points="780,118 638,258 638,266 780,128" fill="url(#rackShelf)" opacity="0.85" />
-        {([
-          [320, 380],
-          [560, 480],
-          [820, 600],
-        ] as Array<[number, number]>).map(([fy, by], i) => (
-          <g key={i}>
-            <polygon points={`780,${fy} 638,${by} 638,${by + 8} 780,${fy + 12}`} fill="url(#rackShelf)" />
-            <polygon points={`780,${fy + 12} 638,${by + 8} 638,${by + 14} 780,${fy + 24}`} fill="rgba(0,0,0,0.35)" />
-          </g>
-        ))}
-
-        {/* Cold-air vapour drifting up from the floor */}
-        <ellipse cx="400" cy="780" rx="180" ry="22" fill="rgba(255,255,255,0.07)" />
-      </svg>
-
-      {/* ── TYPOGRAPHY OVERLAYS in the empty rack gaps ───────────────
-            Each phrase is staggered to fade in at a different scroll
-            progress threshold. The cool fridge palette is interrupted
-            by warm gold typography — the only "speakeasy" cue. */}
-
-      {/* CRAFTED — left rack, top gap */}
+      {/* CRAFTED — left rack, upper shelf gap */}
       <FridgeWord
         text="CRAFTED"
         fireAt={0.58}
         color={cream}
+        heavyShadow
         style={{
-          top: '24%', left: '6%',
-          fontSize: 'clamp(1.4rem, 3.2vw, 2.4rem)',
-          letterSpacing: '0.18em',
+          top: '22%', left: '4%',
+          fontSize: 'clamp(1.2rem, 2.8vw, 2rem)',
+          letterSpacing: '0.32em',
         }}
       />
-      {/* MOCKTAILS — left rack, middle gap */}
+      {/* MOCKTAILS — left rack, mid shelf gap, gold italic */}
       <FridgeWord
-        text="MOCKTAILS"
+        text="mocktails."
         fireAt={0.62}
         color={accent}
         glow
         style={{
-          top: '46%', left: '5%',
-          fontSize: 'clamp(1.7rem, 4vw, 3rem)',
+          top: '36%', left: '3%',
+          fontSize: 'clamp(1.8rem, 4.5vw, 3.4rem)',
           fontStyle: 'italic',
-          letterSpacing: '0.04em',
+          letterSpacing: '-0.01em',
           fontWeight: 600,
         }}
       />
 
-      {/* RESERVATIONS ONLY — dead-center on the back wall, biggest */}
+      {/* RESERVATIONS — back wall centre */}
       <FridgeWord
         text="RESERVATIONS"
         fireAt={0.50}
         color={cream}
+        heavyShadow
         style={{
-          top: '36%', left: '50%',
+          top: '30%', left: '50%',
           transform: 'translate(-50%, -50%)',
-          fontSize: 'clamp(2rem, 5vw, 3.6rem)',
-          letterSpacing: '0.08em',
+          fontSize: 'clamp(2.2rem, 5.5vw, 4rem)',
+          letterSpacing: '0.06em',
           textAlign: 'center',
           whiteSpace: 'nowrap',
         }}
@@ -640,76 +527,86 @@ function CoolerInterior({ accent, cream, marble: _marble, wood: _wood }: {
         color={accent}
         glow
         style={{
-          top: '46%', left: '50%',
+          top: '42%', left: '50%',
           transform: 'translate(-50%, -50%)',
-          fontSize: 'clamp(1.5rem, 4vw, 2.8rem)',
+          fontSize: 'clamp(1.6rem, 4.5vw, 3rem)',
           fontStyle: 'italic',
-          letterSpacing: '0.02em',
+          letterSpacing: '-0.01em',
           textAlign: 'center',
           fontWeight: 500,
         }}
       />
 
-      {/* ELEGANT — right rack, top gap */}
+      {/* ELEGANT — right rack, upper shelf gap */}
       <FridgeWord
         text="ELEGANT"
         fireAt={0.66}
         color={cream}
+        heavyShadow
         style={{
-          top: '24%', right: '6%',
-          fontSize: 'clamp(1.4rem, 3.2vw, 2.4rem)',
-          letterSpacing: '0.18em',
+          top: '22%', right: '4%',
+          fontSize: 'clamp(1.2rem, 2.8vw, 2rem)',
+          letterSpacing: '0.32em',
           textAlign: 'right',
         }}
       />
-      {/* PLATES — right rack, middle gap */}
+      {/* PLATES — right rack, mid shelf gap, gold italic */}
       <FridgeWord
-        text="PLATES"
+        text="plates."
         fireAt={0.70}
         color={accent}
         glow
         style={{
-          top: '46%', right: '5%',
-          fontSize: 'clamp(1.7rem, 4vw, 3rem)',
+          top: '36%', right: '3%',
+          fontSize: 'clamp(1.8rem, 4.5vw, 3.4rem)',
           fontStyle: 'italic',
-          letterSpacing: '0.04em',
+          letterSpacing: '-0.01em',
           textAlign: 'right',
           fontWeight: 600,
         }}
       />
 
-      {/* Smaller etched details — operating hours / occupancy / brand
-          mark — laid into the bottom shelves */}
+      {/* Operating hours — etched along the bottom shelf */}
       <FridgeWord
         text="open 7pm — late · thu–sun"
         fireAt={0.78}
-        color="rgba(255,255,255,0.55)"
+        color="rgba(255,255,255,0.75)"
+        heavyShadow
         style={{
-          bottom: '20%', left: '50%',
+          bottom: '18%', left: '50%',
           transform: 'translateX(-50%)',
           fontSize: 'clamp(0.65rem, 1.2vw, 0.85rem)',
           letterSpacing: '0.42em',
           textTransform: 'uppercase',
           whiteSpace: 'nowrap',
+          fontWeight: 700,
         }}
       />
     </div>
   )
 }
 
-// Small helper that handles the staggered fade-in for each fridge word.
-// fireAt = scroll-progress threshold beyond which the word becomes
-// visible. Glow optional — adds a soft accent-coloured halo behind the
-// type (for the gold words only).
+// Staggered fade-in helper for each fridge word.
+//   fireAt       — scroll-progress threshold past which the word fades in
+//   glow         — soft accent-coloured halo around the type (for gold
+//                  italics, makes them feel like neon)
+//   heavyShadow  — strong stacked drop-shadow so neutral-cream type
+//                  reads cleanly against busy photography
 function FridgeWord({
-  text, fireAt, color, glow, style,
+  text, fireAt, color, glow, heavyShadow, style,
 }: {
-  text:   string
-  fireAt: number
-  color:  string
-  glow?:  boolean
-  style?: React.CSSProperties
+  text:         string
+  fireAt:       number
+  color:        string
+  glow?:        boolean
+  heavyShadow?: boolean
+  style?:       React.CSSProperties
 }) {
+  const shadow = glow
+    ? `0 0 22px ${color}cc, 0 0 6px ${color}99, 0 2px 6px rgba(0,0,0,0.5)`
+    : heavyShadow
+      ? '0 2px 4px rgba(0,0,0,0.85), 0 6px 16px rgba(0,0,0,0.65)'
+      : '0 1px 2px rgba(0,0,0,0.6)'
   return (
     <p
       className="display"
@@ -717,10 +614,9 @@ function FridgeWord({
         position: 'absolute',
         margin: 0,
         color,
-        textShadow: glow ? `0 0 22px ${color}aa, 0 0 4px ${color}66` : '0 1px 2px rgba(0,0,0,0.4)',
+        textShadow: shadow,
         opacity: `calc(max(0, var(--scroll-progress, 0) - ${fireAt}) * 6)`,
         // Each word lifts up a few pixels as it lands.
-        // Encode via inline calc so React's CSSProperties type accepts it.
         ['--lift' as string]: `calc((1 - max(0, min(1, (var(--scroll-progress, 0) - ${fireAt}) * 6))) * 14px)`,
         transition: 'opacity 80ms linear',
         ...style,
