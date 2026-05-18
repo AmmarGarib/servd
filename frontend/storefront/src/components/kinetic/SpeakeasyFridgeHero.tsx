@@ -81,37 +81,57 @@ export function SpeakeasyFridgeHero({
           justifyContent: 'center',
         }}
       >
-        {/* Concrete + brushed-steel wall the fridge is mounted in.
-            Includes a horizontal trim seam, a few stray rivets, and
-            faint scuff marks so it reads as a real industrial wall. */}
+        {/* The cooler's EXTERIOR wall — white insulated panel
+            construction. This is what a real walk-in chiller looks
+            like from outside: prefab insulated panels, white/cream
+            face, vertical seam lines every ~24" where the panels meet,
+            slight cool tint at the edges from the room lighting around
+            it. NOT brushed steel — that was the wrong material entirely. */}
         <div aria-hidden="true" style={{
           position: 'absolute', inset: 0,
           background: `
-            linear-gradient(180deg, #1d2022 0%, #0d0f10 100%),
-            repeating-linear-gradient(90deg, rgba(255,255,255,0.025) 0 1px, transparent 1px 6px)
+            radial-gradient(ellipse 100% 80% at 50% 50%, #e8e9eb 0%, #c8cbd0 60%, #9aa0a8 100%)
           `,
-          backgroundBlendMode: 'overlay',
         }} />
-        {/* Subtle wear marks at the door's footprint */}
+        {/* Vertical insulated-panel seams — every ~24" of the wall. */}
         <div aria-hidden="true" style={{
-          position: 'absolute', left: '50%', bottom: '8vh',
-          width: 'min(640px, 80vw)', height: '60px',
+          position: 'absolute', inset: 0,
+          background: `
+            linear-gradient(90deg,
+              transparent 0%,
+              transparent calc(50% - 360px), rgba(0,0,0,0.10) calc(50% - 360px), rgba(0,0,0,0.10) calc(50% - 358px), transparent calc(50% - 358px),
+              transparent calc(50% - 130px), rgba(0,0,0,0.08) calc(50% - 130px), rgba(0,0,0,0.08) calc(50% - 128px), transparent calc(50% - 128px),
+              transparent calc(50% + 128px), rgba(0,0,0,0.08) calc(50% + 128px), rgba(0,0,0,0.08) calc(50% + 130px), transparent calc(50% + 130px),
+              transparent calc(50% + 358px), rgba(0,0,0,0.10) calc(50% + 358px), rgba(0,0,0,0.10) calc(50% + 360px), transparent calc(50% + 360px),
+              transparent 100%)
+          `,
+        }} />
+        {/* Floor strip — darker concrete / floor tile band running
+            across the bottom of the viewport. Makes the cooler "sit
+            on" something instead of floating. */}
+        <div aria-hidden="true" style={{
+          position: 'absolute', left: 0, right: 0, bottom: 0,
+          height: '12vh',
+          background: 'linear-gradient(180deg, #5a6066 0%, #2a3034 40%, #14181b 100%)',
+          borderTop: '1px solid rgba(0,0,0,0.4)',
+          boxShadow: 'inset 0 6px 12px rgba(0,0,0,0.45)',
+        }} />
+        {/* Soft cast shadow from the cooler onto the floor */}
+        <div aria-hidden="true" style={{
+          position: 'absolute', left: '50%', bottom: '11vh',
+          width: 'min(720px, 88vw)', height: '24px',
           transform: 'translateX(-50%)',
-          background: 'radial-gradient(ellipse 60% 40% at 50% 50%, rgba(0,0,0,0.55) 0%, transparent 70%)',
-          filter: 'blur(8px)',
-        }} />
-        {/* Wall trim — horizontal accent line where the floor meets wall */}
-        <div aria-hidden="true" style={{
-          position: 'absolute', left: 0, right: 0, bottom: '8vh',
-          height: 1, background: 'rgba(255,255,255,0.06)',
+          background: 'radial-gradient(ellipse 60% 100% at 50% 50%, rgba(0,0,0,0.6) 0%, transparent 70%)',
+          filter: 'blur(6px)',
         }} />
 
-        {/* Tiny etched label above the door. Almost missable. */}
+        {/* Tiny etched label above the door — almost missable. Dark
+            grey on the white wall so it reads like vinyl signage. */}
         <p className="eyebrow"
           style={{
-            position: 'absolute', top: '6vh', left: '50%',
+            position: 'absolute', top: '4vh', left: '50%',
             transform: 'translateX(-50%)',
-            color: 'rgba(255,255,255,0.32)',
+            color: 'rgba(40,46,52,0.4)',
             letterSpacing: '0.6em',
             fontSize: '0.66rem',
             zIndex: 5,
@@ -172,20 +192,72 @@ export function SpeakeasyFridgeHero({
             <RealisticFridgeDoor cream={cream} />
           </div>
 
-          {/* ── FRAME — the casing around the doorway. Always visible
-                because it doesn't rotate. Heavy black border with bolt
-                heads in each corner. */}
+          {/* ── DIGITAL THERMOMETER — mounted above the door frame.
+                Black housing with a small LCD/LED readout showing the
+                actual cooler temperature. Brand plate to its right.
+                This is what makes the whole thing read as a real
+                walk-in cooler from across the room. */}
           <div aria-hidden="true" style={{
             position: 'absolute',
-            inset: '-18px',
-            border: '18px solid #0a0c0d',
-            borderRadius: '8px',
-            boxShadow: '0 28px 70px rgba(0,0,0,0.7), inset 0 0 0 1px rgba(255,255,255,0.06)',
+            top: '-86px', left: '50%',
+            transform: 'translateX(-50%)',
+            display: 'flex', alignItems: 'center', gap: '10px',
+            zIndex: 5,
+          }}>
+            {/* The thermometer unit */}
+            <div style={{
+              background: 'linear-gradient(180deg, #1f2326 0%, #0d0f10 100%)',
+              borderRadius: '4px',
+              padding: '6px 10px',
+              boxShadow: '0 3px 8px rgba(0,0,0,0.6), inset 0 0 0 1px rgba(255,255,255,0.08)',
+              display: 'flex', alignItems: 'center', gap: '6px',
+            }}>
+              <span style={{
+                fontFamily: 'monospace',
+                fontSize: '0.62rem',
+                color: '#7a8489',
+                letterSpacing: '0.18em',
+              }}>WIC-002</span>
+              <span style={{
+                background: '#050708',
+                padding: '2px 6px',
+                borderRadius: '2px',
+                fontFamily: 'monospace',
+                fontWeight: 700,
+                fontSize: '0.92rem',
+                color: '#3fda86',
+                textShadow: '0 0 6px rgba(63,218,134,0.65)',
+                letterSpacing: '0.04em',
+              }}>-2.4°C</span>
+            </div>
+            {/* Small green status LED */}
+            <span style={{
+              width: 8, height: 8, borderRadius: '50%',
+              background: '#3fda86',
+              boxShadow: '0 0 8px rgba(63,218,134,0.8)',
+            }} />
+          </div>
+
+          {/* ── FRAME — slim stainless steel framework around the
+                doorway. Heavy enough to read as commercial-grade but
+                NOT a fat black border. Polished steel with subtle
+                chrome highlights at the corners. */}
+          <div aria-hidden="true" style={{
+            position: 'absolute',
+            inset: '-12px',
+            border: '12px solid transparent',
+            borderImage: 'linear-gradient(135deg, #cfd4d8 0%, #6a7077 50%, #cfd4d8 100%) 1',
+            background: `
+              linear-gradient(135deg, #cfd4d8 0%, #898f94 25%, #6a7077 50%, #898f94 75%, #cfd4d8 100%)
+            `,
+            backgroundClip: 'border-box',
+            borderRadius: '4px',
+            boxShadow: '0 28px 60px rgba(0,0,0,0.6), inset 0 0 0 1px rgba(255,255,255,0.18)',
             pointerEvents: 'none',
             zIndex: 4,
           }}>
-            {/* Mounting bolts — one in each corner */}
-            {[['8px', '8px'], ['8px', 'auto', '8px', 'auto'], [null, '8px', '8px', 'auto'], [null, 'auto', '8px', '8px']].map((coords, i) => {
+            {/* Mounting bolts — one in each corner of the frame */}
+            {[['6px', '6px'], ['6px', 'auto', '6px', 'auto'], [null, '6px', '6px', 'auto'], [null, 'auto', '6px', '6px']].map((coords, i) => {
               const [top, right, bottom, left] = coords as Array<string | null | undefined>
               return (
                 <div key={i} style={{
@@ -194,10 +266,10 @@ export function SpeakeasyFridgeHero({
                   right: right ?? undefined,
                   bottom: bottom ?? undefined,
                   left: left ?? undefined,
-                  width: 10, height: 10,
+                  width: 8, height: 8,
                   borderRadius: '50%',
-                  background: 'radial-gradient(circle at 30% 30%, #6a6f72 0%, #1a1d1f 80%)',
-                  boxShadow: '0 1px 2px rgba(0,0,0,0.6), inset 0 0 0 1px rgba(255,255,255,0.1)',
+                  background: 'radial-gradient(circle at 30% 30%, #e5ebee 0%, #898f94 60%, #2a2e30 100%)',
+                  boxShadow: 'inset 0 0 0 0.5px rgba(0,0,0,0.4)',
                 }} />
               )
             })}
@@ -245,15 +317,16 @@ export function SpeakeasyFridgeHero({
         <p
           style={{
             position: 'absolute',
-            bottom: '4vh', left: 0, right: 0,
+            bottom: '14vh', left: 0, right: 0,
             textAlign: 'center',
-            color: 'rgba(255,255,255,0.35)',
+            color: 'rgba(40,46,52,0.55)',
             fontSize: '0.7rem',
             letterSpacing: '0.45em',
             textTransform: 'uppercase',
             opacity: 'calc(1 - var(--scroll-progress, 0) * 2)',
             zIndex: 5,
             pointerEvents: 'none',
+            fontWeight: 700,
           } as React.CSSProperties}
         >
           ↓ scroll to enter
@@ -263,11 +336,24 @@ export function SpeakeasyFridgeHero({
   )
 }
 
-// ─── Realistic walk-in fridge door ──────────────────────────────────
-// Layered detail: brushed-steel face, riveted edges, label plate up top,
-// industrial hinges down the left, polished handle on the right, latch
-// mechanism + safety lock above the handle, vent slats at the bottom,
-// condensation marks across the surface, an inspection sticker.
+// ─── Realistic walk-in cooler door ──────────────────────────────────
+// Modelled after an actual commercial walk-in cooler door, not a
+// stand-alone metal slab:
+//
+//   - White insulated panel construction matching the cooler's
+//     exterior wall (so the door is flush with the wall, just slightly
+//     recessed)
+//   - Stainless steel perimeter trim (~18px wide) framing the door
+//   - Three heavy-duty industrial hinges down the left
+//   - Big horizontal paddle/lever handle on the right side
+//   - Small viewing window in the upper third (you'd peek through it
+//     to check the cooler before opening)
+//   - Stainless steel kick plate at the bottom (protects the panel
+//     from carts hitting it)
+//   - Manufacturer's plate
+//
+// LED digital thermometer + brand plate sit ABOVE the door (drawn by
+// the parent component since they're outside the rotating door).
 
 function RealisticFridgeDoor({ cream }: { cream: string }) {
   return (
@@ -275,138 +361,237 @@ function RealisticFridgeDoor({ cream }: { cream: string }) {
       style={{
         position: 'absolute',
         inset: 0,
-        borderRadius: '4px',
-        // Brushed steel — vertical brush striations + a slight bevel
-        background: `
-          linear-gradient(180deg, #4a4f52 0%, #2e3234 35%, #2a2e30 65%, #1a1d1f 100%),
-          repeating-linear-gradient(90deg, rgba(255,255,255,0.06) 0 1px, transparent 1px 3px)
-        `,
-        backgroundBlendMode: 'overlay',
         overflow: 'hidden',
-        boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.08), 0 14px 30px rgba(0,0,0,0.45)',
+        // The door is white insulated panel — same construction as the
+        // cooler wall it's mounted in. Slight cool tint at the edges
+        // implies the panel is recessed slightly into the wall.
+        background: `
+          radial-gradient(ellipse 100% 100% at 50% 50%, #ecedef 0%, #d8dadd 60%, #b4b8bd 100%)
+        `,
+        boxShadow: `
+          inset 0 0 0 1px rgba(0,0,0,0.08),
+          inset 0 -8px 18px rgba(0,0,0,0.10),
+          0 14px 30px rgba(0,0,0,0.4)
+        `,
       }}
     >
-      {/* Hinges — three on the left side */}
-      {[12, 38, 78].map((topPct) => (
-        <Hinge key={topPct} style={{ position: 'absolute', left: '-6px', top: `${topPct}%` }} />
+      {/* STAINLESS STEEL PERIMETER TRIM — a band of polished steel
+          framing the door. This is the most visually distinctive part
+          of a walk-in cooler: the door is INSET into a steel surround. */}
+      {/* Top trim */}
+      <div style={{
+        position: 'absolute', top: 0, left: 0, right: 0, height: '18px',
+        background: 'linear-gradient(180deg, #f3f5f7 0%, #b8bdc2 50%, #6a7077 100%)',
+        boxShadow: 'inset 0 -1px 2px rgba(0,0,0,0.3)',
+      }} />
+      {/* Bottom trim */}
+      <div style={{
+        position: 'absolute', bottom: 0, left: 0, right: 0, height: '18px',
+        background: 'linear-gradient(180deg, #6a7077 0%, #b8bdc2 50%, #f3f5f7 100%)',
+        boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.25)',
+      }} />
+      {/* Left trim */}
+      <div style={{
+        position: 'absolute', top: 0, bottom: 0, left: 0, width: '18px',
+        background: 'linear-gradient(90deg, #f3f5f7 0%, #b8bdc2 50%, #6a7077 100%)',
+        boxShadow: 'inset -1px 0 2px rgba(0,0,0,0.3)',
+      }} />
+      {/* Right trim */}
+      <div style={{
+        position: 'absolute', top: 0, bottom: 0, right: 0, width: '18px',
+        background: 'linear-gradient(90deg, #6a7077 0%, #b8bdc2 50%, #f3f5f7 100%)',
+        boxShadow: 'inset 1px 0 2px rgba(0,0,0,0.25)',
+      }} />
+
+      {/* INDUSTRIAL HINGES — three down the left side. Each one is a
+          rectangular hinge body with two visible "knuckles" stacked, so
+          it reads as a heavy-duty cooler hinge not a residential one.
+          They sit on top of the trim, slightly poking left so they
+          look mounted to the doorframe. */}
+      {[14, 44, 80].map((topPct) => (
+        <CoolerHinge key={topPct} style={{ position: 'absolute', top: `${topPct}%`, left: '-4px' }} />
       ))}
 
-      {/* Top label plate — "WALK-IN · 002 / PROVISIONS" */}
-      <div style={{
-        position: 'absolute', top: '6%', left: '10%', right: '36%',
-        padding: '0.6rem 0.85rem',
-        background: 'rgba(10,12,13,0.7)',
-        border: '1px solid rgba(255,255,255,0.08)',
-        borderRadius: '3px',
-        boxShadow: '0 2px 6px rgba(0,0,0,0.5), inset 0 0 0 1px rgba(255,255,255,0.04)',
-      }}>
-        <p style={{
-          fontFamily: 'var(--font-display)',
-          fontSize: '0.58rem', letterSpacing: '0.55em',
-          color: 'rgba(255,255,255,0.55)', fontWeight: 700,
-        }}>
-          WALK-IN · 002
-        </p>
-        <p style={{
-          fontFamily: 'var(--font-display)',
-          fontSize: '0.92rem', fontWeight: 800,
-          color: cream, marginTop: '0.18rem', letterSpacing: '0.02em',
-        }}>
-          PROVISIONS
-        </p>
-      </div>
-
-      {/* Inspection sticker — small circular sticker, slightly off-axis */}
+      {/* VIEWING WINDOW — upper-third pane, double-glazed look.
+          Frame is brushed steel, glass is dark with a subtle highlight
+          reflection so it reads as glass, not a hole. */}
       <div style={{
         position: 'absolute',
-        top: '11%', right: '12%',
-        width: 56, height: 56,
-        borderRadius: '50%',
-        background: 'radial-gradient(circle at 35% 30%, #c9a961 0%, #8a6e2e 70%, #4d3d18 100%)',
-        boxShadow: '0 2px 6px rgba(0,0,0,0.6), inset 0 0 0 1px rgba(255,255,255,0.15)',
-        transform: 'rotate(-6deg)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        flexDirection: 'column',
-        fontFamily: 'var(--font-display)',
+        top: '14%', left: '24%', right: '24%',
+        height: '22%',
+        background: 'linear-gradient(180deg, #a8b0b7 0%, #6e757b 100%)',
+        borderRadius: '4px',
+        padding: '6px',
+        boxShadow: '0 4px 12px rgba(0,0,0,0.35), inset 0 0 0 1px rgba(255,255,255,0.18)',
       }}>
-        <span style={{ fontSize: '0.55rem', fontWeight: 800, color: '#1a1410', letterSpacing: '0.18em' }}>
-          INSP
-        </span>
-        <span style={{ fontSize: '0.7rem', fontWeight: 900, color: '#1a1410', lineHeight: 1 }}>
-          ★
-        </span>
-        <span style={{ fontSize: '0.45rem', fontWeight: 700, color: '#1a1410', letterSpacing: '0.1em' }}>
-          PASSED
-        </span>
-      </div>
-
-      {/* Handle assembly — long polished vertical bar on the right */}
-      <div style={{
-        position: 'absolute',
-        top: '32%', bottom: '32%', right: '7%',
-        width: '16px',
-        background: 'linear-gradient(90deg, #4a4f52 0%, #8a9094 30%, #d5d9dc 50%, #8a9094 70%, #4a4f52 100%)',
-        borderRadius: '999px',
-        boxShadow: '0 6px 14px rgba(0,0,0,0.55), inset 0 0 0 1px rgba(255,255,255,0.12)',
-      }} />
-      {/* Handle mounting brackets — top + bottom */}
-      <div style={{
-        position: 'absolute', top: '30%', right: '6%',
-        width: '20px', height: '14px',
-        background: 'linear-gradient(180deg, #6a6f72 0%, #2e3234 100%)',
-        borderRadius: '3px',
-        boxShadow: '0 2px 4px rgba(0,0,0,0.5)',
-      }} />
-      <div style={{
-        position: 'absolute', bottom: '30%', right: '6%',
-        width: '20px', height: '14px',
-        background: 'linear-gradient(180deg, #6a6f72 0%, #2e3234 100%)',
-        borderRadius: '3px',
-        boxShadow: '0 2px 4px rgba(0,0,0,0.5)',
-      }} />
-
-      {/* Latch / safety lock — above the handle */}
-      <div style={{
-        position: 'absolute',
-        top: '22%', right: '6%',
-        width: '22px', height: '46px',
-        background: 'linear-gradient(180deg, #9a9fa3 0%, #4a4f52 100%)',
-        borderRadius: '3px',
-        boxShadow: '0 2px 6px rgba(0,0,0,0.6), inset 0 0 0 1px rgba(255,255,255,0.12)',
-      }}>
-        {/* Tiny keyhole dot */}
-        <span style={{
-          position: 'absolute', top: '60%', left: '50%',
-          transform: 'translate(-50%, -50%)',
-          width: 4, height: 4, borderRadius: '50%',
-          background: '#0a0c0d',
-          boxShadow: '0 0 0 1.5px rgba(255,255,255,0.2)',
+        {/* Glass pane */}
+        <div style={{
+          width: '100%', height: '100%',
+          background: `
+            linear-gradient(135deg, rgba(255,255,255,0.18) 0%, rgba(255,255,255,0.04) 20%, transparent 35%, transparent 100%),
+            linear-gradient(180deg, #1a2024 0%, #0a0e11 100%)
+          `,
+          borderRadius: '2px',
+          boxShadow: 'inset 0 0 0 1px rgba(0,0,0,0.6), inset 0 2px 6px rgba(0,0,0,0.7)',
         }} />
       </div>
 
-      {/* Bottom vent slats — louvered air vent */}
+      {/* PADDLE HANDLE — long horizontal lever on the right side at
+          waist height. Heavy industrial stainless. Bolted to a backing
+          plate. This is THE recognisable cooler-door element. */}
+      {/* Backing plate */}
       <div style={{
         position: 'absolute',
-        bottom: '7%', left: '14%', right: '14%',
-        height: '12%',
-        background: `repeating-linear-gradient(180deg,
-          rgba(0,0,0,0.65) 0 4px,
-          rgba(255,255,255,0.04) 4px 11px)`,
+        top: '46%', right: '6%',
+        width: '36%', height: '14%',
+        background: 'linear-gradient(180deg, #cfd4d8 0%, #898f94 100%)',
         borderRadius: '4px',
-        boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.05), inset 0 4px 12px rgba(0,0,0,0.6)',
+        boxShadow: '0 3px 8px rgba(0,0,0,0.35), inset 0 0 0 1px rgba(255,255,255,0.2)',
       }} />
+      {/* The lever itself — long capsule shape with chrome gradient */}
+      <div style={{
+        position: 'absolute',
+        top: '49%', right: '8%',
+        width: '32%', height: '8%',
+        background: 'linear-gradient(180deg, #f5f7f9 0%, #b8bec3 30%, #f5f7f9 50%, #b8bec3 70%, #6a7077 100%)',
+        borderRadius: '999px',
+        boxShadow: '0 4px 10px rgba(0,0,0,0.45), inset 0 0 0 1px rgba(255,255,255,0.3)',
+      }} />
+      {/* Pivot anchor — circular hub where the lever attaches */}
+      <div style={{
+        position: 'absolute',
+        top: '50%', right: '37%',
+        width: '20px', height: '20px',
+        background: 'radial-gradient(circle at 35% 30%, #f5f7f9 0%, #898f94 70%, #3a4045 100%)',
+        borderRadius: '999px',
+        transform: 'translateY(-2px)',
+        boxShadow: '0 2px 4px rgba(0,0,0,0.5)',
+      }} />
+      {/* Lock cylinder under the handle */}
+      <div style={{
+        position: 'absolute',
+        top: '62%', right: '12%',
+        width: '24px', height: '18px',
+        background: 'linear-gradient(180deg, #b8bec3 0%, #6a7077 100%)',
+        borderRadius: '3px',
+        boxShadow: '0 2px 4px rgba(0,0,0,0.4), inset 0 0 0 1px rgba(0,0,0,0.2)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}>
+        <span style={{
+          width: 5, height: 5, borderRadius: '50%',
+          background: '#0a0c0d',
+          boxShadow: '0 0 0 1px rgba(255,255,255,0.3)',
+        }} />
+      </div>
 
-      {/* Surface condensation — faint vertical streaks of moisture */}
+      {/* MANUFACTURER PLATE — small stainless plate in the upper left */}
+      <div style={{
+        position: 'absolute',
+        top: '5%', left: '5%',
+        width: '36%', height: '6%',
+        background: 'linear-gradient(180deg, #cfd4d8 0%, #898f94 100%)',
+        borderRadius: '2px',
+        boxShadow: '0 2px 4px rgba(0,0,0,0.3), inset 0 0 0 1px rgba(255,255,255,0.25)',
+        display: 'flex', flexDirection: 'column',
+        justifyContent: 'center', padding: '0 0.55rem',
+      }}>
+        <p style={{
+          fontFamily: 'var(--font-display)',
+          fontSize: '0.42rem', letterSpacing: '0.42em',
+          color: '#3a4045', fontWeight: 700,
+        }}>
+          WALK-IN · 002 · PROVISIONS
+        </p>
+        <p style={{
+          fontFamily: 'var(--font-display)',
+          fontSize: '0.55rem', letterSpacing: '0.04em',
+          color: '#1a1d20', fontWeight: 800, marginTop: '0.1rem',
+        }}>
+          MODEL WIC-300
+        </p>
+      </div>
+
+      {/* KICK PLATE — stainless plate across the bottom 18% of the door,
+          protects the panel from cart strikes / mop bucket bashes */}
+      <div style={{
+        position: 'absolute',
+        bottom: '4%', left: '6%', right: '6%',
+        height: '18%',
+        background: `
+          linear-gradient(180deg, #d5dadd 0%, #989fa4 50%, #6a7077 100%),
+          repeating-linear-gradient(90deg, rgba(255,255,255,0.06) 0 1px, transparent 1px 4px)
+        `,
+        backgroundBlendMode: 'overlay',
+        borderRadius: '3px',
+        boxShadow: '0 4px 10px rgba(0,0,0,0.35), inset 0 0 0 1px rgba(255,255,255,0.18)',
+      }}>
+        {/* A few corner screw heads on the kick plate */}
+        {[
+          { top: 4, left: 4 }, { top: 4, right: 4 },
+          { bottom: 4, left: 4 }, { bottom: 4, right: 4 },
+        ].map((pos, i) => (
+          <span key={i} style={{
+            position: 'absolute', ...pos,
+            width: 6, height: 6, borderRadius: '50%',
+            background: 'radial-gradient(circle at 35% 30%, #898f94 0%, #1a1d20 80%)',
+            boxShadow: 'inset 0 0 0 0.5px rgba(255,255,255,0.3)',
+          }} />
+        ))}
+      </div>
+
+      {/* SUBTLE PANEL SHEEN — diagonal light streak across the door */}
       <div aria-hidden="true" style={{
         position: 'absolute', inset: 0,
-        background: `
-          radial-gradient(ellipse at 30% 35%, rgba(255,255,255,0.06) 0%, transparent 35%),
-          radial-gradient(ellipse at 75% 65%, rgba(255,255,255,0.05) 0%, transparent 40%),
-          radial-gradient(ellipse at 20% 80%, rgba(255,255,255,0.04) 0%, transparent 35%)
-        `,
+        background: 'linear-gradient(120deg, transparent 38%, rgba(255,255,255,0.06) 50%, transparent 62%)',
         pointerEvents: 'none',
+      }} />
+      {/* Tiny scuffs near the kick plate to break the perfection */}
+      <div aria-hidden="true" style={{
+        position: 'absolute',
+        bottom: '25%', left: '18%',
+        width: '8px', height: '14px',
+        background: 'rgba(0,0,0,0.10)',
+        borderRadius: '50%',
+        filter: 'blur(2px)',
+      }} />
+      <div aria-hidden="true" style={{
+        position: 'absolute',
+        bottom: '28%', right: '24%',
+        width: '12px', height: '8px',
+        background: 'rgba(0,0,0,0.08)',
+        borderRadius: '50%',
+        filter: 'blur(2px)',
+      }} />
+      {/* Avoid the eslint "_cream is unused" — keep the prop for parent
+          compatibility even if we don't render any cream-coloured text
+          on the door itself anymore. */}
+      <span style={{ display: 'none' }}>{cream}</span>
+    </div>
+  )
+}
+
+// CoolerHinge — heavy industrial hinge with two visible knuckles.
+function CoolerHinge({ style }: { style: React.CSSProperties }) {
+  return (
+    <div aria-hidden="true" style={{
+      width: 30, height: 64,
+      background: 'linear-gradient(90deg, #4a4f52 0%, #989fa4 30%, #cfd4d8 50%, #989fa4 70%, #4a4f52 100%)',
+      borderRadius: '3px',
+      boxShadow: '0 4px 10px rgba(0,0,0,0.55), inset 0 0 0 1px rgba(255,255,255,0.18)',
+      display: 'flex', flexDirection: 'column',
+      justifyContent: 'space-around', alignItems: 'center',
+      ...style,
+    }}>
+      {/* Two knuckle rings */}
+      <span style={{
+        width: 14, height: 14, borderRadius: '50%',
+        background: 'radial-gradient(circle at 35% 30%, #f3f5f7 0%, #6a7077 70%, #2a2e30 100%)',
+        boxShadow: 'inset 0 0 0 1px rgba(0,0,0,0.3)',
+      }} />
+      <span style={{
+        width: 14, height: 14, borderRadius: '50%',
+        background: 'radial-gradient(circle at 35% 30%, #f3f5f7 0%, #6a7077 70%, #2a2e30 100%)',
+        boxShadow: 'inset 0 0 0 1px rgba(0,0,0,0.3)',
       }} />
     </div>
   )
@@ -461,20 +646,17 @@ function CoolerInterior({ accent, cream, imageUrl }: {
         <CoolerInteriorSVG />
       )}
 
-      {/* Tiny gold halo at the back-wall center — only on the photo
-          path (where the photo is darker and the warm-light hint reads).
-          On the SVG fallback the room is bright white and this would
-          just tint the type yellow — skip it. */}
-      {imageUrl && (
-        <div
-          aria-hidden="true"
-          style={{
-            position: 'absolute', inset: 0,
-            background: `radial-gradient(ellipse 40% 30% at 50% 40%, ${accent}28 0%, transparent 70%)`,
-            mixBlendMode: 'screen',
-          }}
-        />
-      )}
+      {/* Gold halo at the back-wall centre — warm light hint bleeding
+          into the dim cooler. Works for both photo + SVG fallback now
+          that the SVG interior is dark again. */}
+      <div
+        aria-hidden="true"
+        style={{
+          position: 'absolute', inset: 0,
+          background: `radial-gradient(ellipse 40% 30% at 50% 40%, ${accent}30 0%, transparent 70%)`,
+          mixBlendMode: 'screen',
+        }}
+      />
 
       {/* ── TYPOGRAPHY OVERLAYS sitting in the empty shelves of the
             photo. Positions are tuned for a typical walk-in cooler shot
@@ -494,7 +676,8 @@ function CoolerInterior({ accent, cream, imageUrl }: {
       <FridgeWord
         text="CRAFTED"
         fireAt={0.58}
-        color="#2a3035"
+        color={cream}
+        heavyShadow
         style={{
           top: '20%', left: '3%',
           fontSize: 'clamp(1.1rem, 2.4vw, 1.7rem)',
@@ -520,7 +703,8 @@ function CoolerInterior({ accent, cream, imageUrl }: {
       <FridgeWord
         text="RESERVATIONS"
         fireAt={0.50}
-        color="#2a3035"
+        color={cream}
+        heavyShadow
         style={{
           top: '32%', left: '50%',
           transform: 'translate(-50%, -50%)',
@@ -550,7 +734,8 @@ function CoolerInterior({ accent, cream, imageUrl }: {
       <FridgeWord
         text="ELEGANT"
         fireAt={0.66}
-        color="#2a3035"
+        color={cream}
+        heavyShadow
         style={{
           top: '20%', right: '3%',
           fontSize: 'clamp(1.1rem, 2.4vw, 1.7rem)',
@@ -661,56 +846,53 @@ function CoolerInteriorSVG() {
       style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}
     >
       <defs>
-        {/* Wall — bright cool white, slight darkening at the bottom. */}
+        {/* Dark mood interior palette. The exterior shell of the cooler
+            is bright + realistic (white insulated panels). What's
+            BEHIND the door, however, is dimmed — the cooler is "still
+            cold but the lights are low," nudging the speakeasy vibe. */}
         <linearGradient id="ciWall" x1="0%" y1="0%" x2="0%" y2="100%">
-          <stop offset="0%"   stopColor="#f1f3f5" />
-          <stop offset="55%"  stopColor="#cdd4d9" />
-          <stop offset="100%" stopColor="#8d979e" />
+          <stop offset="0%"   stopColor="#9aa4ac" />
+          <stop offset="55%"  stopColor="#4d585f" />
+          <stop offset="100%" stopColor="#1d2226" />
         </linearGradient>
-        {/* Back wall — brightest because it's lit by the LED + reflects floor */}
-        <radialGradient id="ciBack" cx="50%" cy="45%" r="70%">
-          <stop offset="0%"   stopColor="#f6f8fa" />
-          <stop offset="60%"  stopColor="#d8dde2" />
-          <stop offset="100%" stopColor="#9aa3a9" />
+        <radialGradient id="ciBack" cx="50%" cy="40%" r="70%">
+          <stop offset="0%"   stopColor="#aab4bc" />
+          <stop offset="50%"  stopColor="#5c6a72" />
+          <stop offset="100%" stopColor="#1d262b" />
         </radialGradient>
-        {/* Ceiling — bright white, slightly cooler at the front edge */}
         <linearGradient id="ciCeiling" x1="0%" y1="0%" x2="0%" y2="100%">
-          <stop offset="0%"   stopColor="#dde2e6" />
-          <stop offset="100%" stopColor="#f3f6f8" />
+          <stop offset="0%"   stopColor="#6a747a" />
+          <stop offset="100%" stopColor="#aab4bc" />
         </linearGradient>
-        {/* Floor — dark polished aluminum/concrete with reflection band */}
         <linearGradient id="ciFloor" x1="0%" y1="0%" x2="0%" y2="100%">
-          <stop offset="0%"   stopColor="#2a3035" />
-          <stop offset="40%"  stopColor="#1d2226" />
-          <stop offset="100%" stopColor="#0e1114" />
+          <stop offset="0%"   stopColor="#1d2226" />
+          <stop offset="50%"  stopColor="#0e1114" />
+          <stop offset="100%" stopColor="#050709" />
         </linearGradient>
         {/* Chrome pipe — dark/light/dark gradient for cylindrical sheen */}
         <linearGradient id="ciChrome" x1="0%" y1="0%" x2="100%" y2="0%">
-          <stop offset="0%"   stopColor="#3a4045" />
-          <stop offset="25%"  stopColor="#9aa4ac" />
-          <stop offset="50%"  stopColor="#e5ebee" />
-          <stop offset="75%"  stopColor="#9aa4ac" />
-          <stop offset="100%" stopColor="#3a4045" />
+          <stop offset="0%"   stopColor="#1a1d1f" />
+          <stop offset="35%"  stopColor="#7a8489" />
+          <stop offset="50%"  stopColor="#bbc3c8" />
+          <stop offset="65%"  stopColor="#7a8489" />
+          <stop offset="100%" stopColor="#1a1d1f" />
         </linearGradient>
-        {/* Stainless steel shelf top — light at the front, darker into the back */}
         <linearGradient id="ciShelfTop" x1="0%" y1="0%" x2="0%" y2="100%">
-          <stop offset="0%"   stopColor="#e4e9ec" />
-          <stop offset="50%"  stopColor="#b9c1c7" />
-          <stop offset="100%" stopColor="#6a7378" />
+          <stop offset="0%"   stopColor="#a0aab2" />
+          <stop offset="55%"  stopColor="#5c6770" />
+          <stop offset="100%" stopColor="#1a1f23" />
         </linearGradient>
-        {/* Shelf front edge (visible thickness) — darker, the underside shadow */}
         <linearGradient id="ciShelfEdge" x1="0%" y1="0%" x2="0%" y2="100%">
-          <stop offset="0%"   stopColor="#8a9298" />
-          <stop offset="100%" stopColor="#3a4045" />
+          <stop offset="0%"   stopColor="#5a646b" />
+          <stop offset="100%" stopColor="#1a1d1f" />
         </linearGradient>
-        {/* Refrigeration unit body */}
         <linearGradient id="ciFridgeUnit" x1="0%" y1="0%" x2="0%" y2="100%">
-          <stop offset="0%"   stopColor="#bdc4ca" />
-          <stop offset="55%"  stopColor="#7a8489" />
-          <stop offset="100%" stopColor="#3e464b" />
+          <stop offset="0%"   stopColor="#5a646b" />
+          <stop offset="60%"  stopColor="#2a3035" />
+          <stop offset="100%" stopColor="#0d1013" />
         </linearGradient>
         <filter id="ciLedGlow">
-          <feGaussianBlur stdDeviation="8" />
+          <feGaussianBlur stdDeviation="6" />
         </filter>
       </defs>
 
