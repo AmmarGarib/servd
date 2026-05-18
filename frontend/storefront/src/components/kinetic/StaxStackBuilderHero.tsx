@@ -1,5 +1,6 @@
 'use client'
 import Link from 'next/link'
+import type { CSSProperties } from 'react'
 import { useScrollProgress } from './motionHooks'
 
 /**
@@ -20,15 +21,25 @@ import { useScrollProgress } from './motionHooks'
  * The "wow" comes from the choreography, not decoration.
  */
 
+// Each layer in the stack is either:
+//   - a regular content layer (gradient bar with a label + sub)
+//   - the top bun (domed SVG, sesame seeds, glossy gradient)
+//   - the bottom bun (flat-domed SVG, deeper crust)
+type LayerVariant = 'top-bun' | 'bottom-bun' | 'fill'
+
 interface Layer {
-  /** Menu category this layer represents — shown as the label. */
+  /** What kind of shape this layer is rendered as. */
+  variant?: LayerVariant
+  /** Menu category this layer represents — shown as the label.
+   *  Buns set their own labels internally. */
   label:   string
   /** Sub-label / what's in that category. */
   sub:     string
   /** Height of this layer in vh on the canvas. */
   height:  number
-  /** Background — gradient/solid that reads as "this ingredient". */
-  bg:      string
+  /** Background — gradient/solid that reads as "this ingredient".
+   *  Buns ignore this; their gradients live in the SVG. */
+  bg?:     string
   /** When in scroll progress this layer drops in (0..1). */
   fireAt:  number
   /** Optional darker shadow band at the layer's underside. */
@@ -53,9 +64,10 @@ interface Props {
 }
 
 const DEFAULT_LAYERS: Layer[] = [
-  // The stack is rendered bottom-up: bottom bun first (lowest fireAt,
-  // lands first), top bun last (highest fireAt, lands last).
-  { label: 'Bottom · House Brioche',  sub: 'baked in-house, never frozen',  height: 8.5, bg: 'linear-gradient(180deg, #d4a056 0%, #8a5618 100%)', fireAt: 0.08, shadow: '#6d4413' },
+  // Bottom-up: bottom bun lands first, top bun lands last. Buns use the
+  // dedicated SVG variants so they read as actual bread — flat-domed
+  // base, glossy sesame top — not flat coloured bars.
+  { variant: 'bottom-bun', label: 'House Brioche', sub: 'baked in-house, never frozen',          height: 10,   fireAt: 0.06 },
   { label: 'Stacked Bowls',           sub: 'grain · greens · house dressing',
     height: 6, bg: 'linear-gradient(180deg, #b8d870 0%, #4d7a25 100%)',     fireAt: 0.18, shadow: '#356015', textColor: '#0a0a0a' },
   { label: 'Smash Stax',              sub: 'double smash patty, MCD / Smash / build-your-own',
@@ -68,8 +80,7 @@ const DEFAULT_LAYERS: Layer[] = [
     height: 5, bg: 'linear-gradient(180deg, #e5b25d 0%, #9c6a16 100%)',     fireAt: 0.64, textColor: '#3a1f08' },
   { label: 'Side Stax · Desserts',    sub: 'pommes stax · roasties · stacked desserts',
     height: 4.5, bg: 'linear-gradient(180deg, #c97d4a 0%, #7a3d18 100%)',   fireAt: 0.74 },
-  { label: 'Top · House Brioche',     sub: 'sesame · brushed butter · pressed on the flat-top',
-    height: 9, bg: 'linear-gradient(180deg, #e0b367 0%, #a06c20 100%)',     fireAt: 0.86, shadow: '#704812' },
+  { variant: 'top-bun',   label: 'House Brioche', sub: 'sesame · brushed butter · pressed on the flat-top', height: 13, fireAt: 0.86 },
 ]
 
 export function StaxStackBuilderHero({
@@ -188,36 +199,55 @@ export function StaxStackBuilderHero({
           {layers.map((layer, i) => {
             const easedExpr = `min(1, max(0, (var(--scroll-progress, 0) - ${layer.fireAt}) * 6))`
             const invExpr   = `(1 - ${easedExpr})`
+            const wrapperStyle: CSSProperties = {
+              width: '100%',
+              height: `${layer.height}vh`,
+              marginTop: '-0.7vh',
+              position: 'relative',
+              transform: `
+                translateY(calc(-100vh * ${invExpr}))
+                rotate(calc(-6deg * ${invExpr}))
+                scale(calc(0.85 + 0.15 * ${easedExpr}))
+              `,
+              opacity: `calc(0.2 + ${easedExpr} * 0.8)`,
+              transition: 'transform 80ms linear, opacity 80ms linear',
+              zIndex: layers.length - i,
+            }
+            // Buns get their own SVG-rendered shape; the label sits
+            // overlaid on top of the bun.
+            if (layer.variant === 'top-bun') {
+              return (
+                <div key={layer.label} style={wrapperStyle}>
+                  <TopBun />
+                  <BunLabel idx={i + 1} layer={layer} accent={accent} />
+                </div>
+              )
+            }
+            if (layer.variant === 'bottom-bun') {
+              return (
+                <div key={layer.label} style={wrapperStyle}>
+                  <BottomBun />
+                  <BunLabel idx={i + 1} layer={layer} accent={accent} bottom />
+                </div>
+              )
+            }
+            // Regular fill layer — gradient bar with index + label inside.
             return (
               <div
                 key={layer.label}
                 style={{
-                  width: '100%',
-                  height: `${layer.height}vh`,
-                  marginTop: '-0.7vh',                  // overlap so layers butt against each other
+                  ...wrapperStyle,
                   borderRadius: '14px',
                   background: layer.bg,
                   boxShadow: layer.shadow
                     ? `0 -6px 0 -2px ${layer.shadow}, 0 18px 36px -8px rgba(0,0,0,0.55)`
                     : '0 18px 36px -8px rgba(0,0,0,0.55)',
-                  position: 'relative',
-                  // Each layer flies in from -100vh above + spinning slightly
-                  // toward 0. Scale from 0.85 → 1 so it "settles".
-                  transform: `
-                    translateY(calc(-100vh * ${invExpr}))
-                    rotate(calc(-6deg * ${invExpr}))
-                    scale(calc(0.85 + 0.15 * ${easedExpr}))
-                  `,
-                  opacity: `calc(0.2 + ${easedExpr} * 0.8)`,
-                  transition: 'transform 80ms linear, opacity 80ms linear',
-                  zIndex: layers.length - i,             // higher layers on top
                   display: 'flex',
                   alignItems: 'center',
                   padding: '0 1.5rem',
                   gap: '0.85rem',
                 }}
               >
-                {/* Category index — copper tag, sits inside the layer */}
                 <span style={{
                   background: 'rgba(0,0,0,0.45)',
                   color: accent,
@@ -277,6 +307,181 @@ export function StaxStackBuilderHero({
             </Link>
           )}
         </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── SVG buns ────────────────────────────────────────────────────────
+//
+// Brioche illustrated in SVG so the top dome curves and the bottom flat
+// crust read as actual bread — not flat coloured rectangles. Multi-stop
+// radial gradients give each bun real-looking depth + a glossy highlight.
+// They breathe at idle (subtle CSS keyframe wobble) so the stack feels
+// alive even before the user scrolls.
+
+function TopBun() {
+  return (
+    <svg
+      viewBox="0 0 800 220"
+      preserveAspectRatio="xMidYMid meet"
+      width="100%" height="100%"
+      style={{
+        display: 'block',
+        overflow: 'visible',
+        filter: 'drop-shadow(0 14px 24px rgba(0,0,0,0.45))',
+        animation: 'staxBunBreath 5.5s ease-in-out infinite alternate',
+      }}
+    >
+      <defs>
+        <radialGradient id="staxTopBun" cx="50%" cy="22%" r="80%">
+          <stop offset="0%"   stopColor="#FFE3A8" />
+          <stop offset="32%"  stopColor="#E0A95C" />
+          <stop offset="72%"  stopColor="#B46F2A" />
+          <stop offset="100%" stopColor="#7A4318" />
+        </radialGradient>
+        <radialGradient id="staxTopBunHi" cx="50%" cy="14%" r="40%">
+          <stop offset="0%"   stopColor="white" stopOpacity="0.9" />
+          <stop offset="100%" stopColor="white" stopOpacity="0" />
+        </radialGradient>
+      </defs>
+      <path
+        d="M40 198
+           Q 40 70, 210 40
+           Q 400 8, 590 40
+           Q 760 70, 760 198
+           Z"
+        fill="url(#staxTopBun)"
+      />
+      <path
+        d="M40 198
+           Q 40 70, 210 40
+           Q 400 8, 590 40
+           Q 760 70, 760 198
+           Z"
+        fill="url(#staxTopBunHi)"
+      />
+      {/* Sesame seeds — scattered across the dome with subtle rotation */}
+      {SESAME.map((s, i) => (
+        <ellipse
+          key={i}
+          cx={s.x} cy={s.y} rx="7" ry="10"
+          fill="#F8E5B0"
+          transform={`rotate(${s.r} ${s.x} ${s.y})`}
+          opacity="0.92"
+        />
+      ))}
+    </svg>
+  )
+}
+
+const SESAME = [
+  { x: 200, y: 58, r: -10 }, { x: 290, y: 44, r: 8 },  { x: 380, y: 38, r: -4 },
+  { x: 460, y: 42, r: 12 },  { x: 540, y: 48, r: -8 }, { x: 610, y: 62, r: 6 },
+  { x: 240, y: 78, r: 4 },   { x: 420, y: 66, r: -14 }, { x: 510, y: 82, r: 10 },
+  { x: 340, y: 86, r: 18 },
+]
+
+function BottomBun() {
+  return (
+    <svg
+      viewBox="0 0 800 130"
+      preserveAspectRatio="xMidYMid meet"
+      width="100%" height="100%"
+      style={{
+        display: 'block',
+        overflow: 'visible',
+        filter: 'drop-shadow(0 18px 32px rgba(0,0,0,0.5))',
+        animation: 'staxBunBreath 6s ease-in-out infinite alternate-reverse',
+      }}
+    >
+      <defs>
+        <radialGradient id="staxBottomBun" cx="50%" cy="78%" r="80%">
+          <stop offset="0%"   stopColor="#E5B976" />
+          <stop offset="38%"  stopColor="#C28A3A" />
+          <stop offset="78%"  stopColor="#8a541a" />
+          <stop offset="100%" stopColor="#4d2810" />
+        </radialGradient>
+        <linearGradient id="staxBottomBunHi" x1="50%" y1="0%" x2="50%" y2="100%">
+          <stop offset="0%"   stopColor="white" stopOpacity="0.55" />
+          <stop offset="35%"  stopColor="white" stopOpacity="0" />
+        </linearGradient>
+      </defs>
+      <path
+        d="M40 14
+           L 760 14
+           Q 760 100, 600 118
+           Q 400 132, 200 118
+           Q 40 100, 40 14
+           Z"
+        fill="url(#staxBottomBun)"
+      />
+      <path
+        d="M40 14
+           L 760 14
+           Q 760 100, 600 118
+           Q 400 132, 200 118
+           Q 40 100, 40 14
+           Z"
+        fill="url(#staxBottomBunHi)"
+      />
+    </svg>
+  )
+}
+
+// Tiny label that overlays the bun shapes — sits inside the dome on top,
+// or on the visible part of the flat-bottom. Positioned with vertical
+// offset depending on which bun it's for.
+function BunLabel({
+  idx, layer, accent, bottom,
+}: { idx: number; layer: Layer; accent: string; bottom?: boolean }) {
+  return (
+    <div style={{
+      position: 'absolute',
+      inset: 0,
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'flex-start',
+      paddingLeft: 'clamp(2rem, 6vw, 4rem)',
+      // Bottom bun is short + flat, so the label sits centered vertically.
+      // Top bun is taller + domed, so we nudge the label up into the dome.
+      paddingTop: bottom ? 0 : 'clamp(1rem, 3vh, 2rem)',
+      gap: '0.85rem',
+      pointerEvents: 'none',
+    }}>
+      <span style={{
+        background: 'rgba(60,30,8,0.55)',
+        color: '#FFE3A8',
+        fontFamily: 'var(--font-display)',
+        fontWeight: 800,
+        fontSize: '0.7rem',
+        letterSpacing: '0.18em',
+        padding: '0.28rem 0.55rem',
+        borderRadius: '4px',
+        textTransform: 'uppercase',
+        textShadow: '0 1px 1px rgba(0,0,0,0.4)',
+      }}>
+        {String(idx).padStart(2, '0')}
+      </span>
+      <div style={{ minWidth: 0 }}>
+        <p style={{
+          fontFamily: 'var(--font-display)',
+          fontWeight: 800,
+          fontSize: 'clamp(0.95rem, 1.6vw, 1.25rem)',
+          color: '#3a1f08',
+          letterSpacing: '-0.015em',
+          lineHeight: 1.05,
+        }}>
+          {bottom ? 'Bottom · ' : 'Top · '}{layer.label}
+          <span style={{ color: accent }}>.</span>
+        </p>
+        <p style={{
+          fontSize: 'clamp(0.7rem, 1.1vw, 0.82rem)',
+          color: 'rgba(58,31,8,0.78)',
+          marginTop: '0.15rem',
+        }}>
+          {layer.sub}
+        </p>
       </div>
     </div>
   )

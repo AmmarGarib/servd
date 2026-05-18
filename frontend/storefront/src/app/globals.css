@@ -574,10 +574,10 @@ button:hover > .kinetic-caret::after { transform: translateX(6px); }
   filter: saturate(1.15) contrast(1.05);
 }
 
-/* Candle flicker — small rapid scale wobble that simulates a flickering
-   flame. Used by SlowCookHero. */
-@keyframes candleFlicker {
-  0%   { transform: translateX(-50%) scale(1, 1) skewX(-2deg); filter: blur(1px) drop-shadow(0 0 16px var(--brand-accent)); }
-  50%  { transform: translateX(-50%) scale(0.95, 1.05) skewX(1deg); filter: blur(1.5px) drop-shadow(0 0 20px var(--brand-accent)); }
-  100% { transform: translateX(-50%) scale(1.05, 0.95) skewX(-1deg); filter: blur(1px) drop-shadow(0 0 14px var(--brand-accent)); }
+/* Stax bun "breath" — subtle scale + skew wobble so the buns feel like
+   freshly-baked dough, not flat decals. Used by StaxStackBuilderHero. */
+@keyframes staxBunBreath {
+  0%   { transform: scale(1, 1) translateY(0); }
+  50%  { transform: scale(1.012, 0.99) translateY(-2px); }
+  100% { transform: scale(0.995, 1.008) translateY(1px); }
 }

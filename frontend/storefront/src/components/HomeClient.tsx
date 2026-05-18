@@ -3,7 +3,6 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import type { Concept } from '../lib/concept'
 import { conceptHeroImage } from '../lib/concept'
-import { KineticShape } from './kinetic/KineticShape'
 import { DragRail } from './kinetic/DragRail'
 import { MarqueeText } from './kinetic/MarqueeStrip'
 import { useScrollReveal } from './kinetic/motionHooks'
@@ -86,28 +85,17 @@ export function HomeClient({ concepts: _concepts }: Props) {
           ['--brand-ink' as string]:    '#0a0a0a',
         }}>
 
-        {/* servd is the platform layer — discovery + order + delivery
-            tracking, like Uber for the kitchens. The hero is restrained:
-            a single soft ambient glow in the active brand's accent, no
-            scattered decoration. The food emoji stays as a single subtle
-            brand cue that tracks the spotlight. */}
+        {/* servd is the platform — discovery + order + delivery tracking.
+            Restrained hero: just an ambient glow that tracks the active
+            brand's accent. No floating decorations, no food emojis,
+            no scattered shapes. The hero earns its weight from typography
+            + the brand spotlight cycle, not from kinetic ornament. */}
         <div aria-hidden="true" style={{
           position: 'absolute', inset: 0, zIndex: 1,
           background: `radial-gradient(ellipse 50% 50% at 70% 30%, ${liveAccent}30 0%, transparent 70%),
                        radial-gradient(ellipse 50% 50% at 20% 80%, ${liveAccent}18 0%, transparent 70%)`,
           transition: 'background 800ms ease',
         }} />
-        <KineticShape
-          variant="emoji"
-          emoji={VOICES[liveIdx]?.emoji ?? '🍔'}
-          size={120}
-          style={{
-            top: '18%', right: '10%',
-            transition: 'opacity 600ms ease',
-            zIndex: 2,
-            opacity: 0.7,
-          }}
-        />
 
         <div className="container relative z-10" style={{ paddingTop: 'clamp(4rem, 9vw, 7rem)', paddingBottom: 'clamp(4rem, 9vw, 7rem)' }}>
 
@@ -231,12 +219,12 @@ export function HomeClient({ concepts: _concepts }: Props) {
               <div style={{
                 position: 'relative',
                 aspectRatio: '4 / 5',
-                background: `linear-gradient(135deg, ${v.accent}25, transparent 60%), #0a0a0a`,
+                background: `
+                  radial-gradient(ellipse 80% 60% at 70% 20%, ${v.accent}22 0%, transparent 60%),
+                  linear-gradient(180deg, #1a1a1a 0%, #0a0a0a 100%)
+                `,
                 overflow: 'hidden',
               }}>
-                <KineticShape variant="blob"  size={300} color={v.accent} style={{ top: '-10%', right: '-15%' }} />
-                <KineticShape variant="emoji" emoji={v.emoji} size={170} style={{ bottom: '8%', right: '12%' }} />
-                <KineticShape variant="ring"  size={90}  color={v.accent} style={{ top: '18%', left: '14%' }} spin />
                 <div className="kinetic-arrow">→</div>
                 <div style={{
                   position: 'absolute', left: '1.5rem', bottom: '1.5rem',
@@ -321,9 +309,6 @@ export function HomeClient({ concepts: _concepts }: Props) {
       {/* ── THE PROMISE — three pillars laid out asymmetric. The accent
             shifts on each pillar so the section reads as multi-brand. ── */}
       <section className="section relative overflow-hidden" style={{ background: 'white' }}>
-        <KineticShape variant="blob" size={380} color="#22c55e" style={{ top: '-10%', right: '-12%', opacity: 0.25 }} />
-        <KineticShape variant="blob" size={280} color="#FF6B35" style={{ bottom: '5%', left: '-8%', opacity: 0.2 }} />
-
         <div className="container relative">
           <p className="eyebrow eyebrow-accent">The promise</p>
           <h2 className="display" style={{ fontSize: 'clamp(2.8rem, 6vw, 5rem)', marginBottom: '2.5rem', maxWidth: '900px' }}>
@@ -357,6 +342,146 @@ export function HomeClient({ concepts: _concepts }: Props) {
                 <p style={{ color: 'var(--servd-mute)', lineHeight: 1.55 }}>{p.body}</p>
               </div>
             ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ── INSIDERS — membership push. This section is the loyalty
+            growth engine: turn one-time orderers into Insiders, who get
+            early access to limited drops, free delivery on weekday
+            lunches, and a private channel for the omakase nights at
+            Simmer. Three-tier card layout, central CTA. ─────────── */}
+      <section className="section surface-ink relative overflow-hidden"
+        style={{ ['--brand-accent' as string]: '#c9a961', ['--brand-ink' as string]: '#0a0a0a' }}>
+        {/* Soft gold wash so this section reads as "the premium tier" */}
+        <div aria-hidden="true" style={{
+          position: 'absolute', inset: 0,
+          background: 'radial-gradient(ellipse 60% 50% at 50% 30%, rgba(201,169,97,0.18) 0%, transparent 60%)',
+        }} />
+        <div className="container relative">
+          <div className="asym-2" style={{ marginBottom: 'clamp(2.5rem, 5vw, 3.5rem)' }}>
+            <div>
+              <p className="eyebrow" style={{ color: '#c9a961', marginBottom: '1rem' }}>
+                Insiders · free to join
+              </p>
+              <h2 className="display" style={{
+                fontSize: 'clamp(2.8rem, 6.5vw, 5rem)',
+                color: 'white',
+              }}>
+                The best stuff<br />
+                <span className="display-italic" style={{ color: '#c9a961' }}>doesn't get listed.</span>
+              </h2>
+            </div>
+            <p style={{
+              color: 'rgba(255,255,255,0.7)',
+              fontSize: '1.05rem',
+              lineHeight: 1.55,
+              maxWidth: '440px',
+            }}>
+              Limited drops. Omakase nights at Simmer. Build-your-own off-menu Stax. Free delivery on weekday lunches. Insiders get first.
+            </p>
+          </div>
+
+          {/* Three perks in a row — keep the layout asymmetric (middle
+              card stands taller) so it doesn't read as a generic grid. */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-5" style={{ alignItems: 'stretch' }}>
+            {[
+              {
+                tag:   'First access',
+                head:  'Drops before they list',
+                body:  'New Stax stacks, Simmer omakase nights, Flipd Friday tenders — Insiders get a 24-hour window before anyone else can book.',
+                badge: '24h',
+              },
+              {
+                tag:   'Off-menu',
+                head:  'The hidden Stax menu',
+                body:  "Build-your-own pubstax, off-menu sandwiches, and dishes the chefs run for friends. Members only.",
+                badge: '★',
+                featured: true,
+              },
+              {
+                tag:   'Free perks',
+                head:  'Lunch delivery on us',
+                body:  'Weekday lunch delivery free for Insiders. Plus 200 points on every order. Redeem for a meal once you hit 2,000.',
+                badge: 'Rs. 0',
+              },
+            ].map((p, i) => (
+              <div key={i} style={{
+                background: p.featured
+                  ? 'linear-gradient(160deg, rgba(201,169,97,0.16) 0%, rgba(201,169,97,0.04) 60%, transparent 100%)'
+                  : 'rgba(255,255,255,0.03)',
+                border: p.featured ? '1px solid rgba(201,169,97,0.45)' : '1px solid rgba(255,255,255,0.08)',
+                borderRadius: '1.25rem',
+                padding: '1.5rem 1.4rem',
+                color: 'white',
+                position: 'relative',
+                transform: p.featured ? 'translateY(-12px)' : 'none',
+                transition: 'transform 220ms cubic-bezier(0.22, 1, 0.36, 1)',
+              }}>
+                <div style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  width: '2.4rem',
+                  height: '2.4rem',
+                  background: p.featured ? '#c9a961' : 'rgba(255,255,255,0.08)',
+                  color: p.featured ? '#0a0a0a' : '#c9a961',
+                  borderRadius: '999px',
+                  fontFamily: 'var(--font-display)',
+                  fontWeight: 800,
+                  fontSize: '0.95rem',
+                  marginBottom: '1rem',
+                }}>{p.badge}</div>
+                <p className="eyebrow" style={{ color: '#c9a961', marginBottom: '0.5rem' }}>
+                  {p.tag}
+                </p>
+                <h3 className="display" style={{
+                  fontSize: 'clamp(1.35rem, 2.3vw, 1.65rem)',
+                  color: 'white',
+                  marginBottom: '0.6rem',
+                  lineHeight: 1.05,
+                }}>
+                  {p.head}
+                </h3>
+                <p style={{
+                  color: 'rgba(255,255,255,0.7)',
+                  fontSize: '0.92rem',
+                  lineHeight: 1.55,
+                }}>
+                  {p.body}
+                </p>
+              </div>
+            ))}
+          </div>
+
+          {/* Single Insiders CTA — branded with the gold accent so the
+              "premium tier" framing carries through. */}
+          <div style={{
+            marginTop: 'clamp(2.5rem, 5vw, 3.5rem)',
+            display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '1rem',
+          }}>
+            <Link
+              href="/signup?insider=1"
+              className="brand-pill"
+              style={{ background: '#c9a961', color: '#0a0a0a', fontSize: '1.05rem' }}
+            >
+              Become an Insider →
+            </Link>
+            <Link
+              href="/insiders"
+              style={{
+                color: 'rgba(255,255,255,0.75)',
+                fontWeight: 600,
+                textDecoration: 'underline',
+                textUnderlineOffset: '4px',
+                textDecorationColor: 'rgba(201,169,97,0.5)',
+              }}
+            >
+              See all member perks
+            </Link>
+            <span style={{ color: 'rgba(255,255,255,0.4)', fontSize: '0.86rem' }}>
+              · free forever · cancel anytime
+            </span>
           </div>
         </div>
       </section>

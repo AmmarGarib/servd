@@ -1,69 +1,47 @@
 'use client'
-import { useState, useEffect, useRef } from 'react'
 import Link from 'next/link'
+import { useScrollProgress } from './motionHooks'
 
 /**
- * SpeakeasyFridgeHero — the literal Simmer entrance, on the website.
+ * SpeakeasyFridgeHero — Simmer's web entrance, mirroring the physical one.
  *
- * Concept (from the operator):
- *   "Simmer is in the basement of Stax. The entrance is the outer shell
- *    of a walk-in fridge with a pin pad. Customers tap in a code to get
- *    in. Inside: dark, moody, wood + green marble, mocktails + tapas."
+ * IRL: Simmer is in the basement of Stax. The entrance — inside Stax —
+ * looks like a walk-in fridge door, no signage, no labels. Customers
+ * who know, know. They walk up to what looks like a chiller, pull on
+ * the handle, and it opens into the speakeasy.
  *
- * The web hero mirrors the physical entrance exactly:
- *   1. User lands on the page. A walk-in fridge door fills the viewport,
- *      brushed steel, with a small pin pad next to the handle.
- *   2. User taps the pin pad (touchscreen-style buttons 0-9). Four digits
- *      land in the readout. Wrong code → red flash + clear. Right code
- *      (1973 — Karachi's first speakeasy year, but really just a memorable
- *      4-digit) → the readout turns green and the door unlocks with a soft
- *      "click" + a brand-accent halo.
- *   3. The fridge door slowly swings open, revealing the speakeasy
- *      interior behind it: warm low light, wood panels, green-marble
- *      counter, glass shelves with mocktails, the brand logo wordmark
- *      glowing on the back wall.
- *   4. Menu categories (Small Plates, Large Plates, Desserts, Drinks)
- *      fade up over the interior, with a reservations CTA.
+ * On the web:
+ *   1. First thing you see on /brand/simmer is the closed walk-in
+ *      fridge door, full-bleed. Nothing else. Brushed steel, rivets,
+ *      industrial hinges, a polished handle. Looks like a real fridge.
+ *   2. As you scroll, the door slowly swings open along its hinge.
+ *      Cold air pours out (light-blue glow at the top seam). The
+ *      interior emerges from behind — dark wood, green-marble bar,
+ *      candle-glow against the back wall.
+ *   3. Once the door is fully open, a single line lands on the
+ *      interior: "RESERVATIONS ONLY." Below it, the brand wordmark
+ *      and the Reserve CTA.
  *
- * Fallback for scroll-only users: if the user scrolls past the door
- * without entering a code, the door opens automatically once they've
- * scrolled ~30% past the section. Nobody gets stuck.
- *
- * Code: 1973 (deliberately not displayed anywhere; the savvy customer
- * either learns it from word-of-mouth, or scrolls and the door yields).
+ * Pure scroll-driven. No pin pad, no clicks. The whole hero is a
+ * sticky 250vh section; CSS reads --scroll-progress to choreograph the
+ * door rotation + the interior reveal + the text cascade.
  */
 
-interface CategoryReveal {
-  label: string
-  emoji: string
-  href:  string
-}
-
 interface Props {
-  brandName:  string
-  /** Hex of the brand accent (gold for Simmer). */
-  accent:     string
-  /** Outer ink — the brushed-steel exterior background. */
-  ink:        string
-  /** Deeper wood-tone for the interior reveal. */
-  wood?:      string
-  /** Marble swatch for the back-bar counter. */
-  marble?:    string
-  /** "Cream" tone used on label text inside. */
-  cream?:     string
+  brandName:   string
+  /** Saffron gold accent. */
+  accent:      string
+  /** Outer ink — the brushed-steel wall colour. */
+  ink:         string
+  /** Interior wood-tone. */
+  wood?:       string
+  /** Green marble for the back-bar. */
+  marble?:     string
+  cream?:      string
   reserveHref: string
-  menuHref:    string
-  categories?: CategoryReveal[]
-  /** The unlock code. Default 1973. */
-  code?:       string
+  /** Optional menu link for inside-the-speakeasy navigation. */
+  menuHref?:   string
 }
-
-const DEFAULT_CATEGORIES: CategoryReveal[] = [
-  { label: 'Small plates', emoji: '🥄', href: '#small' },
-  { label: 'Large plates', emoji: '🍽',  href: '#large' },
-  { label: 'Desserts',     emoji: '🍰', href: '#desserts' },
-  { label: 'Drinks',       emoji: '🍸', href: '#drinks' },
-]
 
 export function SpeakeasyFridgeHero({
   brandName, accent, ink,
@@ -71,138 +49,112 @@ export function SpeakeasyFridgeHero({
   marble = '#22382f',
   cream  = '#f4ede0',
   reserveHref, menuHref,
-  categories = DEFAULT_CATEGORIES,
-  code = '1973',
 }: Props) {
-  const [entered, setEntered]     = useState('')        // digits the user has tapped so far
-  const [unlocked, setUnlocked]   = useState(false)     // door opens once true
-  const [errorTick, setErrorTick] = useState(0)         // bumped on wrong-code to trigger shake
-  const [autoUnlock, setAutoUnlock] = useState(false)   // fallback once user scrolls past
-  const sectionRef = useRef<HTMLDivElement | null>(null)
-
-  // Fallback unlock — if the user scrolls into the page without engaging
-  // the pin pad, ease the door open once they've crossed ~70% of viewport
-  // height past the section top. We don't punish people for not knowing
-  // there's a code; the interaction is a delight for those who try it.
-  useEffect(() => {
-    const el = sectionRef.current
-    if (!el) return
-    function onScroll() {
-      const rect = el!.getBoundingClientRect()
-      if (rect.top < -window.innerHeight * 0.3) {
-        setAutoUnlock(true)
-      }
-    }
-    window.addEventListener('scroll', onScroll, { passive: true })
-    return () => window.removeEventListener('scroll', onScroll)
-  }, [])
-
-  function pressKey(d: string) {
-    if (unlocked) return
-    if (d === 'C') { setEntered(''); return }
-    if (d === '⌫') { setEntered((cur) => cur.slice(0, -1)); return }
-    setEntered((cur) => {
-      const next = (cur + d).slice(0, code.length)
-      // Validate as soon as we've got the full code length
-      if (next.length === code.length) {
-        if (next === code) {
-          // tiny delay so the user reads "✓" before the door opens
-          setTimeout(() => setUnlocked(true), 350)
-        } else {
-          setErrorTick((t) => t + 1)
-          setTimeout(() => setEntered(''), 600)
-        }
-      }
-      return next
-    })
-  }
-
-  const open = unlocked || autoUnlock
+  const { ref } = useScrollProgress<HTMLDivElement>()
 
   return (
-    <section
-      ref={sectionRef}
+    <div
+      ref={ref}
       style={{
+        height: '260vh',                       // generous runway for the open
         position: 'relative',
-        minHeight: '100vh',
         background: ink,
         color: cream,
-        overflow: 'hidden',
         ['--brand-accent' as string]: accent,
         ['--simmer-wood' as string]:  wood,
         ['--simmer-marble' as string]: marble,
       } as React.CSSProperties}
     >
-      {/* Brushed-steel wall — the exterior surface the fridge sits in.
-          Subtle vertical brushing pattern + a long horizontal seam line
-          across the middle gives it the "industrial wall" feel. */}
-      <div aria-hidden="true" style={{
-        position: 'absolute', inset: 0,
-        background: `
-          linear-gradient(180deg, #2a2f31 0%, #1a1d1f 100%),
-          repeating-linear-gradient(90deg, rgba(255,255,255,0.04) 0 1px, transparent 1px 4px)
-        `,
-        backgroundBlendMode: 'overlay',
-      }} />
-      {/* Horizontal seam line — a thin highlight band crossing the wall */}
-      <div aria-hidden="true" style={{
-        position: 'absolute', left: 0, right: 0, top: '52%',
-        height: 1, background: 'rgba(255,255,255,0.06)',
-      }} />
-
-      {/* Brand label etched into the wall above the door — small, almost
-          missable. The whole point of a speakeasy. */}
-      <p className="eyebrow"
+      <div className="sticky overflow-hidden"
         style={{
-          position: 'absolute', top: '6vh', left: '50%',
+          top: 0,
+          height: '100vh',
+          width: '100%',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}
+      >
+        {/* Concrete + brushed-steel wall the fridge is mounted in.
+            Includes a horizontal trim seam, a few stray rivets, and
+            faint scuff marks so it reads as a real industrial wall. */}
+        <div aria-hidden="true" style={{
+          position: 'absolute', inset: 0,
+          background: `
+            linear-gradient(180deg, #1d2022 0%, #0d0f10 100%),
+            repeating-linear-gradient(90deg, rgba(255,255,255,0.025) 0 1px, transparent 1px 6px)
+          `,
+          backgroundBlendMode: 'overlay',
+        }} />
+        {/* Subtle wear marks at the door's footprint */}
+        <div aria-hidden="true" style={{
+          position: 'absolute', left: '50%', bottom: '8vh',
+          width: 'min(640px, 80vw)', height: '60px',
           transform: 'translateX(-50%)',
-          color: 'rgba(255,255,255,0.4)',
-          letterSpacing: '0.55em',
-          fontSize: '0.68rem',
-        }}>
-        below stax · {brandName.toLowerCase()}
-      </p>
+          background: 'radial-gradient(ellipse 60% 40% at 50% 50%, rgba(0,0,0,0.55) 0%, transparent 70%)',
+          filter: 'blur(8px)',
+        }} />
+        {/* Wall trim — horizontal accent line where the floor meets wall */}
+        <div aria-hidden="true" style={{
+          position: 'absolute', left: 0, right: 0, bottom: '8vh',
+          height: 1, background: 'rgba(255,255,255,0.06)',
+        }} />
 
-      <div className="container relative z-10" style={{
-        minHeight: '100vh',
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: 'clamp(6rem, 12vw, 9rem) 1rem 4rem',
-      }}>
+        {/* Tiny etched label above the door. Almost missable. */}
+        <p className="eyebrow"
+          style={{
+            position: 'absolute', top: '6vh', left: '50%',
+            transform: 'translateX(-50%)',
+            color: 'rgba(255,255,255,0.32)',
+            letterSpacing: '0.6em',
+            fontSize: '0.66rem',
+            zIndex: 5,
+          }}>
+          below stax · {brandName.toLowerCase()}
+        </p>
 
-        {/* The fridge door + pin pad assembly */}
-        <div style={{
-          position: 'relative',
-          width: 'min(560px, 86vw)',
-          aspectRatio: '3 / 4.4',
-          perspective: 1400,
-        }}>
-
-          {/* INTERIOR — behind the door. Becomes visible only after the
-              door opens; otherwise hidden by the door's z-index. */}
+        {/* THE DOOR ASSEMBLY ──────────────────────────────────────────
+            Three layers, back-to-front:
+              1. Interior — visible only as door rotates open
+              2. Door — rotates open on left hinge based on scroll
+              3. Frame — fixed casing around the doorway
+        */}
+        <div
+          style={{
+            position: 'relative',
+            width: 'min(680px, 90vw)',
+            aspectRatio: '3 / 4.6',
+            perspective: 1800,
+            zIndex: 2,
+          }}
+        >
+          {/* ── INTERIOR — visible behind the door once it opens ── */}
           <div
-            aria-hidden={!open}
+            aria-hidden={true}
             style={{
               position: 'absolute',
               inset: 0,
-              borderRadius: '14px',
+              borderRadius: '4px',
               background: `
-                radial-gradient(ellipse 80% 60% at 50% 70%, ${accent}30 0%, transparent 70%),
-                linear-gradient(180deg, #0e1612 0%, ${wood} 100%)
+                radial-gradient(ellipse 80% 60% at 50% 65%, ${accent}30 0%, transparent 70%),
+                linear-gradient(180deg, #0a1410 0%, ${wood} 60%, #0a0a0a 100%)
               `,
               overflow: 'hidden',
-              boxShadow: 'inset 0 30px 80px rgba(0,0,0,0.7)',
-              opacity: open ? 1 : 0,
-              transition: 'opacity 800ms ease 600ms',
+              boxShadow: 'inset 0 30px 80px rgba(0,0,0,0.85)',
+              // Interior is dark — brightens as door opens
+              opacity: 'calc(var(--scroll-progress, 0) * 1.8)',
+              transition: 'opacity 80ms linear',
             }}>
-            {/* Wood-panel slat texture */}
+            {/* Wood-panel slat texture — vertical seams every 60px */}
             <div aria-hidden="true" style={{
               position: 'absolute', inset: 0,
-              background: `repeating-linear-gradient(180deg, rgba(255,255,255,0.04) 0 2px, transparent 2px 64px)`,
+              background: `
+                repeating-linear-gradient(180deg,
+                  rgba(255,255,255,0.04) 0 2px,
+                  transparent 2px 60px)
+              `,
             }} />
-            {/* Green marble back-bar — bottom 40% */}
+            {/* Green-marble back-bar across the bottom third */}
             <div aria-hidden="true" style={{
               position: 'absolute',
               left: 0, right: 0, bottom: 0,
@@ -212,338 +164,344 @@ export function SpeakeasyFridgeHero({
                 radial-gradient(ellipse at 70% 30%, ${marble} 0%, transparent 70%),
                 linear-gradient(180deg, ${marble} 0%, #0d1813 100%)
               `,
-              borderTop: `1px solid ${accent}45`,
+              borderTop: `1px solid ${accent}50`,
             }}>
-              {/* Bottle silhouettes on the back bar */}
+              {/* Bottle silhouettes lined up on the bar */}
               <div style={{
-                position: 'absolute', bottom: '20%', left: 0, right: 0,
+                position: 'absolute', bottom: '22%', left: 0, right: 0,
                 display: 'flex', justifyContent: 'space-around', alignItems: 'flex-end',
                 gap: '6px',
                 padding: '0 8%',
               }}>
-                {[80, 110, 70, 95, 120, 75, 100].map((h, i) => (
+                {[80, 110, 70, 95, 120, 75, 100, 88].map((h, i) => (
                   <div key={i} style={{
-                    width: 14, height: h,
-                    background: 'linear-gradient(180deg, rgba(0,0,0,0.5) 0%, rgba(0,0,0,0.9) 100%)',
-                    borderRadius: '4px 4px 2px 2px',
-                    boxShadow: `0 0 8px ${accent}55`,
+                    width: 12, height: h,
+                    background: 'linear-gradient(180deg, rgba(0,0,0,0.5) 0%, rgba(0,0,0,0.95) 100%)',
+                    borderRadius: '3px 3px 1px 1px',
+                    boxShadow: `0 0 10px ${accent}55`,
                   }} />
                 ))}
               </div>
             </div>
-            {/* Brand wordmark glowing on the back wall */}
-            <p
-              className="display-italic"
+            {/* RESERVATIONS ONLY — the big reveal text. Fades in only
+                after the door is mostly open (progress > 0.55). */}
+            <div
               style={{
                 position: 'absolute',
-                top: '20%', left: 0, right: 0,
+                top: '22%', left: 0, right: 0,
                 textAlign: 'center',
-                color: accent,
-                fontSize: 'clamp(2rem, 5vw, 3.5rem)',
-                textShadow: `0 0 24px ${accent}aa`,
-                letterSpacing: '-0.01em',
-              }}
+                opacity: 'calc(max(0, var(--scroll-progress, 0) - 0.5) * 2.2)',
+                transform: 'translateY(calc((1 - var(--scroll-progress, 0)) * 16px))',
+                transition: 'opacity 90ms linear',
+              } as React.CSSProperties}
             >
-              {brandName.toLowerCase()}.
-            </p>
-            {/* Welcome eyebrow */}
-            <p className="eyebrow" style={{
-              position: 'absolute', top: '34%', left: 0, right: 0,
-              textAlign: 'center', color: 'rgba(244,237,224,0.55)',
-              letterSpacing: '0.45em',
-              fontSize: '0.7rem',
-            }}>
-              you're in
-            </p>
-            {/* Cold-air drift on first open — light stream pouring out */}
+              <p className="display"
+                style={{
+                  fontSize: 'clamp(2.2rem, 5.5vw, 4rem)',
+                  color: cream,
+                  letterSpacing: '0.04em',
+                  textShadow: `0 0 28px ${accent}aa`,
+                  margin: 0,
+                }}
+              >
+                RESERVATIONS
+              </p>
+              <p className="display-italic"
+                style={{
+                  fontSize: 'clamp(1.5rem, 4vw, 2.8rem)',
+                  color: accent,
+                  marginTop: '0.15em',
+                  letterSpacing: '0.02em',
+                }}
+              >
+                only.
+              </p>
+            </div>
+            {/* Cold air pouring out — vertical light stream from top seam */}
             <div aria-hidden="true" style={{
               position: 'absolute',
-              top: 0, left: '40%', width: '20%', height: '40%',
-              background: `linear-gradient(180deg, ${accent}20 0%, transparent 100%)`,
+              top: 0, left: '38%', width: '24%', height: '60%',
+              background: `linear-gradient(180deg, rgba(180,220,255,0.35) 0%, transparent 100%)`,
               filter: 'blur(20px)',
-              opacity: open ? 0.7 : 0,
-              transition: 'opacity 700ms ease 600ms',
+              opacity: 'calc(var(--scroll-progress, 0) * 1.5)',
             }} />
           </div>
 
-          {/* THE DOOR — sits on top of the interior. Swings open along its
-              left hinge (rotateY) when unlocked. */}
+          {/* ── THE DOOR — rotates open along its left hinge as scroll
+                progresses. Goes from 0deg (closed) to -85deg (wide open). */}
           <div
             style={{
               position: 'absolute',
               inset: 0,
               transformOrigin: 'left center',
-              transform: open
-                ? 'rotateY(-78deg) translateX(-2px)'
-                : `rotateY(0deg) translateX(${errorTick % 2 ? '8px' : '0'})`,
+              transform: 'rotateY(calc(var(--scroll-progress, 0) * -85deg))',
               transformStyle: 'preserve-3d',
-              transition: open
-                ? 'transform 1500ms cubic-bezier(0.22, 1, 0.36, 1)'
-                : 'transform 90ms cubic-bezier(0.7, 0, 0.7, 1)',
-              zIndex: 2,
-            }}
+              transition: 'transform 80ms linear',
+              zIndex: 3,
+              // Tiny depth shadow that grows as door opens
+              boxShadow: 'calc(var(--scroll-progress, 0) * 30px) 0 60px rgba(0,0,0,0.6)',
+            } as React.CSSProperties}
           >
-            {/* Door face — brushed steel, big handle on the right, label
-                up top, vent slats at the bottom. */}
-            <div style={{
-              position: 'absolute',
-              inset: 0,
-              borderRadius: '14px',
-              background: `
-                linear-gradient(180deg, #4a5054 0%, #2a2f31 50%, #1d2122 100%),
-                repeating-linear-gradient(90deg, rgba(255,255,255,0.05) 0 1px, transparent 1px 3px)
-              `,
-              backgroundBlendMode: 'overlay',
-              boxShadow: open
-                ? '0 0 0 1px rgba(255,255,255,0.06), 0 30px 60px rgba(0,0,0,0.6)'
-                : '0 0 0 1px rgba(255,255,255,0.08), 0 18px 40px rgba(0,0,0,0.5)',
-              overflow: 'hidden',
-            }}>
-              {/* Top label plate — "PROVISIONS" or just an industrial sticker */}
-              <div style={{
-                position: 'absolute',
-                top: '5%', left: '10%', right: '32%',
-                padding: '0.5rem 0.85rem',
-                background: 'rgba(0,0,0,0.55)',
-                border: '1px solid rgba(255,255,255,0.1)',
-                borderRadius: '4px',
-              }}>
-                <p style={{ fontSize: '0.6rem', letterSpacing: '0.5em', color: 'rgba(255,255,255,0.55)', fontWeight: 700 }}>
-                  WALK-IN · 002
-                </p>
-                <p style={{ fontSize: '0.85rem', fontWeight: 800, color: cream, marginTop: '0.15rem' }}>
-                  PROVISIONS
-                </p>
-              </div>
-              {/* Door handle — long vertical bar on the right side */}
-              <div style={{
-                position: 'absolute',
-                top: '20%', bottom: '20%', right: '7%',
-                width: '14px',
-                background: 'linear-gradient(90deg, #5a5f62 0%, #8a9094 30%, #c5c9cc 50%, #8a9094 70%, #5a5f62 100%)',
-                borderRadius: '999px',
-                boxShadow: '0 4px 14px rgba(0,0,0,0.55), inset 0 0 0 1px rgba(255,255,255,0.1)',
-              }} />
-              {/* Latch — small fixture above the handle */}
-              <div style={{
-                position: 'absolute',
-                top: '14%', right: '6%',
-                width: '18px', height: '38px',
-                background: 'linear-gradient(180deg, #8a9094 0%, #4a5054 100%)',
-                borderRadius: '3px',
-                boxShadow: '0 2px 6px rgba(0,0,0,0.6)',
-              }} />
-              {/* Bottom vent slats */}
-              <div style={{
-                position: 'absolute',
-                bottom: '8%', left: '14%', right: '14%',
-                height: '90px',
-                background: `repeating-linear-gradient(180deg, rgba(0,0,0,0.6) 0 4px, rgba(255,255,255,0.04) 4px 12px)`,
-                borderRadius: '6px',
-                boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.05)',
-              }} />
-
-              {/* Pin pad — middle-left of the door. This is what the user
-                  taps. Each button is a small steel square with the
-                  number etched in. Wrong code = brief red glow + shake. */}
-              <div
-                style={{
-                  position: 'absolute',
-                  top: '36%',
-                  left: '10%',
-                  width: 'clamp(160px, 38%, 200px)',
-                  padding: '0.85rem',
-                  background: 'linear-gradient(180deg, #1a1d1f 0%, #0d0f10 100%)',
-                  border: `1px solid ${entered.length === code.length && entered === code ? accent : 'rgba(255,255,255,0.12)'}`,
-                  borderRadius: '10px',
-                  boxShadow: '0 6px 16px rgba(0,0,0,0.6), inset 0 0 0 1px rgba(255,255,255,0.05)',
-                  transition: 'border-color 200ms ease',
-                }}>
-                {/* Readout — shows entered digits as dots, flashes red on wrong */}
-                <div style={{
-                  background: '#0a0c0d',
-                  border: '1px solid rgba(255,255,255,0.08)',
-                  borderRadius: '4px',
-                  padding: '0.4rem 0.6rem',
-                  marginBottom: '0.65rem',
-                  minHeight: '32px',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  gap: '0.4rem',
-                  fontFamily: 'var(--font-display), monospace',
-                  color: errorTick && entered.length === code.length
-                    ? '#ff4d4f'
-                    : entered === code ? accent : cream,
-                  letterSpacing: '0.6em',
-                  fontSize: '1.1rem',
-                  fontWeight: 800,
-                  textShadow: errorTick && entered.length === code.length
-                    ? '0 0 8px rgba(255,77,79,0.7)'
-                    : entered === code ? `0 0 8px ${accent}aa` : 'none',
-                  transition: 'color 200ms, text-shadow 200ms',
-                }}>
-                  {entered === code
-                    ? '✓'
-                    : Array.from({ length: code.length }).map((_, i) => entered[i] ? '●' : '○').join(' ')}
-                </div>
-
-                <div style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(3, 1fr)',
-                  gap: '0.35rem',
-                }}>
-                  {['1','2','3','4','5','6','7','8','9','C','0','⌫'].map((d) => (
-                    <button
-                      key={d}
-                      type="button"
-                      onClick={() => pressKey(d)}
-                      onMouseDown={(e) => e.preventDefault()}
-                      style={{
-                        aspectRatio: '1 / 1',
-                        background: 'linear-gradient(180deg, #2a2f31 0%, #1a1d1f 100%)',
-                        border: '1px solid rgba(255,255,255,0.1)',
-                        borderRadius: '5px',
-                        color: cream,
-                        fontFamily: 'var(--font-display), monospace',
-                        fontWeight: 800,
-                        fontSize: '0.95rem',
-                        cursor: 'pointer',
-                        boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.04), 0 1px 0 rgba(255,255,255,0.06)',
-                        transition: 'transform 80ms ease, background 120ms ease',
-                      }}
-                      onMouseEnter={(e) => { e.currentTarget.style.background = 'linear-gradient(180deg, #353a3c 0%, #232728 100%)' }}
-                      onMouseLeave={(e) => { e.currentTarget.style.background = 'linear-gradient(180deg, #2a2f31 0%, #1a1d1f 100%)' }}
-                      onMouseDownCapture={(e) => { e.currentTarget.style.transform = 'scale(0.94)' }}
-                      onMouseUp={(e) => { e.currentTarget.style.transform = 'scale(1)' }}
-                    >
-                      {d}
-                    </button>
-                  ))}
-                </div>
-
-                {/* Hint — appears subtly under the pad. The savvy user gets
-                    it; everyone else can scroll past and the door opens. */}
-                <p style={{
-                  marginTop: '0.65rem',
-                  fontSize: '0.6rem',
-                  letterSpacing: '0.18em',
-                  color: 'rgba(255,255,255,0.32)',
-                  textAlign: 'center',
-                  textTransform: 'uppercase',
-                }}>
-                  {entered.length === code.length && entered !== code
-                    ? 'try again'
-                    : entered === code
-                      ? 'access granted'
-                      : 'enter to dine'}
-                </p>
-              </div>
-
-              {/* Frost / condensation effect on the steel — gradient bands
-                  to imply temperature. */}
-              <div aria-hidden="true" style={{
-                position: 'absolute', inset: 0,
-                background: `
-                  radial-gradient(ellipse at 30% 20%, rgba(255,255,255,0.05) 0%, transparent 50%),
-                  radial-gradient(ellipse at 80% 90%, rgba(255,255,255,0.04) 0%, transparent 60%)
-                `,
-                pointerEvents: 'none',
-              }} />
-            </div>
+            <RealisticFridgeDoor cream={cream} />
           </div>
 
-          {/* Door frame casing — a darker outer rectangle around the door */}
+          {/* ── FRAME — the casing around the doorway. Always visible
+                because it doesn't rotate. Heavy black border with bolt
+                heads in each corner. */}
           <div aria-hidden="true" style={{
             position: 'absolute',
-            inset: '-14px',
-            border: '14px solid #0a0c0d',
-            borderRadius: '24px',
-            boxShadow: '0 24px 60px rgba(0,0,0,0.6), inset 0 0 0 1px rgba(255,255,255,0.06)',
+            inset: '-18px',
+            border: '18px solid #0a0c0d',
+            borderRadius: '8px',
+            boxShadow: '0 28px 70px rgba(0,0,0,0.7), inset 0 0 0 1px rgba(255,255,255,0.06)',
             pointerEvents: 'none',
-            zIndex: 3,
-          }} />
+            zIndex: 4,
+          }}>
+            {/* Mounting bolts — one in each corner */}
+            {[['8px', '8px'], ['8px', 'auto', '8px', 'auto'], [null, '8px', '8px', 'auto'], [null, 'auto', '8px', '8px']].map((coords, i) => {
+              const [top, right, bottom, left] = coords as Array<string | null | undefined>
+              return (
+                <div key={i} style={{
+                  position: 'absolute',
+                  top: top ?? undefined,
+                  right: right ?? undefined,
+                  bottom: bottom ?? undefined,
+                  left: left ?? undefined,
+                  width: 10, height: 10,
+                  borderRadius: '50%',
+                  background: 'radial-gradient(circle at 30% 30%, #6a6f72 0%, #1a1d1f 80%)',
+                  boxShadow: '0 1px 2px rgba(0,0,0,0.6), inset 0 0 0 1px rgba(255,255,255,0.1)',
+                }} />
+              )
+            })}
+          </div>
         </div>
 
-        {/* Reveal — menu categories + CTA. Stacked below the door, fades
-            in once the door is open. Sits OUTSIDE the door's 3D rotation
-            so it stays flat to the screen. */}
+        {/* Reveal layer — once door is mostly open (~progress > 0.7),
+            the Reserve CTA + brand wordmark fade up below the doorway. */}
         <div
           style={{
-            marginTop: 'clamp(2rem, 4vw, 3rem)',
-            textAlign: 'center',
-            opacity: open ? 1 : 0,
-            transform: open ? 'translateY(0)' : 'translateY(28px)',
-            transition: 'opacity 800ms ease 900ms, transform 800ms ease 900ms',
-            pointerEvents: open ? 'auto' : 'none',
-            maxWidth: '720px',
-          }}>
-          <p className="eyebrow" style={{ color: accent, marginBottom: '0.85rem' }}>
-            inside · ready for you
+            position: 'absolute',
+            bottom: '4vh', left: 0, right: 0,
+            display: 'flex', flexDirection: 'column', alignItems: 'center',
+            gap: '0.9rem',
+            opacity: 'calc(max(0, var(--scroll-progress, 0) - 0.65) * 3)',
+            transform: 'translateY(calc((1 - var(--scroll-progress, 0)) * 20px))',
+            transition: 'opacity 100ms linear',
+            zIndex: 10,
+            pointerEvents: 'auto',
+          } as React.CSSProperties}
+        >
+          <p
+            className="display-italic"
+            style={{
+              fontSize: 'clamp(1.5rem, 3vw, 2.2rem)',
+              color: accent,
+              textShadow: `0 0 16px ${accent}99`,
+            }}
+          >
+            {brandName.toLowerCase()}.
           </p>
-          <h2 className="display" style={{
-            fontSize: 'clamp(2rem, 4vw, 3rem)',
-            color: cream,
-            marginBottom: '1.5rem',
-          }}>
-            Welcome to {brandName}<span style={{ color: accent }}>.</span>
-          </h2>
-
-          <div style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
-            gap: '0.65rem',
-            marginBottom: '1.75rem',
-          }}>
-            {categories.map((c) => (
-              <a
-                key={c.label}
-                href={c.href}
-                style={{
-                  background: 'rgba(255,255,255,0.04)',
-                  border: `1px solid ${accent}40`,
-                  backdropFilter: 'blur(8px)',
-                  borderRadius: '0.9rem',
-                  padding: '0.95rem 0.5rem',
-                  textDecoration: 'none',
-                  color: cream,
-                  transition: 'border-color 180ms ease, transform 180ms ease',
-                  fontFamily: 'var(--font-display)',
-                  fontWeight: 700,
-                  fontSize: '0.95rem',
-                  letterSpacing: '-0.01em',
-                }}
-                onMouseEnter={(e) => { e.currentTarget.style.borderColor = accent; e.currentTarget.style.transform = 'translateY(-2px)' }}
-                onMouseLeave={(e) => { e.currentTarget.style.borderColor = `${accent}40`; e.currentTarget.style.transform = 'translateY(0)' }}
-              >
-                <span style={{ fontSize: '1.4rem', display: 'block', marginBottom: '0.35rem' }}>{c.emoji}</span>
-                {c.label}
-              </a>
-            ))}
-          </div>
-
-          <div style={{ display: 'inline-flex', flexWrap: 'wrap', gap: '0.7rem', justifyContent: 'center' }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.7rem', justifyContent: 'center' }}>
             <Link href={reserveHref} className="brand-pill">
               Reserve a table →
             </Link>
-            <Link href={menuHref} className="brand-pill-outline" style={{ borderColor: cream, color: cream }}>
-              See the menu
-            </Link>
+            {menuHref && (
+              <Link href={menuHref} className="brand-pill-outline" style={{ borderColor: cream, color: cream }}>
+                See the menu
+              </Link>
+            )}
           </div>
         </div>
 
-        {/* Subtle scroll-or-tap hint near the bottom, before the door opens */}
-        {!open && (
-          <p style={{
-            position: 'absolute', bottom: '4vh', left: 0, right: 0,
+        {/* "↓ scroll" hint at the bottom — only while door is still closed */}
+        <p
+          style={{
+            position: 'absolute',
+            bottom: '4vh', left: 0, right: 0,
             textAlign: 'center',
             color: 'rgba(255,255,255,0.35)',
-            fontSize: '0.72rem',
-            letterSpacing: '0.32em',
+            fontSize: '0.7rem',
+            letterSpacing: '0.45em',
             textTransform: 'uppercase',
-          }}>
-            tap a code · or scroll past
-          </p>
-        )}
+            opacity: 'calc(1 - var(--scroll-progress, 0) * 2)',
+            zIndex: 5,
+            pointerEvents: 'none',
+          } as React.CSSProperties}
+        >
+          ↓ scroll to enter
+        </p>
       </div>
-    </section>
+    </div>
+  )
+}
+
+// ─── Realistic walk-in fridge door ──────────────────────────────────
+// Layered detail: brushed-steel face, riveted edges, label plate up top,
+// industrial hinges down the left, polished handle on the right, latch
+// mechanism + safety lock above the handle, vent slats at the bottom,
+// condensation marks across the surface, an inspection sticker.
+
+function RealisticFridgeDoor({ cream }: { cream: string }) {
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        inset: 0,
+        borderRadius: '4px',
+        // Brushed steel — vertical brush striations + a slight bevel
+        background: `
+          linear-gradient(180deg, #4a4f52 0%, #2e3234 35%, #2a2e30 65%, #1a1d1f 100%),
+          repeating-linear-gradient(90deg, rgba(255,255,255,0.06) 0 1px, transparent 1px 3px)
+        `,
+        backgroundBlendMode: 'overlay',
+        overflow: 'hidden',
+        boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.08), 0 14px 30px rgba(0,0,0,0.45)',
+      }}
+    >
+      {/* Hinges — three on the left side */}
+      {[12, 38, 78].map((topPct) => (
+        <Hinge key={topPct} style={{ position: 'absolute', left: '-6px', top: `${topPct}%` }} />
+      ))}
+
+      {/* Top label plate — "WALK-IN · 002 / PROVISIONS" */}
+      <div style={{
+        position: 'absolute', top: '6%', left: '10%', right: '36%',
+        padding: '0.6rem 0.85rem',
+        background: 'rgba(10,12,13,0.7)',
+        border: '1px solid rgba(255,255,255,0.08)',
+        borderRadius: '3px',
+        boxShadow: '0 2px 6px rgba(0,0,0,0.5), inset 0 0 0 1px rgba(255,255,255,0.04)',
+      }}>
+        <p style={{
+          fontFamily: 'var(--font-display)',
+          fontSize: '0.58rem', letterSpacing: '0.55em',
+          color: 'rgba(255,255,255,0.55)', fontWeight: 700,
+        }}>
+          WALK-IN · 002
+        </p>
+        <p style={{
+          fontFamily: 'var(--font-display)',
+          fontSize: '0.92rem', fontWeight: 800,
+          color: cream, marginTop: '0.18rem', letterSpacing: '0.02em',
+        }}>
+          PROVISIONS
+        </p>
+      </div>
+
+      {/* Inspection sticker — small circular sticker, slightly off-axis */}
+      <div style={{
+        position: 'absolute',
+        top: '11%', right: '12%',
+        width: 56, height: 56,
+        borderRadius: '50%',
+        background: 'radial-gradient(circle at 35% 30%, #c9a961 0%, #8a6e2e 70%, #4d3d18 100%)',
+        boxShadow: '0 2px 6px rgba(0,0,0,0.6), inset 0 0 0 1px rgba(255,255,255,0.15)',
+        transform: 'rotate(-6deg)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        flexDirection: 'column',
+        fontFamily: 'var(--font-display)',
+      }}>
+        <span style={{ fontSize: '0.55rem', fontWeight: 800, color: '#1a1410', letterSpacing: '0.18em' }}>
+          INSP
+        </span>
+        <span style={{ fontSize: '0.7rem', fontWeight: 900, color: '#1a1410', lineHeight: 1 }}>
+          ★
+        </span>
+        <span style={{ fontSize: '0.45rem', fontWeight: 700, color: '#1a1410', letterSpacing: '0.1em' }}>
+          PASSED
+        </span>
+      </div>
+
+      {/* Handle assembly — long polished vertical bar on the right */}
+      <div style={{
+        position: 'absolute',
+        top: '32%', bottom: '32%', right: '7%',
+        width: '16px',
+        background: 'linear-gradient(90deg, #4a4f52 0%, #8a9094 30%, #d5d9dc 50%, #8a9094 70%, #4a4f52 100%)',
+        borderRadius: '999px',
+        boxShadow: '0 6px 14px rgba(0,0,0,0.55), inset 0 0 0 1px rgba(255,255,255,0.12)',
+      }} />
+      {/* Handle mounting brackets — top + bottom */}
+      <div style={{
+        position: 'absolute', top: '30%', right: '6%',
+        width: '20px', height: '14px',
+        background: 'linear-gradient(180deg, #6a6f72 0%, #2e3234 100%)',
+        borderRadius: '3px',
+        boxShadow: '0 2px 4px rgba(0,0,0,0.5)',
+      }} />
+      <div style={{
+        position: 'absolute', bottom: '30%', right: '6%',
+        width: '20px', height: '14px',
+        background: 'linear-gradient(180deg, #6a6f72 0%, #2e3234 100%)',
+        borderRadius: '3px',
+        boxShadow: '0 2px 4px rgba(0,0,0,0.5)',
+      }} />
+
+      {/* Latch / safety lock — above the handle */}
+      <div style={{
+        position: 'absolute',
+        top: '22%', right: '6%',
+        width: '22px', height: '46px',
+        background: 'linear-gradient(180deg, #9a9fa3 0%, #4a4f52 100%)',
+        borderRadius: '3px',
+        boxShadow: '0 2px 6px rgba(0,0,0,0.6), inset 0 0 0 1px rgba(255,255,255,0.12)',
+      }}>
+        {/* Tiny keyhole dot */}
+        <span style={{
+          position: 'absolute', top: '60%', left: '50%',
+          transform: 'translate(-50%, -50%)',
+          width: 4, height: 4, borderRadius: '50%',
+          background: '#0a0c0d',
+          boxShadow: '0 0 0 1.5px rgba(255,255,255,0.2)',
+        }} />
+      </div>
+
+      {/* Bottom vent slats — louvered air vent */}
+      <div style={{
+        position: 'absolute',
+        bottom: '7%', left: '14%', right: '14%',
+        height: '12%',
+        background: `repeating-linear-gradient(180deg,
+          rgba(0,0,0,0.65) 0 4px,
+          rgba(255,255,255,0.04) 4px 11px)`,
+        borderRadius: '4px',
+        boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.05), inset 0 4px 12px rgba(0,0,0,0.6)',
+      }} />
+
+      {/* Surface condensation — faint vertical streaks of moisture */}
+      <div aria-hidden="true" style={{
+        position: 'absolute', inset: 0,
+        background: `
+          radial-gradient(ellipse at 30% 35%, rgba(255,255,255,0.06) 0%, transparent 35%),
+          radial-gradient(ellipse at 75% 65%, rgba(255,255,255,0.05) 0%, transparent 40%),
+          radial-gradient(ellipse at 20% 80%, rgba(255,255,255,0.04) 0%, transparent 35%)
+        `,
+        pointerEvents: 'none',
+      }} />
+    </div>
+  )
+}
+
+function Hinge({ style }: { style: React.CSSProperties }) {
+  return (
+    <div aria-hidden="true" style={{
+      width: 26, height: 36,
+      background: 'linear-gradient(180deg, #6a6f72 0%, #2e3234 50%, #1a1d1f 100%)',
+      borderRadius: '3px',
+      boxShadow: '0 3px 8px rgba(0,0,0,0.55), inset 0 0 0 1px rgba(255,255,255,0.1)',
+      ...style,
+    }}>
+      {/* Hinge pin highlight */}
+      <span style={{
+        position: 'absolute', top: '50%', left: '50%',
+        transform: 'translate(-50%, -50%)',
+        width: 4, height: '70%',
+        background: 'linear-gradient(180deg, rgba(255,255,255,0.4) 0%, rgba(255,255,255,0.1) 100%)',
+        borderRadius: '999px',
+      }} />
+    </div>
   )
 }

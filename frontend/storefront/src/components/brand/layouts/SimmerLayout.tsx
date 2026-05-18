@@ -79,10 +79,12 @@ export function SimmerLayout({ concept, concepts }: Props) {
     >
       <PromoBar brandName={concept.name} brandSlug={concept.slug} accent={SIMMER_GOLD} />
 
-      {/* SPEAKEASY ENTRANCE — the literal walk-in fridge door + pin pad
-          that customers see in the basement of Stax. Tap a 4-digit code
-          (or scroll past) to "enter" Simmer. Door swings open, revealing
-          the wood + green-marble interior with the menu categories. */}
+      {/* SPEAKEASY ENTRANCE — first thing the customer sees on Simmer.
+          A realistic walk-in fridge door fills the viewport. As they
+          scroll, the door slowly swings open along its hinge, the
+          interior emerges (dark wood + green marble bar), and the words
+          "RESERVATIONS ONLY" land on the back wall. Pure scroll-driven;
+          no pin pad, no clicks — the experience IS the entrance. */}
       <SpeakeasyFridgeHero
         brandName={concept.name}
         accent={SIMMER_GOLD}
@@ -92,12 +94,6 @@ export function SimmerLayout({ concept, concepts }: Props) {
         cream={SIMMER_CREAM}
         reserveHref={`/reserve/${concept.slug}`}
         menuHref={`/brand/${concept.slug}/menu`}
-        categories={[
-          { label: 'Small plates', emoji: '🥄', href: `/brand/${concept.slug}/menu#small` },
-          { label: 'Large plates', emoji: '🍽',  href: `/brand/${concept.slug}/menu#large` },
-          { label: 'Desserts',     emoji: '🍰', href: `/brand/${concept.slug}/menu#desserts` },
-          { label: 'Drinks',       emoji: '🍸', href: `/brand/${concept.slug}/menu#drinks` },
-        ]}
       />
 
       {/* AMBIENT HERO — picks up after the speakeasy door. Now that the
