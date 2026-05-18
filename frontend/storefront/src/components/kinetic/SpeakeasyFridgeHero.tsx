@@ -458,74 +458,23 @@ function CoolerInterior({ accent, cream, imageUrl }: {
           />
         </>
       ) : (
-        <>
-          {/* FALLBACK PATH ───────────────────────────────────────
-              No photo supplied yet. Paint a deliberate stainless-steel
-              cavity with CSS so the page looks intentional, not broken.
-              Drop a real photo at /public/simmer-cooler.jpg and pass
-              coolerImageUrl="/simmer-cooler.jpg" to swap in. */}
-          <div
-            aria-hidden="true"
-            style={{
-              position: 'absolute', inset: 0,
-              background: `
-                radial-gradient(ellipse 90% 55% at 50% 35%, #4a545b 0%, #2a3035 45%, #15191c 100%)
-              `,
-            }}
-          />
-          {/* Front-to-back lighter wash so the back of the room feels
-              recessed and lit, not flat */}
-          <div
-            aria-hidden="true"
-            style={{
-              position: 'absolute', inset: 0,
-              background: `
-                linear-gradient(180deg, rgba(255,255,255,0.05) 0%, transparent 30%, transparent 70%, rgba(0,0,0,0.45) 100%)
-              `,
-            }}
-          />
-          {/* Subtle brushed-steel vertical striations on the side walls */}
-          <div
-            aria-hidden="true"
-            style={{
-              position: 'absolute', inset: 0,
-              background: `
-                linear-gradient(90deg,
-                  rgba(255,255,255,0.06) 0%,
-                  rgba(255,255,255,0.06) 12%,
-                  transparent 25%,
-                  transparent 75%,
-                  rgba(255,255,255,0.06) 88%,
-                  rgba(255,255,255,0.06) 100%),
-                repeating-linear-gradient(90deg,
-                  rgba(255,255,255,0.025) 0 1px,
-                  transparent 1px 4px)
-              `,
-              mixBlendMode: 'overlay',
-            }}
-          />
-          {/* Soft cold-light from above */}
-          <div
-            aria-hidden="true"
-            style={{
-              position: 'absolute', inset: 0,
-              background: `radial-gradient(ellipse 50% 25% at 50% 5%, rgba(255,255,255,0.18) 0%, transparent 70%)`,
-            }}
-          />
-        </>
+        <CoolerInteriorSVG />
       )}
 
-      {/* Subtle accent wash at the centre — gold halo bleeding into the
-          back wall as if light is escaping from somewhere behind. Same
-          for both photo and fallback paths. */}
-      <div
-        aria-hidden="true"
-        style={{
-          position: 'absolute', inset: 0,
-          background: `radial-gradient(ellipse 40% 30% at 50% 40%, ${accent}28 0%, transparent 70%)`,
-          mixBlendMode: 'screen',
-        }}
-      />
+      {/* Tiny gold halo at the back-wall center — only on the photo
+          path (where the photo is darker and the warm-light hint reads).
+          On the SVG fallback the room is bright white and this would
+          just tint the type yellow — skip it. */}
+      {imageUrl && (
+        <div
+          aria-hidden="true"
+          style={{
+            position: 'absolute', inset: 0,
+            background: `radial-gradient(ellipse 40% 30% at 50% 40%, ${accent}28 0%, transparent 70%)`,
+            mixBlendMode: 'screen',
+          }}
+        />
+      )}
 
       {/* ── TYPOGRAPHY OVERLAYS sitting in the empty shelves of the
             photo. Positions are tuned for a typical walk-in cooler shot
@@ -534,27 +483,33 @@ function CoolerInterior({ accent, cream, imageUrl }: {
             different scroll-progress threshold. Heavy drop shadows so
             the type reads against any photo we swap in. */}
 
-      {/* CRAFTED — left rack, upper shelf gap */}
+      {/* ── TYPOGRAPHY in the negative space of the racks ──────────
+            Now that the racks have FOUR shelves (matching the IndiaMART
+            reference), the gaps are at roughly y = 18%, 32%, 50%, 70%.
+            We park "CRAFTED" + "mocktails." in the left rack's upper-
+            two gaps and "ELEGANT" + "plates." mirrored on the right.
+            "RESERVATIONS only." goes on the back wall (centre, around
+            30-42% from top). */}
+
       <FridgeWord
         text="CRAFTED"
         fireAt={0.58}
-        color={cream}
-        heavyShadow
+        color="#2a3035"
         style={{
-          top: '22%', left: '4%',
-          fontSize: 'clamp(1.2rem, 2.8vw, 2rem)',
-          letterSpacing: '0.32em',
+          top: '20%', left: '3%',
+          fontSize: 'clamp(1.1rem, 2.4vw, 1.7rem)',
+          letterSpacing: '0.35em',
+          fontWeight: 800,
         }}
       />
-      {/* MOCKTAILS — left rack, mid shelf gap, gold italic */}
       <FridgeWord
         text="mocktails."
         fireAt={0.62}
         color={accent}
         glow
         style={{
-          top: '36%', left: '3%',
-          fontSize: 'clamp(1.8rem, 4.5vw, 3.4rem)',
+          top: '36%', left: '2%',
+          fontSize: 'clamp(1.8rem, 4.4vw, 3.2rem)',
           fontStyle: 'italic',
           letterSpacing: '-0.01em',
           fontWeight: 600,
@@ -565,15 +520,15 @@ function CoolerInterior({ accent, cream, imageUrl }: {
       <FridgeWord
         text="RESERVATIONS"
         fireAt={0.50}
-        color={cream}
-        heavyShadow
+        color="#2a3035"
         style={{
-          top: '30%', left: '50%',
+          top: '32%', left: '50%',
           transform: 'translate(-50%, -50%)',
-          fontSize: 'clamp(2.2rem, 5.5vw, 4rem)',
-          letterSpacing: '0.06em',
+          fontSize: 'clamp(2.2rem, 5.2vw, 3.8rem)',
+          letterSpacing: '0.08em',
           textAlign: 'center',
           whiteSpace: 'nowrap',
+          fontWeight: 800,
         }}
       />
       <FridgeWord
@@ -584,7 +539,7 @@ function CoolerInterior({ accent, cream, imageUrl }: {
         style={{
           top: '42%', left: '50%',
           transform: 'translate(-50%, -50%)',
-          fontSize: 'clamp(1.6rem, 4.5vw, 3rem)',
+          fontSize: 'clamp(1.6rem, 4vw, 2.8rem)',
           fontStyle: 'italic',
           letterSpacing: '-0.01em',
           textAlign: 'center',
@@ -592,28 +547,26 @@ function CoolerInterior({ accent, cream, imageUrl }: {
         }}
       />
 
-      {/* ELEGANT — right rack, upper shelf gap */}
       <FridgeWord
         text="ELEGANT"
         fireAt={0.66}
-        color={cream}
-        heavyShadow
+        color="#2a3035"
         style={{
-          top: '22%', right: '4%',
-          fontSize: 'clamp(1.2rem, 2.8vw, 2rem)',
-          letterSpacing: '0.32em',
+          top: '20%', right: '3%',
+          fontSize: 'clamp(1.1rem, 2.4vw, 1.7rem)',
+          letterSpacing: '0.35em',
           textAlign: 'right',
+          fontWeight: 800,
         }}
       />
-      {/* PLATES — right rack, mid shelf gap, gold italic */}
       <FridgeWord
         text="plates."
         fireAt={0.70}
         color={accent}
         glow
         style={{
-          top: '36%', right: '3%',
-          fontSize: 'clamp(1.8rem, 4.5vw, 3.4rem)',
+          top: '36%', right: '2%',
+          fontSize: 'clamp(1.8rem, 4.4vw, 3.2rem)',
           fontStyle: 'italic',
           letterSpacing: '-0.01em',
           textAlign: 'right',
@@ -621,14 +574,15 @@ function CoolerInterior({ accent, cream, imageUrl }: {
         }}
       />
 
-      {/* Operating hours — etched along the bottom shelf */}
+      {/* Operating hours — etched along the cooler floor near the
+          bottom, mimicking a vinyl sticker laid on the polished steel */}
       <FridgeWord
         text="open 7pm — late · thu–sun"
         fireAt={0.78}
-        color="rgba(255,255,255,0.75)"
+        color="rgba(255,255,255,0.55)"
         heavyShadow
         style={{
-          bottom: '18%', left: '50%',
+          bottom: '12%', left: '50%',
           transform: 'translateX(-50%)',
           fontSize: 'clamp(0.65rem, 1.2vw, 0.85rem)',
           letterSpacing: '0.42em',
@@ -681,6 +635,270 @@ function FridgeWord({
         {text}
       </span>
     </p>
+  )
+}
+
+// ─── CoolerInteriorSVG ──────────────────────────────────────────────
+// Looks like an actual walk-in cooler interior (bright white walls,
+// stainless steel solid-shelf racks against each side wall, polished
+// floor, refrigeration unit + LED on the ceiling, back wall with panel
+// seam). Built in proper 1-point perspective with the vanishing point
+// at the centre of the back wall.
+//
+// The racks are modelled after the IndiaMART reference: four solid
+// stainless shelves with chrome pipe verticals at each corner, visible
+// shelf thickness on the front edge (so they read as 3D, not flat).
+// Rendered front pole > back pole so the rack foreshortens correctly.
+//
+// Viewbox is 1600 × 1000. Back-wall rectangle sits at x=520–1080,
+// y=240–680. Everything else trapezoids out from that.
+
+function CoolerInteriorSVG() {
+  return (
+    <svg
+      viewBox="0 0 1600 1000"
+      preserveAspectRatio="xMidYMid slice"
+      style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}
+    >
+      <defs>
+        {/* Wall — bright cool white, slight darkening at the bottom. */}
+        <linearGradient id="ciWall" x1="0%" y1="0%" x2="0%" y2="100%">
+          <stop offset="0%"   stopColor="#f1f3f5" />
+          <stop offset="55%"  stopColor="#cdd4d9" />
+          <stop offset="100%" stopColor="#8d979e" />
+        </linearGradient>
+        {/* Back wall — brightest because it's lit by the LED + reflects floor */}
+        <radialGradient id="ciBack" cx="50%" cy="45%" r="70%">
+          <stop offset="0%"   stopColor="#f6f8fa" />
+          <stop offset="60%"  stopColor="#d8dde2" />
+          <stop offset="100%" stopColor="#9aa3a9" />
+        </radialGradient>
+        {/* Ceiling — bright white, slightly cooler at the front edge */}
+        <linearGradient id="ciCeiling" x1="0%" y1="0%" x2="0%" y2="100%">
+          <stop offset="0%"   stopColor="#dde2e6" />
+          <stop offset="100%" stopColor="#f3f6f8" />
+        </linearGradient>
+        {/* Floor — dark polished aluminum/concrete with reflection band */}
+        <linearGradient id="ciFloor" x1="0%" y1="0%" x2="0%" y2="100%">
+          <stop offset="0%"   stopColor="#2a3035" />
+          <stop offset="40%"  stopColor="#1d2226" />
+          <stop offset="100%" stopColor="#0e1114" />
+        </linearGradient>
+        {/* Chrome pipe — dark/light/dark gradient for cylindrical sheen */}
+        <linearGradient id="ciChrome" x1="0%" y1="0%" x2="100%" y2="0%">
+          <stop offset="0%"   stopColor="#3a4045" />
+          <stop offset="25%"  stopColor="#9aa4ac" />
+          <stop offset="50%"  stopColor="#e5ebee" />
+          <stop offset="75%"  stopColor="#9aa4ac" />
+          <stop offset="100%" stopColor="#3a4045" />
+        </linearGradient>
+        {/* Stainless steel shelf top — light at the front, darker into the back */}
+        <linearGradient id="ciShelfTop" x1="0%" y1="0%" x2="0%" y2="100%">
+          <stop offset="0%"   stopColor="#e4e9ec" />
+          <stop offset="50%"  stopColor="#b9c1c7" />
+          <stop offset="100%" stopColor="#6a7378" />
+        </linearGradient>
+        {/* Shelf front edge (visible thickness) — darker, the underside shadow */}
+        <linearGradient id="ciShelfEdge" x1="0%" y1="0%" x2="0%" y2="100%">
+          <stop offset="0%"   stopColor="#8a9298" />
+          <stop offset="100%" stopColor="#3a4045" />
+        </linearGradient>
+        {/* Refrigeration unit body */}
+        <linearGradient id="ciFridgeUnit" x1="0%" y1="0%" x2="0%" y2="100%">
+          <stop offset="0%"   stopColor="#bdc4ca" />
+          <stop offset="55%"  stopColor="#7a8489" />
+          <stop offset="100%" stopColor="#3e464b" />
+        </linearGradient>
+        <filter id="ciLedGlow">
+          <feGaussianBlur stdDeviation="8" />
+        </filter>
+      </defs>
+
+      {/* ── ROOM SHELL ────────────────────────────────────────────── */}
+
+      {/* Ceiling — trapezoid */}
+      <polygon points="0,0 1600,0 1080,240 520,240" fill="url(#ciCeiling)" />
+      {/* Left wall — trapezoid */}
+      <polygon points="0,0 520,240 520,680 0,1000" fill="url(#ciWall)" />
+      {/* Right wall */}
+      <polygon points="1600,0 1600,1000 1080,680 1080,240" fill="url(#ciWall)" />
+      {/* Floor — trapezoid */}
+      <polygon points="0,1000 1600,1000 1080,680 520,680" fill="url(#ciFloor)" />
+      {/* Subtle floor reflection band (lighter horizontal sheen) */}
+      <ellipse cx="800" cy="840" rx="520" ry="34" fill="rgba(255,255,255,0.06)" />
+      {/* Back wall */}
+      <rect x="520" y="240" width="560" height="440" fill="url(#ciBack)" />
+      {/* Back wall panel seams — two thin vertical lines split the panel into 3 */}
+      <line x1="708" y1="240" x2="708" y2="680" stroke="rgba(0,0,0,0.08)" strokeWidth="1" />
+      <line x1="892" y1="240" x2="892" y2="680" stroke="rgba(0,0,0,0.08)" strokeWidth="1" />
+
+      {/* Wall-floor corner trim — darker line where wall meets floor (each side) */}
+      <line x1="0"    y1="1000" x2="520"  y2="680" stroke="rgba(0,0,0,0.25)" strokeWidth="2" />
+      <line x1="1600" y1="1000" x2="1080" y2="680" stroke="rgba(0,0,0,0.25)" strokeWidth="2" />
+      <line x1="520"  y1="680"  x2="1080" y2="680" stroke="rgba(0,0,0,0.30)" strokeWidth="2" />
+      {/* Wall-ceiling corner trim */}
+      <line x1="0"    y1="0"    x2="520"  y2="240" stroke="rgba(0,0,0,0.08)" strokeWidth="1" />
+      <line x1="1600" y1="0"    x2="1080" y2="240" stroke="rgba(0,0,0,0.08)" strokeWidth="1" />
+
+      {/* ── CEILING REFRIGERATION UNIT ─────────────────────────────── */}
+      <g transform="translate(800, 100)">
+        {/* Housing — wider than tall, like the rectangular evaporator
+            unit hanging from the ceiling in commercial coolers */}
+        <rect x="-160" y="-30" width="320" height="78" rx="3" fill="url(#ciFridgeUnit)" />
+        {/* Top mounting strap */}
+        <rect x="-130" y="-38" width="260" height="10" fill="#2e3438" />
+        {/* Air-vent grille on the underside */}
+        <rect x="-130" y="40" width="260" height="22" rx="2" fill="#1a1f22" />
+        <g transform="translate(0, 51)">
+          {/* Concentric circles + spokes for the fan visible through the grille */}
+          <circle cx="-60" cy="0" r="14" fill="none" stroke="#5a6266" strokeWidth="1" />
+          <circle cx="-60" cy="0" r="4"  fill="#3a4045" />
+          {Array.from({ length: 6 }).map((_, i) => (
+            <line key={i}
+              x1="-60" y1="0"
+              x2={-60 + Math.cos((i * Math.PI) / 3) * 12}
+              y2={Math.sin((i * Math.PI) / 3) * 12}
+              stroke="#5a6266" strokeWidth="0.8" />
+          ))}
+          <circle cx="60" cy="0" r="14" fill="none" stroke="#5a6266" strokeWidth="1" />
+          <circle cx="60" cy="0" r="4"  fill="#3a4045" />
+          {Array.from({ length: 6 }).map((_, i) => (
+            <line key={i}
+              x1="60" y1="0"
+              x2={60 + Math.cos((i * Math.PI) / 3) * 12}
+              y2={Math.sin((i * Math.PI) / 3) * 12}
+              stroke="#5a6266" strokeWidth="0.8" />
+          ))}
+          {/* Horizontal louver slats between the two fans */}
+          {[0, 6, 12, -6, -12].map((y) => (
+            <line key={y} x1="-35" y1={y} x2="35" y2={y} stroke="#5a6266" strokeWidth="0.6" />
+          ))}
+        </g>
+        {/* Brand sticker / model plate on the front */}
+        <rect x="-50" y="-10" width="100" height="14" rx="2" fill="rgba(255,255,255,0.10)" />
+        <line x1="-44" y1="-3" x2="44" y2="-3" stroke="rgba(255,255,255,0.25)" strokeWidth="0.8" />
+      </g>
+
+      {/* ── LED ceiling strip — long fluorescent across the front ── */}
+      <rect x="600" y="40" width="400" height="18" rx="4" fill="#f8fbfd" />
+      <rect x="600" y="40" width="400" height="18" rx="4" fill="white" opacity="0.7" filter="url(#ciLedGlow)" />
+      <ellipse cx="800" cy="68" rx="320" ry="40" fill="rgba(255,255,255,0.22)" />
+
+      {/* ── LEFT RACK ─────────────────────────────────────────────────
+            Stands against the left wall. Two front poles + two back
+            poles. Four solid shelves spanning between them. We render
+            in z-order: back poles first, then shelves (with thickness
+            edges), then front poles on top so they sit "in front" of
+            the shelves visually. */}
+      <LeftRack />
+
+      {/* ── RIGHT RACK ── mirror */}
+      <RightRack />
+
+      {/* ── Faint cold-air vapour drifting along the floor ── */}
+      <ellipse cx="800" cy="780" rx="200" ry="18" fill="rgba(255,255,255,0.05)" />
+    </svg>
+  )
+}
+
+// LeftRack — 4 chrome verticals (2 front, 2 back) + 4 stainless shelves
+// against the left wall, perspectively foreshortened toward the back.
+function LeftRack() {
+  // Front-of-rack poles (closer to camera, full viewport-height span).
+  // Back-of-rack poles (deeper, shorter span — clip to the back wall's
+  // y range so they don't poke past the room corners).
+  const polesFront: Array<[number, number]> = [[60, 5], [240, 5]]   // [x, width]
+  const polesBack:  Array<[number, number]> = [[460, 4], [510, 4]]
+  // Shelf-top y-coordinates: front y vs back y (different because the
+  // shelf foreshortens). 4 shelves, top to bottom.
+  // Pair format: [frontY, backY, thicknessFront, thicknessBack]
+  const shelves: Array<[number, number, number, number]> = [
+    [180,  280, 10, 7],   // top
+    [380,  410, 11, 8],   // mid-upper
+    [580,  540, 12, 8],   // mid-lower
+    [820,  650, 14, 9],   // bottom
+  ]
+
+  return (
+    <g>
+      {/* Back poles render first (behind shelves) */}
+      {polesBack.map(([x, w], i) => (
+        <rect key={`bb-${i}`} x={x} y="260" width={w} height="400" fill="url(#ciChrome)" opacity="0.9" />
+      ))}
+
+      {/* Shelves — each is a perspective quad (top surface) + a thin
+          front-edge rectangle showing the shelf's thickness + an
+          underside shadow polygon. */}
+      {shelves.map(([fy, by, ft], i) => {
+        // Top surface polygon — from front-pole-1 to front-pole-2 (across
+        // the rack's depth at the front) to back-pole-2 to back-pole-1.
+        const fx1 = 60,  fx2 = 240
+        const bx1 = 460, bx2 = 510
+        return (
+          <g key={i}>
+            {/* Top surface */}
+            <polygon
+              points={`${fx1},${fy} ${fx2},${fy} ${bx2},${by} ${bx1},${by}`}
+              fill="url(#ciShelfTop)"
+            />
+            {/* Front edge — visible vertical thickness of the shelf */}
+            <rect x={fx1} y={fy} width={fx2 - fx1} height={ft} fill="url(#ciShelfEdge)" />
+            {/* Underside shadow — small dark band under the front edge */}
+            <rect x={fx1 - 4} y={fy + ft} width={fx2 - fx1 + 8} height={5} fill="rgba(0,0,0,0.32)" />
+          </g>
+        )
+      })}
+
+      {/* Front poles last so they appear in front of the shelves */}
+      {polesFront.map(([x, w], i) => (
+        <rect key={`fp-${i}`} x={x} y="80" width={w + 4} height="900" fill="url(#ciChrome)" />
+      ))}
+
+      {/* Foot caps at the bottom of front poles — small rubber pads */}
+      {polesFront.map(([x, w], i) => (
+        <rect key={`fc-${i}`} x={x - 2} y="970" width={w + 8} height="14" fill="#1a1d20" />
+      ))}
+    </g>
+  )
+}
+
+// RightRack — mirror of LeftRack across the viewBox centre (x=800).
+function RightRack() {
+  // Mirror coordinates by reflecting across x=800.
+  // Front poles originally at x=60, 240 → mirror to x = (1600-60-w) etc.
+  const polesFront: Array<[number, number]> = [[1335, 5], [1515, 5]]
+  const polesBack:  Array<[number, number]> = [[1090, 4], [1136, 4]]
+  const shelves: Array<[number, number]> = [
+    [180,  280],
+    [380,  410],
+    [580,  540],
+    [820,  650],
+  ]
+  const fx1 = 1360, fx2 = 1540
+  const bx1 = 1090, bx2 = 1140
+
+  return (
+    <g>
+      {polesBack.map(([x, w], i) => (
+        <rect key={`bb-${i}`} x={x} y="260" width={w} height="400" fill="url(#ciChrome)" opacity="0.9" />
+      ))}
+      {shelves.map(([fy, by], i) => (
+        <g key={i}>
+          <polygon
+            points={`${fx1},${fy} ${fx2},${fy} ${bx2},${by} ${bx1},${by}`}
+            fill="url(#ciShelfTop)"
+          />
+          <rect x={fx1} y={fy} width={fx2 - fx1} height={10 + i} fill="url(#ciShelfEdge)" />
+          <rect x={fx1 - 4} y={fy + 10 + i} width={fx2 - fx1 + 8} height={5} fill="rgba(0,0,0,0.32)" />
+        </g>
+      ))}
+      {polesFront.map(([x, w], i) => (
+        <rect key={`fp-${i}`} x={x} y="80" width={w + 4} height="900" fill="url(#ciChrome)" />
+      ))}
+      {polesFront.map(([x, w], i) => (
+        <rect key={`fc-${i}`} x={x - 2} y="970" width={w + 8} height="14" fill="#1a1d20" />
+      ))}
+    </g>
   )
 }
 
