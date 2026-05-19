@@ -1,4 +1,4 @@
-'use client'
+﻿'use client'
 import Link from 'next/link'
 import { useScrollProgress } from './motionHooks'
 
@@ -81,63 +81,75 @@ export function SpeakeasyFridgeHero({
           justifyContent: 'center',
         }}
       >
-        {/* The cooler's EXTERIOR wall — white insulated panel
-            construction. This is what a real walk-in chiller looks
-            like from outside: prefab insulated panels, white/cream
-            face, vertical seam lines every ~24" where the panels meet,
-            slight cool tint at the edges from the room lighting around
-            it. NOT brushed steel — that was the wrong material entirely. */}
+        {/* BLUEPRINT BACKDROP. We can't render a photoreal walk-in
+            chiller in CSS+SVG (already proven). Instead we lean into a
+            deliberate architectural-drawing aesthetic: deep ink paper
+            with a faint grid + gold-cream technical lines drawing the
+            cooler. Reads as "schematic of the entrance" — intentional,
+            on-brand for the speakeasy mood, doesn't pretend to be
+            something it isn't. */}
         <div aria-hidden="true" style={{
           position: 'absolute', inset: 0,
-          background: `
-            radial-gradient(ellipse 100% 80% at 50% 50%, #e8e9eb 0%, #c8cbd0 60%, #9aa0a8 100%)
-          `,
+          background: '#10141a',
         }} />
-        {/* Vertical insulated-panel seams — every ~24" of the wall. */}
+        {/* Faint blueprint grid — 40px squares, thin gold-cream stroke */}
         <div aria-hidden="true" style={{
           position: 'absolute', inset: 0,
-          background: `
-            linear-gradient(90deg,
-              transparent 0%,
-              transparent calc(50% - 360px), rgba(0,0,0,0.10) calc(50% - 360px), rgba(0,0,0,0.10) calc(50% - 358px), transparent calc(50% - 358px),
-              transparent calc(50% - 130px), rgba(0,0,0,0.08) calc(50% - 130px), rgba(0,0,0,0.08) calc(50% - 128px), transparent calc(50% - 128px),
-              transparent calc(50% + 128px), rgba(0,0,0,0.08) calc(50% + 128px), rgba(0,0,0,0.08) calc(50% + 130px), transparent calc(50% + 130px),
-              transparent calc(50% + 358px), rgba(0,0,0,0.10) calc(50% + 358px), rgba(0,0,0,0.10) calc(50% + 360px), transparent calc(50% + 360px),
-              transparent 100%)
+          backgroundImage: `
+            linear-gradient(rgba(201,169,97,0.06) 1px, transparent 1px),
+            linear-gradient(90deg, rgba(201,169,97,0.06) 1px, transparent 1px)
           `,
+          backgroundSize: '40px 40px, 40px 40px',
         }} />
-        {/* Floor strip — darker concrete / floor tile band running
-            across the bottom of the viewport. Makes the cooler "sit
-            on" something instead of floating. */}
+        {/* Heavier major grid every 200px so the page has visual
+            structure without the grid feeling busy */}
         <div aria-hidden="true" style={{
-          position: 'absolute', left: 0, right: 0, bottom: 0,
-          height: '12vh',
-          background: 'linear-gradient(180deg, #5a6066 0%, #2a3034 40%, #14181b 100%)',
-          borderTop: '1px solid rgba(0,0,0,0.4)',
-          boxShadow: 'inset 0 6px 12px rgba(0,0,0,0.45)',
+          position: 'absolute', inset: 0,
+          backgroundImage: `
+            linear-gradient(rgba(201,169,97,0.10) 1px, transparent 1px),
+            linear-gradient(90deg, rgba(201,169,97,0.10) 1px, transparent 1px)
+          `,
+          backgroundSize: '200px 200px, 200px 200px',
         }} />
-        {/* Soft cast shadow from the cooler onto the floor */}
+        {/* Vignette so the centre of the drawing feels lit */}
         <div aria-hidden="true" style={{
-          position: 'absolute', left: '50%', bottom: '11vh',
-          width: 'min(720px, 88vw)', height: '24px',
-          transform: 'translateX(-50%)',
-          background: 'radial-gradient(ellipse 60% 100% at 50% 50%, rgba(0,0,0,0.6) 0%, transparent 70%)',
-          filter: 'blur(6px)',
+          position: 'absolute', inset: 0,
+          background: 'radial-gradient(ellipse 70% 60% at 50% 50%, transparent 0%, rgba(0,0,0,0.55) 100%)',
         }} />
 
-        {/* Tiny etched label above the door — almost missable. Dark
-            grey on the white wall so it reads like vinyl signage. */}
-        <p className="eyebrow"
-          style={{
-            position: 'absolute', top: '4vh', left: '50%',
-            transform: 'translateX(-50%)',
-            color: 'rgba(40,46,52,0.4)',
-            letterSpacing: '0.6em',
-            fontSize: '0.66rem',
-            zIndex: 5,
-          }}>
-          below stax · {brandName.toLowerCase()}
-        </p>
+        {/* TITLE BLOCK — top-left corner. Same convention every real
+            engineering drawing uses: project name + drawing number +
+            scale. Sells the "this is a deliberate schematic" framing. */}
+        <div style={{
+          position: 'absolute', top: '3vh', left: '4vw',
+          color: 'rgba(216,200,154,0.7)',
+          fontFamily: 'var(--font-display)',
+          fontSize: '0.62rem',
+          letterSpacing: '0.32em',
+          lineHeight: 1.55,
+          zIndex: 6,
+          textTransform: 'uppercase',
+        }}>
+          <p style={{ color: 'rgba(216,200,154,0.45)' }}>· PROJECT</p>
+          <p style={{ color: '#d8c89a', fontWeight: 700 }}>{brandName.toUpperCase()} · BELOW STAX</p>
+          <p style={{ color: 'rgba(216,200,154,0.45)', marginTop: '0.6rem' }}>· SHEET A-02 / ENTRANCE</p>
+        </div>
+        {/* TITLE BLOCK — top-right corner: scale + revision */}
+        <div style={{
+          position: 'absolute', top: '3vh', right: '4vw',
+          color: 'rgba(216,200,154,0.7)',
+          fontFamily: 'var(--font-display)',
+          fontSize: '0.62rem',
+          letterSpacing: '0.32em',
+          lineHeight: 1.55,
+          zIndex: 6,
+          textTransform: 'uppercase',
+          textAlign: 'right',
+        }}>
+          <p style={{ color: 'rgba(216,200,154,0.45)' }}>SCALE 1 : 24</p>
+          <p style={{ color: 'rgba(216,200,154,0.45)' }}>REV · {new Date().getFullYear()}.05</p>
+          <p style={{ color: '#d8c89a', fontWeight: 700, marginTop: '0.6rem' }}>↓ SCROLL · OPEN</p>
+        </div>
 
         {/* THE DOOR ASSEMBLY ──────────────────────────────────────────
             Three layers, back-to-front:
@@ -189,7 +201,7 @@ export function SpeakeasyFridgeHero({
               boxShadow: 'calc(var(--scroll-progress, 0) * 30px) 0 60px rgba(0,0,0,0.6)',
             } as React.CSSProperties}
           >
-            <RealisticFridgeDoor cream={cream} />
+            <BlueprintCoolerDoor accent={accent} />
           </div>
 
           {/* ── DIGITAL THERMOMETER — mounted above the door frame.
@@ -312,287 +324,203 @@ export function SpeakeasyFridgeHero({
           </div>
         </div>
 
-        {/* "↓ scroll" hint at the bottom — only while door is still closed */}
-        <p
-          style={{
-            position: 'absolute',
-            bottom: '14vh', left: 0, right: 0,
-            textAlign: 'center',
-            color: 'rgba(40,46,52,0.55)',
-            fontSize: '0.7rem',
-            letterSpacing: '0.45em',
-            textTransform: 'uppercase',
+        {/* Bottom annotation row — the standard engineering-drawing
+            footer with dimension callouts. Static; doesn't fade. */}
+        <div style={{
+          position: 'absolute',
+          bottom: '3vh', left: '4vw', right: '4vw',
+          display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
+          color: 'rgba(216,200,154,0.55)',
+          fontFamily: 'var(--font-display)',
+          fontSize: '0.6rem',
+          letterSpacing: '0.32em',
+          textTransform: 'uppercase',
+          zIndex: 6,
+          pointerEvents: 'none',
+        }}>
+          <span>↳ DOOR · 1900 × 800 MM · INSULATED</span>
+          <span style={{
             opacity: 'calc(1 - var(--scroll-progress, 0) * 2)',
-            zIndex: 5,
-            pointerEvents: 'none',
-            fontWeight: 700,
-          } as React.CSSProperties}
-        >
-          ↓ scroll to enter
-        </p>
+          } as React.CSSProperties}>
+            ENTRANCE · MEMBERS ONLY
+          </span>
+          <span>WIC-002 · ─2.4°C</span>
+        </div>
       </div>
     </div>
   )
 }
 
-// ─── Realistic walk-in cooler door ──────────────────────────────────
-// Modelled after an actual commercial walk-in cooler door, not a
-// stand-alone metal slab:
+// ─── Blueprint cooler door ──────────────────────────────────────────
+// Technical-drawing aesthetic. We can't render a photoreal walk-in
+// chiller in CSS+SVG. Instead this is a clean architectural schematic:
+// thin gold-cream strokes on the dark ink background, every part
+// labelled with a callout line + dimension annotations. Reads as
+// "drawing of the cooler door" rather than "failed attempt at a photo."
 //
-//   - White insulated panel construction matching the cooler's
-//     exterior wall (so the door is flush with the wall, just slightly
-//     recessed)
-//   - Stainless steel perimeter trim (~18px wide) framing the door
-//   - Three heavy-duty industrial hinges down the left
-//   - Big horizontal paddle/lever handle on the right side
-//   - Small viewing window in the upper third (you'd peek through it
-//     to check the cooler before opening)
-//   - Stainless steel kick plate at the bottom (protects the panel
-//     from carts hitting it)
-//   - Manufacturer's plate
-//
-// LED digital thermometer + brand plate sit ABOVE the door (drawn by
-// the parent component since they're outside the rotating door).
+// Includes the same anatomical parts a real commercial walk-in door
+// has (panel, perimeter trim, hinges, handle, viewing window, kick
+// plate, manufacturer plate) but rendered as line art with annotations.
 
-function RealisticFridgeDoor({ cream }: { cream: string }) {
+function BlueprintCoolerDoor({ accent }: { accent: string }) {
+  const line   = 'rgba(216,200,154,0.85)'   // primary line colour
+  const fine   = 'rgba(216,200,154,0.45)'   // thinner reference lines + dimension ticks
+  const dim    = 'rgba(216,200,154,0.35)'   // dimension extension lines
+  const label  = '#d8c89a'                  // callout label text
+  // Viewbox is 600 × 880 — door aspect roughly 1 : 1.47, matching a
+  // real walk-in cooler door (e.g. 800mm wide × 1900mm tall).
   return (
-    <div
+    <svg
+      viewBox="0 0 600 880"
+      preserveAspectRatio="xMidYMid meet"
       style={{
         position: 'absolute',
         inset: 0,
-        overflow: 'hidden',
-        // The door is white insulated panel — same construction as the
-        // cooler wall it's mounted in. Slight cool tint at the edges
-        // implies the panel is recessed slightly into the wall.
-        background: `
-          radial-gradient(ellipse 100% 100% at 50% 50%, #ecedef 0%, #d8dadd 60%, #b4b8bd 100%)
-        `,
-        boxShadow: `
-          inset 0 0 0 1px rgba(0,0,0,0.08),
-          inset 0 -8px 18px rgba(0,0,0,0.10),
-          0 14px 30px rgba(0,0,0,0.4)
-        `,
+        width: '100%',
+        height: '100%',
+        overflow: 'visible',
       }}
     >
-      {/* STAINLESS STEEL PERIMETER TRIM — a band of polished steel
-          framing the door. This is the most visually distinctive part
-          of a walk-in cooler: the door is INSET into a steel surround. */}
-      {/* Top trim */}
-      <div style={{
-        position: 'absolute', top: 0, left: 0, right: 0, height: '18px',
-        background: 'linear-gradient(180deg, #f3f5f7 0%, #b8bdc2 50%, #6a7077 100%)',
-        boxShadow: 'inset 0 -1px 2px rgba(0,0,0,0.3)',
-      }} />
-      {/* Bottom trim */}
-      <div style={{
-        position: 'absolute', bottom: 0, left: 0, right: 0, height: '18px',
-        background: 'linear-gradient(180deg, #6a7077 0%, #b8bdc2 50%, #f3f5f7 100%)',
-        boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.25)',
-      }} />
-      {/* Left trim */}
-      <div style={{
-        position: 'absolute', top: 0, bottom: 0, left: 0, width: '18px',
-        background: 'linear-gradient(90deg, #f3f5f7 0%, #b8bdc2 50%, #6a7077 100%)',
-        boxShadow: 'inset -1px 0 2px rgba(0,0,0,0.3)',
-      }} />
-      {/* Right trim */}
-      <div style={{
-        position: 'absolute', top: 0, bottom: 0, right: 0, width: '18px',
-        background: 'linear-gradient(90deg, #6a7077 0%, #b8bdc2 50%, #f3f5f7 100%)',
-        boxShadow: 'inset 1px 0 2px rgba(0,0,0,0.25)',
-      }} />
-
-      {/* INDUSTRIAL HINGES — three down the left side. Each one is a
-          rectangular hinge body with two visible "knuckles" stacked, so
-          it reads as a heavy-duty cooler hinge not a residential one.
-          They sit on top of the trim, slightly poking left so they
-          look mounted to the doorframe. */}
-      {[14, 44, 80].map((topPct) => (
-        <CoolerHinge key={topPct} style={{ position: 'absolute', top: `${topPct}%`, left: '-4px' }} />
+      {/* ── DOOR PANEL — the outer rectangle ─────────────────────── */}
+      <rect
+        x="40" y="40" width="520" height="800"
+        fill="rgba(216,200,154,0.04)"
+        stroke={line}
+        strokeWidth="2"
+        rx="4"
+      />
+      {/* Stainless perimeter trim — inner offset rectangle */}
+      <rect
+        x="56" y="56" width="488" height="768"
+        fill="none"
+        stroke={line}
+        strokeWidth="1.2"
+        rx="3"
+      />
+      {/* Cross-hatch corners suggesting the trim's reflective surface */}
+      {([[60, 60], [528, 60], [60, 808], [528, 808]] as Array<[number, number]>).map(([x, y], i) => (
+        <g key={i} stroke={fine} strokeWidth="0.7">
+          <line x1={x} y1={y} x2={x + 12} y2={y + 12} />
+          <line x1={x + 4} y1={y} x2={x + 12} y2={y + 8} />
+          <line x1={x} y1={y + 4} x2={x + 8} y2={y + 12} />
+        </g>
       ))}
 
-      {/* VIEWING WINDOW — upper-third pane, double-glazed look.
-          Frame is brushed steel, glass is dark with a subtle highlight
-          reflection so it reads as glass, not a hole. */}
-      <div style={{
-        position: 'absolute',
-        top: '14%', left: '24%', right: '24%',
-        height: '22%',
-        background: 'linear-gradient(180deg, #a8b0b7 0%, #6e757b 100%)',
-        borderRadius: '4px',
-        padding: '6px',
-        boxShadow: '0 4px 12px rgba(0,0,0,0.35), inset 0 0 0 1px rgba(255,255,255,0.18)',
-      }}>
-        {/* Glass pane */}
-        <div style={{
-          width: '100%', height: '100%',
-          background: `
-            linear-gradient(135deg, rgba(255,255,255,0.18) 0%, rgba(255,255,255,0.04) 20%, transparent 35%, transparent 100%),
-            linear-gradient(180deg, #1a2024 0%, #0a0e11 100%)
-          `,
-          borderRadius: '2px',
-          boxShadow: 'inset 0 0 0 1px rgba(0,0,0,0.6), inset 0 2px 6px rgba(0,0,0,0.7)',
-        }} />
-      </div>
+      {/* ── HINGES — three on the left edge ──────────────────────── */}
+      {[150, 440, 690].map((y, i) => (
+        <g key={i}>
+          {/* Hinge body */}
+          <rect x="24" y={y} width="40" height="56" fill="rgba(216,200,154,0.05)" stroke={line} strokeWidth="1.4" rx="2" />
+          {/* Two knuckle circles */}
+          <circle cx="44" cy={y + 16} r="6" fill="none" stroke={line} strokeWidth="1.2" />
+          <circle cx="44" cy={y + 40} r="6" fill="none" stroke={line} strokeWidth="1.2" />
+          {/* Hinge pin centre line */}
+          <line x1="44" y1={y + 4} x2="44" y2={y + 52} stroke={fine} strokeWidth="0.7" strokeDasharray="2 2" />
+          {/* Callout line + label, only on the top hinge */}
+          {i === 0 && (
+            <>
+              <line x1="22" y1={y + 28} x2="-30" y2={y + 28} stroke={fine} strokeWidth="0.7" />
+              <text x="-34" y={y + 26} fill={label} fontFamily="var(--font-display)" fontSize="11" letterSpacing="2.5" textAnchor="end">
+                03 ── HINGE
+              </text>
+              <text x="-34" y={y + 38} fill={fine as string} fontFamily="var(--font-display)" fontSize="9" letterSpacing="2" textAnchor="end">
+                heavy-duty × 3
+              </text>
+            </>
+          )}
+        </g>
+      ))}
 
-      {/* PADDLE HANDLE — long horizontal lever on the right side at
-          waist height. Heavy industrial stainless. Bolted to a backing
-          plate. This is THE recognisable cooler-door element. */}
-      {/* Backing plate */}
-      <div style={{
-        position: 'absolute',
-        top: '46%', right: '6%',
-        width: '36%', height: '14%',
-        background: 'linear-gradient(180deg, #cfd4d8 0%, #898f94 100%)',
-        borderRadius: '4px',
-        boxShadow: '0 3px 8px rgba(0,0,0,0.35), inset 0 0 0 1px rgba(255,255,255,0.2)',
-      }} />
-      {/* The lever itself — long capsule shape with chrome gradient */}
-      <div style={{
-        position: 'absolute',
-        top: '49%', right: '8%',
-        width: '32%', height: '8%',
-        background: 'linear-gradient(180deg, #f5f7f9 0%, #b8bec3 30%, #f5f7f9 50%, #b8bec3 70%, #6a7077 100%)',
-        borderRadius: '999px',
-        boxShadow: '0 4px 10px rgba(0,0,0,0.45), inset 0 0 0 1px rgba(255,255,255,0.3)',
-      }} />
-      {/* Pivot anchor — circular hub where the lever attaches */}
-      <div style={{
-        position: 'absolute',
-        top: '50%', right: '37%',
-        width: '20px', height: '20px',
-        background: 'radial-gradient(circle at 35% 30%, #f5f7f9 0%, #898f94 70%, #3a4045 100%)',
-        borderRadius: '999px',
-        transform: 'translateY(-2px)',
-        boxShadow: '0 2px 4px rgba(0,0,0,0.5)',
-      }} />
-      {/* Lock cylinder under the handle */}
-      <div style={{
-        position: 'absolute',
-        top: '62%', right: '12%',
-        width: '24px', height: '18px',
-        background: 'linear-gradient(180deg, #b8bec3 0%, #6a7077 100%)',
-        borderRadius: '3px',
-        boxShadow: '0 2px 4px rgba(0,0,0,0.4), inset 0 0 0 1px rgba(0,0,0,0.2)',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-      }}>
-        <span style={{
-          width: 5, height: 5, borderRadius: '50%',
-          background: '#0a0c0d',
-          boxShadow: '0 0 0 1px rgba(255,255,255,0.3)',
-        }} />
-      </div>
+      {/* ── VIEWING WINDOW — upper third ─────────────────────────── */}
+      <g>
+        <rect x="140" y="160" width="320" height="160" fill="rgba(216,200,154,0.05)" stroke={line} strokeWidth="1.6" rx="3" />
+        {/* Glass inner rectangle */}
+        <rect x="150" y="170" width="300" height="140" fill="none" stroke={fine} strokeWidth="1" rx="2" strokeDasharray="3 2" />
+        {/* Diagonal reflection lines so it reads as glass not a hole */}
+        <line x1="160" y1="180" x2="190" y2="180" stroke={fine} strokeWidth="0.7" />
+        <line x1="160" y1="180" x2="160" y2="210" stroke={fine} strokeWidth="0.7" />
+        {/* Callout */}
+        <line x1="460" y1="240" x2="540" y2="240" stroke={fine} strokeWidth="0.7" />
+        <text x="546" y="238" fill={label} fontFamily="var(--font-display)" fontSize="11" letterSpacing="2.5">
+          02 ── VIEW PANE
+        </text>
+        <text x="546" y="250" fill={fine as string} fontFamily="var(--font-display)" fontSize="9" letterSpacing="2">
+          double-glaze
+        </text>
+      </g>
 
-      {/* MANUFACTURER PLATE — small stainless plate in the upper left */}
-      <div style={{
-        position: 'absolute',
-        top: '5%', left: '5%',
-        width: '36%', height: '6%',
-        background: 'linear-gradient(180deg, #cfd4d8 0%, #898f94 100%)',
-        borderRadius: '2px',
-        boxShadow: '0 2px 4px rgba(0,0,0,0.3), inset 0 0 0 1px rgba(255,255,255,0.25)',
-        display: 'flex', flexDirection: 'column',
-        justifyContent: 'center', padding: '0 0.55rem',
-      }}>
-        <p style={{
-          fontFamily: 'var(--font-display)',
-          fontSize: '0.42rem', letterSpacing: '0.42em',
-          color: '#3a4045', fontWeight: 700,
-        }}>
-          WALK-IN · 002 · PROVISIONS
-        </p>
-        <p style={{
-          fontFamily: 'var(--font-display)',
-          fontSize: '0.55rem', letterSpacing: '0.04em',
-          color: '#1a1d20', fontWeight: 800, marginTop: '0.1rem',
-        }}>
-          MODEL WIC-300
-        </p>
-      </div>
+      {/* ── PADDLE HANDLE — right side, waist height ─────────────── */}
+      <g>
+        {/* Backing plate */}
+        <rect x="320" y="430" width="220" height="80" fill="rgba(216,200,154,0.05)" stroke={line} strokeWidth="1.4" rx="3" />
+        {/* The lever — capsule */}
+        <rect x="336" y="454" width="188" height="28" rx="14" fill="rgba(201,169,97,0.10)" stroke={accent} strokeWidth="1.6" />
+        {/* Pivot dot */}
+        <circle cx="358" cy="468" r="6" fill={accent} />
+        <circle cx="358" cy="468" r="3" fill="#10141a" />
+        {/* Lock cylinder underneath */}
+        <rect x="436" y="490" width="40" height="14" fill="none" stroke={fine} strokeWidth="1" rx="2" />
+        <circle cx="456" cy="497" r="2.5" fill={fine} />
+        {/* Callout */}
+        <line x1="540" y1="468" x2="600" y2="468" stroke={fine} strokeWidth="0.7" />
+        <text x="-540" y="466" fill={label} fontFamily="var(--font-display)" fontSize="11" letterSpacing="2.5" transform="scale(-1,1)">
+          ── PADDLE HANDLE ── 01
+        </text>
+      </g>
 
-      {/* KICK PLATE — stainless plate across the bottom 18% of the door,
-          protects the panel from cart strikes / mop bucket bashes */}
-      <div style={{
-        position: 'absolute',
-        bottom: '4%', left: '6%', right: '6%',
-        height: '18%',
-        background: `
-          linear-gradient(180deg, #d5dadd 0%, #989fa4 50%, #6a7077 100%),
-          repeating-linear-gradient(90deg, rgba(255,255,255,0.06) 0 1px, transparent 1px 4px)
-        `,
-        backgroundBlendMode: 'overlay',
-        borderRadius: '3px',
-        boxShadow: '0 4px 10px rgba(0,0,0,0.35), inset 0 0 0 1px rgba(255,255,255,0.18)',
-      }}>
-        {/* A few corner screw heads on the kick plate */}
-        {[
-          { top: 4, left: 4 }, { top: 4, right: 4 },
-          { bottom: 4, left: 4 }, { bottom: 4, right: 4 },
-        ].map((pos, i) => (
-          <span key={i} style={{
-            position: 'absolute', ...pos,
-            width: 6, height: 6, borderRadius: '50%',
-            background: 'radial-gradient(circle at 35% 30%, #898f94 0%, #1a1d20 80%)',
-            boxShadow: 'inset 0 0 0 0.5px rgba(255,255,255,0.3)',
-          }} />
+      {/* ── MANUFACTURER PLATE — top-left of the door panel ──────── */}
+      <g>
+        <rect x="80" y="80" width="180" height="46" fill="rgba(216,200,154,0.04)" stroke={line} strokeWidth="1" rx="2" />
+        <text x="90" y="98" fill={label} fontFamily="var(--font-display)" fontSize="9" letterSpacing="3.2" fontWeight="700">
+          WIC-002 · PROVISIONS
+        </text>
+        <text x="90" y="114" fill={fine as string} fontFamily="var(--font-display)" fontSize="8" letterSpacing="2.5">
+          MODEL: WIC-300 / CLASS C
+        </text>
+        <text x="90" y="124" fill={fine as string} fontFamily="var(--font-display)" fontSize="7" letterSpacing="2.5">
+          BUILT 2026 · KARACHI
+        </text>
+      </g>
+
+      {/* ── KICK PLATE — bottom 18% of the door ─────────────────── */}
+      <g>
+        <rect x="80" y="720" width="440" height="100" fill="rgba(216,200,154,0.05)" stroke={line} strokeWidth="1.4" rx="2" />
+        {/* Brushed-steel striations rendered as thin dashed lines */}
+        {[745, 760, 775, 790, 805].map((y) => (
+          <line key={y} x1="100" y1={y} x2="500" y2={y} stroke={fine} strokeWidth="0.5" strokeDasharray="2 4" />
         ))}
-      </div>
+        {/* Corner screws */}
+        {[[95, 735], [505, 735], [95, 805], [505, 805]].map(([x, y], i) => (
+          <circle key={i} cx={x} cy={y} r="3" fill="none" stroke={line} strokeWidth="0.9" />
+        ))}
+        {/* Callout */}
+        <line x1="520" y1="770" x2="580" y2="770" stroke={fine} strokeWidth="0.7" />
+        <text x="586" y="768" fill={label} fontFamily="var(--font-display)" fontSize="11" letterSpacing="2.5">
+          04 ── KICK PLATE
+        </text>
+        <text x="586" y="780" fill={fine as string} fontFamily="var(--font-display)" fontSize="9" letterSpacing="2">
+          stainless 16ga
+        </text>
+      </g>
 
-      {/* SUBTLE PANEL SHEEN — diagonal light streak across the door */}
-      <div aria-hidden="true" style={{
-        position: 'absolute', inset: 0,
-        background: 'linear-gradient(120deg, transparent 38%, rgba(255,255,255,0.06) 50%, transparent 62%)',
-        pointerEvents: 'none',
-      }} />
-      {/* Tiny scuffs near the kick plate to break the perfection */}
-      <div aria-hidden="true" style={{
-        position: 'absolute',
-        bottom: '25%', left: '18%',
-        width: '8px', height: '14px',
-        background: 'rgba(0,0,0,0.10)',
-        borderRadius: '50%',
-        filter: 'blur(2px)',
-      }} />
-      <div aria-hidden="true" style={{
-        position: 'absolute',
-        bottom: '28%', right: '24%',
-        width: '12px', height: '8px',
-        background: 'rgba(0,0,0,0.08)',
-        borderRadius: '50%',
-        filter: 'blur(2px)',
-      }} />
-      {/* Avoid the eslint "_cream is unused" — keep the prop for parent
-          compatibility even if we don't render any cream-coloured text
-          on the door itself anymore. */}
-      <span style={{ display: 'none' }}>{cream}</span>
-    </div>
-  )
-}
-
-// CoolerHinge — heavy industrial hinge with two visible knuckles.
-function CoolerHinge({ style }: { style: React.CSSProperties }) {
-  return (
-    <div aria-hidden="true" style={{
-      width: 30, height: 64,
-      background: 'linear-gradient(90deg, #4a4f52 0%, #989fa4 30%, #cfd4d8 50%, #989fa4 70%, #4a4f52 100%)',
-      borderRadius: '3px',
-      boxShadow: '0 4px 10px rgba(0,0,0,0.55), inset 0 0 0 1px rgba(255,255,255,0.18)',
-      display: 'flex', flexDirection: 'column',
-      justifyContent: 'space-around', alignItems: 'center',
-      ...style,
-    }}>
-      {/* Two knuckle rings */}
-      <span style={{
-        width: 14, height: 14, borderRadius: '50%',
-        background: 'radial-gradient(circle at 35% 30%, #f3f5f7 0%, #6a7077 70%, #2a2e30 100%)',
-        boxShadow: 'inset 0 0 0 1px rgba(0,0,0,0.3)',
-      }} />
-      <span style={{
-        width: 14, height: 14, borderRadius: '50%',
-        background: 'radial-gradient(circle at 35% 30%, #f3f5f7 0%, #6a7077 70%, #2a2e30 100%)',
-        boxShadow: 'inset 0 0 0 1px rgba(0,0,0,0.3)',
-      }} />
-    </div>
+      {/* ── DIMENSION LINES — left side height + bottom width ───── */}
+      <g stroke={dim} strokeWidth="0.7" fontFamily="var(--font-display)">
+        {/* Height — left side, outside the door */}
+        <line x1="-18" y1="40" x2="-18" y2="840" />
+        <line x1="-22" y1="40" x2="-14" y2="40" />
+        <line x1="-22" y1="840" x2="-14" y2="840" />
+        <text x="-30" y="446" fill={label} fontSize="11" letterSpacing="2" textAnchor="middle" transform="rotate(-90, -30, 446)">
+          1900 mm
+        </text>
+        {/* Width — bottom, outside the door */}
+        <line x1="40" y1="858" x2="560" y2="858" />
+        <line x1="40" y1="854" x2="40" y2="862" />
+        <line x1="560" y1="854" x2="560" y2="862" />
+        <text x="300" y="876" fill={label} fontSize="11" letterSpacing="2" textAnchor="middle">
+          800 mm
+        </text>
+      </g>
+    </svg>
   )
 }
 
@@ -645,17 +573,19 @@ function CoolerInterior({ accent, cream, imageUrl }: {
         <CoolerInteriorSVG />
       )}
 
-      {/* Gold halo at the back-wall centre — warm light hint bleeding
-          into the dim cooler. Works for both photo + SVG fallback now
-          that the SVG interior is dark again. */}
-      <div
-        aria-hidden="true"
-        style={{
-          position: 'absolute', inset: 0,
-          background: `radial-gradient(ellipse 40% 30% at 50% 40%, ${accent}30 0%, transparent 70%)`,
-          mixBlendMode: 'screen',
-        }}
-      />
+      {/* Gold halo at the back-wall centre — only over the operator's
+          photo (the blueprint SVG is already gold-on-ink, so a screen-
+          blended gold layer would just wash out the dark ink). */}
+      {imageUrl && (
+        <div
+          aria-hidden="true"
+          style={{
+            position: 'absolute', inset: 0,
+            background: `radial-gradient(ellipse 40% 30% at 50% 40%, ${accent}30 0%, transparent 70%)`,
+            mixBlendMode: 'screen',
+          }}
+        />
+      )}
 
       {/* ── TYPOGRAPHY OVERLAYS sitting in the empty shelves of the
             photo. Positions are tuned for a typical walk-in cooler shot
@@ -822,284 +752,176 @@ function FridgeWord({
   )
 }
 
-// ─── CoolerInteriorSVG ──────────────────────────────────────────────
-// Looks like an actual walk-in cooler interior (bright white walls,
-// stainless steel solid-shelf racks against each side wall, polished
-// floor, refrigeration unit + LED on the ceiling, back wall with panel
-// seam). Built in proper 1-point perspective with the vanishing point
-// at the centre of the back wall.
-//
-// The racks are modelled after the IndiaMART reference: four solid
-// stainless shelves with chrome pipe verticals at each corner, visible
-// shelf thickness on the front edge (so they read as 3D, not flat).
-// Rendered front pole > back pole so the rack foreshortens correctly.
-//
-// Viewbox is 1600 × 1000. Back-wall rectangle sits at x=520–1080,
-// y=240–680. Everything else trapezoids out from that.
+// ─── Blueprint cooler interior ──────────────────────────────────────
+// Matches the schematic aesthetic of BlueprintCoolerDoor — thin gold
+// lines on dark ink with annotations and dimension callouts. Renders
+// the "view inside the cooler" as an architectural drawing: back wall
+// rectangle, side walls drawn as receding trapezoids, two wire-rack
+// schematics against the side walls, ceiling refrigeration unit, LED
+// strip, floor dimension line. Numbered callouts so the picture reads
+// like a working drawing.
 
 function CoolerInteriorSVG() {
+  const line  = 'rgba(216,200,154,0.85)'
+  const fine  = 'rgba(216,200,154,0.42)'
+  const dim   = 'rgba(216,200,154,0.28)'
+  const label = '#d8c89a'
   return (
     <svg
       viewBox="0 0 1600 1000"
       preserveAspectRatio="xMidYMid slice"
       style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}
     >
-      <defs>
-        {/* Dark mood interior palette. The exterior shell of the cooler
-            is bright + realistic (white insulated panels). What's
-            BEHIND the door, however, is dimmed — the cooler is "still
-            cold but the lights are low," nudging the speakeasy vibe. */}
-        <linearGradient id="ciWall" x1="0%" y1="0%" x2="0%" y2="100%">
-          <stop offset="0%"   stopColor="#9aa4ac" />
-          <stop offset="55%"  stopColor="#4d585f" />
-          <stop offset="100%" stopColor="#1d2226" />
-        </linearGradient>
-        <radialGradient id="ciBack" cx="50%" cy="40%" r="70%">
-          <stop offset="0%"   stopColor="#aab4bc" />
-          <stop offset="50%"  stopColor="#5c6a72" />
-          <stop offset="100%" stopColor="#1d262b" />
-        </radialGradient>
-        <linearGradient id="ciCeiling" x1="0%" y1="0%" x2="0%" y2="100%">
-          <stop offset="0%"   stopColor="#6a747a" />
-          <stop offset="100%" stopColor="#aab4bc" />
-        </linearGradient>
-        <linearGradient id="ciFloor" x1="0%" y1="0%" x2="0%" y2="100%">
-          <stop offset="0%"   stopColor="#1d2226" />
-          <stop offset="50%"  stopColor="#0e1114" />
-          <stop offset="100%" stopColor="#050709" />
-        </linearGradient>
-        {/* Chrome pipe — dark/light/dark gradient for cylindrical sheen */}
-        <linearGradient id="ciChrome" x1="0%" y1="0%" x2="100%" y2="0%">
-          <stop offset="0%"   stopColor="#1a1d1f" />
-          <stop offset="35%"  stopColor="#7a8489" />
-          <stop offset="50%"  stopColor="#bbc3c8" />
-          <stop offset="65%"  stopColor="#7a8489" />
-          <stop offset="100%" stopColor="#1a1d1f" />
-        </linearGradient>
-        <linearGradient id="ciShelfTop" x1="0%" y1="0%" x2="0%" y2="100%">
-          <stop offset="0%"   stopColor="#a0aab2" />
-          <stop offset="55%"  stopColor="#5c6770" />
-          <stop offset="100%" stopColor="#1a1f23" />
-        </linearGradient>
-        <linearGradient id="ciShelfEdge" x1="0%" y1="0%" x2="0%" y2="100%">
-          <stop offset="0%"   stopColor="#5a646b" />
-          <stop offset="100%" stopColor="#1a1d1f" />
-        </linearGradient>
-        <linearGradient id="ciFridgeUnit" x1="0%" y1="0%" x2="0%" y2="100%">
-          <stop offset="0%"   stopColor="#5a646b" />
-          <stop offset="60%"  stopColor="#2a3035" />
-          <stop offset="100%" stopColor="#0d1013" />
-        </linearGradient>
-        <filter id="ciLedGlow">
-          <feGaussianBlur stdDeviation="6" />
-        </filter>
-      </defs>
+      {/* Vanishing-point construction lines — extending from corners
+          to the centre. Like a perspective grid actually drawn by hand. */}
+      <g stroke={dim} strokeWidth="0.6" strokeDasharray="3 4">
+        <line x1="0"    y1="0"    x2="800" y2="460" />
+        <line x1="1600" y1="0"    x2="800" y2="460" />
+        <line x1="0"    y1="1000" x2="800" y2="460" />
+        <line x1="1600" y1="1000" x2="800" y2="460" />
+      </g>
+      {/* Vanishing point cross-hair */}
+      <g stroke={fine} strokeWidth="0.8">
+        <line x1="788" y1="460" x2="812" y2="460" />
+        <line x1="800" y1="448" x2="800" y2="472" />
+      </g>
+      <text x="816" y="456" fill={fine} fontFamily="var(--font-display)" fontSize="9" letterSpacing="2">VP</text>
 
-      {/* ── ROOM SHELL ────────────────────────────────────────────── */}
+      {/* Room outlines — no fill */}
+      <polygon points="0,0 1600,0 1080,240 520,240"
+        fill="none" stroke={line} strokeWidth="1.6" />
+      <polygon points="0,0 520,240 520,680 0,1000"
+        fill="none" stroke={line} strokeWidth="1.6" />
+      <polygon points="1600,0 1600,1000 1080,680 1080,240"
+        fill="none" stroke={line} strokeWidth="1.6" />
+      <polygon points="0,1000 1600,1000 1080,680 520,680"
+        fill="none" stroke={line} strokeWidth="1.6" />
+      {/* Back wall with subtle hatched fill */}
+      <rect x="520" y="240" width="560" height="440"
+        fill="rgba(216,200,154,0.03)" stroke={line} strokeWidth="1.6" />
+      <line x1="708" y1="240" x2="708" y2="680" stroke={fine} strokeWidth="0.8" />
+      <line x1="892" y1="240" x2="892" y2="680" stroke={fine} strokeWidth="0.8" />
 
-      {/* Ceiling — trapezoid */}
-      <polygon points="0,0 1600,0 1080,240 520,240" fill="url(#ciCeiling)" />
-      {/* Left wall — trapezoid */}
-      <polygon points="0,0 520,240 520,680 0,1000" fill="url(#ciWall)" />
-      {/* Right wall */}
-      <polygon points="1600,0 1600,1000 1080,680 1080,240" fill="url(#ciWall)" />
-      {/* Floor — trapezoid */}
-      <polygon points="0,1000 1600,1000 1080,680 520,680" fill="url(#ciFloor)" />
-      {/* Subtle floor reflection band (lighter horizontal sheen) */}
-      <ellipse cx="800" cy="840" rx="520" ry="34" fill="rgba(255,255,255,0.06)" />
-      {/* Back wall */}
-      <rect x="520" y="240" width="560" height="440" fill="url(#ciBack)" />
-      {/* Back wall panel seams — two thin vertical lines split the panel into 3 */}
-      <line x1="708" y1="240" x2="708" y2="680" stroke="rgba(0,0,0,0.08)" strokeWidth="1" />
-      <line x1="892" y1="240" x2="892" y2="680" stroke="rgba(0,0,0,0.08)" strokeWidth="1" />
-
-      {/* Wall-floor corner trim — darker line where wall meets floor (each side) */}
-      <line x1="0"    y1="1000" x2="520"  y2="680" stroke="rgba(0,0,0,0.25)" strokeWidth="2" />
-      <line x1="1600" y1="1000" x2="1080" y2="680" stroke="rgba(0,0,0,0.25)" strokeWidth="2" />
-      <line x1="520"  y1="680"  x2="1080" y2="680" stroke="rgba(0,0,0,0.30)" strokeWidth="2" />
-      {/* Wall-ceiling corner trim */}
-      <line x1="0"    y1="0"    x2="520"  y2="240" stroke="rgba(0,0,0,0.08)" strokeWidth="1" />
-      <line x1="1600" y1="0"    x2="1080" y2="240" stroke="rgba(0,0,0,0.08)" strokeWidth="1" />
-
-      {/* ── CEILING REFRIGERATION UNIT ─────────────────────────────── */}
-      <g transform="translate(800, 100)">
-        {/* Housing — wider than tall, like the rectangular evaporator
-            unit hanging from the ceiling in commercial coolers */}
-        <rect x="-160" y="-30" width="320" height="78" rx="3" fill="url(#ciFridgeUnit)" />
-        {/* Top mounting strap */}
-        <rect x="-130" y="-38" width="260" height="10" fill="#2e3438" />
-        {/* Air-vent grille on the underside */}
-        <rect x="-130" y="40" width="260" height="22" rx="2" fill="#1a1f22" />
-        <g transform="translate(0, 51)">
-          {/* Concentric circles + spokes for the fan visible through the grille */}
-          <circle cx="-60" cy="0" r="14" fill="none" stroke="#5a6266" strokeWidth="1" />
-          <circle cx="-60" cy="0" r="4"  fill="#3a4045" />
-          {Array.from({ length: 6 }).map((_, i) => (
-            <line key={i}
-              x1="-60" y1="0"
-              x2={-60 + Math.cos((i * Math.PI) / 3) * 12}
-              y2={Math.sin((i * Math.PI) / 3) * 12}
-              stroke="#5a6266" strokeWidth="0.8" />
-          ))}
-          <circle cx="60" cy="0" r="14" fill="none" stroke="#5a6266" strokeWidth="1" />
-          <circle cx="60" cy="0" r="4"  fill="#3a4045" />
-          {Array.from({ length: 6 }).map((_, i) => (
-            <line key={i}
-              x1="60" y1="0"
-              x2={60 + Math.cos((i * Math.PI) / 3) * 12}
-              y2={Math.sin((i * Math.PI) / 3) * 12}
-              stroke="#5a6266" strokeWidth="0.8" />
-          ))}
-          {/* Horizontal louver slats between the two fans */}
-          {[0, 6, 12, -6, -12].map((y) => (
-            <line key={y} x1="-35" y1={y} x2="35" y2={y} stroke="#5a6266" strokeWidth="0.6" />
-          ))}
-        </g>
-        {/* Brand sticker / model plate on the front */}
-        <rect x="-50" y="-10" width="100" height="14" rx="2" fill="rgba(255,255,255,0.10)" />
-        <line x1="-44" y1="-3" x2="44" y2="-3" stroke="rgba(255,255,255,0.25)" strokeWidth="0.8" />
+      {/* Ceiling evaporator (schematic plan-view) */}
+      <g transform="translate(800, 120)">
+        <rect x="-160" y="-30" width="320" height="70"
+          fill="rgba(216,200,154,0.04)" stroke={line} strokeWidth="1.4" rx="2" />
+        <line x1="-140" y1="-36" x2="140" y2="-36" stroke={fine} strokeWidth="1" />
+        {[-70, 70].map((cx) => (
+          <g key={cx}>
+            <circle cx={cx} cy="14" r="20" fill="none" stroke={line} strokeWidth="1.2" />
+            <circle cx={cx} cy="14" r="4" fill={line} />
+            {Array.from({ length: 4 }).map((_, i) => (
+              <line key={i}
+                x1={cx} y1="14"
+                x2={cx + Math.cos((i * Math.PI) / 2) * 16}
+                y2={14 + Math.sin((i * Math.PI) / 2) * 16}
+                stroke={fine} strokeWidth="0.8" />
+            ))}
+          </g>
+        ))}
+        <line x1="170" y1="0" x2="240" y2="0" stroke={fine} strokeWidth="0.7" />
+        <text x="246" y="-2" fill={label} fontFamily="var(--font-display)" fontSize="11" letterSpacing="2.5">
+          05 ── EVAPORATOR
+        </text>
+        <text x="246" y="10" fill={fine} fontFamily="var(--font-display)" fontSize="9" letterSpacing="2">
+          ceiling-mount
+        </text>
       </g>
 
-      {/* ── LED ceiling strip — long fluorescent across the front ── */}
-      <rect x="600" y="40" width="400" height="18" rx="4" fill="#f8fbfd" />
-      <rect x="600" y="40" width="400" height="18" rx="4" fill="white" opacity="0.7" filter="url(#ciLedGlow)" />
-      <ellipse cx="800" cy="68" rx="320" ry="40" fill="rgba(255,255,255,0.22)" />
+      {/* LED ceiling strip */}
+      <line x1="600" y1="50" x2="1000" y2="50" stroke={line} strokeWidth="3" strokeLinecap="round" />
+      <line x1="540" y1="200" x2="600" y2="50" stroke={fine} strokeWidth="0.7" />
+      <text x="430" y="200" fill={label} fontFamily="var(--font-display)" fontSize="11" letterSpacing="2.5">
+        06 ── LED · 4000K
+      </text>
 
-      {/* ── LEFT RACK ─────────────────────────────────────────────────
-            Stands against the left wall. Two front poles + two back
-            poles. Four solid shelves spanning between them. We render
-            in z-order: back poles first, then shelves (with thickness
-            edges), then front poles on top so they sit "in front" of
-            the shelves visually. */}
-      <LeftRack />
+      {/* LEFT + RIGHT racks */}
+      <BlueprintRack side="left"  lineColor={line} fineColor={fine} labelColor={label} />
+      <BlueprintRack side="right" lineColor={line} fineColor={fine} labelColor={label} />
 
-      {/* ── RIGHT RACK ── mirror */}
-      <RightRack />
+      {/* Floor width dimension callout */}
+      <g stroke={dim} strokeWidth="0.7">
+        <line x1="40" y1="970" x2="1560" y2="970" />
+        <line x1="40" y1="965" x2="40" y2="975" />
+        <line x1="1560" y1="965" x2="1560" y2="975" />
+      </g>
+      <text x="800" y="990" fill={label} fontFamily="var(--font-display)" fontSize="11" letterSpacing="2.5" textAnchor="middle">
+        2400 mm · cooler width
+      </text>
 
-      {/* ── Faint cold-air vapour drifting along the floor ── */}
-      <ellipse cx="800" cy="780" rx="200" ry="18" fill="rgba(255,255,255,0.05)" />
+      {/* North arrow (bottom-right corner) */}
+      <g transform="translate(1500, 920)">
+        <circle cx="0" cy="0" r="24" fill="none" stroke={fine} strokeWidth="0.8" />
+        <line x1="0" y1="-22" x2="0" y2="22" stroke={fine} strokeWidth="0.6" />
+        <line x1="-22" y1="0" x2="22" y2="0" stroke={fine} strokeWidth="0.6" />
+        <polygon points="0,-22 -5,-8 5,-8" fill={label} />
+        <text x="0" y="-30" fill={label} fontFamily="var(--font-display)" fontSize="9" letterSpacing="2" textAnchor="middle">
+          N
+        </text>
+      </g>
     </svg>
   )
 }
 
-// LeftRack — 4 chrome verticals (2 front, 2 back) + 4 stainless shelves
-// against the left wall, perspectively foreshortened toward the back.
-function LeftRack() {
-  // Front-of-rack poles (closer to camera, full viewport-height span).
-  // Back-of-rack poles (deeper, shorter span — clip to the back wall's
-  // y range so they don't poke past the room corners).
-  const polesFront: Array<[number, number]> = [[60, 5], [240, 5]]   // [x, width]
-  const polesBack:  Array<[number, number]> = [[460, 4], [510, 4]]
-  // Shelf-top y-coordinates: front y vs back y (different because the
-  // shelf foreshortens). 4 shelves, top to bottom.
-  // Pair format: [frontY, backY, thicknessFront, thicknessBack]
-  const shelves: Array<[number, number, number, number]> = [
-    [180,  280, 10, 7],   // top
-    [380,  410, 11, 8],   // mid-upper
-    [580,  540, 12, 8],   // mid-lower
-    [820,  650, 14, 9],   // bottom
-  ]
-
-  return (
-    <g>
-      {/* Back poles render first (behind shelves) */}
-      {polesBack.map(([x, w], i) => (
-        <rect key={`bb-${i}`} x={x} y="260" width={w} height="400" fill="url(#ciChrome)" opacity="0.9" />
-      ))}
-
-      {/* Shelves — each is a perspective quad (top surface) + a thin
-          front-edge rectangle showing the shelf's thickness + an
-          underside shadow polygon. */}
-      {shelves.map(([fy, by, ft], i) => {
-        // Top surface polygon — from front-pole-1 to front-pole-2 (across
-        // the rack's depth at the front) to back-pole-2 to back-pole-1.
-        const fx1 = 60,  fx2 = 240
-        const bx1 = 460, bx2 = 510
-        return (
-          <g key={i}>
-            {/* Top surface */}
-            <polygon
-              points={`${fx1},${fy} ${fx2},${fy} ${bx2},${by} ${bx1},${by}`}
-              fill="url(#ciShelfTop)"
-            />
-            {/* Front edge — visible vertical thickness of the shelf */}
-            <rect x={fx1} y={fy} width={fx2 - fx1} height={ft} fill="url(#ciShelfEdge)" />
-            {/* Underside shadow — small dark band under the front edge */}
-            <rect x={fx1 - 4} y={fy + ft} width={fx2 - fx1 + 8} height={5} fill="rgba(0,0,0,0.32)" />
-          </g>
-        )
-      })}
-
-      {/* Front poles last so they appear in front of the shelves */}
-      {polesFront.map(([x, w], i) => (
-        <rect key={`fp-${i}`} x={x} y="80" width={w + 4} height="900" fill="url(#ciChrome)" />
-      ))}
-
-      {/* Foot caps at the bottom of front poles — small rubber pads */}
-      {polesFront.map(([x, w], i) => (
-        <rect key={`fc-${i}`} x={x - 2} y="970" width={w + 8} height="14" fill="#1a1d20" />
-      ))}
-    </g>
-  )
-}
-
-// RightRack — mirror of LeftRack across the viewBox centre (x=800).
-function RightRack() {
-  // Mirror coordinates by reflecting across x=800.
-  // Front poles originally at x=60, 240 → mirror to x = (1600-60-w) etc.
-  const polesFront: Array<[number, number]> = [[1335, 5], [1515, 5]]
-  const polesBack:  Array<[number, number]> = [[1090, 4], [1136, 4]]
+// Wire-rack schematic — front + back vertical poles with four shelves
+// drawn as foreshortened quadrilaterals plus thin wire-grid lines.
+function BlueprintRack({ side, lineColor, fineColor, labelColor }: {
+  side:       'left' | 'right'
+  lineColor:  string
+  fineColor:  string
+  labelColor: string
+}) {
+  const isLeft = side === 'left'
+  // Left rack — front edge near viewport-left, back edge near back-wall edge.
+  const fx1 = isLeft ? 70   : 1130
+  const fx2 = isLeft ? 240  : 1300
+  const bx1 = isLeft ? 470  : 1150
+  const bx2 = isLeft ? 530  : 1090
   const shelves: Array<[number, number]> = [
-    [180,  280],
-    [380,  410],
-    [580,  540],
-    [820,  650],
+    [200, 320],
+    [400, 440],
+    [600, 560],
+    [820, 660],
   ]
-  const fx1 = 1360, fx2 = 1540
-  const bx1 = 1090, bx2 = 1140
-
   return (
     <g>
-      {polesBack.map(([x, w], i) => (
-        <rect key={`bb-${i}`} x={x} y="260" width={w} height="400" fill="url(#ciChrome)" opacity="0.9" />
+      <line x1={fx1} y1="80"  x2={fx1} y2="940" stroke={lineColor} strokeWidth="1.4" />
+      <line x1={fx2} y1="120" x2={fx2} y2="900" stroke={lineColor} strokeWidth="1.4" />
+      <line x1={bx1} y1="260" x2={bx1} y2="680" stroke={fineColor} strokeWidth="1.1" />
+      <line x1={bx2} y1="270" x2={bx2} y2="670" stroke={fineColor} strokeWidth="1.1" />
+      {[fx1, fx2].map((x) => (
+        <line key={x} x1={x - 6} y1="945" x2={x + 6} y2="945" stroke={lineColor} strokeWidth="2" />
       ))}
       {shelves.map(([fy, by], i) => (
-        <g key={i}>
-          <polygon
-            points={`${fx1},${fy} ${fx2},${fy} ${bx2},${by} ${bx1},${by}`}
-            fill="url(#ciShelfTop)"
-          />
-          <rect x={fx1} y={fy} width={fx2 - fx1} height={10 + i} fill="url(#ciShelfEdge)" />
-          <rect x={fx1 - 4} y={fy + 10 + i} width={fx2 - fx1 + 8} height={5} fill="rgba(0,0,0,0.32)" />
+        <polygon
+          key={i}
+          points={`${fx1},${fy} ${fx2},${fy} ${bx2},${by} ${bx1},${by}`}
+          fill="rgba(216,200,154,0.03)"
+          stroke={lineColor}
+          strokeWidth="1.2"
+        />
+      ))}
+      {/* Wire-grid lines on each shelf */}
+      {shelves.map(([fy, by], i) => (
+        <g key={i} stroke={fineColor} strokeWidth="0.5">
+          <line x1={fx1 + 10} y1={fy + (by - fy) * 0.25} x2={fx2 - 10} y2={fy + (by - fy) * 0.25} />
+          <line x1={fx1 + 10} y1={fy + (by - fy) * 0.5}  x2={fx2 - 10} y2={fy + (by - fy) * 0.5} />
+          <line x1={fx1 + 10} y1={fy + (by - fy) * 0.75} x2={fx2 - 10} y2={fy + (by - fy) * 0.75} />
         </g>
       ))}
-      {polesFront.map(([x, w], i) => (
-        <rect key={`fp-${i}`} x={x} y="80" width={w + 4} height="900" fill="url(#ciChrome)" />
-      ))}
-      {polesFront.map(([x, w], i) => (
-        <rect key={`fc-${i}`} x={x - 2} y="970" width={w + 8} height="14" fill="#1a1d20" />
-      ))}
+      {/* Callout — only on the left rack to avoid clutter */}
+      {isLeft && (
+        <>
+          <line x1="240" y1="200" x2="380" y2="160" stroke={fineColor} strokeWidth="0.7" />
+          <text x="386" y="158" fill={labelColor} fontFamily="var(--font-display)" fontSize="11" letterSpacing="2.5">
+            07 ── WIRE RACK
+          </text>
+          <text x="386" y="170" fill={fineColor} fontFamily="var(--font-display)" fontSize="9" letterSpacing="2">
+            4-shelf × 2
+          </text>
+        </>
+      )}
     </g>
-  )
-}
-
-function Hinge({ style }: { style: React.CSSProperties }) {
-  return (
-    <div aria-hidden="true" style={{
-      width: 26, height: 36,
-      background: 'linear-gradient(180deg, #6a6f72 0%, #2e3234 50%, #1a1d1f 100%)',
-      borderRadius: '3px',
-      boxShadow: '0 3px 8px rgba(0,0,0,0.55), inset 0 0 0 1px rgba(255,255,255,0.1)',
-      ...style,
-    }}>
-      {/* Hinge pin highlight */}
-      <span style={{
-        position: 'absolute', top: '50%', left: '50%',
-        transform: 'translate(-50%, -50%)',
-        width: 4, height: '70%',
-        background: 'linear-gradient(180deg, rgba(255,255,255,0.4) 0%, rgba(255,255,255,0.1) 100%)',
-        borderRadius: '999px',
-      }} />
-    </div>
   )
 }
