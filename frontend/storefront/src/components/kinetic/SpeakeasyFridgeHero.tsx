@@ -602,25 +602,67 @@ function CoolerInterior({ accent, cream, imageUrl }: {
             "RESERVATIONS only." goes on the back wall (centre, around
             30-42% from top). */}
 
-      {/* Three vertical type columns. Each one is a tight pair:
-            small tracked-caps eyebrow on top, gold italic statement
-            directly below. All three pairs share the same baseline so
-            the page reads as a triptych — left / centre / right — not
-            as scattered words. The middle band (45-58% from top) keeps
-            them clear of the blueprint callouts in the upper third and
-            the dimension line at the bottom. */}
+      {/* Hierarchy in two layers:
+            1. HEADLINE — "RESERVATIONS only." as a single inline phrase
+               (white tracked caps + gold italic on the SAME line, with
+               a thin space between). Reads as one statement, not two
+               unrelated words. Sits at top 38%.
+            2. CAPTION ROW — CRAFTED · mocktails. (left) and ELEGANT ·
+               plates. (right) live in their own row at top 60-70%,
+               well clear of the headline so nothing overlaps. */}
 
-      {/* LEFT pair — CRAFTED · mocktails. */}
+      {/* HEADLINE — RESERVATIONS only. as one phrase */}
+      <div
+        style={{
+          position: 'absolute',
+          top: '38%', left: '50%',
+          transform: 'translate(-50%, -50%)',
+          textAlign: 'center',
+          whiteSpace: 'nowrap',
+          fontFamily: 'var(--font-display)',
+          lineHeight: 1,
+          opacity: 'calc(max(0, var(--scroll-progress, 0) - 0.50) * 6)',
+          transition: 'opacity 80ms linear',
+          zIndex: 2,
+        } as React.CSSProperties}
+      >
+        <span style={{
+          color: cream,
+          fontSize: 'clamp(2rem, 4.8vw, 3.6rem)',
+          letterSpacing: '0.06em',
+          fontWeight: 800,
+          textShadow: '0 2px 4px rgba(0,0,0,0.85), 0 6px 16px rgba(0,0,0,0.65)',
+        }}>
+          RESERVATIONS
+        </span>
+        <span style={{
+          color: accent,
+          fontSize: 'clamp(1.7rem, 4.2vw, 3rem)',
+          fontStyle: 'italic',
+          letterSpacing: '-0.01em',
+          fontWeight: 500,
+          marginLeft: '0.32em',
+          textShadow: `0 0 22px ${accent}cc, 0 0 6px ${accent}99, 0 2px 6px rgba(0,0,0,0.5)`,
+        }}>
+          only.
+        </span>
+      </div>
+
+      {/* CAPTION ROW — left + right pairs, vertically BELOW the
+            headline so they don't compete with it. Tight pair: tracked
+            eyebrow over gold italic. */}
+
       <FridgeWord
         text="CRAFTED"
         fireAt={0.58}
         color={cream}
         heavyShadow
         style={{
-          top: '44%', left: '8%',
-          fontSize: 'clamp(0.95rem, 1.9vw, 1.3rem)',
+          top: '60%', left: '8%',
+          fontSize: 'clamp(0.9rem, 1.8vw, 1.2rem)',
           letterSpacing: '0.45em',
           fontWeight: 800,
+          lineHeight: 1,
         }}
       />
       <FridgeWord
@@ -629,8 +671,8 @@ function CoolerInterior({ accent, cream, imageUrl }: {
         color={accent}
         glow
         style={{
-          top: '52%', left: '6%',
-          fontSize: 'clamp(1.7rem, 3.6vw, 2.6rem)',
+          top: '68%', left: '6%',
+          fontSize: 'clamp(1.5rem, 3.4vw, 2.4rem)',
           fontStyle: 'italic',
           letterSpacing: '-0.01em',
           fontWeight: 600,
@@ -638,52 +680,18 @@ function CoolerInterior({ accent, cream, imageUrl }: {
         }}
       />
 
-      {/* CENTRE pair — RESERVATIONS only. */}
-      <FridgeWord
-        text="RESERVATIONS"
-        fireAt={0.50}
-        color={cream}
-        heavyShadow
-        style={{
-          top: '44%', left: '50%',
-          transform: 'translate(-50%, -50%)',
-          fontSize: 'clamp(2rem, 4.6vw, 3.4rem)',
-          letterSpacing: '0.08em',
-          textAlign: 'center',
-          whiteSpace: 'nowrap',
-          fontWeight: 800,
-          lineHeight: 1,
-        }}
-      />
-      <FridgeWord
-        text="only."
-        fireAt={0.54}
-        color={accent}
-        glow
-        style={{
-          top: '54%', left: '50%',
-          transform: 'translate(-50%, -50%)',
-          fontSize: 'clamp(1.5rem, 3.6vw, 2.6rem)',
-          fontStyle: 'italic',
-          letterSpacing: '-0.01em',
-          textAlign: 'center',
-          fontWeight: 500,
-          lineHeight: 1,
-        }}
-      />
-
-      {/* RIGHT pair — ELEGANT · plates. */}
       <FridgeWord
         text="ELEGANT"
         fireAt={0.66}
         color={cream}
         heavyShadow
         style={{
-          top: '44%', right: '8%',
-          fontSize: 'clamp(0.95rem, 1.9vw, 1.3rem)',
+          top: '60%', right: '8%',
+          fontSize: 'clamp(0.9rem, 1.8vw, 1.2rem)',
           letterSpacing: '0.45em',
           textAlign: 'right',
           fontWeight: 800,
+          lineHeight: 1,
         }}
       />
       <FridgeWord
@@ -692,8 +700,8 @@ function CoolerInterior({ accent, cream, imageUrl }: {
         color={accent}
         glow
         style={{
-          top: '52%', right: '6%',
-          fontSize: 'clamp(1.7rem, 3.6vw, 2.6rem)',
+          top: '68%', right: '6%',
+          fontSize: 'clamp(1.5rem, 3.4vw, 2.4rem)',
           fontStyle: 'italic',
           letterSpacing: '-0.01em',
           textAlign: 'right',
