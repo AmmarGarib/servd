@@ -288,15 +288,14 @@ export function SpeakeasyFridgeHero({
         </div>
 
         {/* Reveal layer — once door is mostly open (~progress > 0.7),
-            the Reserve CTA + brand wordmark fade in INSIDE the cooler,
-            sitting roughly at 82-90% from the top — below the caption
-            row (top 60-68%) and above the floor dimension annotation
-            (bottom ~3vh). Previous version anchored to `bottom: 4vh`
-            which overlapped the "2400 mm · cooler width" callout. */}
+            the Reserve CTA + brand wordmark fade in INSIDE the cooler.
+            Sits at top 78% so the wordmark + pills (≈110-140px tall
+            total) end around 88%, leaving ≥6% breathing room before
+            the "open 7pm" floor sticker at bottom 4%. */}
         <div
           style={{
             position: 'absolute',
-            top: '80%', left: 0, right: 0,
+            top: '78%', left: 0, right: 0,
             display: 'flex', flexDirection: 'column', alignItems: 'center',
             gap: '0.9rem',
             opacity: 'calc(max(0, var(--scroll-progress, 0) - 0.65) * 3)',
@@ -714,15 +713,19 @@ function CoolerInterior({ accent, cream, imageUrl }: {
         }}
       />
 
-      {/* Operating hours — etched along the cooler floor near the
-          bottom, mimicking a vinyl sticker laid on the polished steel */}
+      {/* Operating hours — etched along the cooler floor at the very
+          bottom of the visible section, just above the SVG's "2400 mm ·
+          cooler width" dimension callout. Previously at bottom: 12%
+          which crashed straight into the Reserve/Menu CTA cluster
+          that lives at top: 80%. Pushed down to bottom: 4% so it sits
+          on the floor like a vinyl sticker, not stacked under the CTAs. */}
       <FridgeWord
         text="open 7pm — late · thu–sun"
         fireAt={0.78}
         color="rgba(255,255,255,0.55)"
         heavyShadow
         style={{
-          bottom: '12%', left: '50%',
+          bottom: '4%', left: '50%',
           transform: 'translateX(-50%)',
           fontSize: 'clamp(0.65rem, 1.2vw, 0.85rem)',
           letterSpacing: '0.42em',
