@@ -1,0 +1,91 @@
+version: "3.9"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Servd — Windows Docker + Cloudflare Tunnel production stack
+#
+# Database : Neon (cloud Postgres)   — URL comes from .env.production
+# Cache    : Upstash Redis           — URL comes from .env.production
+# Routing  : Cloudflare Tunnel       — no ports exposed on host
+#
+# Tunnel routes to set in Cloudflare Zero Trust dashboard:
+#   api.servd.garibsons.app    → http://api:3001
+#   admin.servd.garibsons.app  → http://admin:3000
+#   app.servd.garibsons.app    → http://storefront:3000
+#   deploy.servd.garibsons.app → http://host.docker.internal:9000  (webhook)
+#
+# Files needed before running:
+#   deploy/.env              (auto-created by deploy.bat)
+#   deploy/.env.production   (auto-copied from root .env by deploy.bat)
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+
+  # ─────────── Backend API (Fastify + Prisma) ───────────────────────────────
+  api:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file: .env.production
+    environment:
+      NODE_ENV: "production"
+      PORT: "3001"
+      ENABLE_WORKERS: "true"
+      API_URL: "https://api.servd.garibsons.app"
+      WEB_URL: "https://admin.servd.garibsons.app"
+      STOREFRONT_URL: "https://app.servd.garibsons.app"
+    command: sh -c "npx prisma migrate deploy && node dist/index.js"
+    networks:
+      - servd_net
+
+  # ─────────── Admin Panel (Next.js) ────────────────────────────────────────
+  admin:
+    build:
+      context: ../frontend/admin
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: "${PUBLIC_API_URL}"
+        NEXT_PUBLIC_WS_URL: "${PUBLIC_WS_URL}"
+        NEXT_PUBLIC_SENTRY_DSN: "${SENTRY_DSN_ADMIN:-}"
+    restart: unless-stopped
+    environment:
+      NODE_ENV: "production"
+      PORT: "3000"
+    depends_on:
+      - api
+    networks:
+      - servd_net
+
+  # ─────────── Customer Storefront (Next.js) ────────────────────────────────
+  storefront:
+    build:
+      context: ../frontend/storefront
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: "${PUBLIC_API_URL}"
+        NEXT_PUBLIC_WS_URL: "${PUBLIC_WS_URL}"
+        NEXT_PUBLIC_SENTRY_DSN: "${SENTRY_DSN_STOREFRONT:-}"
+    restart: unless-stopped
+    environment:
+      NODE_ENV: "production"
+      PORT: "3000"
+    depends_on:
+      - api
+    networks:
+      - servd_net
+
+  # ─────────── Cloudflare Tunnel ────────────────────────────────────────────
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run --token "${CF_TUNNEL_TOKEN}"
+    depends_on:
+      - api
+      - admin
+      - storefront
+    networks:
+      - servd_net
+
+networks:
+  servd_net:
+    driver: bridge
