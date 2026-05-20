@@ -1,10 +1,12 @@
 FROM node:20-alpine AS base
 
+# ── deps: production-only node_modules ───────────────────────────────────────
 FROM base AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
 
+# ── builder: full install + compile ──────────────────────────────────────────
 FROM base AS builder
 WORKDIR /app
 COPY package.json package-lock.json ./
@@ -12,18 +14,36 @@ RUN npm ci
 COPY src/ ./src/
 COPY tsconfig.json ./
 COPY prisma/ ./prisma/
+# Generate Prisma client with Alpine musl binary included
 RUN npx prisma generate
 RUN npm run build
 
+# ── runner: lean production image ─────────────────────────────────────────────
 FROM base AS runner
 WORKDIR /app
 ENV NODE_ENV=production
+
+# OpenSSL is required by Prisma on Alpine
+RUN apk add --no-cache openssl
+
 RUN addgroup --system --gid 1001 nodejs && adduser --system --uid 1001 servd
-COPY --from=builder /app/dist ./dist
-COPY --from=builder /app/prisma ./prisma
-COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
-COPY --from=deps /app/node_modules ./node_modules
+
+# Production node_modules from deps stage
+COPY --chown=servd:nodejs --from=deps    /app/node_modules              ./node_modules
+
+# Overlay Prisma-specific directories from builder (contains correct Alpine binaries)
+COPY --chown=servd:nodejs --from=builder /app/node_modules/.prisma      ./node_modules/.prisma
+COPY --chown=servd:nodejs --from=builder /app/node_modules/@prisma      ./node_modules/@prisma
+
+# Prisma CLI from builder (it's a devDep, not in deps stage)
+COPY --chown=servd:nodejs --from=builder /app/node_modules/.bin/prisma  ./node_modules/.bin/prisma
+COPY --chown=servd:nodejs --from=builder /app/node_modules/prisma       ./node_modules/prisma
+
+COPY --chown=servd:nodejs --from=builder /app/dist   ./dist
+COPY --chown=servd:nodejs --from=builder /app/prisma ./prisma
+
 COPY package.json ./
+
 USER servd
 EXPOSE 3001
 CMD ["node", "dist/src/index.js"]
