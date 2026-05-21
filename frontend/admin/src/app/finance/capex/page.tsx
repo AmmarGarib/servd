@@ -165,6 +165,10 @@ export default function CapexTrackerPage() {
               <Link href="/finance/capital-ledger" className="text-kds-green font-bold hover:opacity-80">
                 See the roll-up in Investment Dashboard →
               </Link>
+              {' · '}
+              <Link href="/finance/opex" className="text-kds-green font-bold hover:opacity-80">
+                Standing OpEx (workforce + JV) →
+              </Link>
             </p>
           </div>
           <button onClick={() => setCreating(true)} className="rounded-xl bg-kds-green px-4 py-2.5 text-sm font-black text-black hover:opacity-90">+ New project</button>

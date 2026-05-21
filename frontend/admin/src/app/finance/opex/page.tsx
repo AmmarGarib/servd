@@ -87,6 +87,13 @@ interface PositionsSummary {
   totalPositions: number
   contributions: ContributionLine[]
 }
+interface TenantJV {
+  id: string
+  name: string
+  isActive?: boolean
+  isJointVenture?: boolean
+  jvPartners?: Array<{ label: string; pct: number }> | null
+}
 interface PayrollSnapshot {
   runs: PayrollRun[]
   budget?: PayrollBudget
@@ -128,6 +135,17 @@ export default function OpexTrackerPage() {
     queryKey: ['positions', 'summary'],
     queryFn:  () => api.get('/positions/summary'),
   })
+
+  // Active tenant's JV config — if isJointVenture, every cost line shows
+  // partner-split chips ("Viva 60% / GS 40%"). Pulled from /tenants/mine
+  // since that's the source of truth for tenant flags.
+  const { data: tenants = [] } = useQuery<TenantJV[]>({
+    queryKey: ['my-tenants'],
+    queryFn:  () => api.get('/tenants/mine'),
+    staleTime: 5 * 60_000,
+  })
+  const activeTenant = tenants.find((t) => t.isActive) ?? tenants[0]
+  const jvPartners = activeTenant?.isJointVenture ? (activeTenant.jvPartners ?? []) : []
   const { data: cashflow = [] } = useQuery<CashflowItem[]>({ queryKey: ['opex-cashflow'], queryFn: () => api.get('/opex/cashflow') })
 
   const [creatingCategory, setCreatingCategory] = useState(false)
@@ -163,12 +181,42 @@ export default function OpexTrackerPage() {
       </header>
 
       <div className="px-7 py-6 max-w-[1100px] space-y-6">
+        {/* JV partner banner — only shown when active tenant is flagged as
+            a joint venture. Documents the partner split that's then applied
+            to every total + headline number on the page. Click to edit. */}
+        {activeTenant?.isJointVenture && jvPartners.length > 0 && (
+          <Link href="/settings"
+            className="block rounded-2xl px-5 py-3 hover:bg-white/[0.03] transition-colors"
+            style={{ background: 'rgba(168,85,247,0.06)', border: '1px solid rgba(168,85,247,0.25)' }}>
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-[10px] font-black uppercase tracking-wider rounded px-1.5 py-0.5"
+                  style={{ background: 'rgba(168,85,247,0.20)', color: '#C4B5FD' }}>
+                  Joint venture
+                </span>
+                <span className="text-sm text-white/85 font-bold">{activeTenant.name}</span>
+                <span className="text-xs text-white/40">- every cost line below splits as:</span>
+                {jvPartners.map((p, i) => (
+                  <span key={i} className="text-[11px] font-bold rounded px-2 py-0.5"
+                    style={{ background: 'rgba(168,85,247,0.10)', color: '#DDD6FE' }}>
+                    {p.label} {p.pct}%
+                  </span>
+                ))}
+              </div>
+              <span className="text-[11px] text-white/45 hover:underline">Edit JV config →</span>
+            </div>
+          </Link>
+        )}
+
         {/* Top stats */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <Stat label="Monthly run-rate" value={PKR(totalMonthly)} accent="#00D4B1" />
-          <Stat label="Monthly budget"   value={PKR(totalBudget)}  accent="#A5B4FC" />
+          <Stat label="Monthly run-rate" value={PKR(totalMonthly)} accent="#00D4B1"
+            jvPartners={jvPartners} />
+          <Stat label="Monthly budget"   value={PKR(totalBudget)}  accent="#A5B4FC"
+            jvPartners={jvPartners} />
           <Stat label="Categories over budget" value={`${overBudgetCount} / ${categories.length}`} accent={overBudgetCount > 0 ? '#FCA5A5' : '#86EFAC'} />
-          <Stat label="Annual run-rate"   value={PKR(totalMonthly * 12)} accent="#FCD34D" />
+          <Stat label="Annual run-rate"   value={PKR(totalMonthly * 12)} accent="#FCD34D"
+            jvPartners={jvPartners} />
         </div>
 
         {/* Cashflow horizon */}
@@ -206,6 +254,7 @@ export default function OpexTrackerPage() {
               category={c}
               payrollSnap={c.name.toLowerCase() === 'payroll' ? payrollSnap : undefined}
               positionsSummary={c.name.toLowerCase() === 'payroll' ? positionsSummary : undefined}
+              jvPartners={jvPartners}
               onEditCategory={() => setEditingCategory(c)}
               onAddLine={() => setAddingLineFor(c)}
               onEditLine={(line) => setEditingLine({ line, category: c })}
@@ -246,19 +295,39 @@ function CashBucket({ label, rows, total }: { label: string; rows: CashflowItem[
   )
 }
 
-function Stat({ label, value, accent }: { label: string; value: string; accent: string }) {
+function Stat({ label, value, accent, jvPartners }: {
+  label: string; value: string; accent: string
+  jvPartners?: Array<{ label: string; pct: number }>
+}) {
+  // Parse "PKR 1,235,000" back to cents so we can render the per-partner split.
+  const rawCents = (() => {
+    if (!jvPartners || jvPartners.length === 0) return 0
+    const digits = value.replace(/[^0-9]/g, '')
+    return digits ? parseInt(digits) * 100 : 0
+  })()
   return (
     <div className="rounded-xl p-3" style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)' }}>
       <p className="text-[10px] font-black uppercase tracking-[0.18em] text-white/35">{label}</p>
       <p className="text-base font-black mt-1" style={{ color: accent }}>{value}</p>
+      {jvPartners && jvPartners.length > 0 && rawCents > 0 && (
+        <div className="mt-1.5 flex gap-1.5 flex-wrap">
+          {jvPartners.map((p, i) => (
+            <span key={i} className="text-[10px] font-mono rounded px-1.5 py-0.5"
+              style={{ background: 'rgba(168,85,247,0.10)', color: '#C4B5FD' }}>
+              {p.label}: {PKR(Math.round(rawCents * p.pct / 100))}
+            </span>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
 
-function CategoryCard({ category, payrollSnap, positionsSummary, onEditCategory, onAddLine, onEditLine }: {
+function CategoryCard({ category, payrollSnap, positionsSummary, jvPartners, onEditCategory, onAddLine, onEditLine }: {
   category: Category
   payrollSnap: PayrollSnapshot | undefined
   positionsSummary: PositionsSummary | undefined
+  jvPartners?: Array<{ label: string; pct: number }>
   onEditCategory: () => void; onAddLine: () => void; onEditLine: (l: Line) => void
 }) {
   const overBudget = category.overBudgetPct > 0
@@ -333,11 +402,23 @@ function CategoryCard({ category, payrollSnap, positionsSummary, onEditCategory,
                 </span>
               </div>
             ))}
-            <div className="border-t border-white/10 mt-1 pt-2 flex justify-between text-sm">
+            <div className="border-t border-white/10 mt-1 pt-2 flex justify-between items-baseline text-sm">
               <span className="font-bold text-white/85">Net to this tenant&apos;s P&L</span>
-              <span className="font-black" style={{ color: '#00D4B1' }}>
-                {PKR(payrollSnap.budget.netMonthlyCents)}
-              </span>
+              <div className="text-right">
+                <span className="font-black block" style={{ color: '#00D4B1' }}>
+                  {PKR(payrollSnap.budget.netMonthlyCents)}
+                </span>
+                {jvPartners && jvPartners.length > 0 && (
+                  <div className="mt-1 flex gap-1.5 flex-wrap justify-end">
+                    {jvPartners.map((p, i) => (
+                      <span key={i} className="text-[10px] font-mono rounded px-1.5 py-0.5"
+                        style={{ background: 'rgba(168,85,247,0.10)', color: '#C4B5FD' }}>
+                        {p.label} {p.pct}%: {PKR(Math.round(payrollSnap.budget!.netMonthlyCents * p.pct / 100))}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </div>

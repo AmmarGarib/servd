@@ -309,9 +309,23 @@ export async function tenantRoutes(fastify: FastifyInstance) {
       countryCode: z.string().length(2).optional(),
       currency:    z.string().length(3).optional(),
       timezone:    z.string().max(64).optional(),
+      // JV config: flip a tenant into JV mode and supply the partner shares.
+      // Empty jvPartners (null) when isJointVenture=false. Frontend uses
+      // this to render "Viva 60% / GS 40%" chips on every cost line.
+      isJointVenture: z.boolean().optional(),
+      jvPartners: z.array(z.object({
+        label: z.string().min(1).max(80),
+        pct:   z.number().min(0).max(100),
+      })).nullable().optional(),
     }).parse(req.body)
     try {
-      return await prisma.tenant.update({ where: { id: req.params.id }, data: body })
+      return await prisma.tenant.update({
+        where: { id: req.params.id },
+        data: {
+          ...body,
+          jvPartners: body.jvPartners === undefined ? undefined : (body.jvPartners ?? undefined),
+        },
+      })
     } catch (err) {
       return reply.status(404).send({ error: { code: 'TENANT_NOT_FOUND', message: (err as Error).message } })
     }

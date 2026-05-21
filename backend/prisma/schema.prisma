@@ -4007,6 +4007,14 @@ model Tenant {
   plan        String    @default("trial") // 'trial' | 'starter' | 'growth' | 'chain'
   trialEndsAt DateTime?
   isActive    Boolean   @default(true)
+  // Joint-venture metadata. When isJointVenture=true, every cost line viewed
+  // under this tenant (OpEx, positions, contributions) renders with partner-
+  // split chips so the operator can see at a glance "who pays what". Stored
+  // as JSON array: [{ label: 'Viva', pct: 60 }, { label: 'Garibsons', pct: 40 }].
+  // Percentages should sum to 100 but we don't enforce — the chips display
+  // whatever was entered, the operator can correct.
+  isJointVenture Boolean @default(false)
+  jvPartners     Json?   // [{label, pct}, ...]
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
   deletedAt   DateTime?

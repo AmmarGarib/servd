@@ -116,11 +116,16 @@ export default function PositionsPage() {
   // Tenants the operator is a member of. Used to populate source/destination
   // pickers on the contribution modal. The backend guardrail requires at
   // least one side of the contribution to be a tenant we belong to.
-  const { data: tenants = [] } = useQuery<Array<{ id: string; name: string; slug: string }>>({
+  const { data: tenants = [] } = useQuery<Array<{ id: string; name: string; slug: string; isActive?: boolean; isJointVenture?: boolean; jvPartners?: Array<{ label: string; pct: number }> | null }>>({
     queryKey: ['my-tenants'],
     queryFn:  () => api.get('/tenants/mine'),
     staleTime: 5 * 60_000,
   })
+  // Active tenant's JV config. Drives the partner-split chips on the
+  // Net P&L stat card so the operator sees "Viva 60% / GS 40%" of every
+  // total without doing the math.
+  const activeTenant = tenants.find((t) => t.isActive) ?? tenants[0]
+  const jvPartners = activeTenant?.isJointVenture ? (activeTenant.jvPartners ?? []) : []
 
   // â”€â”€â”€ Group positions by Concept â†’ Department â†’ ShiftBand â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const grouped = useMemo(() => {
@@ -222,6 +227,32 @@ export default function PositionsPage() {
 
       {/* â”€â”€â”€ Roll-up cards â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
       <div className="max-w-6xl mx-auto px-6 pt-5">
+        {/* JV banner — mirrors the one on /finance/opex so the operator
+            sees consistent treatment everywhere they look at JV finances. */}
+        {activeTenant?.isJointVenture && jvPartners.length > 0 && (
+          <Link href="/settings"
+            className="block mb-4 rounded-2xl px-4 py-3 hover:bg-white/[0.03] transition-colors"
+            style={{ background: 'rgba(168,85,247,0.06)', border: '1px solid rgba(168,85,247,0.25)' }}>
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-[10px] font-black uppercase tracking-wider rounded px-1.5 py-0.5"
+                  style={{ background: 'rgba(168,85,247,0.20)', color: '#C4B5FD' }}>
+                  Joint venture
+                </span>
+                <span className="text-sm text-kds-text font-bold">{activeTenant.name}</span>
+                <span className="text-xs text-kds-subtext">- partner split:</span>
+                {jvPartners.map((p, i) => (
+                  <span key={i} className="text-[11px] font-bold rounded px-2 py-0.5"
+                    style={{ background: 'rgba(168,85,247,0.10)', color: '#DDD6FE' }}>
+                    {p.label} {p.pct}%
+                  </span>
+                ))}
+              </div>
+              <span className="text-[11px] text-kds-subtext hover:underline">Edit JV config →</span>
+            </div>
+          </Link>
+        )}
+
         {summary && (
           <>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -234,12 +265,16 @@ export default function PositionsPage() {
                     : `equals gross (no contributions)`
                 }
                 accent="#00D4B1"
+                jvPartners={jvPartners}
+                valueCents={summary.netMonthlyCents}
               />
               <StatCard
                 label="Annualised net"
                 value={fmtPkr(summary.annualisedNetCents)}
                 hint="net x 12 months"
                 accent="#6366F1"
+                jvPartners={jvPartners}
+                valueCents={summary.annualisedNetCents}
               />
               <StatCard
                 label="Headcount"
@@ -431,12 +466,26 @@ export default function PositionsPage() {
 
 // â”€â”€â”€ Stat card â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-function StatCard({ label, value, hint, accent }: { label: string; value: string; hint?: string; accent: string }) {
+function StatCard({ label, value, hint, accent, jvPartners, valueCents }: {
+  label: string; value: string; hint?: string; accent: string
+  jvPartners?: Array<{ label: string; pct: number }>
+  valueCents?: number
+}) {
   return (
     <div className="rounded-xl border border-kds-border bg-kds-card p-4">
       <p className="text-[10px] uppercase tracking-wider text-kds-subtext font-bold">{label}</p>
       <p className="text-xl font-black mt-1" style={{ color: accent }}>{value}</p>
       {hint && <p className="text-[10px] text-kds-subtext mt-0.5">{hint}</p>}
+      {jvPartners && jvPartners.length > 0 && valueCents !== undefined && valueCents > 0 && (
+        <div className="mt-2 flex gap-1.5 flex-wrap">
+          {jvPartners.map((p, i) => (
+            <span key={i} className="text-[10px] font-mono rounded px-1.5 py-0.5"
+              style={{ background: 'rgba(168,85,247,0.10)', color: '#C4B5FD' }}>
+              {p.label} {p.pct}%: {fmtPkr(Math.round(valueCents * p.pct / 100))}
+            </span>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
