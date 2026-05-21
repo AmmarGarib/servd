@@ -18,12 +18,12 @@ import { PrismaClient, PositionStatus } from '@prisma/client'
 
 const prisma = new PrismaClient()
 
-// Head office GS Foods cost-share. From the spec:
-//   Total HO staff cost: PKR 800,000 / month
-//   GS Foods bears:       PKR 300,000 / month (the rest sits with AG personal
-//                                              + other ventures)
-// → 37.5% per position. Operator can adjust per-role from the UI later.
-const HEAD_OFFICE_GS_SHARE_PCT = 300 / 800
+// Head office sits 100% on GS Foods (Bukhari) — the entity actually issues
+// the salaries. The JV's contribution back to GS Foods (500k = 200k Garibsons
+// 40% + 300k Viva 60%) is tracked separately as a TenantContribution so
+// projections can show "gross HO cost" and "net HO cost after JV contribution"
+// as distinct numbers.
+const HEAD_OFFICE_GS_SHARE_PCT = 1.0
 
 interface PositionSeed {
   title: string
@@ -163,7 +163,7 @@ async function main() {
       title: r.title,
       monthlySalaryCents: gross,
       tenantCostShareCents: share,
-      costShareNote: `Head office: GS Foods bears ${Math.round(HEAD_OFFICE_GS_SHARE_PCT * 100)}% (PKR ${(share / 100).toLocaleString()}) of gross ${r.pkr.toLocaleString()}.`,
+      costShareNote: `Head office: GS Foods carries 100% of gross PKR ${r.pkr.toLocaleString()}. The JV (GS x Viva) contributes 500k/month back via a separate TenantContribution row covering all HO salaries collectively.`,
     })
   }
 
@@ -250,6 +250,7 @@ async function main() {
     { dept: staxMain,          title: 'Commis 1',                    pkr: 30_000, shift: sb_18_26 },
     { dept: staxMain,          title: 'Commis 2',                    pkr: 30_000, shift: sb_18_26 },
     { dept: staxAssemblyNight, title: 'Commis 1',                    pkr: 30_000, shift: sb_18_26 },
+    { dept: staxAssemblyNight, title: 'Commis 2',                    pkr: 30_000, shift: sb_18_26 },
     { dept: staxAssemblyNight, title: 'Assembly Bar Cashier + Expo', pkr: 30_000, shift: sb_18_26 },
   ]
   for (const r of staxRoles) {
@@ -306,8 +307,42 @@ async function main() {
     })
   }
 
+  // ─── JV head-office contribution ─────────────────────────────────────────
+  // GS Foods carries 100% of the 800k HO salaries. GS x Viva contributes
+  // 500k/month back — internally 200k from Garibsons' 40% JV share, 300k
+  // from Viva's 60%. Net to GS Foods P&L: 800k - 500k = 300k.
+  const existingContribution = await prisma.tenantContribution.findFirst({
+    where: {
+      sourceTenantId: viva.id,
+      destinationTenantId: gs.id,
+      category: 'head_office',
+    },
+  })
+  const contributionData = {
+    sourceTenantId: viva.id,
+    destinationTenantId: gs.id,
+    category: 'head_office' as const,
+    monthlyCents: pkr(500_000),
+    label: 'GS x Viva HO contribution',
+    description: 'JV contributes 500k/month toward shared head-office salaries (procurement, finance, marketing). Internally split 40/60 (Garibsons / Viva).',
+    internalSplit: [
+      { label: 'Garibsons 40%', cents: pkr(200_000) },
+      { label: 'Viva 60%',      cents: pkr(300_000) },
+    ],
+    isActive: true,
+  }
+  if (existingContribution) {
+    await prisma.tenantContribution.update({
+      where: { id: existingContribution.id },
+      data: contributionData,
+    })
+  } else {
+    await prisma.tenantContribution.create({ data: contributionData })
+  }
+
   const total = await prisma.position.count()
-  console.log(`✅ seed-positions complete — ${total} active positions now in DB`)
+  const contribTotal = await prisma.tenantContribution.count({ where: { isActive: true } })
+  console.log(`✅ seed-positions complete — ${total} active positions, ${contribTotal} active contribution(s)`)
 }
 
 main()

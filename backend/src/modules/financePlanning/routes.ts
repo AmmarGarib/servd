@@ -612,9 +612,35 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
         },
         select: { tenantCostShareCents: true, headcount: true },
       })
-      const autoLaborMonthly = laborPositions.reduce(
+      const autoLaborGross = laborPositions.reduce(
         (s, q) => s + q.tenantCostShareCents * q.headcount, 0,
       )
+
+      // Apply inter-tenant contributions to tenant-wide ProForma scenarios.
+      // Concept-scoped scenarios get only their concept's labour, so
+      // contributions (which are tenant-level) don't apply there. For
+      // tenant-wide projections (no conceptId), incoming contributions
+      // reduce labour cost; outgoing add to it.
+      let contributionAdjustment = 0
+      if (!p.conceptId) {
+        const tenantsArr = typeof laborTenantFilter === 'string'
+          ? [laborTenantFilter]
+          : laborTenantFilter.in
+        const contributions = await prisma.tenantContribution.findMany({
+          where: {
+            isActive: true,
+            OR: [
+              { destinationTenantId: { in: tenantsArr } },
+              { sourceTenantId:      { in: tenantsArr } },
+            ],
+          },
+        })
+        for (const c of contributions) {
+          if (tenantsArr.includes(c.destinationTenantId)) contributionAdjustment -= c.monthlyCents
+          if (tenantsArr.includes(c.sourceTenantId))      contributionAdjustment += c.monthlyCents
+        }
+      }
+      const autoLaborMonthly = autoLaborGross + contributionAdjustment
 
       // Per-month rendered P&L. totalFixed = manual fixed-cost lines (or
       // legacy aggregate) PLUS the auto labor line, so labor flows in
@@ -657,6 +683,8 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
         // Surface the auto labor split so the UI can render it as its own
         // (non-editable, synthetic) fixed-cost row pointing back at workforce.
         autoLaborMonthlyCents:   autoLaborMonthly,
+        autoLaborGrossCents:     autoLaborGross,
+        contributionAdjustmentCents: contributionAdjustment,
         manualFixedMonthlyCents: totalManualFixed,
         autoLaborPositionCount:  laborPositions.reduce((s, q) => s + q.headcount, 0),
         months: monthsWithCum,

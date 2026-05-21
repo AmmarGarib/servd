@@ -4019,6 +4019,8 @@ model Tenant {
   departments    Department[]
   shiftBands     ShiftBand[]
   positions      Position[]
+  contributionsOut TenantContribution[] @relation("ContributionsFromTenant")
+  contributionsIn  TenantContribution[] @relation("ContributionsToTenant")
 
   @@map("tenants")
 }
@@ -4670,6 +4672,55 @@ enum PositionStatus {
   filled // someone in this seat (filledByUserId set)
   frozen // intentionally not hiring; still counted in budget? see countInBudget
   archived // no longer a position; excluded from rollups
+}
+
+// ─── TenantContribution ──────────────────────────────────────────────────────
+// Inter-tenant monthly transfer for JV / shared-service arrangements.
+//
+// Use case: GS Foods carries 100% of the head office payroll (800k/month) on
+// its books. The JV (GS x Viva) contributes 500k/month back to GS Foods as a
+// lump sum for shared HO services. That 500k internally splits into:
+//   - 200k = Garibsons' 40% share of the JV
+//   - 300k = Viva's    60% share of the JV
+// The split is recorded in `internalSplit` purely for AG's reporting; from a
+// cash-flow standpoint the JV tenant pays the JV tenant pays the full 500k.
+//
+// /opex/payroll-snapshot reads contributions in two directions:
+//   - destination tenant sees `incomingMonthlyCents` (reduces net HO cost)
+//   - source tenant      sees `outgoingMonthlyCents` (adds to its OpEx)
+// Projections do the same on the labour line.
+
+enum ContributionCategory {
+  head_office // shared HO salaries (procurement / finance / marketing)
+  commissary  // shared kitchen prep (e.g. Viva uses GS Foods' 42C)
+  shared_services // other (legal, IT, brand assets)
+  other
+}
+
+model TenantContribution {
+  id                  String               @id @default(uuid())
+  sourceTenantId      String // who pays
+  destinationTenantId String // who receives
+  category            ContributionCategory @default(head_office)
+  monthlyCents        Int // gross amount transferred per month
+  label               String // short name: "Viva HO contribution"
+  description         String? // longer context if needed
+  // JSON array of { label: string; cents: int } — purely informational, lets
+  // operators document the internal split (e.g. "Garibsons 40% / Viva 60%").
+  // Sum doesn't have to match monthlyCents — that's the AGREED transfer.
+  internalSplit       Json?
+  isActive            Boolean              @default(true)
+  startedAt           DateTime             @default(now())
+  endedAt             DateTime?
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+
+  sourceTenant      Tenant @relation("ContributionsFromTenant", fields: [sourceTenantId],      references: [id])
+  destinationTenant Tenant @relation("ContributionsToTenant",   fields: [destinationTenantId], references: [id])
+
+  @@index([destinationTenantId, isActive])
+  @@index([sourceTenantId, isActive])
+  @@map("tenant_contributions")
 }
 
 model Position {

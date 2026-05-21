@@ -53,15 +53,30 @@ interface Position {
   shiftBand: { id: string; name: string; startTime: string; endTime: string } | null
   filledBy: { id: string; name: string; email: string | null } | null
 }
+interface ContributionSummary {
+  id: string
+  label: string
+  category: 'head_office' | 'commissary' | 'shared_services' | 'other'
+  monthlyCents: number
+  sourceTenant:      { id: string; name: string }
+  destinationTenant: { id: string; name: string }
+  direction: 'incoming' | 'outgoing'
+  internalSplit: Array<{ label: string; cents: number }> | null
+}
 interface Summary {
   totalPositions: number
   totalHeadcount: number
   totalGrossMonthlyCents: number
   totalTenantShareMonthlyCents: number
+  netMonthlyCents: number
+  incomingContributionMonthlyCents: number
+  outgoingContributionMonthlyCents: number
   annualisedTenantShareCents: number
+  annualisedNetCents: number
   byConcept: Array<{ id: string | null; name: string; grossCents: number; shareCents: number; count: number }>
   byDepartment: Array<{ id: string; name: string; emoji: string | null; isHeadOffice: boolean; grossCents: number; shareCents: number; count: number }>
   byStatus: { open: number; filled: number; frozen: number }
+  contributions: ContributionSummary[]
 }
 
 const STATUS_META: Record<Position['status'], { label: string; color: string; bg: string }> = {
@@ -198,32 +213,94 @@ export default function PositionsPage() {
       {/* â”€â”€â”€ Roll-up cards â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
       <div className="max-w-6xl mx-auto px-6 pt-5">
         {summary && (
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <StatCard
-              label="Monthly tenant share"
-              value={fmtPkr(summary.totalTenantShareMonthlyCents)}
-              hint={`gross ${fmtPkr(summary.totalGrossMonthlyCents)}`}
-              accent="#00D4B1"
-            />
-            <StatCard
-              label="Annualised"
-              value={fmtPkr(summary.annualisedTenantShareCents)}
-              hint="tenant cost-share Ã— 12"
-              accent="#6366F1"
-            />
-            <StatCard
-              label="Headcount"
-              value={summary.totalHeadcount.toString()}
-              hint={`${summary.totalPositions} positions`}
-              accent="#F59E0B"
-            />
-            <StatCard
-              label="Open seats"
-              value={summary.byStatus.open.toString()}
-              hint={`${summary.byStatus.filled} filled Â· ${summary.byStatus.frozen} frozen`}
-              accent={summary.byStatus.open > 0 ? '#F59E0B' : '#8E8E93'}
-            />
-          </div>
+          <>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <StatCard
+                label="Net monthly P&L"
+                value={fmtPkr(summary.netMonthlyCents)}
+                hint={
+                  summary.incomingContributionMonthlyCents > 0 || summary.outgoingContributionMonthlyCents > 0
+                    ? `gross ${fmtPkr(summary.totalTenantShareMonthlyCents)} +/- JV transfers`
+                    : `equals gross (no contributions)`
+                }
+                accent="#00D4B1"
+              />
+              <StatCard
+                label="Annualised net"
+                value={fmtPkr(summary.annualisedNetCents)}
+                hint="net x 12 months"
+                accent="#6366F1"
+              />
+              <StatCard
+                label="Headcount"
+                value={summary.totalHeadcount.toString()}
+                hint={`${summary.totalPositions} positions`}
+                accent="#F59E0B"
+              />
+              <StatCard
+                label="Open seats"
+                value={summary.byStatus.open.toString()}
+                hint={`${summary.byStatus.filled} filled, ${summary.byStatus.frozen} frozen`}
+                accent={summary.byStatus.open > 0 ? '#F59E0B' : '#8E8E93'}
+              />
+            </div>
+
+            {/* JV / inter-tenant contributions. Surfaced when ANY direction
+                is non-zero so two-entity setups see the chargeback flow on
+                BOTH sides - net is the headline number, but the line items
+                make WHY net differs from gross transparent. */}
+            {summary.contributions.length > 0 && (
+              <div className="mt-4 rounded-xl border border-kds-border bg-kds-card overflow-hidden">
+                <div className="px-4 py-3 border-b border-kds-border flex items-baseline justify-between">
+                  <p className="text-sm font-bold">JV / inter-tenant contributions</p>
+                  <p className="text-[11px] text-kds-subtext">
+                    Subtracts incoming, adds outgoing &rarr; gives net P&L
+                  </p>
+                </div>
+                <div className="px-4 py-3 grid gap-2">
+                  <div className="flex justify-between text-xs font-mono">
+                    <span className="text-kds-subtext">Position gross ({summary.totalPositions} seats)</span>
+                    <span className="font-bold">{fmtPkr(summary.totalTenantShareMonthlyCents)}</span>
+                  </div>
+                  {summary.contributions.map((c) => (
+                    <div key={c.id}>
+                      <div className="flex justify-between text-xs font-mono items-baseline">
+                        <span className="text-kds-subtext flex items-center gap-1.5">
+                          <span style={{ color: c.direction === 'incoming' ? '#00D4B1' : '#F59E0B' }}>
+                            {c.direction === 'incoming' ? '<--' : '-->'}
+                          </span>
+                          {c.label}
+                          <span className="text-[10px] text-kds-subtext/70">
+                            ({c.direction === 'incoming' ? 'from' : 'to'}{' '}
+                            {c.direction === 'incoming' ? c.sourceTenant.name : c.destinationTenant.name})
+                          </span>
+                        </span>
+                        <span className="font-bold"
+                          style={{ color: c.direction === 'incoming' ? '#00D4B1' : '#F59E0B' }}>
+                          {c.direction === 'incoming' ? '-' : '+'} {fmtPkr(c.monthlyCents)}
+                        </span>
+                      </div>
+                      {c.internalSplit && c.internalSplit.length > 0 && (
+                        <div className="pl-5 pt-1 flex gap-3 flex-wrap text-[10px] text-kds-subtext font-mono">
+                          {c.internalSplit.map((s, i) => (
+                            <span key={i}>
+                              {s.label}: {fmtPkr(s.cents)}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                  <div className="border-t border-kds-border mt-1 pt-2 flex justify-between text-sm font-mono">
+                    <span className="font-bold">Net to this tenant&apos;s P&L</span>
+                    <span className="font-black" style={{ color: '#00D4B1' }}>
+                      {fmtPkr(summary.netMonthlyCents)}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            )}
+          </>
         )}
       </div>
 

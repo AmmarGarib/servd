@@ -23,6 +23,7 @@ import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, MANAGERS } from '../auth/middleware.js'
+import { contributionRoutes } from './contributions.js'
 
 // Position.tenantId is non-nullable so we can't pass `null` through to
 // Prisma's where clause (TS rejects it). In practice tenantFilter is only
@@ -50,7 +51,10 @@ const positionSchema = z.object({
 
 export async function positionRoutes(fastify: FastifyInstance) {
 
-  // â”€â”€â”€ Departments â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // Mount inter-tenant contributions sub-routes at /positions/contributions/*
+  await fastify.register(contributionRoutes, { prefix: '/contributions' })
+
+  // ─── Departments ───────────────────────────────────────────────────────────
 
   fastify.get('/departments', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
     const tenantId = req.staffUser!.tenantId!
@@ -227,15 +231,62 @@ export async function positionRoutes(fastify: FastifyInstance) {
       }
     }
 
+    // Inter-tenant contributions affect NET payroll cost:
+    //   incoming = money another tenant sends us (subtract from our cost)
+    //   outgoing = money we send to another tenant (add to our cost)
+    // For the JV setup: GS Foods receives 500k/month from GS x Viva for
+    // shared head-office; that pulls GS Foods' net HO cost from 800k → 300k.
+    const tenantsForFilter = tenantWhere(req)
+    const tenantsArr = typeof tenantsForFilter === 'string' ? [tenantsForFilter] : tenantsForFilter.in
+    const contributions = await prisma.tenantContribution.findMany({
+      where: {
+        isActive: true,
+        OR: [
+          { destinationTenantId: { in: tenantsArr } },
+          { sourceTenantId:      { in: tenantsArr } },
+        ],
+      },
+      include: {
+        sourceTenant:      { select: { id: true, name: true } },
+        destinationTenant: { select: { id: true, name: true } },
+      },
+    })
+
+    let incomingMonthly = 0
+    let outgoingMonthly = 0
+    for (const c of contributions) {
+      if (tenantsArr.includes(c.destinationTenantId)) incomingMonthly += c.monthlyCents
+      if (tenantsArr.includes(c.sourceTenantId))      outgoingMonthly += c.monthlyCents
+    }
+    const netMonthly = totalTenantShareMonthly + outgoingMonthly - incomingMonthly
+
     return {
       totalPositions: positions.length,
       totalHeadcount: positions.reduce((s, p) => s + p.headcount, 0),
-      totalGrossMonthlyCents: totalGrossMonthly,
+      totalGrossMonthlyCents:       totalGrossMonthly,
       totalTenantShareMonthlyCents: totalTenantShareMonthly,
+      // Net after inter-tenant contributions — this is the number that hits
+      // the GS Foods P&L for the JV setup.
+      netMonthlyCents:              netMonthly,
+      incomingContributionMonthlyCents: incomingMonthly,
+      outgoingContributionMonthlyCents: outgoingMonthly,
       annualisedTenantShareCents: totalTenantShareMonthly * 12,
+      annualisedNetCents:         netMonthly * 12,
       byConcept: Array.from(byConcept.values()).sort((a, b) => b.shareCents - a.shareCents),
       byDepartment: Array.from(byDepartment.values()).sort((a, b) => b.shareCents - a.shareCents),
       byStatus,
+      contributions: contributions.map((c) => ({
+        id: c.id,
+        label: c.label,
+        category: c.category,
+        monthlyCents: c.monthlyCents,
+        sourceTenant:      c.sourceTenant,
+        destinationTenant: c.destinationTenant,
+        // Direction from the active tenant's POV — UI uses this to pick
+        // the arrow + colour.
+        direction: tenantsArr.includes(c.destinationTenantId) ? 'incoming' as const : 'outgoing' as const,
+        internalSplit: c.internalSplit,
+      })),
     }
   })
 

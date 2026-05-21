@@ -292,6 +292,28 @@ export async function opexRoutes(fastify: FastifyInstance) {
     const headcountTotal = positions.reduce((s, p) => s + p.headcount, 0)
     const openSeats = positions.filter((p) => p.status === 'open').reduce((s, p) => s + p.headcount, 0)
 
+    // Net = budgeted positions ± inter-tenant contributions. For GS Foods
+    // receiving 500k/month from the JV: gross 800k HO → net 300k. The OpEx
+    // UI shows budgeted-gross + the contribution line as separate rows so
+    // the chargeback is visible.
+    const tenantsArr = typeof tenantFilter === 'string' ? [tenantFilter] : tenantFilter.in
+    const contributions = await prisma.tenantContribution.findMany({
+      where: {
+        isActive: true,
+        OR: [
+          { destinationTenantId: { in: tenantsArr } },
+          { sourceTenantId:      { in: tenantsArr } },
+        ],
+      },
+    })
+    let incomingMonthly = 0
+    let outgoingMonthly = 0
+    for (const c of contributions) {
+      if (tenantsArr.includes(c.destinationTenantId)) incomingMonthly += c.monthlyCents
+      if (tenantsArr.includes(c.sourceTenantId))      outgoingMonthly += c.monthlyCents
+    }
+    const netMonthly = budgetedMonthly + outgoingMonthly - incomingMonthly
+
     return {
       runs: runs.map((r) => ({
         id: r.id,
@@ -310,6 +332,12 @@ export async function opexRoutes(fastify: FastifyInstance) {
         grossMonthlyCents:  budgetedGrossMonthly,
         headcount:          headcountTotal,
         openSeats,
+        // Inter-tenant contributions shown as separate lines under the
+        // Payroll category. netMonthlyCents = what hits this tenant's P&L
+        // after chargebacks.
+        incomingContributionMonthlyCents: incomingMonthly,
+        outgoingContributionMonthlyCents: outgoingMonthly,
+        netMonthlyCents:                  netMonthly,
       },
     }
   })
