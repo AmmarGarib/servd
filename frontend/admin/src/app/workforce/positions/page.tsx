@@ -90,13 +90,19 @@ function fmtPkr(cents: number): string {
   return `PKR ${(cents / 100).toLocaleString('en-PK')}`
 }
 
-// Named export so /workforce/page.tsx can mount this inline as a tab.
+// Named export so /workforce/page.tsx + /finance/capex can mount this inline.
 // The default export below just wraps it so the standalone route still works.
+//
+// embedded=true hides:
+//   - the outer min-h-screen wrapper + bg (host page provides chrome)
+//   - the breadcrumb + h1 + page-title block (host page already has a title)
+//   - the "+ New position" button in the header (host renders own actions if it wants)
+// embedded=false renders everything (standalone mode at /workforce/positions).
 export default function PositionsPage() {
   return <PositionsView />
 }
 
-export function PositionsView() {
+export function PositionsView({ embedded = false }: { embedded?: boolean } = {}) {
   const qc = useQueryClient()
   const { data: positions = [], isLoading } = useQuery<Position[]>({
     queryKey: ['positions'],
@@ -202,8 +208,9 @@ export function PositionsView() {
   }, [positions])
 
   return (
-    <div className="min-h-screen bg-kds-bg text-kds-text">
-      {/* â”€â”€â”€ Header â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+    <div className={embedded ? '' : 'min-h-screen bg-kds-bg text-kds-text'}>
+      {/* â”€â”€â”€ Header (standalone only; embedded host supplies its own chrome) */}
+      {!embedded && (
       <div className="border-b border-kds-border bg-kds-card">
         <div className="max-w-6xl mx-auto px-6 py-5">
           <div className="flex items-start justify-between gap-4">
@@ -230,6 +237,19 @@ export function PositionsView() {
           </div>
         </div>
       </div>
+      )}
+
+      {/* Inline + New position button when embedded — host page won't have
+          one specific to this tab, so put it floating in the top-right of
+          the content area. */}
+      {embedded && (
+        <div className="max-w-6xl mx-auto px-6 pt-4 flex justify-end">
+          <button onClick={() => setShowAdd(true)}
+            className="rounded-lg px-3 py-2 text-xs font-black bg-kds-green text-black hover:opacity-90">
+            + New position
+          </button>
+        </div>
+      )}
 
       {/* â”€â”€â”€ Roll-up cards â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
       <div className="max-w-6xl mx-auto px-6 pt-5">

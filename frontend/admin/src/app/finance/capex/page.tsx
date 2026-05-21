@@ -10,6 +10,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api } from '../../../lib/api'
 import { MoneyInput } from '../../../components/ui/MoneyInput'
+import { PositionsView } from '../../workforce/positions/page'
 
 // ─── Types ────────────────────────────────────────────────────────────────
 
@@ -144,7 +145,11 @@ export default function CapexTrackerPage() {
     queryKey: ['capex-projects'],
     queryFn: () => api.get('/finance/capex'),
   })
-  const [selectedId, setSelectedId] = useState<string | null>(null)
+  // 'workforce' is a synthetic "project" representing the tenant-wide workforce
+  // overview (positions feed). Selecting it swaps the right pane for the
+  // PositionsView so the user sees their standing labour cost in the same
+  // place they review projects. Otherwise selectedId is a real project id.
+  const [selectedId, setSelectedId] = useState<string | 'workforce' | null>(null)
   const [creating, setCreating] = useState(false)
 
   useEffect(() => {
@@ -180,6 +185,30 @@ export default function CapexTrackerPage() {
       <div className="grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-0">
         {/* Left rail: project list */}
         <aside className="border-r border-white/[0.05] p-4 space-y-2 max-h-screen overflow-y-auto">
+          {/* Pinned workforce item — tenant-wide labour budget sits above all
+              projects since it's standing cost, not project-specific. Click
+              swaps the right pane to the PositionsView. */}
+          <button onClick={() => setSelectedId('workforce')}
+            className="w-full text-left rounded-xl p-3 transition-colors"
+            style={selectedId === 'workforce'
+              ? { background: 'rgba(168,85,247,0.10)', border: '1px solid rgba(168,85,247,0.45)' }
+              : { background: 'rgba(168,85,247,0.04)', border: '1px solid rgba(168,85,247,0.20)' }}>
+            <div className="flex items-start justify-between gap-2">
+              <p className="font-bold text-sm" style={{ color: '#C4B5FD' }}>💼 Workforce</p>
+              <span className="text-[10px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded shrink-0"
+                style={{ background: 'rgba(168,85,247,0.20)', color: '#C4B5FD' }}>
+                Standing
+              </span>
+            </div>
+            <p className="text-[11px] text-white/45 mt-1">
+              Positions + JV contributions feed
+            </p>
+          </button>
+
+          <div className="text-[10px] uppercase tracking-wider text-white/40 font-bold pt-2 pb-1 px-1">
+            Projects
+          </div>
+
           {projects.length === 0 && (
             <div className="rounded-xl p-4 text-center"
               style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)' }}>
@@ -227,7 +256,11 @@ export default function CapexTrackerPage() {
 
         {/* Detail */}
         <main className="p-6 max-w-[1100px]">
-          {project ? <ProjectDetail project={project} qc={qc} /> : (
+          {selectedId === 'workforce' ? (
+            <PositionsView embedded />
+          ) : project ? (
+            <ProjectDetail project={project} qc={qc} />
+          ) : (
             <div className="rounded-2xl p-10 text-center"
               style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)' }}>
               <p className="font-bold text-white/85">No project selected</p>

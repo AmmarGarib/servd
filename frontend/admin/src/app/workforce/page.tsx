@@ -333,8 +333,9 @@ function WorkforcePageInner() {
 
       {/* Positions tab renders the budgeted-seats view inline. Same code as
           /workforce/positions standalone — single source of truth via the
-          named PositionsView export. */}
-      {activeTab === 'positions' && <PositionsView />}
+          named PositionsView export. embedded=true skips the inner header
+          since the Workforce page already provides one. */}
+      {activeTab === 'positions' && <PositionsView embedded />}
 
       {activeTab === 'people' && (
       <div className="max-w-6xl mx-auto px-6 pt-5">
