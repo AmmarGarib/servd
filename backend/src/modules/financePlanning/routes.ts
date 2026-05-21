@@ -249,6 +249,14 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
       floorAreaSqft:       z.number().int().positive().nullable().optional(),
       ownerId:             z.string().uuid().nullable().optional(),
       notes:               z.string().optional(),
+      // Project-level JV. Independent of tenant-level JV — a single build
+      // can be co-funded by partners even when the parent tenant is
+      // wholly-owned. UI renders partner chips on every cost row.
+      isJointVenture:      z.boolean().default(false),
+      jvPartners:          z.array(z.object({
+        label: z.string().min(1).max(80),
+        pct:   z.number().min(0).max(100),
+      })).nullable().optional(),
     }).parse(req.body)
     if (body.conceptId) {
       const concept = await prisma.concept.findFirst({
@@ -260,6 +268,7 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
       data: {
         ...body, tenantId: req.staffUser!.tenantId!,
         targetOpeningDate: body.targetOpeningDate ? new Date(body.targetOpeningDate) : null,
+        jvPartners: body.jvPartners ?? undefined,
       },
     })
     return reply.status(201).send(project)
@@ -294,12 +303,18 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
           emoji: z.string().max(8).nullable().optional(),
           hint:  z.string().max(200).nullable().optional(),
         })).max(30).nullable().optional(),
+        // JV flag + partner split per project (independent of tenant flag)
+        isJointVenture:      z.boolean().optional(),
+        jvPartners:          z.array(z.object({
+          label: z.string().min(1).max(80),
+          pct:   z.number().min(0).max(100),
+        })).nullable().optional(),
       }).parse(req.body)
       const owned = await prisma.capexProject.findFirst({
         where: { id: req.params.id, tenantId: req.staffUser!.tenantFilter, deletedAt: null },
       })
       if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'CapEx project not found in your active company' } })
-      const { scopeConfig, ...rest } = body
+      const { scopeConfig, jvPartners, ...rest } = body
       return prisma.capexProject.update({
         where: { id: req.params.id },
         data: {
@@ -308,6 +323,9 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
           actualOpeningDate: body.actualOpeningDate !== undefined ? (body.actualOpeningDate ? new Date(body.actualOpeningDate) : null) : undefined,
           ...(scopeConfig !== undefined && {
             scopeConfig: scopeConfig === null ? Prisma.JsonNull : (scopeConfig as Prisma.InputJsonValue),
+          }),
+          ...(jvPartners !== undefined && {
+            jvPartners: jvPartners === null ? Prisma.JsonNull : (jvPartners as Prisma.InputJsonValue),
           }),
         },
       })

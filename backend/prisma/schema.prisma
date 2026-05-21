@@ -3672,6 +3672,12 @@ model CapexProject {
   // Per-project scope sections — JSON array of { key, label, emoji, hint }.
   // null = use platform default (BOH/FOH/AG/etc). Operators rename/add/reorder.
   scopeConfig         Json?
+  // Project-level JV (independent of tenant-level JV). Useful when a single
+  // build is co-funded by a partner even though the tenant isn't a JV
+  // overall. Same shape as Tenant.jvPartners. UI renders partner-share
+  // chips next to every cost line on the project's CapEx + OpEx tabs.
+  isJointVenture      Boolean   @default(false)
+  jvPartners          Json?     // [{label, pct}, ...]
   status              String    @default("planning") // legacy alias for phase
   notes               String?
   createdAt           DateTime  @default(now())

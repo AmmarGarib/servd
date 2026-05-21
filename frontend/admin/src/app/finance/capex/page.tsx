@@ -83,6 +83,8 @@ interface Project {
   floorAreaSqft: number | null
   notes: string | null
   scopeConfig: ScopeDef[] | null
+  isJointVenture?: boolean
+  jvPartners?: Array<{ label: string; pct: number }> | null
   lines: Line[]
   rollups: {
     budgetedCents: number
@@ -283,6 +285,12 @@ function ProjectDetail({ project, qc }: { project: Project; qc: ReturnType<typeo
                 style={{ background: PHASE_META[project.phase].bg, color: PHASE_META[project.phase].fg }}>
                 {PHASE_META[project.phase].label}
               </span>
+              {project.isJointVenture && (
+                <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded"
+                  style={{ background: 'rgba(168,85,247,0.20)', color: '#C4B5FD' }}>
+                  Joint venture
+                </span>
+              )}
             </div>
             <p className="text-xs text-white/45 mt-1.5">
               {project.projectType.replace(/_/g, ' ')}
@@ -290,6 +298,17 @@ function ProjectDetail({ project, qc }: { project: Project; qc: ReturnType<typeo
               {project.floorAreaSqft ? ` · ${project.floorAreaSqft.toLocaleString()} sqft` : ''}
               {project.targetOpeningDate ? ` · target opens ${new Date(project.targetOpeningDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}` : ''}
             </p>
+            {project.isJointVenture && project.jvPartners && project.jvPartners.length > 0 && (
+              <div className="mt-2 flex items-center gap-1.5 flex-wrap">
+                <span className="text-[10px] uppercase tracking-wider text-white/45">Partner split:</span>
+                {project.jvPartners.map((p, i) => (
+                  <span key={i} className="text-[11px] font-bold rounded px-2 py-0.5"
+                    style={{ background: 'rgba(168,85,247,0.10)', color: '#DDD6FE' }}>
+                    {p.label} {p.pct}% · {PKR(Math.round(project.rollups.totalAskCents * p.pct / 100))}
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
           <button onClick={() => setEditingProject(true)} className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-white/55 hover:text-white">
             Edit project
@@ -872,6 +891,17 @@ function CreateProjectModal({ onClose, onSaved }: { onClose: () => void; onSaved
   const [floorAreaSqft, setFloorAreaSqft] = useState<number | ''>('')
   const [targetOpeningDate, setTargetOpeningDate] = useState('')
   const [budgetEnvelopeCents, setBudgetEnvelopeCents] = useState(0)
+  // JV toggle. When on, partner rows below are required and every CapEx +
+  // OpEx line on this project will render partner-split chips next to its
+  // amount. Independent of tenant-level JV — useful when a single build is
+  // partner-funded inside a wholly-owned tenant.
+  const [isJointVenture, setIsJointVenture] = useState(false)
+  const [jvPartners, setJvPartners] = useState<Array<{ label: string; pct: number }>>([
+    { label: '', pct: 50 },
+    { label: '', pct: 50 },
+  ])
+  const splitSum = jvPartners.reduce((s, p) => s + (p.pct || 0), 0)
+  const splitOff = isJointVenture && Math.abs(splitSum - 100) > 0.01
 
   const save = useMutation({
     mutationFn: () => api.post<{ id: string }>('/finance/capex', {
@@ -879,6 +909,10 @@ function CreateProjectModal({ onClose, onSaved }: { onClose: () => void; onSaved
       ...(address && { address }),
       ...(floorAreaSqft && { floorAreaSqft: +floorAreaSqft }),
       ...(targetOpeningDate && { targetOpeningDate: `${targetOpeningDate}T00:00:00Z` }),
+      isJointVenture,
+      ...(isJointVenture && jvPartners.length > 0 && {
+        jvPartners: jvPartners.filter((p) => p.label.trim()),
+      }),
     }),
     onSuccess: (created) => onSaved(created.id),
   })
@@ -911,6 +945,64 @@ function CreateProjectModal({ onClose, onSaved }: { onClose: () => void; onSaved
       <MoneyInput value={budgetEnvelopeCents} onChange={setBudgetEnvelopeCents} className={fieldCls} placeholder="e.g. 10,000,000" />
       <Hint>The cap. Lines committed above this fire an exception flag.</Hint>
     </Field>
+
+    {/* Joint-venture section. Off by default; flipping it on reveals the
+        partner-share editor. The split applies to EVERY CapEx + OpEx line
+        on this project automatically — set once here, see chips everywhere. */}
+    <div className="rounded-xl p-3"
+      style={{ background: 'rgba(168,85,247,0.05)', border: '1px solid rgba(168,85,247,0.20)' }}>
+      <label className="flex items-center gap-2 cursor-pointer">
+        <input type="checkbox" checked={isJointVenture}
+          onChange={(e) => setIsJointVenture(e.target.checked)} />
+        <span className="text-sm font-bold text-white/85">Joint venture</span>
+        <span className="text-[11px] text-white/40">Flip on if a partner co-funds this build.</span>
+      </label>
+      {isJointVenture && (
+        <div className="mt-3 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] uppercase tracking-wider text-white/55 font-bold">
+              Partner shares
+            </span>
+            <button type="button"
+              onClick={() => setJvPartners([...jvPartners, { label: '', pct: 0 }])}
+              className="text-[10px] font-bold text-[#C4B5FD] hover:underline">
+              + Add partner
+            </button>
+          </div>
+          {jvPartners.map((p, i) => (
+            <div key={i} className="flex gap-2">
+              <input value={p.label}
+                onChange={(e) => {
+                  const next = [...jvPartners]
+                  next[i] = { ...next[i]!, label: e.target.value }
+                  setJvPartners(next)
+                }}
+                placeholder={i === 0 ? 'e.g. Viva' : 'e.g. Garibsons'}
+                className={fieldCls + ' flex-1'} />
+              <div className="relative w-24">
+                <input type="number" min={0} max={100} value={p.pct}
+                  onChange={(e) => {
+                    const next = [...jvPartners]
+                    next[i] = { ...next[i]!, pct: parseFloat(e.target.value) || 0 }
+                    setJvPartners(next)
+                  }}
+                  className={fieldCls + ' pr-7'} />
+                <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-white/40">%</span>
+              </div>
+              {jvPartners.length > 2 && (
+                <button type="button"
+                  onClick={() => setJvPartners(jvPartners.filter((_, j) => j !== i))}
+                  className="text-red-400 hover:bg-red-400/10 rounded-md px-2 text-sm">×</button>
+              )}
+            </div>
+          ))}
+          <p className={`text-[11px] font-mono ${splitOff ? 'text-amber-400' : 'text-white/40'}`}>
+            Total: {splitSum}% {splitOff && '(should be 100)'}
+          </p>
+        </div>
+      )}
+    </div>
+
     {save.error && <ErrorBanner error={save.error} />}
     <ModalFooter onCancel={onClose}>
       <button onClick={() => save.mutate()} disabled={save.isPending || !name.trim()} className={primaryBtn}>
