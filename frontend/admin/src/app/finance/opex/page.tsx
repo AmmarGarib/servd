@@ -60,7 +60,37 @@ interface PayrollRun {
   totalGrossCents: number
   lineCount: number
 }
-interface PayrollSnapshot { runs: PayrollRun[] }
+interface PayrollBudget {
+  monthlyCents: number          // tenant cost-share total (after contributions)
+  grossMonthlyCents: number     // gross monthly salaries
+  headcount: number
+  openSeats: number
+  incomingContributionMonthlyCents: number
+  outgoingContributionMonthlyCents: number
+  netMonthlyCents: number       // == monthlyCents after add/subtract
+}
+interface ContributionLine {
+  id: string
+  label: string
+  category: 'head_office' | 'commissary' | 'shared_services' | 'other'
+  monthlyCents: number
+  sourceTenant:      { id: string; name: string }
+  destinationTenant: { id: string; name: string }
+  direction: 'incoming' | 'outgoing'
+  internalSplit: Array<{ label: string; cents: number }> | null
+}
+interface PositionsSummary {
+  netMonthlyCents: number
+  incomingContributionMonthlyCents: number
+  outgoingContributionMonthlyCents: number
+  totalTenantShareMonthlyCents: number
+  totalPositions: number
+  contributions: ContributionLine[]
+}
+interface PayrollSnapshot {
+  runs: PayrollRun[]
+  budget?: PayrollBudget
+}
 interface CashflowItem { id: string; name: string; categoryName: string; categoryEmoji: string | null; dueDate: string | null; amountCents: number; vendor: string | null }
 
 const CADENCE_LABELS: Record<Cadence, string> = {
@@ -91,6 +121,13 @@ export default function OpexTrackerPage() {
   const qc = useQueryClient()
   const { data: categories = [] } = useQuery<Category[]>({ queryKey: ['opex-categories'], queryFn: () => api.get('/opex/categories') })
   const { data: payrollSnap } = useQuery<PayrollSnapshot>({ queryKey: ['opex-payroll'], queryFn: () => api.get('/opex/payroll-snapshot') })
+  // Positions summary gives the per-contribution rows the snapshot only
+  // aggregates. We need both: snapshot for budget headline, summary for
+  // the JV breakdown rows.
+  const { data: positionsSummary } = useQuery<PositionsSummary>({
+    queryKey: ['positions', 'summary'],
+    queryFn:  () => api.get('/positions/summary'),
+  })
   const { data: cashflow = [] } = useQuery<CashflowItem[]>({ queryKey: ['opex-cashflow'], queryFn: () => api.get('/opex/cashflow') })
 
   const [creatingCategory, setCreatingCategory] = useState(false)
@@ -168,6 +205,7 @@ export default function OpexTrackerPage() {
               key={c.id}
               category={c}
               payrollSnap={c.name.toLowerCase() === 'payroll' ? payrollSnap : undefined}
+              positionsSummary={c.name.toLowerCase() === 'payroll' ? positionsSummary : undefined}
               onEditCategory={() => setEditingCategory(c)}
               onAddLine={() => setAddingLineFor(c)}
               onEditLine={(line) => setEditingLine({ line, category: c })}
@@ -217,8 +255,10 @@ function Stat({ label, value, accent }: { label: string; value: string; accent: 
   )
 }
 
-function CategoryCard({ category, payrollSnap, onEditCategory, onAddLine, onEditLine }: {
-  category: Category; payrollSnap: PayrollSnapshot | undefined
+function CategoryCard({ category, payrollSnap, positionsSummary, onEditCategory, onAddLine, onEditLine }: {
+  category: Category
+  payrollSnap: PayrollSnapshot | undefined
+  positionsSummary: PositionsSummary | undefined
   onEditCategory: () => void; onAddLine: () => void; onEditLine: (l: Line) => void
 }) {
   const overBudget = category.overBudgetPct > 0
@@ -252,12 +292,63 @@ function CategoryCard({ category, payrollSnap, onEditCategory, onAddLine, onEdit
         </div>
       </header>
 
+      {/* Budgeted payroll from workforce/positions — only Payroll category. */}
+      {isPayroll && payrollSnap?.budget && (
+        <div className="px-5 py-4 border-b border-white/[0.04]"
+          style={{ background: 'rgba(0,212,177,0.04)' }}>
+          <div className="flex items-center justify-between mb-3">
+            <div>
+              <p className="text-[10px] font-black uppercase tracking-wider text-[#00D4B1]">Budgeted payroll · from workforce</p>
+              <p className="text-[10px] text-white/40 mt-0.5">
+                {payrollSnap.budget.headcount} ppl
+                {payrollSnap.budget.openSeats > 0 && ` · ${payrollSnap.budget.openSeats} open`}
+              </p>
+            </div>
+            <Link href="/workforce/positions" className="text-[11px] text-[#00D4B1] hover:underline">Manage positions →</Link>
+          </div>
+
+          {/* Gross / contributions / net stack. Mirrors the JV card on
+              /workforce/positions so the operator sees the same number
+              in two places. */}
+          <div className="grid gap-1.5 text-xs font-mono">
+            <div className="flex justify-between">
+              <span className="text-white/55">Position gross</span>
+              <span className="font-bold text-white/85">{PKR(payrollSnap.budget.grossMonthlyCents)}</span>
+            </div>
+            {positionsSummary && positionsSummary.contributions.map((c) => (
+              <div key={c.id} className="flex justify-between items-baseline">
+                <span className="text-white/55 flex items-center gap-1.5">
+                  <span style={{ color: c.direction === 'incoming' ? '#00D4B1' : '#F59E0B' }}>
+                    {c.direction === 'incoming' ? '<--' : '-->'}
+                  </span>
+                  {c.label}
+                  <span className="text-[10px] text-white/35">
+                    ({c.direction === 'incoming' ? 'from' : 'to'}{' '}
+                    {c.direction === 'incoming' ? c.sourceTenant.name : c.destinationTenant.name})
+                  </span>
+                </span>
+                <span className="font-bold"
+                  style={{ color: c.direction === 'incoming' ? '#00D4B1' : '#F59E0B' }}>
+                  {c.direction === 'incoming' ? '-' : '+'} {PKR(c.monthlyCents)}
+                </span>
+              </div>
+            ))}
+            <div className="border-t border-white/10 mt-1 pt-2 flex justify-between text-sm">
+              <span className="font-bold text-white/85">Net to this tenant&apos;s P&L</span>
+              <span className="font-black" style={{ color: '#00D4B1' }}>
+                {PKR(payrollSnap.budget.netMonthlyCents)}
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Live payroll panel — only renders for the Payroll category */}
       {isPayroll && payrollSnap && payrollSnap.runs.length > 0 && (
         <div className="px-5 py-3 border-b border-white/[0.04]"
           style={{ background: 'rgba(99,102,241,0.04)' }}>
           <div className="flex items-center justify-between mb-2">
-            <p className="text-[10px] font-black uppercase tracking-wider text-[#A5B4FC]">Live from payroll module</p>
+            <p className="text-[10px] font-black uppercase tracking-wider text-[#A5B4FC]">Posted runs · last 6 months</p>
             <Link href="/payroll" className="text-[11px] text-[#A5B4FC] hover:underline">Open payroll →</Link>
           </div>
           <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
