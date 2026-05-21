@@ -296,6 +296,7 @@ model Concept {
   tenant            Tenant?                @relation(fields: [tenantId], references: [id])
   componentUses     ComponentBrandUse[]
   feedbackEntries   FeedbackEntry[]
+  positions         Position[]
 
   @@index([tenantId])
   @@map("concepts")
@@ -806,6 +807,7 @@ model User {
   // `tenantId` above acts as the *active* tenant; this list is the set of
   // tenants they're authorised to switch into.
   tenantMemberships      TenantMember[]
+  positionsFilled        Position[]             @relation("PositionFilledBy")
 
   @@map("users")
 }
@@ -4014,6 +4016,9 @@ model Tenant {
   members        TenantMember[]
   suppliers      Supplier[]      @relation("TenantSuppliers")
   inventoryItems InventoryItem[] @relation("TenantInventoryItems")
+  departments    Department[]
+  shiftBands     ShiftBand[]
+  positions      Position[]
 
   @@map("tenants")
 }
@@ -4603,4 +4608,101 @@ model ComplianceViolation {
   @@index([tenantId, detectedAt(sort: Desc)])
   @@index([staffId])
   @@map("compliance_violations")
+}
+
+// ─── Workforce: budgeted positions ────────────────────────────────────────────
+// "Workforce" used to be a directory of People (User rows). That's still true
+// but bottom-up — a User shows up when you onboard a real human. The CEO needs
+// the inverse: a top-down BUDGET of every seat the org has decided to pay for,
+// whether it's filled yet or not. Position = one budgeted seat.
+//
+// Positions roll up into:
+//   - /opex/payroll-snapshot  → "Budgeted payroll" line per tenant
+//   - /financePlanning/*       → labour line on the pro-forma is computed
+//                                 live from active positions, not entered
+//                                 manually as a fixed cost
+// so editing a salary here updates OpEx + projections on next read.
+//
+// Cost-share model: monthlySalaryCents is gross (what the person actually
+// earns). tenantCostShareCents is what THIS tenant's P&L bears. They're
+// equal for normal positions. For shared head-office roles (e.g. a brand
+// manager serving multiple tenants) and JV positions (GS x Viva, 60/40),
+// tenantCostShareCents < monthlySalaryCents. Storing both as cents (not %)
+// keeps the math un-ambiguous in reports.
+
+model Department {
+  id           String   @id @default(uuid())
+  tenantId     String? // null = global / template
+  name         String // "Procurement", "Main Kitchen", "FOH Service"
+  emoji        String?
+  isHeadOffice Boolean  @default(false) // surfaces head-office split UI
+  order        Int      @default(0)
+  archivedAt   DateTime?
+  createdAt    DateTime @default(now())
+
+  tenant    Tenant?    @relation(fields: [tenantId], references: [id])
+  positions Position[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId, archivedAt])
+  @@map("departments")
+}
+
+model ShiftBand {
+  id         String   @id @default(uuid())
+  tenantId   String? // null = global
+  name       String // "10am-6pm", "6pm-2am"
+  startTime  String // "10:00"
+  endTime    String // "18:00"
+  order      Int      @default(0)
+  archivedAt DateTime?
+  createdAt  DateTime @default(now())
+
+  tenant    Tenant?    @relation(fields: [tenantId], references: [id])
+  positions Position[]
+
+  @@unique([tenantId, name])
+  @@map("shift_bands")
+}
+
+enum PositionStatus {
+  open // budgeted, not yet hired
+  filled // someone in this seat (filledByUserId set)
+  frozen // intentionally not hiring; still counted in budget? see countInBudget
+  archived // no longer a position; excluded from rollups
+}
+
+model Position {
+  id                   String         @id @default(uuid())
+  tenantId             String // which tenant owns this seat
+  conceptId            String? // null = tenant-level (e.g. head office, commissary)
+  departmentId         String?
+  shiftBandId          String?
+  title                String // "Chef de Partie", "Procurement Manager"
+  monthlySalaryCents   Int // gross monthly salary
+  // Portion of monthlySalary this tenant's P&L bears. Equal to
+  // monthlySalaryCents in the normal case. Lower when a position is shared
+  // (head office allocated across tenants) or a JV (GS x Viva split).
+  tenantCostShareCents Int
+  // costShareNote: free-text explanation of why share < gross, e.g.
+  // "Head office: GS Foods bears 37.5% of 800k total" or
+  // "JV: combined GS 40% + Viva 60% under this tenant".
+  costShareNote        String?
+  headcount            Int            @default(1) // a single Position row can represent N seats
+  filledByUserId       String?
+  status               PositionStatus @default(open)
+  notes                String?
+  createdAt            DateTime       @default(now())
+  updatedAt            DateTime       @updatedAt
+
+  tenant     Tenant      @relation(fields: [tenantId], references: [id])
+  concept    Concept?    @relation(fields: [conceptId], references: [id])
+  department Department? @relation(fields: [departmentId], references: [id])
+  shiftBand  ShiftBand?  @relation(fields: [shiftBandId], references: [id])
+  filledBy   User?       @relation("PositionFilledBy", fields: [filledByUserId], references: [id])
+
+  @@index([tenantId, status])
+  @@index([conceptId])
+  @@index([departmentId])
+  @@map("positions")
 }

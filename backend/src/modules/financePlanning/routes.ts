@@ -596,10 +596,33 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
         return s + Math.round(monthlyOrders * c.checkAvgCents)
       }, 0)
 
-      // Per-month rendered P&L
-      const totalFixed = p.fixedCosts.length > 0
+      // Live labour line from workforce/positions. Pulls tenantCostShareCents
+      // for any active position attached to this concept (if the ProForma is
+      // concept-scoped) or all tenant-wide positions otherwise. Surfaced as
+      // a synthetic fixed-cost row in the response so the UI can render it
+      // distinctly ("Auto · from workforce") and operators see budget edits
+      // here update projections on next load.
+      // Narrow tenantFilter (Position.tenantId is non-nullable).
+      const laborTenantFilter = req.staffUser!.tenantFilter ?? { in: [] as string[] }
+      const laborPositions = await prisma.position.findMany({
+        where: {
+          tenantId: laborTenantFilter,
+          status: { in: ['open', 'filled', 'frozen'] },
+          ...(p.conceptId ? { conceptId: p.conceptId } : {}),
+        },
+        select: { tenantCostShareCents: true, headcount: true },
+      })
+      const autoLaborMonthly = laborPositions.reduce(
+        (s, q) => s + q.tenantCostShareCents * q.headcount, 0,
+      )
+
+      // Per-month rendered P&L. totalFixed = manual fixed-cost lines (or
+      // legacy aggregate) PLUS the auto labor line, so labor flows in
+      // without operators having to mirror salaries twice.
+      const totalManualFixed = p.fixedCosts.length > 0
         ? p.fixedCosts.reduce((s, f) => s + f.monthlyCents, 0)
         : p.monthlyFixedCostsCents
+      const totalFixed = totalManualFixed + autoLaborMonthly
 
       const monthsRendered = p.months.map((m) => {
         const revenue   = Math.round(ssMonthly * m.rampPct)
@@ -631,6 +654,11 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
         ...p,
         steadyStateMonthlyCents: ssMonthly,
         totalFixedMonthlyCents:  totalFixed,
+        // Surface the auto labor split so the UI can render it as its own
+        // (non-editable, synthetic) fixed-cost row pointing back at workforce.
+        autoLaborMonthlyCents:   autoLaborMonthly,
+        manualFixedMonthlyCents: totalManualFixed,
+        autoLaborPositionCount:  laborPositions.reduce((s, q) => s + q.headcount, 0),
         months: monthsWithCum,
         paybackMonth,
       }

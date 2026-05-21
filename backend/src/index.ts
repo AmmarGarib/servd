@@ -104,6 +104,7 @@ import { opexRoutes } from './modules/opex/routes.js'
 import { notificationRoutes } from './modules/notifications/routes.js'
 import { kdsRoutes } from './modules/kds/routes.js'
 import { kitchenStaffRoutes } from './modules/kitchen-staff/routes.js'
+import { positionRoutes } from './modules/positions/routes.js'
 import { expoRoutes } from './modules/expo/routes.js'
 import { parSheetRoutes } from './modules/par-sheet/routes.js'
 
@@ -300,6 +301,7 @@ async function build() {
       await api.register(notificationRoutes,      { prefix: '/notifications' })
       await api.register(kdsRoutes,               { prefix: '/kds' })
       await api.register(kitchenStaffRoutes,      { prefix: '/kitchen-staff' })
+      await api.register(positionRoutes,          { prefix: '/positions' })
       await api.register(expoRoutes,              { prefix: '/expo' })
       await api.register(parSheetRoutes,          { prefix: '/par-sheet' })
 

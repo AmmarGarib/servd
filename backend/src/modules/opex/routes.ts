@@ -246,7 +246,7 @@ export async function opexRoutes(fastify: FastifyInstance) {
 
   // â”€â”€â”€ Live data: payroll snapshot for the Payroll category â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-  fastify.get('/payroll-snapshot', { preHandler: requireAuth(...MANAGERS) }, async () => {
+  fastify.get('/payroll-snapshot', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
     // Return last 6 months of posted payroll runs; UI renders as a "live" line
     // under the Payroll category instead of manual entry.
     const sixMonthsAgo = new Date(); sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6)
@@ -257,10 +257,40 @@ export async function opexRoutes(fastify: FastifyInstance) {
       take: 12,
     })
 
-    // Also project this month â€” sum unposted clock logs Ã— wage rates
+    // Also project this month — sum unposted clock logs × wage rates
     const monthStart = new Date()
     monthStart.setDate(1); monthStart.setHours(0, 0, 0, 0)
     const monthEnd = new Date(monthStart); monthEnd.setMonth(monthEnd.getMonth() + 1)
+
+    // Budgeted-position total: sums tenantCostShareCents across active
+    // positions in this tenant. This is the "live" budget the OpEx page
+    // shows under Payroll — edits in workforce/positions update this
+    // immediately on next refresh, no manual sync.
+    // tenantFilter narrowing: Position.tenantId is non-nullable; for orphan
+    // users (filter === null) match nothing.
+    const tenantFilter = req.staffUser!.tenantFilter ?? { in: [] as string[] }
+    const positions = await prisma.position.findMany({
+      where: {
+        tenantId: tenantFilter,
+        status: { in: ['open', 'filled', 'frozen'] },
+      },
+      select: {
+        monthlySalaryCents: true,
+        tenantCostShareCents: true,
+        headcount: true,
+        status: true,
+        department: { select: { name: true, isHeadOffice: true } },
+      },
+    })
+
+    const budgetedMonthly = positions.reduce(
+      (s, p) => s + p.tenantCostShareCents * p.headcount, 0,
+    )
+    const budgetedGrossMonthly = positions.reduce(
+      (s, p) => s + p.monthlySalaryCents * p.headcount, 0,
+    )
+    const headcountTotal = positions.reduce((s, p) => s + p.headcount, 0)
+    const openSeats = positions.filter((p) => p.status === 'open').reduce((s, p) => s + p.headcount, 0)
 
     return {
       runs: runs.map((r) => ({
@@ -272,6 +302,15 @@ export async function opexRoutes(fastify: FastifyInstance) {
         lineCount: r._count.lines,
       })),
       currentMonth: { start: monthStart, end: monthEnd },
+      // Live position-based budget. UI surfaces this above the run history
+      // so the operator sees what they're COMMITTED to before they see
+      // what's already been paid out.
+      budget: {
+        monthlyCents:       budgetedMonthly,
+        grossMonthlyCents:  budgetedGrossMonthly,
+        headcount:          headcountTotal,
+        openSeats,
+      },
     }
   })
 

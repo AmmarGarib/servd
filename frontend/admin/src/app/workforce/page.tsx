@@ -282,6 +282,13 @@ function WorkforcePageInner() {
               </p>
             </div>
             <div className="flex items-center gap-2">
+              {/* Positions = budgeted seats (what we PLAN to pay for). People
+                  on this page = actual humans currently filling those seats.
+                  Two-step flow: budget → hire. */}
+              <Link href="/workforce/positions"
+                className="rounded-lg px-3 py-2 text-xs font-bold border border-kds-border text-kds-text hover:border-kds-green/40 transition-colors">
+                💼 Budgeted positions →
+              </Link>
               {pendingCount > 0 && (
                 <Link href="/configuration/pending-approvals"
                   className="rounded-lg px-3 py-2 text-xs font-bold border transition-colors"
