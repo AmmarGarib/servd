@@ -111,6 +111,16 @@ export default function PositionsPage() {
 
   const [editingId, setEditingId] = useState<string | null>(null)
   const [showAdd, setShowAdd] = useState(false)
+  const [contribModal, setContribModal] = useState<ContributionSummary | 'new' | null>(null)
+
+  // Tenants the operator is a member of. Used to populate source/destination
+  // pickers on the contribution modal. The backend guardrail requires at
+  // least one side of the contribution to be a tenant we belong to.
+  const { data: tenants = [] } = useQuery<Array<{ id: string; name: string; slug: string }>>({
+    queryKey: ['my-tenants'],
+    queryFn:  () => api.get('/tenants/mine'),
+    staleTime: 5 * 60_000,
+  })
 
   // â”€â”€â”€ Group positions by Concept â†’ Department â†’ ShiftBand â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const grouped = useMemo(() => {
@@ -245,25 +255,40 @@ export default function PositionsPage() {
               />
             </div>
 
-            {/* JV / inter-tenant contributions. Surfaced when ANY direction
-                is non-zero so two-entity setups see the chargeback flow on
-                BOTH sides - net is the headline number, but the line items
-                make WHY net differs from gross transparent. */}
-            {summary.contributions.length > 0 && (
-              <div className="mt-4 rounded-xl border border-kds-border bg-kds-card overflow-hidden">
-                <div className="px-4 py-3 border-b border-kds-border flex items-baseline justify-between">
+            {/* JV / inter-tenant contributions. Always shown (even when empty)
+                so the "+ Add contribution" button is reachable for first-time
+                setup. Line items document WHY net differs from gross when
+                contributions exist. */}
+            <div className="mt-4 rounded-xl border border-kds-border bg-kds-card overflow-hidden">
+              <div className="px-4 py-3 border-b border-kds-border flex items-center justify-between gap-3">
+                <div>
                   <p className="text-sm font-bold">JV / inter-tenant contributions</p>
                   <p className="text-[11px] text-kds-subtext">
                     Subtracts incoming, adds outgoing &rarr; gives net P&L
                   </p>
                 </div>
+                <button onClick={() => setContribModal('new')}
+                  className="rounded-lg px-3 py-1.5 text-xs font-bold border border-kds-border text-kds-text hover:border-kds-green/40 hover:text-kds-green transition-colors">
+                  + Add contribution
+                </button>
+              </div>
+              {summary.contributions.length === 0 ? (
+                <div className="px-4 py-6 text-center">
+                  <p className="text-xs text-kds-subtext">
+                    No inter-tenant contributions yet. Use this for JV chargebacks
+                    (e.g. one tenant contributes a lump sum to another for shared
+                    head-office or commissary services).
+                  </p>
+                </div>
+              ) : (
                 <div className="px-4 py-3 grid gap-2">
                   <div className="flex justify-between text-xs font-mono">
                     <span className="text-kds-subtext">Position gross ({summary.totalPositions} seats)</span>
                     <span className="font-bold">{fmtPkr(summary.totalTenantShareMonthlyCents)}</span>
                   </div>
                   {summary.contributions.map((c) => (
-                    <div key={c.id}>
+                    <button key={c.id} type="button" onClick={() => setContribModal(c)}
+                      className="text-left rounded-md px-1 py-1 -mx-1 hover:bg-kds-bg/40 transition-colors">
                       <div className="flex justify-between text-xs font-mono items-baseline">
                         <span className="text-kds-subtext flex items-center gap-1.5">
                           <span style={{ color: c.direction === 'incoming' ? '#00D4B1' : '#F59E0B' }}>
@@ -289,7 +314,7 @@ export default function PositionsPage() {
                           ))}
                         </div>
                       )}
-                    </div>
+                    </button>
                   ))}
                   <div className="border-t border-kds-border mt-1 pt-2 flex justify-between text-sm font-mono">
                     <span className="font-bold">Net to this tenant&apos;s P&L</span>
@@ -298,8 +323,8 @@ export default function PositionsPage() {
                     </span>
                   </div>
                 </div>
-              </div>
-            )}
+              )}
+            </div>
           </>
         )}
       </div>
@@ -387,6 +412,17 @@ export default function PositionsPage() {
           onCreated={() => { setShowAdd(false); void qc.invalidateQueries({ queryKey: ['positions'] }) }}
           departments={departments}
           shiftBands={shiftBands}
+        />
+      )}
+      {contribModal && (
+        <ContributionModal
+          existing={contribModal === 'new' ? null : contribModal}
+          tenants={tenants}
+          onClose={() => setContribModal(null)}
+          onSaved={() => {
+            setContribModal(null)
+            void qc.invalidateQueries({ queryKey: ['positions', 'summary'] })
+          }}
         />
       )}
     </div>
@@ -674,5 +710,210 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
       {children}
       {hint && <span className="text-[10px] text-kds-subtext block mt-1">{hint}</span>}
     </label>
+  )
+}
+
+// ─── Contribution modal (create / edit) ───────────────────────────────────────
+// One modal handles both flows — when `existing` is null we POST, otherwise
+// PATCH. The internal-split editor is a dynamic list of {label, cents} chips
+// the operator can add/remove. The list is purely informational (backend
+// stores it as JSON, doesn't enforce it sums to monthlyCents) so we don't
+// validate the sum either — let the operator document however they want.
+
+interface CategoryOption { value: 'head_office' | 'commissary' | 'shared_services' | 'other'; label: string }
+const CONTRIB_CATEGORIES: CategoryOption[] = [
+  { value: 'head_office',     label: 'Head office (shared HQ salaries)' },
+  { value: 'commissary',      label: 'Commissary (shared kitchen)' },
+  { value: 'shared_services', label: 'Shared services (IT, legal, brand)' },
+  { value: 'other',           label: 'Other' },
+]
+
+function ContributionModal({
+  existing, tenants, onClose, onSaved,
+}: {
+  existing: ContributionSummary | null
+  tenants: Array<{ id: string; name: string; slug: string }>
+  onClose: () => void
+  onSaved: () => void
+}) {
+  const [sourceTenantId,      setSourceTenantId]      = useState(existing?.sourceTenant.id      ?? '')
+  const [destinationTenantId, setDestinationTenantId] = useState(existing?.destinationTenant.id ?? '')
+  const [category,            setCategory]            = useState<CategoryOption['value']>(existing?.category ?? 'head_office')
+  const [monthlyCents,        setMonthlyCents]        = useState(existing?.monthlyCents ?? 0)
+  const [label,               setLabel]               = useState(existing?.label ?? '')
+  const [description,         setDescription]         = useState('')
+  const [splitRows, setSplitRows] = useState<Array<{ label: string; cents: number }>>(
+    existing?.internalSplit && existing.internalSplit.length > 0
+      ? existing.internalSplit
+      : [],
+  )
+
+  // Default direction prompt: if operator hasn't picked tenants yet and we
+  // know they belong to 2+ tenants, prefill source = first, dest = second.
+  // Saves a click in the JV case (which is the dominant use case).
+  if (!existing && !sourceTenantId && tenants.length >= 2) {
+    // Note: do this lazily — calling setState during render would loop.
+    queueMicrotask(() => {
+      setSourceTenantId(tenants[0]!.id)
+      setDestinationTenantId(tenants[1]!.id)
+    })
+  }
+
+  const splitSum = splitRows.reduce((s, r) => s + (r.cents || 0), 0)
+  const sumMismatch = splitRows.length > 0 && splitSum !== monthlyCents
+
+  const save = useMutation({
+    mutationFn: () => {
+      const payload = {
+        sourceTenantId,
+        destinationTenantId,
+        category,
+        monthlyCents,
+        label,
+        description: description.trim() || null,
+        internalSplit: splitRows.length > 0 ? splitRows : null,
+      }
+      return existing
+        ? api.patch(`/positions/contributions/${existing.id}`, payload)
+        : api.post('/positions/contributions', payload)
+    },
+    onSuccess: onSaved,
+  })
+
+  const archive = useMutation({
+    mutationFn: () => api.delete(`/positions/contributions/${existing!.id}`),
+    onSuccess: onSaved,
+  })
+
+  const canSave = !!sourceTenantId && !!destinationTenantId
+    && sourceTenantId !== destinationTenantId
+    && monthlyCents > 0
+    && label.trim().length > 0
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
+      <div className="bg-kds-card border border-kds-border rounded-xl p-6 w-full max-w-xl max-h-[90vh] overflow-y-auto"
+        onClick={(e) => e.stopPropagation()}>
+        <h2 className="text-lg font-black mb-1">
+          {existing ? 'Edit contribution' : 'New inter-tenant contribution'}
+        </h2>
+        <p className="text-xs text-kds-subtext mb-4">
+          {existing
+            ? 'Update the agreed monthly transfer or its internal split.'
+            : 'Model a chargeback between two tenants you own (e.g. JV partner contributes to head office).'}
+        </p>
+
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="From (source)">
+              <select value={sourceTenantId} onChange={(e) => setSourceTenantId(e.target.value)} className={inputCls}>
+                <option value="">— Pick a tenant —</option>
+                {tenants.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+              </select>
+            </Field>
+            <Field label="To (destination)">
+              <select value={destinationTenantId} onChange={(e) => setDestinationTenantId(e.target.value)} className={inputCls}>
+                <option value="">— Pick a tenant —</option>
+                {tenants.map((t) => (
+                  <option key={t.id} value={t.id} disabled={t.id === sourceTenantId}>{t.name}</option>
+                ))}
+              </select>
+            </Field>
+          </div>
+          {sourceTenantId && destinationTenantId && sourceTenantId === destinationTenantId && (
+            <p className="text-xs text-red-400">Source and destination must differ.</p>
+          )}
+
+          <Field label="Category">
+            <select value={category} onChange={(e) => setCategory(e.target.value as CategoryOption['value'])} className={inputCls}>
+              {CONTRIB_CATEGORIES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+            </select>
+          </Field>
+
+          <Field label="Label" hint="Short name shown on the positions/opex/projections views.">
+            <input value={label} onChange={(e) => setLabel(e.target.value)}
+              placeholder="e.g. GS x Viva HO contribution" className={inputCls} />
+          </Field>
+
+          <Field label="Monthly amount" hint="Total transferred each month.">
+            <MoneyInput value={monthlyCents} onChange={setMonthlyCents} />
+          </Field>
+
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-kds-subtext">
+                Internal split (optional)
+              </span>
+              <button type="button"
+                onClick={() => setSplitRows([...splitRows, { label: '', cents: 0 }])}
+                className="text-[10px] font-bold text-kds-green hover:underline">
+                + Add line
+              </button>
+            </div>
+            <p className="text-[10px] text-kds-subtext mb-2">
+              Document how the transfer breaks down internally (e.g. JV shares). Not enforced
+              against the monthly amount &mdash; it&apos;s for reporting only.
+            </p>
+            <div className="space-y-2">
+              {splitRows.map((row, i) => (
+                <div key={i} className="flex gap-2">
+                  <input value={row.label}
+                    onChange={(e) => {
+                      const next = [...splitRows]
+                      next[i] = { ...next[i]!, label: e.target.value }
+                      setSplitRows(next)
+                    }}
+                    placeholder="e.g. Garibsons 40%"
+                    className={inputCls + ' flex-1'} />
+                  <div className="w-40">
+                    <MoneyInput value={row.cents}
+                      onChange={(v) => {
+                        const next = [...splitRows]
+                        next[i] = { ...next[i]!, cents: v }
+                        setSplitRows(next)
+                      }} />
+                  </div>
+                  <button type="button"
+                    onClick={() => setSplitRows(splitRows.filter((_, j) => j !== i))}
+                    className="text-red-400 hover:bg-red-400/10 rounded-md px-2 text-sm">
+                    &times;
+                  </button>
+                </div>
+              ))}
+            </div>
+            {splitRows.length > 0 && (
+              <p className={`text-[10px] mt-2 font-mono ${sumMismatch ? 'text-amber-400' : 'text-kds-subtext'}`}>
+                Split sum: PKR {(splitSum / 100).toLocaleString('en-PK')}
+                {sumMismatch && ` (differs from monthly PKR ${(monthlyCents / 100).toLocaleString('en-PK')} — that&apos;s OK if intentional)`}
+              </p>
+            )}
+          </div>
+
+          <Field label="Description (optional)" hint="Context for future-you. Anything goes.">
+            <textarea value={description} onChange={(e) => setDescription(e.target.value)}
+              className={inputCls + ' min-h-[60px]'} />
+          </Field>
+        </div>
+
+        <div className="flex justify-between items-center gap-2 mt-5">
+          {existing ? (
+            <button onClick={() => archive.mutate()} disabled={archive.isPending}
+              className="rounded-lg px-3 py-2 text-xs font-bold text-red-400 border border-red-400/30 hover:bg-red-400/10 disabled:opacity-50">
+              {archive.isPending ? 'Archiving…' : 'Archive'}
+            </button>
+          ) : <div />}
+          <div className="flex gap-2">
+            <button onClick={onClose}
+              className="rounded-lg px-3 py-2 text-xs font-bold text-kds-subtext border border-kds-border hover:text-kds-text">
+              Cancel
+            </button>
+            <button onClick={() => save.mutate()} disabled={!canSave || save.isPending}
+              className="rounded-lg px-3 py-2 text-xs font-black bg-kds-green text-black hover:opacity-90 disabled:opacity-50">
+              {save.isPending ? 'Saving…' : existing ? 'Save changes' : 'Create contribution'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
   )
 }
