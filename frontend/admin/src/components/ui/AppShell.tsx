@@ -59,8 +59,8 @@ const NAV: NavSection[] = [
     title: 'Executive',
     items: [
       { href: '/configuration',                 label: 'CEO Overview',        icon: '👑', module: 'ceo_overview' },
-      { href: '/workforce',                     label: 'Staff Directory',     icon: '👥', module: 'staff_directory', children: [
-        { href: '/workforce/positions',            label: 'Budgeted Positions', module: 'staff_directory' },
+      { href: '/workforce',                     label: 'Workforce',           icon: '👥', module: 'staff_directory', children: [
+        { href: '/workforce?tab=positions',         label: 'Positions (budget)', module: 'staff_directory' },
         { href: '/workforce?category=management',  label: 'Management',     module: 'staff_management' },
         { href: '/workforce?category=foh',         label: 'Front of House', module: 'staff_foh' },
         { href: '/workforce?category=boh',         label: 'Back of House',  module: 'staff_boh' },

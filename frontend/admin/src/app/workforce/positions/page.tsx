@@ -90,7 +90,13 @@ function fmtPkr(cents: number): string {
   return `PKR ${(cents / 100).toLocaleString('en-PK')}`
 }
 
+// Named export so /workforce/page.tsx can mount this inline as a tab.
+// The default export below just wraps it so the standalone route still works.
 export default function PositionsPage() {
+  return <PositionsView />
+}
+
+export function PositionsView() {
   const qc = useQueryClient()
   const { data: positions = [], isLoading } = useQuery<Position[]>({
     queryKey: ['positions'],

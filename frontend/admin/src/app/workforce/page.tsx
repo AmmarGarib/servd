@@ -20,6 +20,7 @@ import { roleLabel, MODULES, type AppRole, type ModuleId } from '../../lib/appRo
 import { usePermissions } from '../../hooks/useCan'
 import { modulesForRole, useRoleModules } from '../../store/roleModules'
 import { useViewAllTenants } from '../../components/ui/TenantSwitcher'
+import { PositionsView } from './positions/page'
 
 interface TenantLite { id: string; name: string; slug: string }
 
@@ -235,6 +236,12 @@ function WorkforcePageInner() {
   const [addOpen, setAddOpen] = useState(false)
   // Inline edit: which row, if any, is in edit mode.
   const [editingId, setEditingId] = useState<string | null>(null)
+  // Top-level tab: 'positions' = budgeted seats (what we plan to pay for);
+  // 'people' = the actual humans hired into those seats. URL ?tab=positions
+  // persists the choice so a bookmark stays on the right view.
+  const [activeTab, setActiveTab] = useState<'people' | 'positions'>(
+    sp.get('tab') === 'positions' ? 'positions' : 'people',
+  )
 
   const { data: users = [], isLoading } = useQuery<StaffUser[]>({
     queryKey: ['workforce', 'users'],
@@ -277,18 +284,12 @@ function WorkforcePageInner() {
             <div>
               <h1 className="text-2xl font-black">Workforce</h1>
               <p className="text-sm text-kds-subtext mt-1">
-                Every staff member, every category. {users.length} total ·
-                <span className={pendingCount > 0 ? 'text-amber-400 font-bold' : ''}> {pendingCount} pending</span>
+                {activeTab === 'positions'
+                  ? 'Every seat the org pays for, filled or not. Edits flow live into /finance/opex + projections.'
+                  : <>Every staff member, every category. {users.length} total · <span className={pendingCount > 0 ? 'text-amber-400 font-bold' : ''}>{pendingCount} pending</span></>}
               </p>
             </div>
             <div className="flex items-center gap-2">
-              {/* Positions = budgeted seats (what we PLAN to pay for). People
-                  on this page = actual humans currently filling those seats.
-                  Two-step flow: budget → hire. */}
-              <Link href="/workforce/positions"
-                className="rounded-lg px-3 py-2 text-xs font-bold border border-kds-border text-kds-text hover:border-kds-green/40 transition-colors">
-                💼 Budgeted positions →
-              </Link>
               {pendingCount > 0 && (
                 <Link href="/configuration/pending-approvals"
                   className="rounded-lg px-3 py-2 text-xs font-bold border transition-colors"
@@ -296,7 +297,7 @@ function WorkforcePageInner() {
                   ⏳ Review {pendingCount} pending
                 </Link>
               )}
-              {canEdit && (
+              {canEdit && activeTab === 'people' && (
                 <button onClick={() => setAddOpen(true)}
                   className="rounded-lg px-3 py-2 text-xs font-black bg-kds-green text-black hover:opacity-90">
                   + Add staff
@@ -307,6 +308,35 @@ function WorkforcePageInner() {
         </div>
       </div>
 
+      {/* Top-level tabs: People (actual humans) vs Positions (budgeted seats).
+          Two faces of "workforce" — the org chart in head vs the org chart
+          on the ground. Positions feed live into /finance/opex; People drive
+          access, scheduling, payroll runs. */}
+      <div className="max-w-6xl mx-auto px-6 pt-4 border-b border-kds-border">
+        <div className="flex gap-2">
+          <button onClick={() => { setActiveTab('people'); router.replace('/workforce') }}
+            className="px-4 py-2.5 text-sm font-bold transition-colors"
+            style={activeTab === 'people'
+              ? { color: '#00D4B1', borderBottom: '2px solid #00D4B1', marginBottom: '-1px' }
+              : { color: 'rgba(255,255,255,0.5)' }}>
+            👥 People ({users.length})
+          </button>
+          <button onClick={() => { setActiveTab('positions'); router.replace('/workforce?tab=positions') }}
+            className="px-4 py-2.5 text-sm font-bold transition-colors"
+            style={activeTab === 'positions'
+              ? { color: '#00D4B1', borderBottom: '2px solid #00D4B1', marginBottom: '-1px' }
+              : { color: 'rgba(255,255,255,0.5)' }}>
+            💼 Positions (budget)
+          </button>
+        </div>
+      </div>
+
+      {/* Positions tab renders the budgeted-seats view inline. Same code as
+          /workforce/positions standalone — single source of truth via the
+          named PositionsView export. */}
+      {activeTab === 'positions' && <PositionsView />}
+
+      {activeTab === 'people' && (
       <div className="max-w-6xl mx-auto px-6 pt-5">
         <div className="flex flex-wrap gap-2">
           <CategoryChip
@@ -378,6 +408,7 @@ function WorkforcePageInner() {
           ))}
         </div>
       </div>
+      )}
 
       {addOpen && (
         <AddStaffModal
