@@ -69,6 +69,8 @@ const NAV: NavSection[] = [
         { href: '/workforce?category=finance',     label: 'Finance',        module: 'staff_finance' },
         { href: '/workforce?category=hr',          label: 'HR',             module: 'staff_hr' },
         { href: '/scheduling',                     label: 'Scheduling',     module: 'scheduling' },
+        { href: '/payroll',                        label: 'Payroll runs',   module: 'payroll' },
+        { href: '/tip-pools',                      label: 'Tip pools',      module: 'payroll' },
       ]},
       { href: '/configuration/pending-approvals', label: 'Pending Signups',  icon: '⏳', module: 'role_management' },
       { href: '/configuration/roles',           label: 'Roles & Permissions', icon: '🔐', module: 'role_management' },
@@ -179,9 +181,6 @@ const NAV: NavSection[] = [
     defaultCollapsed: true,
     items: [
       { href: '/finance',                label: 'P&L',             icon: '💰', module: 'finance_pl' },
-      { href: '/payroll',                label: 'Payroll',         icon: '💰', module: 'payroll', children: [
-        { href: '/tip-pools', label: 'Tip Pools', module: 'payroll' },
-      ]},
       { href: '/accounting',             label: 'Accounting',      icon: '📊', module: 'accounting', children: [
         { href: '/accounting/food-cost',        label: 'Food Cost',        module: 'accounting' },
         { href: '/accounting/menu-engineering', label: 'Menu Engineering', module: 'accounting' },
