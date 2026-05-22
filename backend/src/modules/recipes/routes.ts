@@ -471,7 +471,10 @@ export async function recipeRoutes(fastify: FastifyInstance) {
     '/:id',
     { preHandler: requireAuth(...MANAGERS) },
     async (req, reply) => {
-      await prisma.recipe.delete({ where: { id: req.params.id } })
+      // deleteMany for idempotency — repeated DELETEs (React Query refetch
+      // race, browser preflight oddities) on an already-gone row would throw
+      // Prisma P2025 → 500. deleteMany silently no-ops.
+      await prisma.recipe.deleteMany({ where: { id: req.params.id } })
       return reply.status(204).send()
     },
   )

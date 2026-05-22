@@ -32,6 +32,11 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   return (
     <html lang={locale} dir={locale === 'ur' ? 'rtl' : 'ltr'} className="dark">
       <head>
+        {/* Next.js's appleWebApp metadata emits the deprecated
+            apple-mobile-web-app-capable tag; modern browsers want the
+            standard mobile-web-app-capable too. Adding it here suppresses
+            the console warning without removing Apple's variant. */}
+        <meta name="mobile-web-app-capable" content="yes" />
         <script dangerouslySetInnerHTML={{ __html: `if('serviceWorker' in navigator){navigator.serviceWorker.register('/sw.js')}` }} />
       </head>
       <body className="bg-s-bg text-s-text antialiased">
