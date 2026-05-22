@@ -10,7 +10,7 @@ import { HomeClient } from '../components/HomeClient'
 import type { Block } from '../lib/blocks'
 import type { Concept } from '../lib/concept'
 
-const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
+const API_URL = process.env.INTERNAL_API_URL ?? process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
 export const revalidate = 30
 

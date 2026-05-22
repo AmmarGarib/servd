@@ -40,6 +40,9 @@ services:
     environment:
       NODE_ENV: ${NODE_ENV:-development}
       PORT: "3000"
+      # Same as storefront: server-side fetches use the compose service alias,
+      # client bundle uses the build-time-baked localhost URL.
+      INTERNAL_API_URL: http://api:3001
     ports:
       - "3000:3000"
     depends_on:
@@ -52,6 +55,12 @@ services:
     environment:
       NODE_ENV: ${NODE_ENV:-development}
       PORT: "3000"
+      # Server-side fetches from inside the container reach the api service
+      # via Docker's network alias, NOT localhost (which would be the
+      # storefront's own container). The client bundle has the URL baked at
+      # build time as http://localhost:3001, so browser-side fetches still
+      # use the host's port mapping.
+      INTERNAL_API_URL: http://api:3001
     ports:
       - "3002:3000"
     depends_on:

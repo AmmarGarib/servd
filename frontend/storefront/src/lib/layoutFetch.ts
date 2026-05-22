@@ -4,7 +4,7 @@
 import type { Block } from './blocks'
 import { defaultServdHomeLayout, defaultBrandLayout } from './blocks'
 
-const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
+const API_URL = process.env.INTERNAL_API_URL ?? process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
 interface LayoutResponse {
   slug: string
