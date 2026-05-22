@@ -1,324 +1,410 @@
 'use client'
-import { useState, useEffect } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+// Per-brand 12-month P&L projections (replaces the legacy ProForma UI).
+//
+// Inputs per brand (launch month, check avg, food%, pkg%, daily covers,
+// trading days) come from the operator; staff cost + opex + capex are
+// pulled live from /positions, /opex, /capex so the projection always
+// reflects current org state.
+//
+// Editing any input PUTs to /projections/:id/brands/:conceptId and
+// re-fetches the computed matrix.
+
+import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../../lib/api'
 
-interface Channel {
-  id: string
-  name: string
-  checkAvgCents: number
-  ordersMon: number; ordersTue: number; ordersWed: number; ordersThu: number
-  ordersFri: number; ordersSat: number; ordersSun: number
+interface Concept { id: string; name: string; slug: string; primaryColor: string | null }
+interface BrandInput {
+  inputId: string
+  conceptId: string
+  concept: Concept
+  launchMonth: number
+  checkAverageCents: number
+  tradingDaysPerMonth: number
+  foodCostPct: number
+  packagingCostPct: number
+  dailyCoversAtSS: number
+  staffMonthlyCents: number
+  opexMonthlyCents: number
+  capexTotalCents: number
+  months: BrandMonth[]
+  year1RevenueCents: number
+  year1ProfitCents: number
+  steadyStateMonthlyProfitCents: number
+  steadyStateMonthlyCostCents: number
 }
-interface FixedCost {
-  id: string
-  category: string
-  monthlyCents: number
-  notes: string | null
-}
-interface Month {
-  monthIndex: number
-  rampPct: number
+interface BrandMonth {
+  month: number
+  live: boolean
+  rampFactor: number
+  orders: number
   revenueCents: number
   variableCents: number
-  fixedCents: number
+  staffCents: number
   opexCents: number
+  totalCostCents: number
   profitCents: number
-  cumulativeCashCents: number
+  cumulativeCents: number
 }
-interface ProForma {
-  id: string
-  name: string
-  scenario: string
-  totalAskCents: number
-  capexCents: number
-  workingCapitalCents: number
-  brokerFeeCents: number
-  rentAdvanceSecurityCents: number
-  variableCostPct: number
-  tradingDaysPerMonth: number
-  notes: string | null
-  channels: Channel[]
-  fixedCosts: FixedCost[]
-  months: Month[]
-  steadyStateMonthlyCents: number
-  totalFixedMonthlyCents: number
-  paybackMonth: number | null
+interface CombinedMonth {
+  month: number
+  revenueCents: number
+  variableCents: number
+  staffCents: number
+  opexCents: number
+  totalCostCents: number
+  profitCents: number
+  cumulativeCents: number
+}
+interface ComputedScenario {
+  projection: { id: string; name: string; rampCurve: number[]; updatedAt: string }
+  brands: BrandInput[]
+  combined: CombinedMonth[]
+  summary: {
+    totalCapexCents: number
+    workingCapitalCents: number
+    capitalAskCents: number
+    steadyStateMonthlyCostCents: number
+    steadyStateMonthlyProfitCents: number
+    year1TotalRevenueCents: number
+    year1CombinedProfitCents: number
+    paybackMonths: number | null
+  }
 }
 
-function fmtPKR(cents: number) {
-  if (Math.abs(cents) >= 1_00_000_00) return `${cents < 0 ? '-' : ''}PKR ${(Math.abs(cents) / 1_00_000_00).toFixed(1)}L`
-  if (Math.abs(cents) >= 1_000_00)    return `${cents < 0 ? '-' : ''}PKR ${(Math.abs(cents) / 1_000_00).toFixed(0)}K`
-  return `${cents < 0 ? '-' : ''}PKR ${(Math.abs(cents) / 100).toFixed(0)}`
+function fmtPkr(cents: number): string {
+  const v = cents / 100
+  if (Math.abs(v) >= 1_000_000) return `${(v / 1_000_000).toFixed(2)}M`
+  if (Math.abs(v) >= 1_000) return `${Math.round(v / 1_000)}k`
+  return `${Math.round(v)}`
+}
+function fmtPkrFull(cents: number): string {
+  return `PKR ${Math.round(cents / 100).toLocaleString('en-PK')}`
 }
 
 export default function ProjectionsPage() {
   const qc = useQueryClient()
-  const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [showAdd, setShowAdd] = useState(false)
 
-  const { data: list = [] } = useQuery<ProForma[]>({
+  // List concepts (for auto-seeding brand rows on first scenario)
+  const { data: concepts = [] } = useQuery<Concept[]>({
+    queryKey: ['concepts-projections'],
+    queryFn: () => api.get('/concepts'),
+  })
+
+  // List scenarios
+  const { data: scenarios = [], isLoading: scenariosLoading } = useQuery<Array<{ id: string; name: string }>>({
     queryKey: ['projections'],
-    queryFn: () => api.get('/finance/projections'),
+    queryFn: () => api.get('/projections'),
   })
-  useEffect(() => { if (!selectedId && list.length > 0) setSelectedId(list[0]!.id) }, [list, selectedId])
 
-  const { data: detail } = useQuery<ProForma>({
-    queryKey: ['projection', selectedId],
-    queryFn: () => api.get(`/finance/projections/${selectedId}`),
-    enabled: !!selectedId,
+  // Active scenario selector — defaults to the most recently created one
+  const [activeId, setActiveId] = useState<string | null>(null)
+  useEffect(() => {
+    if (!activeId && scenarios.length > 0) setActiveId(scenarios[0]!.id)
+  }, [activeId, scenarios])
+
+  // Auto-create default scenario if none exists
+  const createScenario = useMutation({
+    mutationFn: (body: { name: string; brands: Array<{ conceptId: string }> }) =>
+      api.post<{ id: string }>('/projections', body),
+    onSuccess: (created) => {
+      void qc.invalidateQueries({ queryKey: ['projections'] })
+      setActiveId(created.id)
+    },
   })
+  useEffect(() => {
+    if (!scenariosLoading && scenarios.length === 0 && concepts.length > 0 && !createScenario.isPending) {
+      createScenario.mutate({
+        name: 'Default scenario',
+        brands: concepts.map((c) => ({ conceptId: c.id })),
+      })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scenariosLoading, scenarios.length, concepts.length])
+
+  // Fetch computed projection
+  const { data: computed, isLoading: computedLoading, refetch } = useQuery<ComputedScenario>({
+    queryKey: ['projection-computed', activeId],
+    queryFn: () => api.get(`/projections/${activeId}/computed`),
+    enabled: !!activeId,
+  })
+
+  // Add any missing concepts as brand rows (lets you add a 4th brand later)
+  const missingConcepts = useMemo(() => {
+    if (!computed) return []
+    const have = new Set(computed.brands.map((b) => b.conceptId))
+    return concepts.filter((c) => !have.has(c.id))
+  }, [computed, concepts])
+
+  const upsertBrand = useMutation({
+    mutationFn: ({ conceptId, body }: { conceptId: string; body: Partial<BrandInput> }) =>
+      api.put(`/projections/${activeId}/brands/${conceptId}`, body),
+    onSuccess: () => void refetch(),
+  })
+
+  function patchBrand(conceptId: string, patch: Partial<BrandInput>) {
+    upsertBrand.mutate({ conceptId, body: patch })
+  }
+
+  if (scenariosLoading || (!computed && computedLoading)) {
+    return <div className="p-12 text-center text-sm text-s-muted">Loading projections…</div>
+  }
+  if (!computed) {
+    return <div className="p-12 text-center text-sm text-s-muted">Creating default scenario…</div>
+  }
+
+  const { brands, combined, summary, projection } = computed
+  const MONTHS = Array.from({ length: 12 }, (_, i) => i + 1)
 
   return (
-    <div className="min-h-screen flex flex-col" style={{ background: '#090a0e' }}>
-      <header className="px-7 py-6 border-b border-white/[0.05]">
-        <div className="flex items-center gap-2 text-xs text-white/40 mb-2">
-          <Link href="/finance" className="hover:text-white/70">← Finance</Link>
-        </div>
-        <div className="flex items-start justify-between gap-4 flex-wrap">
-          <div>
-            <h1 className="text-2xl font-black text-white/90">📈 Projections</h1>
-            <p className="text-sm text-white/40 mt-1 max-w-2xl">
-              Model a new unit. Enter capex, channels, fixed costs + ramp curve → see monthly P&L, cumulative cash flow, payback period. Replaces the &quot;Annual Projection&quot; tab in your Excel.
-            </p>
+    <div className="min-h-screen bg-s-bg text-s-text">
+      {/* ── Header ───────────────────────────────────────────────────── */}
+      <header className="border-b border-s-border bg-s-surface">
+        <div className="max-w-7xl mx-auto px-6 py-5">
+          <div className="text-xs text-s-muted mb-1">
+            <Link href="/finance/capex" className="hover:text-s-text">Project Tracker</Link>
+            <span className="mx-2">/</span>
+            <span className="text-s-text">Projections</span>
           </div>
-          <button onClick={() => setShowAdd(true)}
-            className="rounded-xl bg-kds-green px-4 py-2.5 text-sm font-black text-black hover:opacity-90">
-            + New scenario
-          </button>
+          <div className="flex items-baseline justify-between gap-4 flex-wrap">
+            <div>
+              <h1 className="text-2xl font-black">12-month P&L projections</h1>
+              <p className="text-sm text-s-muted mt-1 max-w-2xl">
+                Per-brand revenue + cost forecast with launch phasing and a 6-month ramp curve.
+                Staff cost pulls from <Link href="/workforce" className="text-s-teal hover:underline">Positions</Link>,
+                fixed opex from <Link href="/finance/opex" className="text-s-teal hover:underline">OpEx</Link>,
+                capex from <Link href="/finance/capex" className="text-s-teal hover:underline">Capex</Link>.
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              {scenarios.length > 1 && (
+                <select value={activeId ?? ''} onChange={(e) => setActiveId(e.target.value)}
+                  className="rounded-lg bg-s-surface border border-s-border text-xs px-2 py-1.5">
+                  {scenarios.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+              )}
+              <span className="text-[10px] text-s-dim">Updated {new Date(projection.updatedAt).toLocaleString()}</span>
+            </div>
+          </div>
         </div>
       </header>
 
-      <div className="flex-1 flex overflow-hidden">
-        <aside className="w-72 shrink-0 border-r border-white/[0.05] overflow-y-auto p-3 space-y-1">
-          {list.length === 0 && (
-            <p className="text-sm text-white/40 p-4 text-center">No scenarios yet</p>
-          )}
-          {list.map((p) => (
-            <button key={p.id} onClick={() => setSelectedId(p.id)}
-              className="w-full text-left rounded-xl p-3"
-              style={{
-                background: p.id === selectedId ? 'rgba(0,212,177,0.08)' : 'rgba(255,255,255,0.025)',
-                border: p.id === selectedId ? '1px solid rgba(0,212,177,0.35)' : '1px solid rgba(255,255,255,0.06)',
-              }}>
-              <p className="font-bold text-sm text-white/85 truncate">{p.name}</p>
-              <p className="text-[10px] text-white/40 mt-0.5 uppercase tracking-wider">{p.scenario}</p>
-            </button>
-          ))}
-        </aside>
+      <main className="max-w-7xl mx-auto px-6 py-6 space-y-8">
 
-        <main className="flex-1 overflow-y-auto p-6">
-          {!detail && list.length === 0 && (
-            <div className="text-center mt-20 text-white/40">Create a new scenario to start modelling</div>
-          )}
-          {detail && <ScenarioDetail proForma={detail} onChange={() => {
-            void qc.invalidateQueries({ queryKey: ['projection', selectedId] })
-            void qc.invalidateQueries({ queryKey: ['projections'] })
-          }} />}
-        </main>
-      </div>
+        {/* ── Summary cards ───────────────────────────────────────────── */}
+        <section className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <SummaryCard
+            label="Year-1 revenue"
+            value={fmtPkrFull(summary.year1TotalRevenueCents)}
+            hint={`across ${brands.length} brand${brands.length === 1 ? '' : 's'}`}
+            color="#00D4B1"
+          />
+          <SummaryCard
+            label="Year-1 combined P&L"
+            value={fmtPkrFull(summary.year1CombinedProfitCents)}
+            hint={summary.year1CombinedProfitCents >= 0 ? 'profit' : 'loss'}
+            color={summary.year1CombinedProfitCents >= 0 ? '#00D4B1' : '#FF4D4F'}
+          />
+          <SummaryCard
+            label="Capital ask"
+            value={fmtPkrFull(summary.capitalAskCents)}
+            hint={`Capex ${fmtPkr(summary.totalCapexCents)} + 3-mo WC ${fmtPkr(summary.workingCapitalCents)}`}
+            color="#6366F1"
+          />
+          <SummaryCard
+            label="Payback period"
+            value={summary.paybackMonths != null ? `${(summary.paybackMonths / 12).toFixed(1)} yrs` : '—'}
+            hint={summary.paybackMonths != null ? `${summary.paybackMonths} months at steady-state` : 'No profit at Month 12'}
+            color="#F59E0B"
+          />
+        </section>
 
-      {showAdd && (
-        <AddScenarioModal onClose={() => setShowAdd(false)}
-          onCreated={(id) => {
-            setShowAdd(false); setSelectedId(id)
-            void qc.invalidateQueries({ queryKey: ['projections'] })
-          }} />
-      )}
-    </div>
-  )
-}
-
-function ScenarioDetail({ proForma, onChange }: { proForma: ProForma; onChange: () => void }) {
-  const ssRevenue = proForma.steadyStateMonthlyCents
-  const breakEven = proForma.totalFixedMonthlyCents / Math.max(0.01, 1 - proForma.variableCostPct)
-  const breakEvenPctOfSS = ssRevenue > 0 ? Math.round((breakEven / ssRevenue) * 100) : 0
-
-  return (
-    <div className="max-w-5xl mx-auto space-y-6">
-      <div className="flex items-start justify-between gap-3 flex-wrap">
-        <div>
-          <h2 className="text-xl font-black text-white/95">{proForma.name}</h2>
-          <p className="text-xs text-white/40 mt-1 capitalize">{proForma.scenario} scenario</p>
-        </div>
-        <div className="text-right">
-          <p className="text-[10px] text-white/40 uppercase tracking-wider">Payback period</p>
-          <p className="text-2xl font-black"
-            style={{ color: proForma.paybackMonth ? '#00D4B1' : '#F59E0B' }}>
-            {proForma.paybackMonth ? `Month ${proForma.paybackMonth}` : '> 12 months'}
-          </p>
-        </div>
-      </div>
-
-      {/* Top KPIs */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <KPI label="Total ask"        value={fmtPKR(proForma.totalAskCents)}              color="#94A3B8" />
-        <KPI label="Steady-state rev/mo" value={fmtPKR(ssRevenue)}                        color="#00D4B1" />
-        <KPI label="Break-even rev/mo" value={fmtPKR(Math.round(breakEven))}              color="#F59E0B" sub={`${breakEvenPctOfSS}% of SS`} />
-        <KPI label="Fixed costs/mo"   value={fmtPKR(proForma.totalFixedMonthlyCents)}     color="#6366F1" />
-      </div>
-
-      {/* Channels */}
-      <ChannelsSection proForma={proForma} onChange={onChange} />
-
-      {/* Fixed costs */}
-      <FixedCostsSection proForma={proForma} onChange={onChange} />
-
-      {/* Monthly P&L table */}
-      <MonthlyPL proForma={proForma} onChange={onChange} />
-    </div>
-  )
-}
-
-function KPI({ label, value, color, sub }: { label: string; value: string; color: string; sub?: string }) {
-  return (
-    <div className="rounded-2xl p-4"
-      style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)' }}>
-      <p className="text-[10px] font-black uppercase tracking-[0.24em] text-white/40">{label}</p>
-      <p className="text-xl font-black mt-1.5" style={{ color }}>{value}</p>
-      {sub && <p className="text-[10px] text-white/40 mt-1">{sub}</p>}
-    </div>
-  )
-}
-
-function ChannelsSection({ proForma, onChange }: { proForma: ProForma; onChange: () => void }) {
-  const [showAdd, setShowAdd] = useState(false)
-  return (
-    <section>
-      <div className="flex items-center justify-between mb-3">
-        <h3 className="text-sm font-black uppercase tracking-[0.22em] text-white/60">Revenue channels</h3>
-        <button onClick={() => setShowAdd(true)} className="text-xs font-bold text-kds-green">+ Channel</button>
-      </div>
-      <div className="rounded-2xl overflow-hidden"
-        style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)' }}>
-        {proForma.channels.length === 0 ? (
-          <p className="p-4 text-sm text-white/40 text-center">No channels yet — add Ghost / Takeout / Restaurant / etc.</p>
-        ) : (
-          <table className="w-full text-xs">
-            <thead className="bg-white/[0.02]">
-              <tr>
-                <th className="px-3 py-2 text-left text-[10px] font-black uppercase tracking-wider text-white/40">Channel</th>
-                <th className="px-3 py-2 text-right text-[10px] font-black uppercase tracking-wider text-white/40">Avg</th>
-                {['Tue','Wed','Thu','Fri','Sat','Sun','Mon'].map((d) => (
-                  <th key={d} className="px-2 py-2 text-center text-[10px] font-black uppercase tracking-wider text-white/40">{d}</th>
-                ))}
-                <th className="px-3 py-2 text-right text-[10px] font-black uppercase tracking-wider text-white/40">Mo. Rev</th>
-                <th className="px-3 py-2"></th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-white/[0.03]">
-              {proForma.channels.map((c) => {
-                const weeklyOrders = c.ordersMon + c.ordersTue + c.ordersWed + c.ordersThu + c.ordersFri + c.ordersSat + c.ordersSun
-                const monthlyOrders = (weeklyOrders / 7) * proForma.tradingDaysPerMonth
-                const monthlyRevenue = Math.round(monthlyOrders * c.checkAvgCents)
-                return (
-                  <tr key={c.id}>
-                    <td className="px-3 py-2 font-bold text-white/85">{c.name}</td>
-                    <td className="px-3 py-2 text-right font-mono text-white/65">{fmtPKR(c.checkAvgCents)}</td>
-                    {[c.ordersTue, c.ordersWed, c.ordersThu, c.ordersFri, c.ordersSat, c.ordersSun, c.ordersMon].map((n, i) => (
-                      <td key={i} className="px-2 py-2 text-center font-mono text-white/55">{n}</td>
-                    ))}
-                    <td className="px-3 py-2 text-right font-mono font-bold text-kds-green">{fmtPKR(monthlyRevenue)}</td>
-                    <td className="px-3 py-2 text-right">
-                      <DeleteChannel id={c.id} onDone={onChange} />
+        {/* ── Brand inputs ────────────────────────────────────────────── */}
+        <section>
+          <h2 className="text-lg font-black mb-3">Brand inputs</h2>
+          <div className="overflow-x-auto rounded-xl border border-s-border bg-s-surface">
+            <table className="w-full text-xs">
+              <thead className="text-s-muted">
+                <tr className="border-b border-s-border">
+                  <th className="text-left  px-3 py-2 font-bold">Brand</th>
+                  <th className="text-right px-3 py-2 font-bold">Launch month</th>
+                  <th className="text-right px-3 py-2 font-bold">Check avg (PKR)</th>
+                  <th className="text-right px-3 py-2 font-bold">Days/mo</th>
+                  <th className="text-right px-3 py-2 font-bold">Food %</th>
+                  <th className="text-right px-3 py-2 font-bold">Pkg %</th>
+                  <th className="text-right px-3 py-2 font-bold">Daily covers @ SS</th>
+                  <th className="text-right px-3 py-2 font-bold" title="Sum of Position cost-share × headcount where Position.conceptId = this brand">Staff (live)</th>
+                  <th className="text-right px-3 py-2 font-bold" title="Sum of OpexLine.amountCents where conceptId = this brand, normalised to monthly">OpEx (live)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {brands.map((b) => (
+                  <tr key={b.conceptId} className="border-t border-s-border">
+                    <td className="px-3 py-2">
+                      <span className="inline-block w-2 h-2 rounded-full mr-2" style={{ background: b.concept.primaryColor ?? '#888' }}/>
+                      <span className="font-bold">{b.concept.name}</span>
+                    </td>
+                    <CellNum value={b.launchMonth} min={1} max={12}
+                      onCommit={(v) => patchBrand(b.conceptId, { launchMonth: v })} />
+                    <CellNum value={Math.round(b.checkAverageCents / 100)}
+                      onCommit={(v) => patchBrand(b.conceptId, { checkAverageCents: v * 100 })} step={50} />
+                    <CellNum value={b.tradingDaysPerMonth} min={1} max={31}
+                      onCommit={(v) => patchBrand(b.conceptId, { tradingDaysPerMonth: v })} />
+                    <CellNum value={b.foodCostPct} step={0.5}
+                      onCommit={(v) => patchBrand(b.conceptId, { foodCostPct: v })} suffix="%" />
+                    <CellNum value={b.packagingCostPct} step={0.5}
+                      onCommit={(v) => patchBrand(b.conceptId, { packagingCostPct: v })} suffix="%" />
+                    <CellNum value={b.dailyCoversAtSS} min={0}
+                      onCommit={(v) => patchBrand(b.conceptId, { dailyCoversAtSS: v })} />
+                    <td className="text-right px-3 py-2 font-mono text-s-muted" title={fmtPkrFull(b.staffMonthlyCents)}>
+                      {fmtPkr(b.staffMonthlyCents)}
+                    </td>
+                    <td className="text-right px-3 py-2 font-mono text-s-muted" title={fmtPkrFull(b.opexMonthlyCents)}>
+                      {fmtPkr(b.opexMonthlyCents)}
                     </td>
                   </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        )}
-      </div>
-      {showAdd && (
-        <AddChannelModal proFormaId={proForma.id}
-          onClose={() => setShowAdd(false)}
-          onCreated={() => { setShowAdd(false); onChange() }} />
-      )}
-    </section>
-  )
-}
+                ))}
+                {missingConcepts.map((c) => (
+                  <tr key={c.id} className="border-t border-s-border opacity-60">
+                    <td className="px-3 py-2">
+                      <span className="inline-block w-2 h-2 rounded-full mr-2" style={{ background: c.primaryColor ?? '#888' }}/>
+                      <span className="font-bold">{c.name}</span>
+                    </td>
+                    <td colSpan={8} className="px-3 py-2 text-right">
+                      <button onClick={() => patchBrand(c.id, {})}
+                        className="text-xs text-s-teal hover:underline">+ Add to projection</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="text-[10px] text-s-dim mt-2">
+            Staff and OpEx are pulled live — edit them in{' '}
+            <Link href="/workforce" className="text-s-teal hover:underline">Positions</Link> and{' '}
+            <Link href="/finance/opex" className="text-s-teal hover:underline">OpEx</Link> respectively. They feed every brand's
+            monthly P&L from its launch month forward.
+          </p>
+        </section>
 
-function FixedCostsSection({ proForma, onChange }: { proForma: ProForma; onChange: () => void }) {
-  const [showAdd, setShowAdd] = useState(false)
-  return (
-    <section>
-      <div className="flex items-center justify-between mb-3">
-        <h3 className="text-sm font-black uppercase tracking-[0.22em] text-white/60">Monthly fixed costs</h3>
-        <button onClick={() => setShowAdd(true)} className="text-xs font-bold text-kds-green">+ Cost</button>
-      </div>
-      <div className="rounded-2xl overflow-hidden"
-        style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)' }}>
-        {proForma.fixedCosts.length === 0 ? (
-          <p className="p-4 text-sm text-white/40 text-center">No fixed costs yet — add Rent, Utilities, Payroll, Marketing</p>
-        ) : (
-          <table className="w-full text-sm">
-            <tbody className="divide-y divide-white/[0.03]">
-              {proForma.fixedCosts.map((c) => (
-                <tr key={c.id}>
-                  <td className="px-4 py-2 text-white/85">{c.category}</td>
-                  <td className="px-4 py-2 text-right font-mono font-bold text-white/85">{fmtPKR(c.monthlyCents)}</td>
-                  <td className="px-4 py-2 text-right">
-                    <DeleteCost id={c.id} onDone={onChange} />
-                  </td>
+        {/* ── Per-brand 12-month matrix ───────────────────────────────── */}
+        {brands.map((b) => (
+          <BrandMatrix key={b.conceptId} brand={b} months={MONTHS} />
+        ))}
+
+        {/* ── Combined view ────────────────────────────────────────────── */}
+        <section>
+          <h2 className="text-lg font-black mb-3">Combined — all brands</h2>
+          <div className="overflow-x-auto rounded-xl border border-s-border bg-s-surface">
+            <table className="w-full text-xs font-mono">
+              <thead className="text-s-muted">
+                <tr className="border-b border-s-border">
+                  <th className="text-left px-3 py-2 font-bold sticky left-0 bg-s-surface">Line</th>
+                  {MONTHS.map((m) => <th key={m} className="text-right px-3 py-2 font-bold">M{m}</th>)}
+                  <th className="text-right px-3 py-2 font-bold">Year 1</th>
                 </tr>
-              ))}
-              <tr className="bg-white/[0.02] font-bold">
-                <td className="px-4 py-2 text-white/85">Total fixed</td>
-                <td className="px-4 py-2 text-right font-mono text-kds-green">{fmtPKR(proForma.totalFixedMonthlyCents)}</td>
-                <td></td>
-              </tr>
-            </tbody>
-          </table>
-        )}
-      </div>
-      {showAdd && (
-        <AddCostModal proFormaId={proForma.id}
-          onClose={() => setShowAdd(false)}
-          onCreated={() => { setShowAdd(false); onChange() }} />
-      )}
-    </section>
+              </thead>
+              <tbody>
+                <CombinedRow label="Revenue" months={combined} pick={(m) => m.revenueCents} />
+                <CombinedRow label="Variable cost" months={combined} pick={(m) => m.variableCents} negative />
+                <CombinedRow label="Staff" months={combined} pick={(m) => m.staffCents} negative />
+                <CombinedRow label="OpEx" months={combined} pick={(m) => m.opexCents} negative />
+                <CombinedRow label="Total cost" months={combined} pick={(m) => m.totalCostCents} negative bold />
+                <CombinedRow label="Profit / Loss" months={combined} pick={(m) => m.profitCents} bold highlightSign />
+                <CombinedRow label="Cumulative cash" months={combined} pick={(m) => m.cumulativeCents} cumulative highlightSign />
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        {/* ── Ramp curve display ──────────────────────────────────────── */}
+        <section className="rounded-xl border border-s-border bg-s-surface p-4">
+          <h3 className="text-sm font-bold mb-2">Ramp curve</h3>
+          <p className="text-[11px] text-s-muted mb-3">
+            Multiplier on steady-state daily covers, applied from each brand's launch month onward.
+          </p>
+          <div className="grid grid-cols-6 md:grid-cols-12 gap-2">
+            {projection.rampCurve.map((r, i) => (
+              <div key={i} className="rounded-lg bg-s-bg border border-s-border px-2 py-2 text-center">
+                <div className="text-[9px] text-s-dim font-bold uppercase">M{i + 1}</div>
+                <div className="text-sm font-black mt-0.5">{(r * 100).toFixed(0)}%</div>
+              </div>
+            ))}
+          </div>
+        </section>
+      </main>
+    </div>
   )
 }
 
-function MonthlyPL({ proForma, onChange }: { proForma: ProForma; onChange: () => void }) {
+// ─── Sub-components ───────────────────────────────────────────────────────────
+
+function SummaryCard({ label, value, hint, color }: { label: string; value: string; hint?: string; color: string }) {
+  return (
+    <div className="rounded-xl border border-s-border bg-s-surface p-4">
+      <p className="text-[10px] uppercase tracking-wider text-s-muted font-bold">{label}</p>
+      <p className="text-xl font-black mt-1" style={{ color }}>{value}</p>
+      {hint && <p className="text-[10px] text-s-dim mt-0.5">{hint}</p>}
+    </div>
+  )
+}
+
+function CellNum({ value, onCommit, min, max, step, suffix }: {
+  value: number; onCommit: (v: number) => void
+  min?: number; max?: number; step?: number; suffix?: string
+}) {
+  const [local, setLocal] = useState(String(value))
+  useEffect(() => { setLocal(String(value)) }, [value])
+  return (
+    <td className="text-right px-2 py-1">
+      <input
+        type="number" value={local} step={step ?? 1} min={min} max={max}
+        onChange={(e) => setLocal(e.target.value)}
+        onBlur={() => {
+          const n = parseFloat(local)
+          if (Number.isFinite(n) && n !== value) onCommit(n)
+        }}
+        className="w-20 rounded bg-s-bg border border-s-border px-2 py-1 text-right text-xs font-mono"
+      />
+      {suffix && <span className="ml-1 text-s-dim text-[10px]">{suffix}</span>}
+    </td>
+  )
+}
+
+function BrandMatrix({ brand, months }: { brand: BrandInput; months: number[] }) {
   return (
     <section>
-      <h3 className="text-sm font-black uppercase tracking-[0.22em] text-white/60 mb-3">Monthly P&L (12-month projection)</h3>
-      <div className="rounded-2xl overflow-x-auto"
-        style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)' }}>
-        <table className="w-full text-xs" style={{ minWidth: '900px' }}>
-          <thead className="bg-white/[0.02]">
-            <tr>
-              <th className="px-3 py-2 text-left text-[10px] font-black uppercase tracking-wider text-white/40">Month</th>
-              <th className="px-3 py-2 text-right text-[10px] font-black uppercase tracking-wider text-white/40">Ramp</th>
-              <th className="px-3 py-2 text-right text-[10px] font-black uppercase tracking-wider text-white/40">Revenue</th>
-              <th className="px-3 py-2 text-right text-[10px] font-black uppercase tracking-wider text-white/40">Variable</th>
-              <th className="px-3 py-2 text-right text-[10px] font-black uppercase tracking-wider text-white/40">Fixed</th>
-              <th className="px-3 py-2 text-right text-[10px] font-black uppercase tracking-wider text-white/40">P/L</th>
-              <th className="px-3 py-2 text-right text-[10px] font-black uppercase tracking-wider text-white/40">Cum. cash</th>
+      <div className="flex items-baseline gap-3 mb-3">
+        <span className="inline-block w-3 h-3 rounded-full" style={{ background: brand.concept.primaryColor ?? '#888' }}/>
+        <h2 className="text-lg font-black">{brand.concept.name}</h2>
+        <span className="text-xs text-s-muted">
+          Launches M{brand.launchMonth} · Steady state M12: profit {fmtPkr(brand.steadyStateMonthlyProfitCents)}/mo
+        </span>
+      </div>
+      <div className="overflow-x-auto rounded-xl border border-s-border bg-s-surface">
+        <table className="w-full text-xs font-mono">
+          <thead className="text-s-muted">
+            <tr className="border-b border-s-border">
+              <th className="text-left px-3 py-2 font-bold sticky left-0 bg-s-surface">Line</th>
+              {months.map((m) => (
+                <th key={m} className="text-right px-3 py-2 font-bold">
+                  M{m}{!brand.months[m - 1]!.live && <span className="ml-1 text-[8px] text-s-dim">pre-launch</span>}
+                </th>
+              ))}
+              <th className="text-right px-3 py-2 font-bold">Year 1</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-white/[0.03]">
-            {proForma.months.map((m) => (
-              <tr key={m.monthIndex}>
-                <td className="px-3 py-2 font-bold text-white/85">M{m.monthIndex}</td>
-                <td className="px-3 py-2 text-right">
-                  <RampInput proFormaId={proForma.id} monthIndex={m.monthIndex} value={m.rampPct} onDone={onChange} />
-                </td>
-                <td className="px-3 py-2 text-right font-mono text-kds-green">{fmtPKR(m.revenueCents)}</td>
-                <td className="px-3 py-2 text-right font-mono text-white/55">{fmtPKR(m.variableCents)}</td>
-                <td className="px-3 py-2 text-right font-mono text-white/55">{fmtPKR(m.fixedCents)}</td>
-                <td className="px-3 py-2 text-right font-mono font-bold"
-                  style={{ color: m.profitCents >= 0 ? '#00D4B1' : '#FF4D4F' }}>
-                  {fmtPKR(m.profitCents)}
-                </td>
-                <td className="px-3 py-2 text-right font-mono font-bold"
-                  style={{ color: m.cumulativeCashCents >= 0 ? '#00D4B1' : '#FF4D4F' }}>
-                  {fmtPKR(m.cumulativeCashCents)}
-                </td>
-              </tr>
-            ))}
+          <tbody>
+            <BrandRow label="Ramp factor" brand={brand} pick={(m) => m.rampFactor * 100} suffix="%" raw />
+            <BrandRow label="Orders" brand={brand} pick={(m) => m.orders} raw />
+            <BrandRow label="Revenue" brand={brand} pick={(m) => m.revenueCents} />
+            <BrandRow label="Variable cost" brand={brand} pick={(m) => m.variableCents} negative />
+            <BrandRow label="Staff" brand={brand} pick={(m) => m.staffCents} negative />
+            <BrandRow label="OpEx" brand={brand} pick={(m) => m.opexCents} negative />
+            <BrandRow label="Total cost" brand={brand} pick={(m) => m.totalCostCents} negative bold />
+            <BrandRow label="Profit / Loss" brand={brand} pick={(m) => m.profitCents} bold highlightSign />
+            <BrandRow label="Cumulative" brand={brand} pick={(m) => m.cumulativeCents} cumulative highlightSign />
           </tbody>
         </table>
       </div>
@@ -326,226 +412,70 @@ function MonthlyPL({ proForma, onChange }: { proForma: ProForma; onChange: () =>
   )
 }
 
-function RampInput({ proFormaId, monthIndex, value, onDone }: {
-  proFormaId: string; monthIndex: number; value: number; onDone: () => void
+interface BrandRowProps {
+  label: string
+  brand: BrandInput
+  pick: (m: BrandMonth) => number
+  suffix?: string
+  raw?: boolean
+  negative?: boolean
+  bold?: boolean
+  cumulative?: boolean
+  highlightSign?: boolean
+}
+
+function BrandRow({ label, brand, pick, suffix, raw, negative, bold, cumulative, highlightSign }: BrandRowProps) {
+  const total = brand.months.reduce((s, m) => s + pick(m), 0)
+  const display = (v: number) => {
+    if (raw) return suffix === '%' ? v.toFixed(0) + suffix : v.toLocaleString('en-PK')
+    return fmtPkr(v)
+  }
+  return (
+    <tr className={`border-t border-s-border ${bold ? 'bg-s-bg/40' : ''}`}>
+      <td className={`text-left px-3 py-1.5 sticky left-0 bg-s-surface ${bold ? 'font-black' : ''}`}>{label}</td>
+      {brand.months.map((m) => {
+        const v = pick(m)
+        const color = highlightSign ? (v >= 0 ? '#00D4B1' : '#FF4D4F') : negative ? '#9CA3AF' : 'inherit'
+        return (
+          <td key={m.month} className="text-right px-3 py-1.5" style={{ color }}>
+            {v === 0 ? <span className="text-s-dim">—</span> : display(v)}
+          </td>
+        )
+      })}
+      <td className={`text-right px-3 py-1.5 ${bold || cumulative ? 'font-black' : ''}`}
+          style={{ color: highlightSign ? (total >= 0 ? '#00D4B1' : '#FF4D4F') : 'inherit' }}>
+        {cumulative ? display(brand.months[brand.months.length - 1]!.cumulativeCents) : display(total)}
+      </td>
+    </tr>
+  )
+}
+
+function CombinedRow({ label, months, pick, negative, bold, cumulative, highlightSign }: {
+  label: string
+  months: CombinedMonth[]
+  pick: (m: CombinedMonth) => number
+  negative?: boolean
+  bold?: boolean
+  cumulative?: boolean
+  highlightSign?: boolean
 }) {
-  const [val, setVal] = useState(String(Math.round(value * 100)))
-  const save = useMutation({
-    mutationFn: () => api.patch(`/finance/projections/${proFormaId}/months/${monthIndex}`, {
-      rampPct: parseFloat(val) / 100,
-    }),
-    onSuccess: () => onDone(),
-  })
+  const total = months.reduce((s, m) => s + pick(m), 0)
   return (
-    <input value={val}
-      onChange={(e) => setVal(e.target.value.replace(/[^0-9]/g, ''))}
-      onBlur={() => save.mutate()}
-      type="text" inputMode="numeric"
-      className="w-12 bg-white/[0.03] border border-white/[0.06] rounded px-1.5 py-0.5 text-right font-mono text-white/85 focus:outline-none focus:border-kds-green"
-      style={{ fontSize: '11px' }} />
-  )
-}
-
-function DeleteChannel({ id, onDone }: { id: string; onDone: () => void }) {
-  const remove = useMutation({ mutationFn: () => api.delete(`/finance/projections/channels/${id}`), onSuccess: onDone })
-  return <button onClick={() => remove.mutate()} className="text-xs text-white/40 hover:text-kds-red">×</button>
-}
-function DeleteCost({ id, onDone }: { id: string; onDone: () => void }) {
-  const remove = useMutation({ mutationFn: () => api.delete(`/finance/projections/fixed-costs/${id}`), onSuccess: onDone })
-  return <button onClick={() => remove.mutate()} className="text-xs text-white/40 hover:text-kds-red">×</button>
-}
-
-function AddScenarioModal({ onClose, onCreated }: { onClose: () => void; onCreated: (id: string) => void }) {
-  const [name, setName] = useState('')
-  const [totalAsk, setTotalAsk] = useState('')
-  const [capex, setCapex] = useState('')
-  const [workingCapital, setWorkingCapital] = useState('')
-  const [scenario, setScenario] = useState<'base'|'aggressive'|'conservative'>('base')
-
-  const create = useMutation({
-    mutationFn: () => api.post<{ id: string }>('/finance/projections', {
-      name: name.trim(),
-      scenario,
-      totalAskCents: totalAsk ? Math.round(parseFloat(totalAsk) * 100) : 0,
-      capexCents: capex ? Math.round(parseFloat(capex) * 100) : 0,
-      workingCapitalCents: workingCapital ? Math.round(parseFloat(workingCapital) * 100) : 0,
-    }),
-    onSuccess: (data) => onCreated(data.id),
-  })
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4" onClick={onClose}>
-      <div className="w-full max-w-md rounded-2xl overflow-hidden"
-        style={{ background: '#14161e', border: '1px solid rgba(255,255,255,0.08)' }}
-        onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between border-b border-white/[0.05] px-5 py-3">
-          <h2 className="font-black text-white/90">New projection scenario</h2>
-          <button onClick={onClose} className="text-white/40 text-xl">✕</button>
-        </div>
-        <div className="p-5 space-y-3">
-          <Field label="Name *">
-            <input value={name} onChange={(e) => setName(e.target.value)}
-              placeholder="Stax + Speakeasy v1"
-              className="w-full bg-white/[0.03] border border-white/[0.08] rounded-lg px-3 py-2.5 text-sm text-white/90 focus:outline-none focus:border-kds-green" autoFocus />
-          </Field>
-          <Field label="Scenario">
-            <div className="flex gap-1.5">
-              {(['base','aggressive','conservative'] as const).map((s) => (
-                <button key={s} onClick={() => setScenario(s)}
-                  className="flex-1 rounded-lg px-3 py-2 text-xs font-bold capitalize transition-colors"
-                  style={scenario === s
-                    ? { background: 'rgba(0,212,177,0.12)', border: '1px solid rgba(0,212,177,0.4)', color: '#00D4B1' }
-                    : { background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.6)' }}>
-                  {s}
-                </button>
-              ))}
-            </div>
-          </Field>
-          <Field label="Total ask (PKR)">
-            <input value={totalAsk} onChange={(e) => setTotalAsk(e.target.value)} type="number"
-              placeholder="20917700"
-              className="w-full bg-white/[0.03] border border-white/[0.08] rounded-lg px-3 py-2.5 text-sm text-white/90 focus:outline-none focus:border-kds-green" />
-          </Field>
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="CapEx (PKR)">
-              <input value={capex} onChange={(e) => setCapex(e.target.value)} type="number"
-                placeholder="15000000"
-                className="w-full bg-white/[0.03] border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-white/90 focus:outline-none focus:border-kds-green" />
-            </Field>
-            <Field label="Working capital (PKR)">
-              <input value={workingCapital} onChange={(e) => setWorkingCapital(e.target.value)} type="number"
-                placeholder="3117700"
-                className="w-full bg-white/[0.03] border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-white/90 focus:outline-none focus:border-kds-green" />
-            </Field>
-          </div>
-        </div>
-        <div className="flex justify-between gap-2 border-t border-white/[0.05] p-4 bg-white/[0.01]">
-          <button onClick={onClose} className="rounded-xl border border-white/10 px-4 py-2.5 text-sm text-white/55">Cancel</button>
-          <button onClick={() => create.mutate()} disabled={!name.trim() || create.isPending}
-            className="rounded-xl bg-kds-green px-5 py-2.5 text-sm font-black text-black hover:opacity-90 disabled:opacity-40">
-            {create.isPending ? 'Creating…' : 'Create scenario'}
-          </button>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-function AddChannelModal({ proFormaId, onClose, onCreated }: { proFormaId: string; onClose: () => void; onCreated: () => void }) {
-  const [name, setName] = useState('')
-  const [checkAvg, setCheckAvg] = useState('')
-  const [orders, setOrders] = useState({ Mon: '', Tue: '', Wed: '', Thu: '', Fri: '', Sat: '', Sun: '' })
-
-  const create = useMutation({
-    mutationFn: () => api.post(`/finance/projections/${proFormaId}/channels`, {
-      name: name.trim(),
-      checkAvgCents: Math.round(parseFloat(checkAvg) * 100),
-      ordersMon: parseInt(orders.Mon, 10) || 0,
-      ordersTue: parseInt(orders.Tue, 10) || 0,
-      ordersWed: parseInt(orders.Wed, 10) || 0,
-      ordersThu: parseInt(orders.Thu, 10) || 0,
-      ordersFri: parseInt(orders.Fri, 10) || 0,
-      ordersSat: parseInt(orders.Sat, 10) || 0,
-      ordersSun: parseInt(orders.Sun, 10) || 0,
-    }),
-    onSuccess: onCreated,
-  })
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4" onClick={onClose}>
-      <div className="w-full max-w-md rounded-2xl overflow-hidden"
-        style={{ background: '#14161e', border: '1px solid rgba(255,255,255,0.08)' }}
-        onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between border-b border-white/[0.05] px-5 py-3">
-          <h2 className="font-black text-white/90">+ Channel</h2>
-          <button onClick={onClose} className="text-white/40 text-xl">✕</button>
-        </div>
-        <div className="p-5 space-y-3">
-          <Field label="Name *">
-            <input value={name} onChange={(e) => setName(e.target.value)}
-              placeholder="Ghost / Takeout / Stax / Simmer"
-              className="w-full bg-white/[0.03] border border-white/[0.08] rounded-lg px-3 py-2.5 text-sm text-white/90 focus:outline-none focus:border-kds-green" autoFocus />
-          </Field>
-          <Field label="Check average (PKR) *">
-            <input value={checkAvg} onChange={(e) => setCheckAvg(e.target.value)} type="number"
-              placeholder="1500"
-              className="w-full bg-white/[0.03] border border-white/[0.08] rounded-lg px-3 py-2.5 text-sm text-white/90 focus:outline-none focus:border-kds-green" />
-          </Field>
-          <Field label="Daily orders by day">
-            <div className="grid grid-cols-7 gap-1">
-              {(Object.keys(orders) as Array<keyof typeof orders>).map((d) => (
-                <div key={d}>
-                  <p className="text-[9px] text-white/40 text-center mb-1">{d}</p>
-                  <input value={orders[d]} onChange={(e) => setOrders({ ...orders, [d]: e.target.value })}
-                    type="number" placeholder="0"
-                    className="w-full bg-white/[0.03] border border-white/[0.08] rounded px-1 py-1 text-center text-xs text-white/90 focus:outline-none focus:border-kds-green" />
-                </div>
-              ))}
-            </div>
-          </Field>
-        </div>
-        <div className="flex justify-between gap-2 border-t border-white/[0.05] p-4 bg-white/[0.01]">
-          <button onClick={onClose} className="rounded-xl border border-white/10 px-4 py-2.5 text-sm text-white/55">Cancel</button>
-          <button onClick={() => create.mutate()} disabled={!name.trim() || !checkAvg || create.isPending}
-            className="rounded-xl bg-kds-green px-5 py-2.5 text-sm font-black text-black hover:opacity-90 disabled:opacity-40">
-            Add channel
-          </button>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-function AddCostModal({ proFormaId, onClose, onCreated }: { proFormaId: string; onClose: () => void; onCreated: () => void }) {
-  const [category, setCategory] = useState('')
-  const [monthly, setMonthly] = useState('')
-
-  const create = useMutation({
-    mutationFn: () => api.post(`/finance/projections/${proFormaId}/fixed-costs`, {
-      category: category.trim(),
-      monthlyCents: Math.round(parseFloat(monthly) * 100),
-    }),
-    onSuccess: onCreated,
-  })
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4" onClick={onClose}>
-      <div className="w-full max-w-sm rounded-2xl overflow-hidden"
-        style={{ background: '#14161e', border: '1px solid rgba(255,255,255,0.08)' }}
-        onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between border-b border-white/[0.05] px-5 py-3">
-          <h2 className="font-black text-white/90">+ Fixed cost</h2>
-          <button onClick={onClose} className="text-white/40 text-xl">✕</button>
-        </div>
-        <div className="p-5 space-y-3">
-          <Field label="Category *">
-            <input value={category} onChange={(e) => setCategory(e.target.value)}
-              placeholder="Rent / Utilities / Payroll / Marketing"
-              className="w-full bg-white/[0.03] border border-white/[0.08] rounded-lg px-3 py-2.5 text-sm text-white/90 focus:outline-none focus:border-kds-green" autoFocus />
-          </Field>
-          <Field label="Monthly amount (PKR) *">
-            <input value={monthly} onChange={(e) => setMonthly(e.target.value)} type="number"
-              placeholder="375000"
-              className="w-full bg-white/[0.03] border border-white/[0.08] rounded-lg px-3 py-2.5 text-sm text-white/90 focus:outline-none focus:border-kds-green" />
-          </Field>
-        </div>
-        <div className="flex justify-between gap-2 border-t border-white/[0.05] p-4 bg-white/[0.01]">
-          <button onClick={onClose} className="rounded-xl border border-white/10 px-4 py-2.5 text-sm text-white/55">Cancel</button>
-          <button onClick={() => create.mutate()} disabled={!category.trim() || !monthly || create.isPending}
-            className="rounded-xl bg-kds-green px-5 py-2.5 text-sm font-black text-black hover:opacity-90 disabled:opacity-40">
-            Add
-          </button>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div>
-      <label className="text-xs text-white/55 block mb-1">{label}</label>
-      {children}
-    </div>
+    <tr className={`border-t border-s-border ${bold ? 'bg-s-bg/40' : ''}`}>
+      <td className={`text-left px-3 py-1.5 sticky left-0 bg-s-surface ${bold ? 'font-black' : ''}`}>{label}</td>
+      {months.map((m) => {
+        const v = pick(m)
+        const color = highlightSign ? (v >= 0 ? '#00D4B1' : '#FF4D4F') : negative ? '#9CA3AF' : 'inherit'
+        return (
+          <td key={m.month} className="text-right px-3 py-1.5" style={{ color }}>
+            {v === 0 ? <span className="text-s-dim">—</span> : fmtPkr(v)}
+          </td>
+        )
+      })}
+      <td className={`text-right px-3 py-1.5 ${bold || cumulative ? 'font-black' : ''}`}
+          style={{ color: highlightSign ? (total >= 0 ? '#00D4B1' : '#FF4D4F') : 'inherit' }}>
+        {cumulative ? fmtPkr(months[months.length - 1]!.cumulativeCents) : fmtPkr(total)}
+      </td>
+    </tr>
   )
 }

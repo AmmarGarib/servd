@@ -96,6 +96,7 @@ import { opsReportRoutes } from './modules/opsReports/routes.js'
 import { tenantRoutes } from './modules/tenants/routes.js'
 import { domainRoutes } from './modules/domains/routes.js'
 import { financePlanningRoutes } from './modules/financePlanning/routes.js'
+import { projectionsRoutes } from './modules/projections/routes.js'
 import { componentRoutes } from './modules/components/routes.js'
 import { setupRoutes } from './modules/setup/routes.js'
 import { crosschecksRoutes } from './modules/crosschecks/routes.js'
@@ -292,6 +293,7 @@ async function build() {
       await api.register(tenantRoutes,            { prefix: '/tenants' })
       await api.register(domainRoutes,            { prefix: '/domains' })
       await api.register(financePlanningRoutes,   { prefix: '/finance' })
+      await api.register(projectionsRoutes,       { prefix: '/projections' })
       await api.register(componentRoutes,         { prefix: '/components' })
       await api.register(setupRoutes,             { prefix: '/setup' })
       await api.register(crosschecksRoutes,       { prefix: '/crosschecks' })

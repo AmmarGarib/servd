@@ -297,6 +297,7 @@ model Concept {
   componentUses     ComponentBrandUse[]
   feedbackEntries   FeedbackEntry[]
   positions         Position[]
+  projectionInputs  ProjectionBrandInput[]
 
   @@index([tenantId])
   @@map("concepts")
@@ -3933,6 +3934,61 @@ model ProFormaMonth {
   @@unique([proFormaId, monthIndex])
   @@index([proFormaId])
   @@map("pro_forma_months")
+}
+
+// ─── Projections (per-brand 12-month P&L) ────────────────────────────────────
+// Replaces the legacy ProForma model. Inputs are stored per-brand; the rest
+// (staff costs, opex, capex working-capital buffer) is derived live from
+// Positions, OpexLine, and CapexProject so the projection always reflects
+// the current state of the business.
+//
+// Calculation:
+//   per brand per month:
+//     liveThisMonth = monthNumber >= launchMonth
+//     rampFactor    = rampCurve[ min(monthNumber - launchMonth + 1, rampCurve.length) ]
+//     orders        = tradingDaysPerMonth * dailyCoversAtSS * rampFactor
+//     revenue       = orders * checkAverageCents
+//     variableCost  = revenue * (foodCostPct + packagingCostPct) / 100
+//     staffCost     = SUM(positions.tenantCostShareCents * headcount) WHERE conceptId = brand
+//     opexCost      = SUM(opex_lines.amountCents) WHERE conceptId = brand AND cadence = monthly
+//     totalCost     = variableCost + staffCost + opexCost
+//     profit        = revenue - totalCost
+//   combined = sum across brands.
+//   capitalAsk = sum(capex_projects.totalCents) + (3 * steadyStateMonthlyCost)
+//   payback (months) = capitalAsk / max(1, steadyStateMonthlyProfit)
+
+model Projection {
+  id        String                  @id @default(cuid())
+  tenantId  String?
+  name      String                  @default("Default scenario")
+  isActive  Boolean                 @default(true)
+  // 12-month ramp curve (multipliers on steady-state daily covers, applied
+  // from each brand's launch month onward). Default = PDF spec.
+  rampCurve Float[]                 @default([0.30, 0.45, 0.60, 0.75, 0.90, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00])
+  brands    ProjectionBrandInput[]
+  createdAt DateTime                @default(now())
+  updatedAt DateTime                @updatedAt
+
+  @@map("projections")
+}
+
+model ProjectionBrandInput {
+  id                  String     @id @default(cuid())
+  projectionId        String
+  conceptId           String
+  launchMonth         Int        @default(1) // 1..12
+  checkAverageCents   Int        @default(0)
+  tradingDaysPerMonth Int        @default(26)
+  foodCostPct         Float      @default(32)
+  packagingCostPct    Float      @default(8)
+  dailyCoversAtSS     Int        @default(0)
+
+  projection Projection @relation(fields: [projectionId], references: [id], onDelete: Cascade)
+  concept    Concept    @relation(fields: [conceptId], references: [id], onDelete: Cascade)
+
+  @@unique([projectionId, conceptId])
+  @@index([projectionId])
+  @@map("projection_brand_inputs")
 }
 
 // ─── Custom domains ───────────────────────────────────────────────────────────

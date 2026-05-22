@@ -191,11 +191,9 @@ const NAV: NavSection[] = [
       { href: '/reconciliation',         label: 'Reconciliation',  icon: '⚖️', module: 'reconciliation' },
       { href: '/exceptions',             label: 'Exceptions',      icon: '🚨', module: 'exceptions' },
       // Investment Dashboard is a read-only roll-up of Project Tracker —
-      // every CapexLine + payment flows here. To log anything, use /capex.
+      // every CapexLine + payment flows here. To log anything, use the
+      // Capex tab under Project Tracker.
       { href: '/finance/capital-ledger', label: 'Investment',      icon: '📊', module: 'capital' },
-      { href: '/finance/capex',          label: 'Project Tracker', icon: '🏗', module: 'capital' },
-      { href: '/finance/opex',           label: 'OpEx',            icon: '💸', module: 'capital' },
-      { href: '/finance/projections',    label: 'Projections',     icon: '📈', module: 'projections' },
       { href: '/procurement',            label: 'Procurement',     icon: '🏭', module: 'procurement', children: [
         { href: '/procurement/chat',    label: 'Supplier Chat', module: 'procurement' },
         { href: '/procurement/monitor', label: 'Monitor',       module: 'procurement' },
@@ -203,6 +201,20 @@ const NAV: NavSection[] = [
       { href: '/reports',                label: 'Reports',         icon: '📈', module: 'reports', children: [
         { href: '/analytics/forecast', label: 'Demand Forecast', module: 'reports' },
       ]},
+    ],
+  },
+  {
+    // Project Tracker — capital projects, run-rate opex, and forward
+    // projections in one section. Capex tracks each kitchen build/refurb
+    // with quotes + payments; OpEx is the recurring monthly run-rate; and
+    // Projections rolls both into a 12-month P&L per brand (Stax/Flip'd/
+    // Simmer) with launch phasing and ramp curves.
+    title: 'Project Tracker',
+    defaultCollapsed: false,
+    items: [
+      { href: '/finance/capex',       label: 'Capex',       icon: '🏗', module: 'capital' },
+      { href: '/finance/opex',        label: 'OpEx',        icon: '💸', module: 'capital' },
+      { href: '/finance/projections', label: 'Projections', icon: '📈', module: 'projections' },
     ],
   },
   {
