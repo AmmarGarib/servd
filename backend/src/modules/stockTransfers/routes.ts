@@ -140,7 +140,7 @@ async function transition(
   expected: string,
   next: string,
   patch: Record<string, unknown>,
-  req: { staffUser?: { id: string; email: string } | null },
+  req: { staffUser?: { id: string; email: string | null } | null },
 ) {
   const t = await prisma.stockTransfer.findUnique({ where: { id } })
   if (!t) throw new NotFoundError('StockTransfer', id)

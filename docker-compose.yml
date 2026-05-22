@@ -1,98 +1,58 @@
-version: "3.9"
+# servd — consumer-side compose for running prebuilt Docker Hub images.
+#
+# This is the file Hasham (or anyone) uses to RUN servd without building.
+# All 3 images live under ONE private Docker Hub repo with 3 tags
+# (because Docker Hub free tier allows 1 free private repo):
+#
+#   ammargarib/servd:api          - the Fastify backend
+#   ammargarib/servd:admin        - the Next.js operator UI
+#   ammargarib/servd:storefront   - the Next.js public storefront
+#
+# Override DOCKER_REPO + TAG in your .env if those move.
+#
+# Setup on a fresh machine:
+#   1. Install Docker Desktop
+#   2. Copy .env.docker.template -> .env, fill in DB/Redis/secrets
+#   3. docker login                           (paste Docker Hub creds)
+#   4. docker compose pull                    (downloads the 3 image variants)
+#   5. docker compose up -d                   (boots everything)
+#   6. open http://localhost:3000 (admin), http://localhost:3002 (storefront)
+#
+# The maintainer (who BUILDS the images) uses infra/docker-compose.yml instead —
+# that file has `build:` contexts. This one only has `image:` references.
 
 services:
-  postgres:
-    image: postgres:15-alpine
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: servd
-      POSTGRES_PASSWORD: servd_dev
-      POSTGRES_DB: servd
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U servd"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-
-  redis:
-    image: redis:7-alpine
-    restart: unless-stopped
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-
   api:
-    build:
-      context: ./apps/api
-      dockerfile: Dockerfile.dev
+    image: ${DOCKER_REPO:-ammargarib/servd}:api
     restart: unless-stopped
     env_file: .env
     environment:
-      DATABASE_URL: postgresql://servd:servd_dev@postgres:5432/servd
-      REDIS_URL: redis://redis:6379
+      NODE_ENV: production
+      PORT: "3001"
+      ENABLE_WORKERS: "false"
     ports:
       - "3001:3001"
-    volumes:
-      - ./apps/api:/app
-      - ./packages:/packages
-      - /app/node_modules
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    command: pnpm dev
 
-  web:
-    build:
-      context: ./apps/web
-      dockerfile: Dockerfile.dev
+  admin:
+    image: ${DOCKER_REPO:-ammargarib/servd}:admin
     restart: unless-stopped
     env_file: .env
     environment:
-      NEXT_PUBLIC_API_URL: http://localhost:3001
-      NEXT_PUBLIC_WS_URL: http://localhost:3001
+      NODE_ENV: production
+      PORT: "3000"
     ports:
       - "3000:3000"
-    volumes:
-      - ./apps/web:/app
-      - ./packages:/packages
-      - /app/node_modules
-      - /app/.next
     depends_on:
       - api
-    command: pnpm dev
 
   storefront:
-    build:
-      context: ./apps/storefront
-      dockerfile: Dockerfile.dev
+    image: ${DOCKER_REPO:-ammargarib/servd}:storefront
     restart: unless-stopped
     env_file: .env
     environment:
-      NEXT_PUBLIC_API_URL: http://localhost:3001
-      NEXT_PUBLIC_WS_URL: http://localhost:3001
+      NODE_ENV: production
+      PORT: "3000"
     ports:
       - "3002:3000"
-    volumes:
-      - ./apps/storefront:/app
-      - ./packages:/packages
-      - /app/node_modules
-      - /app/.next
     depends_on:
       - api
-    command: pnpm dev
-
-volumes:
-  postgres_data:
-  redis_data:

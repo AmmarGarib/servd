@@ -20,7 +20,7 @@ import { roleLabel, MODULES, type AppRole, type ModuleId } from '../../lib/appRo
 import { usePermissions } from '../../hooks/useCan'
 import { modulesForRole, useRoleModules } from '../../store/roleModules'
 import { useViewAllTenants } from '../../components/ui/TenantSwitcher'
-import { PositionsView } from './positions/page'
+import { PositionsView } from './positions/view'
 
 interface TenantLite { id: string; name: string; slug: string }
 
@@ -138,7 +138,7 @@ const CATEGORIES: Category[] = [
     label: 'Management',
     emoji: '🧑‍💼',
     blurb: 'GMs, FOH & BOH leads, the people who run the floor day-to-day.',
-    roles: ['management', 'foh_management', 'boh_management', 'manager'],
+    roles: ['management', 'foh_management', 'boh_management'],
   },
   {
     key: 'foh',

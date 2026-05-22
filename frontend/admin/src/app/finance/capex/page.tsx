@@ -10,7 +10,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api } from '../../../lib/api'
 import { MoneyInput } from '../../../components/ui/MoneyInput'
-import { PositionsView } from '../../workforce/positions/page'
+import { PositionsView } from '../../workforce/positions/view'
 
 // ─── Types ────────────────────────────────────────────────────────────────
 

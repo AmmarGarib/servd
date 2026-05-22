@@ -77,6 +77,7 @@ export async function getMenuEngineering(opts: {
       const { recipe } = item
       const servings = recipe.servings || 1
       const ingredientCost = recipe.ingredients.reduce((sum, ing) => {
+        if (!ing.inventoryItem) return sum
         const rawCost = (ing.inventoryItem.unitCostCents ?? 0) * ing.quantity
         return sum + rawCost / ing.yieldPct
       }, 0)

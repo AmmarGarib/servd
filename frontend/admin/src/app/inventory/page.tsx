@@ -119,7 +119,7 @@ export default function InventoryPage() {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['inventory'] })
       setShowAdd(false)
-      setAddForm({ name: '', unit: 'kg', parLevel: '', currentStock: '', notes: '' })
+      setAddForm({ name: '', unit: 'kg', parLevel: '', currentStock: '', notes: '', tenantId: '' })
     },
   })
 

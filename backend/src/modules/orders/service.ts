@@ -42,6 +42,7 @@ export async function deductInventoryForOrder(orderId: string): Promise<void> {
     const recipe = recipeMap.get(item.menuItemId)
     if (!recipe || recipe.servings < 1) continue
     for (const ing of recipe.ingredients) {
+      if (!ing.inventoryItemId) continue
       // quantity per serving adjusted for yield loss
       const rawQtyPerServing = ing.quantity / recipe.servings
       const purchaseQty = ing.yieldPct > 0 ? rawQtyPerServing / ing.yieldPct : rawQtyPerServing
@@ -99,7 +100,7 @@ async function autoEightySixDepletedItems(ingredientIds: string[]) {
     select: { menuItemId: true, menuItem: { select: { id: true, conceptId: true, isAvailable: true } } },
   })
   const toDisable = recipes
-    .filter((r) => r.menuItem.isAvailable)
+    .filter((r): r is typeof r & { menuItem: NonNullable<typeof r.menuItem> } => r.menuItem !== null && r.menuItem.isAvailable)
     .map((r) => ({ id: r.menuItem.id, conceptId: r.menuItem.conceptId }))
 
   if (toDisable.length === 0) return

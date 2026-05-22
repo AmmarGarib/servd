@@ -274,9 +274,6 @@ export async function kitchenStaffRoutes(fastify: FastifyInstance) {
         },
         include: {
           _count: { select: { complianceViolations: { where: { resolvedAt: null } } } },
-          // Tenant relation so the frontend can render the indigo brand chip
-          // on each row in portfolio view.
-          tenant: { select: { id: true, name: true, slug: true } },
           payrollRuns: {
             orderBy: [{ year: 'desc' }, { month: 'desc' }],
             take: 1,

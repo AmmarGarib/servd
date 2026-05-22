@@ -283,7 +283,7 @@ export async function expoRoutes(fastify: FastifyInstance) {
           orderItem: { order: { concept: { tenantId } } },
         },
         include: {
-          recipeStep: { select: { instruction: true, phase: true, estimatedSeconds: true } },
+          recipeStep: { select: { instruction: true, instructionUrdu: true, phase: true, estimatedSeconds: true } },
           orderItem:  {
             include: {
               order: {

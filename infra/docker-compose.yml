@@ -50,7 +50,7 @@ services:
       - redis
     networks:
       - servd_net
-    command: sh -c "npx prisma migrate deploy && node dist/index.js"
+    command: sh -c "npx prisma migrate deploy && node dist/src/index.js"
 
   # ───────────────────────────── Admin (Next.js) ──────────────────
   # Build args read from a compose-level `.env` file (NOT .env.production).

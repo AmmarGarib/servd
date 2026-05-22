@@ -106,6 +106,7 @@ export async function opsReportRoutes(fastify: FastifyInstance) {
           const perPortion = ing.quantity / recipeServings
           const rawNeeded = (perPortion / yp) * portionsNeeded
           const inv = ing.inventoryItem
+          if (!inv) continue
           const id = inv.id
 
           const existing = bucket.lines.get(id)
