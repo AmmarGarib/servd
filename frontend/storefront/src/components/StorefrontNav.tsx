@@ -1,6 +1,7 @@
 'use client'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
+import { useEffect, useState } from 'react'
 import { useCustomerAuth } from '../store/customerAuth'
 
 // Pages that manage their own header (full-screen splashes, brand
@@ -15,6 +16,20 @@ export function StorefrontNav() {
   const pathname = usePathname() ?? '/'
   const token = useCustomerAuth((s) => s.token)
 
+  // On dark-hero pages, the sticky nav is transparent and renders white
+  // text. Once the user scrolls past the hero into the white sections,
+  // the white text becomes invisible — so flip to the blurred-glass look
+  // (white bg + ink text) after the first 60vh of scroll.
+  const [scrolledPastHero, setScrolledPastHero] = useState(false)
+  useEffect(() => {
+    if (!TRANSPARENT_PATHS.has(pathname)) return
+    const threshold = window.innerHeight * 0.6
+    const onScroll = () => setScrolledPastHero(window.scrollY > threshold)
+    onScroll()
+    window.addEventListener('scroll', onScroll, { passive: true })
+    return () => window.removeEventListener('scroll', onScroll)
+  }, [pathname])
+
   if (HIDDEN_PREFIXES.some((p) => pathname.startsWith(p))) return null
 
   // Hide nav on the per-concept ordering screen; that page has its own
@@ -24,7 +39,7 @@ export function StorefrontNav() {
     return null
   }
 
-  const transparent = TRANSPARENT_PATHS.has(pathname)
+  const transparent = TRANSPARENT_PATHS.has(pathname) && !scrolledPastHero
   const onDarkHero  = transparent     // home page is ink-on-dark, nav goes white
 
   return (
@@ -38,11 +53,12 @@ export function StorefrontNav() {
         alignItems: 'center',
         justifyContent: 'space-between',
         padding: '0.95rem clamp(1rem, 4vw, 2rem)',
-        // On the dark hero, nav stays transparent. On scroll the home
-        // page will naturally push the hero up and the nav re-renders
-        // against a white surface — same nav, but the transparent style
-        // doesn't fight the dark hero behind it.
-        background: transparent ? 'transparent' : 'rgba(255,255,255,0.88)',
+        // On the dark hero (home page, scroll near top): solid dark nav so the
+        // white brand text reads against it — body bg is white by default, so
+        // a truly transparent nav would render white-on-white. Once scrolled
+        // past the hero, flip to the blurred-glass look against the white
+        // section underneath.
+        background: transparent ? '#0a0a0a' : 'rgba(255,255,255,0.88)',
         backdropFilter: transparent ? undefined : 'blur(16px) saturate(160%)',
         WebkitBackdropFilter: transparent ? undefined : 'blur(16px) saturate(160%)',
         borderBottom: transparent ? 'none' : '1px solid var(--servd-line)',
