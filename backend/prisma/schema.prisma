@@ -193,6 +193,10 @@ model Concept {
   logoUrl      String?
   primaryColor String?
   isActive     Boolean     @default(true)
+  // Expected monthly portions at steady state — denominator for the
+  // brand's Opex per Portion calc on the Recipe page. Operator-edited
+  // when projections are set or revised.
+  forecastPortionsPerMonth Int @default(0)
   taxRate      Float       @default(17) // FBR GST % — legacy single rate; kept for back-compat. New calc uses the split below.
   // FBR allows a discounted GST rate on card / digital tenders to encourage
   // banked payments. The split is per-brand because some concepts negotiate
@@ -1729,6 +1733,15 @@ model InventoryItem {
   parLevel      Float     @default(0)
   currentStock  Float     @default(0)
   unitCostCents Int? // cost per unit (paisa) — updated on each PO receipt
+  // Edible portion after trim/peel/loss. The Recipe page uses this as the
+  // default yield when adding this ingredient to a recipe; per-recipe rows
+  // can still override on RecipeIngredient.yieldPct.
+  yieldPct      Float     @default(100)
+  // Dietary tags surfaced on Recipe / Menu pages — e.g. ['dairy','gluten'].
+  allergens     String[]  @default([])
+  // Coarse classification used for ingredient picker grouping: 'protein',
+  // 'produce', 'dairy', 'dry_goods', 'sauce', 'packaging', 'other'.
+  category      String?
   supplierId    String?
   notes         String?
   createdAt     DateTime  @default(now())
@@ -1829,6 +1842,10 @@ model Supplier {
 enum RecipeKind {
   plate
   prep
+  // Sub-recipe used inside other recipes (e.g. "Burger Sauce" used by both
+  // Stax Classic and Stax Spicy). Behaves like a prep but never carries an
+  // opex/portion allocation — components feed into plates that already do.
+  component
 }
 
 model Recipe {
@@ -1850,6 +1867,26 @@ model Recipe {
   notes        String?
   steps        String? // cooking/assembly steps for kitchen staff (KDS)
   stepsUrdu    String? @map("steps_urdu")
+  // ── Pricing inputs (per spec — sections 3 & 4) ──────────────────────────
+  // Q factor = waste buffer. Default 10% pre-fills on every new recipe;
+  // operator can override per-recipe (e.g. tighter for hard-to-waste prep,
+  // looser for protein-heavy plates).
+  qFactorPct        Float   @default(10)
+  // Target net profit % the recipe should generate after opex + packaging.
+  // Default 25%. Drives the suggested Target Price calculation.
+  targetProfitPct   Float   @default(25)
+  // Packaging as % of selling price (takeaway boxes, lids, bags). Default 8%.
+  packagingPct      Float   @default(8)
+  // What the operator actually charges on the menu. Null = defaults to
+  // the computed Target Price. Stored as cents (paisa) per servd convention.
+  actualSellingPriceCents Int?
+  // Recipe category for menu organisation. 'main' | 'side' | 'sauce' |
+  // 'sub_recipe'. Plate recipes usually inherit category from MenuItem;
+  // prep/component recipes own this field directly since they have no
+  // MenuItem.
+  category          String?
+  // Optional hero photo URL. Operator-uploaded via the media upload helper.
+  photoUrl          String?
 
   // Seasonality. `seasons` is an array of slugs from the curated set:
   // 'spring' | 'summer' | 'monsoon' | 'autumn' | 'winter' | 'ramadan' | 'year-round'

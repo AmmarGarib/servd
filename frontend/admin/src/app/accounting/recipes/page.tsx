@@ -347,7 +347,7 @@ export default function RecipesPage() {
           </div>
           <div className="flex items-center gap-3">
             <Link href="/accounting" className="text-xs text-s-teal hover:underline">← Hub</Link>
-            <button onClick={openCreate} className="s-btn-primary text-xs px-3 py-1.5">+ New Recipe</button>
+            <Link href="/accounting/recipes/new" className="s-btn-primary text-xs px-3 py-1.5">+ New Recipe</Link>
           </div>
         </div>
 

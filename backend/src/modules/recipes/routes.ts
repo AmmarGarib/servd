@@ -36,7 +36,7 @@ const ingredientSchema = z.object({
 // (where every required field is enforced) and skip it on PUT (where partial
 // edits are allowed by design).
 const recipeShape = {
-  kind:         z.enum(['plate', 'prep']).default('plate'),
+  kind:         z.enum(['plate', 'prep', 'component']).default('plate'),
   menuItemId:   z.string().uuid().optional(),
   name:         z.string().min(1).optional(),
   yieldGrams:   z.number().positive().optional(),
@@ -50,6 +50,14 @@ const recipeShape = {
   seasonStart:  z.string().regex(SEASON_DATE_RE, 'Use MM-DD format').nullable().optional(),
   seasonEnd:    z.string().regex(SEASON_DATE_RE, 'Use MM-DD format').nullable().optional(),
   isActive:     z.boolean().default(true),
+  // Pricing-spec fields. All have schema defaults so callers can omit them
+  // and inherit the operator-level defaults (10/25/8) — see spec.
+  qFactorPct:              z.number().min(0).max(100).default(10),
+  targetProfitPct:         z.number().min(0).max(100).default(25),
+  packagingPct:            z.number().min(0).max(100).default(8),
+  actualSellingPriceCents: z.number().int().min(0).nullable().optional(),
+  category:                z.enum(['main', 'side', 'sauce', 'sub_recipe']).nullable().optional(),
+  photoUrl:                z.string().url().nullable().optional(),
   ingredients:  z.array(ingredientSchema).min(1),
 }
 const recipeBase = z.object(recipeShape)
@@ -57,15 +65,15 @@ const recipeSchema = recipeBase.superRefine((r, ctx) => {
   if (r.kind === 'plate' && !r.menuItemId) {
     ctx.addIssue({ code: 'custom', path: ['menuItemId'], message: 'Plate recipes must link to a menu item' })
   }
-  if (r.kind === 'prep') {
+  if (r.kind === 'prep' || r.kind === 'component') {
     if (!r.name || !r.name.trim()) {
-      ctx.addIssue({ code: 'custom', path: ['name'], message: 'Prep recipes need a name' })
+      ctx.addIssue({ code: 'custom', path: ['name'], message: `${r.kind === 'prep' ? 'Prep' : 'Component'} recipes need a name` })
     }
     if (!r.yieldGrams || r.yieldGrams <= 0) {
-      ctx.addIssue({ code: 'custom', path: ['yieldGrams'], message: 'Prep recipes need a batch yield in grams (drives cost-per-gram)' })
+      ctx.addIssue({ code: 'custom', path: ['yieldGrams'], message: `${r.kind === 'prep' ? 'Prep' : 'Component'} recipes need a batch yield in grams (drives cost-per-gram)` })
     }
     if (r.menuItemId) {
-      ctx.addIssue({ code: 'custom', path: ['menuItemId'], message: 'Prep recipes do not link to a menu item' })
+      ctx.addIssue({ code: 'custom', path: ['menuItemId'], message: `${r.kind === 'prep' ? 'Prep' : 'Component'} recipes do not link to a menu item` })
     }
   }
 })
@@ -304,6 +312,169 @@ export async function recipeRoutes(fastify: FastifyInstance) {
     },
   )
 
+  // GET /recipes/:id/costing — full pricing-spec readout (sections 3-5).
+  // Returns plate cost, opex/portion, suggested prices, profitability +
+  // verdict. Used by the Recipe page to show the live cost panel.
+  fastify.get<{ Params: { id: string } }>(
+    '/:id/costing',
+    { preHandler: requireAuth(...MANAGERS) },
+    async (req) => {
+      const recipe = await prisma.recipe.findUnique({
+        where: { id: req.params.id },
+        include: {
+          menuItem: { select: { id: true, conceptId: true, priceCents: true, concept: { select: { id: true, name: true, forecastPortionsPerMonth: true } } } },
+          ingredients: {
+            include: {
+              inventoryItem: { select: { id: true, name: true, unit: true, unitCostCents: true, yieldPct: true, allergens: true } },
+              prepRecipe:    { select: { id: true, name: true, yieldGrams: true } },
+            },
+          },
+        },
+      })
+      if (!recipe) throw new NotFoundError('Recipe', req.params.id)
+
+      // Section 2 — per-ingredient cost
+      const ingredients = recipe.ingredients.map((ri) => {
+        const inv = ri.inventoryItem
+        // Cost per gram for raw inventory items. unit is e.g. "kg" with
+        // unitCostCents priced per kg, so /1000 gives cost-per-gram. For
+        // 'pcs', cost per gram doesn't apply; ingredient cost = qty * cost.
+        let costPerGramCents = 0
+        let ingredientCostCents = 0
+        if (inv) {
+          if (inv.unit === 'kg' || inv.unit === 'litres' || inv.unit === 'l') {
+            costPerGramCents = (inv.unitCostCents ?? 0) / 1000
+          } else if (inv.unit === 'g' || inv.unit === 'ml') {
+            costPerGramCents = inv.unitCostCents ?? 0
+          } else {
+            // 'pcs' / other → quantity is in units, not grams. Cost is qty * unitCost.
+            ingredientCostCents = (inv.unitCostCents ?? 0) * ri.quantity
+          }
+          if (costPerGramCents > 0) {
+            // Apply yield% (operator override on the row, fall back to inventory default).
+            const yieldFactor = (ri.yieldPct ?? inv.yieldPct ?? 100) / 100
+            ingredientCostCents = (ri.quantity * costPerGramCents) / Math.max(yieldFactor, 0.01)
+          }
+        }
+        return {
+          id:               ri.id,
+          name:             inv?.name ?? ri.prepRecipe?.name ?? '—',
+          unit:             ri.unit,
+          quantity:         ri.quantity,
+          yieldPct:         ri.yieldPct ?? inv?.yieldPct ?? 100,
+          costPerGramCents,
+          ingredientCostCents: Math.round(ingredientCostCents),
+          allergens:        inv?.allergens ?? [],
+        }
+      })
+
+      // Section 3 — cost calculation
+      const totalIngredientCents = ingredients.reduce((s, i) => s + i.ingredientCostCents, 0)
+      const qFactorCents         = Math.round(totalIngredientCents * (recipe.qFactorPct / 100))
+      const totalRecipeCents     = totalIngredientCents + qFactorCents
+      const plateCostCents       = Math.round(totalRecipeCents / Math.max(recipe.servings, 1))
+
+      // Opex/Portion — only applies to plate recipes (sub-recipes never carry
+      // opex; their cost rolls into the plate that uses them). Sum monthly-
+      // equivalent OpexLine.amountCents for the brand, divide by the brand's
+      // forecast monthly portions.
+      let opexPerPortionCents = 0
+      let brandMonthlyOpexCents = 0
+      let brandForecastPortions = 0
+      if (recipe.kind === 'plate' && recipe.menuItem?.conceptId) {
+        const opexLines = await prisma.opexLine.findMany({
+          where: { conceptId: recipe.menuItem.conceptId, isActive: true },
+          select: { amountCents: true, cadence: true },
+        })
+        brandMonthlyOpexCents = opexLines.reduce((s, l) => {
+          const monthly =
+            l.cadence === 'monthly'   ? l.amountCents :
+            l.cadence === 'quarterly' ? Math.round(l.amountCents / 3) :
+            l.cadence === 'annual'    ? Math.round(l.amountCents / 12) :
+            l.amountCents
+          return s + monthly
+        }, 0)
+        brandForecastPortions = recipe.menuItem.concept?.forecastPortionsPerMonth ?? 0
+        opexPerPortionCents = brandForecastPortions > 0
+          ? Math.round(brandMonthlyOpexCents / brandForecastPortions)
+          : 0
+      }
+
+      // Section 4 — pricing
+      const packagingFactor = recipe.packagingPct / 100
+      const targetProfitFactor = recipe.targetProfitPct / 100
+      // Legacy: 30% food cost rule of thumb, opex not included
+      const foodCostPriceCents = Math.round(plateCostCents / 0.30)
+      // Break-even: (Plate + Opex) / (1 - Packaging%)
+      const breakEvenDenominator = Math.max(0.01, 1 - packagingFactor)
+      const breakEvenPriceCents = Math.round((plateCostCents + opexPerPortionCents) / breakEvenDenominator)
+      // Target: (Plate + Opex) / (1 - Packaging% - TargetProfit%)
+      const targetDenominator = Math.max(0.01, 1 - packagingFactor - targetProfitFactor)
+      const targetPriceCents = Math.round((plateCostCents + opexPerPortionCents) / targetDenominator)
+      const actualSellingPriceCents = recipe.actualSellingPriceCents ?? targetPriceCents
+
+      // Section 5 — profitability readout
+      const packagingCostCents     = Math.round(actualSellingPriceCents * packagingFactor)
+      const contributionMarginCents = actualSellingPriceCents - plateCostCents - packagingCostCents
+      const contributionMarginPct  = actualSellingPriceCents > 0
+        ? (contributionMarginCents / actualSellingPriceCents) * 100
+        : 0
+      const netProfitCents         = contributionMarginCents - opexPerPortionCents
+      const netProfitPct           = actualSellingPriceCents > 0
+        ? (netProfitCents / actualSellingPriceCents) * 100
+        : 0
+      const foodCostPctOfSp        = actualSellingPriceCents > 0
+        ? (plateCostCents / actualSellingPriceCents) * 100
+        : 0
+      const verdict: 'profitable' | 'covers_food_loses_opex' | 'loses_every_plate' =
+        netProfitCents > 0          ? 'profitable' :
+        contributionMarginCents > 0 ? 'covers_food_loses_opex' :
+                                      'loses_every_plate'
+
+      return {
+        recipe: {
+          id:                       recipe.id,
+          kind:                     recipe.kind,
+          name:                     recipe.name ?? recipe.menuItem?.id ?? null,
+          category:                 recipe.category,
+          servings:                 recipe.servings,
+          yieldGrams:               recipe.yieldGrams,
+          qFactorPct:               recipe.qFactorPct,
+          targetProfitPct:          recipe.targetProfitPct,
+          packagingPct:             recipe.packagingPct,
+          actualSellingPriceCents:  recipe.actualSellingPriceCents,
+          photoUrl:                 recipe.photoUrl,
+        },
+        brand: recipe.menuItem?.concept ?? null,
+        ingredients,
+        cost: {
+          totalIngredientCents,
+          qFactorCents,
+          totalRecipeCents,
+          plateCostCents,
+          opexPerPortionCents,
+          brandMonthlyOpexCents,
+          brandForecastPortions,
+        },
+        pricing: {
+          foodCostPriceCents,
+          breakEvenPriceCents,
+          targetPriceCents,
+          actualSellingPriceCents,
+        },
+        profitability: {
+          packagingCostCents,
+          contributionMarginCents,
+          contributionMarginPct,
+          netProfitCents,
+          netProfitPct,
+          foodCostPctOfSp,
+          verdict,
+        },
+      }
+    },
+  )
+
   // GET /recipes/by-item/:menuItemId — KDS instruction panel fetches this
   // when the cook taps a card. Includes both the legacy free-text steps
   // (steps / stepsUrdu) AND the structured per-step list (recipeSteps with
@@ -384,8 +555,8 @@ export async function recipeRoutes(fastify: FastifyInstance) {
       data: {
         kind:         body.kind,
         menuItemId:   body.kind === 'plate' ? body.menuItemId : null,
-        name:         body.kind === 'prep'  ? body.name       : null,
-        yieldGrams:   body.kind === 'prep'  ? body.yieldGrams : null,
+        name:         body.kind === 'plate' ? null : body.name,
+        yieldGrams:   body.kind === 'plate' ? null : body.yieldGrams,
         servings:     body.servings,
         portionSizeG: body.portionSizeG,
         laborMinutes: body.laborMinutes,
@@ -396,6 +567,12 @@ export async function recipeRoutes(fastify: FastifyInstance) {
         seasonStart:  body.seasonStart ?? null,
         seasonEnd:    body.seasonEnd ?? null,
         isActive:     body.isActive,
+        qFactorPct:              body.qFactorPct,
+        targetProfitPct:         body.targetProfitPct,
+        packagingPct:            body.packagingPct,
+        actualSellingPriceCents: body.actualSellingPriceCents ?? null,
+        category:                body.category ?? null,
+        photoUrl:                body.photoUrl ?? null,
         ingredients:  { create: body.ingredients.map((i) => ({
           quantity: i.quantity,
           yieldPct: i.yieldPct,
@@ -444,6 +621,12 @@ export async function recipeRoutes(fastify: FastifyInstance) {
             ...(body.seasonStart  !== undefined && { seasonStart: body.seasonStart }),
             ...(body.seasonEnd    !== undefined && { seasonEnd: body.seasonEnd }),
             ...(body.isActive     != null && { isActive: body.isActive }),
+            ...(body.qFactorPct              != null      && { qFactorPct:              body.qFactorPct }),
+            ...(body.targetProfitPct         != null      && { targetProfitPct:         body.targetProfitPct }),
+            ...(body.packagingPct            != null      && { packagingPct:            body.packagingPct }),
+            ...(body.actualSellingPriceCents !== undefined && { actualSellingPriceCents: body.actualSellingPriceCents }),
+            ...(body.category                !== undefined && { category:                body.category }),
+            ...(body.photoUrl                !== undefined && { photoUrl:                body.photoUrl }),
             ...(body.ingredients  && {
               ingredients: {
                 create: body.ingredients.map((i) => ({
