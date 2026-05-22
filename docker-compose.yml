@@ -27,7 +27,7 @@ services:
     restart: unless-stopped
     env_file: .env
     environment:
-      NODE_ENV: production
+      NODE_ENV: ${NODE_ENV:-development}
       PORT: "3001"
       ENABLE_WORKERS: "false"
     ports:
@@ -38,7 +38,7 @@ services:
     restart: unless-stopped
     env_file: .env
     environment:
-      NODE_ENV: production
+      NODE_ENV: ${NODE_ENV:-development}
       PORT: "3000"
     ports:
       - "3000:3000"
@@ -50,7 +50,7 @@ services:
     restart: unless-stopped
     env_file: .env
     environment:
-      NODE_ENV: production
+      NODE_ENV: ${NODE_ENV:-development}
       PORT: "3000"
     ports:
       - "3002:3000"
