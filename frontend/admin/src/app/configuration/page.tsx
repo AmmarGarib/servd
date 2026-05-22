@@ -164,10 +164,6 @@ export default function ConfigurationHubPage() {
 
     // B07: API tokens tile removed — no third-party integrations need them in v1.
 
-    { href: '/configuration/billing',  icon: '💵', title: 'Subscription & Billing',
-      desc: 'Plan tier, invoices, payment method.',
-      category: 'platform', status: 'incomplete', hint: 'Free trial active' },
-
     { href: '/help',  icon: '❓', title: 'Help & Support',
       desc: 'FAQ, WhatsApp support, email, docs.',
       category: 'platform', status: 'ready', hint: 'WhatsApp reply within 1h business hours' },

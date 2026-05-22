@@ -238,7 +238,7 @@ const NAV: NavSection[] = [
   },
 ]
 
-const FULL_SCREEN_PREFIXES = ['/kds', '/pos', '/login', '/supplier', '/welcome', '/signup', '/mobile']
+const FULL_SCREEN_PREFIXES = ['/kds', '/pos', '/login', '/supplier', '/mobile']
 
 function isActive(pathname: string, href: string): boolean {
   if (href === '/dashboard') return pathname === '/dashboard' || pathname === '/'

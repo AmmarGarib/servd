@@ -4005,13 +4005,10 @@ model Tenant {
   id          String    @id @default(cuid())
   slug        String    @unique
   name        String
-  ownerEmail  String? // owner contact — set during signup
   industry    String? // 'qsr' | 'cafe' | 'fine_dining' | 'cloud_kitchen' | 'biryani' | 'multi_brand'
   countryCode String    @default("PK") // ISO 3166-1 alpha-2 — drives currency, tax regime
   currency    String    @default("PKR")
   timezone    String    @default("Asia/Karachi")
-  plan        String    @default("trial") // 'trial' | 'starter' | 'growth' | 'chain'
-  trialEndsAt DateTime?
   isActive    Boolean   @default(true)
   // Joint-venture metadata. When isJointVenture=true, every cost line viewed
   // under this tenant (OpEx, positions, contributions) renders with partner-

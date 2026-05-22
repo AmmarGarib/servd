@@ -213,7 +213,7 @@ async function main() {
   let tenant = await prisma.tenant.findFirst({ where: { slug: 'main' } })
   if (!tenant) {
     tenant = await prisma.tenant.create({
-      data: { slug: 'main', name: 'GS Foods', plan: 'starter', isActive: true },
+      data: { slug: 'main', name: 'GS Foods', isActive: true },
     })
     console.log(`  ✓ Created tenant "${tenant.name}"`)
   }

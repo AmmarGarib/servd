@@ -3,7 +3,7 @@ import { useState, useEffect } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
 import { useAuthStore } from '../../store/auth'
 
-const PUBLIC_PATHS = ['/', '/login', '/kds/login', '/welcome', '/signup']
+const PUBLIC_PATHS = ['/', '/login', '/kds/login']
 
 export function AuthGuard({ children }: { children: React.ReactNode }) {
   const [hydrated, setHydrated] = useState(false)

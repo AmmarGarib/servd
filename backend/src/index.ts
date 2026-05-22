@@ -491,7 +491,7 @@ async function build() {
     const tenantCount = await prisma.tenant.count({ where: { deletedAt: null } })
     if (tenantCount === 0) {
       const main = await prisma.tenant.create({
-        data: { slug: 'main', name: 'Main Tenant', plan: 'starter', isActive: true },
+        data: { slug: 'main', name: 'Main Tenant', isActive: true },
       })
       await prisma.concept.updateMany({ where: { tenantId: null }, data: { tenantId: main.id } })
       await prisma.user.updateMany({ where: { tenantId: null }, data: { tenantId: main.id } })
