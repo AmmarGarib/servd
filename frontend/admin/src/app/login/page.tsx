@@ -75,7 +75,10 @@ export default function StaffLoginPage() {
         user: { id: string; name: string; role: string }
       }
       setAuth(data.user, data.accessToken ?? data.token, data.refreshToken)
-      router.replace('/dashboard')
+      // Non-CEO staff land on the Time Clock kiosk first — clocking in is the
+      // first thing they do every shift. CEO (admin role) bypasses straight
+      // to the dashboard.
+      router.replace(data.user.role === 'admin' ? '/dashboard' : '/time-clock')
     } catch (e) {
       setError(e instanceof Error ? e.message : 'PIN not recognised')
       setPin('')

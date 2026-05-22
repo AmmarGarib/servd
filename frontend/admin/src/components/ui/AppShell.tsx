@@ -68,6 +68,7 @@ const NAV: NavSection[] = [
         { href: '/workforce?category=marketing',   label: 'Marketing',      module: 'staff_marketing' },
         { href: '/workforce?category=finance',     label: 'Finance',        module: 'staff_finance' },
         { href: '/workforce?category=hr',          label: 'HR',             module: 'staff_hr' },
+        { href: '/scheduling',                     label: 'Scheduling',     module: 'scheduling' },
       ]},
       { href: '/configuration/pending-approvals', label: 'Pending Signups',  icon: '⏳', module: 'role_management' },
       { href: '/configuration/roles',           label: 'Roles & Permissions', icon: '🔐', module: 'role_management' },
@@ -215,23 +216,6 @@ const NAV: NavSection[] = [
       { href: '/finance/capex',       label: 'Capex',       icon: '🏗', module: 'capital' },
       { href: '/finance/opex',        label: 'OpEx',        icon: '💸', module: 'capital' },
       { href: '/finance/projections', label: 'Projections', icon: '📈', module: 'projections' },
-    ],
-  },
-  {
-    // Workforce ops — day-to-day staff operations. Staff Directory + Pending
-    // Signups moved up to Executive since they're hiring/permission decisions.
-    // What remains here is shift-floor work the manager runs every day.
-    title: 'Workforce',
-    defaultCollapsed: true,
-    items: [
-      { href: '/kitchen-staff', label: 'Kitchen Brigade', icon: '👨‍🍳', module: 'kitchen_staff', children: [
-        { href: '/kitchen-staff/schedule',   label: 'Schedule',   module: 'kitchen_staff' },
-        { href: '/kitchen-staff/attendance', label: 'Attendance', module: 'kitchen_staff' },
-        { href: '/kitchen-staff/payroll',    label: 'Payroll',    module: 'payroll' },
-        { href: '/kitchen-staff/compliance', label: 'Compliance', module: 'kitchen_staff' },
-      ]},
-      { href: '/time-clock', label: 'Time Clock', icon: '⏱', module: 'staff_directory' },
-      { href: '/scheduling', label: 'Scheduling', icon: '📅', module: 'scheduling' },
     ],
   },
   {
