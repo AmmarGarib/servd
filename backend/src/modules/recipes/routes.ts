@@ -57,6 +57,19 @@ const recipeShape = {
   packagingPct:            z.number().min(0).max(100).default(8),
   actualSellingPriceCents: z.number().int().min(0).nullable().optional(),
   category:                z.enum(['main', 'side', 'sauce', 'sub_recipe']).nullable().optional(),
+  // ── Inline menu-item creation for plate recipes ──────────────────────
+  // When kind='plate' and no `menuItemId` is supplied, the operator is
+  // creating the recipe AND the menu item in one shot. The new MenuItem
+  // gets its name, description, and category from this object; the price
+  // comes from actualSellingPriceCents (so the operator sets the menu
+  // price by setting the recipe's selling price). conceptId is required
+  // since menu items are brand-scoped.
+  newMenuItem: z.object({
+    conceptId:   z.string().uuid(),
+    categoryId:  z.string().uuid(),
+    name:        z.string().min(1).max(200),
+    description: z.string().max(500).nullable().optional(),
+  }).optional(),
   photoUrl:                z.string().url().nullable().optional(),
   ingredients:  z.array(ingredientSchema).min(1),
 }
@@ -551,10 +564,32 @@ export async function recipeRoutes(fastify: FastifyInstance) {
       if (existing) throw new AppError('RECIPE_EXISTS', 'Recipe for this menu item already exists', 409)
     }
 
+    // Inline menu-item creation. When kind='plate' and the operator didn't
+    // pick an existing menuItemId but supplied newMenuItem (name + category
+    // + brand), provision the MenuItem here so the operator never has to
+    // jump to the Menu Editor first. Menu-item price seeds from the
+    // recipe's actualSellingPriceCents (or 0 if not set yet — operator can
+    // dial it in once the recipe form computes the target).
+    let resolvedMenuItemId = body.menuItemId ?? null
+    if (body.kind === 'plate' && !resolvedMenuItemId && body.newMenuItem) {
+      const nm = body.newMenuItem
+      const createdItem = await prisma.menuItem.create({
+        data: {
+          conceptId:   nm.conceptId,
+          categoryId:  nm.categoryId,
+          name:        nm.name,
+          description: nm.description ?? null,
+          priceCents:  body.actualSellingPriceCents ?? 0,
+          isAvailable: body.isActive,
+        },
+      })
+      resolvedMenuItemId = createdItem.id
+    }
+
     const recipe = await prisma.recipe.create({
       data: {
         kind:         body.kind,
-        menuItemId:   body.kind === 'plate' ? body.menuItemId : null,
+        menuItemId:   body.kind === 'plate' ? resolvedMenuItemId : null,
         name:         body.kind === 'plate' ? null : body.name,
         yieldGrams:   body.kind === 'plate' ? null : body.yieldGrams,
         servings:     body.servings,
@@ -645,6 +680,23 @@ export async function recipeRoutes(fastify: FastifyInstance) {
             menuItem: true,
           },
         })
+      }).then(async (updated) => {
+        // Plate recipes are the price source for their menu item — sync the
+        // operator's actualSellingPriceCents to MenuItem.priceCents whenever
+        // it changes. Menu Editor still lets the operator override the price
+        // there afterwards if they want it to deviate from the recipe.
+        if (
+          body.actualSellingPriceCents != null &&
+          updated.kind === 'plate' &&
+          updated.menuItemId &&
+          updated.menuItem?.priceCents !== body.actualSellingPriceCents
+        ) {
+          await prisma.menuItem.update({
+            where: { id: updated.menuItemId },
+            data:  { priceCents: body.actualSellingPriceCents },
+          })
+        }
+        return updated
       })
     },
   )

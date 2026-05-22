@@ -77,7 +77,14 @@ function costPerGramCents(inv: InventoryItem): number {
   return 0
 }
 
-export function RecipeForm({ initial }: { initial?: RecipeFormInitial }) {
+export function RecipeForm({ initial, prefillBrandId, prefillCategoryId }: {
+  initial?: RecipeFormInitial
+  // Optional URL-driven pre-selection — used when the Menu Editor's
+  // 'Add via Recipe' link is clicked, so the operator lands inside the
+  // brand + category they were already looking at.
+  prefillBrandId?: string
+  prefillCategoryId?: string
+}) {
   const router = useRouter()
   const qc = useQueryClient()
   const isEdit = !!initial
@@ -100,8 +107,14 @@ export function RecipeForm({ initial }: { initial?: RecipeFormInitial }) {
   const [kind, setKind]                 = useState<Kind>(initial?.kind ?? 'plate')
   const [name, setName]                 = useState(initial?.name ?? '')
   const [category, setCategory]         = useState<Category>(initial?.category ?? 'main')
-  const [brandId, setBrandId]           = useState<string>(initial?.brandId ?? '')
+  const [brandId, setBrandId]           = useState<string>(initial?.brandId ?? prefillBrandId ?? '')
+  // 'new' = create a new menu item inline (default for fresh recipes);
+  // 'existing' = retrofit an existing menu item with a recipe.
+  const [menuItemMode, setMenuItemMode] = useState<'new' | 'existing'>(initial?.menuItemId ? 'existing' : 'new')
   const [menuItemId, setMenuItemId]     = useState<string>(initial?.menuItemId ?? '')
+  const [newItemName, setNewItemName]                 = useState('')
+  const [newItemDescription, setNewItemDescription]   = useState('')
+  const [newItemCategoryId, setNewItemCategoryId]     = useState(prefillCategoryId ?? '')
   const [portions, setPortions]         = useState(initial?.servings ?? 1)
   const [yieldGrams, setYieldGrams]     = useState(initial?.yieldGrams ?? 0)
   const [photoUrl, setPhotoUrl]         = useState(initial?.photoUrl ?? '')
@@ -137,6 +150,17 @@ export function RecipeForm({ initial }: { initial?: RecipeFormInitial }) {
     [menuItems, brandId],
   )
   const activeConcept = concepts.find((c) => c.id === brandId)
+
+  // Categories under the picked brand (for the "new menu item" mode's
+  // category dropdown). Fetched lazily when a brand is selected.
+  const { data: brandCategories = [] } = useQuery<Array<{ id: string; name: string }>>({
+    queryKey: ['recipes', 'brand-categories', brandId],
+    queryFn: async () => {
+      const cats = await api.get<Array<{ id: string; name: string; items: unknown[] }>>(`/menu/${brandId}`)
+      return cats.map((c) => ({ id: c.id, name: c.name }))
+    },
+    enabled: !!brandId,
+  })
 
   // ── Live cost preview ───────────────────────────────────────────────────
   const computed = useMemo(() => {
@@ -191,13 +215,33 @@ export function RecipeForm({ initial }: { initial?: RecipeFormInitial }) {
     return Array.from(set).sort()
   }, [computed.rows])
 
+  // Resolve the actual selling price the operator wants saved. If they
+  // didn't override, fall back to the live-computed target — the backend
+  // mirrors this into MenuItem.priceCents so the menu price auto-fills
+  // from the recipe spec.
+  const resolvedActualSpCents = actualSpPkr.trim()
+    ? Math.round(parseFloat(actualSpPkr) * 100)
+    : computed.target
+
   // ── Save (POST on create, PUT on edit) ─────────────────────────────────
   const save = useMutation({
     mutationFn: () => {
       const payload = {
         ...(isEdit ? {} : { kind }),
+        // Plate recipes either link to an existing menu item OR ship a
+        // `newMenuItem` block that the backend uses to create one. Non-
+        // plate recipes carry their own name + yield instead.
         ...(kind === 'plate'
-          ? { menuItemId }
+          ? (menuItemMode === 'existing'
+              ? { menuItemId }
+              : {
+                  newMenuItem: {
+                    conceptId:   brandId,
+                    categoryId:  newItemCategoryId,
+                    name:        newItemName.trim(),
+                    description: newItemDescription.trim() || null,
+                  },
+                })
           : { name: name.trim(), yieldGrams }),
         servings: portions,
         category,
@@ -229,7 +273,10 @@ export function RecipeForm({ initial }: { initial?: RecipeFormInitial }) {
 
   function submit() {
     setErr('')
-    if (kind === 'plate' && !menuItemId) return setErr('Pick a menu item this plate recipe is for.')
+    if (kind === 'plate' && !brandId) return setErr('Pick a brand for this recipe.')
+    if (kind === 'plate' && menuItemMode === 'existing' && !menuItemId) return setErr('Pick a menu item this plate recipe is for.')
+    if (kind === 'plate' && menuItemMode === 'new' && !newItemName.trim()) return setErr('Name the new menu item.')
+    if (kind === 'plate' && menuItemMode === 'new' && !newItemCategoryId) return setErr('Pick a menu category for the new item.')
     if (kind !== 'plate' && !name.trim()) return setErr('Give the recipe a name.')
     if (kind !== 'plate' && yieldGrams <= 0) return setErr('Set a positive batch yield (grams) for prep/component recipes.')
     if (computed.rows.every((r) => !r.inventoryItemId || r.quantity <= 0)) return setErr('Add at least one ingredient with quantity > 0.')
@@ -281,25 +328,68 @@ export function RecipeForm({ initial }: { initial?: RecipeFormInitial }) {
           {/* Section 1 — Header */}
           <Section title="1 · Recipe header">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {/* Brand always first — it scopes everything below. */}
+              <Field label="Brand *">
+                <select value={brandId} onChange={(e) => { setBrandId(e.target.value); if (!isEdit) { setMenuItemId(''); setNewItemCategoryId('') } }} className={inputCls} disabled={isEdit}>
+                  <option value="">— Pick brand —</option>
+                  {concepts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+              </Field>
+
+              {/* Plate-only: menu item picker — new (default) or existing */}
               {kind === 'plate' ? (
-                <Field label="Menu item *">
-                  <select value={menuItemId} onChange={(e) => setMenuItemId(e.target.value)} className={inputCls} disabled={isEdit}>
-                    <option value="">— Pick from menu —</option>
-                    {conceptMenu.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
-                  </select>
-                </Field>
+                <div className="md:col-span-1 space-y-2">
+                  {!isEdit && (
+                    <div className="flex gap-1 text-[10px] font-bold uppercase tracking-wider">
+                      <button type="button" onClick={() => setMenuItemMode('new')}
+                        className={`rounded-md px-2 py-1 ${menuItemMode === 'new' ? 'bg-s-teal text-black' : 'border border-s-border text-s-muted'}`}>
+                        New menu item
+                      </button>
+                      <button type="button" onClick={() => setMenuItemMode('existing')}
+                        className={`rounded-md px-2 py-1 ${menuItemMode === 'existing' ? 'bg-s-teal text-black' : 'border border-s-border text-s-muted'}`}>
+                        Existing
+                      </button>
+                    </div>
+                  )}
+                  {menuItemMode === 'existing' ? (
+                    <Field label="Menu item *">
+                      <select value={menuItemId} onChange={(e) => setMenuItemId(e.target.value)} className={inputCls} disabled={isEdit}>
+                        <option value="">— Pick from menu —</option>
+                        {conceptMenu.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+                      </select>
+                    </Field>
+                  ) : (
+                    <Field label="Menu item name *">
+                      <input value={newItemName} onChange={(e) => setNewItemName(e.target.value)}
+                        placeholder="e.g. Chimi Shimi" className={inputCls}/>
+                    </Field>
+                  )}
+                </div>
               ) : (
                 <Field label="Recipe name *">
                   <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Burger sauce" className={inputCls}/>
                 </Field>
               )}
-              <Field label="Brand *">
-                <select value={brandId} onChange={(e) => { setBrandId(e.target.value); if (!isEdit) setMenuItemId('') }} className={inputCls}>
-                  <option value="">— Pick brand —</option>
-                  {concepts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-                </select>
-              </Field>
-              <Field label="Category">
+
+              {/* Plate + new-mode only: description + category for the menu item */}
+              {kind === 'plate' && menuItemMode === 'new' && !isEdit && (
+                <>
+                  <Field label="Menu category *" hint={brandId ? '' : 'Pick a brand first'}>
+                    <select value={newItemCategoryId} onChange={(e) => setNewItemCategoryId(e.target.value)}
+                      className={inputCls} disabled={!brandId}>
+                      <option value="">{brandId ? '— Pick category —' : '— Pick brand first —'}</option>
+                      {brandCategories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    </select>
+                  </Field>
+                  <div className="md:col-span-2">
+                    <Field label="Menu description (optional)" hint="Shows under the item on the customer menu">
+                      <input value={newItemDescription} onChange={(e) => setNewItemDescription(e.target.value)}
+                        placeholder="e.g. House Brioche | Smash Beef | Chimichurri | American Cheese" className={inputCls}/>
+                    </Field>
+                  </div>
+                </>
+              )}
+              <Field label="Recipe type tag" hint="For your costing library — separate from the menu category">
                 <select value={category} onChange={(e) => setCategory(e.target.value as Category)} className={inputCls}>
                   <option value="main">Main</option>
                   <option value="side">Side</option>

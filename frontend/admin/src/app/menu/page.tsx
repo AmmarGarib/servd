@@ -179,25 +179,19 @@ export default function MenuPage() {
                       ✎ Edit
                     </span>
                   </button>
-                  <button
-                    onClick={() => setAddingItemToCat(addingItemToCat === cat.id ? null : cat.id)}
+                  {/* Items are now created via the Recipe form so the menu
+                      price auto-fills from the recipe's spec calc. The Menu
+                      Editor just curates what's live + lets you deviate from
+                      the recipe's suggested price. */}
+                  <Link
+                    href={`/accounting/recipes/new?brandId=${conceptId}&categoryId=${cat.id}`}
                     className="text-sm text-kds-green hover:underline font-medium"
                   >
-                    {addingItemToCat === cat.id ? 'Cancel' : '+ Add Item'}
-                  </button>
+                    + Add via Recipe
+                  </Link>
                 </>
               )}
             </div>
-
-            {addingItemToCat === cat.id && (
-              <AddItemForm
-                conceptId={conceptId}
-                categoryId={cat.id}
-                displayOrder={cat.items.length}
-                onSaved={() => { void qc.invalidateQueries({ queryKey: ['menu', conceptId] }); setAddingItemToCat(null) }}
-                onCancel={() => setAddingItemToCat(null)}
-              />
-            )}
 
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {cat.items.map((item) => (
@@ -244,13 +238,13 @@ export default function MenuPage() {
                 </div>
               ))}
 
-              {cat.items.length === 0 && addingItemToCat !== cat.id && (
-                <button
-                  onClick={() => setAddingItemToCat(cat.id)}
+              {cat.items.length === 0 && (
+                <Link
+                  href={`/accounting/recipes/new?brandId=${conceptId}&categoryId=${cat.id}`}
                   className="rounded-xl border border-dashed border-kds-border p-6 text-center text-kds-subtext hover:border-kds-green hover:text-kds-green transition-colors col-span-full"
                 >
-                  + Add first item to this category
-                </button>
+                  + Add first item via Recipe
+                </Link>
               )}
             </div>
           </section>
