@@ -87,6 +87,10 @@ const PORTFOLIO_GUARD_EXCLUSIONS: readonly RegExp[] = [
   /^\/inventory\b/,
   /^\/recipes\b/,
   /^\/components\b/,
+  // Projections span multiple brands (often multiple tenants too) — they're
+  // an analytical/planning artifact, not a tenant-bound record. Picking one
+  // company to "own" a multi-brand projection would be wrong.
+  /^\/projections\b/,
 ]
 
 function isPortfolioGuarded(path: string, method: string): boolean {
