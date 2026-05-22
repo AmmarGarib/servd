@@ -1,5 +1,6 @@
 'use client'
 import { useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../../lib/api'
 import Link from 'next/link'
@@ -109,6 +110,7 @@ const BLANK_ING: IngRow = {
 
 export default function RecipesPage() {
   const qc = useQueryClient()
+  const router = useRouter()
   const { data: tenants = [] } = useMyTenants()
   const [conceptFilter, setConceptFilter] = useState('')
   const [search,        setSearch]        = useState('')
@@ -210,30 +212,10 @@ export default function RecipesPage() {
     setIngs([{ ...BLANK_ING }]); setFormErr(''); setModal('create')
   }
   function openEdit(r: Recipe) {
-    setKind(r.kind)
-    setMenuItemId(r.menuItemId ?? '')
-    setPrepName(r.name ?? '')
-    setYieldGramsStr(r.yieldGrams != null ? String(r.yieldGrams) : '')
-    setServings(String(r.servings))
-    setPortionSizeG(r.portionSizeG ? String(r.portionSizeG) : '')
-    setLaborMins(String(r.laborMinutes))
-    setNotes(r.notes ?? '')
-    setSteps(r.steps ?? '')
-    setStepsUrdu(r.stepsUrdu ?? '')
-    setSeasons(r.seasons ?? [])
-    setSeasonStart(r.seasonStart ?? '')
-    setSeasonEnd(r.seasonEnd ?? '')
-    setIsActive(r.isActive ?? true)
-    setIngs(r.ingredients.map((i) => ({
-      source: i.prepRecipeId ? 'prep' : 'raw',
-      inventoryItemId: i.inventoryItemId ?? '',
-      prepRecipeId:    i.prepRecipeId ?? '',
-      quantity:        String(i.quantity),
-      yieldPct:        String(Math.round(i.yieldPct * 100)),
-      unit:            i.unit,
-      notes:           i.notes ?? '',
-    })))
-    setFormErr(''); setModal(r)
+    // Edit now uses the dedicated pricing-spec page at /accounting/recipes/[id]
+    // instead of the legacy modal. The form mirrors the create flow so the
+    // operator gets the same live cost panel + verdict badge while editing.
+    router.push(`/accounting/recipes/${r.id}`)
   }
   function closeModal() { setModal(null) }
 

@@ -134,7 +134,6 @@ const NAV: NavSection[] = [
     title: 'Kitchen',
     items: [
       { href: '/menu',                label: 'Menu',         icon: '📝', module: 'menu' },
-      { href: '/components',          label: 'Components',   icon: '🧪', module: 'components' },
       { href: '/accounting/recipes',  label: 'Recipes',      icon: '📐', module: 'recipes' },
       { href: '/par-sheet',           label: 'Par Sheet',    icon: '📋', module: 'par_sheet' },
       { href: '/inventory',           label: 'Inventory',    icon: '📦', module: 'inventory' },
