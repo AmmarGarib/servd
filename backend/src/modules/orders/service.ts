@@ -534,6 +534,31 @@ export async function updateOrderStatus(id: string, status: OrderStatus) {
     bumpCustomerRollups(customerId)
   }
 
+  // On completion: post the financial entry, journal, and tax invoice. These
+  // live here (not in the item-bump path) so they fire exactly when an order
+  // actually completes — expo hand-off or a manual completion — and never on
+  // the intermediate kitchen-done → ready step. All three are idempotent and
+  // fire-and-forget so an accounting/invoice misconfig never blocks the pass.
+  if (status === 'completed') {
+    createFinancialEntry(id).catch((err) =>
+      console.error(`[financial] createFinancialEntry failed for ${id}:`, (err as Error).message),
+    )
+    postOrderCompletion(id).catch((err) =>
+      console.error(`[journal] postOrderCompletion failed for ${id}:`, (err as Error).message),
+    )
+    // Auto-issue tax invoice. Skipped silently if the concept hasn't been
+    // configured for invoicing (missing invoiceLegalName); the operator can
+    // issue manually via POST /invoices/orders/:id/issue later.
+    import('../invoices/service.js')
+      .then(({ issueInvoiceForOrder }) => issueInvoiceForOrder({ orderId: id }))
+      .catch((err) => {
+        const msg = (err as Error).message
+        if (!msg.includes('CONCEPT_NOT_REGISTERED')) {
+          console.error(`[invoice] auto-issue failed for ${id}:`, msg)
+        }
+      })
+  }
+
   // Notify customer on key status transitions
   if (['preparing', 'ready', 'completed', 'cancelled'].includes(status)) {
     notifyStatusChange(id, status).catch((err) =>
@@ -571,7 +596,7 @@ export async function updateItemStatus(itemId: string, status: ItemStatus, staff
   // B19: validate the kitchen transition. Pre-fix, a recall on an already-
   // bumped item that had a duplicate event in flight could leave the item in
   // a "voided then revived" state that broke the all-done check below.
-  const { canTransitionItem } = await import('../../lib/orderStateMachine.js')
+  const { canTransitionItem, canTransitionOrder } = await import('../../lib/orderStateMachine.js')
   if (!canTransitionItem(item.status, status)) {
     throw new AppError(
       'INVALID_TRANSITION',
@@ -605,7 +630,13 @@ export async function updateItemStatus(itemId: string, status: ItemStatus, staff
 
   emitItemUpdated(itemId, status, item.stationId)
 
-  // Check if all items in order are complete → auto-complete order
+  // All dishes done → hand the order up to expo's "ready" queue. Expo owns the
+  // final hand-off (serve / dispatch / pickup) via POST /expo/orders/:id/handoff,
+  // and that completion is where the financial entry, journal, and tax invoice
+  // fire (see updateOrderStatus). The kitchen path must NOT complete the order
+  // itself: that skips expo's sign-off, and because the state machine only
+  // allows ready → completed it used to throw INVALID_TRANSITION and silently
+  // strand the order in 'preparing' — never completed, never invoiced.
   if (status === 'bumped') {
     const order = await prisma.order.findUnique({
       where: { id: item.orderId },
@@ -613,25 +644,8 @@ export async function updateItemStatus(itemId: string, status: ItemStatus, staff
     })
     if (order) {
       const allDone = order.items.every((i) => ['bumped', 'voided'].includes(i.status))
-      if (allDone) {
-        await updateOrderStatus(item.orderId, 'completed')
-        await createFinancialEntry(item.orderId)
-        // Journal-post side-effect kept fire-and-forget so a CoA misconfig
-        // never blocks a kitchen bump. Failures surface in logs + alarms.
-        postOrderCompletion(item.orderId).catch((err) =>
-          console.error(`[journal] postOrderCompletion failed for ${item.orderId}:`, (err as Error).message),
-        )
-        // Auto-issue tax invoice. Skipped silently if the concept hasn't been
-        // configured for invoicing (missing invoiceLegalName); the operator
-        // can issue manually via POST /invoices/orders/:id/issue later.
-        import('../invoices/service.js')
-          .then(({ issueInvoiceForOrder }) => issueInvoiceForOrder({ orderId: item.orderId }))
-          .catch((err) => {
-            const msg = (err as Error).message
-            if (!msg.includes('CONCEPT_NOT_REGISTERED')) {
-              console.error(`[invoice] auto-issue failed for ${item.orderId}:`, msg)
-            }
-          })
+      if (allDone && order.status !== 'ready' && canTransitionOrder(order.status, 'ready')) {
+        await updateOrderStatus(item.orderId, 'ready')
       }
     }
   }

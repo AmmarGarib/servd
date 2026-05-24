@@ -306,10 +306,14 @@ async function testInventoryDeduction(ctx: Awaited<ReturnType<typeof setup>>) {
 async function testLifecycle(orderId: string) {
   header('Test 4: full order lifecycle')
 
+  // Expo confirms & fires the order: received → preparing.
+  await updateOrderStatus(orderId, 'preparing' as OrderStatus)
+
   const items = await prisma.orderItem.findMany({ where: { orderId } })
   const itemIds = items.map((i) => i.id)
 
-  // Bump every item one by one
+  // Stations bump every dish. When the last dish is bumped, the kitchen path
+  // hands the order up to expo's "ready" queue — it must NOT auto-complete.
   for (const id of itemIds) {
     await updateItemStatus(id, 'bumped' as never)
   }
@@ -317,10 +321,13 @@ async function testLifecycle(orderId: string) {
   check('All items bumped', afterBump.every((i) => i.status === 'bumped'))
   check('All items have completedAt timestamp', afterBump.every((i) => i.completedAt !== null))
 
-  // Complete the order
+  const ready = await prisma.order.findUnique({ where: { id: orderId } })
+  check('Order handed to expo as "ready" (not auto-completed)', ready?.status === 'ready')
+
+  // Expo hands off (serve / dispatch / pickup): ready → completed.
   await updateOrderStatus(orderId, 'completed' as OrderStatus)
   const order = await prisma.order.findUnique({ where: { id: orderId } })
-  check('Order marked completed', order?.status === 'completed')
+  check('Order completed by expo hand-off', order?.status === 'completed')
   check('Order has completedAt timestamp', order?.completedAt !== null)
 }
 
