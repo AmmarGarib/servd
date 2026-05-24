@@ -1,20 +1,27 @@
--- Replace UberEats, DoorDash, Deliveroo with Foodpanda in OrderSource enum
--- PostgreSQL does not support dropping enum values directly; recreate the type
+-- Replace UberEats, DoorDash, Deliveroo with Foodpanda in the OrderSource enum.
+--
+-- PostgreSQL forbids USING a newly-added enum value in the same transaction
+-- that adds it (SQLSTATE 55P04), and Prisma wraps each migration in a single
+-- transaction. The original version did `ALTER TYPE ... ADD VALUE 'foodpanda'`
+-- and then referenced 'foodpanda' in an UPDATE within the same file, so it
+-- could not be replayed onto a fresh database (it only succeeded where the
+-- value already existed from an out-of-band step).
+--
+-- Instead we recreate the type — which already contains 'foodpanda' — and remap
+-- the retired source values during the column cast. No ADD VALUE, so the whole
+-- migration is transaction-safe and replays cleanly from scratch.
 
--- Step 1: Add foodpanda value
-ALTER TYPE "OrderSource" ADD VALUE IF NOT EXISTS 'foodpanda';
-
--- Step 2: Migrate any existing rows (pre-launch safety net)
-UPDATE "orders" SET source = 'foodpanda' WHERE source IN ('ubereats', 'doordash', 'deliveroo');
-
--- Step 3: Recreate enum without old values
 ALTER TYPE "OrderSource" RENAME TO "OrderSource_old";
+
 CREATE TYPE "OrderSource" AS ENUM ('servd', 'foodpanda', 'pos', 'cart', 'manual');
 
--- Step 4: Migrate the column to new type
 ALTER TABLE "orders"
-  ALTER COLUMN source TYPE "OrderSource"
-  USING source::text::"OrderSource";
+  ALTER COLUMN "source" TYPE "OrderSource"
+  USING (
+    CASE
+      WHEN "source"::text IN ('ubereats', 'doordash', 'deliveroo') THEN 'foodpanda'
+      ELSE "source"::text
+    END::"OrderSource"
+  );
 
--- Step 5: Drop old type
 DROP TYPE "OrderSource_old";
