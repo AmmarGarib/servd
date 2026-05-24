@@ -23,7 +23,7 @@ describe('postJournalEntry', () => {
           { accountCode: '4001', type: 'credit', amountCents:  90 },
         ],
       }),
-    ).rejects.toThrow(/JOURNAL_UNBALANCED|differenceCents/i)
+    ).rejects.toMatchObject({ code: 'JOURNAL_UNBALANCED' })
   })
 
   it('rejects negative amounts', async () => {
@@ -37,7 +37,7 @@ describe('postJournalEntry', () => {
           { accountCode: '4001', type: 'credit', amountCents: -100 },
         ],
       }),
-    ).rejects.toThrow(/NEGATIVE_AMOUNT/i)
+    ).rejects.toMatchObject({ code: 'JOURNAL_NEGATIVE_AMOUNT' })
   })
 
   it('posts a balanced entry and is idempotent on (sourceType, sourceId)', async () => {
@@ -100,7 +100,7 @@ describe('postJournalEntry', () => {
           { accountCode: '4001', type: 'credit', amountCents: 100 },
         ],
       }),
-    ).rejects.toThrow(/PERIOD_LOCKED/i)
+    ).rejects.toMatchObject({ code: 'PERIOD_LOCKED' })
   })
 
   it('allows posting in the open period after a lock', async () => {
@@ -132,6 +132,6 @@ describe('postJournalEntry', () => {
           { accountCode: '4001', type: 'credit', amountCents: 100 },
         ],
       }),
-    ).rejects.toThrow(/ACCOUNT_NOT_FOUND/i)
+    ).rejects.toMatchObject({ code: 'ACCOUNT_NOT_FOUND' })
   })
 })

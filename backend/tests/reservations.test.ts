@@ -67,10 +67,10 @@ describe('reservations: race-proof booking', () => {
           guestName: 'Second', source: 'staff',
         },
       }),
-    ).rejects.toMatchObject({
-      // Prisma surfaces sqlstate 23P01 as P2010 with meta.code='23P01'
-      code: 'P2010',
-    })
+    // The DB exclusion constraint rejects the overlap. Prisma surfaces the raw
+    // 23P01 (exclusion_violation) as a PrismaClientUnknownRequestError, so we
+    // match on the constraint name carried in the error message.
+    ).rejects.toThrow(/reservations_no_table_overlap/)
   })
 
   test('exclusion constraint rejects partial overlap', async () => {
@@ -94,7 +94,7 @@ describe('reservations: race-proof booking', () => {
           guestName: 'Overlap', source: 'staff',
         },
       }),
-    ).rejects.toMatchObject({ code: 'P2010' })
+    ).rejects.toThrow(/reservations_no_table_overlap/)
   })
 
   test('adjacent (touching) reservations succeed — endTime == nextStartTime is OK', async () => {
