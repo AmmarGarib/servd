@@ -63,17 +63,16 @@ export function BrowseClient({ concepts }: Props) {
   return (
     <div style={{ background: 'var(--servd-bg)' }}>
 
-      {/* Header */}
+      {/* Header — editorial, asymmetric, matches /home + brand microsites */}
       <section className="section-tight" style={{ paddingBottom: '1.5rem', borderBottom: '1px solid var(--servd-line)' }}>
         <div className="container">
-          <p style={{ color: 'var(--servd-green-dark)', fontWeight: 700, fontSize: '0.75rem', letterSpacing: '0.18em', textTransform: 'uppercase', marginBottom: '0.5rem' }}>
-            Every kitchen
-          </p>
-          <h1 style={{ fontSize: 'clamp(2rem, 5vw, 3rem)', marginBottom: '0.5rem' }}>
-            Browse all brands
+          <p className="eyebrow eyebrow-accent">Every kitchen</p>
+          <h1 className="display" style={{ fontSize: 'clamp(2.5rem, 7vw, 5rem)', margin: '0.5rem 0 0.75rem', maxWidth: '900px' }}>
+            Pick your craving.<br />
+            <span className="display-italic">{concepts.length} kitchens.</span>
           </h1>
-          <p style={{ color: 'var(--servd-mute)', fontSize: '1rem', maxWidth: '40rem' }}>
-            {concepts.length} kitchens, all under one app. Pick your craving.
+          <p style={{ color: 'var(--servd-mute)', fontSize: '1.05rem', maxWidth: '36rem', lineHeight: 1.55 }}>
+            One app, one delivery bag. Mix and match — pick from one, two, or all of them, and we figure out the timing.
           </p>
 
           {/* Search + filters */}
@@ -85,8 +84,13 @@ export function BrowseClient({ concepts }: Props) {
                 top: '50%',
                 transform: 'translateY(-50%)',
                 color: 'var(--servd-mute)',
-                fontSize: '1.05rem',
-              }}>🔍</span>
+                display: 'inline-flex',
+              }}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="11" cy="11" r="8"/>
+                  <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                </svg>
+              </span>
               <input
                 type="text"
                 value={query}
