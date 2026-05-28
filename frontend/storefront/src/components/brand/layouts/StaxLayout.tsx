@@ -1,285 +1,251 @@
 'use client'
+// Stax — brand microsite layout.
+//
+// Style direction (per CEO direction May 2026): industrial palette —
+// light grey paper + deep purple ink, mono-spec sheets, factory-spec
+// numbering. Think workshop documentation, not loud diner.
+//
+// No real menu data wired in yet — signature items render from the
+// BRAND_STORIES highlights list and double as marketing modules until
+// the menu API exposes per-brand items.
+
 import Link from 'next/link'
 import type { Concept } from '../../../lib/concept'
-import { PromoBar } from '../parts/PromoBar'
 import { CrossBrandStrip } from '../parts/CrossBrandStrip'
-import { BottomCTA } from '../parts/BottomCTA'
-import { OpenStatusBadge, useHoursData } from '../parts/OpenStatusBadge'
-import { useScrollReveal } from '../../kinetic/motionHooks'
-import { StaxStackBuilderHero } from '../../kinetic/StaxStackBuilderHero'
-
-// StaxLayout — formerly FlipdLayout. Per CEO 2026-05-12: the lighter,
-// hand-drawn cream + mustard design originally drawn for Flipd reads
-// better on Stax, so the layout was moved here. Warm cream + mustard
-// yellow + smoke black, tilted cards, pencil borders. Family-pack
-// section drives bulk conversion.
-//
-// Heads-up: the hardcoded PIECES + BUCKETS data below still references
-// Flipd's chicken menu ("Hot Honey Tenders", "buttermilk brine", etc.).
-// Re-author the product copy from /content/{slug} (storefront CMS) to
-// match Stax's burger build-your-own pitch.
+import { OpenStatusBadge, HoursGrid, useHoursData } from '../parts/OpenStatusBadge'
+import { brandStory } from '../../../lib/concept'
 
 interface Props {
   concept: Concept
   concepts: Concept[]
 }
 
-const FLIPD_MUSTARD = '#E5A100'
-const FLIPD_CREAM   = '#fcf6e8'
-const FLIPD_BLACK   = '#1a1410'
-const FLIPD_RED     = '#b8351c'
-
-const PIECES = [
-  { name: 'Classic Crispy Sandwich',    price: 890,  emoji: '🥪', body: 'Buttermilk-brined breast, pickles, brioche, Flipd sauce.' },
-  { name: 'Hot Honey Tenders (4 pc)',   price: 950,  emoji: '🍗', body: 'Hand-breaded tenders, hot honey drizzle. The fan favourite.' },
-  { name: 'Loaded Chicken Fries',       price: 1050, emoji: '🍟', body: 'Fries, cheese, jalapeño, tender pieces, ranch.' },
-  { name: 'Smoked Maple Sandwich',      price: 990,  emoji: '🥪', body: 'Cherry-wood smoke, maple glaze, jalapeño slaw.' },
-]
-
-const BUCKETS = [
-  { name: 'The Lunch Bucket',  feeds: 1, body: 'Sandwich + fries + drink. Done.', price: 1200, badge: 'Solo' },
-  { name: 'The Squad Bucket',  feeds: 3, body: '3 sandwiches · 8 tenders · 2 large fries · 4 sauces.', price: 3450, badge: 'Most ordered' },
-  { name: 'The Family Coop',   feeds: 5, body: '5 sandwiches · 16 tenders · large fries · slaw · 6 sauces.', price: 5800, badge: 'Save Rs. 600' },
-  { name: 'The Tender Trove',  feeds: 4, body: '20 tenders · 4 sauces · 2 large fries · pickles. Tender-only menu.', price: 4500, badge: 'Tender-heads' },
-]
+// Industrial spec-numbers — each section gets a `00 / SECTION` tag like
+// a parts catalogue. Pure ornament, but it ties the visual language to
+// the workshop reference.
+const SPECS = ['00', '01', '02', '03', '04', '05'] as const
 
 export function StaxLayout({ concept, concepts }: Props) {
   const hoursData = useHoursData(concept.slug)
-  // Scroll-reveal observer for the hero — children with .reveal-on-scroll
-  // (the headline + spec sheet) fade in as the section enters view.
-  const heroRef = useScrollReveal<HTMLElement>()
+  const story = brandStory(concept.slug)
+  const reservations = concept.reservationsEnabled !== false
+
   return (
-    <div
-      style={{
-        background: FLIPD_CREAM,
-        color: FLIPD_BLACK,
-        // Drive the kinetic CSS vars off the brand palette so every SVG
-        // shape inside the page picks up the right accent automatically.
-        ['--brand-accent' as string]:      FLIPD_MUSTARD,
-        ['--brand-accent-dark' as string]: FLIPD_MUSTARD,
-        ['--brand-ink' as string]:         FLIPD_BLACK,
-      } as React.CSSProperties}
-    >
-      <PromoBar brandName={concept.name} brandSlug={concept.slug} accent={FLIPD_MUSTARD} />
+    <div className="stax-page">
+      <style jsx>{`
+        .stax-page {
+          background: var(--stax-paper);
+          color: var(--stax-ink);
+          font-family: var(--stax-display);
+        }
+        .stax-page :global(.stax-mono) {
+          font-family: var(--stax-mono);
+          letter-spacing: 0.02em;
+        }
+        .stax-page :global(.stax-spec) {
+          font-family: var(--stax-mono);
+          font-size: 0.72rem;
+          letter-spacing: 0.18em;
+          text-transform: uppercase;
+          color: var(--stax-purple);
+        }
+        .stax-page :global(.stax-rule) {
+          height: 1px;
+          background: rgba(19,19,24,0.12);
+          border: 0;
+          margin: 0;
+        }
+        .stax-page :global(.stax-line) {
+          height: 1px;
+          background: var(--stax-purple);
+          border: 0;
+          width: 3rem;
+          margin: 0;
+        }
+        .stax-page :global(.stax-display) {
+          font-family: var(--stax-display);
+          font-weight: 700;
+          letter-spacing: -0.025em;
+          line-height: 1.02;
+        }
+        .stax-page :global(.stax-btn) {
+          display: inline-flex;
+          align-items: center;
+          gap: 0.65rem;
+          font-family: var(--stax-mono);
+          font-size: 0.78rem;
+          letter-spacing: 0.18em;
+          text-transform: uppercase;
+          padding: 1rem 1.6rem;
+          background: var(--stax-purple);
+          color: var(--stax-paper);
+          border: 0;
+          text-decoration: none;
+          transition: background 180ms ease;
+        }
+        .stax-page :global(.stax-btn:hover) { background: var(--stax-purple-deep); }
+        .stax-page :global(.stax-btn-ghost) {
+          background: transparent;
+          color: var(--stax-ink);
+          border: 1px solid rgba(19,19,24,0.25);
+        }
+        .stax-page :global(.stax-btn-ghost:hover) { border-color: var(--stax-purple); color: var(--stax-purple); }
+        .stax-page :global(.stax-grid-bg) {
+          background-image:
+            linear-gradient(to right, rgba(19,19,24,0.04) 1px, transparent 1px),
+            linear-gradient(to bottom, rgba(19,19,24,0.04) 1px, transparent 1px);
+          background-size: 32px 32px;
+        }
+      `}</style>
 
-      {/* CINEMATIC HERO — industrial chef's table. Ingredient layers
-          drop in from above as the user scrolls, each one labelled with
-          one of the Stax menu categories. By the time the top bun lands
-          the user has seen every category in motion. */}
-      <StaxStackBuilderHero
-        brandName={concept.name}
-        accent={FLIPD_MUSTARD}
-        ink={FLIPD_BLACK}
-        cream={FLIPD_CREAM}
-        orderHref={`/${concept.slug}`}
-        menuHref={`/brand/${concept.slug}/menu`}
-      />
-
-      {/* HERO — butcher-paper slab. Decorative noise removed; the hero
-          now relies on its content + the stack-builder above for visual
-          weight. */}
-      <section ref={heroRef} style={{
-        position: 'relative',
-        padding: 'clamp(3rem, 7vw, 5rem) 0 clamp(2.5rem, 5vw, 4rem)',
-        background: `repeating-linear-gradient(45deg, ${FLIPD_CREAM} 0 12px, ${FLIPD_MUSTARD}0c 12px 24px)`,
-        borderBottom: `3px solid ${FLIPD_BLACK}`,
-        overflow: 'hidden',
-      }}>
-        <div className="container relative z-10">
-          <div className="reveal-stagger" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '3rem', alignItems: 'center' }}>
-            <div className="reveal-on-scroll">
-              <p style={{ color: FLIPD_RED, fontWeight: 800, fontSize: '0.78rem', letterSpacing: '0.24em', textTransform: 'uppercase', marginBottom: '1rem' }}>
-                Buttermilk · brined · for 24 hours · no shortcut
-              </p>
-              <h1 style={{
-                fontSize: 'clamp(3rem, 9vw, 7rem)',
-                fontWeight: 900,
-                letterSpacing: '-0.04em',
-                lineHeight: 0.92,
-                margin: 0,
-                color: FLIPD_BLACK,
-              }}>
-                Hot. Crispy.<br />
-                <span style={{ color: FLIPD_MUSTARD, textShadow: `2px 2px 0 ${FLIPD_BLACK}` }}>Hand-breaded.</span>
-              </h1>
-              <div style={{ marginTop: '1rem' }}>
-                <OpenStatusBadge hoursData={hoursData} accentColor={FLIPD_MUSTARD} />
-              </div>
-              <p style={{ marginTop: '1.5rem', fontSize: '1.1rem', color: `${FLIPD_BLACK}cc`, lineHeight: 1.55, maxWidth: '34rem' }}>
-                Every piece made-to-order. Brioche pressed on the flat-top. Hot honey drizzled in front of you. {concept.name} doesn&rsquo;t reheat. {concept.name} doesn&rsquo;t apologise.
-              </p>
-              <div style={{ marginTop: '2rem', display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
-                <Link href={`/${concept.slug}`} style={{
-                  padding: '1.1rem 2rem',
-                  background: FLIPD_BLACK,
-                  color: FLIPD_MUSTARD,
-                  fontWeight: 900,
-                  fontSize: '1rem',
-                  textDecoration: 'none',
-                  borderRadius: '4px',
-                  letterSpacing: '0.04em',
-                  textTransform: 'uppercase',
-                  border: `3px solid ${FLIPD_BLACK}`,
-                  boxShadow: `4px 4px 0 0 ${FLIPD_MUSTARD}`,
-                }}>
-                  Pick a piece →
-                </Link>
-                <Link href="#buckets" style={{
-                  padding: '1.1rem 2rem',
-                  background: FLIPD_MUSTARD,
-                  color: FLIPD_BLACK,
-                  fontWeight: 900,
-                  fontSize: '1rem',
-                  textDecoration: 'none',
-                  borderRadius: '4px',
-                  letterSpacing: '0.04em',
-                  textTransform: 'uppercase',
-                  border: `3px solid ${FLIPD_BLACK}`,
-                  boxShadow: `4px 4px 0 0 ${FLIPD_BLACK}`,
-                }}>
-                  Family bucket
-                </Link>
-              </div>
-            </div>
-
-            <div className="reveal-on-scroll" style={{
-              background: 'white',
-              border: `3px solid ${FLIPD_BLACK}`,
-              borderRadius: '4px',
-              padding: '2rem',
-              transform: 'rotate(-1.2deg)',
-              boxShadow: `8px 8px 0 0 ${FLIPD_MUSTARD}`,
-              position: 'relative',
-            }}>
-              <p style={{ fontSize: '0.7rem', fontWeight: 800, letterSpacing: '0.32em', color: FLIPD_RED, textTransform: 'uppercase', marginBottom: '1rem' }}>
-                What&rsquo;s on the spec
-              </p>
-              <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
-                {[
-                  { num: '24h', label: 'buttermilk + spice brine' },
-                  { num: '7×',  label: 'hand-bread, never machine' },
-                  { num: '180°', label: 'fryer temp, every single piece' },
-                  { num: '0',   label: 'reheats. ever.' },
-                ].map((s) => (
-                  <li key={s.num} style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '1rem', alignItems: 'baseline' }}>
-                    <span style={{ fontSize: '1.6rem', fontWeight: 900, color: FLIPD_MUSTARD, letterSpacing: '-0.02em', minWidth: '3rem' }}>{s.num}</span>
-                    <span style={{ fontSize: '0.95rem', color: FLIPD_BLACK }}>{s.label}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </div>
+      {concept.announcementBanner && (
+        <div role="status" style={{ background: 'var(--stax-ink)', color: 'var(--stax-paper)', padding: '0.7rem 1.5rem', textAlign: 'center', fontFamily: 'var(--stax-mono)', fontSize: '0.78rem', letterSpacing: '0.18em', textTransform: 'uppercase' }}>
+          {concept.announcementBanner}
         </div>
-      </section>
+      )}
 
-      {/* THE LINEUP */}
-      <section style={{ padding: 'clamp(3rem, 7vw, 5rem) 0', borderBottom: `3px solid ${FLIPD_BLACK}` }}>
-        <div className="container">
-          <h2 style={{
-            fontSize: 'clamp(2rem, 5vw, 3.5rem)',
-            fontWeight: 900,
-            letterSpacing: '-0.03em',
-            textTransform: 'uppercase',
-            marginBottom: '0.75rem',
-          }}>
-            The lineup
-          </h2>
-          <p style={{ color: `${FLIPD_BLACK}99`, fontSize: '1rem', marginBottom: '2.5rem', maxWidth: '36rem' }}>
-            Tap any piece — your basket follows you into checkout.
+      {/* ── HERO ─ Industrial header: spec tag, wordmark, spec line, sub. ── */}
+      <section className="stax-grid-bg" style={{ padding: 'clamp(4rem, 12vh, 8rem) clamp(1.5rem, 5vw, 3rem) clamp(3rem, 6vh, 4rem)' }}>
+        <div style={{ maxWidth: '76rem', margin: '0 auto' }}>
+          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '2rem', flexWrap: 'wrap', marginBottom: '2rem' }}>
+            <span className="stax-spec">{SPECS[0]} / KITCHEN — KARACHI</span>
+            <span className="stax-spec" style={{ color: 'rgba(19,19,24,0.5)' }}>SPEC SHEET · v.2026</span>
+          </div>
+
+          <h1 className="stax-display" style={{ fontSize: 'clamp(4.5rem, 14vw, 11rem)', margin: '0 0 1rem', color: 'var(--stax-ink)' }}>
+            STAX<span style={{ color: 'var(--stax-purple)' }}>.</span>
+          </h1>
+
+          <hr className="stax-line" />
+
+          <p className="stax-display" style={{ fontSize: 'clamp(1.4rem, 2.4vw, 2rem)', maxWidth: '36ch', margin: '2rem 0 0', fontWeight: 500, lineHeight: 1.2 }}>
+            {story.tagline}
           </p>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: '1.25rem' }}>
-            {PIECES.map((p, i) => (
-              <Link key={p.name} href={`/${concept.slug}`} style={{
-                display: 'flex', flexDirection: 'column',
-                background: 'white', border: `2px solid ${FLIPD_BLACK}`,
-                borderRadius: '4px', textDecoration: 'none', color: 'inherit',
-                overflow: 'hidden',
-                transform: `rotate(${(i % 2 === 0 ? -0.5 : 0.5)}deg)`,
-                boxShadow: `4px 4px 0 0 ${FLIPD_MUSTARD}`,
-              }}>
-                <div style={{ aspectRatio: '4/3', background: `linear-gradient(135deg, ${FLIPD_MUSTARD} 0%, ${FLIPD_RED} 100%)`, display: 'grid', placeItems: 'center', fontSize: '4.5rem' }}>
-                  <span aria-hidden="true">{p.emoji}</span>
-                </div>
-                <div style={{ padding: '1.25rem 1.4rem' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-                    <h3 style={{ fontSize: '1.1rem', fontWeight: 900, letterSpacing: '-0.01em' }}>{p.name}</h3>
-                    <span style={{ fontSize: '0.95rem', fontWeight: 900, color: FLIPD_RED, whiteSpace: 'nowrap' }}>Rs. {p.price.toLocaleString()}</span>
-                  </div>
-                  <p style={{ marginTop: '0.5rem', fontSize: '0.9rem', color: `${FLIPD_BLACK}99`, lineHeight: 1.5 }}>{p.body}</p>
-                </div>
-              </Link>
-            ))}
+
+          <p style={{ fontFamily: 'var(--stax-mono)', fontSize: '0.95rem', letterSpacing: '0.02em', maxWidth: '52ch', margin: '1.25rem 0 0', color: 'rgba(19,19,24,0.75)' }}>
+            {story.oneLiner}
+          </p>
+
+          <div style={{ marginTop: '3rem', display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+            <Link href={`/${concept.slug}`} className="stax-btn">Order Stax →</Link>
+            <Link href={`/brand/${concept.slug}/menu`} className="stax-btn stax-btn-ghost">View menu</Link>
           </div>
         </div>
       </section>
 
-      {/* BUCKETS — the conversion path. Family bucket front and center. */}
-      <section id="buckets" style={{ padding: 'clamp(3rem, 7vw, 5rem) 0', background: FLIPD_BLACK, color: FLIPD_CREAM }}>
-        <div className="container">
-          <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', flexWrap: 'wrap', gap: '1rem', marginBottom: '2.5rem' }}>
-            <div>
-              <p style={{ color: FLIPD_MUSTARD, fontWeight: 800, fontSize: '0.78rem', letterSpacing: '0.32em', textTransform: 'uppercase', marginBottom: '0.75rem' }}>
-                Buckets · made for groups
-              </p>
-              <h2 style={{ fontSize: 'clamp(2rem, 5vw, 3.5rem)', fontWeight: 900, letterSpacing: '-0.03em', textTransform: 'uppercase', lineHeight: 1.05 }}>
-                Order for the<br /><span style={{ color: FLIPD_MUSTARD }}>whole table.</span>
-              </h2>
-            </div>
-            <p style={{ color: 'rgba(252,246,232,0.55)', fontSize: '0.9rem', maxWidth: '20rem' }}>
-              All buckets cooked-to-order. Allow 18–22 minutes for the family-size.
-            </p>
+      <hr className="stax-rule" />
+
+      {/* ── SPEC SHEET — story.highlights as numbered specs, monospace ── */}
+      <section style={{ padding: 'clamp(4rem, 9vh, 6rem) clamp(1.5rem, 5vw, 3rem)' }}>
+        <div style={{ maxWidth: '76rem', margin: '0 auto' }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: '2rem', marginBottom: '3rem' }}>
+            <span className="stax-spec">{SPECS[1]}</span>
+            <h2 className="stax-display" style={{ fontSize: 'clamp(2rem, 4vw, 3rem)', margin: 0 }}>The brief.</h2>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '1.25rem' }}>
-            {BUCKETS.map((b) => (
-              <Link key={b.name} href={`/${concept.slug}`} style={{
-                background: 'rgba(252,246,232,0.04)',
-                border: `1px solid ${FLIPD_MUSTARD}55`,
-                padding: '1.75rem 1.5rem',
-                borderRadius: '4px',
-                textDecoration: 'none', color: FLIPD_CREAM,
-                display: 'flex', flexDirection: 'column', gap: '0.6rem',
-              }}>
-                <span style={{ alignSelf: 'flex-start', fontSize: '0.65rem', fontWeight: 800, letterSpacing: '0.18em', color: FLIPD_MUSTARD, padding: '0.2rem 0.55rem', border: `1px solid ${FLIPD_MUSTARD}55`, borderRadius: '4px' }}>
-                  {b.badge}
-                </span>
-                <h3 style={{ fontSize: '1.4rem', fontWeight: 900, letterSpacing: '-0.02em', marginTop: '0.4rem' }}>{b.name}</h3>
-                <p style={{ fontSize: '0.78rem', color: 'rgba(252,246,232,0.55)', letterSpacing: '0.1em', textTransform: 'uppercase' }}>Feeds {b.feeds}</p>
-                <p style={{ fontSize: '0.9rem', color: 'rgba(252,246,232,0.85)', lineHeight: 1.5 }}>{b.body}</p>
-                <p style={{ marginTop: 'auto', fontSize: '1.5rem', fontWeight: 900, color: FLIPD_MUSTARD, letterSpacing: '-0.02em', paddingTop: '0.5rem' }}>
-                  Rs. {b.price.toLocaleString()}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '0', border: '1px solid rgba(19,19,24,0.12)' }}>
+            {story.highlights.map((h, i) => (
+              <div key={h} style={{ padding: '1.75rem 1.5rem', borderRight: '1px solid rgba(19,19,24,0.12)', borderBottom: i < story.highlights.length - 1 ? '0' : '0', minHeight: '8rem', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+                <span className="stax-spec">{String(i + 1).padStart(2, '0')}</span>
+                <p className="stax-mono" style={{ fontSize: '0.95rem', lineHeight: 1.5, margin: '1rem 0 0', fontWeight: 500 }}>
+                  {h}
                 </p>
-              </Link>
+              </div>
             ))}
           </div>
         </div>
       </section>
 
-      {/* THE BUTTERMILK STORY */}
-      <section style={{ padding: 'clamp(4rem, 8vw, 7rem) 0' }}>
-        <div className="container" style={{ maxWidth: '38rem', textAlign: 'center' }}>
-          <p style={{ color: FLIPD_RED, fontWeight: 800, fontSize: '0.7rem', letterSpacing: '0.32em', textTransform: 'uppercase', marginBottom: '1rem' }}>
-            The brine story
-          </p>
-          <h2 style={{ fontSize: 'clamp(1.75rem, 4vw, 2.75rem)', fontWeight: 900, letterSpacing: '-0.02em', lineHeight: 1.1, marginBottom: '1.5rem' }}>
-            24 hours of buttermilk.<br /><span style={{ color: FLIPD_MUSTARD }}>That&rsquo;s the whole secret.</span>
-          </h2>
-          <p style={{ fontSize: '1.05rem', color: `${FLIPD_BLACK}cc`, lineHeight: 1.7 }}>
-            Every piece sits in our buttermilk + spice brine for a full 24 hours before it hits the breading station. That&rsquo;s why the chicken is juicy on the inside, even when the crust is loud. There&rsquo;s no shortcut for this. We&rsquo;ve tried.
-          </p>
-          <p style={{ marginTop: '1.25rem', fontSize: '1rem', color: `${FLIPD_BLACK}88`, fontStyle: 'italic' }}>
-            Cooked in our own kitchens · delivered by our own riders · made the second you tap order.
+      <hr className="stax-rule" />
+
+      {/* ── LONG STORY — single column, sober ── */}
+      <section style={{ padding: 'clamp(4rem, 9vh, 6rem) clamp(1.5rem, 5vw, 3rem)' }}>
+        <div style={{ maxWidth: '46rem', margin: '0 auto' }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: '2rem', marginBottom: '2rem' }}>
+            <span className="stax-spec">{SPECS[2]}</span>
+            <h2 className="stax-display" style={{ fontSize: 'clamp(2rem, 4vw, 3rem)', margin: 0 }}>The kitchen.</h2>
+          </div>
+          <p className="stax-mono" style={{ fontSize: '1.1rem', lineHeight: 1.65, color: 'rgba(19,19,24,0.85)' }}>
+            {story.long}
           </p>
         </div>
       </section>
 
-      <CrossBrandStrip current={concept} concepts={concepts} accent={FLIPD_MUSTARD} kicker="In the same neighbourhood" heading="Other GS Foods kitchens you might like" />
-      <BottomCTA brandName={concept.name} brandSlug={concept.slug} accent={FLIPD_MUSTARD} />
+      <hr className="stax-rule" />
+
+      {/* ── HOURS + LOCATION ── */}
+      <section style={{ padding: 'clamp(4rem, 9vh, 6rem) clamp(1.5rem, 5vw, 3rem)' }}>
+        <div style={{ maxWidth: '76rem', margin: '0 auto', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'clamp(2rem, 5vw, 4rem)' }} className="stax-visit-grid">
+          <style jsx>{`
+            @media (max-width: 700px) {
+              :global(.stax-visit-grid) { grid-template-columns: 1fr !important; }
+            }
+          `}</style>
+
+          <div>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: '2rem', marginBottom: '2rem' }}>
+              <span className="stax-spec">{SPECS[3]}</span>
+              <h2 className="stax-display" style={{ fontSize: 'clamp(1.6rem, 3vw, 2.2rem)', margin: 0 }}>Hours.</h2>
+            </div>
+            <div style={{ marginBottom: '1.5rem' }}><OpenStatusBadge slug={concept.slug} /></div>
+            <div className="stax-mono" style={{ fontSize: '0.95rem' }}>
+              {hoursData?.hours && hoursData.hours.length > 0 ? (
+                <HoursGrid hours={hoursData.hours} />
+              ) : (
+                <p style={{ opacity: 0.6 }}>Hours not published yet.</p>
+              )}
+            </div>
+          </div>
+
+          <div>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: '2rem', marginBottom: '2rem' }}>
+              <span className="stax-spec">{SPECS[4]}</span>
+              <h2 className="stax-display" style={{ fontSize: 'clamp(1.6rem, 3vw, 2.2rem)', margin: 0 }}>Where.</h2>
+            </div>
+            <p className="stax-display" style={{ fontSize: '1.3rem', lineHeight: 1.4, margin: '0 0 1rem', fontWeight: 500 }}>
+              {concept.address ?? 'Karachi · address TBA'}
+            </p>
+            {concept.phone && (
+              <p className="stax-mono" style={{ fontSize: '0.95rem', margin: 0 }}>
+                <a href={`tel:${concept.phone.replace(/\s/g, '')}`} style={{ color: 'var(--stax-purple)', textDecoration: 'none', borderBottom: '1px solid currentColor' }}>
+                  {concept.phone}
+                </a>
+              </p>
+            )}
+            {reservations && (
+              <div style={{ marginTop: '2rem' }}>
+                <Link href={`/reserve/${concept.slug}`} className="stax-btn stax-btn-ghost">Reserve a table</Link>
+              </div>
+            )}
+          </div>
+        </div>
+      </section>
+
+      <hr className="stax-rule" />
+
+      {/* ── CROSS-BRAND STRIP ── */}
+      <div style={{ background: 'var(--stax-paper-deep)' }}>
+        <CrossBrandStrip
+          current={concept}
+          concepts={concepts}
+          accent="var(--stax-purple)"
+          kicker="ALSO FROM THE OPERATOR"
+          heading="Other lines coming out of the same kitchen group."
+        />
+      </div>
+
+      {/* ── CTA STRIP ── */}
+      <section style={{ background: 'var(--stax-ink)', color: 'var(--stax-paper)', padding: 'clamp(4rem, 10vh, 7rem) clamp(1.5rem, 5vw, 3rem)' }}>
+        <div style={{ maxWidth: '64rem', margin: '0 auto', textAlign: 'center' }}>
+          <span className="stax-spec" style={{ color: 'rgba(236,234,230,0.5)' }}>{SPECS[5]} · ORDER</span>
+          <h2 className="stax-display" style={{ fontSize: 'clamp(2.2rem, 5vw, 4rem)', margin: '1rem 0 2rem' }}>
+            Get it built<span style={{ color: 'var(--stax-purple)' }}>.</span>
+          </h2>
+          <Link href={`/${concept.slug}`} className="stax-btn" style={{ background: 'var(--stax-paper)', color: 'var(--stax-ink)' }}>
+            Order from Stax →
+          </Link>
+        </div>
+      </section>
     </div>
   )
 }
-
-// Retired: SimmerFridgeTease was an easter-egg fridge tile on Stax that
-// linked to Simmer. Removed per operator — "the walk in chiller has no
-// place on the stax site." The cross-brand strip already does the
-// "discover Simmer too" job at the bottom of Stax.

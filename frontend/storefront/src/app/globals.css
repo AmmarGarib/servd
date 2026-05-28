@@ -1,7 +1,7 @@
 /* Inter for body text, Bricolage Grotesque for the kinetic display headlines
    that drive the new asymmetric / chunky look. Falls back to Inter Black if
    the display family fails to load — keeps the bold weight intact. */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&family=Amarante&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -28,6 +28,33 @@
   /* Display font for the kinetic look — used on hero headlines, eyebrow
      labels, marquee text, anywhere we want the "agency-modern" feel. */
   --font-display:       'Bricolage Grotesque', 'Inter', system-ui, sans-serif;
+
+  /* ── Simmer brand tokens (per simmer-brand SKILL.md) ─────────────────────
+     Forest green surface, bone ink, fiery orange signal. Night mode is the
+     web default. Amarante for display, Times for body/utility. */
+  --simmer-green:       #1B2D2A;
+  --simmer-bone:        #EDE6D3;
+  --simmer-walnut:      #3D2817;
+  --simmer-black:       #0E0E0E;
+  --simmer-orange:      #E94E1B;
+  --simmer-display:     'Amarante', serif;
+  --simmer-body:        'Times New Roman', Times, serif;
+
+  /* ── Stax brand tokens (industrial: light grey + deep purple) ──────────── */
+  --stax-paper:         #ECEAE6;
+  --stax-paper-deep:    #D9D6CF;
+  --stax-ink:           #131318;
+  --stax-purple:        #5B3990;
+  --stax-purple-deep:   #3C236A;
+  --stax-display:       'Space Grotesk', 'Inter', sans-serif;
+  --stax-mono:          'JetBrains Mono', 'Courier New', monospace;
+
+  /* ── Flipd brand tokens (cool diner: pale blue + sky accent) ───────────── */
+  --flipd-sky:          #3AA8FF;
+  --flipd-sky-deep:     #1A78D6;
+  --flipd-pale:         #E8F4FF;
+  --flipd-ink:          #0E1A2A;
+  --flipd-cream:        #FBFDFF;
 }
 
 html {

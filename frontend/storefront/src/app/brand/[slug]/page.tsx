@@ -6,7 +6,7 @@
 // as the only fallback so brand pages match the depth of the servd home.
 
 import { notFound } from 'next/navigation'
-import type { Concept } from '../../../lib/concept'
+import { brandAccent, type Concept } from '../../../lib/concept'
 import type { Block } from '../../../lib/blocks'
 import { PageRenderer } from '../../../components/blocks/PageRenderer'
 import { BrandFallback } from '../../../components/brand/BrandFallback'
@@ -50,8 +50,9 @@ export default async function BrandHome({
     getBrandBlocks(slug),
   ])
 
-  const concept = concepts.find((c) => c.slug === slug) ?? null
-  if (!concept) notFound()
+  const found = concepts.find((c) => c.slug === slug) ?? null
+  if (!found) notFound()
+  const concept: Concept = { ...found, primaryColor: brandAccent(found.slug, found.primaryColor) }
 
   if (blocks.length === 0) {
     return (

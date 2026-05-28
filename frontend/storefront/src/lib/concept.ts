@@ -14,6 +14,10 @@ export interface Concept {
   description: string | null
   logoUrl: string | null
   primaryColor: string | null
+  // Operator-editable strings returned by the API but optional in the type
+  // — used for the brand-page promo strip and hero subhead respectively.
+  heroTagline?: string | null
+  announcementBanner?: string | null
   // Physical presence — included in /storefront/concepts response
   phone?:    string | null
   address?:  string | null
@@ -25,6 +29,22 @@ export interface Concept {
   // admin → Marketing → Brands → Storefront. When false, customer-facing
   // surfaces hide the "Book a table" CTA.
   reservationsEnabled?: boolean
+}
+
+// Per-brand visual override applied at the BrandLayout level. Lets a brand
+// page run its own visual language without depending on whatever color is
+// in the DB. Until the operator UI grows a real palette field, this map
+// is the source of truth for /brand/<slug> chrome.
+const BRAND_ACCENT_OVERRIDES: Record<string, string> = {
+  simmer: '#E94E1B',  // fiery orange — the simmer brand bible's signal color
+  stax:   '#5B3990',  // deep purple — industrial palette
+  flipd:  '#3AA8FF',  // sky blue — cool diner palette
+}
+
+/** Returns the brand accent the storefront should use for this concept,
+ *  preferring the per-brand override over the DB primaryColor. */
+export function brandAccent(slug: string, fallback: string | null | undefined): string {
+  return BRAND_ACCENT_OVERRIDES[slug] ?? fallback ?? '#22c55e'
 }
 
 export function typeLabel(t: string): string {

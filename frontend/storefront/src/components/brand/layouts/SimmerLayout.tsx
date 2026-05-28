@@ -1,463 +1,239 @@
 'use client'
+// simmer — brand microsite layout.
+// Built strictly to the simmer-brand SKILL.md (canonical source of truth):
+//   • Night mode (forest green surface, bone ink)
+//   • Amarante for display, Times for body/utility
+//   • lowercase wordmark `simmer`, tagline `simmer down.` (below, never above)
+//   • single orange signal per viewport, no decorative repetition
+//   • no white, no gradients, no emojis, no exclamation marks
+//   • no banned words: elevated, curated, experience, journey, passionate,
+//     crafted, artisanal, fusion, twist on a classic
+//
+// Menu items are intentionally absent from this surface — the dedicated
+// /brand/simmer/menu route renders the full menu in the locked format.
+// This page leads with brand identity and routes to menu / reserve / order.
+
 import Link from 'next/link'
 import type { Concept } from '../../../lib/concept'
-import { PromoBar } from '../parts/PromoBar'
 import { CrossBrandStrip } from '../parts/CrossBrandStrip'
-import { BottomCTA } from '../parts/BottomCTA'
 import { OpenStatusBadge, HoursGrid, useHoursData } from '../parts/OpenStatusBadge'
-import { useScrollReveal } from '../../kinetic/motionHooks'
-import { SpeakeasyFridgeHero } from '../../kinetic/SpeakeasyFridgeHero'
-
-// Simmer — fine-casual mocktail bar and small-plates kitchen. Dark green +
-// saffron gold. Warm, intimate, specific. Karachi evenings, plated softly.
-// Reservations are first-class. The bar story is the brand story.
 
 interface Props {
   concept: Concept
   concepts: Concept[]
 }
 
-const SIMMER_INK   = '#15201c'
-const SIMMER_GREEN = '#2d4a3e'
-const SIMMER_CREAM = '#f4ede0'
-const SIMMER_GOLD  = '#c9a961'
+// Today's date in the menu's signature `26.05.26` format — same rhythm
+// the printed menu uses at the top right. Tracked-out Times below the
+// wordmark, never above.
+function todayStamp(): string {
+  const d = new Date()
+  const dd = String(d.getDate()).padStart(2, '0')
+  const mm = String(d.getMonth() + 1).padStart(2, '0')
+  const yy = String(d.getFullYear()).slice(-2)
+  return `${dd}.${mm}.${yy}`
+}
 
-const DRINKS = [
-  { name: 'The Garden Fizz',  desc: 'Cucumber ribbons pressed in elderflower syrup, torn mint, long squeeze of lemon, topped sparkling. Light, pale, cleaner than you expect.',                                         price: 750 },
-  { name: 'Midnight Bloom',   desc: 'Butterfly pea flower steeped overnight, shaken with lemon and raw honey, lengthened with tonic. Pours indigo. Brightens to violet when the citrus hits.',                         price: 780 },
-  { name: 'Stone Rose',       desc: 'Rose water, fresh lychee, sliced ginger, lime, soda. Floral but not sweet. The one everyone orders twice.',                                                                       price: 800 },
-  { name: 'Morning After',    desc: 'Cold-pressed ginger and raw turmeric, brightened with lemon and honey, finished sparkling. Tastes like it means well — and it does.',                                             price: 750 },
-  { name: 'Simmer Signature', desc: 'The bar\'s current house blend — rotating weekly, never written down. Ask what\'s in it. It\'s always better than you expect.',                                                   price: 850 },
-]
-
-const PLATES = [
-  { name: 'Smoked Labneh',          desc: 'Our labneh sits in the smoker for six hours before service — dense, cool, carrying a low wood note. Za\'atar oil pooled on top, warm pita alongside, olives that have been sitting in oil since Tuesday.',                                                                         price: 900 },
-  { name: 'Burrata & Peach',        desc: 'Stracciatella torn at the table over ripe peach, two thin slices of prosciutto, a long pour of aged balsamic, torn basil. Looks like it took ten minutes. Tastes like it took forty.',                                                                                           price: 1300 },
-  { name: 'Crispy Calamari',        desc: 'Flash-fried at 190°C, out in ninety seconds — stays crisp the whole way through the plate. House-made lemon aioli, a pinch of chilli flakes, torn flat-leaf parsley.',                                                                                                          price: 1150 },
-  { name: 'Chicken Skewers',        desc: 'Thigh pieces marinated 24 hours in our harissa blend, charred until they hold a crust. Served over harissa yoghurt with pomegranate seeds that pop against the heat.',                                                                                                          price: 1200 },
-  { name: 'Slow-Roast Lamb',        desc: 'The shoulder goes in at 10 PM. It comes out at 10 AM — twelve hours, low heat, its own juices. Pulled, plated, finished with a pomegranate jus reduced since prep began. The root vegetables have been in the same pan the whole time.',                                        price: 1950 },
-  { name: 'Mushroom Risotto',       desc: 'Arborio cooked long and loose, wild mushrooms folded in at the end so they stay tender rather than disappearing into the rice. Truffle oil, parmesan, cracked black pepper. Vegetarian. The kitchen\'s most reordered plate.',                                                   price: 1500 },
-  { name: 'Dark Chocolate Fondant', desc: 'The centre is still liquid when it reaches the table — that\'s the whole point. Vanilla bean ice cream alongside, caramel tuile on top, a dusting of cocoa. You will not share this one.',                                                                                       price: 800 },
-]
-
-const FEATURED_PLATES = [
-  {
-    name: 'Slow-Roast Lamb',
-    desc: 'The shoulder goes in at 10 PM. Twelve hours, low heat. Pulled, plated, finished with pomegranate jus. The room smells of it by 9 PM.',
-    img: 'https://images.unsplash.com/photo-1544025162-d76694265947?w=700&q=85',
-    price: 1950,
-  },
-  {
-    name: 'Midnight Bloom',
-    desc: 'Butterfly pea flower steeped overnight, shaken with lemon and honey, tonic to finish. Pours indigo. Brightens to violet when the citrus hits.',
-    img: 'https://images.unsplash.com/photo-1544145945-f90425340c7e?w=700&q=85',
-    price: 780,
-  },
-  {
-    name: 'Dark Chocolate Fondant',
-    desc: 'The centre is still liquid when it reaches the table — that\'s the whole point. Vanilla bean ice cream alongside. You will not share this one.',
-    img: 'https://images.unsplash.com/photo-1563729784474-d77dbb933a9e?w=700&q=85',
-    price: 800,
-  },
-]
+const STAMP = todayStamp()
 
 export function SimmerLayout({ concept, concepts }: Props) {
   const hoursData = useHoursData(concept.slug)
-  const heroRef = useScrollReveal<HTMLElement>()
+  const reservations = concept.reservationsEnabled !== false
+
   return (
-    <div
-      style={{
-        background: SIMMER_CREAM,
-        color: SIMMER_INK,
-        // Push the gold accent into the kinetic CSS vars so every SVG
-        // shape on the page picks it up automatically. Ink stays the
-        // dark green so contrast pills sit right.
-        ['--brand-accent' as string]:      SIMMER_GOLD,
-        ['--brand-accent-dark' as string]: SIMMER_GOLD,
-        ['--brand-ink' as string]:         SIMMER_INK,
-      } as React.CSSProperties}
-    >
-      <PromoBar brandName={concept.name} brandSlug={concept.slug} accent={SIMMER_GOLD} />
+    <div className="simmer-page">
+      <style jsx>{`
+        .simmer-page {
+          background: var(--simmer-green);
+          color: var(--simmer-bone);
+          font-family: var(--simmer-body);
+          letter-spacing: 0.04em;
+        }
+        .simmer-page :global(.amarante)  { font-family: var(--simmer-display); letter-spacing: 0.02em; }
+        .simmer-page :global(.utility)   { font-family: var(--simmer-body); letter-spacing: 0.28em; text-transform: lowercase; }
+        .simmer-page :global(.signal)    { color: var(--simmer-orange); }
+        .simmer-page :global(.rule)      { height: 1px; background: rgba(237,230,211,0.2); border: 0; margin: 0; }
+        .simmer-page :global(.wordmark)  { font-family: var(--simmer-display); font-weight: 400; line-height: 1; }
+        .simmer-page :global(.action) {
+          display: inline-block;
+          font-family: var(--simmer-body);
+          letter-spacing: 0.28em;
+          text-transform: lowercase;
+          padding: 0.95rem 1.6rem;
+          border: 1px solid var(--simmer-bone);
+          color: var(--simmer-bone);
+          background: transparent;
+          text-decoration: none;
+          font-size: 0.78rem;
+          transition: background 180ms ease, color 180ms ease;
+        }
+        .simmer-page :global(.action:hover) {
+          background: var(--simmer-bone);
+          color: var(--simmer-green);
+        }
+        .simmer-page :global(.action--signal) {
+          border-color: var(--simmer-orange);
+          color: var(--simmer-orange);
+        }
+        .simmer-page :global(.action--signal:hover) {
+          background: var(--simmer-orange);
+          color: var(--simmer-green);
+        }
+      `}</style>
 
-      {/* SPEAKEASY ENTRANCE — first thing the customer sees on Simmer.
-          A realistic walk-in fridge door fills the viewport. As they
-          scroll, the door slowly swings open along its hinge, the
-          interior emerges (dark wood + green marble bar), and the words
-          "RESERVATIONS ONLY" land on the back wall. Pure scroll-driven;
-          no pin pad, no clicks — the experience IS the entrance. */}
-      <SpeakeasyFridgeHero
-        brandName={concept.name}
-        accent={SIMMER_GOLD}
-        ink={SIMMER_INK}
-        wood="#2a1d12"
-        marble={SIMMER_GREEN}
-        cream={SIMMER_CREAM}
-        reserveHref={`/reserve/${concept.slug}`}
-        menuHref={`/brand/${concept.slug}/menu`}
-      />
-
-      {/* AMBIENT HERO — picks up after the speakeasy door. Now that the
-          customer is "inside", the rest of the page is moody/intimate
-          editorial. Decorative noise removed. */}
-      <section ref={heroRef} style={{
-        position: 'relative',
-        background: `linear-gradient(170deg, ${SIMMER_INK} 0%, ${SIMMER_GREEN} 100%)`,
-        color: 'white',
-        overflow: 'hidden',
-      }}>
-        {/* Warm ambient glow */}
-        <div aria-hidden="true" style={{
-          position: 'absolute', inset: 0,
-          background: [
-            `radial-gradient(ellipse 60% 40% at 75% 20%, ${SIMMER_GOLD}44 0%, transparent 60%)`,
-            `radial-gradient(ellipse 40% 60% at 15% 80%, ${SIMMER_GREEN}88 0%, transparent 50%)`,
-          ].join(', '),
-          zIndex: 1,
-        }} />
-        <div className="container" style={{ position: 'relative', zIndex: 2 }}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', alignItems: 'stretch', gap: 0 }}>
-            {/* Copy */}
-            <div style={{ padding: 'clamp(3rem, 7vw, 5rem) 0 clamp(4rem, 8vw, 6rem)', paddingRight: 'clamp(1.5rem, 4vw, 4rem)' }}>
-              <p style={{
-                fontSize: '0.72rem', fontWeight: 600, letterSpacing: '0.55em',
-                color: SIMMER_GOLD, textTransform: 'uppercase', marginBottom: '2rem',
-              }}>
-                GS Foods · evenings only · no spirits served
-              </p>
-              <h1 style={{
-                fontSize: 'clamp(2.75rem, 8vw, 6.5rem)',
-                fontWeight: 300,
-                letterSpacing: '0.03em',
-                lineHeight: 1.06,
-                textTransform: 'uppercase',
-                margin: 0,
-              }}>
-                A room that<br />
-                <em style={{ fontStyle: 'italic', fontWeight: 400, color: SIMMER_GOLD }}>
-                  doesn&rsquo;t hurry.
-                </em>
-              </h1>
-              <div style={{ marginTop: '1.25rem', display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
-                <OpenStatusBadge hoursData={hoursData} accentColor={SIMMER_GOLD} />
-              </div>
-              {hoursData && hoursData.hours.length > 0 && (
-                <div style={{ marginTop: '1.5rem' }}>
-                  <p style={{ fontSize: '0.62rem', fontWeight: 700, letterSpacing: '0.28em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.45)', marginBottom: '0.5rem' }}>Hours (PKT)</p>
-                  <HoursGrid hoursData={hoursData} accentColor={SIMMER_GOLD} />
-                </div>
-              )}
-              <p style={{
-                marginTop: '2rem',
-                fontSize: 'clamp(1rem, 1.6vw, 1.25rem)',
-                lineHeight: 1.75,
-                color: 'rgba(255,255,255,0.72)',
-                fontWeight: 300,
-                maxWidth: '36rem',
-              }}>
-                Twelve tables. A bar that doesn&rsquo;t serve spirits. Hand-built mocktails, seasonal small plates, and a kitchen that takes its time.
-              </p>
-              <div style={{ marginTop: '2.75rem', display: 'flex', gap: '0.85rem', flexWrap: 'wrap' }}>
-                {concept.reservationsEnabled !== false && (
-                  <Link href={`/reserve/${concept.slug}`} style={{
-                    padding: '1.1rem 2.25rem',
-                    background: SIMMER_GOLD,
-                    color: SIMMER_INK,
-                    fontWeight: 700,
-                    fontSize: '0.9rem',
-                    letterSpacing: '0.2em',
-                    textTransform: 'uppercase',
-                    textDecoration: 'none',
-                  }}>
-                    Reserve a table
-                  </Link>
-                )}
-                <Link href={`/${concept.slug}`} style={{
-                  padding: '1.1rem 2.25rem',
-                  background: 'transparent',
-                  color: 'white',
-                  border: '1px solid rgba(255,255,255,0.35)',
-                  fontWeight: 600,
-                  fontSize: '0.9rem',
-                  letterSpacing: '0.2em',
-                  textTransform: 'uppercase',
-                  textDecoration: 'none',
-                }}>
-                  Order in
-                </Link>
-              </div>
-              <div style={{ marginTop: '3rem', display: 'flex', gap: '2rem', flexWrap: 'wrap' }}>
-                {['Tue – Sat · 7pm–midnight', 'Reservations recommended', 'No spirits served'].map((s) => (
-                  <span key={s} style={{ fontSize: '0.75rem', fontWeight: 500, color: 'rgba(255,255,255,0.45)', letterSpacing: '0.1em' }}>
-                    {s}
-                  </span>
-                ))}
-              </div>
-            </div>
-            {/* Food image panel */}
-            <div style={{ minHeight: 'min(65vh, 620px)', overflow: 'hidden', position: 'relative' }}>
-              <img
-                src="https://images.unsplash.com/photo-1414235077428-338989a2e8c0?w=900&q=85"
-                alt="Plated dish at Simmer"
-                style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', opacity: 0.85 }}
-              />
-              <div aria-hidden="true" style={{
-                position: 'absolute', inset: 0,
-                background: `linear-gradient(90deg, ${SIMMER_INK}cc 0%, transparent 40%, transparent 100%)`,
-              }} />
-              <div style={{
-                position: 'absolute', bottom: '2rem', left: '1.5rem',
-                background: `${SIMMER_INK}cc`,
-                border: `1px solid ${SIMMER_GOLD}44`,
-                padding: '0.75rem 1.25rem',
-                backdropFilter: 'blur(8px)',
-              }}>
-                <p style={{ fontSize: '0.78rem', fontWeight: 300, color: SIMMER_GOLD, letterSpacing: '0.18em', textTransform: 'uppercase' }}>
-                  Tonight&rsquo;s feature
-                </p>
-                <p style={{ fontSize: '1rem', fontWeight: 500, color: 'white', marginTop: '0.2rem' }}>Slow-Roast Lamb</p>
-              </div>
-            </div>
-          </div>
+      {/* ── Announcement strip (only when operator has filled the field) ───────
+          Per the brand bible: operational copy stays plain and clear. */}
+      {concept.announcementBanner && (
+        <div
+          role="status"
+          style={{
+            background: 'var(--simmer-black)',
+            color: 'var(--simmer-bone)',
+            padding: '0.7rem 1.5rem',
+            textAlign: 'center',
+            fontFamily: 'var(--simmer-body)',
+            fontSize: '0.78rem',
+            letterSpacing: '0.22em',
+            textTransform: 'lowercase',
+          }}
+        >
+          {concept.announcementBanner}
         </div>
-      </section>
+      )}
 
-      {/* ON THE PLATE — food leads. Three dishes before any brand copy. */}
-      <section style={{ padding: 'clamp(4rem, 8vw, 7rem) 0', background: SIMMER_CREAM, borderBottom: `1px solid ${SIMMER_INK}14` }}>
-        <div className="container">
-          <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', flexWrap: 'wrap', gap: '1.5rem', marginBottom: '3rem' }}>
-            <div>
-              <p style={{ color: SIMMER_GOLD, fontWeight: 600, fontSize: '0.72rem', letterSpacing: '0.42em', textTransform: 'uppercase', marginBottom: '0.6rem' }}>
-                Tonight on the plate
-              </p>
-              <h2 style={{ fontSize: 'clamp(2rem, 4vw, 3rem)', fontWeight: 300, letterSpacing: '0.04em', textTransform: 'uppercase', lineHeight: 1.1, margin: 0 }}>
-                The food.
-              </h2>
-            </div>
-            <Link href={`/brand/${concept.slug}/menu`} style={{ fontSize: '0.82rem', fontWeight: 600, letterSpacing: '0.28em', textTransform: 'uppercase', color: SIMMER_GREEN, textDecoration: 'none', borderBottom: `1px solid ${SIMMER_GOLD}`, paddingBottom: '0.2rem' }}>
-              Full menu →
-            </Link>
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '1.5rem' }}>
-            {FEATURED_PLATES.map((d) => (
-              <Link key={d.name} href={`/${concept.slug}`} style={{ textDecoration: 'none', color: 'inherit', display: 'flex', flexDirection: 'column', background: 'white', border: `1px solid ${SIMMER_INK}0f` }}>
-                <div style={{ aspectRatio: '4/3', overflow: 'hidden' }}>
-                  <img
-                    src={d.img}
-                    alt={d.name}
-                    style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
-                  />
-                </div>
-                <div style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '0.5rem', flex: 1 }}>
-                  <h3 style={{ fontSize: '1.1rem', fontWeight: 500, letterSpacing: '0.02em' }}>{d.name}</h3>
-                  <p style={{ fontSize: '0.9rem', color: `${SIMMER_INK}88`, lineHeight: 1.55, fontStyle: 'italic', flex: 1 }}>{d.desc}</p>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: '0.75rem', borderTop: `1px solid ${SIMMER_INK}0f` }}>
-                    <span style={{ fontSize: '0.95rem', fontWeight: 600, color: SIMMER_GREEN }}>Rs. {d.price.toLocaleString()}</span>
-                    <span style={{ fontSize: '0.78rem', fontWeight: 600, letterSpacing: '0.18em', color: SIMMER_GOLD, textTransform: 'uppercase' }}>Order →</span>
-                  </div>
-                </div>
-              </Link>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* THE BAR — the brand's main differentiator. Lead with the drinks. */}
-      <section style={{ padding: 'clamp(4rem, 8vw, 7rem) 0', borderBottom: `1px solid ${SIMMER_INK}14` }}>
-        <div className="container">
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '4rem', alignItems: 'start' }}>
-
-            <div style={{ position: 'sticky', top: '2rem' }}>
-              <p style={{ color: SIMMER_GOLD, fontWeight: 600, fontSize: '0.72rem', letterSpacing: '0.42em', textTransform: 'uppercase', marginBottom: '1.25rem' }}>
-                The bar
-              </p>
-              <h2 style={{ fontSize: 'clamp(2rem, 4.5vw, 3.25rem)', fontWeight: 300, letterSpacing: '0.04em', textTransform: 'uppercase', lineHeight: 1.1, margin: '0 0 1.5rem' }}>
-                No spirit.<br /><em style={{ fontStyle: 'italic', fontWeight: 400, color: SIMMER_GOLD }}>All theatre.</em>
-              </h2>
-              <p style={{ fontSize: '1rem', color: `${SIMMER_INK}cc`, lineHeight: 1.7, fontWeight: 300, maxWidth: '28rem' }}>
-                Every drink is hand-built — steam-smoked, shaken, or slowly stirred. The bar doesn&rsquo;t serve spirits by choice, not constraint. You won&rsquo;t miss them.
-              </p>
-              <Link href={`/${concept.slug}`} style={{
-                display: 'inline-block', marginTop: '1.75rem',
-                fontSize: '0.82rem', fontWeight: 600,
-                letterSpacing: '0.28em', textTransform: 'uppercase',
-                color: SIMMER_GREEN, textDecoration: 'none',
-                borderBottom: `1px solid ${SIMMER_GOLD}`,
-                paddingBottom: '0.2rem',
-              }}>
-                Order drinks
-              </Link>
-            </div>
-
-            <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
-              {DRINKS.map((d) => (
-                <li key={d.name} style={{
-                  padding: '1.6rem 0',
-                  borderBottom: `1px solid ${SIMMER_INK}0f`,
-                  display: 'grid',
-                  gridTemplateColumns: '1fr auto',
-                  gap: '1.5rem',
-                  alignItems: 'baseline',
-                }}>
-                  <div>
-                    <p style={{ fontSize: '1.05rem', fontWeight: 500, letterSpacing: '0.02em' }}>{d.name}</p>
-                    <p style={{ marginTop: '0.3rem', fontSize: '0.9rem', fontStyle: 'italic', color: `${SIMMER_INK}77`, lineHeight: 1.5 }}>{d.desc}</p>
-                  </div>
-                  <span style={{ fontSize: '0.95rem', fontWeight: 600, color: SIMMER_GREEN, whiteSpace: 'nowrap' }}>
-                    Rs. {d.price.toLocaleString()}
-                  </span>
-                </li>
-              ))}
-            </ul>
-
-          </div>
-        </div>
-      </section>
-
-      {/* THE KITCHEN — food plates. Mains take time. */}
-      <section style={{ padding: 'clamp(4rem, 8vw, 7rem) 0', background: `${SIMMER_INK}04`, borderBottom: `1px solid ${SIMMER_INK}14` }}>
-        <div className="container">
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '3rem 5rem', alignItems: 'start' }}>
-            <div>
-              <p style={{ color: SIMMER_GOLD, fontWeight: 600, fontSize: '0.72rem', letterSpacing: '0.42em', textTransform: 'uppercase', marginBottom: '1.25rem' }}>
-                The kitchen
-              </p>
-              <h2 style={{ fontSize: 'clamp(2rem, 4.5vw, 3.25rem)', fontWeight: 300, letterSpacing: '0.04em', textTransform: 'uppercase', lineHeight: 1.1, margin: '0 0 1.5rem' }}>
-                Plates that<br /><em style={{ fontStyle: 'italic', fontWeight: 400, color: SIMMER_GOLD }}>take their time.</em>
-              </h2>
-              <p style={{ fontSize: '1rem', color: `${SIMMER_INK}cc`, lineHeight: 1.7, fontWeight: 300 }}>
-                Small plates to share, mains to linger over, desserts worth saving room for. The menu rotates with the season — these are tonight&rsquo;s features.
-              </p>
-              <Link href={`/brand/${concept.slug}/menu`} style={{
-                display: 'inline-block', marginTop: '1.75rem',
-                fontSize: '0.82rem', fontWeight: 600,
-                letterSpacing: '0.28em', textTransform: 'uppercase',
-                color: SIMMER_GREEN, textDecoration: 'none',
-                borderBottom: `1px solid ${SIMMER_GOLD}`,
-                paddingBottom: '0.2rem',
-              }}>
-                Full menu →
-              </Link>
-            </div>
-
-            <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
-              {PLATES.map((p) => (
-                <li key={p.name} style={{
-                  padding: '1.5rem 0',
-                  borderBottom: `1px solid ${SIMMER_INK}0f`,
-                  display: 'grid',
-                  gridTemplateColumns: '1fr auto',
-                  gap: '1.5rem',
-                  alignItems: 'baseline',
-                }}>
-                  <div>
-                    <p style={{ fontSize: '1.05rem', fontWeight: 500, letterSpacing: '0.01em' }}>{p.name}</p>
-                    <p style={{ marginTop: '0.3rem', fontSize: '0.9rem', fontStyle: 'italic', color: `${SIMMER_INK}77`, lineHeight: 1.45 }}>{p.desc}</p>
-                  </div>
-                  <span style={{ fontSize: '0.95rem', fontWeight: 600, color: SIMMER_GREEN, whiteSpace: 'nowrap' }}>
-                    Rs. {p.price.toLocaleString()}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        </div>
-      </section>
-
-      {/* THE ROOM — atmosphere, story, who we are */}
-      <section style={{ padding: 'clamp(4rem, 8vw, 7rem) 0', background: SIMMER_INK, color: SIMMER_CREAM }}>
-        <div className="container" style={{ maxWidth: '44rem', textAlign: 'center' }}>
-          <p style={{ color: SIMMER_GOLD, fontWeight: 600, fontSize: '0.72rem', letterSpacing: '0.42em', textTransform: 'uppercase', marginBottom: '1.5rem' }}>
-            The room
-          </p>
-          <h2 style={{ fontSize: 'clamp(2rem, 4vw, 3rem)', fontWeight: 300, letterSpacing: '0.04em', textTransform: 'uppercase', lineHeight: 1.15, margin: '0 0 2rem' }}>
-            Built for the kind of night<br /><em style={{ fontStyle: 'italic', fontWeight: 400, color: SIMMER_GOLD }}>that becomes a story.</em>
-          </h2>
-          <p style={{ fontSize: '1.05rem', lineHeight: 1.9, color: 'rgba(244,237,224,0.78)', fontWeight: 300 }}>
-            Low light. Hand-thrown ceramics. Music that doesn&rsquo;t shout you down. Twelve tables — no walk-ins on weekends. One menu, written each week with whatever&rsquo;s fresh. Service that lets the food do the talking.
-          </p>
-          <p style={{ marginTop: '1.5rem', fontSize: '1rem', lineHeight: 1.8, color: 'rgba(244,237,224,0.55)', fontWeight: 300, fontStyle: 'italic' }}>
-            Cooked in our kitchen. Served by our team. No third party between the plate and the table.
-          </p>
-
-          <div style={{ marginTop: '3rem', display: 'flex', justifyContent: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
-            {concept.reservationsEnabled !== false && (
-              <Link href={`/reserve/${concept.slug}`} style={{
-                padding: '1.1rem 2.25rem',
-                border: `1px solid ${SIMMER_GOLD}`,
-                background: SIMMER_GOLD,
-                color: SIMMER_INK,
-                fontWeight: 700,
-                fontSize: '0.88rem',
-                letterSpacing: '0.2em',
-                textTransform: 'uppercase',
-                textDecoration: 'none',
-              }}>
-                Reserve a table
-              </Link>
-            )}
-            <Link href={`/${concept.slug}`} style={{
-              padding: '1.1rem 2.25rem',
-              background: 'transparent',
-              color: SIMMER_CREAM,
-              border: `1px solid rgba(244,237,224,0.3)`,
-              fontWeight: 600,
-              fontSize: '0.88rem',
-              letterSpacing: '0.2em',
-              textTransform: 'uppercase',
-              textDecoration: 'none',
-            }}>
-              Order in
-            </Link>
-          </div>
-        </div>
-      </section>
-
-      {/* VOICES — Karachi regulars */}
-      <section style={{ padding: 'clamp(3rem, 7vw, 5rem) 0' }}>
-        <div className="container">
-          <div style={{ textAlign: 'center', marginBottom: '2.5rem' }}>
-            <p style={{ color: SIMMER_GOLD, fontWeight: 600, fontSize: '0.72rem', letterSpacing: '0.42em', textTransform: 'uppercase', marginBottom: '0.6rem' }}>
-              Regulars
+      {/* ── HERO ─────────────────────────────────────────────────────────────
+          The wordmark is the hero. Single orange signal sits as the date
+          stamp to its right. Tagline below — never above. */}
+      <section style={{ padding: 'clamp(5rem, 14vh, 9rem) clamp(1.5rem, 5vw, 3rem) clamp(3rem, 6vh, 4rem)' }}>
+        <div style={{ maxWidth: '64rem', margin: '0 auto' }}>
+          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '2rem', flexWrap: 'wrap' }}>
+            <h1 className="wordmark" style={{ fontSize: 'clamp(5rem, 18vw, 12rem)', margin: 0 }}>simmer</h1>
+            <p className="utility signal" style={{ fontSize: '0.78rem', margin: '1.5rem 0 0', whiteSpace: 'nowrap' }}>
+              {STAMP}
             </p>
-            <h2 style={{ fontSize: 'clamp(1.5rem, 3vw, 2.25rem)', fontWeight: 300, letterSpacing: '0.04em', textTransform: 'uppercase' }}>
-              What the table says.
-            </h2>
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '1.25rem' }}>
-            {[
-              { quote: '"The mocktails are better than most cocktails I\'ve had anywhere in Karachi. The Stone Rose should be illegal."', who: 'Zara A.', area: 'DHA Phase VI' },
-              { quote: '"Twelve-hour lamb. I don\'t have words. I just come back every two weeks."',                                       who: 'Bilal H.', area: 'Clifton'     },
-              { quote: '"First restaurant in the city where I genuinely don\'t miss alcohol. That\'s a compliment."',                      who: 'Maryam K.', area: 'PECHS'     },
-            ].map((r, i) => (
-              <div key={i} style={{
-                background: 'white',
-                border: `1px solid ${SIMMER_INK}14`,
-                padding: '2rem 1.75rem',
-                display: 'flex', flexDirection: 'column', gap: '1.25rem',
-              }}>
-                <div style={{ color: SIMMER_GOLD, letterSpacing: '0.1em', fontSize: '0.9rem' }} aria-label="5 out of 5 stars">★★★★★</div>
-                <p style={{ fontSize: '0.98rem', lineHeight: 1.65, fontStyle: 'italic', color: `${SIMMER_INK}dd` }}>{r.quote}</p>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.7rem', marginTop: 'auto' }}>
-                  <div style={{
-                    width: '2.25rem', height: '2.25rem', borderRadius: '50%',
-                    background: `${SIMMER_GOLD}22`, color: SIMMER_GREEN,
-                    fontWeight: 700, display: 'grid', placeItems: 'center', fontSize: '0.85rem',
-                  }}>
-                    {r.who[0]}
-                  </div>
-                  <div>
-                    <p style={{ fontSize: '0.85rem', fontWeight: 700 }}>{r.who}</p>
-                    <p style={{ fontSize: '0.78rem', color: `${SIMMER_INK}88` }}>{r.area}</p>
-                  </div>
-                </div>
-              </div>
-            ))}
+
+          <p className="amarante" style={{ fontSize: 'clamp(1.5rem, 2.4vw, 2rem)', lineHeight: 1.25, margin: '2rem 0 0', maxWidth: '36ch', color: 'var(--simmer-bone)' }}>
+            Small plates and mocktails. A dark room on Bukhari, served softly.
+          </p>
+
+          <p className="utility" style={{ marginTop: '2.25rem', fontSize: '0.7rem', opacity: 0.75 }}>simmer down.</p>
+        </div>
+      </section>
+
+      <hr className="rule" />
+
+      {/* ── WHAT WE ARE ─────────────────────────────────────────────────────
+          Caption voice. Plain truths, dry. One sentence per line. */}
+      <section style={{ padding: 'clamp(4rem, 9vh, 6rem) clamp(1.5rem, 5vw, 3rem)' }}>
+        <div style={{ maxWidth: '64rem', margin: '0 auto', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 'clamp(2rem, 5vw, 4rem)' }}>
+          <div>
+            <p className="utility" style={{ fontSize: '0.7rem', opacity: 0.7, marginBottom: '1.25rem' }}>the room</p>
+            <p style={{ fontSize: '1.05rem', lineHeight: 1.7, fontFamily: 'var(--simmer-body)', letterSpacing: '0.02em' }}>
+              Basement. Walnut, green marble, low light. Reservations are how we hold the room quiet.
+            </p>
+          </div>
+          <div>
+            <p className="utility" style={{ fontSize: '0.7rem', opacity: 0.7, marginBottom: '1.25rem' }}>the kitchen</p>
+            <p style={{ fontSize: '1.05rem', lineHeight: 1.7, fontFamily: 'var(--simmer-body)', letterSpacing: '0.02em' }}>
+              Small plates, large plates, desserts. Ingredient-driven. The menu changes when the kitchen changes.
+            </p>
+          </div>
+          <div>
+            <p className="utility" style={{ fontSize: '0.7rem', opacity: 0.7, marginBottom: '1.25rem' }}>the bar</p>
+            <p style={{ fontSize: '1.05rem', lineHeight: 1.7, fontFamily: 'var(--simmer-body)', letterSpacing: '0.02em' }}>
+              Mocktails only, on their own menu. Built like cocktails, without the alcohol.
+            </p>
           </div>
         </div>
       </section>
 
-      <CrossBrandStrip current={concept} concepts={concepts} accent={SIMMER_GOLD} kicker="GS Foods kitchens" heading="Other nights, other kitchens." />
-      <BottomCTA brandName={concept.name} brandSlug={concept.slug} accent={SIMMER_GOLD} />
+      <hr className="rule" />
+
+      {/* ── MENU CTA ────────────────────────────────────────────────────────
+          The menu lives at /brand/simmer/menu. This is the route in. */}
+      <section style={{ padding: 'clamp(5rem, 12vh, 8rem) clamp(1.5rem, 5vw, 3rem)' }}>
+        <div style={{ maxWidth: '54rem', margin: '0 auto', textAlign: 'center' }}>
+          <p className="utility" style={{ fontSize: '0.7rem', opacity: 0.7, marginBottom: '1.5rem' }}>the menu</p>
+          <p className="amarante" style={{ fontSize: 'clamp(2.2rem, 5vw, 3.6rem)', lineHeight: 1.05, margin: 0 }}>
+            ingredient-driven.<br />printed on the date you read it.
+          </p>
+          <p style={{ marginTop: '1.5rem', fontFamily: 'var(--simmer-body)', fontSize: '1.05rem', letterSpacing: '0.02em', opacity: 0.85, maxWidth: '36ch', marginLeft: 'auto', marginRight: 'auto' }}>
+            Today's menu is dated <span className="amarante signal" style={{ letterSpacing: '0.04em' }}>{STAMP}</span>. Read it before you sit.
+          </p>
+          <div style={{ marginTop: '2.5rem', display: 'flex', gap: '1rem', justifyContent: 'center', flexWrap: 'wrap' }}>
+            <Link href={`/brand/${concept.slug}/menu`} className="action action--signal">read the menu</Link>
+            <Link href={`/${concept.slug}`} className="action">order from simmer</Link>
+          </div>
+        </div>
+      </section>
+
+      <hr className="rule" />
+
+      {/* ── HOURS + RESERVATIONS + VISIT ─────────────────────────────────── */}
+      <section style={{ padding: 'clamp(4rem, 9vh, 6rem) clamp(1.5rem, 5vw, 3rem)' }}>
+        <div style={{ maxWidth: '64rem', margin: '0 auto', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'clamp(2rem, 5vw, 4rem)' }} className="simmer-visit-grid">
+          <style jsx>{`
+            @media (max-width: 700px) {
+              :global(.simmer-visit-grid) { grid-template-columns: 1fr !important; }
+            }
+          `}</style>
+
+          <div>
+            <p className="utility" style={{ fontSize: '0.7rem', opacity: 0.7, marginBottom: '1.5rem' }}>hours</p>
+            <div style={{ marginBottom: '1.25rem' }}>
+              <OpenStatusBadge slug={concept.slug} />
+            </div>
+            <div style={{ fontFamily: 'var(--simmer-body)', fontSize: '0.95rem', letterSpacing: '0.02em', opacity: 0.9 }}>
+              {hoursData?.hours && hoursData.hours.length > 0 ? (
+                <HoursGrid hours={hoursData.hours} />
+              ) : (
+                <p style={{ opacity: 0.7 }}>Hours not published yet.</p>
+              )}
+            </div>
+          </div>
+
+          <div>
+            <p className="utility" style={{ fontSize: '0.7rem', opacity: 0.7, marginBottom: '1.5rem' }}>visit</p>
+            <p className="amarante" style={{ fontSize: '1.6rem', lineHeight: 1.3, margin: '0 0 1rem' }}>
+              {concept.address ?? 'Bukhari Commercial, DHA Phase 6, Karachi'}
+            </p>
+            {concept.phone && (
+              <p style={{ fontFamily: 'var(--simmer-body)', fontSize: '1rem', letterSpacing: '0.02em', opacity: 0.85, margin: 0 }}>
+                <a href={`tel:${concept.phone.replace(/\s/g, '')}`} style={{ color: 'inherit', textDecoration: 'none', borderBottom: '1px solid rgba(237,230,211,0.3)' }}>
+                  {concept.phone}
+                </a>
+              </p>
+            )}
+            {reservations && (
+              <div style={{ marginTop: '2rem' }}>
+                <Link href={`/reserve/${concept.slug}`} className="action">book a table</Link>
+              </div>
+            )}
+          </div>
+        </div>
+      </section>
+
+      <hr className="rule" />
+
+      {/* ── CROSS-BRAND STRIP — reuse the existing component. The accent
+          comes through via the brand-accent override at the BrandShell. */}
+      <div style={{ background: 'var(--simmer-bone)', color: 'var(--simmer-green)' }}>
+        <CrossBrandStrip
+          current={concept}
+          concepts={concepts}
+          accent="var(--simmer-orange)"
+          kicker="other kitchens"
+          heading="more from the operator."
+        />
+      </div>
+
+      {/* ── SIGN-OFF — the brand's closing line ───────────────────────── */}
+      <section style={{ padding: 'clamp(5rem, 12vh, 8rem) clamp(1.5rem, 5vw, 3rem)', textAlign: 'center' }}>
+        <p className="wordmark" style={{ fontSize: 'clamp(3.5rem, 10vw, 6rem)', margin: 0 }}>
+          simmer down<span className="signal">.</span>
+        </p>
+      </section>
     </div>
   )
 }
