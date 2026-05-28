@@ -30,74 +30,11 @@ export function StaxLayout({ concept, concepts }: Props) {
   const story = brandStory(concept.slug)
   const reservations = concept.reservationsEnabled !== false
 
+  // Classes (.stax-page, .stax-mono, .stax-spec, .stax-rule, .stax-line,
+  // .stax-display, .stax-btn, .stax-btn-ghost, .stax-grid-bg,
+  // .stax-visit-grid) live in globals.css.
   return (
     <div className="stax-page">
-      <style jsx>{`
-        .stax-page {
-          background: var(--stax-paper);
-          color: var(--stax-ink);
-          font-family: var(--stax-display);
-        }
-        .stax-page :global(.stax-mono) {
-          font-family: var(--stax-mono);
-          letter-spacing: 0.02em;
-        }
-        .stax-page :global(.stax-spec) {
-          font-family: var(--stax-mono);
-          font-size: 0.72rem;
-          letter-spacing: 0.18em;
-          text-transform: uppercase;
-          color: var(--stax-purple);
-        }
-        .stax-page :global(.stax-rule) {
-          height: 1px;
-          background: rgba(19,19,24,0.12);
-          border: 0;
-          margin: 0;
-        }
-        .stax-page :global(.stax-line) {
-          height: 1px;
-          background: var(--stax-purple);
-          border: 0;
-          width: 3rem;
-          margin: 0;
-        }
-        .stax-page :global(.stax-display) {
-          font-family: var(--stax-display);
-          font-weight: 700;
-          letter-spacing: -0.025em;
-          line-height: 1.02;
-        }
-        .stax-page :global(.stax-btn) {
-          display: inline-flex;
-          align-items: center;
-          gap: 0.65rem;
-          font-family: var(--stax-mono);
-          font-size: 0.78rem;
-          letter-spacing: 0.18em;
-          text-transform: uppercase;
-          padding: 1rem 1.6rem;
-          background: var(--stax-purple);
-          color: var(--stax-paper);
-          border: 0;
-          text-decoration: none;
-          transition: background 180ms ease;
-        }
-        .stax-page :global(.stax-btn:hover) { background: var(--stax-purple-deep); }
-        .stax-page :global(.stax-btn-ghost) {
-          background: transparent;
-          color: var(--stax-ink);
-          border: 1px solid rgba(19,19,24,0.25);
-        }
-        .stax-page :global(.stax-btn-ghost:hover) { border-color: var(--stax-purple); color: var(--stax-purple); }
-        .stax-page :global(.stax-grid-bg) {
-          background-image:
-            linear-gradient(to right, rgba(19,19,24,0.04) 1px, transparent 1px),
-            linear-gradient(to bottom, rgba(19,19,24,0.04) 1px, transparent 1px);
-          background-size: 32px 32px;
-        }
-      `}</style>
-
       {concept.announcementBanner && (
         <div role="status" style={{ background: 'var(--stax-ink)', color: 'var(--stax-paper)', padding: '0.7rem 1.5rem', textAlign: 'center', fontFamily: 'var(--stax-mono)', fontSize: '0.78rem', letterSpacing: '0.18em', textTransform: 'uppercase' }}>
           {concept.announcementBanner}
@@ -176,21 +113,15 @@ export function StaxLayout({ concept, concepts }: Props) {
       {/* ── HOURS + LOCATION ── */}
       <section style={{ padding: 'clamp(4rem, 9vh, 6rem) clamp(1.5rem, 5vw, 3rem)' }}>
         <div style={{ maxWidth: '76rem', margin: '0 auto', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'clamp(2rem, 5vw, 4rem)' }} className="stax-visit-grid">
-          <style jsx>{`
-            @media (max-width: 700px) {
-              :global(.stax-visit-grid) { grid-template-columns: 1fr !important; }
-            }
-          `}</style>
-
           <div>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: '2rem', marginBottom: '2rem' }}>
               <span className="stax-spec">{SPECS[3]}</span>
               <h2 className="stax-display" style={{ fontSize: 'clamp(1.6rem, 3vw, 2.2rem)', margin: 0 }}>Hours.</h2>
             </div>
-            <div style={{ marginBottom: '1.5rem' }}><OpenStatusBadge slug={concept.slug} /></div>
+            <div style={{ marginBottom: '1.5rem' }}><OpenStatusBadge hoursData={hoursData} /></div>
             <div className="stax-mono" style={{ fontSize: '0.95rem' }}>
               {hoursData?.hours && hoursData.hours.length > 0 ? (
-                <HoursGrid hours={hoursData.hours} />
+                <HoursGrid hoursData={hoursData} />
               ) : (
                 <p style={{ opacity: 0.6 }}>Hours not published yet.</p>
               )}

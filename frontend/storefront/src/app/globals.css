@@ -49,6 +49,75 @@
   --stax-display:       'Space Grotesk', 'Inter', sans-serif;
   --stax-mono:          'JetBrains Mono', 'Courier New', monospace;
 
+  /* ── Per-brand microsite component classes (moved out of <style jsx>
+        because Next.js standalone build doesn't transpile styled-jsx in
+        app-router server boundaries reliably) ─────────────────────────── */
+}
+
+/* simmer */
+.simmer-page { background: var(--simmer-green); color: var(--simmer-bone); font-family: var(--simmer-body); letter-spacing: 0.04em; }
+.simmer-page .amarante  { font-family: var(--simmer-display); letter-spacing: 0.02em; }
+.simmer-page .utility   { font-family: var(--simmer-body); letter-spacing: 0.28em; text-transform: lowercase; }
+.simmer-page .signal    { color: var(--simmer-orange); }
+.simmer-page .rule      { height: 1px; background: rgba(237,230,211,0.2); border: 0; margin: 0; }
+.simmer-page .wordmark  { font-family: var(--simmer-display); font-weight: 400; line-height: 1; }
+.simmer-page .action {
+  display: inline-block; font-family: var(--simmer-body);
+  letter-spacing: 0.28em; text-transform: lowercase;
+  padding: 0.95rem 1.6rem; border: 1px solid var(--simmer-bone);
+  color: var(--simmer-bone); background: transparent;
+  text-decoration: none; font-size: 0.78rem;
+  transition: background 180ms ease, color 180ms ease;
+}
+.simmer-page .action:hover { background: var(--simmer-bone); color: var(--simmer-green); }
+.simmer-page .action--signal { border-color: var(--simmer-orange); color: var(--simmer-orange); }
+.simmer-page .action--signal:hover { background: var(--simmer-orange); color: var(--simmer-green); }
+@media (max-width: 700px) { .simmer-visit-grid { grid-template-columns: 1fr !important; } }
+
+/* stax */
+.stax-page { background: var(--stax-paper); color: var(--stax-ink); font-family: var(--stax-display); }
+.stax-page .stax-mono { font-family: var(--stax-mono); letter-spacing: 0.02em; }
+.stax-page .stax-spec { font-family: var(--stax-mono); font-size: 0.72rem; letter-spacing: 0.18em; text-transform: uppercase; color: var(--stax-purple); }
+.stax-page .stax-rule { height: 1px; background: rgba(19,19,24,0.12); border: 0; margin: 0; }
+.stax-page .stax-line { height: 1px; background: var(--stax-purple); border: 0; width: 3rem; margin: 0; }
+.stax-page .stax-display { font-family: var(--stax-display); font-weight: 700; letter-spacing: -0.025em; line-height: 1.02; }
+.stax-page .stax-btn {
+  display: inline-flex; align-items: center; gap: 0.65rem;
+  font-family: var(--stax-mono); font-size: 0.78rem;
+  letter-spacing: 0.18em; text-transform: uppercase;
+  padding: 1rem 1.6rem; background: var(--stax-purple); color: var(--stax-paper);
+  border: 0; text-decoration: none; transition: background 180ms ease;
+}
+.stax-page .stax-btn:hover { background: var(--stax-purple-deep); }
+.stax-page .stax-btn-ghost { background: transparent; color: var(--stax-ink); border: 1px solid rgba(19,19,24,0.25); }
+.stax-page .stax-btn-ghost:hover { border-color: var(--stax-purple); color: var(--stax-purple); }
+.stax-page .stax-grid-bg {
+  background-image:
+    linear-gradient(to right, rgba(19,19,24,0.04) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(19,19,24,0.04) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+@media (max-width: 700px) { .stax-visit-grid { grid-template-columns: 1fr !important; } }
+
+/* flipd */
+.flipd-page { background: var(--flipd-cream); color: var(--flipd-ink); font-family: 'Inter', system-ui, sans-serif; }
+.flipd-page .flipd-display { font-family: 'Bricolage Grotesque', 'Inter', sans-serif; font-weight: 800; letter-spacing: -0.035em; line-height: 0.98; }
+.flipd-page .flipd-eyebrow { font-family: 'Inter', sans-serif; font-size: 0.72rem; font-weight: 700; letter-spacing: 0.24em; text-transform: uppercase; color: var(--flipd-sky-deep); }
+.flipd-page .flipd-btn {
+  display: inline-flex; align-items: center; gap: 0.6rem;
+  font-family: 'Inter', sans-serif; font-size: 0.95rem; font-weight: 700;
+  padding: 1rem 1.75rem; background: var(--flipd-sky); color: var(--flipd-ink);
+  border: 0; border-radius: 999px; text-decoration: none;
+  transition: background 180ms ease, transform 180ms ease;
+}
+.flipd-page .flipd-btn:hover { background: var(--flipd-sky-deep); color: var(--flipd-cream); transform: translateY(-1px); }
+.flipd-page .flipd-btn-ghost { background: transparent; color: var(--flipd-ink); border: 1.5px solid var(--flipd-ink); }
+.flipd-page .flipd-btn-ghost:hover { background: var(--flipd-ink); color: var(--flipd-cream); }
+.flipd-page .flipd-card { background: var(--flipd-pale); border: 1.5px solid var(--flipd-ink); border-radius: 1.25rem; padding: 2rem; }
+@media (prefers-reduced-motion: reduce) { .flipd-page .flipd-btn:hover { transform: none; } }
+@media (max-width: 700px) { .flipd-visit-grid { grid-template-columns: 1fr !important; } }
+
+:root {
   /* ── Flipd brand tokens (cool diner: pale blue + sky accent) ───────────── */
   --flipd-sky:          #3AA8FF;
   --flipd-sky-deep:     #1A78D6;
