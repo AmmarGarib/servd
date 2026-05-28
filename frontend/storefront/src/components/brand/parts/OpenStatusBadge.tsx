@@ -147,7 +147,7 @@ export function OpenStatusBadge({ hoursData, accentColor, size = 'md' }: BadgePr
   }
 
   if (status.open) {
-    const green = accentColor ?? '#22c55e'
+    const green = accentColor ?? 'var(--servd-green)'
     return (
       <span style={{
         display: 'inline-flex', alignItems: 'center', gap: '0.3rem',
@@ -197,7 +197,7 @@ export function HoursGrid({ hoursData, accentColor }: GridProps) {
     setTodayDay(pktNow().day)
   }, [])
 
-  const accent = accentColor ?? '#22c55e'
+  const accent = accentColor ?? 'var(--servd-green)'
 
   if (hoursData.hours.length === 0) return null
 

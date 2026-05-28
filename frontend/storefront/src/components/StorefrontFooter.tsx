@@ -8,7 +8,7 @@ import { KineticShape } from './kinetic/KineticShape'
 // concept rows + microsites land.
 const BRANDS = [
   { slug: 'stax',   name: 'Stax',   accent: '#FF6B35' },
-  { slug: 'simmer', name: 'Simmer', accent: '#22c55e' },
+  { slug: 'simmer', name: 'Simmer', accent: 'var(--servd-green)' },
   { slug: 'flipd',  name: 'Flipd',  accent: '#F5B700' },
 ]
 

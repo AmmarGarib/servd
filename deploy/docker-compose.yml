@@ -34,7 +34,10 @@ services:
       API_URL: "https://api.servd.garibsons.app"
       WEB_URL: "https://admin.servd.garibsons.app"
       STOREFRONT_URL: "https://app.servd.garibsons.app"
-    command: sh -c "npx prisma migrate deploy && node dist/index.js"
+    # tsc outputs to dist/src/index.js (rootDir is backend/src/), not
+    # dist/index.js. Previous override pointed at the wrong path and the
+    # api crash-looped on every start.
+    command: sh -c "npx prisma migrate deploy && node dist/src/index.js"
     networks:
       - servd_net
 

@@ -149,7 +149,7 @@ export default function CheckoutPage() {
       </div>
       <Link href={`/${slug}`}
         className="mt-1 rounded-2xl font-black px-8 py-4 text-sm transition-all hover:scale-[1.02] active:scale-[0.98]"
-        style={{ background: 'var(--servd-green)', color: '#0a0a0a', boxShadow: '0 6px 18px rgba(34,197,94,0.28)' }}>
+        style={{ background: 'var(--servd-green)', color: '#0a0a0a', boxShadow: '0 6px 18px rgba(30,58,138,0.28)' }}>
         Back to Menu
       </Link>
     </main>
@@ -386,7 +386,7 @@ export default function CheckoutPage() {
             ))}
           </div>
           {/* How are you getting it? */}
-          <div className="rounded-xl p-3.5 mb-3" style={{ background: 'rgba(34,197,94,0.06)', border: '1px solid rgba(34,197,94,0.25)' }}>
+          <div className="rounded-xl p-3.5 mb-3" style={{ background: 'rgba(30,58,138,0.06)', border: '1px solid rgba(30,58,138,0.25)' }}>
             <p className="text-xs font-bold tracking-wider uppercase mb-2" style={{ color: 'var(--servd-green-dark)' }}>How are you getting it?</p>
             <div className="flex gap-2 mb-2">
               {(['pickup', 'curbside', 'delivery'] as const).map((m) => (
@@ -443,7 +443,7 @@ export default function CheckoutPage() {
                           }}
                           className="w-full flex items-center gap-2.5 rounded-lg px-3 py-2 text-left transition-all"
                           style={isSelected
-                            ? { background: 'rgba(34,197,94,0.1)', border: '1.5px solid var(--servd-green)' }
+                            ? { background: 'rgba(30,58,138,0.1)', border: '1.5px solid var(--servd-green)' }
                             : { background: '#fff', border: '1px solid rgba(0,0,0,0.08)' }}>
                           <span className="text-base shrink-0">📍</span>
                           <div className="flex-1 min-w-0">
@@ -451,7 +451,7 @@ export default function CheckoutPage() {
                               <span className="font-bold text-xs" style={{ color: 'var(--servd-ink)' }}>{addr.label}</span>
                               {addr.isDefault && (
                                 <span className="text-[9px] font-black uppercase tracking-wide px-1.5 py-0.5 rounded-full"
-                                  style={{ background: 'rgba(34,197,94,0.12)', color: 'var(--servd-green-dark)' }}>Default</span>
+                                  style={{ background: 'rgba(30,58,138,0.12)', color: 'var(--servd-green-dark)' }}>Default</span>
                               )}
                             </div>
                             <p className="text-[11px] truncate mt-0.5" style={{ color: 'var(--servd-mute)' }}>{addr.address}</p>
@@ -477,7 +477,7 @@ export default function CheckoutPage() {
                       }}
                       className="w-full flex items-center gap-2 rounded-lg px-3 py-2 text-left transition-all"
                       style={showNewAddressInput
-                        ? { background: 'rgba(34,197,94,0.1)', border: '1.5px solid var(--servd-green)' }
+                        ? { background: 'rgba(30,58,138,0.1)', border: '1.5px solid var(--servd-green)' }
                         : { background: '#fff', border: '1px dashed rgba(0,0,0,0.12)' }}>
                       <span className="text-base shrink-0">✏️</span>
                       <span className="text-xs font-semibold" style={{ color: 'var(--servd-ink)' }}>Enter a different address</span>
@@ -506,7 +506,7 @@ export default function CheckoutPage() {
           </div>
 
           {/* Tip the rider */}
-          <div className="rounded-xl p-3.5 mb-3" style={{ background: 'rgba(34,197,94,0.08)', border: '1px solid rgba(34,197,94,0.2)' }}>
+          <div className="rounded-xl p-3.5 mb-3" style={{ background: 'rgba(30,58,138,0.08)', border: '1px solid rgba(30,58,138,0.2)' }}>
             <p className="text-xs font-bold tracking-wider uppercase text-[color:var(--servd-green-dark)] mb-2">Tip the rider</p>
             <div className="flex flex-wrap gap-1.5 mb-2">
               {(['none', '5', '10', '15', '20', 'custom'] as const).map((m) => (
@@ -566,7 +566,7 @@ export default function CheckoutPage() {
                 disabled={giftCardStatus === 'checking' || !giftCard.trim()}
                 className="shrink-0 rounded-lg px-3 py-1.5 text-xs font-black transition-all disabled:opacity-40"
                 style={{
-                  background: giftCardStatus === 'valid' ? '#16a34a' : 'rgba(0,0,0,0.07)',
+                  background: giftCardStatus === 'valid' ? 'var(--servd-green-dark)' : 'rgba(0,0,0,0.07)',
                   color: giftCardStatus === 'valid' ? '#fff' : 'var(--servd-ink)',
                   border: '1px solid rgba(0,0,0,0.08)',
                 }}>
@@ -574,7 +574,7 @@ export default function CheckoutPage() {
               </button>
             </div>
             {giftCardStatus === 'valid' && (
-              <p className="text-xs font-semibold mt-1.5" style={{ color: '#16a34a' }}>
+              <p className="text-xs font-semibold mt-1.5" style={{ color: 'var(--servd-green-dark)' }}>
                 Balance: {fmt(giftCardBalance)}
                 {giftCardDeduction > 0 && ` · saving ${fmt(giftCardDeduction)} on this order`}
               </p>
@@ -591,19 +591,19 @@ export default function CheckoutPage() {
             <PriceLine label="Subtotal"    value={fmt(subtotalCents())} />
             <PriceLine label="Tax (17% GST)" value={fmt(taxCents())} />
             {tipCents > 0 && (
-              <PriceLine label="Tip" value={fmt(tipCents)} accent="#16a34a" />
+              <PriceLine label="Tip" value={fmt(tipCents)} accent="var(--servd-green-dark)" />
             )}
             {loyaltyDeduction > 0 && (
               <PriceLine label={`Points (${loyaltyPts} pts)`} value={`−${fmt(loyaltyDeduction)}`} accent="var(--servd-green-dark)" />
             )}
             {walletDeduction > 0 && (
-              <PriceLine label="Wallet credit" value={`−${fmt(walletDeduction)}`} accent="#16a34a" />
+              <PriceLine label="Wallet credit" value={`−${fmt(walletDeduction)}`} accent="var(--servd-green-dark)" />
             )}
             {promoDiscountCents > 0 && (
-              <PriceLine label={`Promo (${promoCode.trim().toUpperCase()})`} value={`−${fmt(promoDiscountCents)}`} accent="#16a34a" />
+              <PriceLine label={`Promo (${promoCode.trim().toUpperCase()})`} value={`−${fmt(promoDiscountCents)}`} accent="var(--servd-green-dark)" />
             )}
             {giftCardDeduction > 0 && (
-              <PriceLine label={`Gift card (${giftCard.trim().toUpperCase()})`} value={`−${fmt(giftCardDeduction)}`} accent="#16a34a" />
+              <PriceLine label={`Gift card (${giftCard.trim().toUpperCase()})`} value={`−${fmt(giftCardDeduction)}`} accent="var(--servd-green-dark)" />
             )}
             <div className="flex justify-between items-center pt-2.5"
               style={{ borderTop: '1px solid rgba(0,0,0,0.08)' }}>
@@ -642,7 +642,7 @@ export default function CheckoutPage() {
                   disabled={promoStatus === 'checking' || !promoCode.trim()}
                   className="shrink-0 rounded-xl px-4 py-3 text-sm font-black transition-all disabled:opacity-40"
                   style={{
-                    background: promoStatus === 'valid' ? '#16a34a' : 'var(--servd-green-dark)',
+                    background: promoStatus === 'valid' ? 'var(--servd-green-dark)' : 'var(--servd-green-dark)',
                     color: '#0a0a0a',
                   }}
                 >
@@ -650,7 +650,7 @@ export default function CheckoutPage() {
                 </button>
               </div>
               {promoStatus === 'valid' && promoMessage && (
-                <p className="text-xs font-semibold mt-1.5" style={{ color: '#16a34a' }}>
+                <p className="text-xs font-semibold mt-1.5" style={{ color: 'var(--servd-green-dark)' }}>
                   ✓ {promoMessage} · saving {fmt(promoDiscountCents)}
                 </p>
               )}
@@ -673,7 +673,7 @@ export default function CheckoutPage() {
                 }}>
                 <div className="flex items-center gap-3">
                   <div className="h-11 w-11 rounded-xl flex items-center justify-center shrink-0"
-                    style={{ background: useWallet ? 'rgba(34,197,94,0.12)' : 'var(--servd-surface)', color: useWallet ? 'var(--servd-green-dark)' : 'var(--servd-mute)' }}>
+                    style={{ background: useWallet ? 'rgba(30,58,138,0.12)' : 'var(--servd-surface)', color: useWallet ? 'var(--servd-green-dark)' : 'var(--servd-mute)' }}>
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                       <path d="M21 7H3a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h18a1 1 0 0 0 1-1V8a1 1 0 0 0-1-1z"/>
                       <path d="M17 14a2 2 0 1 1 0-4 2 2 0 0 1 0 4z"/>
@@ -795,7 +795,7 @@ export default function CheckoutPage() {
                   {/* Keenu redirect note */}
                   {isSelected && opt.id === 'keenu' && (
                     <div className="mt-1.5 mx-1 rounded-lg px-3 py-2"
-                      style={{ background: 'rgba(34,197,94,0.06)', border: '1px solid rgba(34,197,94,0.2)' }}>
+                      style={{ background: 'rgba(30,58,138,0.06)', border: '1px solid rgba(30,58,138,0.2)' }}>
                       <p className="text-[11px]" style={{ color: 'var(--servd-green-dark)' }}>
                         After placing your order you&rsquo;ll be redirected to Keenu&rsquo;s secure payment page to complete payment by card.
                       </p>
@@ -825,7 +825,7 @@ export default function CheckoutPage() {
           style={{
             background: loading ? 'var(--servd-line)' : 'var(--servd-green)',
             color: loading ? 'var(--servd-mute)' : '#fff',
-            boxShadow: loading ? 'none' : '0 0 32px rgba(34,197,94,0.28)',
+            boxShadow: loading ? 'none' : '0 0 32px rgba(30,58,138,0.28)',
           }}>
           <span>{ctaLabel}</span>
           <span>{fmt(displayTotal)}</span>
@@ -887,7 +887,7 @@ function PremiumInput({ type, value, onChange, placeholder, autoFocus }: {
       style={{ background: '#fff', border: '1.5px solid rgba(0,0,0,0.1)', color: 'var(--servd-ink)' }}
       onFocus={e => {
         e.currentTarget.style.borderColor = 'var(--servd-green)'
-        e.currentTarget.style.boxShadow   = '0 0 0 3px rgba(34,197,94,0.28)'
+        e.currentTarget.style.boxShadow   = '0 0 0 3px rgba(30,58,138,0.28)'
       }}
       onBlur={e => {
         e.currentTarget.style.borderColor = 'rgba(0,0,0,0.1)'
@@ -909,7 +909,7 @@ function PremiumTextarea({ value, onChange, placeholder, rows }: {
       style={{ background: '#fff', border: '1.5px solid rgba(0,0,0,0.1)', color: 'var(--servd-ink)' }}
       onFocus={e => {
         e.currentTarget.style.borderColor = 'var(--servd-green)'
-        e.currentTarget.style.boxShadow   = '0 0 0 3px rgba(34,197,94,0.28)'
+        e.currentTarget.style.boxShadow   = '0 0 0 3px rgba(30,58,138,0.28)'
       }}
       onBlur={e => {
         e.currentTarget.style.borderColor = 'rgba(0,0,0,0.1)'
