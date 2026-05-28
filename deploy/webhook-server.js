@@ -61,13 +61,19 @@ async function runDeploy() {
       console.log('\n  [OK] .env synced to deploy/.env.production');
     }
 
-    // Step 2: git pull
-    console.log('\n  [1/2] git pull...');
-    await run('git', ['pull'], PROJECT_DIR);
+    // Step 2: hard-reset working tree to origin/main. Using `git pull` left
+    // us stuck when the local checkout was on a different branch or had a
+    // dirty state — silently "up to date" while origin/main had new commits.
+    console.log('\n  [1/2] git fetch + reset --hard origin/main...');
+    await run('git', ['fetch', 'origin', 'main'], PROJECT_DIR);
+    await run('git', ['reset', '--hard', 'origin/main'], PROJECT_DIR);
+    await run('git', ['log', '--oneline', '-1'], PROJECT_DIR);
 
-    // Step 3: docker compose up --build (cache makes this fast for unchanged services)
-    console.log('\n  [2/2] docker compose up --build...');
-    await run('docker', ['compose', 'up', '-d', '--build'], DEPLOY_DIR);
+    // Step 3: rebuild + force-recreate so env changes and source updates
+    // both take effect, even if docker would otherwise reuse a cached image
+    // or skip a container restart.
+    console.log('\n  [2/2] docker compose up --build --force-recreate...');
+    await run('docker', ['compose', 'up', '-d', '--build', '--force-recreate'], DEPLOY_DIR);
 
     lastDeployStatus = 'success';
     console.log('\n' + '═'.repeat(56));
