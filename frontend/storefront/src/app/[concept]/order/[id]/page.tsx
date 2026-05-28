@@ -104,7 +104,7 @@ export default function OrderStatusPage() {
       </div>
       <Link href={`/${slug}`}
         className="rounded-2xl font-black px-8 py-4 text-sm transition-transform active:scale-[0.98]"
-        style={{ background: 'var(--servd-green)', color: '#0a0a0a', boxShadow: '0 6px 18px rgba(30,58,138,0.28)' }}>
+        style={{ background: 'var(--servd-green)', color: 'white', boxShadow: '0 6px 18px rgba(30,58,138,0.28)' }}>
         Back to menu
       </Link>
     </main>
@@ -388,7 +388,7 @@ function CurbsideArrivedButton({ orderId, onArrived }: { orderId: string; onArri
     <button onClick={tap} disabled={busy}
       className="flex items-center justify-center gap-2 w-full rounded-2xl py-4 font-black text-sm tracking-wide transition-transform active:scale-[0.98]"
       style={{
-        background: 'var(--servd-green)', color: '#0a0a0a',
+        background: 'var(--servd-green)', color: 'white',
         border: '1px solid var(--servd-green-dark)',
         boxShadow: '0 6px 18px rgba(30,58,138,0.28)',
         opacity: busy ? 0.6 : 1,
