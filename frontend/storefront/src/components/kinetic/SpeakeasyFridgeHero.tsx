@@ -90,14 +90,14 @@ export function SpeakeasyFridgeHero({
             something it isn't. */}
         <div aria-hidden="true" style={{
           position: 'absolute', inset: 0,
-          background: '#10141a',
+          background: '#1B2D2A',
         }} />
         {/* Faint blueprint grid — 40px squares, thin gold-cream stroke */}
         <div aria-hidden="true" style={{
           position: 'absolute', inset: 0,
           backgroundImage: `
-            linear-gradient(rgba(201,169,97,0.06) 1px, transparent 1px),
-            linear-gradient(90deg, rgba(201,169,97,0.06) 1px, transparent 1px)
+            linear-gradient(rgba(237,230,211,0.06) 1px, transparent 1px),
+            linear-gradient(90deg, rgba(237,230,211,0.06) 1px, transparent 1px)
           `,
           backgroundSize: '40px 40px, 40px 40px',
         }} />
@@ -106,8 +106,8 @@ export function SpeakeasyFridgeHero({
         <div aria-hidden="true" style={{
           position: 'absolute', inset: 0,
           backgroundImage: `
-            linear-gradient(rgba(201,169,97,0.10) 1px, transparent 1px),
-            linear-gradient(90deg, rgba(201,169,97,0.10) 1px, transparent 1px)
+            linear-gradient(rgba(237,230,211,0.10) 1px, transparent 1px),
+            linear-gradient(90deg, rgba(237,230,211,0.10) 1px, transparent 1px)
           `,
           backgroundSize: '200px 200px, 200px 200px',
         }} />
@@ -122,7 +122,7 @@ export function SpeakeasyFridgeHero({
             scale. Sells the "this is a deliberate schematic" framing. */}
         <div style={{
           position: 'absolute', top: '3vh', left: '4vw',
-          color: 'rgba(216,200,154,0.7)',
+          color: 'rgba(237,230,211,0.7)',
           fontFamily: 'var(--font-display)',
           fontSize: '0.62rem',
           letterSpacing: '0.32em',
@@ -130,14 +130,14 @@ export function SpeakeasyFridgeHero({
           zIndex: 6,
           textTransform: 'uppercase',
         }}>
-          <p style={{ color: 'rgba(216,200,154,0.45)' }}>· PROJECT</p>
-          <p style={{ color: '#d8c89a', fontWeight: 700 }}>{brandName.toUpperCase()} · BELOW STAX</p>
-          <p style={{ color: 'rgba(216,200,154,0.45)', marginTop: '0.6rem' }}>· SHEET A-02 / ENTRANCE</p>
+          <p style={{ color: 'rgba(237,230,211,0.45)' }}>· PROJECT</p>
+          <p style={{ color: '#EDE6D3', fontWeight: 700 }}>{brandName.toUpperCase()} · BELOW STAX</p>
+          <p style={{ color: 'rgba(237,230,211,0.45)', marginTop: '0.6rem' }}>· SHEET A-02 / ENTRANCE</p>
         </div>
         {/* TITLE BLOCK — top-right corner: scale + revision */}
         <div style={{
           position: 'absolute', top: '3vh', right: '4vw',
-          color: 'rgba(216,200,154,0.7)',
+          color: 'rgba(237,230,211,0.7)',
           fontFamily: 'var(--font-display)',
           fontSize: '0.62rem',
           letterSpacing: '0.32em',
@@ -146,9 +146,9 @@ export function SpeakeasyFridgeHero({
           textTransform: 'uppercase',
           textAlign: 'right',
         }}>
-          <p style={{ color: 'rgba(216,200,154,0.45)' }}>SCALE 1 : 24</p>
-          <p style={{ color: 'rgba(216,200,154,0.45)' }}>REV · {new Date().getFullYear()}.05</p>
-          <p style={{ color: '#d8c89a', fontWeight: 700, marginTop: '0.6rem' }}>↓ SCROLL · OPEN</p>
+          <p style={{ color: 'rgba(237,230,211,0.45)' }}>SCALE 1 : 24</p>
+          <p style={{ color: 'rgba(237,230,211,0.45)' }}>REV · {new Date().getFullYear()}.05</p>
+          <p style={{ color: '#EDE6D3', fontWeight: 700, marginTop: '0.6rem' }}>↓ SCROLL · OPEN</p>
         </div>
 
         {/* THE DOOR ASSEMBLY ──────────────────────────────────────────
@@ -285,17 +285,18 @@ export function SpeakeasyFridgeHero({
           </div>
         </div>
 
-        {/* Reveal layer — once door is mostly open (~progress > 0.65), the
-            brand wordmark + the Reserve/Menu CTAs fade in INSIDE the
-            cooler. Lifted up into the band where the CRAFTED/ELEGANT
-            captions used to live so the CTAs sit on the cooler interior
-            instead of dangling below the frame on mobile. */}
+        {/* Reveal layer — once door is mostly open (~progress > 0.65),
+            the brand wordmark + the Reserve/Menu CTAs fade in INSIDE
+            the cooler. Sits at top 48% so the wordmark sits just under
+            the RESERVATIONS headline (38%) and the two pills clear the
+            "open 7pm" floor sticker at bottom 4% even on a 390px-tall
+            mobile cooler. */}
         <div
           style={{
             position: 'absolute',
-            top: '60%', left: 0, right: 0,
+            top: '48%', left: 0, right: 0,
             display: 'flex', flexDirection: 'column', alignItems: 'center',
-            gap: '1.1rem',
+            gap: '0.9rem',
             opacity: 'calc(max(0, var(--scroll-progress, 0) - 0.65) * 3)',
             transform: 'translateY(calc((1 - var(--scroll-progress, 0)) * 20px))',
             transition: 'opacity 100ms linear',
@@ -331,7 +332,7 @@ export function SpeakeasyFridgeHero({
           position: 'absolute',
           bottom: '3vh', left: '4vw', right: '4vw',
           display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
-          color: 'rgba(216,200,154,0.55)',
+          color: 'rgba(237,230,211,0.55)',
           fontFamily: 'var(--font-display)',
           fontSize: '0.6rem',
           letterSpacing: '0.32em',
@@ -364,10 +365,10 @@ export function SpeakeasyFridgeHero({
 // plate, manufacturer plate) but rendered as line art with annotations.
 
 function BlueprintCoolerDoor({ accent }: { accent: string }) {
-  const line   = 'rgba(216,200,154,0.85)'   // primary line colour
-  const fine   = 'rgba(216,200,154,0.45)'   // thinner reference lines + dimension ticks
-  const dim    = 'rgba(216,200,154,0.35)'   // dimension extension lines
-  const label  = '#d8c89a'                  // callout label text
+  const line   = 'rgba(237,230,211,0.85)'   // primary line colour
+  const fine   = 'rgba(237,230,211,0.45)'   // thinner reference lines + dimension ticks
+  const dim    = 'rgba(237,230,211,0.35)'   // dimension extension lines
+  const label  = '#EDE6D3'                  // callout label text
   // Viewbox is 600 × 880 — door aspect roughly 1 : 1.47, matching a
   // real walk-in cooler door (e.g. 800mm wide × 1900mm tall).
   return (
@@ -385,7 +386,7 @@ function BlueprintCoolerDoor({ accent }: { accent: string }) {
       {/* ── DOOR PANEL — the outer rectangle ─────────────────────── */}
       <rect
         x="40" y="40" width="520" height="800"
-        fill="rgba(216,200,154,0.04)"
+        fill="rgba(237,230,211,0.04)"
         stroke={line}
         strokeWidth="2"
         rx="4"
@@ -411,7 +412,7 @@ function BlueprintCoolerDoor({ accent }: { accent: string }) {
       {[150, 440, 690].map((y, i) => (
         <g key={i}>
           {/* Hinge body */}
-          <rect x="24" y={y} width="40" height="56" fill="rgba(216,200,154,0.05)" stroke={line} strokeWidth="1.4" rx="2" />
+          <rect x="24" y={y} width="40" height="56" fill="rgba(237,230,211,0.05)" stroke={line} strokeWidth="1.4" rx="2" />
           {/* Two knuckle circles */}
           <circle cx="44" cy={y + 16} r="6" fill="none" stroke={line} strokeWidth="1.2" />
           <circle cx="44" cy={y + 40} r="6" fill="none" stroke={line} strokeWidth="1.2" />
@@ -434,7 +435,7 @@ function BlueprintCoolerDoor({ accent }: { accent: string }) {
 
       {/* ── VIEWING WINDOW — upper third ─────────────────────────── */}
       <g>
-        <rect x="140" y="160" width="320" height="160" fill="rgba(216,200,154,0.05)" stroke={line} strokeWidth="1.6" rx="3" />
+        <rect x="140" y="160" width="320" height="160" fill="rgba(237,230,211,0.05)" stroke={line} strokeWidth="1.6" rx="3" />
         {/* Glass inner rectangle */}
         <rect x="150" y="170" width="300" height="140" fill="none" stroke={fine} strokeWidth="1" rx="2" strokeDasharray="3 2" />
         {/* Diagonal reflection lines so it reads as glass not a hole */}
@@ -453,12 +454,12 @@ function BlueprintCoolerDoor({ accent }: { accent: string }) {
       {/* ── PADDLE HANDLE — right side, waist height ─────────────── */}
       <g>
         {/* Backing plate */}
-        <rect x="320" y="430" width="220" height="80" fill="rgba(216,200,154,0.05)" stroke={line} strokeWidth="1.4" rx="3" />
+        <rect x="320" y="430" width="220" height="80" fill="rgba(237,230,211,0.05)" stroke={line} strokeWidth="1.4" rx="3" />
         {/* The lever — capsule */}
-        <rect x="336" y="454" width="188" height="28" rx="14" fill="rgba(201,169,97,0.10)" stroke={accent} strokeWidth="1.6" />
+        <rect x="336" y="454" width="188" height="28" rx="14" fill="rgba(237,230,211,0.10)" stroke={accent} strokeWidth="1.6" />
         {/* Pivot dot */}
         <circle cx="358" cy="468" r="6" fill={accent} />
-        <circle cx="358" cy="468" r="3" fill="#10141a" />
+        <circle cx="358" cy="468" r="3" fill="#1B2D2A" />
         {/* Lock cylinder underneath */}
         <rect x="436" y="490" width="40" height="14" fill="none" stroke={fine} strokeWidth="1" rx="2" />
         <circle cx="456" cy="497" r="2.5" fill={fine} />
@@ -471,7 +472,7 @@ function BlueprintCoolerDoor({ accent }: { accent: string }) {
 
       {/* ── MANUFACTURER PLATE — top-left of the door panel ──────── */}
       <g>
-        <rect x="80" y="80" width="180" height="46" fill="rgba(216,200,154,0.04)" stroke={line} strokeWidth="1" rx="2" />
+        <rect x="80" y="80" width="180" height="46" fill="rgba(237,230,211,0.04)" stroke={line} strokeWidth="1" rx="2" />
         <text x="90" y="98" fill={label} fontFamily="var(--font-display)" fontSize="9" letterSpacing="3.2" fontWeight="700">
           WIC-002 · PROVISIONS
         </text>
@@ -485,7 +486,7 @@ function BlueprintCoolerDoor({ accent }: { accent: string }) {
 
       {/* ── KICK PLATE — bottom 18% of the door ─────────────────── */}
       <g>
-        <rect x="80" y="720" width="440" height="100" fill="rgba(216,200,154,0.05)" stroke={line} strokeWidth="1.4" rx="2" />
+        <rect x="80" y="720" width="440" height="100" fill="rgba(237,230,211,0.05)" stroke={line} strokeWidth="1.4" rx="2" />
         {/* Brushed-steel striations rendered as thin dashed lines */}
         {[745, 760, 775, 790, 805].map((y) => (
           <line key={y} x1="100" y1={y} x2="500" y2={y} stroke={fine} strokeWidth="0.5" strokeDasharray="2 4" />
@@ -710,10 +711,10 @@ function FridgeWord({
 // like a working drawing.
 
 function CoolerInteriorSVG() {
-  const line  = 'rgba(216,200,154,0.85)'
-  const fine  = 'rgba(216,200,154,0.42)'
-  const dim   = 'rgba(216,200,154,0.28)'
-  const label = '#d8c89a'
+  const line  = 'rgba(237,230,211,0.85)'
+  const fine  = 'rgba(237,230,211,0.42)'
+  const dim   = 'rgba(237,230,211,0.28)'
+  const label = '#EDE6D3'
   return (
     <svg
       viewBox="0 0 1600 1000"
@@ -746,14 +747,14 @@ function CoolerInteriorSVG() {
         fill="none" stroke={line} strokeWidth="1.6" />
       {/* Back wall with subtle hatched fill */}
       <rect x="520" y="240" width="560" height="440"
-        fill="rgba(216,200,154,0.03)" stroke={line} strokeWidth="1.6" />
+        fill="rgba(237,230,211,0.03)" stroke={line} strokeWidth="1.6" />
       <line x1="708" y1="240" x2="708" y2="680" stroke={fine} strokeWidth="0.8" />
       <line x1="892" y1="240" x2="892" y2="680" stroke={fine} strokeWidth="0.8" />
 
       {/* Ceiling evaporator (schematic plan-view) */}
       <g transform="translate(800, 120)">
         <rect x="-160" y="-30" width="320" height="70"
-          fill="rgba(216,200,154,0.04)" stroke={line} strokeWidth="1.4" rx="2" />
+          fill="rgba(237,230,211,0.04)" stroke={line} strokeWidth="1.4" rx="2" />
         <line x1="-140" y1="-36" x2="140" y2="-36" stroke={fine} strokeWidth="1" />
         {[-70, 70].map((cx) => (
           <g key={cx}>
@@ -845,7 +846,7 @@ function BlueprintRack({ side, lineColor, fineColor, labelColor }: {
         <polygon
           key={i}
           points={`${fx1},${fy} ${fx2},${fy} ${bx2},${by} ${bx1},${by}`}
-          fill="rgba(216,200,154,0.03)"
+          fill="rgba(237,230,211,0.03)"
           stroke={lineColor}
           strokeWidth="1.2"
         />
