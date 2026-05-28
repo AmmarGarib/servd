@@ -167,12 +167,10 @@ export function SpeakeasyFridgeHero({
           }}
         >
           {/* ── INTERIOR — empty walk-in cooler, NOT a wood-marble
-                speakeasy. Stays disguised even when the door opens —
-                stainless steel racks, polished aluminum floor, LED
-                strip and refrigeration unit on the ceiling. The
-                speakeasy hint is only the typography in the empty
-                rack gaps: RESERVATIONS ONLY / CRAFTED MOCKTAILS /
-                ELEGANT PLATES. Brightens as door opens. */}
+                speakeasy. Stays disguised even when the door opens.
+                The speakeasy hint is the "RESERVATIONS only." headline
+                on the back wall, the simmer wordmark, and the Reserve
+                / Menu CTAs that fade in as the door opens. */}
           <div
             aria-hidden={true}
             style={{
@@ -287,17 +285,17 @@ export function SpeakeasyFridgeHero({
           </div>
         </div>
 
-        {/* Reveal layer — once door is mostly open (~progress > 0.7),
-            the Reserve CTA + brand wordmark fade in INSIDE the cooler.
-            Sits at top 78% so the wordmark + pills (≈110-140px tall
-            total) end around 88%, leaving ≥6% breathing room before
-            the "open 7pm" floor sticker at bottom 4%. */}
+        {/* Reveal layer — once door is mostly open (~progress > 0.65), the
+            brand wordmark + the Reserve/Menu CTAs fade in INSIDE the
+            cooler. Lifted up into the band where the CRAFTED/ELEGANT
+            captions used to live so the CTAs sit on the cooler interior
+            instead of dangling below the frame on mobile. */}
         <div
           style={{
             position: 'absolute',
-            top: '78%', left: 0, right: 0,
+            top: '60%', left: 0, right: 0,
             display: 'flex', flexDirection: 'column', alignItems: 'center',
-            gap: '0.9rem',
+            gap: '1.1rem',
             opacity: 'calc(max(0, var(--scroll-progress, 0) - 0.65) * 3)',
             transform: 'translateY(calc((1 - var(--scroll-progress, 0)) * 20px))',
             transition: 'opacity 100ms linear',
@@ -597,23 +595,6 @@ function CoolerInterior({ accent, cream, imageUrl }: {
             different scroll-progress threshold. Heavy drop shadows so
             the type reads against any photo we swap in. */}
 
-      {/* ── TYPOGRAPHY in the negative space of the racks ──────────
-            Now that the racks have FOUR shelves (matching the IndiaMART
-            reference), the gaps are at roughly y = 18%, 32%, 50%, 70%.
-            We park "CRAFTED" + "mocktails." in the left rack's upper-
-            two gaps and "ELEGANT" + "plates." mirrored on the right.
-            "RESERVATIONS only." goes on the back wall (centre, around
-            30-42% from top). */}
-
-      {/* Hierarchy in two layers:
-            1. HEADLINE — "RESERVATIONS only." as a single inline phrase
-               (white tracked caps + gold italic on the SAME line, with
-               a thin space between). Reads as one statement, not two
-               unrelated words. Sits at top 38%.
-            2. CAPTION ROW — CRAFTED · mocktails. (left) and ELEGANT ·
-               plates. (right) live in their own row at top 60-70%,
-               well clear of the headline so nothing overlaps. */}
-
       {/* HEADLINE — RESERVATIONS only. as one phrase */}
       <div
         style={{
@@ -650,68 +631,6 @@ function CoolerInterior({ accent, cream, imageUrl }: {
           only.
         </span>
       </div>
-
-      {/* CAPTION ROW — left + right pairs, vertically BELOW the
-            headline so they don't compete with it. Tight pair: tracked
-            eyebrow over gold italic. */}
-
-      <FridgeWord
-        text="CRAFTED"
-        fireAt={0.58}
-        color={cream}
-        heavyShadow
-        style={{
-          top: '60%', left: '8%',
-          fontSize: 'clamp(0.9rem, 1.8vw, 1.2rem)',
-          letterSpacing: '0.45em',
-          fontWeight: 800,
-          lineHeight: 1,
-        }}
-      />
-      <FridgeWord
-        text="mocktails."
-        fireAt={0.62}
-        color={accent}
-        glow
-        style={{
-          top: '68%', left: '6%',
-          fontSize: 'clamp(1.5rem, 3.4vw, 2.4rem)',
-          fontStyle: 'italic',
-          letterSpacing: '-0.01em',
-          fontWeight: 600,
-          lineHeight: 1,
-        }}
-      />
-
-      <FridgeWord
-        text="ELEGANT"
-        fireAt={0.66}
-        color={cream}
-        heavyShadow
-        style={{
-          top: '60%', right: '8%',
-          fontSize: 'clamp(0.9rem, 1.8vw, 1.2rem)',
-          letterSpacing: '0.45em',
-          textAlign: 'right',
-          fontWeight: 800,
-          lineHeight: 1,
-        }}
-      />
-      <FridgeWord
-        text="plates."
-        fireAt={0.70}
-        color={accent}
-        glow
-        style={{
-          top: '68%', right: '6%',
-          fontSize: 'clamp(1.5rem, 3.4vw, 2.4rem)',
-          fontStyle: 'italic',
-          letterSpacing: '-0.01em',
-          textAlign: 'right',
-          fontWeight: 600,
-          lineHeight: 1,
-        }}
-      />
 
       {/* Operating hours — etched along the cooler floor at the very
           bottom of the visible section, just above the SVG's "2400 mm ·
