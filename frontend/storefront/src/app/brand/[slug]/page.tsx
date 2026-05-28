@@ -14,7 +14,7 @@ import ConceptViewTracker from '../../../components/ConceptViewTracker'
 
 const API_URL = process.env.INTERNAL_API_URL ?? process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
-export const revalidate = 30
+export const dynamic = 'force-dynamic'
 
 interface LayoutResponse {
   slug: string
@@ -23,7 +23,7 @@ interface LayoutResponse {
 
 async function getConcepts(): Promise<Concept[]> {
   try {
-    const res = await fetch(`${API_URL}/api/v1/storefront/concepts`, { next: { revalidate: 60 } })
+    const res = await fetch(`${API_URL}/api/v1/storefront/concepts`, { cache: 'no-store' })
     if (!res.ok) return []
     return await res.json()
   } catch { return [] }
@@ -31,9 +31,7 @@ async function getConcepts(): Promise<Concept[]> {
 
 async function getBrandBlocks(slug: string): Promise<Block[]> {
   try {
-    const res = await fetch(`${API_URL}/api/v1/site-layouts/brand:${encodeURIComponent(slug)}`, {
-      next: { revalidate: 30 },
-    })
+    const res = await fetch(`${API_URL}/api/v1/site-layouts/brand:${encodeURIComponent(slug)}`, { cache: 'no-store' })
     if (!res.ok) return []
     const body = await res.json() as LayoutResponse
     return Array.isArray(body.blocks) ? body.blocks : []
