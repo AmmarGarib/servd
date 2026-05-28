@@ -40,7 +40,7 @@ export function Banner(block: BannerBlock) {
         {block.cta && (
           <Link href={block.cta.href} style={{
             display: 'inline-flex', marginTop: '1.5rem',
-            background: 'var(--servd-green)', color: '#000',
+            background: 'var(--servd-green)', color: 'white',
             padding: '0.85rem 1.75rem', borderRadius: '999px',
             fontWeight: 900, textDecoration: 'none',
           }}>

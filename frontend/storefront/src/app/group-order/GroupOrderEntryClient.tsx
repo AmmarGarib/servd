@@ -71,14 +71,14 @@ export function GroupOrderEntryClient({ brands }: Props) {
         <button onClick={() => setMode('start')} aria-pressed={mode === 'start'}
           className="px-4 py-2 rounded-full font-bold text-sm transition-colors"
           style={mode === 'start'
-            ? { background: 'var(--servd-green)', color: '#0a0a0a', border: '1px solid var(--servd-green)' }
+            ? { background: 'var(--servd-green)', color: 'white', border: '1px solid var(--servd-green)' }
             : { background: 'white', color: 'var(--servd-mute)', border: '1px solid var(--servd-line)' }}>
           Start a group
         </button>
         <button onClick={() => setMode('join')} aria-pressed={mode === 'join'}
           className="px-4 py-2 rounded-full font-bold text-sm transition-colors"
           style={mode === 'join'
-            ? { background: 'var(--servd-green)', color: '#0a0a0a', border: '1px solid var(--servd-green)' }
+            ? { background: 'var(--servd-green)', color: 'white', border: '1px solid var(--servd-green)' }
             : { background: 'white', color: 'var(--servd-mute)', border: '1px solid var(--servd-line)' }}>
           Join with code
         </button>

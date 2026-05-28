@@ -94,7 +94,7 @@ export function Hero(block: HeroBlock) {
                 <Link href={block.primaryCta.href} className="servd-cta"
                   style={{
                     display: 'inline-flex', alignItems: 'center', justifyContent: 'center', textAlign: 'center',
-                    background: 'var(--servd-green)', color: 'var(--servd-black)', fontWeight: 900,
+                    background: 'var(--servd-green)', color: 'white', fontWeight: 900,
                     fontSize: 'clamp(1.1rem, 2.4vw, 1.6rem)',
                     padding: 'clamp(1.1rem, 2.6vw, 1.6rem) clamp(2.5rem, 6vw, 4rem)',
                     borderRadius: '999px', textDecoration: 'none',

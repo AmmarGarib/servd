@@ -271,8 +271,7 @@ function BrowseCard({ concept }: { concept: Concept }) {
           <span style={{
             display: 'inline-flex',
             alignItems: 'center',
-            background: 'var(--servd-green)',
-            color: 'var(--servd-black)',
+            background: 'var(--servd-green)', color: 'white',
             fontWeight: 800,
             fontSize: '0.85rem',
             padding: '0.45rem 1rem',

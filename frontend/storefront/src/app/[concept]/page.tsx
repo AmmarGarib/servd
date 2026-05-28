@@ -531,7 +531,7 @@ function ItemDetailModal({
                   <span style={{ fontSize: '0.92rem', fontWeight: 700, color: 'var(--servd-ink)' }}>{g.name}</span>
                   {g.isRequired && (
                     <span style={{
-                      background: 'var(--servd-green)', color: '#0a0a0a',
+                      background: 'var(--servd-green)', color: 'white',
                       fontSize: '0.62rem', fontWeight: 800, letterSpacing: '0.08em',
                       textTransform: 'uppercase', padding: '0.15rem 0.45rem', borderRadius: '999px',
                     }}>Required</span>

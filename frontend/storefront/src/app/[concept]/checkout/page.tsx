@@ -149,7 +149,7 @@ export default function CheckoutPage() {
       </div>
       <Link href={`/${slug}`}
         className="mt-1 rounded-2xl font-black px-8 py-4 text-sm transition-all hover:scale-[1.02] active:scale-[0.98]"
-        style={{ background: 'var(--servd-green)', color: '#0a0a0a', boxShadow: '0 6px 18px rgba(30,58,138,0.28)' }}>
+        style={{ background: 'var(--servd-green)', color: 'white', boxShadow: '0 6px 18px rgba(30,58,138,0.28)' }}>
         Back to Menu
       </Link>
     </main>
