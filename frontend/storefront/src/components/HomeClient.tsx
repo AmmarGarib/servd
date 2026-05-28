@@ -3,7 +3,6 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import type { Concept } from '../lib/concept'
 import { brandAccent, brandStory, conceptHeroImage } from '../lib/concept'
-import { MarqueeText } from './kinetic/MarqueeStrip'
 import { useScrollReveal } from './kinetic/motionHooks'
 
 // servd home — the FOOD hub.
@@ -168,18 +167,6 @@ export function HomeClient({ concepts }: Props) {
           </div>
         </div>
       </section>
-
-      {/* ── MARQUEE — royal accent ── */}
-      <MarqueeText
-        items={[
-          'three kitchens',
-          'one bag',
-          'no markup',
-          'cooked tonight',
-          'karachi-built',
-        ]}
-        accent
-      />
 
       {/* ── BRAND CARDS ─ Each one is a full-bleed food block leading
             into the order flow. */}
