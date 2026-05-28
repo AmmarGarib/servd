@@ -278,9 +278,15 @@ export default function ConceptOrderPage() {
           conceptSlug={concept.slug}
           accent={accent}
           onClose={() => setOpenItem(null)}
-          onAdd={(item, qty) => {
+          onAdd={(item, qty, modifiers, finalPriceCents, notes) => {
             for (let i = 0; i < qty; i++) {
-              cart.addItem({ menuItemId: item.id, name: item.name, priceCents: item.priceCents })
+              cart.addItem({
+                menuItemId: item.id,
+                name: item.name,
+                priceCents: finalPriceCents,
+                ...(modifiers.length > 0 && { modifiers }),
+                ...(notes && { notes }),
+              })
             }
             setOpenItem(null)
             setCartOpen(true)
@@ -408,10 +414,62 @@ function ItemDetailModal({
   conceptSlug: string
   accent: string
   onClose: () => void
-  onAdd: (item: MenuItem, qty: number) => void
+  onAdd: (
+    item: MenuItem,
+    qty: number,
+    modifiers: { modifierId: string; name: string; priceDeltaCents: number }[],
+    finalPriceCents: number,
+    notes: string,
+  ) => void
 }) {
   const [qty, setQty] = useState(1)
   const [notes, setNotes] = useState('')
+
+  // selections[groupId] = Set of selected modifier ids. Seeded with the
+  // group's isDefault picks so a "must pick exactly one" group lands on
+  // the default the operator marked.
+  const [selections, setSelections] = useState<Record<string, Set<string>>>(() => {
+    const seed: Record<string, Set<string>> = {}
+    for (const g of item.modifierGroups ?? []) {
+      const defaults = g.modifiers.filter((m) => m.isDefault).map((m) => m.id)
+      seed[g.id] = new Set(defaults.slice(0, Math.max(1, g.maxSelect)))
+    }
+    return seed
+  })
+
+  function togglePick(group: ModGroup, modifierId: string) {
+    setSelections((prev) => {
+      const current = new Set(prev[group.id] ?? [])
+      if (group.maxSelect <= 1) {
+        // Radio behavior — replace selection.
+        current.clear()
+        current.add(modifierId)
+      } else if (current.has(modifierId)) {
+        current.delete(modifierId)
+      } else if (current.size < group.maxSelect) {
+        current.add(modifierId)
+      }
+      return { ...prev, [group.id]: current }
+    })
+  }
+
+  // Validate: each required group must have at least minSelect picks.
+  const groups = item.modifierGroups ?? []
+  const unmet = groups.filter((g) => {
+    const count = selections[g.id]?.size ?? 0
+    if (g.isRequired && count < Math.max(1, g.minSelect)) return true
+    if (g.minSelect > 0 && count > 0 && count < g.minSelect) return true
+    return false
+  })
+  const canAdd = unmet.length === 0
+
+  // Flatten picks for price calculation + the add payload.
+  const pickedModifiers = groups.flatMap((g) =>
+    g.modifiers
+      .filter((m) => selections[g.id]?.has(m.id))
+      .map((m) => ({ modifierId: m.id, name: m.name, priceDeltaCents: m.priceDeltaCents })),
+  )
+  const lineUnitPriceCents = item.priceCents + pickedModifiers.reduce((s, m) => s + m.priceDeltaCents, 0)
 
   return (
     <div
@@ -455,6 +513,72 @@ function ItemDetailModal({
           )}
           <p style={{ fontWeight: 800, color: 'var(--servd-green-dark)', fontSize: '1.1rem' }}>{fmt(item.priceCents)}</p>
 
+          {/* Modifier groups — radios for maxSelect ≤ 1, checkboxes otherwise.
+              Required groups get a "Required" pill; min/max constraints
+              surface as caption text so the customer knows the rules. */}
+          {groups.map((g) => {
+            const picked = selections[g.id] ?? new Set<string>()
+            const radio = g.maxSelect <= 1
+            const caption =
+              g.isRequired
+                ? `Required · pick ${g.minSelect === g.maxSelect ? g.minSelect : `${g.minSelect}–${g.maxSelect}`}`
+                : g.maxSelect > 1
+                  ? `Pick up to ${g.maxSelect}`
+                  : 'Optional'
+            return (
+              <fieldset key={g.id} style={{ border: '1px solid var(--servd-line)', borderRadius: '0.75rem', padding: '0.85rem 1rem 0.6rem', margin: 0 }}>
+                <legend style={{ padding: '0 0.4rem', display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                  <span style={{ fontSize: '0.92rem', fontWeight: 700, color: 'var(--servd-ink)' }}>{g.name}</span>
+                  {g.isRequired && (
+                    <span style={{
+                      background: 'var(--servd-green)', color: '#0a0a0a',
+                      fontSize: '0.62rem', fontWeight: 800, letterSpacing: '0.08em',
+                      textTransform: 'uppercase', padding: '0.15rem 0.45rem', borderRadius: '999px',
+                    }}>Required</span>
+                  )}
+                </legend>
+                <p style={{ fontSize: '0.75rem', color: 'var(--servd-mute)', marginBottom: '0.5rem' }}>{caption}</p>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+                  {g.modifiers.map((m) => {
+                    const checked = picked.has(m.id)
+                    const reachedMax = !radio && !checked && picked.size >= g.maxSelect
+                    return (
+                      <label
+                        key={m.id}
+                        style={{
+                          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                          padding: '0.55rem 0.75rem', borderRadius: '0.5rem',
+                          background: checked ? 'rgba(34,197,94,0.08)' : 'transparent',
+                          border: checked ? '1px solid var(--servd-green)' : '1px solid transparent',
+                          cursor: reachedMax ? 'not-allowed' : 'pointer',
+                          opacity: reachedMax ? 0.5 : 1,
+                          gap: '0.75rem',
+                        }}
+                      >
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.6rem', fontSize: '0.92rem' }}>
+                          <input
+                            type={radio ? 'radio' : 'checkbox'}
+                            name={radio ? g.id : undefined}
+                            checked={checked}
+                            disabled={reachedMax}
+                            onChange={() => togglePick(g, m.id)}
+                            style={{ accentColor: 'var(--servd-green)' }}
+                          />
+                          <span>{m.name}</span>
+                        </span>
+                        {m.priceDeltaCents !== 0 && (
+                          <span style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--servd-mute)' }}>
+                            {m.priceDeltaCents > 0 ? '+' : ''}{fmt(m.priceDeltaCents)}
+                          </span>
+                        )}
+                      </label>
+                    )
+                  })}
+                </div>
+              </fieldset>
+            )
+          })}
+
           <label style={{ display: 'block' }}>
             <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--servd-mute)' }}>Notes for the kitchen (optional)</span>
             <textarea
@@ -480,11 +604,14 @@ function ItemDetailModal({
               style={{ width: '2rem', height: '2rem', borderRadius: '999px', border: 'none', background: 'transparent', fontSize: '1.1rem', cursor: 'pointer' }}>+</button>
           </div>
           <button
-            onClick={() => onAdd(item, qty)}
+            onClick={() => canAdd && onAdd(item, qty, pickedModifiers, lineUnitPriceCents, notes.trim())}
+            disabled={!canAdd}
             className="servd-btn-primary"
-            style={{ flex: 1, padding: '0.85rem 1rem' }}
+            style={{ flex: 1, padding: '0.85rem 1rem', opacity: canAdd ? 1 : 0.5, cursor: canAdd ? 'pointer' : 'not-allowed' }}
           >
-            Add {qty} · {fmt(item.priceCents * qty)}
+            {canAdd
+              ? `Add ${qty} · ${fmt(lineUnitPriceCents * qty)}`
+              : `Pick ${unmet[0]?.name}`}
           </button>
         </div>
       </div>
@@ -566,21 +693,26 @@ function CartDrawer({
             <p style={{ padding: '3rem 1.5rem', textAlign: 'center', color: 'var(--servd-mute)' }}>Basket&rsquo;s empty.</p>
           )}
           {cart.items.map((line) => (
-            <div key={line.menuItemId} style={{ padding: '1rem 1.5rem', borderBottom: '1px solid var(--servd-line)', display: 'flex', gap: '1rem', alignItems: 'flex-start' }}>
+            <div key={line.lineId} style={{ padding: '1rem 1.5rem', borderBottom: '1px solid var(--servd-line)', display: 'flex', gap: '1rem', alignItems: 'flex-start' }}>
               <div style={{ flex: 1 }}>
                 <p style={{ fontWeight: 700, marginBottom: '0.25rem' }}>{line.name}</p>
+                {line.modifiers && line.modifiers.length > 0 && (
+                  <p style={{ color: 'var(--servd-mute)', fontSize: '0.78rem', lineHeight: 1.4, marginBottom: '0.2rem' }}>
+                    {line.modifiers.map((m) => m.name).join(' · ')}
+                  </p>
+                )}
                 <p style={{ color: 'var(--servd-mute)', fontSize: '0.85rem' }}>{fmt(line.priceCents)} · qty {line.quantity}</p>
                 <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.5rem', border: '1px solid var(--servd-line)', borderRadius: '999px', padding: '0.15rem 0.3rem' }}>
-                  <button onClick={() => cart.updateQty(line.menuItemId, line.quantity - 1)} aria-label="Decrease"
+                  <button onClick={() => cart.updateQty(line.lineId, line.quantity - 1)} aria-label="Decrease"
                     style={{ width: '1.6rem', height: '1.6rem', borderRadius: '999px', border: 'none', background: 'transparent', fontSize: '1rem', cursor: 'pointer' }}>−</button>
                   <span style={{ minWidth: '1.2rem', textAlign: 'center', fontWeight: 700, fontSize: '0.85rem' }}>{line.quantity}</span>
-                  <button onClick={() => cart.updateQty(line.menuItemId, line.quantity + 1)} aria-label="Increase"
+                  <button onClick={() => cart.updateQty(line.lineId, line.quantity + 1)} aria-label="Increase"
                     style={{ width: '1.6rem', height: '1.6rem', borderRadius: '999px', border: 'none', background: 'transparent', fontSize: '1rem', cursor: 'pointer' }}>+</button>
                 </div>
               </div>
               <div style={{ textAlign: 'right' }}>
                 <p style={{ fontWeight: 700 }}>{fmt(line.priceCents * line.quantity)}</p>
-                <button onClick={() => cart.removeItem(line.menuItemId)}
+                <button onClick={() => cart.removeItem(line.lineId)}
                   style={{ background: 'transparent', border: 'none', color: 'var(--servd-mute)', fontSize: '0.75rem', marginTop: '0.4rem', cursor: 'pointer' }}>Remove</button>
               </div>
             </div>

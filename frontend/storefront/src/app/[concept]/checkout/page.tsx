@@ -294,6 +294,11 @@ export default function CheckoutPage() {
             items: items.map(i => ({
               menuItemId: i.menuItemId, name: i.name,
               priceCents: i.priceCents, quantity: i.quantity, notes: i.notes,
+              modifiers: (i.modifiers ?? []).map(m => ({
+                modifierId: m.modifierId ?? '',
+                name: m.name,
+                priceDeltaCents: m.priceDeltaCents,
+              })).filter(m => m.modifierId),
             })),
           }),
         })
@@ -354,16 +359,23 @@ export default function CheckoutPage() {
         <Panel icon="🧾" label="Your Order">
           <div className="space-y-3 mb-4">
             {items.map((item, i) => (
-              <div key={item.menuItemId} className="flex items-center justify-between gap-3"
+              <div key={item.lineId} className="flex items-start justify-between gap-3"
                 style={{ animation: `revealUp 0.4s ${i * 0.05}s both` }}>
-                <div className="flex items-center gap-3 min-w-0">
+                <div className="flex items-start gap-3 min-w-0 flex-1">
                   <div className="h-9 w-9 rounded-xl shrink-0 flex items-center justify-center text-sm font-black"
-                    style={{ background: 'rgba(0,0,0,0.06)', color: 'rgba(24,22,15,0.55)' }}>
+                    style={{ background: 'var(--servd-surface)', color: 'var(--servd-mute)' }}>
                     {item.quantity}×
                   </div>
-                  <span className="font-semibold text-sm truncate" style={{ color: '#18160f' }}>{item.name}</span>
+                  <div className="min-w-0 flex-1">
+                    <p className="font-semibold text-sm truncate" style={{ color: 'var(--servd-ink)' }}>{item.name}</p>
+                    {item.modifiers && item.modifiers.length > 0 && (
+                      <p className="text-[11px] leading-snug mt-0.5" style={{ color: 'var(--servd-mute)' }}>
+                        {item.modifiers.map((m) => m.name).join(' · ')}
+                      </p>
+                    )}
+                  </div>
                 </div>
-                <span className="font-black text-sm shrink-0" style={{ color: '#00a896' }}>
+                <span className="font-black text-sm shrink-0" style={{ color: 'var(--servd-green-dark)' }}>
                   {fmt(item.priceCents * item.quantity)}
                 </span>
               </div>

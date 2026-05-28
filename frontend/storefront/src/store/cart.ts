@@ -9,12 +9,25 @@ export interface CartItemModifier {
 }
 
 export interface CartItem {
+  /** Unique per cart line — same menuItem with different modifier picks
+   *  gets a different lineId so they list separately and remove/update
+   *  target the right row. */
+  lineId: string
   menuItemId: string
   name: string
   priceCents: number
   quantity: number
   notes?: string
   modifiers?: CartItemModifier[]
+}
+
+function modifierKey(mods?: CartItemModifier[]): string {
+  if (!mods || mods.length === 0) return ''
+  return mods
+    .map((m) => m.modifierId ?? m.name)
+    .filter(Boolean)
+    .sort()
+    .join('|')
 }
 
 function genCartId() {
@@ -28,13 +41,20 @@ interface CartStore {
   conceptSlug: string | null
   items: CartItem[]
   setConceptSlug: (slug: string) => void
-  addItem: (item: Omit<CartItem, 'quantity'>) => void
-  removeItem: (menuItemId: string) => void
-  updateQty: (menuItemId: string, qty: number) => void
+  /** Caller passes the item without quantity AND without lineId — store
+   *  computes the lineId from menuItemId + modifier hash so repeated adds
+   *  of the same combination land on the same line. */
+  addItem: (item: Omit<CartItem, 'quantity' | 'lineId'>) => void
+  removeItem: (lineId: string) => void
+  updateQty: (lineId: string, qty: number) => void
   clearCart: () => void
   // Replaces the entire cart with the given items, scoped to a concept. Used
   // by Reorder to bulk-load items from a past order.
-  hydrateFromReorder: (slug: string, items: CartItem[]) => void
+  /** Replaces the entire cart with the given items, scoped to a concept.
+   *  Items may arrive without a lineId (e.g. from the reorder API or the
+   *  cross-domain cart handoff token) — the store assigns lineIds based on
+   *  the same menuItemId+modifiers hash used by addItem. */
+  hydrateFromReorder: (slug: string, items: Array<Omit<CartItem, 'lineId'> & { lineId?: string }>) => void
   itemCount: () => number
   subtotalCents: () => number
   taxCents: () => number
@@ -54,32 +74,44 @@ export const useCart = create<CartStore>()(
 
       addItem: (item) =>
         set((state) => {
-          const existing = state.items.find((i) => i.menuItemId === item.menuItemId)
+          // Two cart entries for the same menu item with DIFFERENT modifier
+          // picks are distinct lines. Hash the modifier set (sorted by id
+          // so insertion order doesn't create false negatives) and combine
+          // with menuItemId to form the lineId.
+          const lineId = `${item.menuItemId}#${modifierKey(item.modifiers)}`
+          const existing = state.items.find((i) => i.lineId === lineId)
           if (existing) {
             return {
               items: state.items.map((i) =>
-                i.menuItemId === item.menuItemId ? { ...i, quantity: i.quantity + 1 } : i,
+                i.lineId === lineId ? { ...i, quantity: i.quantity + 1 } : i,
               ),
             }
           }
-          return { items: [...state.items, { ...item, quantity: 1 }] }
+          return { items: [...state.items, { ...item, lineId, quantity: 1 }] }
         }),
 
-      removeItem: (menuItemId) =>
-        set((state) => ({ items: state.items.filter((i) => i.menuItemId !== menuItemId) })),
+      removeItem: (lineId) =>
+        set((state) => ({ items: state.items.filter((i) => i.lineId !== lineId) })),
 
-      updateQty: (menuItemId, qty) =>
+      updateQty: (lineId, qty) =>
         set((state) => ({
           items:
             qty <= 0
-              ? state.items.filter((i) => i.menuItemId !== menuItemId)
-              : state.items.map((i) => (i.menuItemId === menuItemId ? { ...i, quantity: qty } : i)),
+              ? state.items.filter((i) => i.lineId !== lineId)
+              : state.items.map((i) => (i.lineId === lineId ? { ...i, quantity: qty } : i)),
         })),
 
       clearCart: () => set({ items: [], conceptSlug: null, cartId: genCartId() }),
 
       hydrateFromReorder: (slug, items) =>
-        set({ conceptSlug: slug, items, cartId: genCartId() }),
+        set({
+          conceptSlug: slug,
+          items: items.map((i) => ({
+            ...i,
+            lineId: i.lineId ?? `${i.menuItemId}#${modifierKey(i.modifiers)}`,
+          })),
+          cartId: genCartId(),
+        }),
 
 
       itemCount: () => get().items.reduce((s, i) => s + i.quantity, 0),
@@ -87,6 +119,22 @@ export const useCart = create<CartStore>()(
       taxCents: () => Math.round(get().subtotalCents() * TAX_RATE),
       totalCents: () => get().subtotalCents() + get().taxCents(),
     }),
-    { name: 'servd-cart' },
+    {
+      name: 'servd-cart',
+      // Bump version when shape changes. v1 added `lineId` per cart line —
+      // legacy v0 entries get one assigned from menuItemId + modifier hash
+      // so existing browser carts keep working after the upgrade.
+      version: 1,
+      migrate: (persisted, fromVersion) => {
+        const state = persisted as { items?: Array<Omit<CartItem, 'lineId'> & { lineId?: string }> } | null
+        if (fromVersion < 1 && state?.items) {
+          state.items = state.items.map((i) => ({
+            ...i,
+            lineId: i.lineId ?? `${i.menuItemId}#${modifierKey(i.modifiers)}`,
+          }))
+        }
+        return state as never
+      },
+    },
   ),
 )
