@@ -35,7 +35,7 @@ const STATUS_CONFIG: Record<string, { bg: string; text: string; label: string; b
   confirmed: { bg: 'rgba(99,102,241,0.12)',  text: '#4f46e5', label: 'Confirmed', bar: '#6366f1' },
   preparing: { bg: 'rgba(234,179,8,0.12)',   text: '#d97706', label: 'Preparing', bar: '#eab308' },
   ready:     { bg: 'rgba(34,197,94,0.12)',   text: '#16a34a', label: 'Ready!',    bar: '#22c55e' },
-  completed: { bg: 'rgba(0,0,0,0.05)',       text: 'rgba(24,22,15,0.38)', label: 'Completed', bar: 'rgba(0,0,0,0.18)' },
+  completed: { bg: 'rgba(0,0,0,0.05)',       text: 'var(--servd-mute)', label: 'Completed', bar: 'rgba(0,0,0,0.18)' },
   cancelled: { bg: 'rgba(239,68,68,0.1)',    text: '#dc2626', label: 'Cancelled', bar: '#ef4444' },
 }
 const TIER_COLOR: Record<string, string> = { bronze: '#cd7f32', silver: '#c0c0c0', gold: '#ffd700' }
@@ -139,7 +139,7 @@ export default function AccountPage() {
           <div className="absolute inset-0 rounded-full animate-spin"
             style={{ border: '2px solid transparent', borderTopColor: 'rgba(0,212,177,0.6)' }} />
         </div>
-        <p className="text-sm" style={{ color: 'rgba(24,22,15,0.38)' }}>Loading account…</p>
+        <p className="text-sm" style={{ color: 'var(--servd-mute)' }}>Loading account…</p>
       </div>
     </main>
   )
@@ -151,7 +151,7 @@ export default function AccountPage() {
       <p className="text-sm" style={{ color: '#dc2626' }}>{error || 'Account not found'}</p>
       <Link href="/browse"
         className="rounded-2xl font-black px-8 py-3.5 text-sm transition-all hover:scale-[1.02]"
-        style={{ background: 'linear-gradient(135deg, #00D4B1, #6366F1)', color: '#fff', boxShadow: '0 4px 20px rgba(0,212,177,0.3)' }}>
+        style={{ background: 'var(--servd-green)', color: '#fff', boxShadow: '0 4px 20px rgba(0,212,177,0.3)' }}>
         Browse brands
       </Link>
     </main>
@@ -186,9 +186,9 @@ export default function AccountPage() {
         style={{ borderBottom: '1px solid rgba(22,163,74,0.12)', background: 'rgba(240,253,244,0.96)', backdropFilter: 'blur(20px)' }}>
         <Link href="/browse"
           className="flex items-center gap-1.5 text-sm font-semibold transition-colors"
-          style={{ color: 'rgba(24,22,15,0.45)' }}
-          onMouseEnter={e => (e.currentTarget.style.color = 'rgba(24,22,15,0.8)')}
-          onMouseLeave={e => (e.currentTarget.style.color = 'rgba(24,22,15,0.45)')}>
+          style={{ color: 'var(--servd-mute)' }}
+          onMouseEnter={e => (e.currentTarget.style.color = 'var(--servd-ink)')}
+          onMouseLeave={e => (e.currentTarget.style.color = 'var(--servd-mute)')}>
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
             <path d="M10 3L5 8l5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
           </svg>
@@ -196,9 +196,9 @@ export default function AccountPage() {
         </Link>
         <button onClick={() => { clearAuth(); router.replace('/browse') }}
           className="text-xs font-bold transition-colors px-3 py-1.5 rounded-xl"
-          style={{ color: 'rgba(24,22,15,0.45)', background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.15)' }}
+          style={{ color: 'var(--servd-mute)', background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.15)' }}
           onMouseEnter={e => { e.currentTarget.style.color = '#dc2626'; e.currentTarget.style.background = 'rgba(239,68,68,0.1)' }}
-          onMouseLeave={e => { e.currentTarget.style.color = 'rgba(24,22,15,0.45)'; e.currentTarget.style.background = 'rgba(239,68,68,0.06)' }}>
+          onMouseLeave={e => { e.currentTarget.style.color = 'var(--servd-mute)'; e.currentTarget.style.background = 'rgba(239,68,68,0.06)' }}>
           Sign out
         </button>
       </div>
@@ -207,9 +207,9 @@ export default function AccountPage() {
 
         {/* ── Greeting ── */}
         <div className="mb-5">
-          <p className="text-sm" style={{ color: 'rgba(24,22,15,0.38)' }}>Your account</p>
-          <h1 className="font-black text-3xl leading-tight tracking-tight mt-0.5" style={{ color: '#18160f' }}>
-            {firstName ? `Hey, ${firstName} 👋` : 'Welcome back 👋'}
+          <p className="text-sm" style={{ color: 'var(--servd-mute)' }}>Your account</p>
+          <h1 className="font-display font-black text-3xl leading-tight tracking-tight mt-0.5" style={{ fontFamily: 'var(--font-display)', color: 'var(--servd-ink)', letterSpacing: '-0.03em' }}>
+            {firstName ? `Hi, ${firstName}.` : 'Welcome back.'}
           </h1>
         </div>
 
@@ -225,23 +225,23 @@ export default function AccountPage() {
               boxShadow: '0 2px 12px rgba(0,0,0,0.06)',
             }}>
             <div className="h-1 w-full"
-              style={{ background: 'linear-gradient(90deg, #22c55e, #16a34a)' }} />
+              style={{ background: 'var(--servd-green)' }} />
             <div className="p-4 flex flex-col items-center text-center gap-3 h-full pb-5">
               <div className="h-16 w-16 rounded-2xl flex items-center justify-center font-black text-2xl text-white mt-1"
-                style={{ background: 'linear-gradient(135deg, #22c55e, #16a34a)', boxShadow: '0 0 20px rgba(34,197,94,0.28)' }}>
+                style={{ background: 'var(--servd-green)', boxShadow: '0 0 20px rgba(34,197,94,0.28)' }}>
                 {initials}
               </div>
               <div>
-                <p className="font-black text-sm leading-tight" style={{ color: '#18160f' }}>{profile.name ?? 'Guest'}</p>
-                <p className="text-[0.6rem] mt-0.5 truncate max-w-[120px]" style={{ color: 'rgba(24,22,15,0.38)' }}>
+                <p className="font-black text-sm leading-tight" style={{ color: 'var(--servd-ink)' }}>{profile.name ?? 'Guest'}</p>
+                <p className="text-[0.6rem] mt-0.5 truncate max-w-[120px]" style={{ color: 'var(--servd-mute)' }}>
                   {profile.email ?? profile.phone ?? '—'}
                 </p>
               </div>
               {totalOrders > 0 && (
                 <div className="w-full rounded-xl py-2 px-3 mt-auto"
                   style={{ background: 'rgba(0,0,0,0.03)', border: '1px solid rgba(0,0,0,0.06)' }}>
-                  <p className="font-black text-lg leading-none" style={{ color: '#18160f' }}>{totalOrders}</p>
-                  <p className="text-[0.55rem] font-black uppercase tracking-wider mt-0.5" style={{ color: 'rgba(24,22,15,0.38)' }}>orders</p>
+                  <p className="font-black text-lg leading-none" style={{ color: 'var(--servd-ink)' }}>{totalOrders}</p>
+                  <p className="text-[0.55rem] font-black uppercase tracking-wider mt-0.5" style={{ color: 'var(--servd-mute)' }}>orders</p>
                 </div>
               )}
             </div>
@@ -259,16 +259,16 @@ export default function AccountPage() {
                 style={{ background: tc, filter: 'blur(50px)', opacity: 0.1, animation: 'glowPulse 6s ease-in-out infinite' }} />
               <div className="relative z-10 flex flex-col h-full">
                 <div className="flex items-start justify-between mb-2">
-                  <p className="text-[0.55rem] uppercase tracking-[0.28em] font-black" style={{ color: 'rgba(24,22,15,0.38)' }}>Points</p>
+                  <p className="text-[0.55rem] uppercase tracking-[0.28em] font-black" style={{ color: 'var(--servd-mute)' }}>Points</p>
                   <span className="text-[0.55rem] font-black uppercase tracking-wider px-2 py-0.5 rounded-full"
                     style={{ background: `${tc}1e`, color: tc }}>
                     {current?.label ?? tier}
                   </span>
                 </div>
-                <p className="font-black leading-none" style={{ fontSize: '3.2rem', color: '#18160f' }}>
+                <p className="font-black leading-none" style={{ fontSize: '3.2rem', color: 'var(--servd-ink)' }}>
                   {pts.toLocaleString()}
                 </p>
-                <p className="text-[0.6rem] mt-1" style={{ color: 'rgba(24,22,15,0.38)' }}>≈ {fmt(pts * 10)} value</p>
+                <p className="text-[0.6rem] mt-1" style={{ color: 'var(--servd-mute)' }}>≈ {fmt(pts * 10)} value</p>
 
                 <div className="mt-auto pt-3">
                   {next ? (
@@ -278,7 +278,7 @@ export default function AccountPage() {
                         <div className="h-full rounded-full transition-all duration-1000"
                           style={{ width: `${progress}%`, background: `linear-gradient(90deg, ${tc}88, ${tc})` }} />
                       </div>
-                      <p className="text-[0.55rem]" style={{ color: 'rgba(24,22,15,0.38)' }}>
+                      <p className="text-[0.55rem]" style={{ color: 'var(--servd-mute)' }}>
                         {(next.nextAt! - pts).toLocaleString()} pts to {next.label}
                       </p>
                     </>
@@ -292,8 +292,8 @@ export default function AccountPage() {
             <div className="flex-1 min-w-0 rounded-2xl p-4 flex flex-col justify-center items-center text-center gap-2"
               style={{ background: '#fff', border: '1px solid rgba(0,0,0,0.07)', boxShadow: '0 2px 12px rgba(0,0,0,0.06)' }}>
               <p className="text-3xl">⭐</p>
-              <p className="font-black text-sm" style={{ color: '#18160f' }}>No loyalty yet</p>
-              <p className="text-xs" style={{ color: 'rgba(24,22,15,0.38)' }}>Place an order to start earning</p>
+              <p className="font-black text-sm" style={{ color: 'var(--servd-ink)' }}>No loyalty yet</p>
+              <p className="text-xs" style={{ color: 'var(--servd-mute)' }}>Place an order to start earning</p>
             </div>
           )}
         </div>
@@ -302,8 +302,8 @@ export default function AccountPage() {
         {totalOrders > 0 && (
           <div className="rounded-2xl px-5 py-3.5 mb-3 flex items-center justify-between"
             style={{ background: '#fff', border: '1px solid rgba(0,0,0,0.07)', boxShadow: '0 2px 8px rgba(0,0,0,0.04)' }}>
-            <p className="text-sm" style={{ color: 'rgba(24,22,15,0.45)' }}>Lifetime spend</p>
-            <p className="font-black text-lg" style={{ color: '#18160f' }}>{fmt(lifetimeSpend)}</p>
+            <p className="text-sm" style={{ color: 'var(--servd-mute)' }}>Lifetime spend</p>
+            <p className="font-black text-lg" style={{ color: 'var(--servd-ink)' }}>{fmt(lifetimeSpend)}</p>
           </div>
         )}
 
@@ -343,7 +343,7 @@ export default function AccountPage() {
               <div className="flex gap-2">
                 <button onClick={() => void saveAddress()} disabled={addrSaving || !addrForm.label || !addrForm.address}
                   className="flex-1 rounded-xl py-2.5 text-sm font-black transition-all disabled:opacity-50"
-                  style={{ background: 'linear-gradient(135deg, #22c55e, #16a34a)', color: '#fff' }}>
+                  style={{ background: 'var(--servd-green)', color: '#0a0a0a' }}>
                   {addrSaving ? 'Saving…' : 'Save address'}
                 </button>
                 <button onClick={() => setShowAddAddr(false)}
@@ -408,7 +408,7 @@ export default function AccountPage() {
           style={{ background: 'linear-gradient(135deg, rgba(34,197,94,0.06) 0%, rgba(0,212,177,0.06) 100%)', border: '1px solid rgba(34,197,94,0.15)' }}>
           <div className="flex items-center gap-2 mb-2">
             <p className="text-[9px] font-black uppercase tracking-[0.28em]"
-              style={{ color: 'rgba(24,22,15,0.38)' }}>How to earn</p>
+              style={{ color: 'var(--servd-mute)' }}>How to earn</p>
           </div>
           <div className="grid grid-cols-3 gap-2">
             {[
@@ -424,8 +424,8 @@ export default function AccountPage() {
                   animation: `revealUp 0.4s ${i * 0.06}s both`,
                 }}>
                 <div className="text-xl">{tip.emoji}</div>
-                <p className="font-black text-[0.72rem] leading-tight" style={{ color: '#18160f' }}>{tip.title}</p>
-                <p className="text-[0.6rem] leading-snug" style={{ color: 'rgba(24,22,15,0.45)' }}>{tip.desc}</p>
+                <p className="font-black text-[0.72rem] leading-tight" style={{ color: 'var(--servd-ink)' }}>{tip.title}</p>
+                <p className="text-[0.6rem] leading-snug" style={{ color: 'var(--servd-mute)' }}>{tip.desc}</p>
               </div>
             ))}
           </div>
@@ -435,7 +435,7 @@ export default function AccountPage() {
         <div>
           <div className="flex items-center gap-2 mb-2.5">
             <p className="text-[9px] font-black uppercase tracking-[0.28em]"
-              style={{ color: 'rgba(24,22,15,0.38)' }}>Order History</p>
+              style={{ color: 'var(--servd-mute)' }}>Order History</p>
             <div className="h-px flex-1" style={{ background: 'rgba(0,0,0,0.07)' }} />
           </div>
 
@@ -443,10 +443,10 @@ export default function AccountPage() {
             <div className="rounded-2xl p-10 text-center"
               style={{ background: '#fff', border: '1px solid rgba(0,0,0,0.07)', boxShadow: '0 2px 8px rgba(0,0,0,0.04)' }}>
               <div className="text-4xl mb-3" style={{ animation: 'float 3s ease-in-out infinite' }}>🍽</div>
-              <p className="text-sm" style={{ color: 'rgba(24,22,15,0.45)' }}>No orders yet</p>
+              <p className="text-sm" style={{ color: 'var(--servd-mute)' }}>No orders yet</p>
               <Link href="/browse"
                 className="inline-block mt-3 text-sm font-bold transition-colors"
-                style={{ color: '#00a896' }}>
+                style={{ color: 'var(--servd-green-dark)' }}>
                 Browse brands →
               </Link>
             </div>
@@ -470,22 +470,22 @@ export default function AccountPage() {
                       <div className="flex items-start justify-between gap-3 p-4 flex-1 min-w-0">
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2 flex-wrap mb-0.5">
-                            <p className="font-bold text-sm" style={{ color: '#18160f' }}>{order.concept.name}</p>
+                            <p className="font-bold text-sm" style={{ color: 'var(--servd-ink)' }}>{order.concept.name}</p>
                             <span className="text-[9px] font-black uppercase tracking-[0.18em] px-2 py-0.5 rounded-full"
                               style={{ background: sc.bg, color: sc.text }}>
                               {sc.label}
                             </span>
                           </div>
-                          <p className="text-[10px] font-mono mb-1.5" style={{ color: 'rgba(24,22,15,0.32)' }}>
+                          <p className="text-[10px] font-mono mb-1.5" style={{ color: 'var(--servd-dim)' }}>
                             #{order.id.slice(-8).toUpperCase()} · {new Date(order.placedAt).toLocaleDateString('en-PK', { day: 'numeric', month: 'short' })}
                           </p>
-                          <p className="text-xs line-clamp-1" style={{ color: 'rgba(24,22,15,0.45)' }}>
+                          <p className="text-xs line-clamp-1" style={{ color: 'var(--servd-mute)' }}>
                             {order.items.map(it => `${it.quantity}× ${it.name}`).join(', ')}
                           </p>
                         </div>
                         <div className="text-right shrink-0">
-                          <p className="font-black text-sm" style={{ color: '#18160f' }}>{fmt(order.totalCents)}</p>
-                          <p className="text-[10px] mt-0.5" style={{ color: 'rgba(24,22,15,0.28)' }}>→</p>
+                          <p className="font-black text-sm" style={{ color: 'var(--servd-ink)' }}>{fmt(order.totalCents)}</p>
+                          <p className="text-[10px] mt-0.5" style={{ color: 'var(--servd-dim)' }}>→</p>
                         </div>
                       </div>
                     </div>
@@ -598,7 +598,7 @@ function ReferralSection({
         </div>
         <button onClick={() => copy(referralCode)}
           className="rounded-xl px-3 py-3 text-xs font-bold whitespace-nowrap"
-          style={{ background: '#7c2d12', color: '#fff' }}>
+          style={{ background: '#7c2d12', color: '#0a0a0a' }}>
           {copied ? '✓ Copied' : 'Copy'}
         </button>
       </div>
@@ -612,7 +612,7 @@ function ReferralSection({
         <a href={`https://wa.me/?text=${encodeURIComponent(shareText)}`}
           target="_blank" rel="noopener noreferrer"
           className="flex-1 rounded-xl px-3 py-2.5 text-xs font-bold text-center"
-          style={{ background: '#25D366', color: '#fff' }}>
+          style={{ background: '#25D366', color: '#0a0a0a' }}>
           WhatsApp
         </a>
       </div>
@@ -676,7 +676,7 @@ function LoyaltyTransactionsSection({ token }: { token: string | null }) {
     <div className="mt-3">
       <div className="flex items-center gap-2 mb-2.5">
         <p className="text-[9px] font-black uppercase tracking-[0.28em]"
-          style={{ color: 'rgba(24,22,15,0.38)' }}>Points History</p>
+          style={{ color: 'var(--servd-mute)' }}>Points History</p>
         <div className="h-px flex-1" style={{ background: 'rgba(0,0,0,0.07)' }} />
         <button
           onClick={() => setOpen(!open)}
@@ -707,16 +707,16 @@ function LoyaltyTransactionsSection({ token }: { token: string | null }) {
                     {isEarn ? '↑' : isRedeem ? '↓' : '~'}
                   </div>
                   <div className="min-w-0">
-                    <p className="text-xs font-semibold truncate" style={{ color: '#18160f' }}>
+                    <p className="text-xs font-semibold truncate" style={{ color: 'var(--servd-ink)' }}>
                       {tx.description ?? (isEarn ? 'Points earned' : isRedeem ? 'Points redeemed' : 'Adjustment')}
                     </p>
-                    <p className="text-[10px] font-mono mt-0.5" style={{ color: 'rgba(24,22,15,0.38)' }}>
+                    <p className="text-[10px] font-mono mt-0.5" style={{ color: 'var(--servd-mute)' }}>
                       {new Date(tx.createdAt).toLocaleDateString('en-PK', { day: 'numeric', month: 'short', year: 'numeric' })}
                     </p>
                   </div>
                 </div>
                 <span className="font-black text-sm shrink-0 tabular-nums"
-                  style={{ color: isEarn ? '#16a34a' : isRedeem ? '#dc2626' : 'rgba(24,22,15,0.55)' }}>
+                  style={{ color: isEarn ? '#16a34a' : isRedeem ? '#dc2626' : 'var(--servd-mute)' }}>
                   {isEarn ? '+' : isRedeem ? '−' : ''}{pts.toLocaleString()} pts
                 </span>
               </div>
@@ -783,10 +783,10 @@ function MyBookingsSection({ token }: { token: string | null }) {
 
   return (
     <div className="rounded-3xl p-5 sm:p-6 mt-3" style={{ background: '#fff', border: '1px solid rgba(0,0,0,0.06)' }}>
-      <p className="text-[9px] font-black uppercase tracking-[0.28em]" style={{ color: 'rgba(24,22,15,0.38)' }}>
+      <p className="text-[9px] font-black uppercase tracking-[0.28em]" style={{ color: 'var(--servd-mute)' }}>
         My bookings
       </p>
-      <h3 className="text-lg font-black mt-1 mb-3" style={{ color: '#18160f' }}>
+      <h3 className="text-lg font-black mt-1 mb-3" style={{ color: 'var(--servd-ink)' }}>
         {data.upcoming.filter((r) => !cancelled.has(r.id)).length > 0 ? `${data.upcoming.filter((r) => !cancelled.has(r.id)).length} upcoming` : 'Past visits'}
       </h3>
 
@@ -820,19 +820,19 @@ function MyBookingsSection({ token }: { token: string | null }) {
                       {isCancelled ? 'Cancelled' : r.status}
                     </span>
                   </div>
-                  <div className="text-xs mt-0.5" style={{ color: 'rgba(24,22,15,0.55)' }}>
+                  <div className="text-xs mt-0.5" style={{ color: 'var(--servd-mute)' }}>
                     Party of {r.partySize} · {fmtDate(r.startTime)}
                     {r.table ? ` · table ${r.table.label}` : ''}
                   </div>
                   {r.notes && !isCancelled && (
-                    <div className="text-[10px] mt-1 italic" style={{ color: 'rgba(24,22,15,0.45)' }}>{r.notes}</div>
+                    <div className="text-[10px] mt-1 italic" style={{ color: 'var(--servd-mute)' }}>{r.notes}</div>
                   )}
                 </div>
                 <div className="flex flex-col gap-1.5 shrink-0">
                   {r.confirmToken && r.status === 'booked' && !isCancelled && (
                     <Link href={`/reserve/confirm/${r.confirmToken}`}
                       className="rounded-lg px-3 py-1.5 text-xs font-bold whitespace-nowrap text-center"
-                      style={{ background: '#22c55e', color: '#fff' }}>
+                      style={{ background: '#22c55e', color: '#0a0a0a' }}>
                       Confirm
                     </Link>
                   )}
@@ -854,13 +854,13 @@ function MyBookingsSection({ token }: { token: string | null }) {
 
       {data.past.length > 0 && (
         <details>
-          <summary className="text-xs font-bold cursor-pointer" style={{ color: 'rgba(24,22,15,0.55)' }}>
+          <summary className="text-xs font-bold cursor-pointer" style={{ color: 'var(--servd-mute)' }}>
             Past visits ({data.past.length})
           </summary>
           <div className="space-y-1.5 mt-2">
             {data.past.slice(0, 8).map((r) => (
               <div key={r.id} className="text-xs flex items-center justify-between py-1"
-                style={{ color: 'rgba(24,22,15,0.55)' }}>
+                style={{ color: 'var(--servd-mute)' }}>
                 <span>{r.concept.name} · {r.partySize}px</span>
                 <span>{fmtDate(r.startTime)}</span>
               </div>
@@ -895,10 +895,10 @@ function MyReviewsSection({ token }: { token: string | null }) {
 
   return (
     <div className="rounded-3xl p-5 sm:p-6" style={{ background: '#fff', border: '1px solid rgba(0,0,0,0.06)' }}>
-      <p className="text-[9px] font-black uppercase tracking-[0.28em]" style={{ color: 'rgba(24,22,15,0.38)' }}>
+      <p className="text-[9px] font-black uppercase tracking-[0.28em]" style={{ color: 'var(--servd-mute)' }}>
         My reviews
       </p>
-      <h3 className="text-lg font-black mt-1 mb-3" style={{ color: '#18160f' }}>
+      <h3 className="text-lg font-black mt-1 mb-3" style={{ color: 'var(--servd-ink)' }}>
         {reviews.length} review{reviews.length === 1 ? '' : 's'}
       </h3>
       <div className="space-y-3">
@@ -909,7 +909,7 @@ function MyReviewsSection({ token }: { token: string | null }) {
               <span className="text-amber-500 text-sm font-bold">{'★'.repeat(r.rating)}{'☆'.repeat(5 - r.rating)}</span>
             </div>
             {r.comment && (
-              <p className="text-xs mt-1.5" style={{ color: 'rgba(24,22,15,0.7)' }}>{r.comment}</p>
+              <p className="text-xs mt-1.5" style={{ color: 'var(--servd-ink)' }}>{r.comment}</p>
             )}
             {r.tags.length > 0 && (
               <div className="flex flex-wrap gap-1.5 mt-2">
@@ -920,7 +920,7 @@ function MyReviewsSection({ token }: { token: string | null }) {
               </div>
             )}
             {r.managerResponse && (
-              <div className="mt-2.5 pl-2.5 border-l-2 text-xs" style={{ borderColor: '#22c55e', color: 'rgba(24,22,15,0.65)' }}>
+              <div className="mt-2.5 pl-2.5 border-l-2 text-xs" style={{ borderColor: '#22c55e', color: 'var(--servd-ink)' }}>
                 <div className="font-bold mb-0.5" style={{ color: '#16a34a' }}>From the team:</div>
                 {r.managerResponse}
               </div>
@@ -953,10 +953,10 @@ function MyFavoritesSection({ token }: { token: string | null }) {
 
   return (
     <div className="rounded-3xl p-5 sm:p-6" style={{ background: '#fff', border: '1px solid rgba(0,0,0,0.06)' }}>
-      <p className="text-[9px] font-black uppercase tracking-[0.28em]" style={{ color: 'rgba(24,22,15,0.38)' }}>
+      <p className="text-[9px] font-black uppercase tracking-[0.28em]" style={{ color: 'var(--servd-mute)' }}>
         Your usual
       </p>
-      <h3 className="text-lg font-black mt-1 mb-3" style={{ color: '#18160f' }}>
+      <h3 className="text-lg font-black mt-1 mb-3" style={{ color: 'var(--servd-ink)' }}>
         Order again, fast
       </h3>
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
@@ -967,14 +967,14 @@ function MyFavoritesSection({ token }: { token: string | null }) {
             className="rounded-xl p-3 text-left transition-all hover:scale-[1.01]"
             style={{ background: 'rgba(0,0,0,0.025)', border: '1px solid rgba(0,0,0,0.05)' }}>
             <div className="text-[10px] font-bold uppercase tracking-wider"
-              style={{ color: 'rgba(24,22,15,0.4)' }}>
+              style={{ color: 'var(--servd-mute)' }}>
               {it.concept?.name ?? 'Brand'}
             </div>
-            <div className="font-bold text-sm mt-0.5 line-clamp-2" style={{ color: '#18160f' }}>
+            <div className="font-bold text-sm mt-0.5 line-clamp-2" style={{ color: 'var(--servd-ink)' }}>
               {it.name}
             </div>
             <div className="flex items-center justify-between mt-2">
-              <span className="text-xs" style={{ color: 'rgba(24,22,15,0.55)' }}>
+              <span className="text-xs" style={{ color: 'var(--servd-mute)' }}>
                 Ordered {it.timesOrdered}×
               </span>
               <span className="text-sm font-black" style={{ color: '#22c55e' }}>
@@ -1035,7 +1035,7 @@ function SupportSection({ orders }: { orders: Order[] }) {
   return (
     <div className="mt-5">
       <div className="flex items-center gap-2 mb-2.5">
-        <p className="text-[9px] font-black uppercase tracking-[0.28em]" style={{ color: 'rgba(24,22,15,0.38)' }}>Need help?</p>
+        <p className="text-[9px] font-black uppercase tracking-[0.28em]" style={{ color: 'var(--servd-mute)' }}>Need help?</p>
         <div className="h-px flex-1" style={{ background: 'rgba(0,0,0,0.07)' }} />
       </div>
 
@@ -1047,8 +1047,8 @@ function SupportSection({ orders }: { orders: Order[] }) {
         >
           <div className="flex items-center justify-between gap-3">
             <div>
-              <p className="font-black text-sm" style={{ color: '#18160f' }}>🎫 Raise an issue</p>
-              <p className="text-xs mt-0.5" style={{ color: 'rgba(24,22,15,0.45)' }}>
+              <p className="font-black text-sm" style={{ color: 'var(--servd-ink)' }}>🎫 Raise an issue</p>
+              <p className="text-xs mt-0.5" style={{ color: 'var(--servd-mute)' }}>
                 Wrong item, late delivery, quality concern — we&apos;ll fix it.
               </p>
             </div>
@@ -1059,8 +1059,8 @@ function SupportSection({ orders }: { orders: Order[] }) {
         <div className="rounded-2xl p-5 space-y-3"
           style={{ background: '#fff', border: '1px solid rgba(34,197,94,0.25)', boxShadow: '0 2px 8px rgba(0,0,0,0.04)' }}>
           <div className="flex items-center justify-between">
-            <p className="font-black text-sm" style={{ color: '#18160f' }}>Tell us what went wrong</p>
-            <button onClick={() => setOpen(false)} className="text-xs" style={{ color: 'rgba(24,22,15,0.4)' }}>Close</button>
+            <p className="font-black text-sm" style={{ color: 'var(--servd-ink)' }}>Tell us what went wrong</p>
+            <button onClick={() => setOpen(false)} className="text-xs" style={{ color: 'var(--servd-mute)' }}>Close</button>
           </div>
 
           {success && (
@@ -1099,7 +1099,7 @@ function SupportSection({ orders }: { orders: Order[] }) {
                   className="rounded-xl px-2 py-2 text-xs font-bold transition-all flex flex-col items-center gap-1"
                   style={category === c.key
                     ? { background: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.35)', color: '#16a34a' }
-                    : { background: 'rgba(0,0,0,0.03)', border: '1px solid rgba(0,0,0,0.08)', color: 'rgba(24,22,15,0.6)' }}>
+                    : { background: 'rgba(0,0,0,0.03)', border: '1px solid rgba(0,0,0,0.08)', color: 'var(--servd-mute)' }}>
                   <span>{c.emoji}</span>
                   {c.label}
                 </button>
@@ -1131,7 +1131,7 @@ function SupportSection({ orders }: { orders: Order[] }) {
 
           <button onClick={() => void submit()} disabled={submitting || !title.trim() || !description.trim()}
             className="w-full rounded-xl py-2.5 text-sm font-black transition-all disabled:opacity-50"
-            style={{ background: 'linear-gradient(135deg, #22c55e, #16a34a)', color: '#fff' }}>
+            style={{ background: 'var(--servd-green)', color: '#0a0a0a' }}>
             {submitting ? 'Sending…' : 'Send to manager'}
           </button>
         </div>
