@@ -31,10 +31,10 @@ const PAYMENT_OPTIONS: Array<{
   sub: string
   phoneRequired: boolean
 }> = [
-  { id: 'cash',      icon: '💵', label: 'Cash on Delivery',  sub: 'Pay when you receive your order', phoneRequired: false },
-  { id: 'jazzcash',  icon: '📱', label: 'JazzCash Wallet',   sub: 'Enter your JazzCash number',      phoneRequired: true  },
-  { id: 'easypaisa', icon: '📲', label: 'EasyPaisa',         sub: 'Enter your EasyPaisa number',     phoneRequired: true  },
-  { id: 'keenu',     icon: '💳', label: 'Keenu (Card)',       sub: "You'll be redirected to Keenu after placing your order", phoneRequired: false },
+  { id: 'cash',      icon: 'Cash',     label: 'Cash on Delivery', sub: 'Pay when you receive your order',                        phoneRequired: false },
+  { id: 'jazzcash',  icon: 'JC',       label: 'JazzCash Wallet',  sub: 'Enter your JazzCash number',                             phoneRequired: true  },
+  { id: 'easypaisa', icon: 'EP',       label: 'EasyPaisa',        sub: 'Enter your EasyPaisa number',                            phoneRequired: true  },
+  { id: 'keenu',     icon: 'Card',     label: 'Keenu (Card)',     sub: "You'll be redirected to Keenu after placing your order", phoneRequired: false },
 ]
 
 export default function CheckoutPage() {
@@ -326,24 +326,24 @@ export default function CheckoutPage() {
   return (
     <main className="min-h-screen pb-32 relative overflow-hidden" style={{ background: 'transparent' }}>
 
-      {/* Header */}
+      {/* Header — on-system sticky bar matching the rest of servd. */}
       <div className="relative z-10 px-4 pt-5 pb-4 flex items-center gap-3"
-        style={{ borderBottom: '1px solid rgba(0,0,0,0.08)', background: 'rgba(193,191,187,0.95)', backdropFilter: 'blur(12px)' }}>
+        style={{ borderBottom: '1px solid var(--servd-line)', background: 'rgba(255,255,255,0.92)', backdropFilter: 'blur(16px)' }}>
         <Link href={`/${slug}`}
-          className="flex items-center gap-1.5 text-sm font-semibold transition-all duration-150 active:scale-95"
-          style={{ color: 'rgba(24,22,15,0.45)' }}
-          onMouseEnter={e => (e.currentTarget.style.color = 'rgba(24,22,15,0.8)')}
-          onMouseLeave={e => (e.currentTarget.style.color = 'rgba(24,22,15,0.45)')}>
+          className="flex items-center gap-1.5 text-sm font-semibold transition-colors"
+          style={{ color: 'var(--servd-mute)' }}
+          onMouseEnter={e => (e.currentTarget.style.color = 'var(--servd-ink)')}
+          onMouseLeave={e => (e.currentTarget.style.color = 'var(--servd-mute)')}>
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
             <path d="M10 3L5 8l5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
           </svg>
           Menu
         </Link>
-        <span style={{ color: 'rgba(24,22,15,0.15)' }}>·</span>
-        <h1 className="font-black text-lg tracking-tight" style={{ color: '#18160f' }}>Checkout</h1>
+        <span style={{ color: 'var(--servd-dim)' }}>·</span>
+        <h1 className="font-display font-black text-lg tracking-tight" style={{ color: 'var(--servd-ink)', fontFamily: 'var(--font-display)' }}>Checkout</h1>
         {token && account && (
-          <span className="ml-auto text-xs" style={{ color: 'rgba(24,22,15,0.38)' }}>
-            as <span className="font-bold" style={{ color: 'rgba(24,22,15,0.65)' }}>{account.name}</span>
+          <span className="ml-auto text-xs" style={{ color: 'var(--servd-mute)' }}>
+            as <span className="font-bold" style={{ color: 'var(--servd-ink)' }}>{account.name}</span>
           </span>
         )}
       </div>
@@ -798,14 +798,14 @@ export default function CheckoutPage() {
 
       {/* ── Fixed CTA ── */}
       <div className="fixed bottom-0 left-0 right-0 px-4 py-4 z-40"
-        style={{ background: 'rgba(193,191,187,0.97)', backdropFilter: 'blur(24px)', borderTop: '1px solid rgba(0,0,0,0.08)' }}>
+        style={{ background: 'rgba(255,255,255,0.96)', backdropFilter: 'blur(20px)', borderTop: '1px solid var(--servd-line)' }}>
         <button
           onClick={() => { void handlePlaceOrder() }} disabled={loading}
-          className="flex items-center justify-between w-full max-w-lg mx-auto rounded-2xl py-4 px-6 font-black text-base transition-all duration-200 disabled:opacity-40 hover:scale-[1.01] active:scale-[0.98]"
+          className="flex items-center justify-between w-full max-w-lg mx-auto rounded-2xl py-4 px-6 font-black text-base transition-all duration-200 disabled:opacity-40 active:scale-[0.98]"
           style={{
-            background: loading ? 'rgba(0,0,0,0.08)' : 'linear-gradient(135deg, #00D4B1 0%, #6366F1 100%)',
-            color: loading ? 'rgba(24,22,15,0.4)' : '#fff',
-            boxShadow: loading ? 'none' : '0 0 32px rgba(0,212,177,0.28)',
+            background: loading ? 'var(--servd-surface)' : 'var(--servd-green)',
+            color: loading ? 'var(--servd-mute)' : '#0a0a0a',
+            boxShadow: loading ? 'none' : '0 8px 24px rgba(34,197,94,0.28)',
           }}>
           <span>{ctaLabel}</span>
           <span>{fmt(displayTotal)}</span>
@@ -818,17 +818,17 @@ export default function CheckoutPage() {
 /* ── Sub-components ── */
 
 function Panel({ icon, label, extra, children }: {
-  icon: string; label: string; extra?: React.ReactNode; children: React.ReactNode
+  icon?: string; label: string; extra?: React.ReactNode; children: React.ReactNode
 }) {
+  // `icon` is accepted for backward compatibility with existing call sites
+  // but no longer rendered — the eyebrow label carries the meaning.
+  void icon
   return (
     <div className="rounded-2xl p-4 space-y-3"
-      style={{ background: '#fff', border: '1px solid rgba(0,0,0,0.07)', boxShadow: '0 2px 8px rgba(0,0,0,0.04)' }}>
+      style={{ background: 'white', border: '1px solid var(--servd-line)', boxShadow: '0 1px 3px rgba(0,0,0,0.04)' }}>
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <span className="text-base">{icon}</span>
-          <p className="text-[10px] font-black uppercase tracking-[0.2em]"
-            style={{ color: 'rgba(24,22,15,0.38)' }}>{label}</p>
-        </div>
+        <p className="text-[10px] font-black uppercase tracking-[0.22em]"
+          style={{ color: 'var(--servd-mute)' }}>{label}</p>
         {extra}
       </div>
       {children}
@@ -839,8 +839,8 @@ function Panel({ icon, label, extra, children }: {
 function PriceLine({ label, value, accent }: { label: string; value: string; accent?: string }) {
   return (
     <div className="flex justify-between text-sm">
-      <span style={{ color: 'rgba(24,22,15,0.45)' }}>{label}</span>
-      <span style={{ color: accent ?? 'rgba(24,22,15,0.6)' }}>{value}</span>
+      <span style={{ color: 'var(--servd-mute)' }}>{label}</span>
+      <span style={{ color: accent ?? 'var(--servd-ink)', fontWeight: 600 }}>{value}</span>
     </div>
   )
 }
@@ -848,8 +848,8 @@ function PriceLine({ label, value, accent }: { label: string; value: string; acc
 function FormField({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
-      <label className="block text-[10px] font-black uppercase tracking-[0.2em] mb-1.5"
-        style={{ color: 'rgba(24,22,15,0.38)' }}>{label}</label>
+      <label className="block text-[10px] font-black uppercase tracking-[0.22em] mb-1.5"
+        style={{ color: 'var(--servd-mute)' }}>{label}</label>
       {children}
     </div>
   )
@@ -863,14 +863,14 @@ function PremiumInput({ type, value, onChange, placeholder, autoFocus }: {
   return (
     <input
       type={type} value={value} onChange={onChange} placeholder={placeholder} autoFocus={autoFocus}
-      className="w-full rounded-xl px-4 py-3 text-sm focus:outline-none transition-all placeholder:text-black/25"
-      style={{ background: '#fff', border: '1.5px solid rgba(0,0,0,0.1)', color: '#18160f' }}
+      className="w-full rounded-xl px-4 py-3 text-sm focus:outline-none transition-all placeholder:text-black/30"
+      style={{ background: 'white', border: '1.5px solid var(--servd-line)', color: 'var(--servd-ink)' }}
       onFocus={e => {
-        e.currentTarget.style.borderColor = '#00D4B1'
-        e.currentTarget.style.boxShadow   = '0 0 0 3px rgba(0,212,177,0.12)'
+        e.currentTarget.style.borderColor = 'var(--servd-green)'
+        e.currentTarget.style.boxShadow   = '0 0 0 3px rgba(34,197,94,0.14)'
       }}
       onBlur={e => {
-        e.currentTarget.style.borderColor = 'rgba(0,0,0,0.1)'
+        e.currentTarget.style.borderColor = 'var(--servd-line)'
         e.currentTarget.style.boxShadow   = 'none'
       }}
     />
@@ -885,14 +885,14 @@ function PremiumTextarea({ value, onChange, placeholder, rows }: {
   return (
     <textarea
       value={value} onChange={onChange} placeholder={placeholder} rows={rows}
-      className="w-full rounded-xl px-4 py-3 text-sm focus:outline-none transition-all resize-none placeholder:text-black/25"
-      style={{ background: '#fff', border: '1.5px solid rgba(0,0,0,0.1)', color: '#18160f' }}
+      className="w-full rounded-xl px-4 py-3 text-sm focus:outline-none transition-all resize-none placeholder:text-black/30"
+      style={{ background: 'white', border: '1.5px solid var(--servd-line)', color: 'var(--servd-ink)' }}
       onFocus={e => {
-        e.currentTarget.style.borderColor = '#00D4B1'
-        e.currentTarget.style.boxShadow   = '0 0 0 3px rgba(0,212,177,0.12)'
+        e.currentTarget.style.borderColor = 'var(--servd-green)'
+        e.currentTarget.style.boxShadow   = '0 0 0 3px rgba(34,197,94,0.14)'
       }}
       onBlur={e => {
-        e.currentTarget.style.borderColor = 'rgba(0,0,0,0.1)'
+        e.currentTarget.style.borderColor = 'var(--servd-line)'
         e.currentTarget.style.boxShadow   = 'none'
       }}
     />
@@ -904,9 +904,9 @@ function StepBtn({ onClick, children }: { onClick: () => void; children: React.R
     <button
       onClick={onClick}
       className="h-8 w-8 rounded-xl flex items-center justify-center font-black transition-all active:scale-90"
-      style={{ background: 'rgba(0,0,0,0.07)', color: 'rgba(24,22,15,0.6)', border: '1px solid rgba(0,0,0,0.08)' }}
-      onMouseEnter={e => (e.currentTarget.style.color = '#18160f')}
-      onMouseLeave={e => (e.currentTarget.style.color = 'rgba(24,22,15,0.6)')}>
+      style={{ background: 'var(--servd-surface)', color: 'var(--servd-mute)', border: '1px solid var(--servd-line)' }}
+      onMouseEnter={e => (e.currentTarget.style.color = 'var(--servd-ink)')}
+      onMouseLeave={e => (e.currentTarget.style.color = 'var(--servd-mute)')}>
       {children}
     </button>
   )
