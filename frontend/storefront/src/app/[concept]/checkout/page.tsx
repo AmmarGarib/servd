@@ -31,10 +31,10 @@ const PAYMENT_OPTIONS: Array<{
   sub: string
   phoneRequired: boolean
 }> = [
-  { id: 'cash',      icon: '💵', label: 'Cash on Delivery',  sub: 'Pay when you receive your order', phoneRequired: false },
-  { id: 'jazzcash',  icon: '📱', label: 'JazzCash Wallet',   sub: 'Enter your JazzCash number',      phoneRequired: true  },
-  { id: 'easypaisa', icon: '📲', label: 'EasyPaisa',         sub: 'Enter your EasyPaisa number',     phoneRequired: true  },
-  { id: 'keenu',     icon: '💳', label: 'Keenu (Card)',       sub: "You'll be redirected to Keenu after placing your order", phoneRequired: false },
+  { id: 'cash',      icon: 'Cash', label: 'Cash on Delivery',  sub: 'Pay when you receive your order', phoneRequired: false },
+  { id: 'jazzcash',  icon: 'JC', label: 'JazzCash Wallet',   sub: 'Enter your JazzCash number',      phoneRequired: true  },
+  { id: 'easypaisa', icon: 'EP', label: 'EasyPaisa',         sub: 'Enter your EasyPaisa number',     phoneRequired: true  },
+  { id: 'keenu',     icon: 'Card', label: 'Keenu (Card)',       sub: "You'll be redirected to Keenu after placing your order", phoneRequired: false },
 ]
 
 export default function CheckoutPage() {
@@ -138,14 +138,18 @@ export default function CheckoutPage() {
   if (itemCount() === 0) return (
     <main className="flex min-h-screen flex-col items-center justify-center gap-5 px-4"
       style={{ background: 'transparent' }}>
-      <div className="text-7xl" style={{ animation: 'float 3s ease-in-out infinite' }}>🛒</div>
+      <svg width="80" height="80" viewBox="0 0 24 24" fill="none" stroke="var(--servd-mute)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <circle cx="9" cy="21" r="1"/>
+        <circle cx="20" cy="21" r="1"/>
+        <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/>
+      </svg>
       <div className="text-center space-y-2">
-        <p className="font-black text-2xl tracking-tight" style={{ color: '#18160f' }}>Your cart is empty</p>
-        <p className="text-sm" style={{ color: 'rgba(24,22,15,0.45)' }}>Add some items and come back</p>
+        <p className="font-black text-2xl tracking-tight" style={{ color: 'var(--servd-ink)' }}>Your cart is empty</p>
+        <p className="text-sm" style={{ color: 'var(--servd-mute)' }}>Add some items and come back</p>
       </div>
       <Link href={`/${slug}`}
         className="mt-1 rounded-2xl font-black px-8 py-4 text-sm transition-all hover:scale-[1.02] active:scale-[0.98]"
-        style={{ background: 'linear-gradient(135deg, #00D4B1, #6366F1)', color: '#fff', boxShadow: '0 0 24px rgba(0,212,177,0.25)' }}>
+        style={{ background: 'var(--servd-green)', color: '#0a0a0a', boxShadow: '0 6px 18px rgba(34,197,94,0.28)' }}>
         Back to Menu
       </Link>
     </main>
@@ -333,22 +337,22 @@ export default function CheckoutPage() {
 
       {/* Header */}
       <div className="relative z-10 px-4 pt-5 pb-4 flex items-center gap-3"
-        style={{ borderBottom: '1px solid rgba(0,0,0,0.08)', background: 'rgba(193,191,187,0.95)', backdropFilter: 'blur(12px)' }}>
+        style={{ borderBottom: '1px solid rgba(0,0,0,0.08)', background: 'rgba(255,255,255,0.92)', backdropFilter: 'blur(12px)' }}>
         <Link href={`/${slug}`}
           className="flex items-center gap-1.5 text-sm font-semibold transition-all duration-150 active:scale-95"
-          style={{ color: 'rgba(24,22,15,0.45)' }}
-          onMouseEnter={e => (e.currentTarget.style.color = 'rgba(24,22,15,0.8)')}
-          onMouseLeave={e => (e.currentTarget.style.color = 'rgba(24,22,15,0.45)')}>
+          style={{ color: 'var(--servd-mute)' }}
+          onMouseEnter={e => (e.currentTarget.style.color = 'var(--servd-ink)')}
+          onMouseLeave={e => (e.currentTarget.style.color = 'var(--servd-mute)')}>
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
             <path d="M10 3L5 8l5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
           </svg>
           Menu
         </Link>
-        <span style={{ color: 'rgba(24,22,15,0.15)' }}>·</span>
-        <h1 className="font-black text-lg tracking-tight" style={{ color: '#18160f' }}>Checkout</h1>
+        <span style={{ color: 'var(--servd-line)' }}>·</span>
+        <h1 className="font-black text-lg tracking-tight" style={{ color: 'var(--servd-ink)' }}>Checkout</h1>
         {token && account && (
-          <span className="ml-auto text-xs" style={{ color: 'rgba(24,22,15,0.38)' }}>
-            as <span className="font-bold" style={{ color: 'rgba(24,22,15,0.65)' }}>{account.name}</span>
+          <span className="ml-auto text-xs" style={{ color: 'var(--servd-mute)' }}>
+            as <span className="font-bold" style={{ color: 'var(--servd-ink)' }}>{account.name}</span>
           </span>
         )}
       </div>
@@ -356,7 +360,7 @@ export default function CheckoutPage() {
       <div className="relative z-10 max-w-lg mx-auto px-4 py-5 space-y-3">
 
         {/* ── Order summary ── */}
-        <Panel icon="🧾" label="Your Order">
+        <Panel label="Your Order">
           <div className="space-y-3 mb-4">
             {items.map((item, i) => (
               <div key={item.lineId} className="flex items-start justify-between gap-3"
@@ -382,8 +386,8 @@ export default function CheckoutPage() {
             ))}
           </div>
           {/* How are you getting it? */}
-          <div className="rounded-xl p-3.5 mb-3" style={{ background: 'rgba(99,102,241,0.06)', border: '1px solid rgba(99,102,241,0.2)' }}>
-            <p className="text-xs font-bold tracking-wider uppercase mb-2" style={{ color: '#4338ca' }}>How are you getting it?</p>
+          <div className="rounded-xl p-3.5 mb-3" style={{ background: 'rgba(34,197,94,0.06)', border: '1px solid rgba(34,197,94,0.25)' }}>
+            <p className="text-xs font-bold tracking-wider uppercase mb-2" style={{ color: 'var(--servd-green-dark)' }}>How are you getting it?</p>
             <div className="flex gap-2 mb-2">
               {(['pickup', 'curbside', 'delivery'] as const).map((m) => (
                 <button
@@ -392,15 +396,15 @@ export default function CheckoutPage() {
                   onClick={() => setFulfilmentType(m)}
                   className="flex-1 rounded-lg px-3 py-2 text-xs font-bold transition-all"
                   style={fulfilmentType === m
-                    ? { background: '#6366f1', color: '#fff', border: '1px solid #6366f1' }
-                    : { background: '#fff', color: 'rgba(24,22,15,0.65)', border: '1px solid rgba(0,0,0,0.08)' }}>
-                  {m === 'pickup' ? '🚶 Pickup' : m === 'curbside' ? '🚗 Curbside' : '🛵 Delivery'}
+                    ? { background: 'var(--servd-green-dark)', color: '#0a0a0a', border: '1px solid var(--servd-green)' }
+                    : { background: '#fff', color: 'var(--servd-ink)', border: '1px solid rgba(0,0,0,0.08)' }}>
+                  {m === 'pickup' ? 'Pickup' : m === 'curbside' ? 'Curbside' : 'Delivery'}
                 </button>
               ))}
             </div>
             {fulfilmentType === 'curbside' && (
               <div className="space-y-2 mt-2">
-                <p className="text-[11px]" style={{ color: 'rgba(24,22,15,0.55)' }}>
+                <p className="text-[11px]" style={{ color: 'var(--servd-mute)' }}>
                   Tell us about your car so we can find you. Tap &ldquo;I&rsquo;m here&rdquo; on the order page when you arrive.
                 </p>
                 <input
@@ -419,7 +423,7 @@ export default function CheckoutPage() {
             )}
             {fulfilmentType === 'delivery' && (
               <div className="space-y-2 mt-2">
-                <p className="text-[11px]" style={{ color: 'rgba(24,22,15,0.55)' }}>
+                <p className="text-[11px]" style={{ color: 'var(--servd-mute)' }}>
                   We&rsquo;ll bring it to your door.
                 </p>
 
@@ -439,22 +443,22 @@ export default function CheckoutPage() {
                           }}
                           className="w-full flex items-center gap-2.5 rounded-lg px-3 py-2 text-left transition-all"
                           style={isSelected
-                            ? { background: 'rgba(99,102,241,0.1)', border: '1.5px solid #6366f1' }
+                            ? { background: 'rgba(34,197,94,0.1)', border: '1.5px solid var(--servd-green)' }
                             : { background: '#fff', border: '1px solid rgba(0,0,0,0.08)' }}>
                           <span className="text-base shrink-0">📍</span>
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-1.5">
-                              <span className="font-bold text-xs" style={{ color: '#18160f' }}>{addr.label}</span>
+                              <span className="font-bold text-xs" style={{ color: 'var(--servd-ink)' }}>{addr.label}</span>
                               {addr.isDefault && (
                                 <span className="text-[9px] font-black uppercase tracking-wide px-1.5 py-0.5 rounded-full"
-                                  style={{ background: 'rgba(99,102,241,0.12)', color: '#4338ca' }}>Default</span>
+                                  style={{ background: 'rgba(34,197,94,0.12)', color: 'var(--servd-green-dark)' }}>Default</span>
                               )}
                             </div>
-                            <p className="text-[11px] truncate mt-0.5" style={{ color: 'rgba(24,22,15,0.5)' }}>{addr.address}</p>
+                            <p className="text-[11px] truncate mt-0.5" style={{ color: 'var(--servd-mute)' }}>{addr.address}</p>
                           </div>
                           {isSelected && (
                             <div className="h-4 w-4 rounded-full shrink-0 flex items-center justify-center"
-                              style={{ background: '#6366f1' }}>
+                              style={{ background: 'var(--servd-green-dark)' }}>
                               <svg width="8" height="8" viewBox="0 0 8 8" fill="none">
                                 <path d="M1.5 4L3.5 6L6.5 2" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
                               </svg>
@@ -473,10 +477,10 @@ export default function CheckoutPage() {
                       }}
                       className="w-full flex items-center gap-2 rounded-lg px-3 py-2 text-left transition-all"
                       style={showNewAddressInput
-                        ? { background: 'rgba(99,102,241,0.1)', border: '1.5px solid #6366f1' }
+                        ? { background: 'rgba(34,197,94,0.1)', border: '1.5px solid var(--servd-green)' }
                         : { background: '#fff', border: '1px dashed rgba(0,0,0,0.12)' }}>
                       <span className="text-base shrink-0">✏️</span>
-                      <span className="text-xs font-semibold" style={{ color: 'rgba(24,22,15,0.65)' }}>Enter a different address</span>
+                      <span className="text-xs font-semibold" style={{ color: 'var(--servd-ink)' }}>Enter a different address</span>
                     </button>
                   </div>
                 )}
@@ -563,7 +567,7 @@ export default function CheckoutPage() {
                 className="shrink-0 rounded-lg px-3 py-1.5 text-xs font-black transition-all disabled:opacity-40"
                 style={{
                   background: giftCardStatus === 'valid' ? '#16a34a' : 'rgba(0,0,0,0.07)',
-                  color: giftCardStatus === 'valid' ? '#fff' : 'rgba(24,22,15,0.65)',
+                  color: giftCardStatus === 'valid' ? '#fff' : 'var(--servd-ink)',
                   border: '1px solid rgba(0,0,0,0.08)',
                 }}>
                 {giftCardStatus === 'checking' ? '…' : giftCardStatus === 'valid' ? '✓' : 'Check'}
@@ -590,7 +594,7 @@ export default function CheckoutPage() {
               <PriceLine label="Tip" value={fmt(tipCents)} accent="#16a34a" />
             )}
             {loyaltyDeduction > 0 && (
-              <PriceLine label={`Points (${loyaltyPts} pts)`} value={`−${fmt(loyaltyDeduction)}`} accent="#6366f1" />
+              <PriceLine label={`Points (${loyaltyPts} pts)`} value={`−${fmt(loyaltyDeduction)}`} accent="var(--servd-green-dark)" />
             )}
             {walletDeduction > 0 && (
               <PriceLine label="Wallet credit" value={`−${fmt(walletDeduction)}`} accent="#16a34a" />
@@ -603,8 +607,8 @@ export default function CheckoutPage() {
             )}
             <div className="flex justify-between items-center pt-2.5"
               style={{ borderTop: '1px solid rgba(0,0,0,0.08)' }}>
-              <span className="font-black text-base" style={{ color: '#18160f' }}>Total</span>
-              <span className="font-black text-xl" style={{ color: '#00a896' }}>{fmt(displayTotal)}</span>
+              <span className="font-black text-base" style={{ color: 'var(--servd-ink)' }}>Total</span>
+              <span className="font-black text-xl" style={{ color: 'var(--servd-green-dark)' }}>{fmt(displayTotal)}</span>
             </div>
           </div>
         </Panel>
@@ -615,7 +619,7 @@ export default function CheckoutPage() {
         {token ? (
           <>
             {/* Promo code */}
-            <Panel icon="🎟" label="Promo Code">
+            <Panel icon="" label="Promo Code">
               <div className="flex gap-2">
                 <div className="flex-1">
                   <PremiumInput
@@ -638,8 +642,8 @@ export default function CheckoutPage() {
                   disabled={promoStatus === 'checking' || !promoCode.trim()}
                   className="shrink-0 rounded-xl px-4 py-3 text-sm font-black transition-all disabled:opacity-40"
                   style={{
-                    background: promoStatus === 'valid' ? '#16a34a' : '#6366f1',
-                    color: '#fff',
+                    background: promoStatus === 'valid' ? '#16a34a' : 'var(--servd-green-dark)',
+                    color: '#0a0a0a',
                   }}
                 >
                   {promoStatus === 'checking' ? '…' : promoStatus === 'valid' ? '✓' : 'Apply'}
@@ -668,19 +672,23 @@ export default function CheckoutPage() {
                   boxShadow: useWallet ? '0 0 20px rgba(0,168,150,0.08)' : '0 2px 8px rgba(0,0,0,0.04)',
                 }}>
                 <div className="flex items-center gap-3">
-                  <div className="h-11 w-11 rounded-xl flex items-center justify-center text-xl shrink-0"
-                    style={{ background: useWallet ? 'rgba(0,168,150,0.1)' : 'rgba(0,0,0,0.05)' }}>
-                    💰
+                  <div className="h-11 w-11 rounded-xl flex items-center justify-center shrink-0"
+                    style={{ background: useWallet ? 'rgba(34,197,94,0.12)' : 'var(--servd-surface)', color: useWallet ? 'var(--servd-green-dark)' : 'var(--servd-mute)' }}>
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <path d="M21 7H3a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h18a1 1 0 0 0 1-1V8a1 1 0 0 0-1-1z"/>
+                      <path d="M17 14a2 2 0 1 1 0-4 2 2 0 0 1 0 4z"/>
+                      <path d="M5 5h14"/>
+                    </svg>
                   </div>
                   <div className="text-left">
-                    <p className="font-bold text-sm" style={{ color: '#18160f' }}>Use Wallet Balance</p>
-                    <p className="text-xs mt-0.5" style={{ color: 'rgba(24,22,15,0.45)' }}>
+                    <p className="font-bold text-sm" style={{ color: 'var(--servd-ink)' }}>Use Wallet Balance</p>
+                    <p className="text-xs mt-0.5" style={{ color: 'var(--servd-mute)' }}>
                       {fmt(walletBalance)} available
                     </p>
                   </div>
                 </div>
                 <div className="h-5 w-9 rounded-full transition-all duration-300 relative shrink-0"
-                  style={{ background: useWallet ? '#00D4B1' : 'rgba(0,0,0,0.12)' }}>
+                  style={{ background: useWallet ? 'var(--servd-green)' : 'rgba(0,0,0,0.12)' }}>
                   <div className="absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-all duration-300"
                     style={{ left: useWallet ? '1.1rem' : '0.125rem' }} />
                 </div>
@@ -689,14 +697,14 @@ export default function CheckoutPage() {
 
             {/* Loyalty points */}
             {loyaltyBalance > 0 && (
-              <Panel icon="⭐" label="Redeem Points">
+              <Panel icon="" label="Redeem Points">
                 <div className="flex items-center justify-between">
-                  <p className="text-xs" style={{ color: 'rgba(24,22,15,0.45)' }}>
-                    {loyaltyBalance} pts available · <span style={{ color: 'rgba(24,22,15,0.65)' }}>{loyaltyPts} selected</span>
+                  <p className="text-xs" style={{ color: 'var(--servd-mute)' }}>
+                    {loyaltyBalance} pts available · <span style={{ color: 'var(--servd-ink)' }}>{loyaltyPts} selected</span>
                   </p>
                   <div className="flex items-center gap-2">
                     <StepBtn onClick={() => setLoyaltyPts(p => Math.max(0, p - 10))}>−</StepBtn>
-                    <span className="font-black text-sm w-10 text-center" style={{ color: '#18160f' }}>{loyaltyPts}</span>
+                    <span className="font-black text-sm w-10 text-center" style={{ color: 'var(--servd-ink)' }}>{loyaltyPts}</span>
                     <StepBtn onClick={() => setLoyaltyPts(p => Math.min(loyaltyBalance, p + 10))}>+</StepBtn>
                   </div>
                 </div>
@@ -704,19 +712,19 @@ export default function CheckoutPage() {
             )}
 
             {/* Notes */}
-            <Panel icon="📝" label="Special Instructions for Kitchen">
+            <Panel icon="" label="Special Instructions for Kitchen">
               <PremiumTextarea value={notes} onChange={e => setNotes(e.target.value)}
                 placeholder="Allergies, spice level, extras…" rows={2} />
             </Panel>
           </>
         ) : (
           /* ── Guest details ── */
-          <Panel icon="👤" label="Your Details" extra={
+          <Panel icon="" label="Your Details" extra={
             <Link href="/login"
               className="text-xs font-black transition-colors"
-              style={{ color: '#6366f1' }}
-              onMouseEnter={e => (e.currentTarget.style.color = '#4f46e5')}
-              onMouseLeave={e => (e.currentTarget.style.color = '#6366f1')}>
+              style={{ color: 'var(--servd-green-dark)' }}
+              onMouseEnter={e => (e.currentTarget.style.color = 'var(--servd-ink)')}
+              onMouseLeave={e => (e.currentTarget.style.color = 'var(--servd-green-dark)')}>
               Sign in for rewards →
             </Link>
           }>
@@ -738,7 +746,7 @@ export default function CheckoutPage() {
         )}
 
         {/* ── Payment Method ── */}
-        <Panel icon="💳" label="Payment Method">
+        <Panel icon="" label="Payment Method">
           <div className="space-y-2">
             {PAYMENT_OPTIONS.map((opt) => {
               const isSelected = paymentMethod === opt.id
@@ -753,16 +761,16 @@ export default function CheckoutPage() {
                       : { background: 'rgba(0,0,0,0.025)', border: '1px solid rgba(0,0,0,0.07)' }}>
                     <span className="text-lg shrink-0">{opt.icon}</span>
                     <div className="flex-1 text-left min-w-0">
-                      <p className="font-bold text-sm" style={{ color: '#18160f' }}>{opt.label}</p>
+                      <p className="font-bold text-sm" style={{ color: 'var(--servd-ink)' }}>{opt.label}</p>
                       {!opt.phoneRequired && (
-                        <p className="text-[11px] mt-0.5" style={{ color: 'rgba(24,22,15,0.45)' }}>{opt.sub}</p>
+                        <p className="text-[11px] mt-0.5" style={{ color: 'var(--servd-mute)' }}>{opt.sub}</p>
                       )}
                     </div>
                     <div className="h-5 w-5 rounded-full shrink-0 flex items-center justify-center"
                       style={isSelected
                         ? { background: 'rgba(0,168,150,0.12)', border: '1.5px solid rgba(0,168,150,0.45)' }
                         : { background: 'transparent', border: '1.5px solid rgba(0,0,0,0.15)' }}>
-                      {isSelected && <div className="h-2 w-2 rounded-full" style={{ background: '#00a896' }} />}
+                      {isSelected && <div className="h-2 w-2 rounded-full" style={{ background: 'var(--servd-green-dark)' }} />}
                     </div>
                   </button>
 
@@ -778,7 +786,7 @@ export default function CheckoutPage() {
                         className="w-full rounded-lg px-3 py-2 text-sm"
                         style={{ background: '#fff', border: '1.5px solid rgba(0,168,150,0.3)' }}
                       />
-                      <p className="text-[11px] mt-1" style={{ color: 'rgba(24,22,15,0.45)' }}>
+                      <p className="text-[11px] mt-1" style={{ color: 'var(--servd-mute)' }}>
                         Enter your {opt.label} number to process payment
                       </p>
                     </div>
@@ -787,8 +795,8 @@ export default function CheckoutPage() {
                   {/* Keenu redirect note */}
                   {isSelected && opt.id === 'keenu' && (
                     <div className="mt-1.5 mx-1 rounded-lg px-3 py-2"
-                      style={{ background: 'rgba(99,102,241,0.06)', border: '1px solid rgba(99,102,241,0.15)' }}>
-                      <p className="text-[11px]" style={{ color: '#4338ca' }}>
+                      style={{ background: 'rgba(34,197,94,0.06)', border: '1px solid rgba(34,197,94,0.2)' }}>
+                      <p className="text-[11px]" style={{ color: 'var(--servd-green-dark)' }}>
                         After placing your order you&rsquo;ll be redirected to Keenu&rsquo;s secure payment page to complete payment by card.
                       </p>
                     </div>
@@ -810,14 +818,14 @@ export default function CheckoutPage() {
 
       {/* ── Fixed CTA ── */}
       <div className="fixed bottom-0 left-0 right-0 px-4 py-4 z-40"
-        style={{ background: 'rgba(193,191,187,0.97)', backdropFilter: 'blur(24px)', borderTop: '1px solid rgba(0,0,0,0.08)' }}>
+        style={{ background: 'rgba(255,255,255,0.96)', backdropFilter: 'blur(24px)', borderTop: '1px solid rgba(0,0,0,0.08)' }}>
         <button
           onClick={() => { void handlePlaceOrder() }} disabled={loading}
           className="flex items-center justify-between w-full max-w-lg mx-auto rounded-2xl py-4 px-6 font-black text-base transition-all duration-200 disabled:opacity-40 hover:scale-[1.01] active:scale-[0.98]"
           style={{
-            background: loading ? 'rgba(0,0,0,0.08)' : 'linear-gradient(135deg, #00D4B1 0%, #6366F1 100%)',
-            color: loading ? 'rgba(24,22,15,0.4)' : '#fff',
-            boxShadow: loading ? 'none' : '0 0 32px rgba(0,212,177,0.28)',
+            background: loading ? 'var(--servd-line)' : 'var(--servd-green)',
+            color: loading ? 'var(--servd-mute)' : '#fff',
+            boxShadow: loading ? 'none' : '0 0 32px rgba(34,197,94,0.28)',
           }}>
           <span>{ctaLabel}</span>
           <span>{fmt(displayTotal)}</span>
@@ -830,17 +838,17 @@ export default function CheckoutPage() {
 /* ── Sub-components ── */
 
 function Panel({ icon, label, extra, children }: {
-  icon: string; label: string; extra?: React.ReactNode; children: React.ReactNode
+  icon?: string; label: string; extra?: React.ReactNode; children: React.ReactNode
 }) {
+  // icon prop retained for backward compat but unused — the eyebrow label
+  // alone carries the meaning. Skill rule: no emoji as structural icons.
+  void icon
   return (
     <div className="rounded-2xl p-4 space-y-3"
-      style={{ background: '#fff', border: '1px solid rgba(0,0,0,0.07)', boxShadow: '0 2px 8px rgba(0,0,0,0.04)' }}>
+      style={{ background: 'white', border: '1px solid var(--servd-line)', boxShadow: '0 1px 3px rgba(0,0,0,0.04)' }}>
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <span className="text-base">{icon}</span>
-          <p className="text-[10px] font-black uppercase tracking-[0.2em]"
-            style={{ color: 'rgba(24,22,15,0.38)' }}>{label}</p>
-        </div>
+        <p className="text-[10px] font-black uppercase tracking-[0.22em]"
+          style={{ color: 'var(--servd-mute)' }}>{label}</p>
         {extra}
       </div>
       {children}
@@ -851,8 +859,8 @@ function Panel({ icon, label, extra, children }: {
 function PriceLine({ label, value, accent }: { label: string; value: string; accent?: string }) {
   return (
     <div className="flex justify-between text-sm">
-      <span style={{ color: 'rgba(24,22,15,0.45)' }}>{label}</span>
-      <span style={{ color: accent ?? 'rgba(24,22,15,0.6)' }}>{value}</span>
+      <span style={{ color: 'var(--servd-mute)' }}>{label}</span>
+      <span style={{ color: accent ?? 'var(--servd-mute)' }}>{value}</span>
     </div>
   )
 }
@@ -861,7 +869,7 @@ function FormField({ label, children }: { label: string; children: React.ReactNo
   return (
     <div>
       <label className="block text-[10px] font-black uppercase tracking-[0.2em] mb-1.5"
-        style={{ color: 'rgba(24,22,15,0.38)' }}>{label}</label>
+        style={{ color: 'var(--servd-mute)' }}>{label}</label>
       {children}
     </div>
   )
@@ -876,10 +884,10 @@ function PremiumInput({ type, value, onChange, placeholder, autoFocus }: {
     <input
       type={type} value={value} onChange={onChange} placeholder={placeholder} autoFocus={autoFocus}
       className="w-full rounded-xl px-4 py-3 text-sm focus:outline-none transition-all placeholder:text-black/25"
-      style={{ background: '#fff', border: '1.5px solid rgba(0,0,0,0.1)', color: '#18160f' }}
+      style={{ background: '#fff', border: '1.5px solid rgba(0,0,0,0.1)', color: 'var(--servd-ink)' }}
       onFocus={e => {
-        e.currentTarget.style.borderColor = '#00D4B1'
-        e.currentTarget.style.boxShadow   = '0 0 0 3px rgba(0,212,177,0.12)'
+        e.currentTarget.style.borderColor = 'var(--servd-green)'
+        e.currentTarget.style.boxShadow   = '0 0 0 3px rgba(34,197,94,0.28)'
       }}
       onBlur={e => {
         e.currentTarget.style.borderColor = 'rgba(0,0,0,0.1)'
@@ -898,10 +906,10 @@ function PremiumTextarea({ value, onChange, placeholder, rows }: {
     <textarea
       value={value} onChange={onChange} placeholder={placeholder} rows={rows}
       className="w-full rounded-xl px-4 py-3 text-sm focus:outline-none transition-all resize-none placeholder:text-black/25"
-      style={{ background: '#fff', border: '1.5px solid rgba(0,0,0,0.1)', color: '#18160f' }}
+      style={{ background: '#fff', border: '1.5px solid rgba(0,0,0,0.1)', color: 'var(--servd-ink)' }}
       onFocus={e => {
-        e.currentTarget.style.borderColor = '#00D4B1'
-        e.currentTarget.style.boxShadow   = '0 0 0 3px rgba(0,212,177,0.12)'
+        e.currentTarget.style.borderColor = 'var(--servd-green)'
+        e.currentTarget.style.boxShadow   = '0 0 0 3px rgba(34,197,94,0.28)'
       }}
       onBlur={e => {
         e.currentTarget.style.borderColor = 'rgba(0,0,0,0.1)'
@@ -916,9 +924,9 @@ function StepBtn({ onClick, children }: { onClick: () => void; children: React.R
     <button
       onClick={onClick}
       className="h-8 w-8 rounded-xl flex items-center justify-center font-black transition-all active:scale-90"
-      style={{ background: 'rgba(0,0,0,0.07)', color: 'rgba(24,22,15,0.6)', border: '1px solid rgba(0,0,0,0.08)' }}
-      onMouseEnter={e => (e.currentTarget.style.color = '#18160f')}
-      onMouseLeave={e => (e.currentTarget.style.color = 'rgba(24,22,15,0.6)')}>
+      style={{ background: 'rgba(0,0,0,0.07)', color: 'var(--servd-mute)', border: '1px solid rgba(0,0,0,0.08)' }}
+      onMouseEnter={e => (e.currentTarget.style.color = 'var(--servd-ink)')}
+      onMouseLeave={e => (e.currentTarget.style.color = 'var(--servd-mute)')}>
       {children}
     </button>
   )
