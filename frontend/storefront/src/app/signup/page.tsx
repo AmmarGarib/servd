@@ -4,20 +4,24 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { useCustomerAuth } from '../../store/customerAuth'
 
+// /signup — restyled to the on-system --servd-* tokens + Bricolage Grotesque
+// display. Replaces the legacy teal→indigo gradient + placeholder "S" mark
+// with the real servd wordmark, --servd-green primary CTA, and three
+// SVG-iconed benefit chips (no emoji structural icons).
+
 function ErrorToast({ message, onDismiss }: { message: string; onDismiss: () => void }) {
   useEffect(() => {
     const t = setTimeout(onDismiss, 6000)
     return () => clearTimeout(t)
   }, [message, onDismiss])
   return (
-    <div
-      className="fixed top-4 left-1/2 z-[9999] w-[calc(100vw-2rem)] max-w-sm"
+    <div className="fixed top-4 left-1/2 z-[9999] w-[calc(100vw-2rem)] max-w-sm"
       style={{ transform: 'translateX(-50%)', animation: 'slideDownFade 0.25s cubic-bezier(0.22,1,0.36,1) both' }}>
-      <div className="flex items-start gap-3 rounded-2xl px-4 py-3.5 shadow-2xl"
-        style={{ background: '#1a0505', border: '1.5px solid #ef4444', boxShadow: '0 8px 32px rgba(239,68,68,0.35)' }}>
-        <span style={{ fontSize: '1.1rem', lineHeight: 1.4 }}>⚠️</span>
-        <p className="flex-1 text-sm font-bold leading-snug" style={{ color: '#fca5a5' }}>{message}</p>
-        <button onClick={onDismiss} className="text-red-400/60 hover:text-red-300 text-lg leading-none shrink-0">×</button>
+      <div className="flex items-start gap-3 rounded-2xl px-4 py-3.5 shadow-xl"
+        style={{ background: '#fff1f1', border: '1.5px solid #ef4444', boxShadow: '0 8px 32px rgba(239,68,68,0.18)' }}>
+        <span aria-hidden style={{ width: 18, height: 18, borderRadius: 999, background: '#ef4444', flex: 'none', marginTop: 2 }} />
+        <p className="flex-1 text-sm font-bold leading-snug" style={{ color: '#c0392b' }}>{message}</p>
+        <button onClick={onDismiss} className="text-red-400 hover:text-red-600 text-lg leading-none shrink-0">×</button>
       </div>
     </div>
   )
@@ -27,15 +31,12 @@ const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
 /**
  * F19 signup flow — two-step:
+ *   Step 1: collect name, email, password, phone, referral code. Server
+ *           dispatches a WhatsApp OTP for the phone and we move to step 2.
+ *   Step 2: collect the 6-digit code. Submitting calls register with phone
+ *           + otpCode; server re-verifies and stamps phoneVerifiedAt.
  *
- *   Step 1: collect name, email, password, phone, referral code. We request
- *           a WhatsApp OTP for the phone and move to step 2 once it dispatches.
- *   Step 2: collect the 6-digit code. Submitting it calls the registration
- *           endpoint with phone+otpCode; the server re-verifies the OTP and
- *           stamps phoneVerifiedAt on the new Customer row.
- *
- * The user can resend after a 30-second cooldown (server-enforced) or edit
- * their phone number to start over. We never echo the code back to the client.
+ * Resend after 30s cooldown. Never echo the code back to the client.
  */
 export default function SignupPage() {
   const router  = useRouter()
@@ -44,24 +45,21 @@ export default function SignupPage() {
 
   const [step,    setStep]    = useState<'details' | 'otp'>('details')
 
-  // Step 1 fields
   const [name,     setName]     = useState('')
   const [email,    setEmail]    = useState('')
   const [phone,    setPhone]    = useState('')
   const [password, setPassword] = useState('')
   const [confirm,  setConfirm]  = useState('')
-  const [referralCode, setReferralCode] = useState((params?.get('ref') ?? '').toUpperCase())
+  const [referralCode, _setReferralCode] = useState((params?.get('ref') ?? '').toUpperCase())
 
-  // Step 2 fields
-  const [otp,      setOtp]      = useState('')
-  const [otpSentAt, setOtpSentAt] = useState<number | null>(null)
-  const [resendCooldown, setResendCooldown] = useState(0)
+  const [otp,             setOtp]             = useState('')
+  const [_otpSentAt,      setOtpSentAt]       = useState<number | null>(null)
+  const [resendCooldown,  setResendCooldown]  = useState(0)
 
   const [loading,  setLoading]  = useState(false)
   const [error,    setError]    = useState('')
   const [emailTaken, setEmailTaken] = useState(false)
 
-  // Tick down the resend cooldown every second so the button re-enables itself
   useEffect(() => {
     if (resendCooldown <= 0) return
     const t = setTimeout(() => setResendCooldown((c) => c - 1), 1000)
@@ -130,7 +128,6 @@ export default function SignupPage() {
           setError('An account with this email already exists.')
           setStep('details')
         } else if (data.error?.code === 'OTP_WRONG' || data.error?.code === 'OTP_EXPIRED' || data.error?.code === 'OTP_NOT_FOUND') {
-          // Stay on the OTP step so they can retype the code.
           setError(data.error?.message ?? 'Invalid or expired code')
         } else {
           setError(data.error?.message ?? 'Registration failed. Please try again.')
@@ -146,79 +143,83 @@ export default function SignupPage() {
     }
   }
 
-  const inp = (base = '') =>
-    `w-full rounded-2xl px-4 py-4 text-sm font-semibold focus:outline-none transition-all placeholder:text-black/25 ${base}`
-  const inpStyle = { background: '#fff', border: '1.5px solid rgba(0,0,0,0.1)', color: '#18160f' }
+  const inp = (extra = '') =>
+    `w-full rounded-2xl px-4 py-4 text-sm font-semibold focus:outline-none transition-all placeholder:text-black/30 ${extra}`
+  const inpStyle = { background: 'white', border: '1.5px solid var(--servd-line)', color: 'var(--servd-ink)' }
   const onFocus = (e: React.FocusEvent<HTMLInputElement>) => {
-    e.currentTarget.style.borderColor = '#00D4B1'
-    e.currentTarget.style.boxShadow   = '0 0 0 3px rgba(0,212,177,0.12)'
+    e.currentTarget.style.borderColor = 'var(--servd-green)'
+    e.currentTarget.style.boxShadow   = '0 0 0 3px rgba(34,197,94,0.16)'
   }
   const onBlur = (e: React.FocusEvent<HTMLInputElement>) => {
-    e.currentTarget.style.borderColor = 'rgba(0,0,0,0.1)'
+    e.currentTarget.style.borderColor = 'var(--servd-line)'
     e.currentTarget.style.boxShadow   = 'none'
   }
+  const primaryBtnStyle = (busy: boolean) => ({
+    background: busy ? 'var(--servd-surface)' : 'var(--servd-green)',
+    color: busy ? 'var(--servd-mute)' : '#0a0a0a',
+    boxShadow: busy ? 'none' : '0 6px 18px rgba(34,197,94,0.28)',
+  })
 
   return (
-    <main className="flex flex-col items-center justify-center px-5 py-12" style={{ minHeight: '100dvh', background: 'transparent' }}>
+    <main className="flex flex-col items-center justify-center px-5 py-12" style={{ minHeight: '100dvh', background: 'var(--servd-bg)' }}>
 
-      <div className="flex items-center gap-2.5 mb-8">
-        <div className="h-9 w-9 rounded-xl flex items-center justify-center font-black text-white text-sm"
-          style={{ background: 'linear-gradient(135deg, #00D4B1, #6366F1)', boxShadow: '0 4px 14px rgba(0,212,177,0.3)' }}>
-          S
-        </div>
-        <span className="font-black text-xl tracking-tighter text-shimmer">servd</span>
-      </div>
+      <Link href="/" aria-label="servd home" className="mb-8" style={{
+        fontFamily: 'var(--font-display)', fontSize: '1.85rem', fontWeight: 800, letterSpacing: '-0.045em',
+        color: 'var(--servd-black)', textDecoration: 'none', display: 'inline-flex', alignItems: 'baseline', gap: '0.1rem',
+      }}>
+        servd<span style={{ color: 'var(--servd-green)' }}>.</span>
+      </Link>
 
-      <div className="w-full max-w-sm rounded-3xl px-6 py-8 shadow-xl" style={{ background: '#fff', border: '1px solid rgba(0,0,0,0.07)', animation: 'fadeSlideUp 0.4s both' }}>
+      <div className="w-full max-w-sm rounded-3xl px-6 py-8" style={{ background: 'white', border: '1px solid var(--servd-line)', boxShadow: '0 1px 3px rgba(0,0,0,0.04)', animation: 'fadeSlideUp 0.4s both' }}>
         {step === 'details' ? (
           <>
-            <h1 className="text-3xl font-black tracking-tight mb-1" style={{ color: '#18160f' }}>Create account</h1>
-            <p className="text-sm mb-6" style={{ color: 'rgba(24,22,15,0.45)' }}>Join free — earn points on every order</p>
+            <h1 className="font-display font-black tracking-tight mb-1" style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(2rem, 6vw, 2.4rem)', color: 'var(--servd-ink)', letterSpacing: '-0.03em' }}>Create account</h1>
+            <p className="text-sm mb-6" style={{ color: 'var(--servd-mute)' }}>Free. Earn points on every order.</p>
 
             {error && <ErrorToast message={error} onDismiss={() => setError('')} />}
-            {emailTaken && error && (
-              <div className="mb-4 rounded-2xl px-4 py-3" style={{ background: 'rgba(0,168,150,0.07)', border: '1px solid rgba(0,168,150,0.2)' }}>
-                <Link href="/login" className="text-sm font-black" style={{ color: '#00a896' }}>→ Sign in to your existing account</Link>
+            {emailTaken && (
+              <div className="mb-4 rounded-2xl px-4 py-3" style={{ background: 'rgba(34,197,94,0.08)', border: '1px solid rgba(34,197,94,0.25)' }}>
+                <Link href="/login" className="text-sm font-black" style={{ color: 'var(--servd-green-dark)' }}>→ Sign in to your existing account</Link>
               </div>
             )}
 
             <form onSubmit={e => { void handleStep1(e) }} className="space-y-3">
               {([
-                ['text',     'Full name',        'Your name',     name,     setName],
-                ['email',    'Email',            'you@example.com', email,  setEmail],
-                ['tel',      'Mobile (WhatsApp)', '0300 1234567',  phone,    setPhone],
-                ['password', 'Password',         '8+ characters', password, setPassword],
-                ['password', 'Confirm password', 'Repeat password', confirm, setConfirm],
+                ['text',     'Full name',         'Your name',       name,     setName],
+                ['email',    'Email',             'you@example.com', email,    setEmail],
+                ['tel',      'Mobile (WhatsApp)', '0300 1234567',    phone,    setPhone],
+                ['password', 'Password',          '8+ characters',   password, setPassword],
+                ['password', 'Confirm password',  'Repeat password', confirm,  setConfirm],
               ] as const).map(([type, label, ph, val, set], i) => (
                 <div key={label}>
-                  <label className="block text-[10px] font-black uppercase tracking-[0.2em] mb-1.5" style={{ color: 'rgba(24,22,15,0.35)' }}>{label}</label>
+                  <label className="block text-[10px] font-black uppercase tracking-[0.22em] mb-1.5" style={{ color: 'var(--servd-mute)' }}>{label}</label>
                   <input type={type} value={val} onChange={e => (set as (v: string) => void)(e.target.value)}
                     placeholder={ph} autoFocus={i === 0} required
                     className={inp()} style={inpStyle} onFocus={onFocus} onBlur={onBlur} />
                 </div>
               ))}
-              <p className="text-[11px] leading-snug pt-1" style={{ color: 'rgba(24,22,15,0.4)' }}>
+              <p className="text-[11px] leading-snug pt-1" style={{ color: 'var(--servd-mute)' }}>
                 We&rsquo;ll send a 6-digit code to your WhatsApp to verify the number.
               </p>
               <button type="submit" disabled={loading}
                 className="w-full rounded-2xl py-4 font-black text-[0.95rem] transition-all disabled:opacity-40 active:scale-[0.98] mt-1"
-                style={{ background: 'linear-gradient(135deg, #00D4B1 0%, #6366F1 100%)', color: '#fff', boxShadow: '0 4px 20px rgba(0,212,177,0.25)' }}>
+                style={primaryBtnStyle(loading)}>
                 {loading ? 'Sending code…' : 'Continue →'}
               </button>
             </form>
           </>
         ) : (
           <>
-            <h1 className="text-3xl font-black tracking-tight mb-1" style={{ color: '#18160f' }}>Verify your number</h1>
-            <p className="text-sm mb-6" style={{ color: 'rgba(24,22,15,0.45)' }}>
-              We sent a code to <span className="font-semibold" style={{ color: '#18160f' }}>{phone}</span>
+            <h1 className="font-display font-black tracking-tight mb-1" style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(2rem, 6vw, 2.4rem)', color: 'var(--servd-ink)', letterSpacing: '-0.03em' }}>Verify your number</h1>
+            <p className="text-sm mb-6" style={{ color: 'var(--servd-mute)' }}>
+              We sent a code to <span className="font-semibold" style={{ color: 'var(--servd-ink)' }}>{phone}</span>
             </p>
 
             {error && <ErrorToast message={error} onDismiss={() => setError('')} />}
 
             <form onSubmit={e => { void handleStep2(e) }} className="space-y-3">
               <div>
-                <label htmlFor="otp-input" className="block text-[10px] font-black uppercase tracking-[0.2em] mb-1.5" style={{ color: 'rgba(24,22,15,0.35)' }}>6-digit code</label>
+                <label htmlFor="otp-input" className="block text-[10px] font-black uppercase tracking-[0.22em] mb-1.5" style={{ color: 'var(--servd-mute)' }}>6-digit code</label>
                 <input id="otp-input" type="text" inputMode="numeric" pattern="[0-9]*" maxLength={6}
                   value={otp} onChange={e => setOtp(e.target.value.replace(/\D/g, ''))}
                   placeholder="••••••" autoFocus required
@@ -227,19 +228,19 @@ export default function SignupPage() {
 
               <button type="submit" disabled={loading || otp.length < 4}
                 className="w-full rounded-2xl py-4 font-black text-[0.95rem] transition-all disabled:opacity-40 active:scale-[0.98] mt-1"
-                style={{ background: 'linear-gradient(135deg, #00D4B1 0%, #6366F1 100%)', color: '#fff', boxShadow: '0 4px 20px rgba(0,212,177,0.25)' }}>
-                {loading ? 'Verifying…' : 'Verify & Create Account'}
+                style={primaryBtnStyle(loading)}>
+                {loading ? 'Verifying…' : 'Verify & create account'}
               </button>
 
               <div className="flex items-center justify-between pt-2 text-xs">
                 <button type="button" onClick={() => { setStep('details'); setOtp(''); setError('') }}
-                  className="font-bold" style={{ color: 'rgba(24,22,15,0.55)' }}>
+                  className="font-bold" style={{ color: 'var(--servd-mute)' }}>
                   ← Change number
                 </button>
                 <button type="button" disabled={resendCooldown > 0 || loading}
                   onClick={() => { void requestOtp() }}
                   className="font-bold disabled:opacity-40"
-                  style={{ color: '#00a896' }}>
+                  style={{ color: 'var(--servd-green-dark)' }}>
                   {resendCooldown > 0 ? `Resend in ${resendCooldown}s` : 'Resend code'}
                 </button>
               </div>
@@ -250,22 +251,58 @@ export default function SignupPage() {
         {step === 'details' && (
           <>
             <div className="grid grid-cols-3 gap-2 mt-5">
-              {[{ icon: '⭐', label: 'Earn Points' }, { icon: '📍', label: 'Track Orders' }, { icon: '🎁', label: 'Promos' }].map(b => (
+              {[
+                { icon: <StarIcon />,  label: 'Earn points' },
+                { icon: <PinIcon />,   label: 'Track orders' },
+                { icon: <GiftIcon />,  label: 'Member perks' },
+              ].map((b) => (
                 <div key={b.label} className="flex flex-col items-center gap-1.5 py-3 rounded-2xl"
-                  style={{ background: 'rgba(0,0,0,0.03)', border: '1px solid rgba(0,0,0,0.07)' }}>
-                  <span style={{ fontSize: '1.1rem' }}>{b.icon}</span>
-                  <span className="text-[10px] font-bold" style={{ color: 'rgba(24,22,15,0.4)' }}>{b.label}</span>
+                  style={{ background: 'var(--servd-surface)', border: '1px solid var(--servd-line)' }}>
+                  <span style={{ color: 'var(--servd-green-dark)', display: 'inline-flex' }}>{b.icon}</span>
+                  <span className="text-[10px] font-bold" style={{ color: 'var(--servd-mute)' }}>{b.label}</span>
                 </div>
               ))}
             </div>
 
-            <p className="text-center text-sm mt-5" style={{ color: 'rgba(24,22,15,0.35)' }}>
+            <p className="text-center text-sm mt-5" style={{ color: 'var(--servd-mute)' }}>
               Already have an account?{' '}
-              <Link href="/login" className="font-black" style={{ color: '#00a896' }}>Sign in →</Link>
+              <Link href="/login" className="font-black" style={{ color: 'var(--servd-green-dark)' }}>Sign in →</Link>
             </p>
           </>
         )}
       </div>
+
+      <Link href="/" className="mt-6 text-xs font-semibold" style={{ color: 'var(--servd-mute)', textDecoration: 'none' }}>
+        ← Back to home
+      </Link>
     </main>
+  )
+}
+
+// ── Inline SVG icons — no emoji as structural icons per the design system. ──
+function StarIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+    </svg>
+  )
+}
+function PinIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/>
+      <circle cx="12" cy="10" r="3"/>
+    </svg>
+  )
+}
+function GiftIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <polyline points="20 12 20 22 4 22 4 12"/>
+      <rect x="2" y="7" width="20" height="5"/>
+      <line x1="12" y1="22" x2="12" y2="7"/>
+      <path d="M12 7H7.5a2.5 2.5 0 0 1 0-5C11 2 12 7 12 7z"/>
+      <path d="M12 7h4.5a2.5 2.5 0 0 0 0-5C13 2 12 7 12 7z"/>
+    </svg>
   )
 }
