@@ -8,9 +8,11 @@ import type { Concept } from '../../../lib/concept'
 
 const API_URL = process.env.INTERNAL_API_URL ?? process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
+export const dynamic = 'force-dynamic'
+
 async function getConcept(slug: string): Promise<Concept | null> {
   try {
-    const res = await fetch(`${API_URL}/api/v1/storefront/concepts`, { next: { revalidate: 60 } })
+    const res = await fetch(`${API_URL}/api/v1/storefront/concepts`, { cache: 'no-store' })
     if (!res.ok) return null
     const all: Concept[] = await res.json()
     return all.find((c) => c.slug === slug) ?? null
