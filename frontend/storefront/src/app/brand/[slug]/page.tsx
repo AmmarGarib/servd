@@ -45,10 +45,12 @@ const FALLBACK_CONCEPTS: Record<string, Concept> = {
 async function getConcepts(): Promise<Concept[]> {
   try {
     const res = await fetch(`${API_URL}/api/v1/storefront/concepts`, { cache: 'no-store' })
-    if (!res.ok) return []
-    const live: Concept[] = await res.json()
-    if (live.length > 0) return live
-  } catch { /* fall through */ }
+    if (res.ok) {
+      const live: Concept[] = await res.json()
+      if (live.length > 0) return live
+    }
+    // res.ok was false (api 4xx/5xx) — fall through to fallback below
+  } catch { /* api unreachable — fall through */ }
   // API empty/down → return the hardcoded fallback set so the
   // brand-page render still finds the slug and never notFound()s.
   return Object.values(FALLBACK_CONCEPTS)
