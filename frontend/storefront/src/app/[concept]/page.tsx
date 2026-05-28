@@ -32,9 +32,9 @@ interface MenuItem   {
 }
 
 const DIETARY_BADGE: Record<string, { label: string; color: string }> = {
-  vegetarian:  { label: '🌿 Veg',     color: 'rgba(34,197,94,0.15)' },
-  vegan:       { label: '🌱 Vegan',   color: 'rgba(34,197,94,0.15)' },
-  halal:       { label: 'Halal',      color: 'rgba(34,197,94,0.15)' },
+  vegetarian:  { label: '🌿 Veg',     color: 'rgba(30,58,138,0.15)' },
+  vegan:       { label: '🌱 Vegan',   color: 'rgba(30,58,138,0.15)' },
+  halal:       { label: 'Halal',      color: 'rgba(30,58,138,0.15)' },
   gluten_free: { label: 'GF',         color: 'rgba(245,158,11,0.15)' },
 }
 interface Category   { id: string; name: string; sortOrder: number; items: MenuItem[] }
@@ -166,7 +166,7 @@ export default function ConceptOrderPage() {
     )
   }
 
-  const accent = concept.primaryColor ?? '#16a34a'
+  const accent = concept.primaryColor ?? 'var(--servd-green-dark)'
   const itemTotal = cart.itemCount()
   const hasItems = itemTotal > 0
 
@@ -548,7 +548,7 @@ function ItemDetailModal({
                         style={{
                           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                           padding: '0.55rem 0.75rem', borderRadius: '0.5rem',
-                          background: checked ? 'rgba(34,197,94,0.08)' : 'transparent',
+                          background: checked ? 'rgba(30,58,138,0.08)' : 'transparent',
                           border: checked ? '1px solid var(--servd-green)' : '1px solid transparent',
                           cursor: reachedMax ? 'not-allowed' : 'pointer',
                           opacity: reachedMax ? 0.5 : 1,

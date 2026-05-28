@@ -50,7 +50,7 @@ function voiceFor(slug: string) {
 export function KineticBrandLayout({ concept, concepts }: Props) {
   const { voice, emoji, menuTeaser } = voiceFor(concept.slug)
   const heroImg = conceptHeroImage(concept)
-  const accent = concept.primaryColor || '#22c55e'
+  const accent = concept.primaryColor || 'var(--servd-green)'
   const otherBrands = concepts.filter((c) => c.slug !== concept.slug).slice(0, 3)
 
   return (
@@ -239,7 +239,7 @@ export function KineticBrandLayout({ concept, concepts }: Props) {
           <DragRail>
             {otherBrands.map((other) => {
               const ov = BRAND_VOICE[other.slug]
-              const otherAccent = other.primaryColor || '#22c55e'
+              const otherAccent = other.primaryColor || 'var(--servd-green)'
               return (
                 <Link
                   key={other.slug}

@@ -61,7 +61,7 @@ export default function LoginPage() {
   const inpStyle = { background: 'white', border: '1.5px solid var(--servd-line)', color: 'var(--servd-ink)' }
   const onFocus = (e: React.FocusEvent<HTMLInputElement>) => {
     e.currentTarget.style.borderColor = 'var(--servd-green)'
-    e.currentTarget.style.boxShadow   = '0 0 0 3px rgba(34,197,94,0.16)'
+    e.currentTarget.style.boxShadow   = '0 0 0 3px rgba(30,58,138,0.16)'
   }
   const onBlur = (e: React.FocusEvent<HTMLInputElement>) => {
     e.currentTarget.style.borderColor = 'var(--servd-line)'
@@ -101,7 +101,7 @@ export default function LoginPage() {
             style={{
               background: loading ? 'var(--servd-surface)' : 'var(--servd-green)',
               color: loading ? 'var(--servd-mute)' : '#0a0a0a',
-              boxShadow: loading ? 'none' : '0 6px 18px rgba(34,197,94,0.28)',
+              boxShadow: loading ? 'none' : '0 6px 18px rgba(30,58,138,0.28)',
             }}>
             {loading ? 'Signing in…' : 'Sign in →'}
           </button>

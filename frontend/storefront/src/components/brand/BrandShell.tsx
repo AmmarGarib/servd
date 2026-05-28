@@ -27,7 +27,7 @@ export function BrandShell({ concept, children }: Props) {
   // component (kinetic shapes, pills, headlines) inherits the brand's
   // colour via --brand-accent. Stax → orange, Simmer → green, Flipd →
   // yellow. Default to servd-green if a concept doesn't define one.
-  const accent = concept.primaryColor || '#22c55e'
+  const accent = concept.primaryColor || 'var(--servd-green)'
   const wrapperStyle = {
     ['--brand-accent' as string]:      accent,
     ['--brand-accent-dark' as string]: accent,

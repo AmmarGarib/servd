@@ -17,6 +17,7 @@ import Link from 'next/link'
 import type { Concept } from '../../../lib/concept'
 import { CrossBrandStrip } from '../parts/CrossBrandStrip'
 import { OpenStatusBadge, HoursGrid, useHoursData } from '../parts/OpenStatusBadge'
+import { SpeakeasyFridgeHero } from '../../kinetic/SpeakeasyFridgeHero'
 
 interface Props {
   concept: Concept
@@ -64,23 +65,31 @@ export function SimmerLayout({ concept, concepts }: Props) {
         </div>
       )}
 
-      {/* ── HERO ─────────────────────────────────────────────────────────────
-          The wordmark is the hero. Single orange signal sits as the date
-          stamp to its right. Tagline below — never above. */}
-      <section style={{ padding: 'clamp(5rem, 14vh, 9rem) clamp(1.5rem, 5vw, 3rem) clamp(3rem, 6vh, 4rem)' }}>
-        <div style={{ maxWidth: '64rem', margin: '0 auto' }}>
-          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '2rem', flexWrap: 'wrap' }}>
-            <h1 className="wordmark" style={{ fontSize: 'clamp(5rem, 18vw, 12rem)', margin: 0 }}>simmer</h1>
-            <p className="utility signal" style={{ fontSize: '0.78rem', margin: '1.5rem 0 0', whiteSpace: 'nowrap' }}>
-              {STAMP}
-            </p>
-          </div>
+      {/* ── SPEAKEASY FRIDGE HERO ────────────────────────────────────────
+          Scroll-driven walk-in chiller door that swings open to reveal
+          "RESERVATIONS ONLY". Mirrors the IRL entrance — Simmer is in
+          the basement of Stax, accessed through what looks like a
+          fridge door. The web entrance is the same. Pure scroll, no
+          clicks. */}
+      <SpeakeasyFridgeHero
+        brandName="simmer"
+        accent="var(--simmer-orange)"
+        ink="var(--simmer-green)"
+        wood="var(--simmer-walnut)"
+        marble="var(--simmer-green)"
+        cream="var(--simmer-bone)"
+        reserveHref={`/reserve/${concept.slug}`}
+        menuHref={`/brand/${concept.slug}/menu`}
+      />
 
-          <p className="amarante" style={{ fontSize: 'clamp(1.5rem, 2.4vw, 2rem)', lineHeight: 1.25, margin: '2rem 0 0', maxWidth: '36ch', color: 'var(--simmer-bone)' }}>
-            Small plates and mocktails. A dark room on Bukhari, served softly.
+      {/* ── DATE STAMP STRIP — picks up after the chiller, signals the
+          current menu printing date. */}
+      <section style={{ padding: 'clamp(3rem, 6vh, 4rem) clamp(1.5rem, 5vw, 3rem)' }}>
+        <div style={{ maxWidth: '64rem', margin: '0 auto', display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '2rem', flexWrap: 'wrap' }}>
+          <p className="utility" style={{ fontSize: '0.78rem', margin: 0 }}>tonight&apos;s service</p>
+          <p className="utility signal" style={{ fontSize: '0.78rem', margin: 0, whiteSpace: 'nowrap' }}>
+            {STAMP}
           </p>
-
-          <p className="utility" style={{ marginTop: '2.25rem', fontSize: '0.7rem', opacity: 0.75 }}>simmer down.</p>
         </div>
       </section>
 

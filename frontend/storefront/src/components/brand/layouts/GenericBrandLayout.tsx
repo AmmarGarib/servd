@@ -67,7 +67,7 @@ export function GenericBrandLayout({ concept, concepts }: Props) {
             }}>
               {concept.name}.
             </h1>
-            <OpenStatusBadge hoursData={hoursData} accentColor="#22c55e" size="md" />
+            <OpenStatusBadge hoursData={hoursData} accentColor="var(--servd-green)" size="md" />
           </div>
           <p style={{ fontSize: 'clamp(1.15rem, 2vw, 1.6rem)', color: 'rgba(255,255,255,0.92)', maxWidth: '46rem', lineHeight: 1.4, fontWeight: 500 }}>
             {story.tagline}
@@ -110,7 +110,7 @@ export function GenericBrandLayout({ concept, concepts }: Props) {
               <p style={{ fontSize: '0.65rem', fontWeight: 700, letterSpacing: '0.28em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.55)', marginBottom: '0.6rem' }}>
                 Hours (PKT)
               </p>
-              <HoursGrid hoursData={hoursData} accentColor="#22c55e" />
+              <HoursGrid hoursData={hoursData} accentColor="var(--servd-green)" />
             </div>
           )}
         </div>

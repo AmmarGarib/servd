@@ -8,10 +8,16 @@
 @tailwind utilities;
 
 :root {
-  --servd-green:        #22c55e;
-  --servd-green-dark:   #16a34a;
-  --servd-green-soft:   #dcfce7;
-  --servd-green-ink:    #052e16;
+  /* servd primary — deep royal blue. The variable names are kept as
+     "--servd-green-*" so we don't have to find/replace every reference
+     across the storefront, but the values are now royal blue. Treat
+     them as "the servd brand color" semantically.
+     Royal blue: deep, confident, premium. Lighter variants for soft
+     surfaces; darker for hover/contrast. */
+  --servd-green:        #1E3A8A;  /* royal — primary CTA, brand dot */
+  --servd-green-dark:   #1E2F66;  /* hover / pressed */
+  --servd-green-soft:   #E0E7FF;  /* soft tint for chips, success cards */
+  --servd-green-ink:    #0B1437;  /* darkest, used as text on soft */
   --servd-black:        #0a0a0a;
   --servd-ink:          #171717;
   --servd-mute:         #525252;

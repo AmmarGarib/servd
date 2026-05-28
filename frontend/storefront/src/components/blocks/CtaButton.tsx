@@ -3,7 +3,7 @@ import type { CtaButtonBlock } from '../../lib/blocks'
 import { BUTTON_SIZE_PX } from '../../lib/blocks'
 
 const STYLE: Record<CtaButtonBlock['style'], { bg: string; fg: string; shadow: string; border: string }> = {
-  primary:   { bg: 'var(--servd-green)', fg: 'var(--servd-black)', shadow: '0 14px 36px rgba(34,197,94,0.4)', border: 'none' },
+  primary:   { bg: 'var(--servd-green)', fg: 'var(--servd-black)', shadow: '0 14px 36px rgba(30,58,138,0.4)', border: 'none' },
   secondary: { bg: '#fff',               fg: 'var(--servd-ink)',   shadow: 'none',                            border: '1px solid var(--servd-line)' },
   dark:      { bg: '#0a0a0a',            fg: '#fff',               shadow: '0 12px 30px rgba(0,0,0,0.25)',    border: 'none' },
   ghost:     { bg: 'transparent',        fg: 'var(--servd-ink)',   shadow: 'none',                            border: '1px solid transparent' },
