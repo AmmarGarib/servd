@@ -32,7 +32,6 @@ import { startShrinkageTrendWorker } from './workers/shrinkageTrend.js'
 import { startRiderScoringWorker } from './workers/riderScoring.js'
 import { startOrderAutoCancelWorker } from './workers/orderAutoCancel.js'
 import { startPaymentRetryWorker } from './workers/paymentRetry.js'
-import { startInventorySyncWorker } from './workers/inventorySync.js'
 import { startRiderDispatchWorker } from './workers/riderDispatch.js'
 import { analyticsRoutes } from './modules/analytics/routes.js'
 import { startSegmentComputationWorker } from './workers/segmentComputation.js'
@@ -554,7 +553,6 @@ async function build() {
     startRiderScoringWorker()
     startOrderAutoCancelWorker()
     startPaymentRetryWorker()
-    startInventorySyncWorker()
     startRiderDispatchWorker()
   } else {
     fastify.log.warn('Background workers disabled (set ENABLE_WORKERS=true to run them)')
