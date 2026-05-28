@@ -21,12 +21,37 @@ interface LayoutResponse {
   blocks: Block[] | null
 }
 
+// Same fallback record set as brand/[slug]/layout.tsx — keeps the
+// microsites usable when the live /storefront/concepts can't be
+// reached (api warmup / network blip).
+const FALLBACK_CONCEPTS: Record<string, Concept> = {
+  simmer: {
+    id: 'fallback-simmer', name: 'Simmer', slug: 'simmer', type: 'restaurant',
+    description: 'Small plates and mocktails. A dark room on Bukhari, served softly.',
+    logoUrl: null, primaryColor: null, reservationsEnabled: true,
+  },
+  stax: {
+    id: 'fallback-stax', name: 'Stax', slug: 'stax', type: 'restaurant',
+    description: 'Smash burgers, loaded fries, delivery-first ghost kitchen.',
+    logoUrl: null, primaryColor: null, reservationsEnabled: false,
+  },
+  flipd: {
+    id: 'fallback-flipd', name: 'Flipd', slug: 'flipd', type: 'restaurant',
+    description: 'Buttermilk-brined fried chicken, made-to-order. No reheats.',
+    logoUrl: null, primaryColor: null, reservationsEnabled: false,
+  },
+}
+
 async function getConcepts(): Promise<Concept[]> {
   try {
     const res = await fetch(`${API_URL}/api/v1/storefront/concepts`, { cache: 'no-store' })
     if (!res.ok) return []
-    return await res.json()
-  } catch { return [] }
+    const live: Concept[] = await res.json()
+    if (live.length > 0) return live
+  } catch { /* fall through */ }
+  // API empty/down → return the hardcoded fallback set so the
+  // brand-page render still finds the slug and never notFound()s.
+  return Object.values(FALLBACK_CONCEPTS)
 }
 
 async function getBrandBlocks(slug: string): Promise<Block[]> {
