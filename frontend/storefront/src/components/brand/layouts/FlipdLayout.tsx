@@ -25,61 +25,10 @@ export function FlipdLayout({ concept, concepts }: Props) {
   const story = brandStory(concept.slug)
   const reservations = concept.reservationsEnabled !== false
 
+  // Classes (.flipd-page, .flipd-display, .flipd-eyebrow, .flipd-btn,
+  // .flipd-btn-ghost, .flipd-card, .flipd-visit-grid) live in globals.css.
   return (
     <div className="flipd-page">
-      <style jsx>{`
-        .flipd-page {
-          background: var(--flipd-cream);
-          color: var(--flipd-ink);
-          font-family: 'Inter', system-ui, sans-serif;
-        }
-        .flipd-page :global(.flipd-display) {
-          font-family: 'Bricolage Grotesque', 'Inter', sans-serif;
-          font-weight: 800;
-          letter-spacing: -0.035em;
-          line-height: 0.98;
-        }
-        .flipd-page :global(.flipd-eyebrow) {
-          font-family: 'Inter', sans-serif;
-          font-size: 0.72rem;
-          font-weight: 700;
-          letter-spacing: 0.24em;
-          text-transform: uppercase;
-          color: var(--flipd-sky-deep);
-        }
-        .flipd-page :global(.flipd-btn) {
-          display: inline-flex;
-          align-items: center;
-          gap: 0.6rem;
-          font-family: 'Inter', sans-serif;
-          font-size: 0.95rem;
-          font-weight: 700;
-          padding: 1rem 1.75rem;
-          background: var(--flipd-sky);
-          color: var(--flipd-ink);
-          border: 0;
-          border-radius: 999px;
-          text-decoration: none;
-          transition: background 180ms ease, transform 180ms ease;
-        }
-        .flipd-page :global(.flipd-btn:hover) { background: var(--flipd-sky-deep); color: var(--flipd-cream); transform: translateY(-1px); }
-        .flipd-page :global(.flipd-btn-ghost) {
-          background: transparent;
-          color: var(--flipd-ink);
-          border: 1.5px solid var(--flipd-ink);
-        }
-        .flipd-page :global(.flipd-btn-ghost:hover) { background: var(--flipd-ink); color: var(--flipd-cream); }
-        .flipd-page :global(.flipd-card) {
-          background: var(--flipd-pale);
-          border: 1.5px solid var(--flipd-ink);
-          border-radius: 1.25rem;
-          padding: 2rem;
-        }
-        @media (prefers-reduced-motion: reduce) {
-          .flipd-page :global(.flipd-btn:hover) { transform: none; }
-        }
-      `}</style>
-
       {concept.announcementBanner && (
         <div role="status" style={{ background: 'var(--flipd-ink)', color: 'var(--flipd-sky)', padding: '0.7rem 1.5rem', textAlign: 'center', fontWeight: 700, fontSize: '0.85rem', letterSpacing: '0.04em' }}>
           {concept.announcementBanner}
@@ -157,18 +106,13 @@ export function FlipdLayout({ concept, concepts }: Props) {
       {/* ── HOURS + LOCATION ── */}
       <section style={{ padding: 'clamp(4rem, 9vh, 6rem) clamp(1.5rem, 5vw, 3rem)' }}>
         <div style={{ maxWidth: '72rem', margin: '0 auto', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'clamp(2rem, 5vw, 4rem)' }} className="flipd-visit-grid">
-          <style jsx>{`
-            @media (max-width: 700px) {
-              :global(.flipd-visit-grid) { grid-template-columns: 1fr !important; }
-            }
-          `}</style>
 
           <div>
             <p className="flipd-eyebrow" style={{ marginBottom: '1.25rem' }}>Hours</p>
-            <div style={{ marginBottom: '1.5rem' }}><OpenStatusBadge slug={concept.slug} /></div>
+            <div style={{ marginBottom: '1.5rem' }}><OpenStatusBadge hoursData={hoursData} /></div>
             <div style={{ fontSize: '0.95rem' }}>
               {hoursData?.hours && hoursData.hours.length > 0 ? (
-                <HoursGrid hours={hoursData.hours} />
+                <HoursGrid hoursData={hoursData} />
               ) : (
                 <p style={{ opacity: 0.6 }}>Hours not published yet.</p>
               )}

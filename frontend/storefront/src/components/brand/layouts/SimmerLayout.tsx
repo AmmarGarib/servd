@@ -40,47 +40,10 @@ export function SimmerLayout({ concept, concepts }: Props) {
   const hoursData = useHoursData(concept.slug)
   const reservations = concept.reservationsEnabled !== false
 
+  // Classes (.simmer-page, .amarante, .utility, .signal, .rule, .wordmark,
+  // .action, .action--signal, .simmer-visit-grid) live in globals.css.
   return (
     <div className="simmer-page">
-      <style jsx>{`
-        .simmer-page {
-          background: var(--simmer-green);
-          color: var(--simmer-bone);
-          font-family: var(--simmer-body);
-          letter-spacing: 0.04em;
-        }
-        .simmer-page :global(.amarante)  { font-family: var(--simmer-display); letter-spacing: 0.02em; }
-        .simmer-page :global(.utility)   { font-family: var(--simmer-body); letter-spacing: 0.28em; text-transform: lowercase; }
-        .simmer-page :global(.signal)    { color: var(--simmer-orange); }
-        .simmer-page :global(.rule)      { height: 1px; background: rgba(237,230,211,0.2); border: 0; margin: 0; }
-        .simmer-page :global(.wordmark)  { font-family: var(--simmer-display); font-weight: 400; line-height: 1; }
-        .simmer-page :global(.action) {
-          display: inline-block;
-          font-family: var(--simmer-body);
-          letter-spacing: 0.28em;
-          text-transform: lowercase;
-          padding: 0.95rem 1.6rem;
-          border: 1px solid var(--simmer-bone);
-          color: var(--simmer-bone);
-          background: transparent;
-          text-decoration: none;
-          font-size: 0.78rem;
-          transition: background 180ms ease, color 180ms ease;
-        }
-        .simmer-page :global(.action:hover) {
-          background: var(--simmer-bone);
-          color: var(--simmer-green);
-        }
-        .simmer-page :global(.action--signal) {
-          border-color: var(--simmer-orange);
-          color: var(--simmer-orange);
-        }
-        .simmer-page :global(.action--signal:hover) {
-          background: var(--simmer-orange);
-          color: var(--simmer-green);
-        }
-      `}</style>
-
       {/* ── Announcement strip (only when operator has filled the field) ───────
           Per the brand bible: operational copy stays plain and clear. */}
       {concept.announcementBanner && (
@@ -173,20 +136,14 @@ export function SimmerLayout({ concept, concepts }: Props) {
       {/* ── HOURS + RESERVATIONS + VISIT ─────────────────────────────────── */}
       <section style={{ padding: 'clamp(4rem, 9vh, 6rem) clamp(1.5rem, 5vw, 3rem)' }}>
         <div style={{ maxWidth: '64rem', margin: '0 auto', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'clamp(2rem, 5vw, 4rem)' }} className="simmer-visit-grid">
-          <style jsx>{`
-            @media (max-width: 700px) {
-              :global(.simmer-visit-grid) { grid-template-columns: 1fr !important; }
-            }
-          `}</style>
-
           <div>
             <p className="utility" style={{ fontSize: '0.7rem', opacity: 0.7, marginBottom: '1.5rem' }}>hours</p>
             <div style={{ marginBottom: '1.25rem' }}>
-              <OpenStatusBadge slug={concept.slug} />
+              <OpenStatusBadge hoursData={hoursData} />
             </div>
             <div style={{ fontFamily: 'var(--simmer-body)', fontSize: '0.95rem', letterSpacing: '0.02em', opacity: 0.9 }}>
               {hoursData?.hours && hoursData.hours.length > 0 ? (
-                <HoursGrid hours={hoursData.hours} />
+                <HoursGrid hoursData={hoursData} />
               ) : (
                 <p style={{ opacity: 0.7 }}>Hours not published yet.</p>
               )}
