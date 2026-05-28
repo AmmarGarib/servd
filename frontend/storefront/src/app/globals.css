@@ -14,10 +14,10 @@
      them as "the servd brand color" semantically.
      Royal blue: deep, confident, premium. Lighter variants for soft
      surfaces; darker for hover/contrast. */
-  --servd-green:        #0A1857;  /* deep royal — primary CTA, brand dot */
-  --servd-green-dark:   #050F3D;  /* darker — hover / pressed / depth */
-  --servd-green-soft:   #DBE2F7;  /* soft tint for chips, success cards */
-  --servd-green-ink:    #050F3D;  /* darkest, used as text on soft */
+  --servd-green:        #3A0E69;  /* deep royal purple — primary CTA, brand dot */
+  --servd-green-dark:   #1E0640;  /* darker purple — hover / pressed */
+  --servd-green-soft:   #EBDEF7;  /* soft purple tint for chips, success cards */
+  --servd-green-ink:    #150525;  /* darkest, used as text on soft */
   --servd-black:        #0a0a0a;
   --servd-ink:          #171717;
   --servd-mute:         #525252;
@@ -50,14 +50,23 @@
   --simmer-display:     'Amarante', serif;
   --simmer-body:        'Times New Roman', Times, serif;
 
-  /* ── Stax brand tokens (industrial: light grey + deep purple) ──────────── */
-  --stax-paper:         #ECEAE6;
-  --stax-paper-deep:    #D9D6CF;
-  --stax-ink:           #131318;
-  --stax-purple:        #5B3990;
-  --stax-purple-deep:   #3C236A;
-  --stax-display:       'Space Grotesk', 'Inter', sans-serif;
-  --stax-mono:          'JetBrains Mono', 'Courier New', monospace;
+  /* ── Stax brand tokens (industrial blueprint: deep royal blue + greys)
+        Blueprint background, technical-drawing line work, cream
+        annotations. Multiple greys for text hierarchy. */
+  --stax-blueprint:        #0A1857;            /* deep royal blue surface */
+  --stax-blueprint-deep:   #050F3D;            /* darker — gradient end */
+  --stax-line:             rgba(255,255,255,0.16); /* major grid */
+  --stax-line-faint:       rgba(255,255,255,0.07); /* minor grid */
+  --stax-cream:            #F2EBDA;            /* annotation labels, headlines */
+  --stax-cream-dim:        rgba(242,235,218,0.7);
+  --stax-grey-100:         #FFFFFF;            /* brightest text */
+  --stax-grey-80:          #E8E8EC;            /* primary body */
+  --stax-grey-60:          #B5B7C0;            /* secondary text, captions */
+  --stax-grey-40:          #6E7186;            /* tertiary, dividers */
+  --stax-grey-20:          #2A2E40;            /* card backgrounds (dark) */
+  --stax-ink:              #FFFFFF;
+  --stax-display:          'Space Grotesk', 'Inter', sans-serif;
+  --stax-mono:             'JetBrains Mono', 'Courier New', monospace;
 
   /* ── Per-brand microsite component classes (moved out of <style jsx>
         because Next.js standalone build doesn't transpile styled-jsx in
@@ -84,28 +93,50 @@
 .simmer-page .action--signal:hover { background: var(--simmer-orange); color: var(--simmer-green); }
 @media (max-width: 700px) { .simmer-visit-grid { grid-template-columns: 1fr !important; } }
 
-/* stax */
-.stax-page { background: var(--stax-paper); color: var(--stax-ink); font-family: var(--stax-display); }
-.stax-page .stax-mono { font-family: var(--stax-mono); letter-spacing: 0.02em; }
-.stax-page .stax-spec { font-family: var(--stax-mono); font-size: 0.72rem; letter-spacing: 0.18em; text-transform: uppercase; color: var(--stax-purple); }
-.stax-page .stax-rule { height: 1px; background: rgba(19,19,24,0.12); border: 0; margin: 0; }
-.stax-page .stax-line { height: 1px; background: var(--stax-purple); border: 0; width: 3rem; margin: 0; }
-.stax-page .stax-display { font-family: var(--stax-display); font-weight: 700; letter-spacing: -0.025em; line-height: 1.02; }
+/* stax — industrial blueprint */
+.stax-page {
+  background-color: var(--stax-blueprint);
+  background-image:
+    /* major grid (100px) */
+    linear-gradient(to right, var(--stax-line) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--stax-line) 1px, transparent 1px),
+    /* minor grid (20px) */
+    linear-gradient(to right, var(--stax-line-faint) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--stax-line-faint) 1px, transparent 1px),
+    /* radial wash so the grid doesn't read flat */
+    radial-gradient(ellipse 80% 60% at 50% 0%, color-mix(in srgb, var(--stax-blueprint) 75%, white 25%) 0%, var(--stax-blueprint) 60%, var(--stax-blueprint-deep) 100%);
+  background-size: 100px 100px, 100px 100px, 20px 20px, 20px 20px, auto;
+  background-position: 0 0, 0 0, 0 0, 0 0, center;
+  color: var(--stax-grey-80);
+  font-family: var(--stax-display);
+}
+.stax-page .stax-mono { font-family: var(--stax-mono); letter-spacing: 0.02em; color: var(--stax-grey-60); }
+.stax-page .stax-spec { font-family: var(--stax-mono); font-size: 0.72rem; letter-spacing: 0.18em; text-transform: uppercase; color: var(--stax-cream); }
+.stax-page .stax-rule { height: 1px; background: var(--stax-line); border: 0; margin: 0; }
+.stax-page .stax-line { height: 1px; background: var(--stax-cream); border: 0; width: 3rem; margin: 0; }
+.stax-page .stax-display { font-family: var(--stax-display); font-weight: 700; letter-spacing: -0.025em; line-height: 1.02; color: var(--stax-grey-100); }
 .stax-page .stax-btn {
   display: inline-flex; align-items: center; gap: 0.65rem;
   font-family: var(--stax-mono); font-size: 0.78rem;
   letter-spacing: 0.18em; text-transform: uppercase;
-  padding: 1rem 1.6rem; background: var(--stax-purple); color: var(--stax-paper);
-  border: 0; text-decoration: none; transition: background 180ms ease;
+  padding: 1rem 1.6rem; background: var(--stax-cream); color: var(--stax-blueprint);
+  border: 0; text-decoration: none; transition: background 180ms ease, color 180ms ease;
 }
-.stax-page .stax-btn:hover { background: var(--stax-purple-deep); }
-.stax-page .stax-btn-ghost { background: transparent; color: var(--stax-ink); border: 1px solid rgba(19,19,24,0.25); }
-.stax-page .stax-btn-ghost:hover { border-color: var(--stax-purple); color: var(--stax-purple); }
+.stax-page .stax-btn:hover { background: white; color: var(--stax-blueprint-deep); }
+.stax-page .stax-btn-ghost { background: transparent; color: var(--stax-cream); border: 1px solid var(--stax-line); }
+.stax-page .stax-btn-ghost:hover { border-color: var(--stax-cream); background: rgba(242,235,218,0.06); }
 .stax-page .stax-grid-bg {
+  /* On the blueprint page the grid IS the background — this class adds
+     stronger emphasis lines (denser hatching) for the hero section. */
   background-image:
-    linear-gradient(to right, rgba(19,19,24,0.04) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(19,19,24,0.04) 1px, transparent 1px);
-  background-size: 32px 32px;
+    /* corner ticks at 25% intervals */
+    linear-gradient(to right, var(--stax-cream-dim) 0 12px, transparent 12px 0%),
+    linear-gradient(to bottom, var(--stax-cream-dim) 0 12px, transparent 12px 0%),
+    /* additional hatching */
+    repeating-linear-gradient(135deg, rgba(255,255,255,0.04) 0 1px, transparent 1px 8px);
+  background-size: 25% 1px, 1px 25%, auto;
+  background-repeat: repeat-x, repeat-y, repeat;
+  background-position: 0 0, 0 0, 0 0;
 }
 @media (max-width: 700px) { .stax-visit-grid { grid-template-columns: 1fr !important; } }
 

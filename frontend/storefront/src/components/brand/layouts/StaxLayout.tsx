@@ -36,7 +36,7 @@ export function StaxLayout({ concept, concepts }: Props) {
   return (
     <div className="stax-page">
       {concept.announcementBanner && (
-        <div role="status" style={{ background: 'var(--stax-ink)', color: 'var(--stax-paper)', padding: '0.7rem 1.5rem', textAlign: 'center', fontFamily: 'var(--stax-mono)', fontSize: '0.78rem', letterSpacing: '0.18em', textTransform: 'uppercase' }}>
+        <div role="status" style={{ background: 'var(--stax-blueprint-deep)', color: 'var(--stax-cream)', padding: '0.7rem 1.5rem', textAlign: 'center', fontFamily: 'var(--stax-mono)', fontSize: '0.78rem', letterSpacing: '0.18em', textTransform: 'uppercase' }}>
           {concept.announcementBanner}
         </div>
       )}
@@ -46,11 +46,11 @@ export function StaxLayout({ concept, concepts }: Props) {
         <div style={{ maxWidth: '76rem', margin: '0 auto' }}>
           <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '2rem', flexWrap: 'wrap', marginBottom: '2rem' }}>
             <span className="stax-spec">{SPECS[0]} / KITCHEN — KARACHI</span>
-            <span className="stax-spec" style={{ color: 'rgba(19,19,24,0.5)' }}>SPEC SHEET · v.2026</span>
+            <span className="stax-spec" style={{ color: 'var(--stax-grey-60)' }}>SPEC SHEET · v.2026</span>
           </div>
 
-          <h1 className="stax-display" style={{ fontSize: 'clamp(4.5rem, 14vw, 11rem)', margin: '0 0 1rem', color: 'var(--stax-ink)' }}>
-            STAX<span style={{ color: 'var(--stax-purple)' }}>.</span>
+          <h1 className="stax-display" style={{ fontSize: 'clamp(4.5rem, 14vw, 11rem)', margin: '0 0 1rem', color: 'var(--stax-grey-100)' }}>
+            STAX<span style={{ color: 'var(--stax-cream)' }}>.</span>
           </h1>
 
           <hr className="stax-line" />
@@ -59,7 +59,7 @@ export function StaxLayout({ concept, concepts }: Props) {
             {story.tagline}
           </p>
 
-          <p style={{ fontFamily: 'var(--stax-mono)', fontSize: '0.95rem', letterSpacing: '0.02em', maxWidth: '52ch', margin: '1.25rem 0 0', color: 'rgba(19,19,24,0.75)' }}>
+          <p style={{ fontFamily: 'var(--stax-mono)', fontSize: '0.95rem', letterSpacing: '0.02em', maxWidth: '52ch', margin: '1.25rem 0 0', color: 'var(--stax-grey-80)' }}>
             {story.oneLiner}
           </p>
 
@@ -80,9 +80,9 @@ export function StaxLayout({ concept, concepts }: Props) {
             <h2 className="stax-display" style={{ fontSize: 'clamp(2rem, 4vw, 3rem)', margin: 0 }}>The brief.</h2>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '0', border: '1px solid rgba(19,19,24,0.12)' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '0', border: '1px solid var(--stax-line)' }}>
             {story.highlights.map((h, i) => (
-              <div key={h} style={{ padding: '1.75rem 1.5rem', borderRight: '1px solid rgba(19,19,24,0.12)', borderBottom: i < story.highlights.length - 1 ? '0' : '0', minHeight: '8rem', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+              <div key={h} style={{ padding: '1.75rem 1.5rem', borderRight: '1px solid var(--stax-line)', borderBottom: i < story.highlights.length - 1 ? '0' : '0', minHeight: '8rem', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
                 <span className="stax-spec">{String(i + 1).padStart(2, '0')}</span>
                 <p className="stax-mono" style={{ fontSize: '0.95rem', lineHeight: 1.5, margin: '1rem 0 0', fontWeight: 500 }}>
                   {h}
@@ -102,7 +102,7 @@ export function StaxLayout({ concept, concepts }: Props) {
             <span className="stax-spec">{SPECS[2]}</span>
             <h2 className="stax-display" style={{ fontSize: 'clamp(2rem, 4vw, 3rem)', margin: 0 }}>The kitchen.</h2>
           </div>
-          <p className="stax-mono" style={{ fontSize: '1.1rem', lineHeight: 1.65, color: 'rgba(19,19,24,0.85)' }}>
+          <p className="stax-mono" style={{ fontSize: '1.1rem', lineHeight: 1.65, color: 'var(--stax-grey-80)' }}>
             {story.long}
           </p>
         </div>
@@ -138,7 +138,7 @@ export function StaxLayout({ concept, concepts }: Props) {
             </p>
             {concept.phone && (
               <p className="stax-mono" style={{ fontSize: '0.95rem', margin: 0 }}>
-                <a href={`tel:${concept.phone.replace(/\s/g, '')}`} style={{ color: 'var(--stax-purple)', textDecoration: 'none', borderBottom: '1px solid currentColor' }}>
+                <a href={`tel:${concept.phone.replace(/\s/g, '')}`} style={{ color: 'var(--stax-cream)', textDecoration: 'none', borderBottom: '1px solid currentColor' }}>
                   {concept.phone}
                 </a>
               </p>
@@ -155,24 +155,24 @@ export function StaxLayout({ concept, concepts }: Props) {
       <hr className="stax-rule" />
 
       {/* ── CROSS-BRAND STRIP ── */}
-      <div style={{ background: 'var(--stax-paper-deep)' }}>
+      <div style={{ background: 'var(--stax-blueprint-deep)' }}>
         <CrossBrandStrip
           current={concept}
           concepts={concepts}
-          accent="var(--stax-purple)"
+          accent="var(--stax-cream)"
           kicker="ALSO FROM THE OPERATOR"
           heading="Other lines coming out of the same kitchen group."
         />
       </div>
 
       {/* ── CTA STRIP ── */}
-      <section style={{ background: 'var(--stax-ink)', color: 'var(--stax-paper)', padding: 'clamp(4rem, 10vh, 7rem) clamp(1.5rem, 5vw, 3rem)' }}>
+      <section style={{ background: 'var(--stax-blueprint-deep)', color: 'var(--stax-cream)', padding: 'clamp(4rem, 10vh, 7rem) clamp(1.5rem, 5vw, 3rem)' }}>
         <div style={{ maxWidth: '64rem', margin: '0 auto', textAlign: 'center' }}>
           <span className="stax-spec" style={{ color: 'rgba(236,234,230,0.5)' }}>{SPECS[5]} · ORDER</span>
           <h2 className="stax-display" style={{ fontSize: 'clamp(2.2rem, 5vw, 4rem)', margin: '1rem 0 2rem' }}>
-            Get it built<span style={{ color: 'var(--stax-purple)' }}>.</span>
+            Get it built<span style={{ color: 'var(--stax-cream)' }}>.</span>
           </h2>
-          <Link href={`/${concept.slug}`} className="stax-btn" style={{ background: 'var(--stax-paper)', color: 'var(--stax-ink)' }}>
+          <Link href={`/${concept.slug}`} className="stax-btn" style={{ background: 'var(--stax-cream)', color: 'var(--stax-blueprint)' }}>
             Order from Stax →
           </Link>
         </div>

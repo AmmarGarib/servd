@@ -37,7 +37,7 @@ export interface Concept {
 // is the source of truth for /brand/<slug> chrome.
 const BRAND_ACCENT_OVERRIDES: Record<string, string> = {
   simmer: '#E94E1B',  // fiery orange — the simmer brand bible's signal color
-  stax:   '#5B3990',  // deep purple — industrial palette
+  stax:   '#0A1857',  // deep royal blue — industrial blueprint palette
   flipd:  '#3AA8FF',  // sky blue — cool diner palette
 }
 
