@@ -43,7 +43,6 @@ const STATUS_COLORS: Record<string, string> = {
 const SOURCE_COLORS: Record<string, string> = {
   pos:        'bg-purple-900/40 text-purple-400',
   servd:      'bg-blue-900/40 text-kds-blue',
-  foodpanda:  'bg-pink-900/40 text-pink-400',
   cart:       'bg-orange-900/40 text-orange-400',
   manual:     'bg-kds-card text-kds-subtext',
 }
@@ -310,7 +309,7 @@ export default function OrdersPage() {
                 <div className="flex flex-wrap gap-3">
                   <select value={source} onChange={(e) => setSource(e.target.value)} className={sel}>
                     <option value="">All sources</option>
-                    {['pos','servd','foodpanda','cart','manual'].map((s) => (
+                    {['pos','servd','cart','manual'].map((s) => (
                       <option key={s} value={s}>{s}</option>
                     ))}
                   </select>

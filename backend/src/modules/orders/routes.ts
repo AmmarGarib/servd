@@ -9,7 +9,7 @@ import { AppError } from '../../lib/errors.js'
 import type { OrderDTO } from '@servd/types'
 
 const createOrderSchema = z.object({
-  source: z.enum(['servd', 'foodpanda', 'pos', 'cart', 'manual']),
+  source: z.enum(['servd', 'pos', 'cart', 'manual']),
   external_id: z.string().default(() => `manual-${Date.now()}`),
   concept_id: z.string().uuid(),
   placed_at: z.string().datetime().default(() => new Date().toISOString()),

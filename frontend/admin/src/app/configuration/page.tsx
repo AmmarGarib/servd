@@ -110,10 +110,6 @@ export default function ConfigurationHubPage() {
       desc: 'Hours, layout, hero, announcement banner.',
       category: 'channels', status: 'unknown' },
 
-    { href: '/settings/integrations',  icon: '🛵', title: 'Aggregators',
-      desc: 'Foodpanda, Careem — webhooks, secrets, menu sync.',
-      category: 'channels', status: 'incomplete', hint: 'Configure HMAC secrets' },
-
     { href: '/settings/integrations',  icon: '💬', title: 'WhatsApp Ordering',
       desc: 'Cloud API token + webhook for direct chat orders.',
       category: 'channels', status: 'optional' },
@@ -210,7 +206,7 @@ export default function ConfigurationHubPage() {
       category: 'operations', status: 'incomplete' },
 
     { href: '/configuration/bank-accounts', icon: '🏦', title: 'Bank accounts',
-      desc: 'Operating accounts for reconciliation against aggregator settlements + payouts.',
+      desc: 'Operating accounts for reconciliation against card payouts and rider COD handoffs.',
       category: 'finance', status: 'incomplete' },
 
     { href: '/configuration/reservation-policy', icon: '📅', title: 'Reservation policy',

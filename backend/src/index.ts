@@ -18,7 +18,6 @@ import { redis } from './lib/redis.js'
 import { AppError, errorResponse } from './lib/errors.js'
 import { ZodError } from 'zod'
 import { startCartReleaseWorker } from './lib/reservation.js'
-import { startOrderIngestionWorker } from './workers/orderIngestion.js'
 import { startCoursePacingWorker } from './workers/coursePacing.js'
 import { startLoyaltyTriggerWorker } from './workers/loyaltyTriggers.js'
 import { startLoyaltyExpirationWorker } from './workers/loyaltyExpiration.js'
@@ -130,7 +129,6 @@ async function build() {
           'req.headers.cookie',
           'req.headers["x-api-key"]',
           'req.headers["x-keenu-signature"]',
-          'req.headers["x-foodpanda-signature"]',
           'res.headers["set-cookie"]',
           '*.password', '*.pin', '*.token', '*.refreshToken', '*.accessToken',
           '*.jwt', '*.apiKey', '*.secret', '*.webhookSecret',
@@ -540,7 +538,6 @@ async function build() {
 
   if (workersEnabled) {
     startCartReleaseWorker()
-    startOrderIngestionWorker()
     startLoyaltyTriggerWorker()
     startLoyaltyExpirationWorker()
     startReservationReminderWorker()
@@ -578,7 +575,6 @@ function validateProductionEnv() {
     'STOREFRONT_URL',
     // Webhooks must verify signatures in prod — empty secret is a silent bypass
     'KEENU_WEBHOOK_SECRET',
-    'FOODPANDA_WEBHOOK_SECRET',
   ]
   const missing = required.filter((k) => !process.env[k])
   if (missing.length) {

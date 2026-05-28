@@ -50,7 +50,6 @@ const config: Config = {
         // Source badge colors
         source: {
           servd:     '#6366F1',
-          foodpanda: '#EC4899',
           pos:       '#22C55E',
           cart:      '#F59E0B',
           manual:    '#8B5CF6',

@@ -82,8 +82,8 @@ export async function deductInventoryForOrder(orderId: string): Promise<void> {
 
   // Auto-86: if any deducted ingredient is now at or below zero, mark every
   // menu item whose recipe depends on it as unavailable. Cross-channel: the
-  // emitted event reaches storefront clients, KDS, and aggregator availability
-  // checks (since they all read MenuItem.isAvailable).
+  // emitted event reaches storefront clients and KDS (everything reads
+  // MenuItem.isAvailable).
   await autoEightySixDepletedItems(ids)
 }
 
@@ -143,11 +143,7 @@ export async function ingestOrder(dto: OrderDTO) {
   // show plate vs package, so we never leave this null.
   const fulfilmentType: 'dine_in' | 'takeout' | 'delivery' =
     (dto as { fulfilment_type?: 'dine_in' | 'takeout' | 'delivery' }).fulfilment_type
-    ?? (
-      dto.table_id ? 'dine_in'
-      : (dto.source === 'foodpanda' || dto.source === 'careem') ? 'delivery'
-      : 'takeout'
-    )
+    ?? (dto.table_id ? 'dine_in' : 'takeout')
 
   async function runTransaction() {
     return prisma.$transaction(async (tx) => {
@@ -437,11 +433,11 @@ export async function updateOrderStatus(id: string, status: OrderStatus) {
   const order = await prisma.order.findFirst({ where: { id, deletedAt: null } })
   if (!order) throw new NotFoundError('Order', id)
 
-  // B19: validate the transition. A retried Foodpanda webhook that tries to
-  // move a `completed` order back to `received` (or `confirmed`) used to
-  // silently succeed and re-fire all the side effects — financial entries,
-  // loyalty earns, FBR submission. The state machine rejects with a 409
-  // here so the caller can dedupe.
+  // B19: validate the transition. Retried webhooks / repeated client requests
+  // that try to move a `completed` order back to `received` (or `confirmed`)
+  // used to silently succeed and re-fire all the side effects — financial
+  // entries, loyalty earns, FBR submission. The state machine rejects with a
+  // 409 here so the caller can dedupe.
   const { canTransitionOrder } = await import('../../lib/orderStateMachine.js')
   if (!canTransitionOrder(order.status, status)) {
     throw new AppError(
@@ -711,13 +707,10 @@ async function createFinancialEntry(orderId: string) {
   const existing = await prisma.financialEntry.findUnique({ where: { orderId } })
   if (existing) return
 
-  // B02: read the per-brand commission rate from the concept; falls back to
-  // 25% only if the concept hasn't been configured yet. Foodpanda actually
-  // varies the rate by brand + city — single hard-coded value loses money.
-  const commissionRate = order.source === 'foodpanda'
-    ? (order.concept.foodpandaCommissionRate ?? 0.25)
-    : 0
-  const commissionCents = Math.round(order.totalCents * commissionRate)
+  // No third-party commission — servd is operator-direct only. The
+  // financial entry still records a commission line for schema parity
+  // with legacy historical rows, but the rate is always zero.
+  const commissionCents = 0
 
   try {
     await prisma.financialEntry.create({

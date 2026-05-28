@@ -3,8 +3,6 @@
 
 export type OrderSource =
   | 'servd'
-  | 'foodpanda'
-  | 'careem'
   | 'pos'
   | 'cart'
   | 'manual'

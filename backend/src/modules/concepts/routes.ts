@@ -51,8 +51,6 @@ const updateConceptSchema = createConceptSchema.partial().omit({ slug: true }).e
   latitude:        z.number().min(-90).max(90).nullable().optional(),
   longitude:       z.number().min(-180).max(180).nullable().optional(),
   deliveryRadiusKm: z.number().min(0).max(50).optional(),
-  // Aggregator economics
-  foodpandaCommissionRate: z.number().min(0).max(1).optional(),
   // FBR / tax invoice details
   strn:             z.string().max(40).nullable().optional(),
   ntn:              z.string().max(40).nullable().optional(),

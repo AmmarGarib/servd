@@ -70,7 +70,7 @@ export function OnboardingChecklist({ forceShow = false }: { forceShow?: boolean
       href: '/menu', done: hasMenuItems },
     { key: 'supplier',  title: 'Onboard your first supplier', desc: 'Open a chat thread + portal invite',
       href: '/procurement/chat', done: suppliers.length > 0 },
-    { key: 'integrations', title: 'Hook up integrations',  desc: 'R2 storage, WhatsApp, Foodpanda — at least one',
+    { key: 'integrations', title: 'Hook up integrations',  desc: 'R2 storage, WhatsApp, Keenu — at least one',
       href: '/settings/integrations', done: false /* unknown without query */ },
   ]
 

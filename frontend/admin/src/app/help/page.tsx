@@ -15,7 +15,7 @@ const FAQ: Array<{ q: string; a: string }> = [
   },
   {
     q: 'How does auto-86 work?',
-    a: 'When the recipe-driven inventory worker deducts an ingredient and it drops to zero, every menu item whose recipe uses that ingredient is automatically marked unavailable across POS, the storefront, and any aggregator that respects the live availability flag. You\'ll see an alert on the dashboard and the items go grey on the menu editor.',
+    a: 'When the recipe-driven inventory worker deducts an ingredient and it drops to zero, every menu item whose recipe uses that ingredient is automatically marked unavailable across POS and the storefront. You\'ll see an alert on the dashboard and the items go grey on the menu editor.',
   },
   {
     q: 'How do I add a supplier and start chatting with them?',

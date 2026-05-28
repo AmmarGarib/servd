@@ -3,39 +3,6 @@ import { redis } from './redis.js'
 
 const connection = redis
 
-// ─── Order Ingestion Queue ────────────────────────────────────────────────────
-// Handles retry logic for failed webhook acknowledgements
-
-export interface OrderIngestionJob {
-  source: string
-  payload: unknown
-  attempt?: number
-}
-
-let _orderIngestionQueue: Queue<OrderIngestionJob> | null = null
-
-export function getOrderIngestionQueue(): Queue<OrderIngestionJob> | null {
-  if (_orderIngestionQueue) return _orderIngestionQueue
-  try {
-    _orderIngestionQueue = new Queue<OrderIngestionJob>('order-ingestion', {
-      connection,
-      defaultJobOptions: {
-        attempts: 5,
-        backoff: { type: 'exponential', delay: 2000 },
-        removeOnComplete: { count: 100 },
-        removeOnFail: { count: 200 },
-      },
-    })
-    return _orderIngestionQueue
-  } catch (err) {
-    console.warn('[queue] orderIngestionQueue init failed (Redis unavailable):', (err as Error).message)
-    return null
-  }
-}
-
-// Legacy export — lazily initialised on first access
-export const orderIngestionQueue = { add: (...args: Parameters<Queue['add']>) => getOrderIngestionQueue()?.add(...args) }
-
 // ─── FBR Submission Queue ─────────────────────────────────────────────────────
 // Fire-and-forget; failures do NOT block the POS payment response.
 // Worker retries with exponential backoff; final failure logs for compliance.

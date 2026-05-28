@@ -1,4 +1,4 @@
-export type OrderSource = 'servd' | 'foodpanda' | 'pos' | 'cart' | 'manual';
+export type OrderSource = 'servd' | 'pos' | 'cart' | 'manual';
 export interface OrderModifierDTO {
     name: string;
     priceDeltaCents: number;
