@@ -73,6 +73,14 @@ services:
       NODE_ENV: "production"
       PORT: "3000"
       INTERNAL_API_URL: "http://api:3001"
+    # Wipe Next.js's persistent fetch/data cache on every container start.
+    # Without this, an empty response cached during the first post-deploy
+    # request (api still warming up) sticks around indefinitely, so
+    # /brand/<slug> 404s while /browse (force-dynamic, uncached) works.
+    # Adding `command` here also forces docker compose to recreate the
+    # container even when the image is unchanged.
+    command: >
+      sh -c "rm -rf /app/.next/cache /app/.next/standalone/.next/cache 2>/dev/null; node server.js"
     depends_on:
       - api
     networks:
