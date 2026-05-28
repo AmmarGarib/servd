@@ -283,15 +283,22 @@ export default function AccountPage() {
                       </p>
                     </>
                   ) : (
-                    <p className="text-xs font-black" style={{ color: tc }}>🏆 Top tier!</p>
+                    <p className="text-xs font-black inline-flex items-center gap-1.5" style={{ color: tc }}>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                        <path d="M6 9V2h12v7c0 2.21-1.79 4-4 4h-1v3l3 1v3H8v-3l3-1v-3h-1c-2.21 0-4-1.79-4-4z"/>
+                      </svg>
+                      Top tier
+                    </p>
                   )}
                 </div>
               </div>
             </div>
           ) : (
             <div className="flex-1 min-w-0 rounded-2xl p-4 flex flex-col justify-center items-center text-center gap-2"
-              style={{ background: '#fff', border: '1px solid rgba(0,0,0,0.07)', boxShadow: '0 2px 12px rgba(0,0,0,0.06)' }}>
-              <p className="text-3xl">⭐</p>
+              style={{ background: 'white', border: '1px solid var(--servd-line)', boxShadow: '0 1px 3px rgba(0,0,0,0.04)' }}>
+              <svg width="32" height="32" viewBox="0 0 24 24" fill="currentColor" style={{ color: 'var(--servd-green-dark)' }} aria-hidden="true">
+                <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+              </svg>
               <p className="font-black text-sm" style={{ color: 'var(--servd-ink)' }}>No loyalty yet</p>
               <p className="text-xs" style={{ color: 'var(--servd-mute)' }}>Place an order to start earning</p>
             </div>
@@ -357,19 +364,25 @@ export default function AccountPage() {
 
           {addresses.length === 0 && !showAddAddr ? (
             <div className="rounded-2xl p-5 text-center"
-              style={{ background: '#fff', border: '1px solid rgba(0,0,0,0.07)', boxShadow: '0 2px 8px rgba(0,0,0,0.04)' }}>
-              <p className="text-2xl mb-2">📍</p>
-              <p className="text-sm font-semibold" style={{ color: 'rgba(15,26,15,0.55)' }}>No saved locations yet</p>
-              <p className="text-xs mt-1" style={{ color: 'rgba(15,26,15,0.35)' }}>Add your home, work or favourite spots for quick ordering</p>
+              style={{ background: 'white', border: '1px solid var(--servd-line)', boxShadow: '0 1px 3px rgba(0,0,0,0.04)' }}>
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--servd-mute)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ display: 'inline-block', marginBottom: '0.5rem' }} aria-hidden="true">
+                <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/>
+                <circle cx="12" cy="10" r="3"/>
+              </svg>
+              <p className="text-sm font-semibold" style={{ color: 'var(--servd-ink)' }}>No saved locations yet</p>
+              <p className="text-xs mt-1" style={{ color: 'var(--servd-mute)' }}>Add your home, work or favourite spots for quick ordering</p>
             </div>
           ) : (
             <div className="space-y-2">
               {addresses.map((addr) => (
                 <div key={addr.id} className="rounded-2xl p-4 flex items-center gap-3"
-                  style={{ background: '#fff', border: addr.isDefault ? '1px solid rgba(34,197,94,0.3)' : '1px solid rgba(0,0,0,0.07)', boxShadow: '0 2px 8px rgba(0,0,0,0.04)' }}>
-                  <div className="h-9 w-9 rounded-xl flex items-center justify-center shrink-0 text-sm"
-                    style={{ background: addr.isDefault ? 'rgba(34,197,94,0.12)' : 'rgba(0,0,0,0.04)' }}>
-                    📍
+                  style={{ background: 'white', border: addr.isDefault ? '1px solid rgba(34,197,94,0.3)' : '1px solid var(--servd-line)', boxShadow: '0 1px 3px rgba(0,0,0,0.04)' }}>
+                  <div className="h-9 w-9 rounded-xl flex items-center justify-center shrink-0"
+                    style={{ background: addr.isDefault ? 'rgba(34,197,94,0.12)' : 'var(--servd-surface)', color: addr.isDefault ? 'var(--servd-green-dark)' : 'var(--servd-mute)' }}>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/>
+                      <circle cx="12" cy="10" r="3"/>
+                    </svg>
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1.5 flex-wrap">
