@@ -14,10 +14,10 @@
      them as "the servd brand color" semantically.
      Royal blue: deep, confident, premium. Lighter variants for soft
      surfaces; darker for hover/contrast. */
-  --servd-green:        #1E3A8A;  /* royal — primary CTA, brand dot */
-  --servd-green-dark:   #1E2F66;  /* hover / pressed */
-  --servd-green-soft:   #E0E7FF;  /* soft tint for chips, success cards */
-  --servd-green-ink:    #0B1437;  /* darkest, used as text on soft */
+  --servd-green:        #0A1857;  /* deep royal — primary CTA, brand dot */
+  --servd-green-dark:   #050F3D;  /* darker — hover / pressed / depth */
+  --servd-green-soft:   #DBE2F7;  /* soft tint for chips, success cards */
+  --servd-green-ink:    #050F3D;  /* darkest, used as text on soft */
   --servd-black:        #0a0a0a;
   --servd-ink:          #171717;
   --servd-mute:         #525252;
