@@ -42,18 +42,15 @@ export function startRiderDispatchWorker() {
 }
 
 async function runDispatchSweep(): Promise<void> {
-  // Confirmed delivery orders with no rider yet.
-  // Delivery orders are either from a delivery platform (foodpanda/careem)
-  // or native orders that received a delivery OTP at checkout.
+  // Confirmed delivery orders with no rider yet. Native servd orders mark
+  // themselves for delivery by issuing a delivery OTP at checkout — that
+  // OTP is the dispatcher's signal that this order needs a rider.
   const orders = await prisma.order.findMany({
     where: {
       status: 'confirmed',
       riderId: null,
       deletedAt: null,
-      OR: [
-        { source: { in: ['foodpanda', 'careem'] } },
-        { deliveryOtp: { not: null } },
-      ],
+      deliveryOtp: { not: null },
     },
     take: 50,
     select: {

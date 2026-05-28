@@ -106,7 +106,7 @@ const LAYOUTS: Layout[] = [
     name: 'Cloud kitchen — Pickup only',
     emoji: '🛵',
     description: 'No seating · 4 pickup pickup-stations',
-    bestFor: 'Delivery-only · Ghost kitchen · Aggregator',
+    bestFor: 'Delivery-only · Ghost kitchen · Own-fleet dispatch',
     tables: [
       ...Array.from({ length: 4 }, (_, i) => ({
         label: `P${i + 1}`, capacity: 0, shape: 'square' as const,

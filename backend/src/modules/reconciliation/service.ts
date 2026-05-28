@@ -9,7 +9,7 @@
 
 import { prisma } from '../../lib/prisma.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
-import { ACCT, postJournalEntry } from '../accounting/journal.js'
+import { postJournalEntry } from '../accounting/journal.js'
 
 // ─── CSV statement parser ────────────────────────────────────────────────────
 // Lenient: accepts any of date,description,amount in the header (in any case);
@@ -252,82 +252,3 @@ export async function adjustStatementLine(input: {
   return { ok: true }
 }
 
-// ─── Foodpanda settlement reconciliation ────────────────────────────────────
-
-export async function reconcileFoodpandaSettlement(input: {
-  settlementDate: Date
-  periodStart: Date
-  periodEnd: Date
-  actualAmountCents: number
-  reference?: string
-  notes?: string
-  recordedById?: string
-}) {
-  // Expected payout = sum of (totalCents - commission) for completed Foodpanda
-  // orders in the period. Commission rate is per-concept (Concept.foodpandaCommissionRate).
-  // Commission is computed on the *food subtotal* (gross minus tax minus
-  // service charge minus tip) since Foodpanda contracts settle on food revenue,
-  // not pass-through taxes/charges.
-  const orders = await prisma.order.findMany({
-    where: {
-      source: 'foodpanda',
-      status: { in: ['completed', 'refunded'] },
-      completedAt: { gte: input.periodStart, lte: input.periodEnd },
-      deletedAt: null,
-    },
-    select: {
-      totalCents: true,
-      taxCents: true,
-      serviceChargeCents: true,
-      tipCents: true,
-      status: true,
-      concept: { select: { foodpandaCommissionRate: true } },
-    },
-  })
-
-  const expectedAmountCents = orders.reduce((s, o) => {
-    if (o.status === 'refunded') return s   // refunded orders aren't settled
-    const rate = o.concept.foodpandaCommissionRate ?? 0.25
-    const commissionable = Math.max(0, o.totalCents - (o.taxCents ?? 0) - (o.serviceChargeCents ?? 0) - (o.tipCents ?? 0))
-    const commission = Math.round(commissionable * rate)
-    return s + (o.totalCents - commission)
-  }, 0)
-
-  const varianceCents = input.actualAmountCents - expectedAmountCents
-
-  const settlement = await prisma.foodpandaSettlement.create({
-    data: {
-      settlementDate: input.settlementDate,
-      reference: input.reference ?? null,
-      expectedAmountCents,
-      actualAmountCents: input.actualAmountCents,
-      varianceCents,
-      status: varianceCents === 0 ? 'reconciled' : 'open',
-      notes: input.notes ?? null,
-      recordedById: input.recordedById ?? null,
-    },
-  })
-
-  // Post the settlement: actual cash arrived in bank, derecognise Foodpanda AR.
-  // If there's a variance, book it to commission expense (or a write-off).
-  await postJournalEntry({
-    sourceType: 'foodpanda.settlement',
-    sourceId: settlement.id,
-    description: `Foodpanda settlement (${input.settlementDate.toISOString().slice(0,10)})`,
-    entryDate: input.settlementDate,
-    postedBy: input.recordedById ?? 'system',
-    reference: input.reference,
-    lines: [
-      { accountCode: ACCT.BANK,         type: 'debit',  amountCents: input.actualAmountCents, memo: 'Foodpanda payout' },
-      ...(varianceCents !== 0 ? [{
-        accountCode: ACCT.FOODPANDA_COMMISSION,
-        type: (varianceCents < 0 ? 'debit' : 'credit') as 'debit' | 'credit',
-        amountCents: Math.abs(varianceCents),
-        memo: varianceCents < 0 ? 'Underpayment variance' : 'Overpayment variance',
-      }] : []),
-      { accountCode: ACCT.FOODPANDA_AR, type: 'credit', amountCents: expectedAmountCents,    memo: 'AR cleared' },
-    ],
-  })
-
-  return settlement
-}

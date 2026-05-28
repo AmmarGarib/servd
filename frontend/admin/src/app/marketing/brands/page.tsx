@@ -25,7 +25,6 @@ interface Concept {
   latitude: number | null
   longitude: number | null
   deliveryRadiusKm: number
-  foodpandaCommissionRate: number
   strn: string | null
   ntn: string | null
   province: string | null
@@ -148,7 +147,6 @@ function BrandForm({ concept }: { concept: Concept }) {
   const [latitude, setLatitude] = useState(concept.latitude !== null ? String(concept.latitude) : '')
   const [longitude, setLongitude] = useState(concept.longitude !== null ? String(concept.longitude) : '')
   const [deliveryRadiusKm, setDeliveryRadiusKm] = useState(String(concept.deliveryRadiusKm))
-  const [fpRate, setFpRate] = useState(String(Math.round(concept.foodpandaCommissionRate * 100)))
 
   const [taxRate, setTaxRate] = useState(String(concept.taxRate))
   const [strn, setStrn] = useState(concept.strn ?? '')
@@ -173,7 +171,6 @@ function BrandForm({ concept }: { concept: Concept }) {
     setLatitude(concept.latitude !== null ? String(concept.latitude) : '')
     setLongitude(concept.longitude !== null ? String(concept.longitude) : '')
     setDeliveryRadiusKm(String(concept.deliveryRadiusKm))
-    setFpRate(String(Math.round(concept.foodpandaCommissionRate * 100)))
     setTaxRate(String(concept.taxRate))
     setStrn(concept.strn ?? ''); setNtn(concept.ntn ?? ''); setProvince(concept.province ?? '')
     setInvoiceLegalName(concept.invoiceLegalName ?? ''); setInvoiceAddress(concept.invoiceAddress ?? '')
@@ -191,7 +188,6 @@ function BrandForm({ concept }: { concept: Concept }) {
       latitude: latitude ? parseFloat(latitude) : null,
       longitude: longitude ? parseFloat(longitude) : null,
       deliveryRadiusKm: parseFloat(deliveryRadiusKm) || 0,
-      foodpandaCommissionRate: (parseFloat(fpRate) || 0) / 100,
       taxRate: parseFloat(taxRate) || 0,
       strn: strn || null, ntn: ntn || null, province: province || null,
       invoiceLegalName: invoiceLegalName || null, invoiceAddress: invoiceAddress || null,
@@ -370,7 +366,7 @@ function BrandForm({ concept }: { concept: Concept }) {
 
       {/* ── Delivery ─────────────────────────────────────────────────────── */}
       {tab === 'delivery' && (
-        <Section title="Delivery geography & aggregator" subtitle="Where you deliver from + commission economics">
+        <Section title="Delivery geography" subtitle="Where you deliver from + radius for your own fleet">
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <Field label="Latitude" hint="Decimal degrees, e.g. 31.5204">
               <input value={latitude} onChange={(e) => setLatitude(e.target.value)}
@@ -385,10 +381,6 @@ function BrandForm({ concept }: { concept: Concept }) {
                 type="number" step="0.5" min="0" max="50" className="s-input w-full" />
             </Field>
           </div>
-          <Field label="Foodpanda commission %" hint="Negotiated rate with Foodpanda. Default 25%.">
-            <input value={fpRate} onChange={(e) => setFpRate(e.target.value)}
-              type="number" step="0.1" min="0" max="100" className="s-input w-full max-w-[200px]" />
-          </Field>
         </Section>
       )}
 

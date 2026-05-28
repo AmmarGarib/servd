@@ -5,7 +5,6 @@
 import type { FastifyInstance } from 'fastify'
 import crypto from 'crypto'
 import { z } from 'zod'
-import { orderIngestionQueue } from '../../lib/queue.js'
 import { AppError } from '../../lib/errors.js'
 import { prisma } from '../../lib/prisma.js'
 import { redis } from '../../lib/redis.js'
@@ -94,29 +93,6 @@ export async function webhookRoutes(fastify: FastifyInstance) {
     }
   })
 
-  // POST /webhooks/foodpanda — order notifications from Foodpanda
-  // Tight per-IP cap: a misconfigured retry storm shouldn't drown the API.
-  fastify.post('/foodpanda', { config: { rateLimit: { max: 60, timeWindow: '1 minute' } } }, async (req, reply) => {
-    const { parsed, raw } = req.body as { parsed: unknown; raw: string }
-    const sig = req.headers['x-foodpanda-signature'] as string ?? ''
-    const secret = process.env['FOODPANDA_WEBHOOK_SECRET']
-
-    if (!secret) throw new AppError('WEBHOOK_NOT_CONFIGURED', 'FOODPANDA_WEBHOOK_SECRET is not set', 500)
-    if (!verifyHmac(secret, sig, raw)) {
-      throw new AppError('INVALID_SIGNATURE', 'Webhook signature verification failed', 401)
-    }
-
-    // Idempotency — Foodpanda retries on transient failures; double-processing
-    // creates duplicate orders + duplicate inventory deductions. Key by their
-    // own request signature so legitimate distinct events are still ingested.
-    const dedupKey = (parsed as any)?.event_id ?? (parsed as any)?.order_id ?? sig
-    const fresh = await claimIdempotency(`foodpanda:${dedupKey}`)
-    if (!fresh) return reply.status(200).send({ received: true, dedup: true })
-
-    await orderIngestionQueue.add('foodpanda-order', { source: 'foodpanda', payload: parsed })
-    return reply.status(200).send({ received: true })
-  })
-
   // POST /webhooks/keenu — payment confirmation callback
   fastify.post('/keenu', { config: { rateLimit: { max: 60, timeWindow: '1 minute' } } }, async (req, reply) => {
     const { parsed, raw } = req.body as { parsed: unknown; raw: string }
@@ -149,25 +125,6 @@ export async function webhookRoutes(fastify: FastifyInstance) {
       })
     }
 
-    return reply.status(200).send({ received: true })
-  })
-
-  // POST /webhooks/careem — order notifications from Careem Food
-  fastify.post('/careem', { config: { rateLimit: { max: 60, timeWindow: '1 minute' } } }, async (req, reply) => {
-    const { parsed, raw } = req.body as { parsed: unknown; raw: string }
-    const sig = req.headers['x-careem-signature'] as string ?? ''
-    const secret = process.env['CAREEM_WEBHOOK_SECRET']
-
-    if (!secret) throw new AppError('WEBHOOK_NOT_CONFIGURED', 'CAREEM_WEBHOOK_SECRET is not set', 500)
-    if (!verifyHmac(secret, sig, raw)) {
-      throw new AppError('INVALID_SIGNATURE', 'Careem webhook signature verification failed', 401)
-    }
-
-    const dedupKey = (parsed as any)?.event_id ?? (parsed as any)?.order?.order_code ?? sig
-    const fresh = await claimIdempotency(`careem:${dedupKey}`)
-    if (!fresh) return reply.status(200).send({ received: true, dedup: true })
-
-    await orderIngestionQueue.add('careem-order', { source: 'careem', payload: parsed })
     return reply.status(200).send({ received: true })
   })
 

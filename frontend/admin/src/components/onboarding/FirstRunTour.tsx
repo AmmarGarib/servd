@@ -24,7 +24,7 @@ const STEPS: TourStep[] = [
   {
     emoji: '💳',
     title: 'POS for in-store + waiter ordering',
-    body: 'Cashiers use /pos. Waiters use /pos/waiter (mobile-first, table-aware). Both feed the same order pipeline as the online storefront, aggregators, and WhatsApp.',
+    body: 'Cashiers use /pos. Waiters use /pos/waiter (mobile-first, table-aware). Both feed the same order pipeline as the online storefront and WhatsApp.',
     cta: { label: 'Open POS', href: '/pos' },
   },
   {

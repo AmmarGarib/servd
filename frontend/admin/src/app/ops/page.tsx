@@ -6,7 +6,7 @@ import { api } from '../../lib/api'
 
 interface Anomaly {
   severity: 'low' | 'medium' | 'high'
-  category: 'kitchen' | 'cash' | 'customer' | 'inventory' | 'aggregator'
+  category: 'kitchen' | 'cash' | 'customer' | 'inventory'
   title: string
   detail: string
   actionUrl?: string
@@ -41,7 +41,7 @@ const SEVERITY_COLOR: Record<string, string> = {
   low:    '#94A3B8',
 }
 const CATEGORY_EMOJI: Record<string, string> = {
-  kitchen: '🍳', cash: '💳', customer: '😞', inventory: '📦', aggregator: '🛵',
+  kitchen: '🍳', cash: '💳', customer: '😞', inventory: '📦',
 }
 
 export default function OpsCenterPage() {

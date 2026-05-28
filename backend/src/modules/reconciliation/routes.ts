@@ -5,7 +5,6 @@ import { requireAuth, MANAGERS, ADMIN_ONLY } from '../auth/middleware.js'
 import {
   importBankStatement,
   adjustStatementLine,
-  reconcileFoodpandaSettlement,
 } from './service.js'
 import { flagException } from '../../lib/exceptions.js'
 
@@ -23,15 +22,6 @@ const importBankSchema = z.object({
 const adjustLineSchema = z.object({
   contraAccountCode: z.string().min(1),
   memo: z.string().min(1),
-})
-
-const settlementSchema = z.object({
-  settlementDate: z.string(),
-  periodStart: z.string(),
-  periodEnd: z.string(),
-  actualAmountCents: z.number().int().min(0),
-  reference: z.string().optional(),
-  notes: z.string().optional(),
 })
 
 export async function reconciliationRoutes(fastify: FastifyInstance) {
@@ -364,26 +354,4 @@ export async function reconciliationRoutes(fastify: FastifyInstance) {
     },
   )
 
-  // ─── Foodpanda settlements ───────────────────────────────────────────────
-
-  fastify.get('/foodpanda/settlements', { preHandler: requireAuth(...MANAGERS) }, async () => {
-    return prisma.foodpandaSettlement.findMany({
-      orderBy: { settlementDate: 'desc' },
-      take: 100,
-    })
-  })
-
-  fastify.post('/foodpanda/settlements', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
-    const body = settlementSchema.parse(req.body)
-    const settlement = await reconcileFoodpandaSettlement({
-      settlementDate: new Date(body.settlementDate),
-      periodStart: new Date(body.periodStart),
-      periodEnd: new Date(body.periodEnd),
-      actualAmountCents: body.actualAmountCents,
-      reference: body.reference,
-      notes: body.notes,
-      recordedById: req.staffUser!.id,
-    })
-    return reply.status(201).send(settlement)
-  })
 }

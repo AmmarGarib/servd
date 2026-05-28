@@ -18,7 +18,7 @@ interface Cfg {
   withholdingTaxRecoverable: boolean
 }
 
-const CHANNELS = ['pos', 'storefront', 'foodpanda', 'careem', 'whatsapp']
+const CHANNELS = ['pos', 'storefront', 'whatsapp']
 
 export default function OperationsPage() {
   const qc = useQueryClient()

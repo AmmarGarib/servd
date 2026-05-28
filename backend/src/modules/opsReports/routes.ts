@@ -253,7 +253,7 @@ export async function opsReportRoutes(fastify: FastifyInstance) {
 
       const flags: Array<{
         severity: 'low' | 'medium' | 'high'
-        category: 'kitchen' | 'cash' | 'customer' | 'inventory' | 'aggregator'
+        category: 'kitchen' | 'cash' | 'customer' | 'inventory'
         title: string
         detail: string
         actionUrl?: string
@@ -340,22 +340,6 @@ export async function opsReportRoutes(fastify: FastifyInstance) {
           title: `${lowStock.length} ingredient${lowStock.length === 1 ? '' : 's'} below par`,
           detail: lowStock.slice(0, 3).map((i) => `${i.name} (${i.currentStock}${i.unit})`).join(', ') + (lowStock.length > 3 ? '…' : ''),
           actionUrl: '/inventory/alerts',
-        })
-      }
-
-      // 5. Aggregator silence — no Foodpanda/Careem orders in last 4h during business hours
-      const fourHoursAgo = new Date(Date.now() - 4 * 3600_000)
-      const aggregatorOrders = await prisma.order.count({
-        where: { placedAt: { gte: fourHoursAgo }, source: { in: ['foodpanda', 'ubereats'] as never } },
-      })
-      const hour = new Date().getHours()
-      if (aggregatorOrders === 0 && hour >= 12 && hour <= 22) {
-        flags.push({
-          severity: 'medium',
-          category: 'aggregator',
-          title: 'No aggregator orders in 4h',
-          detail: 'Foodpanda/Careem feed has been quiet during peak hours. Check webhook health + menu sync.',
-          actionUrl: '/settings/integrations',
         })
       }
 

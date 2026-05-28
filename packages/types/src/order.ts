@@ -1,10 +1,11 @@
 // Canonical Order DTO — all integration adapters must output this shape
 // before the order is persisted. See spec §5.2.
 
+// Legacy values 'foodpanda' and 'careem' remain in the database enum so
+// historical orders can still be loaded, but no new code may emit them —
+// servd is operator-direct only (own delivery fleet, no aggregators).
 export type OrderSource =
   | 'servd'
-  | 'foodpanda'
-  | 'careem'
   | 'pos'
   | 'cart'
   | 'manual'

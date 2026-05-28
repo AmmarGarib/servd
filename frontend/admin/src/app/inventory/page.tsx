@@ -341,7 +341,7 @@ export default function InventoryPage() {
                 icon="📦"
                 title="Track what you cook with"
                 description="Inventory drives recipe costing, auto-86, demand forecasting, and reorder alerts. Add raw ingredients first — finished menu items get linked via Recipe Costing."
-                whyItMatters="When inventory hits zero, the platform auto-disables menu items across POS, storefront, and aggregators. No more 'sorry, we ran out' calls to disappointed customers."
+                whyItMatters="When inventory hits zero, the platform auto-disables menu items across POS and storefront. No more 'sorry, we ran out' calls to disappointed customers."
                 samples={[
                   { emoji: '🐔', title: 'Chicken (boneless)', hint: 'unit: kg · par: 10 kg · supplier: Mubarak Meat' },
                   { emoji: '🌶', title: 'Red chili powder', hint: 'unit: kg · par: 2 kg · supplier: Karachi Spice Co' },

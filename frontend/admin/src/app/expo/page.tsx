@@ -50,8 +50,6 @@ const REJECT_REASONS = [
 
 const SOURCE_BADGE: Record<string, { label: string; bg: string; fg: string }> = {
   servd:     { label: 'Storefront', bg: 'rgba(99,102,241,0.15)',  fg: '#A5B4FC' },
-  foodpanda: { label: 'Foodpanda',  bg: 'rgba(236,72,153,0.18)',  fg: '#F9A8D4' },
-  careem:    { label: 'Careem',     bg: 'rgba(34,197,94,0.15)',   fg: '#86EFAC' },
   pos:       { label: 'POS',        bg: 'rgba(245,158,11,0.15)',  fg: '#FCD34D' },
   cart:      { label: 'Cart',       bg: 'rgba(0,212,177,0.15)',   fg: '#5EEAD4' },
   manual:    { label: 'Manual',     bg: 'rgba(255,255,255,0.06)', fg: 'rgba(255,255,255,0.55)' },

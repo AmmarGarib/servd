@@ -37,7 +37,7 @@ export default function BankAccountsPage() {
           <div>
             <h1 className="text-2xl font-black text-white/90">🏦 Bank accounts</h1>
             <p className="text-sm text-white/40 mt-1 max-w-2xl">
-              Operating accounts. Used to reconcile aggregator settlements (Foodpanda / Careem) and card payouts.
+              Operating accounts. Used to reconcile card payouts and rider COD handoffs.
             </p>
           </div>
           <button onClick={() => setAdding(true)} className="rounded-xl bg-kds-green px-4 py-2.5 text-sm font-black text-black hover:opacity-90">+ Add account</button>

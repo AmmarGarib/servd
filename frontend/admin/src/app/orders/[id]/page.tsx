@@ -95,7 +95,6 @@ const STATUS_COLORS: Record<string, string> = {
 const SOURCE_COLORS: Record<string, string> = {
   pos:       'bg-purple-900/40 text-purple-400',
   servd:     'bg-blue-900/40 text-kds-blue',
-  foodpanda: 'bg-pink-900/40 text-pink-400',
   cart:      'bg-orange-900/40 text-orange-400',
   manual:    'bg-kds-card text-kds-subtext',
 }

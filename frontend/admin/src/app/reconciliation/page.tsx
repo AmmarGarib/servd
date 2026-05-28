@@ -61,15 +61,9 @@ interface BankImport {
   _count: { lines: number }
 }
 
-interface Settlement {
-  id: string; settlementDate: string; reference: string | null
-  expectedAmountCents: number; actualAmountCents: number; varianceCents: number
-  status: string
-}
-
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-type ReconTab = 'shifts' | 'bank' | 'foodpanda'
+type ReconTab = 'shifts' | 'bank'
 
 function VariancePill({ cents }: { cents: number | null }) {
   if (cents === null) return <span className="text-xs text-s-muted">Pending</span>
@@ -299,43 +293,6 @@ function BankImportForm({ onDone }: { onDone: () => void }) {
   )
 }
 
-// ─── Settlement form ──────────────────────────────────────────────────────────
-
-function SettlementForm({ onDone }: { onDone: () => void }) {
-  const [settlementDate, setSettlementDate] = useState(todayPktIso())
-  const [periodStart, setPeriodStart] = useState(todayPktIso())
-  const [periodEnd, setPeriodEnd] = useState(todayPktIso())
-  const [actualPkr, setActualPkr] = useState(0)
-  const [reference, setReference] = useState('')
-  const [err, setErr] = useState<string | null>(null)
-
-  const submit = useMutation({
-    mutationFn: () => api.post('/reconciliation/foodpanda/settlements', {
-      settlementDate, periodStart, periodEnd,
-      actualAmountCents: Math.round(actualPkr * 100),
-      reference: reference || undefined,
-    }),
-    onSuccess: onDone,
-    onError: (e: { message?: string }) => setErr(e.message ?? 'Settlement failed'),
-  })
-
-  return (
-    <div className="p-4 border-b border-s-border space-y-2 text-sm">
-      <div className="grid grid-cols-2 gap-2">
-        <label className="text-xs text-s-muted">Settlement date<input type="date" value={settlementDate} onChange={(e) => setSettlementDate(e.target.value)} className="w-full bg-s-card border border-s-border rounded px-2 py-1 text-s-text" /></label>
-        <label className="text-xs text-s-muted">Reference (Foodpanda ID)<input value={reference} onChange={(e) => setReference(e.target.value)} className="w-full bg-s-card border border-s-border rounded px-2 py-1 text-s-text" /></label>
-        <label className="text-xs text-s-muted">Period start<input type="date" value={periodStart} onChange={(e) => setPeriodStart(e.target.value)} className="w-full bg-s-card border border-s-border rounded px-2 py-1 text-s-text" /></label>
-        <label className="text-xs text-s-muted">Period end<input type="date" value={periodEnd} onChange={(e) => setPeriodEnd(e.target.value)} className="w-full bg-s-card border border-s-border rounded px-2 py-1 text-s-text" /></label>
-        <label className="text-xs text-s-muted col-span-2">Actual paid (PKR)<input type="number" value={actualPkr} onChange={(e) => setActualPkr(parseFloat(e.target.value) || 0)} className="w-full bg-s-card border border-s-border rounded px-2 py-1 text-s-text" /></label>
-      </div>
-      {err && <p className="text-s-red text-xs">{err}</p>}
-      <button onClick={() => submit.mutate()} disabled={submit.isPending} className="s-btn-primary text-xs">
-        {submit.isPending ? 'Reconciling…' : 'Record'}
-      </button>
-    </div>
-  )
-}
-
 // ─── Main page ────────────────────────────────────────────────────────────────
 
 export default function ReconciliationPage() {
@@ -343,7 +300,6 @@ export default function ReconciliationPage() {
   const [tab, setTab] = useState<ReconTab>('shifts')
   const [selectedShift, setSelectedShift] = useState<string | null>(null)
   const [showImport, setShowImport] = useState(false)
-  const [showSettle, setShowSettle] = useState(false)
 
   const { data: summary, isLoading: summaryLoading } = useQuery<SummaryResp>({
     queryKey: ['recon-summary'],
@@ -355,12 +311,6 @@ export default function ReconciliationPage() {
     queryKey: ['bank-imports'],
     queryFn: () => api.get<BankImport[]>('/reconciliation/bank/imports'),
     enabled: tab === 'bank',
-  })
-
-  const { data: settlements } = useQuery({
-    queryKey: ['fp-settlements'],
-    queryFn: () => api.get<Settlement[]>('/reconciliation/foodpanda/settlements'),
-    enabled: tab === 'foodpanda',
   })
 
   const balancedCount = summary?.balancedShifts ?? 0
@@ -408,7 +358,6 @@ export default function ReconciliationPage() {
           {([
             { key: 'shifts', label: 'POS Shifts' },
             { key: 'bank', label: 'Bank Imports' },
-            { key: 'foodpanda', label: 'Foodpanda Settlements' },
           ] as { key: ReconTab; label: string }[]).map((t) => (
             <button
               key={t.key}
@@ -532,55 +481,6 @@ export default function ReconciliationPage() {
                 ))}
                 {(!imports || imports.length === 0) && (
                   <tr><td colSpan={6} className="px-4 py-6 text-center text-xs text-s-muted">No imports yet</td></tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        )}
-
-        {/* ── Foodpanda settlements tab ── */}
-        {tab === 'foodpanda' && (
-          <div className="s-card overflow-hidden">
-            <div className="px-4 py-2 bg-s-bg-soft border-b border-s-border flex items-center justify-between">
-              <div className="text-xs font-semibold text-s-text">Foodpanda Settlements</div>
-              <button onClick={() => setShowSettle(!showSettle)} className="s-btn-secondary text-xs">
-                {showSettle ? 'Cancel' : 'Record Settlement'}
-              </button>
-            </div>
-            {showSettle && (
-              <SettlementForm
-                onDone={() => {
-                  setShowSettle(false)
-                  void qc.invalidateQueries({ queryKey: ['fp-settlements'] })
-                }}
-              />
-            )}
-            <table className="w-full text-sm">
-              <thead className="text-xs text-s-muted">
-                <tr>
-                  <th className="px-4 py-2 text-left">Date</th>
-                  <th className="px-4 py-2 text-left">Ref</th>
-                  <th className="px-4 py-2 text-right">Expected</th>
-                  <th className="px-4 py-2 text-right">Actual</th>
-                  <th className="px-4 py-2 text-right">Variance</th>
-                  <th className="px-4 py-2 text-left">Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {(settlements ?? []).map((s) => (
-                  <tr key={s.id} className="border-t border-s-border">
-                    <td className="px-4 py-2 text-xs text-s-text">{s.settlementDate.slice(0, 10)}</td>
-                    <td className="px-4 py-2 text-xs text-s-muted">{s.reference ?? '—'}</td>
-                    <td className="px-4 py-2 text-right font-mono text-xs text-s-text">{fmtPkr(s.expectedAmountCents)}</td>
-                    <td className="px-4 py-2 text-right font-mono text-xs text-s-text">{fmtPkr(s.actualAmountCents)}</td>
-                    <td className={`px-4 py-2 text-right font-mono text-xs ${s.varianceCents === 0 ? 'text-s-text' : 'text-s-amber'}`}>
-                      {fmtPkr(s.varianceCents)}
-                    </td>
-                    <td className="px-4 py-2 text-xs text-s-text capitalize">{s.status.replace('_', ' ')}</td>
-                  </tr>
-                ))}
-                {(!settlements || settlements.length === 0) && (
-                  <tr><td colSpan={6} className="px-4 py-6 text-center text-xs text-s-muted">No settlements yet</td></tr>
                 )}
               </tbody>
             </table>
