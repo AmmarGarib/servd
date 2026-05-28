@@ -350,7 +350,7 @@ export default function AccountPage() {
               <div className="flex gap-2">
                 <button onClick={() => void saveAddress()} disabled={addrSaving || !addrForm.label || !addrForm.address}
                   className="flex-1 rounded-xl py-2.5 text-sm font-black transition-all disabled:opacity-50"
-                  style={{ background: 'var(--servd-green)', color: '#0a0a0a' }}>
+                  style={{ background: 'var(--servd-green)', color: 'white' }}>
                   {addrSaving ? 'Saving…' : 'Save address'}
                 </button>
                 <button onClick={() => setShowAddAddr(false)}
@@ -619,7 +619,7 @@ function ReferralSection({
       <div className="flex gap-2">
         <button onClick={shareNative}
           className="flex-1 rounded-xl px-3 py-2.5 text-xs font-bold"
-          style={{ background: 'var(--servd-green)', color: '#000' }}>
+          style={{ background: 'var(--servd-green)', color: 'white' }}>
           Share invite link
         </button>
         <a href={`https://wa.me/?text=${encodeURIComponent(shareText)}`}
@@ -845,7 +845,7 @@ function MyBookingsSection({ token }: { token: string | null }) {
                   {r.confirmToken && r.status === 'booked' && !isCancelled && (
                     <Link href={`/reserve/confirm/${r.confirmToken}`}
                       className="rounded-lg px-3 py-1.5 text-xs font-bold whitespace-nowrap text-center"
-                      style={{ background: 'var(--servd-green)', color: '#0a0a0a' }}>
+                      style={{ background: 'var(--servd-green)', color: 'white' }}>
                       Confirm
                     </Link>
                   )}
@@ -1144,7 +1144,7 @@ function SupportSection({ orders }: { orders: Order[] }) {
 
           <button onClick={() => void submit()} disabled={submitting || !title.trim() || !description.trim()}
             className="w-full rounded-xl py-2.5 text-sm font-black transition-all disabled:opacity-50"
-            style={{ background: 'var(--servd-green)', color: '#0a0a0a' }}>
+            style={{ background: 'var(--servd-green)', color: 'white' }}>
             {submitting ? 'Sending…' : 'Send to manager'}
           </button>
         </div>

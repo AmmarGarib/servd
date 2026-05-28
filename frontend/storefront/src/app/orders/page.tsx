@@ -75,8 +75,7 @@ function ReorderButton({ orderId, conceptSlug, token }: { orderId: string; conce
       onClick={onClick}
       disabled={busy}
       style={{
-        background: 'var(--servd-green)',
-        color: 'var(--servd-black)',
+        background: 'var(--servd-green)', color: 'white',
         fontWeight: 700,
         fontSize: '0.8rem',
         padding: '0.45rem 0.9rem',

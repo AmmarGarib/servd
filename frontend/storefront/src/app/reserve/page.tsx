@@ -49,7 +49,7 @@ export default async function ReservePage() {
           {concepts.length === 0 ? (
             <div className="servd-card" style={{ padding: '2.5rem 1.5rem', textAlign: 'center' }}>
               <p style={{ color: 'var(--servd-mute)' }}>No brands are accepting reservations right now.</p>
-              <Link href="/browse" className="brand-pill" style={{ marginTop: '1.25rem', background: 'var(--servd-green)', color: '#0a0a0a' }}>
+              <Link href="/browse" className="brand-pill" style={{ marginTop: '1.25rem', background: 'var(--servd-green)', color: 'white' }}>
                 Browse all kitchens
               </Link>
             </div>
