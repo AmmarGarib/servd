@@ -158,7 +158,8 @@ export function StorefrontNav() {
               className="brand-pill"
               style={{
                 ['--brand-accent' as string]: 'var(--servd-green)',
-                ['--brand-ink' as string]:    '#0a0a0a',
+                // royal-blue accent → text must be white for contrast
+                ['--brand-ink' as string]:    'white',
                 padding: '0.55rem 1.2rem',
                 fontSize: '0.92rem',
               }}

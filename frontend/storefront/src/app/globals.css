@@ -30,7 +30,11 @@
      via inline style. Defaults to servd-green when no brand is active. */
   --brand-accent:       var(--servd-green);
   --brand-accent-dark:  var(--servd-green-dark);
-  --brand-ink:          var(--servd-black);
+  /* --brand-ink is the text colour that sits on top of --brand-accent.
+     Default is white because the servd primary (and most per-brand
+     accents) are dark. BrandShell overrides this dynamically using a
+     luminance check when a brand's accent is light (Flipd sky blue). */
+  --brand-ink:          white;
   /* Display font for the kinetic look — used on hero headlines, eyebrow
      labels, marquee text, anywhere we want the "agency-modern" feel. */
   --font-display:       'Bricolage Grotesque', 'Inter', system-ui, sans-serif;
