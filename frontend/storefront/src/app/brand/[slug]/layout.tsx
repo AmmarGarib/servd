@@ -4,7 +4,7 @@
 
 import { notFound } from 'next/navigation'
 import { BrandShell } from '../../../components/brand/BrandShell'
-import type { Concept } from '../../../lib/concept'
+import { brandAccent, type Concept } from '../../../lib/concept'
 
 const API_URL = process.env.INTERNAL_API_URL ?? process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -30,7 +30,8 @@ export default async function BrandLayout({
   const concept = await getConcept(slug)
   if (!concept) notFound()
 
-  return <BrandShell concept={concept}>{children}</BrandShell>
+  const themed: Concept = { ...concept, primaryColor: brandAccent(concept.slug, concept.primaryColor) }
+  return <BrandShell concept={themed}>{children}</BrandShell>
 }
 
 export async function generateMetadata({
