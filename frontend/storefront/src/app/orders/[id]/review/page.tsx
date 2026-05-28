@@ -125,8 +125,8 @@ export default function ReviewOrderPage() {
   if (order.alreadyReviewed) {
     return (
       <Centered>
-        <div style={{ fontSize: '2.5rem', marginBottom: '0.5rem' }}>🙏</div>
-        <h1 style={{ fontSize: 'clamp(1.6rem, 4vw, 2.25rem)', fontWeight: 800, marginBottom: '0.5rem' }}>Already reviewed.</h1>
+        <div style={{ marginBottom: '0.75rem', color: 'var(--servd-green-dark)' }}><BigCheckIcon /></div>
+        <h1 className="font-display" style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(1.6rem, 4vw, 2.25rem)', fontWeight: 800, marginBottom: '0.5rem', letterSpacing: '-0.03em' }}>Already reviewed.</h1>
         <p style={{ color: 'var(--servd-mute)', marginBottom: '1.5rem' }}>Thanks for the feedback — it helps us cook better.</p>
         <Link href={`/brand/${order.concept.slug}`} className="servd-btn-primary">Back to {order.concept.name}</Link>
       </Centered>
@@ -135,8 +135,10 @@ export default function ReviewOrderPage() {
   if (done) {
     return (
       <Centered>
-        <div style={{ fontSize: '3rem', marginBottom: '0.5rem' }}>{rating >= 4 ? '✨' : '🤝'}</div>
-        <h1 style={{ fontSize: 'clamp(1.6rem, 4vw, 2.25rem)', fontWeight: 800, marginBottom: '0.5rem' }}>
+        <div style={{ marginBottom: '0.75rem', color: 'var(--servd-green-dark)' }}>
+          {rating >= 4 ? <BigStarIcon /> : <BigCheckIcon />}
+        </div>
+        <h1 className="font-display" style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(1.6rem, 4vw, 2.25rem)', fontWeight: 800, marginBottom: '0.5rem', letterSpacing: '-0.03em' }}>
           {rating >= 4 ? 'Thanks for the love.' : 'Thanks for telling us.'}
         </h1>
         <p style={{ color: 'var(--servd-mute)', marginBottom: '0.75rem' }}>
@@ -147,7 +149,7 @@ export default function ReviewOrderPage() {
         {done.bonusPointsAwarded > 0 && (
           <div style={{
             display: 'inline-block', padding: '0.6rem 1.1rem', marginBottom: '1.5rem',
-            background: '#ecfdf5', color: '#059669', borderRadius: '999px',
+            background: 'rgba(34,197,94,0.1)', color: 'var(--servd-green-dark)', borderRadius: '999px',
             fontWeight: 700, fontSize: '0.9rem',
           }}>
             +{done.bonusPointsAwarded} loyalty points credited
@@ -161,17 +163,17 @@ export default function ReviewOrderPage() {
   }
 
   return (
-    <div style={{ background: '#fff', minHeight: '100vh', padding: '2rem 1rem' }}>
+    <div style={{ background: 'var(--servd-bg)', minHeight: '100vh', padding: '2rem 1rem' }}>
       <div style={{ maxWidth: '32rem', margin: '0 auto' }}>
         <Link href="/orders" style={{ color: 'var(--servd-mute)', fontSize: '0.85rem', textDecoration: 'none' }}>
           ← My orders
         </Link>
 
-        <h1 style={{ fontSize: 'clamp(1.75rem, 4vw, 2.5rem)', fontWeight: 800, marginTop: '0.5rem', marginBottom: '0.25rem' }}>
+        <h1 className="font-display" style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(1.75rem, 4vw, 2.5rem)', fontWeight: 800, marginTop: '0.5rem', marginBottom: '0.25rem', letterSpacing: '-0.03em', color: 'var(--servd-ink)' }}>
           How was your meal?
         </h1>
         <p style={{ color: 'var(--servd-mute)', marginBottom: '2rem' }}>
-          {order.concept.name} · 30 seconds · review within 24h for <strong>+50 loyalty points</strong>
+          {order.concept.name} · 30 seconds · review within 24h for <strong style={{ color: 'var(--servd-ink)' }}>+50 loyalty points</strong>
         </p>
 
         {/* Overall stars */}
@@ -210,9 +212,9 @@ export default function ReviewOrderPage() {
                     style={{
                       padding: '0.5rem 0.85rem',
                       borderRadius: '999px',
-                      border: `1px solid ${active ? '#22c55e' : 'var(--servd-line)'}`,
-                      background: active ? '#dcfce7' : '#fff',
-                      color: active ? '#15803d' : '#374151',
+                      border: `1px solid ${active ? 'var(--servd-green)' : 'var(--servd-line)'}`,
+                      background: active ? 'rgba(34,197,94,0.1)' : 'white',
+                      color: active ? 'var(--servd-green-dark)' : 'var(--servd-ink)',
                       fontSize: '0.85rem',
                       fontWeight: 600,
                       cursor: 'pointer',
@@ -261,23 +263,24 @@ export default function ReviewOrderPage() {
 }
 
 function StarPicker({ value, onChange, large }: { value: number; onChange: (n: number) => void; large?: boolean }) {
-  const size = large ? '2.5rem' : '1.5rem'
+  const size = large ? 36 : 22
   return (
     <div style={{ display: 'flex', gap: large ? '0.5rem' : '0.25rem' }}>
       {[1, 2, 3, 4, 5].map((n) => (
         <button
           key={n}
           type="button"
+          aria-label={`${n} star${n === 1 ? '' : 's'}`}
           onClick={() => onChange(n)}
           style={{
-            background: 'none', border: 'none', cursor: 'pointer',
-            fontSize: size, lineHeight: 1, padding: 0,
-            color: n <= value ? '#fbbf24' : '#e5e7eb',
-            transition: 'transform 0.1s',
-          }}
-          onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.1)' }}
-          onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)' }}>
-          ★
+            background: 'none', border: 'none', cursor: 'pointer', padding: '0.15rem',
+            color: n <= value ? '#F59E0B' : 'var(--servd-line)',
+            transition: 'color 160ms ease',
+            display: 'inline-flex',
+          }}>
+          <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+          </svg>
         </button>
       ))}
     </div>
@@ -287,7 +290,7 @@ function StarPicker({ value, onChange, large }: { value: number; onChange: (n: n
 function SubRow({ label, value, onChange }: { label: string; value: number; onChange: (n: number) => void }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.4rem 0' }}>
-      <span style={{ fontSize: '0.9rem', color: '#374151' }}>{label}</span>
+      <span style={{ fontSize: '0.9rem', color: 'var(--servd-ink)' }}>{label}</span>
       <StarPicker value={value} onChange={onChange} />
     </div>
   )
@@ -298,5 +301,24 @@ function Centered({ children }: { children: React.ReactNode }) {
     <div style={{ minHeight: '60vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2rem' }}>
       <div style={{ textAlign: 'center', maxWidth: '32rem' }}>{children}</div>
     </div>
+  )
+}
+
+// ── Inline SVG iconography — no emoji as structural icons ──────────────────
+
+function BigStarIcon() {
+  return (
+    <svg width="56" height="56" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+    </svg>
+  )
+}
+
+function BigCheckIcon() {
+  return (
+    <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="10"/>
+      <path d="M8 12l3 3 5-6"/>
+    </svg>
   )
 }
