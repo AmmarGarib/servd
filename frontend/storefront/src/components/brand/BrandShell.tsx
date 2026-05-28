@@ -4,6 +4,7 @@ import { usePathname } from 'next/navigation'
 import type { Concept } from '../../lib/concept'
 import { useBrandSlug, getServdHost } from '../../lib/host'
 import { KineticShape } from '../kinetic/KineticShape'
+import { isLight } from '../../lib/ui'
 
 // Build a link that points to the servd canonical host. On the servd host
 // itself it stays relative (so client-side navigation kicks in). On a brand
@@ -25,13 +26,18 @@ export function BrandShell({ concept, children }: Props) {
   const onBrandHost = useBrandSlug() !== null
   // Per-brand accent gets pushed onto a single wrapper so EVERY child
   // component (kinetic shapes, pills, headlines) inherits the brand's
-  // colour via --brand-accent. Stax → orange, Simmer → green, Flipd →
-  // yellow. Default to servd-green if a concept doesn't define one.
+  // colour via --brand-accent. Default to servd-green if a concept
+  // doesn't define one.
   const accent = concept.primaryColor || 'var(--servd-green)'
+  // Pick the text/ink colour based on luminance of the accent. Light
+  // accents (Flipd sky blue) get black ink, dark accents (Stax purple,
+  // Simmer green, servd royal blue) get white. Defaults to white when
+  // we can't parse the accent (e.g. it's a CSS var name).
+  const accentInk = accent.startsWith('#') && isLight(accent) ? '#0a0a0a' : 'white'
   const wrapperStyle = {
     ['--brand-accent' as string]:      accent,
     ['--brand-accent-dark' as string]: accent,
-    ['--brand-ink' as string]:         '#0a0a0a',
+    ['--brand-ink' as string]:         accentInk,
   } as React.CSSProperties
 
   return (
