@@ -248,23 +248,154 @@ export function HomeClient({ concepts }: Props) {
         </div>
       </section>
 
-      {/* ── PROMISE NUMBERS — short, useful. ────────────────────── */}
-      <section style={{ background: 'var(--servd-green)', color: 'white', padding: 'clamp(3rem, 6vh, 5rem) 0' }}>
-        <div className="container" style={{ display: 'grid', gap: 'clamp(2rem, 4vw, 3rem)', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', textAlign: 'center' }}>
-          {[
-            { big: '1', label: 'bag, even with three kitchens' },
-            { big: '0%', label: 'aggregator markup' },
-            { big: '40m', label: 'typical delivery time' },
-          ].map((s) => (
-            <div key={s.big}>
-              <p className="display" style={{ fontSize: 'clamp(3rem, 6vw, 4.5rem)', color: 'white', lineHeight: 0.95, margin: 0, letterSpacing: '-0.04em' }}>
-                {s.big}
+      {/* ── INSIDERS — servd loyalty membership pitch. Replaces the
+            promise-numbers strip. Single CTA: become a member. ──── */}
+      <section style={{ background: 'var(--servd-green)', color: 'white', padding: 'clamp(4rem, 8vh, 7rem) 0', position: 'relative', overflow: 'hidden' }}>
+        {/* Soft ambient glow so the section reads as 'premium tier' */}
+        <div aria-hidden style={{
+          position: 'absolute', inset: 0,
+          background: 'radial-gradient(ellipse 60% 50% at 50% 0%, rgba(255,255,255,0.08) 0%, transparent 60%)',
+          pointerEvents: 'none',
+        }} />
+
+        <div className="container" style={{ position: 'relative', zIndex: 1 }}>
+          {/* Header — eyebrow + bricolage display + sub */}
+          <div style={{
+            display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
+            gap: 'clamp(2rem, 5vw, 4rem)',
+            marginBottom: 'clamp(2.5rem, 5vw, 3.5rem)',
+            alignItems: 'baseline',
+          }}>
+            <div>
+              <p className="eyebrow" style={{ color: 'rgba(255,255,255,0.7)', marginBottom: '1rem' }}>
+                Insiders · free to join
               </p>
-              <p style={{ marginTop: '0.5rem', fontSize: '0.95rem', color: 'rgba(255,255,255,0.88)', maxWidth: '18rem', marginLeft: 'auto', marginRight: 'auto' }}>
-                {s.label}
-              </p>
+              <h2 className="display" style={{
+                fontSize: 'clamp(2.5rem, 6vw, 4.5rem)',
+                color: 'white',
+                margin: 0,
+                lineHeight: 0.95,
+                letterSpacing: '-0.04em',
+              }}>
+                The best stuff<br />
+                <span className="display-italic" style={{ color: 'rgba(255,255,255,0.7)' }}>doesn&rsquo;t get listed.</span>
+              </h2>
             </div>
-          ))}
+            <p style={{
+              color: 'rgba(255,255,255,0.82)',
+              fontSize: '1.05rem',
+              lineHeight: 1.55,
+              maxWidth: '32rem',
+            }}>
+              Limited drops. Off-menu plates. Weekday lunch perks. Points on every order. Insiders get first.
+            </p>
+          </div>
+
+          {/* Three perks — light tinted cards on royal so they read.
+              Middle one bumped up to read as the headline perk. */}
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
+            gap: '1rem',
+            alignItems: 'stretch',
+          }}>
+            {[
+              {
+                badge: '24h', tag: 'First access',
+                head: 'Drops before they list',
+                body: 'New stacks, omakase nights, Friday-only tenders. Insiders get a 24-hour window before public booking.',
+                featured: false,
+              },
+              {
+                badge: '★', tag: 'Off-menu',
+                head: 'The hidden menus',
+                body: 'Build-your-own plates, off-menu sandwiches, dishes the chefs run for friends. Members only.',
+                featured: true,
+              },
+              {
+                badge: '+', tag: 'Free perks',
+                head: 'Points on every order',
+                body: 'Earn 1 pt per Rs. 10 spent. Free weekday lunch delivery. Redeem points for a meal at 2,000.',
+                featured: false,
+              },
+            ].map((p) => (
+              <div key={p.head} style={{
+                background: p.featured ? 'rgba(255,255,255,0.14)' : 'rgba(255,255,255,0.07)',
+                border: p.featured ? '1px solid rgba(255,255,255,0.35)' : '1px solid rgba(255,255,255,0.18)',
+                borderRadius: '1.25rem',
+                padding: '1.5rem 1.4rem',
+                color: 'white',
+                transform: p.featured ? 'translateY(-12px)' : 'none',
+                transition: 'transform 220ms cubic-bezier(0.22, 1, 0.36, 1)',
+                backdropFilter: 'blur(8px)',
+              }}>
+                <div style={{
+                  display: 'inline-flex',
+                  alignItems: 'center', justifyContent: 'center',
+                  width: '2.4rem', height: '2.4rem',
+                  background: p.featured ? 'white' : 'rgba(255,255,255,0.12)',
+                  color: p.featured ? 'var(--servd-green)' : 'white',
+                  borderRadius: '999px',
+                  fontFamily: 'var(--font-display)', fontWeight: 800,
+                  fontSize: '0.95rem',
+                  marginBottom: '1rem',
+                }}>{p.badge}</div>
+                <p className="eyebrow" style={{ color: 'rgba(255,255,255,0.7)', marginBottom: '0.5rem' }}>
+                  {p.tag}
+                </p>
+                <h3 className="display" style={{
+                  fontSize: 'clamp(1.35rem, 2.3vw, 1.65rem)',
+                  color: 'white',
+                  margin: '0 0 0.6rem',
+                  lineHeight: 1.05,
+                  letterSpacing: '-0.02em',
+                }}>
+                  {p.head}
+                </h3>
+                <p style={{
+                  color: 'rgba(255,255,255,0.78)',
+                  fontSize: '0.92rem',
+                  lineHeight: 1.55,
+                  margin: 0,
+                }}>
+                  {p.body}
+                </p>
+              </div>
+            ))}
+          </div>
+
+          {/* Single Insiders CTA — white pill against royal */}
+          <div style={{
+            marginTop: 'clamp(2.5rem, 5vw, 3.5rem)',
+            display: 'flex', flexWrap: 'wrap',
+            alignItems: 'center', gap: '1rem',
+          }}>
+            <Link href="/signup?insider=1" style={{
+              background: 'white',
+              color: 'var(--servd-green)',
+              fontFamily: 'var(--font-display)', fontWeight: 800,
+              fontSize: '1.05rem',
+              padding: '1rem 1.85rem',
+              borderRadius: '999px',
+              textDecoration: 'none',
+              display: 'inline-flex', alignItems: 'center', gap: '0.6rem',
+              boxShadow: '0 12px 32px rgba(0,0,0,0.22)',
+            }}>
+              Become an Insider <span aria-hidden style={{ opacity: 0.6 }}>→</span>
+            </Link>
+            <Link href="/login" style={{
+              color: 'rgba(255,255,255,0.85)',
+              fontWeight: 700, fontSize: '0.95rem',
+              textDecoration: 'underline',
+              textUnderlineOffset: '4px',
+              textDecorationColor: 'rgba(255,255,255,0.4)',
+            }}>
+              Already a member? Sign in
+            </Link>
+            <span style={{ color: 'rgba(255,255,255,0.55)', fontSize: '0.85rem' }}>
+              · free forever · cancel anytime
+            </span>
+          </div>
         </div>
       </section>
 
