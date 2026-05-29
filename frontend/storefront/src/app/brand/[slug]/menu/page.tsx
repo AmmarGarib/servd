@@ -1,8 +1,36 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import type { Concept } from '../../../../lib/concept'
+import { SimmerMenu } from '../../../../components/brand/layouts/SimmerMenu'
 
 const API_URL = process.env.INTERNAL_API_URL ?? process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
+
+// Force-dynamic + no-store so a single bad fetch at first request
+// doesn't get baked into the ISR cache for the next 60s.
+export const dynamic = 'force-dynamic'
+
+// Mirrors the FALLBACK_CONCEPTS map in brand/[slug]/{layout,page}.tsx —
+// keeps the microsites usable when /storefront/concepts is unreachable
+// (api warmup, network blip). Without this, a single failed fetch would
+// fire notFound() and the customer scanning the QR in the dining room
+// would see the storefront 404 instead of the placeholder menu.
+const FALLBACK_CONCEPTS: Record<string, Concept> = {
+  simmer: {
+    id: 'fallback-simmer', name: 'Simmer', slug: 'simmer', type: 'restaurant',
+    description: 'Small plates and mocktails. A dark room on Bukhari, served softly.',
+    logoUrl: null, primaryColor: null, reservationsEnabled: true,
+  },
+  stax: {
+    id: 'fallback-stax', name: 'Stax', slug: 'stax', type: 'restaurant',
+    description: 'Smash burgers, loaded fries, delivery-first ghost kitchen.',
+    logoUrl: null, primaryColor: null, reservationsEnabled: false,
+  },
+  flipd: {
+    id: 'fallback-flipd', name: 'Flipd', slug: 'flipd', type: 'restaurant',
+    description: 'Buttermilk-brined fried chicken, made-to-order.',
+    logoUrl: null, primaryColor: null, reservationsEnabled: false,
+  },
+}
 
 interface MenuItem {
   id: string; name: string; description: string | null; priceCents: number; imageUrl: string | null
@@ -10,19 +38,28 @@ interface MenuItem {
 }
 interface MenuCategory { id: string; name: string; items: MenuItem[] }
 
-async function getData(slug: string) {
+async function getData(slug: string): Promise<{ concept: Concept, categories: MenuCategory[] } | null> {
+  // Find the concept (live or fallback).
+  let concept: Concept | undefined
   try {
-    const [conceptsRes, menuRes] = await Promise.all([
-      fetch(`${API_URL}/api/v1/storefront/concepts`, { next: { revalidate: 60 } }),
-      fetch(`${API_URL}/api/v1/storefront/${slug}/menu`, { next: { revalidate: 60 } }),
-    ])
-    if (!conceptsRes.ok) return null
-    const concepts: Concept[] = await conceptsRes.json()
-    const concept = concepts.find((c) => c.slug === slug)
-    if (!concept) return null
-    const categories: MenuCategory[] = menuRes.ok ? await menuRes.json() : []
-    return { concept, categories }
-  } catch { return null }
+    const conceptsRes = await fetch(`${API_URL}/api/v1/storefront/concepts`, { cache: 'no-store' })
+    if (conceptsRes.ok) {
+      const live: Concept[] = await conceptsRes.json()
+      concept = live.find((c) => c.slug === slug)
+    }
+  } catch { /* swallow — fall through to fallback */ }
+  if (!concept) concept = FALLBACK_CONCEPTS[slug]
+  if (!concept) return null
+
+  // Try to load real categories. If the menu endpoint fails or is
+  // empty we hand back `[]` and the page renders the placeholder.
+  let categories: MenuCategory[] = []
+  try {
+    const menuRes = await fetch(`${API_URL}/api/v1/storefront/${slug}/menu`, { cache: 'no-store' })
+    if (menuRes.ok) categories = await menuRes.json()
+  } catch { /* swallow */ }
+
+  return { concept, categories }
 }
 
 export default async function BrandMenuPage({ params }: { params: Promise<{ slug: string }> | { slug: string } }) {
@@ -31,6 +68,15 @@ export default async function BrandMenuPage({ params }: { params: Promise<{ slug
   if (!data) notFound()
   const { concept, categories } = data
   const fmt = (cents: number) => `PKR ${(cents / 100).toLocaleString('en-PK', { maximumFractionDigits: 0 })}`
+
+  // Simmer-branded surface: when the slug is `simmer` AND there's no
+  // published menu yet, render the placeholder in the brand's own
+  // typography + palette. Once the operator publishes a menu, the
+  // page drops through to the generic table-style layout below so
+  // pricing and availability stay accurate.
+  if (slug === 'simmer' && categories.length === 0) {
+    return <SimmerMenu slug={concept.slug} conceptName={concept.name} />
+  }
 
   return (
     <div style={{ background: 'white' }}>
