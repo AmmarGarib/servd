@@ -195,7 +195,11 @@ export function FlipdLayout({ concept, concepts }: Props) {
         </div>
       </section>
 
-      <hr className="flipd-chrome-rule" />
+      {/* ── DINER FLOOR ─ mid-page checkerboard band closes the Today's
+           Board section and walks the viewer into the "How we cook"
+           half of the page. Half the height of the bottom floor so it
+           reads as a transition, not the closer. */}
+      <div aria-hidden="true" className="flipd-tile" style={{ height: 'clamp(3rem, 6vh, 5rem)' }} />
 
       {/* ── THE LONG WAY ─ how-we-cook spec strip, retro counter style ── */}
       <section style={{
@@ -368,16 +372,26 @@ export function FlipdLayout({ concept, concepts }: Props) {
           <Link href={`/${concept.slug}`} className="flipd-btn">Order from Flipd →</Link>
         </div>
 
-        {/* Floor tiles peeking under — opacity-tinted so it doesn't fight
-            the CTA text */}
+        {/* Floor tiles — full opacity, takes up the bottom third of the
+            CTA section so it reads as the actual diner floor under the
+            sign. Cuts off at the section edge and the bottom awning
+            closes the room. */}
         <div aria-hidden="true" className="flipd-tile" style={{
-          position: 'absolute', left: 0, right: 0, bottom: 0, height: '140px',
-          opacity: 0.18, zIndex: 1,
-        }} />
+          position: 'absolute', left: 0, right: 0, bottom: 0, height: '280px',
+          opacity: 1, zIndex: 1,
+          // Soft ink-to-transparent fade at the top so the tile floor
+          // melts into the dark room above instead of starting on a
+          // hard line.
+          maskImage:        'linear-gradient(to top, black 60%, transparent 100%)',
+          WebkitMaskImage:  'linear-gradient(to top, black 60%, transparent 100%)',
+        } as React.CSSProperties} />
       </section>
 
-      {/* ── BOTTOM AWNING ─ matches the top so the page reads as a building */}
-      <div aria-hidden="true" className="flipd-awning" style={{ height: '24px' }} />
+      {/* ── DINER FLOOR ─ full-width checkerboard band closes the page
+           on the cue the CEO wanted up front: an actual diner floor.
+           Tall enough (clamp 8-13vh) that it reads as a floor on phone
+           AND laptop, not as a thin awning. */}
+      <div aria-hidden="true" className="flipd-tile" style={{ height: 'clamp(5rem, 11vh, 9rem)' }} />
     </div>
   )
 }
