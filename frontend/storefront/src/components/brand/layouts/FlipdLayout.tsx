@@ -42,7 +42,7 @@ export function FlipdLayout({ concept, concepts }: Props) {
     <div className="flipd-page">
       {concept.announcementBanner && (
         <div role="status" style={{
-          background: 'var(--flipd-red)', color: 'var(--flipd-cream)',
+          background: 'var(--flipd-ink)', color: 'var(--flipd-cream)',
           padding: '0.7rem 1.5rem', textAlign: 'center',
           fontFamily: 'var(--flipd-type)', fontSize: '0.85rem',
           letterSpacing: '0.18em', textTransform: 'uppercase',
@@ -69,10 +69,15 @@ export function FlipdLayout({ concept, concepts }: Props) {
             Karachi · Est. 2026
           </p>
 
-          <h1 className="flipd-marquee flipd-neon" style={{
+          {/* Wordmark — solid ink Bungee marquee. No neon glow. The bold
+              tertiary against cream paper carries the diner-sign weight
+              all on its own. */}
+          <h1 className="flipd-marquee" style={{
             fontSize: 'clamp(5rem, 17vw, 13rem)',
             margin: '1.2rem 0 0.4rem',
             lineHeight: 0.9,
+            color: 'var(--flipd-ink)',
+            textShadow: '0 4px 0 var(--flipd-sky)',
           }}>
             FLIPD
           </h1>
@@ -80,28 +85,30 @@ export function FlipdLayout({ concept, concepts }: Props) {
           <p className="flipd-display" style={{
             fontSize: 'clamp(1.6rem, 4vw, 2.6rem)',
             margin: 0,
-            color: 'var(--flipd-red)',
+            color: 'var(--flipd-sky-deep)',
             lineHeight: 1.1,
           }}>
             buttermilk &amp; hot honey
           </p>
 
-          {/* OPEN sign */}
+          {/* OPEN sign — ink pill with a sky-blue pulse dot + sky-blue
+              marquee text. (No red neon.) */}
           <div style={{
             display: 'inline-flex', alignItems: 'center', gap: '0.7rem',
             marginTop: '2.2rem',
             padding: '0.55rem 1.2rem',
             background: 'var(--flipd-ink)',
             borderRadius: '999px',
-            border: '2px solid var(--flipd-red)',
+            border: '2px solid var(--flipd-ink)',
           }}>
             <span aria-hidden="true" style={{
               width: '0.5rem', height: '0.5rem', borderRadius: '50%',
-              background: 'var(--flipd-red)',
-              boxShadow: '0 0 8px var(--flipd-red), 0 0 16px var(--flipd-red)',
+              background: 'var(--flipd-sky)',
+              boxShadow: '0 0 8px var(--flipd-sky), 0 0 16px var(--flipd-sky)',
             }} />
-            <span className="flipd-marquee flipd-neon-red" style={{
+            <span className="flipd-marquee" style={{
               fontSize: '0.88rem', letterSpacing: '0.2em',
+              color: 'var(--flipd-sky)',
             }}>
               OPEN NOW
             </span>
@@ -140,7 +147,7 @@ export function FlipdLayout({ concept, concepts }: Props) {
         position: 'relative',
       }}>
         <div style={{ maxWidth: '44rem', margin: '0 auto', textAlign: 'center' }}>
-          <p className="flipd-eyebrow" style={{ color: 'var(--flipd-red)', marginBottom: '0.6rem' }}>
+          <p className="flipd-eyebrow" style={{ color: 'var(--flipd-sky)', marginBottom: '0.6rem' }}>
             Today&apos;s Board
           </p>
           <h2 className="flipd-display" style={{
@@ -236,7 +243,7 @@ export function FlipdLayout({ concept, concepts }: Props) {
               <div key={h} className="flipd-card">
                 <p className="flipd-type" style={{
                   fontSize: '0.7rem', letterSpacing: '0.32em', textTransform: 'uppercase',
-                  color: 'var(--flipd-red)', margin: '0 0 0.6rem',
+                  color: 'var(--flipd-sky-deep)', margin: '0 0 0.6rem',
                 }}>
                   · Today
                 </p>
@@ -303,7 +310,7 @@ export function FlipdLayout({ concept, concepts }: Props) {
             {concept.phone && (
               <p style={{ fontFamily: 'var(--flipd-type)', fontSize: '1rem', margin: 0 }}>
                 <a href={`tel:${concept.phone.replace(/\s/g, '')}`} style={{
-                  color: 'var(--flipd-red)', textDecoration: 'none',
+                  color: 'var(--flipd-sky-deep)', textDecoration: 'none',
                   borderBottom: '1.5px solid currentColor', fontWeight: 700,
                 }}>
                   {concept.phone}
@@ -323,7 +330,7 @@ export function FlipdLayout({ concept, concepts }: Props) {
       <CrossBrandStrip
         current={concept}
         concepts={concepts}
-        accent="var(--flipd-red)"
+        accent="var(--flipd-sky-deep)"
         kicker="Also from the operator"
         heading="More from the same kitchen group."
       />
@@ -339,16 +346,22 @@ export function FlipdLayout({ concept, concepts }: Props) {
           <p className="flipd-eyebrow" style={{ color: 'var(--flipd-sky)', marginBottom: '0.8rem' }}>
             Hungry now?
           </p>
-          <h2 className="flipd-marquee flipd-neon" style={{
+          {/* Solid cream marquee on the ink section. The 4px sky-blue
+              ledge under each glyph is the same offset used on the
+              hero FLIPD wordmark — keeps the diner-sign weight without
+              any glow. */}
+          <h2 className="flipd-marquee" style={{
             fontSize: 'clamp(2.8rem, 6.5vw, 4.6rem)',
             margin: '0 0 0.4rem',
+            color: 'var(--flipd-cream)',
+            textShadow: '0 4px 0 var(--flipd-sky)',
           }}>
             HOT BIRD
           </h2>
           <p className="flipd-display" style={{
             fontSize: 'clamp(1.6rem, 4vw, 2.4rem)',
             margin: '0 0 2.4rem',
-            color: 'var(--flipd-red)',
+            color: 'var(--flipd-sky)',
           }}>
             cold milkshake.
           </p>
@@ -375,7 +388,7 @@ function Spec({ value, label }: { value: string; label: string }) {
       <span className="flipd-marquee" style={{
         display: 'block',
         fontSize: 'clamp(2.4rem, 4.5vw, 3.4rem)',
-        color: 'var(--flipd-red)',
+        color: 'var(--flipd-ink)',
         lineHeight: 0.95,
       }}>
         {value}

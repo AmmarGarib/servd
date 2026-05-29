@@ -316,10 +316,10 @@
 @media (max-width: 700px) { .stax-visit-grid { grid-template-columns: 1fr !important; } }
 
 /* flipd — old-school American diner ───────────────────────────────────
-   Cream paper bg, Lobster cursive headlines that read like a neon sign,
-   Bungee for the marquee wordmark, Special Elite for typewritten copy.
-   Red awning stripes, chrome rules, sky-blue accents tie back to the
-   palette so the diner feels Flipd, not generic. */
+   Cream paper base, Lobster cursive script, Bungee marquee wordmark,
+   Special Elite typewriter body. Sky blue + cream drive the awning +
+   wrappers; ink black is the tertiary that grounds the wordmark, the
+   3D shadows, and the checkered floor. No red. No neon glow. */
 .flipd-page {
   background: var(--flipd-cream);
   color: var(--flipd-ink);
@@ -332,35 +332,37 @@
   font-family: var(--flipd-type);
   font-size: 0.78rem; font-weight: 400;
   letter-spacing: 0.32em; text-transform: uppercase;
-  color: var(--flipd-red);
+  color: var(--flipd-sky-deep);
 }
-/* The signature diner CTA — chrome capsule, red border, marquee text */
+/* Primary CTA — sky-blue capsule, ink border, ink text, ink 3D shadow.
+   On hover it deepens to sky-deep with cream text. Tertiary black does
+   all the "diner signage outline" work that red used to do. */
 .flipd-page .flipd-btn {
   display: inline-flex; align-items: center; gap: 0.6rem;
   font-family: var(--flipd-marquee);
   font-size: 0.92rem; letter-spacing: 0.06em;
   padding: 0.95rem 1.7rem;
-  background: var(--flipd-cream);
-  color: var(--flipd-red);
-  border: 2px solid var(--flipd-red);
+  background: var(--flipd-sky);
+  color: var(--flipd-ink);
+  border: 2px solid var(--flipd-ink);
   border-radius: 999px; text-decoration: none;
   text-transform: uppercase;
-  box-shadow: 0 3px 0 var(--flipd-red), 0 6px 16px rgba(215,38,61,0.18);
+  box-shadow: 0 3px 0 var(--flipd-ink), 0 6px 16px rgba(14,26,42,0.18);
   transition: transform 140ms ease, box-shadow 140ms ease, background 180ms ease, color 180ms ease;
 }
 .flipd-page .flipd-btn:hover {
-  background: var(--flipd-red);
+  background: var(--flipd-sky-deep);
   color: var(--flipd-cream);
   transform: translateY(-2px);
-  box-shadow: 0 5px 0 var(--flipd-red-deep), 0 10px 24px rgba(215,38,61,0.32);
+  box-shadow: 0 5px 0 var(--flipd-ink), 0 10px 24px rgba(14,26,42,0.32);
 }
 .flipd-page .flipd-btn:active {
   transform: translateY(0);
-  box-shadow: 0 1px 0 var(--flipd-red);
+  box-shadow: 0 1px 0 var(--flipd-ink);
 }
-/* Ghost variant — flipped: chrome capsule on ink border */
+/* Ghost variant — cream paper, ink trim. Inverts to ink/cream on hover. */
 .flipd-page .flipd-btn-ghost {
-  background: transparent; color: var(--flipd-ink);
+  background: var(--flipd-cream); color: var(--flipd-ink);
   border-color: var(--flipd-ink);
   box-shadow: 0 3px 0 var(--flipd-ink), 0 6px 16px rgba(14,26,42,0.12);
 }
@@ -379,32 +381,15 @@
   position: relative;
 }
 
-/* Awning — diagonal red/cream stripes (classic candy-stripe canopy) */
+/* Awning / wrapper stripes — sky + cream diagonals. Doubles as the
+   takeout-paper print across the brand: same stripe pattern wraps the
+   tenders, lines the basket, fronts the website. */
 .flipd-awning {
   background-image:
-    linear-gradient(45deg, var(--flipd-red) 25%, transparent 25%, transparent 50%,
-                          var(--flipd-red) 50%, var(--flipd-red) 75%, transparent 75%, transparent);
+    linear-gradient(45deg, var(--flipd-sky) 25%, transparent 25%, transparent 50%,
+                          var(--flipd-sky) 50%, var(--flipd-sky) 75%, transparent 75%, transparent);
   background-size: 36px 36px;
   background-color: var(--flipd-cream);
-}
-
-/* Neon sign — outer halo cyan glow on cream */
-.flipd-neon {
-  color: var(--flipd-sky);
-  text-shadow:
-    0 0 4px var(--flipd-cream),
-    0 0 14px var(--flipd-sky),
-    0 0 28px var(--flipd-sky),
-    0 0 54px var(--flipd-sky-deep);
-}
-/* Neon — red variant, for the OPEN sign */
-.flipd-neon-red {
-  color: var(--flipd-red);
-  text-shadow:
-    0 0 4px var(--flipd-cream),
-    0 0 14px var(--flipd-red),
-    0 0 28px var(--flipd-red),
-    0 0 54px var(--flipd-red-deep);
 }
 
 /* Checkerboard floor — black-and-cream tiles. Apply to a fixed footer
@@ -432,19 +417,16 @@
 @media (max-width: 700px) { .flipd-visit-grid { grid-template-columns: 1fr !important; } }
 
 :root {
-  /* ── Flipd brand tokens (old-school American diner) ──────────────────────
-       Sky blue + cream stay from the original Flipd palette; red and
-       chrome add the classic diner signage cues (awnings, booth piping,
-       neon, fenders). Lobster is the script for headlines; Bungee is the
-       marquee shouter (FLIPD logo, signage); Special Elite is the
-       typewritten body / "today's special" board copy. */
+  /* ── Flipd brand tokens (old-school American diner, sky + cream + ink).
+       Sky blue + cream do all the awning + wrapper work; ink is the
+       tertiary that handles the marquee wordmark, 3D shadows under the
+       cards/buttons, and the checkered floor. No red anywhere — the
+       brand reads as a takeout chicken-paper print, not Coca-Cola. */
   --flipd-sky:          #3AA8FF;
   --flipd-sky-deep:     #1A78D6;
   --flipd-pale:         #E8F4FF;
   --flipd-ink:          #0E1A2A;
   --flipd-cream:        #FBFDFF;
-  --flipd-red:          #D7263D;            /* awning / piping */
-  --flipd-red-deep:     #A41525;            /* hover / shadow */
   --flipd-chrome:       #C8CCD2;            /* booth chrome */
   --flipd-script:       'Lobster', cursive;
   --flipd-marquee:      'Bungee', 'Impact', sans-serif;
