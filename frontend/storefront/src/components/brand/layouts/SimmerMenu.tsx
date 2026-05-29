@@ -191,20 +191,25 @@ export function SimmerMenu({ slug, conceptName }: { slug: string, conceptName: s
           <p className="utility" style={{ fontSize: '0.66rem', opacity: 0.55, letterSpacing: '0.4em' }}>
             menu changes when the kitchen changes
           </p>
+          {/* Tableside ordering isn't live yet — the live /<slug> route
+              needs the kitchen's API to publish real items first. Until
+              then we land politely: tell the room to flag a server,
+              offer reservations as the only working action. Swap this
+              for an order CTA the moment the menu API is wired up. */}
           <p className="amarante" style={{
             fontSize: 'clamp(1.4rem, 4vw, 2rem)', lineHeight: 1.25, margin: '1.4rem 0 0',
           }}>
-            ready to order from your table?
+            ready when you are.
           </p>
           <p style={{
             fontFamily: 'var(--simmer-body)',
             fontSize: '0.95rem', letterSpacing: '0.02em',
             opacity: 0.78, marginTop: '0.8rem',
           }}>
-            Tap below — your seat number is on the card at your setting.
+            Flag your server — they&apos;ll take the order. Tableside ordering opens once the kitchen publishes.
           </p>
           <div style={{ marginTop: '2rem', display: 'flex', gap: '1rem', justifyContent: 'center', flexWrap: 'wrap' }}>
-            <Link href={`/${slug}`} className="action action--signal">order at the table</Link>
+            <Link href={`/reserve/${slug}`} className="action action--signal">reserve a table</Link>
             <Link href={`/brand/${slug}`} className="action">{conceptName.toLowerCase()} home</Link>
           </div>
         </div>

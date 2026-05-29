@@ -149,10 +149,15 @@ export default function ConceptOrderPage() {
   if (error) {
     return (
       <div className="min-h-screen flex items-center justify-center p-6 text-center">
-        <div>
-          <h1 className="text-2xl font-bold mb-2">We can&rsquo;t open this brand right now.</h1>
-          <p className="text-s-muted text-sm mb-4">{error}</p>
-          <Link href="/browse" className="servd-btn-primary">Back to brands</Link>
+        <div style={{ maxWidth: '28rem' }}>
+          <h1 className="text-2xl font-bold mb-2">Tableside ordering isn&rsquo;t live yet.</h1>
+          <p className="text-s-muted text-sm mb-4">
+            The kitchen hasn&rsquo;t published a menu to the order system. Flag down your server — they&rsquo;ll take the order from the printed card. Reservations are open below.
+          </p>
+          <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center', flexWrap: 'wrap' }}>
+            <Link href={`/brand/${slug}/menu`} className="servd-btn-primary">See the menu</Link>
+            <Link href={`/reserve/${slug}`} className="servd-btn-primary" style={{ background: 'var(--servd-mute)', color: 'white' }}>Reserve a table</Link>
+          </div>
         </div>
       </div>
     )
