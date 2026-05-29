@@ -93,6 +93,62 @@
 .simmer-page .action--signal:hover { background: var(--simmer-orange); color: var(--simmer-green); }
 @media (max-width: 700px) { .simmer-visit-grid { grid-template-columns: 1fr !important; } }
 
+/* simmer-checkout — overlays the generic servd checkout with the simmer
+   palette so customers buying high-ticket Simmer items don't get tossed
+   into a foreign-looking white-card flow. We remap the --servd-* tokens
+   that the checkout JSX already references, plus a few !important
+   overrides for the inline `background: white` panel cards. */
+.simmer-checkout {
+  /* token remap — touches everything the checkout already styles
+     through CSS vars (text, accents, borders, surfaces, CTAs) */
+  --servd-ink:        var(--simmer-green);
+  --servd-mute:       rgba(27,45,42,0.62);
+  --servd-line:       rgba(27,45,42,0.18);
+  --servd-surface:    #f5eed8;
+  --servd-green:      var(--simmer-orange);
+  --servd-green-dark: var(--simmer-orange);
+
+  background: var(--simmer-bone);
+  color: var(--simmer-green);
+  font-family: var(--simmer-body);
+  letter-spacing: 0.02em;
+}
+/* Display type — Simmer uses Amarante for headings, not the servd
+   Bricolage. We don't override every <p>/<span> though; the body
+   stays Times via the font-family above. */
+.simmer-checkout h1,
+.simmer-checkout h2,
+.simmer-checkout h3 {
+  font-family: var(--simmer-display);
+  letter-spacing: 0.02em;
+  font-weight: 400;
+}
+/* Panel cards — the JSX hardcodes `background: white`. Tint them to a
+   light bone so they read as paper-on-table, not white-on-bone. */
+.simmer-checkout .rounded-2xl[style*="background: white"],
+.simmer-checkout .rounded-2xl[style*="background:#fff"],
+.simmer-checkout .rounded-2xl[style*="background: #fff"] {
+  background: #f9f3df !important;
+  border-color: rgba(27,45,42,0.14) !important;
+  box-shadow: 0 1px 3px rgba(27,45,42,0.06) !important;
+}
+/* The fixed bottom CTA bar uses rgba white — bump it to a bone wash
+   so it doesn't read as a foreign chrome strip. */
+.simmer-checkout .fixed.bottom-0 {
+  background: rgba(237,230,211,0.96) !important;
+  border-top-color: rgba(27,45,42,0.18) !important;
+}
+/* "Tip the rider" / fulfilment chooser tints use a blue-ish wash on
+   the servd default; remap to a faint orange wash so they tie to the
+   single accent colour. */
+.simmer-checkout div[style*="rgba(30,58,138,0.06)"],
+.simmer-checkout div[style*="rgba(30,58,138,0.08)"],
+.simmer-checkout div[style*="rgba(30,58,138,0.25)"],
+.simmer-checkout div[style*="rgba(30,58,138,0.2)"] {
+  background: rgba(233,78,27,0.06) !important;
+  border-color: rgba(233,78,27,0.20) !important;
+}
+
 /* stax — industrial blueprint */
 .stax-page {
   background-color: var(--stax-blueprint);

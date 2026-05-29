@@ -44,6 +44,14 @@ export default function CheckoutPage() {
   const { items, subtotalCents, taxCents, totalCents, itemCount, clearCart, hydrateFromReorder } = useCart()
   const token = useCustomerAuth((s) => s.token)
 
+  // Simmer is high-ticket plated-service dining — the cart is small,
+  // intentional, and shouldn't be diluted with sides from other brands.
+  // We also re-skin the checkout into Simmer's bone/forest-green/orange
+  // palette so the customer never leaves the brand world they ordered
+  // from. The skin is a CSS-variable swap (`.simmer-checkout` in
+  // globals.css) so we don't have to fork the whole 900-line JSX.
+  const isSimmer = slug === 'simmer'
+
   // Cross-domain handoff: when a user builds a cart on a brand custom domain
   // (eatstax.com, stax.localhost:3002…) and clicks checkout, the brand site
   // appends the cart as a base64url-encoded token. Hydrate on mount, then
@@ -333,7 +341,10 @@ export default function CheckoutPage() {
       : 'Place Order'
 
   return (
-    <main className="min-h-screen pb-32 relative overflow-hidden" style={{ background: 'transparent' }}>
+    <main
+      className={`min-h-screen pb-32 relative overflow-hidden${isSimmer ? ' simmer-checkout' : ''}`}
+      style={{ background: 'transparent' }}
+    >
 
       {/* Header */}
       <div className="relative z-10 px-4 pt-5 pb-4 flex items-center gap-3"
@@ -613,8 +624,11 @@ export default function CheckoutPage() {
           </div>
         </Panel>
 
-        {/* Cross-brand upsell — surface 3 dishes from other GS Foods kitchens. */}
-        <CrossBrandUpsell currentSlug={slug} />
+        {/* Cross-brand upsell — surface 3 dishes from other GS Foods
+            kitchens. Hidden for Simmer: it's high-ticket plated-service
+            and a "want a burger with your tasting menu?" pitch would
+            cheapen the room. */}
+        {!isSimmer && <CrossBrandUpsell currentSlug={slug} />}
 
         {token ? (
           <>
