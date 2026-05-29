@@ -1,14 +1,21 @@
 'use client'
 import Link from 'next/link'
 
-// Cross-brand upsell shown on the checkout page. Surfaces 3 popular dishes
-// from *other* GS Foods kitchens — the point is discovery and a second-order
-// tap that moves the customer back into another brand's menu.
+// Cross-brand upsell on the checkout page. Surfaces the OTHER live GS Foods
+// brands — discovery + a second-order tap that bounces the customer back
+// into another brand's menu.
 //
-// Why links, not add-to-cart: the cart store currently scopes items to a
-// single conceptSlug, so adding cross-brand items here would break the order
-// API. Once the backend supports multi-kitchen orders, swap each <Link> for
-// an `addItem(...)` call. (TODO: when multi-kitchen carts ship.)
+// GS Foods runs three live brands: Stax, Simmer, Flipd. Keep this list in
+// sync with BrandFallback.tsx + lib/concept.ts whenever a brand is added or
+// retired. Phantom/wishlist brands (Strata, Craveman, Bukhari, Garnish
+// Station, Stax @ Padel) were removed in May 2026 — none of them are real
+// operations, so the upsell was previously sending customers to brands that
+// don't exist.
+//
+// Why links, not add-to-cart: the cart store scopes items to a single
+// conceptSlug, so adding cross-brand items here would break the order API.
+// When the backend supports multi-kitchen orders, swap each <Link> for an
+// addItem(...) call.
 
 interface UpsellPick {
   brandSlug: string
@@ -21,13 +28,9 @@ interface UpsellPick {
 }
 
 const PICKS: UpsellPick[] = [
-  { brandSlug: 'stax',            brandName: 'Stax',            dish: 'The Stax Classic',       price: 'Rs. 1,200', emoji: '🍔', color: '#D4581A', blurb: 'Double smash, aged cheddar, special sauce, brioche.' },
-  { brandSlug: 'flipd',           brandName: 'Flipd',           dish: 'Hot Honey Tenders',      price: 'Rs. 950',   emoji: '🍗', color: '#E5A100', blurb: 'Buttermilk-brined, hand-breaded, hot honey drizzle.' },
-  { brandSlug: 'strata',          brandName: 'Strata',          dish: 'Performance Bowl',       price: 'Rs. 1,100', emoji: '🥗', color: '#2D6A4F', blurb: 'Quinoa, grilled chicken, roasted veg, tahini. 45g protein.' },
-  { brandSlug: 'craveman',        brandName: 'Craveman',        dish: 'Seekh Kebab Bowl',       price: 'Rs. 1,300', emoji: '🥘', color: '#F5A623', blurb: 'Charred seekh, saffron rice, green chutney, naan crisps.' },
-  { brandSlug: 'simmer',          brandName: 'Simmer',          dish: 'Smoked Labneh',          price: 'Rs. 900',   emoji: '🫙', color: '#2D4A3E', blurb: 'Wood-smoked labneh, za\'atar oil, warm pita, olives.' },
-  { brandSlug: 'garnish-station', brandName: 'Garnish Station', dish: 'Loaded Bowl',            price: 'Rs. 900',   emoji: '🥙', color: '#C4A24A', blurb: 'Grain base, 5 toppings, protein, premium sauce.' },
-  { brandSlug: 'stax-padel',      brandName: 'Stax @ Padel',   dish: 'Burger + Fries Combo',   price: 'Rs. 1,450', emoji: '🎾', color: '#DC2626', blurb: 'Any burger, regular fries, can. Court-side pickup.' },
+  { brandSlug: 'stax',   brandName: 'Stax',   dish: 'The Stax Classic',  price: 'Rs. 1,800', emoji: '🍔', color: '#0A1857', blurb: 'Double smash, aged cheddar, special sauce, brioche.' },
+  { brandSlug: 'simmer', brandName: 'Simmer', dish: 'Burrata',           price: 'Rs. 1,400', emoji: '🫒', color: '#1B2D2A', blurb: 'Blistered tomato, olive oil cracker, basil.' },
+  { brandSlug: 'flipd',  brandName: 'Flipd',  dish: 'Hot Honey Tenders', price: 'Rs. 1,100', emoji: '🍗', color: '#D7263D', blurb: 'Buttermilk-brined, hand-breaded, hot honey drizzle.' },
 ]
 
 interface Props {
@@ -50,7 +53,7 @@ export function CrossBrandUpsell({ currentSlug, max = 3 }: Props) {
           </p>
           <p className="font-black text-base mt-1" style={{ color: '#18160f' }}>Want to add a side from another GS Foods brand?</p>
           <p className="text-xs mt-0.5" style={{ color: 'rgba(24,22,15,0.55)' }}>
-            One operator, seven kitchens. Tap to browse — we&rsquo;ll save your current cart.
+            One operator, three kitchens. Tap to browse — we&rsquo;ll save your current cart.
           </p>
         </div>
       </div>
