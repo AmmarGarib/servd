@@ -24,6 +24,28 @@ interface CustomerAddress {
 
 type PaymentMethod = 'cash' | 'card' | 'jazzcash' | 'easypaisa' | 'keenu'
 
+// Fulfilment options. Backend accepts these strings on
+// POST /storefront/orders.type.
+type FulfilmentOption = 'dine-in' | 'pickup' | 'curbside' | 'delivery'
+
+// Per-brand allow-list. The brand's operating model decides what
+// fulfilment modes the customer can pick. Simmer is plated dining
+// only (the QR card is at the table); Stax is a ghost kitchen with
+// counter pickup + curbside; Flipd ships hot from the kitchen, so it
+// also opens up delivery. Slugs not in the map see the full set
+// (legacy / generic brand pages).
+const BRAND_FULFILMENT: Record<string, FulfilmentOption[]> = {
+  simmer: ['dine-in'],
+  stax:   ['dine-in', 'pickup', 'curbside'],
+  flipd:  ['dine-in', 'pickup', 'curbside', 'delivery'],
+}
+const FULFILMENT_LABEL: Record<FulfilmentOption, string> = {
+  'dine-in':  'Dine in',
+  'pickup':   'Pickup',
+  'curbside': 'Curbside',
+  'delivery': 'Delivery',
+}
+
 const PAYMENT_OPTIONS: Array<{
   id: PaymentMethod
   icon: string
@@ -91,8 +113,11 @@ export default function CheckoutPage() {
 
   // Fulfilment type. Curbside is a customer convenience — they tap "I'm
   // here" on arrival via /[concept]/order/[id], staff sees the queue at
-  // /orders/curbside in admin and runs the bag out.
-  const [fulfilmentType,   setFulfilmentType]   = useState<'pickup' | 'curbside' | 'delivery'>('pickup')
+  // /orders/curbside in admin and runs the bag out. The allow-list per
+  // brand drives both the rendered chooser and the initial selection
+  // (whatever option appears first in BRAND_FULFILMENT for the slug).
+  const allowedFulfilment = BRAND_FULFILMENT[slug] ?? ['pickup', 'curbside', 'delivery']
+  const [fulfilmentType, setFulfilmentType] = useState<FulfilmentOption>(allowedFulfilment[0]!)
   const [curbsideVehicle,  setCurbsideVehicle]  = useState('')
   const [curbsidePlate,    setCurbsidePlate]    = useState('')
   const [deliveryAddress,  setDeliveryAddress]  = useState('')
@@ -176,10 +201,14 @@ export default function CheckoutPage() {
   const loyaltyBalance   = account?.loyaltyAccount?.pointsBalance ?? 0
   const loyaltyDeduction = Math.min(loyaltyPts * 10, totalCents())
   const walletDeduction  = useWallet ? Math.min(walletBalance, Math.max(0, totalCents() - loyaltyDeduction)) : 0
-  // Tip — computed against subtotal + tax
-  const tipCents         = tipMode === 'custom'
-    ? Math.max(0, Math.round((parseFloat(customTip) || 0) * 100))
-    : Math.round(totalCents() * (tipPctTable[tipMode] ?? 0))
+  // Tip — computed against subtotal + tax. Only applies to delivery
+  // orders (no rider on dine-in / pickup / curbside, so no tip to
+  // pool); we zero it out regardless of the chip the user happened to
+  // leave selected.
+  const tipCents = fulfilmentType !== 'delivery' ? 0 :
+    tipMode === 'custom'
+      ? Math.max(0, Math.round((parseFloat(customTip) || 0) * 100))
+      : Math.round(totalCents() * (tipPctTable[tipMode] ?? 0))
   // Gift card deduction — capped at order total
   const giftCardDeduction = giftCardStatus === 'valid'
     ? Math.min(giftCardBalance, Math.max(0, totalCents() - loyaltyDeduction - walletDeduction - promoDiscountCents))
@@ -310,7 +339,13 @@ export default function CheckoutPage() {
             conceptSlug: slug,
             customerName: name.trim(),
             customerPhone: phone.trim() || undefined,
-            type: 'pickup',
+            // Guest orders honour the brand's allowed-fulfilment list
+            // too — Simmer guests get 'dine-in', Flipd guests can pick
+            // delivery, etc. Backend's guest-orders schema accepts
+            // 'pickup' | 'delivery' | 'dine-in'; curbside falls back to
+            // 'pickup' for guests since it's a logged-in-only feature
+            // (status updates need an account).
+            type: fulfilmentType === 'curbside' ? 'pickup' : fulfilmentType,
             notes: notes.trim() || undefined,
             items: items.map(i => ({
               menuItemId: i.menuItemId, name: i.name,
@@ -405,23 +440,46 @@ export default function CheckoutPage() {
               </div>
             ))}
           </div>
-          {/* How are you getting it? */}
+          {/* How are you getting it? — brand-aware. Allow-list driven by
+              BRAND_FULFILMENT at top of file. When the brand offers only
+              one option (e.g. Simmer = dine-in), skip the chooser and
+              just confirm the mode statically. */}
           <div className="rounded-xl p-3.5 mb-3" style={{ background: 'rgba(30,58,138,0.06)', border: '1px solid rgba(30,58,138,0.25)' }}>
-            <p className="text-xs font-bold tracking-wider uppercase mb-2" style={{ color: 'var(--servd-green-dark)' }}>How are you getting it?</p>
-            <div className="flex gap-2 mb-2">
-              {(['pickup', 'curbside', 'delivery'] as const).map((m) => (
-                <button
-                  key={m}
-                  type="button"
-                  onClick={() => setFulfilmentType(m)}
-                  className="flex-1 rounded-lg px-3 py-2 text-xs font-bold transition-all"
-                  style={fulfilmentType === m
-                    ? { background: 'var(--servd-green-dark)', color: '#0a0a0a', border: '1px solid var(--servd-green)' }
-                    : { background: '#fff', color: 'var(--servd-ink)', border: '1px solid rgba(0,0,0,0.08)' }}>
-                  {m === 'pickup' ? 'Pickup' : m === 'curbside' ? 'Curbside' : 'Delivery'}
-                </button>
-              ))}
-            </div>
+            {allowedFulfilment.length === 1 ? (
+              <>
+                <p className="text-xs font-bold tracking-wider uppercase mb-1" style={{ color: 'var(--servd-green-dark)' }}>
+                  {FULFILMENT_LABEL[allowedFulfilment[0]!]}
+                </p>
+                <p className="text-[11px]" style={{ color: 'var(--servd-mute)' }}>
+                  {allowedFulfilment[0] === 'dine-in'
+                    ? 'Your order goes straight to your table.'
+                    : ''}
+                </p>
+              </>
+            ) : (
+              <>
+                <p className="text-xs font-bold tracking-wider uppercase mb-2" style={{ color: 'var(--servd-green-dark)' }}>How are you getting it?</p>
+                <div className="flex gap-2 mb-2">
+                  {allowedFulfilment.map((m) => (
+                    <button
+                      key={m}
+                      type="button"
+                      onClick={() => setFulfilmentType(m)}
+                      className="flex-1 rounded-lg px-3 py-2 text-xs font-bold transition-all"
+                      style={fulfilmentType === m
+                        ? { background: 'var(--servd-green-dark)', color: '#0a0a0a', border: '1px solid var(--servd-green)' }
+                        : { background: '#fff', color: 'var(--servd-ink)', border: '1px solid rgba(0,0,0,0.08)' }}>
+                      {FULFILMENT_LABEL[m]}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+            {fulfilmentType === 'dine-in' && allowedFulfilment.length > 1 && (
+              <p className="text-[11px] mt-1" style={{ color: 'var(--servd-mute)' }}>
+                Your order goes straight to your table.
+              </p>
+            )}
             {fulfilmentType === 'curbside' && (
               <div className="space-y-2 mt-2">
                 <p className="text-[11px]" style={{ color: 'var(--servd-mute)' }}>
@@ -525,7 +583,10 @@ export default function CheckoutPage() {
             )}
           </div>
 
-          {/* Tip the rider */}
+          {/* Tip the rider — only when there's actually a rider, i.e.
+              the order is being delivered. Dine-in, pickup, and curbside
+              don't involve a rider, so hide the section entirely. */}
+          {fulfilmentType === 'delivery' && (
           <div className="rounded-xl p-3.5 mb-3" style={{ background: 'rgba(30,58,138,0.08)', border: '1px solid rgba(30,58,138,0.2)' }}>
             <p className="text-xs font-bold tracking-wider uppercase text-[color:var(--servd-green-dark)] mb-2">Tip the rider</p>
             <div className="flex flex-wrap gap-1.5 mb-2">
@@ -561,6 +622,7 @@ export default function CheckoutPage() {
               </p>
             )}
           </div>
+          )}
 
           {/* Gift card */}
           <div className="rounded-xl p-3.5 mb-3" style={{ background: 'rgba(0,0,0,0.03)', border: '1px solid rgba(0,0,0,0.06)' }}>
