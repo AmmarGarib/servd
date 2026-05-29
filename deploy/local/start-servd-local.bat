@@ -1,6 +1,6 @@
 @echo off
 REM ============================================================================
-REM  servd — one-double-click local launcher (Windows)
+REM  servd -- one-double-click local launcher (Windows)
 REM
 REM  For a laptop with NOTHING set up. Double-click this file. It will:
 REM    1. Install Git + Docker Desktop (via winget) if they're missing
@@ -9,7 +9,7 @@ REM    3. Boot the whole app locally (api + admin + storefront + db + redis)
 REM    4. Open the storefront in your browser
 REM
 REM  If Docker Desktop gets installed on this run, Windows needs a REBOOT.
-REM  After rebooting, just double-click this file again — it picks up where it
+REM  After rebooting, just double-click this file again -- it picks up where it
 REM  left off and boots the app.
 REM ============================================================================
 
@@ -135,10 +135,10 @@ timeout /t 5 /nobreak >nul
 curl -s -o nul http://localhost:3002 && goto webready
 set /a tries+=1
 if !tries! lss 120 (
-  echo      ... still building/starting ^(!tries!/120^) — this is normal on first run
+  echo      ... still building/starting ^(!tries!/120^) -- this is normal on first run
   goto waitweb
 )
-echo  [!] Took longer than expected. It may still be building. Opening anyway —
+echo  [!] Took longer than expected. It may still be building. Opening anyway --
 echo      if you see "can't reach this page", wait a minute and refresh.
 :webready
 echo(
