@@ -15,6 +15,7 @@
 
 import Link from 'next/link'
 import type { Concept } from '../../../lib/concept'
+import { conceptHeroImage } from '../../../lib/concept'
 import { CrossBrandStrip } from '../parts/CrossBrandStrip'
 import { OpenStatusBadge, HoursGrid, useHoursData } from '../parts/OpenStatusBadge'
 import { SpeakeasyFridgeHero } from '../../kinetic/SpeakeasyFridgeHero'
@@ -36,6 +37,117 @@ function todayStamp(): string {
 }
 
 const STAMP = todayStamp()
+
+// ─── Walnut-framed picture hung off the itinerary rail ──────────────
+// Side: 'left' = card pinned to the left half, 'right' = right half.
+// The orange rail runs down the centre of the parent; a small
+// bone-and-orange dot sits on the rail at this stop's vertical centre.
+function ItineraryStop({ side, children }: { side: 'left' | 'right', children: React.ReactNode }) {
+  return (
+    <div style={{
+      position: 'relative',
+      display: 'flex',
+      marginBottom: '1.8rem',
+    }}>
+      {/* Stop dot — pinned to the rail at the card's vertical centre */}
+      <span aria-hidden="true" style={{
+        position: 'absolute',
+        left: '50%', top: '50%',
+        width: '10px', height: '10px', borderRadius: '50%',
+        background: 'var(--simmer-bone)',
+        border: '1.5px solid var(--simmer-orange)',
+        transform: 'translate(-50%, -50%)',
+        zIndex: 3,
+      }}/>
+
+      <div style={{
+        // Walnut frame — layered gradient mimics polished wood grain,
+        // inset shadows give it the depth of a hung picture frame.
+        background: 'linear-gradient(135deg, #6a4828 0%, #4a311c 22%, #1f1209 55%, #4a311c 80%, #6a4828 100%)',
+        padding: '12px',
+        width: '184px', maxWidth: '184px',
+        borderRadius: '2px',
+        boxShadow:
+          '0 18px 36px rgba(20,12,5,0.45),' +
+          ' 0 2px 0 rgba(0,0,0,0.30),' +
+          ' inset 0 0 0 1px rgba(0,0,0,0.45),' +
+          ' inset 0 0 0 2px rgba(196,142,72,0.18)',
+        marginLeft:  side === 'right' ? 'auto' : 0,
+        marginRight: side === 'left'  ? 'auto' : 0,
+        position: 'relative',
+      }}>
+        {/* Inner mat — thin green rebate around the artwork */}
+        <div style={{
+          background: 'var(--simmer-green)',
+          padding: '4px',
+          borderRadius: '1px',
+          boxShadow: 'inset 0 0 0 1px rgba(0,0,0,0.55)',
+          position: 'relative',
+        }}>
+          <div style={{
+            width: '100%', aspectRatio: '5 / 4',
+            background: '#15231f',
+            overflow: 'hidden', position: 'relative',
+          }}>
+            {children}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Top-down plated-dish sketch (the kitchen) ──────────────────────
+function PlateSketch() {
+  return (
+    <svg viewBox="0 0 200 160" preserveAspectRatio="xMidYMid slice"
+         style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', display: 'block' }}>
+      <rect width="200" height="160" fill="#15231f"/>
+      <g stroke="rgba(237,230,211,0.6)" strokeWidth="1.2" fill="none">
+        <circle cx="100" cy="80" r="58"/>
+        <circle cx="100" cy="80" r="48" strokeWidth="0.5" opacity="0.55"/>
+      </g>
+      <ellipse cx="100" cy="80" rx="54" ry="54" fill="rgba(237,230,211,0.03)"/>
+      <circle cx="78" cy="92" r="3.2" fill="var(--simmer-orange)"/>
+      <circle cx="78" cy="92" r="6.5" fill="rgba(233,78,27,0.18)"/>
+      <g stroke="rgba(237,230,211,0.75)" strokeWidth="0.7" strokeLinecap="round" fill="none">
+        <line x1="106" y1="70" x2="112" y2="64"/>
+        <line x1="113" y1="68" x2="118" y2="63"/>
+        <line x1="110" y1="74" x2="116" y2="71"/>
+      </g>
+      <ellipse cx="118" cy="92" rx="9" ry="4.5" transform="rotate(-22 118 92)"
+               fill="rgba(237,230,211,0.18)" stroke="rgba(237,230,211,0.75)" strokeWidth="0.7"/>
+      <path d="M86 100 Q102 106 124 100"
+            stroke="rgba(237,230,211,0.35)" strokeWidth="0.5" fill="none"/>
+      <circle cx="100" cy="62" r="1.4" fill="rgba(237,230,211,0.85)"/>
+      <circle cx="103" cy="60" r="1.1" fill="rgba(237,230,211,0.65)"/>
+    </svg>
+  )
+}
+
+// ─── Coupe-glass mocktail sketch (the bar) ──────────────────────────
+function CoupeSketch() {
+  return (
+    <svg viewBox="0 0 200 160" preserveAspectRatio="xMidYMid slice"
+         style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', display: 'block' }}>
+      <rect width="200" height="160" fill="#15231f"/>
+      <g stroke="rgba(237,230,211,0.7)" strokeWidth="1.2" fill="none" strokeLinecap="round">
+        <ellipse cx="100" cy="58" rx="50" ry="11"/>
+        <path d="M50 58 Q52 94 100 102 Q148 94 150 58"/>
+        <line x1="100" y1="102" x2="100" y2="138"/>
+        <ellipse cx="100" cy="142" rx="30" ry="4"/>
+      </g>
+      <path d="M58 62 Q70 92 100 98 Q130 92 142 62 Z" fill="rgba(233,78,27,0.32)"/>
+      <ellipse cx="100" cy="62" rx="42" ry="6" fill="none" stroke="rgba(237,230,211,0.5)" strokeWidth="0.7"/>
+      <path d="M62 56 Q78 48 96 46" stroke="rgba(237,230,211,0.75)" strokeWidth="1" fill="none"/>
+      <ellipse cx="120" cy="56" rx="5" ry="2" fill="rgba(237,230,211,0.85)"
+               stroke="rgba(237,230,211,0.85)" strokeWidth="0.4"
+               transform="rotate(-20 120 56)"/>
+      <circle cx="86" cy="78" r="1.4" fill="none" stroke="rgba(237,230,211,0.55)" strokeWidth="0.5"/>
+      <circle cx="92" cy="86" r="0.9" fill="none" stroke="rgba(237,230,211,0.40)" strokeWidth="0.5"/>
+    </svg>
+  )
+}
 
 export function SimmerLayout({ concept, concepts }: Props) {
   const hoursData = useHoursData(concept.slug)
@@ -82,45 +194,59 @@ export function SimmerLayout({ concept, concepts }: Props) {
         menuHref={`/brand/${concept.slug}/menu`}
       />
 
-      {/* ── DATE STAMP STRIP — picks up after the chiller, signals the
-          current menu printing date. */}
-      <section style={{ padding: 'clamp(3rem, 6vh, 4rem) clamp(1.5rem, 5vw, 3rem)' }}>
-        <div style={{ maxWidth: '64rem', margin: '0 auto', display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '2rem', flexWrap: 'wrap' }}>
-          <p className="utility" style={{ fontSize: '0.78rem', margin: 0 }}>tonight&apos;s service</p>
-          <p className="utility signal" style={{ fontSize: '0.78rem', margin: 0, whiteSpace: 'nowrap' }}>
-            {STAMP}
-          </p>
+      {/* ── TONIGHT'S TABLE ──────────────────────────────────────────
+          Bone-backed editorial section. Three walnut-framed pictures
+          hang off a single thin orange rail like an evening itinerary
+          (I → II → III): the room (interior photo placeholder), the
+          kitchen (plated-dish sketch), the bar (coupe sketch). Header
+          carries the live service date — recomputed at render so the
+          stamp ticks daily without operator action. Replaces the
+          previous three-column "the room / the kitchen / the bar"
+          caption block. */}
+      <section style={{
+        background: 'var(--simmer-bone)',
+        color: 'var(--simmer-green)',
+        padding: 'clamp(3rem, 7vh, 5rem) clamp(1.4rem, 5vw, 3rem)',
+      }}>
+        <div style={{ maxWidth: '38rem', margin: '0 auto' }}>
+          {/* Header — tonight's service · DATE */}
+          <div style={{
+            display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
+            paddingBottom: '1rem',
+            borderBottom: '1px solid rgba(27,45,42,0.18)',
+            marginBottom: '2.4rem',
+          }}>
+            <span className="utility" style={{ fontSize: '0.78rem' }}>tonight&apos;s service</span>
+            <span className="utility signal" style={{ fontSize: '0.78rem', whiteSpace: 'nowrap' }}>{STAMP}</span>
+          </div>
+
+          {/* Itinerary — orange rail + three walnut-framed pictures */}
+          <div style={{ position: 'relative', padding: '0.5rem 0 0.5rem' }}>
+            {/* The rail */}
+            <div aria-hidden="true" style={{
+              position: 'absolute', top: '1rem', bottom: '1rem',
+              left: '50%', transform: 'translateX(-50%)',
+              width: '1px', background: 'var(--simmer-orange)', opacity: 0.55,
+            }}/>
+
+            <ItineraryStop side="left">
+              <img
+                src={conceptHeroImage(concept)}
+                alt=""
+                style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+              />
+            </ItineraryStop>
+
+            <ItineraryStop side="right">
+              <PlateSketch />
+            </ItineraryStop>
+
+            <ItineraryStop side="left">
+              <CoupeSketch />
+            </ItineraryStop>
+          </div>
         </div>
       </section>
-
-      <hr className="rule" />
-
-      {/* ── WHAT WE ARE ─────────────────────────────────────────────────────
-          Caption voice. Plain truths, dry. One sentence per line. */}
-      <section style={{ padding: 'clamp(4rem, 9vh, 6rem) clamp(1.5rem, 5vw, 3rem)' }}>
-        <div style={{ maxWidth: '64rem', margin: '0 auto', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 'clamp(2rem, 5vw, 4rem)' }}>
-          <div>
-            <p className="utility" style={{ fontSize: '0.7rem', opacity: 0.7, marginBottom: '1.25rem' }}>the room</p>
-            <p style={{ fontSize: '1.05rem', lineHeight: 1.7, fontFamily: 'var(--simmer-body)', letterSpacing: '0.02em' }}>
-              Basement. Walnut, green marble, low light. Reservations are how we hold the room quiet.
-            </p>
-          </div>
-          <div>
-            <p className="utility" style={{ fontSize: '0.7rem', opacity: 0.7, marginBottom: '1.25rem' }}>the kitchen</p>
-            <p style={{ fontSize: '1.05rem', lineHeight: 1.7, fontFamily: 'var(--simmer-body)', letterSpacing: '0.02em' }}>
-              Small plates, large plates, desserts. Ingredient-driven. The menu changes when the kitchen changes.
-            </p>
-          </div>
-          <div>
-            <p className="utility" style={{ fontSize: '0.7rem', opacity: 0.7, marginBottom: '1.25rem' }}>the bar</p>
-            <p style={{ fontSize: '1.05rem', lineHeight: 1.7, fontFamily: 'var(--simmer-body)', letterSpacing: '0.02em' }}>
-              Mocktails only, on their own menu. Built like cocktails, without the alcohol.
-            </p>
-          </div>
-        </div>
-      </section>
-
-      <hr className="rule" />
 
       {/* ── MENU CTA ────────────────────────────────────────────────────────
           The menu lives at /brand/simmer/menu. This is the route in. */}
