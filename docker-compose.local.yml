@@ -1,0 +1,199 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# servd — LOCAL development stack (run the whole app on your laptop)
+#
+# Why this file exists:
+#   The production box (Windows + Cloudflare Tunnel) hosts the *containers* and
+#   the public URLs. The database (Neon) and cache (Upstash) live in the cloud.
+#   When the office box is down, the public URLs go dark — but you can run the
+#   ENTIRE app on your laptop with this file. It bundles its own Postgres +
+#   Redis, builds nothing from Docker Hub, and runs all three services from
+#   source with HOT RELOAD, so edits show up live on localhost instantly.
+#
+# This is NOT the deploy path. It never pushes images, never touches Docker Hub,
+# and never talks to production. Your normal flow (merge to main → CI builds +
+# pushes images → deploy webhook) is completely unaffected and resumes the
+# moment the office box has power again.
+#
+# ── Quick start ──────────────────────────────────────────────────────────────
+#   1. Install Docker Desktop, then from the repo root:
+#   2. docker compose -f docker-compose.local.yml up
+#   3. Wait for "servd API listening" + the two Next.js "Ready" lines, then open:
+#        Storefront → http://localhost:3002
+#        Admin      → http://localhost:3000
+#        API        → http://localhost:3001/health
+#
+#   First boot installs deps, runs migrations, and seeds Simmer/Stax/Flipd —
+#   give it a few minutes. Later boots are fast. Edit any file under backend/
+#   or frontend/* and the change reloads live, no rebuild, no restart.
+#
+# ── Use the live cloud DB instead of the bundled one (optional) ──────────────
+#   Create a file named  .env.local  next to this one with:
+#       DATABASE_URL=postgresql://...your Neon url...
+#       REDIS_URL=rediss://...your Upstash url...
+#   Then bring the stack up the same way. The bundled db/redis still start but
+#   are ignored. CAUTION: this is real production data — writes and
+#   `prisma migrate` hit live.
+#
+# See LOCAL-DEV.md for the full walkthrough, seeding extras, and the faster
+# no-Docker `npm run dev` alternative.
+# ═══════════════════════════════════════════════════════════════════════════
+
+name: servd-local
+
+services:
+  # ─────────────────────────── Postgres (bundled) ───────────────────────────
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: servd
+      POSTGRES_PASSWORD: servd_dev
+      POSTGRES_DB: servd
+    ports:
+      - "5432:5432"
+    volumes:
+      - servd_local_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U servd -d servd"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # ─────────────────────────── Redis (bundled) ──────────────────────────────
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - servd_local_redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # ─────────────────────────── API (Fastify + Prisma) ───────────────────────
+  # Runs `npm run dev` (tsx watch) from the bind-mounted source for hot reload.
+  # On first boot it installs deps, applies migrations, and seeds once (guarded
+  # by a marker in the seed-state volume so restarts don't re-seed).
+  api:
+    image: node:20-alpine
+    working_dir: /app
+    # DATABASE_URL / REDIS_URL fall back to the bundled services, but anything
+    # you put in .env.local (loaded below) overrides them — e.g. point at Neon.
+    environment:
+      NODE_ENV: development
+      PORT: "3001"
+      HOST: "0.0.0.0"
+      ENABLE_WORKERS: "false"
+      DATABASE_URL: "${DATABASE_URL:-postgresql://servd:servd_dev@db:5432/servd}"
+      REDIS_URL: "${REDIS_URL:-redis://redis:6379}"
+      API_URL: "http://localhost:3001"
+      WEB_URL: "http://localhost:3000"
+      STOREFRONT_URL: "http://localhost:3002"
+      JWT_SECRET: "${JWT_SECRET:-local-dev-jwt-secret-change-me-min-32-chars}"
+      JWT_REFRESH_SECRET: "${JWT_REFRESH_SECRET:-local-dev-refresh-secret-change-me-min-32-chars}"
+      DEFAULT_TAX_RATE: "17"
+      # Reliable file-watching across bind mounts on macOS / Windows.
+      CHOKIDAR_USEPOLLING: "true"
+    env_file:
+      - path: .env.local
+        required: false
+    command: >
+      sh -c "
+        set -e;
+        echo '[local] installing api deps...';
+        npm install --no-audit --no-fund;
+        echo '[local] generating prisma client...';
+        npx prisma generate;
+        echo '[local] applying migrations...';
+        npx prisma migrate deploy;
+        if [ ! -f /seed-state/.seeded ]; then
+          echo '[local] seeding Simmer / Stax / Flipd (first boot)...';
+          if npm run db:seed; then touch /seed-state/.seeded; echo '[local] seed complete';
+          else echo '[local] WARNING: seed failed — continuing, run it manually later'; fi;
+        else
+          echo '[local] seed marker present — skipping seed';
+        fi;
+        echo '[local] starting api (hot reload)...';
+        npm run dev
+      "
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./backend:/app
+      - servd_local_api_modules:/app/node_modules
+      - servd_local_seed_state:/seed-state
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # ─────────────────────────── Admin (Next.js) ──────────────────────────────
+  admin:
+    image: node:20-alpine
+    working_dir: /app
+    environment:
+      NODE_ENV: development
+      # Browser-side fetches hit the host port mapping.
+      NEXT_PUBLIC_API_URL: "http://localhost:3001"
+      NEXT_PUBLIC_WS_URL: "ws://localhost:3001"
+      # Server-side (SSR) fetches reach the api over the compose network.
+      INTERNAL_API_URL: "http://api:3001"
+      NEXT_TELEMETRY_DISABLED: "1"
+      WATCHPACK_POLLING: "true"
+    command: >
+      sh -c "
+        echo '[local] installing admin deps...';
+        npm install --legacy-peer-deps --no-audit --no-fund;
+        echo '[local] starting admin (hot reload)...';
+        npm run dev
+      "
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend/admin:/app
+      - servd_local_admin_modules:/app/node_modules
+      - servd_local_admin_next:/app/.next
+    depends_on:
+      - api
+
+  # ─────────────────────────── Storefront (Next.js) ─────────────────────────
+  storefront:
+    image: node:20-alpine
+    working_dir: /app
+    environment:
+      NODE_ENV: development
+      NEXT_PUBLIC_API_URL: "http://localhost:3001"
+      NEXT_PUBLIC_WS_URL: "ws://localhost:3001"
+      INTERNAL_API_URL: "http://api:3001"
+      NEXT_TELEMETRY_DISABLED: "1"
+      WATCHPACK_POLLING: "true"
+    command: >
+      sh -c "
+        echo '[local] installing storefront deps...';
+        npm install --legacy-peer-deps --no-audit --no-fund;
+        echo '[local] starting storefront (hot reload)...';
+        npm run dev
+      "
+    ports:
+      - "3002:3002"
+    volumes:
+      - ./frontend/storefront:/app
+      - servd_local_storefront_modules:/app/node_modules
+      - servd_local_storefront_next:/app/.next
+    depends_on:
+      - api
+
+volumes:
+  servd_local_pgdata:
+  servd_local_redisdata:
+  servd_local_seed_state:
+  servd_local_api_modules:
+  servd_local_admin_modules:
+  servd_local_admin_next:
+  servd_local_storefront_modules:
+  servd_local_storefront_next:
