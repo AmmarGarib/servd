@@ -312,7 +312,7 @@ export function SpeakeasyFridgeHero({
               textShadow: `0 0 16px ${accent}99`,
             }}
           >
-            {brandName.toLowerCase()}.
+            simmer down.
           </p>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.7rem', justifyContent: 'center' }}>
             <Link href={reserveHref} className="brand-pill">
@@ -640,7 +640,7 @@ function CoolerInterior({ accent, cream, imageUrl }: {
           that lives at top: 80%. Pushed down to bottom: 4% so it sits
           on the floor like a vinyl sticker, not stacked under the CTAs. */}
       <FridgeWord
-        text="open 7pm — late · thu–sun"
+        text="open 7pm — late · tue–sun"
         fireAt={0.78}
         color="rgba(255,255,255,0.55)"
         heavyShadow
