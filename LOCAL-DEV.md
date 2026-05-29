@@ -20,6 +20,24 @@ Nothing here touches Docker Hub or production.
 So you can keep coding, keep pushing to GitHub and Docker, and preview
 everything locally in the meantime.
 
+## Which of my changes reach the server? (code vs data)
+
+Two different things sync by two different mechanisms — this matters:
+
+- **Code changes** (features, styling, fixes) reach the server through
+  **git push → CI builds images → deploy webhook → box pulls**. The database
+  has nothing to do with deploying code. This is unaffected by the outage and
+  resumes automatically when the office box is back.
+- **Data changes** (menus, orders, customers) live in the **database**. If you
+  point this local stack at the **same cloud DB production uses** (Neon +
+  Upstash — see below), then data you change locally is **already on the shared
+  cloud database in real time** — there is no "sync later," it's literally the
+  same database. When the office box powers back on it reconnects to that same
+  DB and sees everything.
+
+So: to have local **data** shared with the server, use the live cloud DB. To
+ship local **code** to the server, push to GitHub as always.
+
 ---
 
 ## Option A — One command (Docker, recommended)
@@ -78,22 +96,30 @@ docker compose -f docker-compose.local.yml exec api npm run db:studio
 
 To force a full re-seed on next boot: `down -v` (wipes the local db), then `up`.
 
-### Use the live cloud database instead
+### Use the SAME database production uses (shared data)
 
-If you'd rather see real production data, create a `.env.local` file in the
-repo root (it's git-ignored):
+This is the option for "anything I change locally shows up on the server." Copy
+the template and fill in your real cloud connection strings:
 
-```dotenv
-DATABASE_URL=postgresql://...your Neon connection string...
-REDIS_URL=rediss://...your Upstash connection string...
+```bash
+cp .env.local.example .env.local     # then edit in your Neon + Upstash URLs
+docker compose -f docker-compose.local.yml up
 ```
 
-Then `docker compose -f docker-compose.local.yml up` as usual. The bundled
-db/redis still start but are ignored.
+`.env.local` is git-ignored and is layered on top of `deploy/local/defaults.env`,
+so its values win. The bundled db/redis still start but are ignored.
 
-> ⚠️ This is **live production data**. Writes persist and
-> `prisma migrate` / seed commands will alter the real schema/data. Prefer the
-> bundled local db for day-to-day development.
+What the stack does for safety when it detects a non-bundled `DATABASE_URL`:
+
+- **Skips auto-migrate and auto-seed**, so booting locally can't alter the live
+  schema or duplicate production data.
+- To intentionally apply pending migrations to the live DB, set
+  `FORCE_MIGRATE=1` in `.env.local`.
+
+> ⚠️ This is the **real production database**. Every write you make locally —
+> creating an order, editing a menu — changes live data immediately. There is
+> no staging copy in this mode. For risk-free experimentation, use the bundled
+> local db (the default) instead.
 
 ---
 

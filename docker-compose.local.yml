@@ -26,13 +26,18 @@
 #   give it a few minutes. Later boots are fast. Edit any file under backend/
 #   or frontend/* and the change reloads live, no rebuild, no restart.
 #
-# ── Use the live cloud DB instead of the bundled one (optional) ──────────────
-#   Create a file named  .env.local  next to this one with:
+# ── Use the SAME database production uses (Neon + Upstash) ───────────────────
+#   So data you change locally is shared with the server in real time (it's
+#   literally the same database; nothing to "sync later"). Create a git-ignored
+#   file named  .env.local  in the repo root with:
 #       DATABASE_URL=postgresql://...your Neon url...
 #       REDIS_URL=rediss://...your Upstash url...
+#       # optional: match prod so existing tokens validate
+#       # JWT_SECRET=...   JWT_REFRESH_SECRET=...
 #   Then bring the stack up the same way. The bundled db/redis still start but
-#   are ignored. CAUTION: this is real production data — writes and
-#   `prisma migrate` hit live.
+#   are ignored. SAFETY: when a non-bundled DATABASE_URL is detected the stack
+#   skips auto-migrate + auto-seed so it can't clobber live data. Your *writes*
+#   still hit live data, though — this is the real production database.
 #
 # See LOCAL-DEV.md for the full walkthrough, seeding extras, and the faster
 # no-Docker `npm run dev` alternative.
@@ -81,26 +86,34 @@ services:
   api:
     image: node:20-alpine
     working_dir: /app
-    # DATABASE_URL / REDIS_URL fall back to the bundled services, but anything
-    # you put in .env.local (loaded below) overrides them — e.g. point at Neon.
+    # The bundled Postgres/Redis are the SAFE default. To run against the SAME
+    # database production uses (Neon + Upstash), drop your connection strings
+    # into a git-ignored .env.local — it's layered on top of the committed
+    # defaults below and wins. DATABASE_URL / REDIS_URL / JWT secrets live in
+    # the env_files (NOT in `environment:`) precisely so .env.local can
+    # override them — values in `environment:` would take precedence and block
+    # the override.
     environment:
       NODE_ENV: development
       PORT: "3001"
       HOST: "0.0.0.0"
       ENABLE_WORKERS: "false"
-      DATABASE_URL: "${DATABASE_URL:-postgresql://servd:servd_dev@db:5432/servd}"
-      REDIS_URL: "${REDIS_URL:-redis://redis:6379}"
       API_URL: "http://localhost:3001"
       WEB_URL: "http://localhost:3000"
       STOREFRONT_URL: "http://localhost:3002"
-      JWT_SECRET: "${JWT_SECRET:-local-dev-jwt-secret-change-me-min-32-chars}"
-      JWT_REFRESH_SECRET: "${JWT_REFRESH_SECRET:-local-dev-refresh-secret-change-me-min-32-chars}"
       DEFAULT_TAX_RATE: "17"
       # Reliable file-watching across bind mounts on macOS / Windows.
       CHOKIDAR_USEPOLLING: "true"
     env_file:
+      # 1) committed bundled defaults  2) your overrides (live DB, etc.) win.
+      - path: deploy/local/defaults.env
+        required: false
       - path: .env.local
         required: false
+    # When the DB is the bundled one (host `db`), migrate + seed automatically.
+    # When it's anything else (i.e. the live Neon DB), skip both so local work
+    # can't clobber production data — opt in with FORCE_MIGRATE=1 if you really
+    # mean to apply migrations to it.
     command: >
       sh -c "
         set -e;
@@ -108,15 +121,27 @@ services:
         npm install --no-audit --no-fund;
         echo '[local] generating prisma client...';
         npx prisma generate;
-        echo '[local] applying migrations...';
-        npx prisma migrate deploy;
-        if [ ! -f /seed-state/.seeded ]; then
-          echo '[local] seeding Simmer / Stax / Flipd (first boot)...';
-          if npm run db:seed; then touch /seed-state/.seeded; echo '[local] seed complete';
-          else echo '[local] WARNING: seed failed — continuing, run it manually later'; fi;
-        else
-          echo '[local] seed marker present — skipping seed';
-        fi;
+        case $$DATABASE_URL in
+          *@db:5432*)
+            echo '[local] bundled local database — migrating + seeding';
+            npx prisma migrate deploy;
+            if [ ! -f /seed-state/.seeded ]; then
+              echo '[local] seeding Simmer / Stax / Flipd (first boot)...';
+              if npm run db:seed; then touch /seed-state/.seeded; echo '[local] seed complete';
+              else echo '[local] WARNING: seed failed — run it manually later'; fi;
+            else
+              echo '[local] seed marker present — skipping seed';
+            fi
+            ;;
+          *)
+            echo '[local] =====================================================';
+            echo '[local]  LIVE / EXTERNAL database in use (production data).';
+            echo '[local]  Auto-migrate + auto-seed are DISABLED to protect it.';
+            echo '[local]  Intentional migrate only: set FORCE_MIGRATE=1';
+            echo '[local] =====================================================';
+            if [ x$$FORCE_MIGRATE = x1 ]; then echo '[local] FORCE_MIGRATE=1 -> prisma migrate deploy'; npx prisma migrate deploy; fi
+            ;;
+        esac;
         echo '[local] starting api (hot reload)...';
         npm run dev
       "
