@@ -1,13 +1,14 @@
 'use client'
-// Flipd — brand microsite layout.
+// Flipd — old-school American diner microsite.
 //
-// Style direction (per CEO direction May 2026): cool palette — pale sky
-// background, vibrant blue accent, deep navy ink. Diner energy without
-// the heat. Big headlines, fat numbers, generous air.
+// Reads like the awning + window of a 1950s-60s roadside diner: red
+// candy-stripe awning, Lobster cursive headlines, Bungee marquee for
+// the wordmark + signage, Special Elite typewriter for the today's-
+// special board. Sky blue + cream stay from the previous palette so
+// it still feels like Flipd; red is the new signal colour.
 //
-// No real menu data wired in yet — signature items render from the
-// BRAND_STORIES highlights and the brand-page CTA routes to the full
-// menu at /brand/flipd/menu when that's ready.
+// All the visual treatments (awning, neon, tile floor, chrome rule)
+// live as utility classes in globals.css.
 
 import Link from 'next/link'
 import type { Concept } from '../../../lib/concept'
@@ -20,71 +21,233 @@ interface Props {
   concepts: Concept[]
 }
 
+// Static menu of placeholder specials. The /brand/flipd/menu route
+// has the live items wired through; this is just for visual texture
+// on the "tonight's board" strip.
+const TODAYS_BOARD: { item: string; price: string }[] = [
+  { item: 'Hot Honey Tenders',  price: 'Rs 1,100' },
+  { item: 'The Diner Stack',    price: 'Rs 1,300' },
+  { item: 'Nashville Hot',      price: 'Rs 1,200' },
+  { item: 'Cheesy Tots',        price: 'Rs   600' },
+  { item: 'Cherry Cola Float',  price: 'Rs   650' },
+  { item: 'Strawberry Shake',   price: 'Rs   700' },
+]
+
 export function FlipdLayout({ concept, concepts }: Props) {
   const hoursData = useHoursData(concept.slug)
   const story = brandStory(concept.slug)
   const reservations = concept.reservationsEnabled !== false
 
-  // Classes (.flipd-page, .flipd-display, .flipd-eyebrow, .flipd-btn,
-  // .flipd-btn-ghost, .flipd-card, .flipd-visit-grid) live in globals.css.
   return (
     <div className="flipd-page">
       {concept.announcementBanner && (
-        <div role="status" style={{ background: 'var(--flipd-ink)', color: 'var(--flipd-sky)', padding: '0.7rem 1.5rem', textAlign: 'center', fontWeight: 700, fontSize: '0.85rem', letterSpacing: '0.04em' }}>
+        <div role="status" style={{
+          background: 'var(--flipd-red)', color: 'var(--flipd-cream)',
+          padding: '0.7rem 1.5rem', textAlign: 'center',
+          fontFamily: 'var(--flipd-type)', fontSize: '0.85rem',
+          letterSpacing: '0.18em', textTransform: 'uppercase',
+        }}>
           {concept.announcementBanner}
         </div>
       )}
 
-      {/* ── HERO ─ Pale blue surface, big eyebrow + big headline + price-from-style hero number ── */}
-      <section style={{ background: 'var(--flipd-pale)', padding: 'clamp(4rem, 12vh, 9rem) clamp(1.5rem, 5vw, 3rem) clamp(4rem, 8vh, 6rem)', position: 'relative', overflow: 'hidden' }}>
-        <div style={{ maxWidth: '72rem', margin: '0 auto', position: 'relative', zIndex: 2 }}>
-          <p className="flipd-eyebrow" style={{ margin: 0 }}>Flipd · Karachi · Open kitchen</p>
+      {/* ── AWNING ─ candy-stripe band that tops the diner ── */}
+      <div aria-hidden="true" className="flipd-awning" style={{ height: '36px' }} />
 
-          <h1 className="flipd-display" style={{ fontSize: 'clamp(4rem, 13vw, 10rem)', margin: '1.5rem 0 0', color: 'var(--flipd-ink)' }}>
-            Cold air.<br />
-            <span style={{ color: 'var(--flipd-sky-deep)' }}>Hot bird.</span>
+      {/* ── HERO ─ neon wordmark behind a glass window ───────────────
+          Marquee FLIPD set with a sky-neon glow, Lobster tagline
+          beneath, "OPEN 24" red neon badge to the side. Built to
+          feel like the diner's window-front. */}
+      <section style={{
+        background: 'var(--flipd-cream)',
+        padding: 'clamp(4rem, 10vh, 7rem) clamp(1.5rem, 5vw, 3rem) clamp(3rem, 7vh, 5rem)',
+        position: 'relative', overflow: 'hidden',
+        textAlign: 'center',
+      }}>
+        <div style={{ maxWidth: '64rem', margin: '0 auto', position: 'relative', zIndex: 2 }}>
+          <p className="flipd-eyebrow" style={{ margin: 0 }}>
+            Karachi · Est. 2026
+          </p>
+
+          <h1 className="flipd-marquee flipd-neon" style={{
+            fontSize: 'clamp(5rem, 17vw, 13rem)',
+            margin: '1.2rem 0 0.4rem',
+            lineHeight: 0.9,
+          }}>
+            FLIPD
           </h1>
 
-          <p style={{ fontSize: 'clamp(1.1rem, 1.8vw, 1.4rem)', lineHeight: 1.5, color: 'rgba(14,26,42,0.75)', margin: '2rem 0 0', maxWidth: '36rem', fontWeight: 500 }}>
+          <p className="flipd-display" style={{
+            fontSize: 'clamp(1.6rem, 4vw, 2.6rem)',
+            margin: 0,
+            color: 'var(--flipd-red)',
+            lineHeight: 1.1,
+          }}>
+            buttermilk &amp; hot honey
+          </p>
+
+          {/* OPEN sign */}
+          <div style={{
+            display: 'inline-flex', alignItems: 'center', gap: '0.7rem',
+            marginTop: '2.2rem',
+            padding: '0.55rem 1.2rem',
+            background: 'var(--flipd-ink)',
+            borderRadius: '999px',
+            border: '2px solid var(--flipd-red)',
+          }}>
+            <span aria-hidden="true" style={{
+              width: '0.5rem', height: '0.5rem', borderRadius: '50%',
+              background: 'var(--flipd-red)',
+              boxShadow: '0 0 8px var(--flipd-red), 0 0 16px var(--flipd-red)',
+            }} />
+            <span className="flipd-marquee flipd-neon-red" style={{
+              fontSize: '0.88rem', letterSpacing: '0.2em',
+            }}>
+              OPEN NOW
+            </span>
+          </div>
+
+          <p className="flipd-type" style={{
+            fontSize: '1rem', maxWidth: '34rem', margin: '1.6rem auto 0',
+            color: 'rgba(14,26,42,0.78)',
+          }}>
             {story.oneLiner}
           </p>
 
-          <div style={{ marginTop: '2.5rem', display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
-            <Link href={`/${concept.slug}`} className="flipd-btn">Order Flipd →</Link>
+          <div style={{ marginTop: '2.4rem', display: 'flex', gap: '0.75rem', flexWrap: 'wrap', justifyContent: 'center' }}>
+            <Link href={`/${concept.slug}`} className="flipd-btn">Order at the counter</Link>
             <Link href={`/brand/${concept.slug}/menu`} className="flipd-btn flipd-btn-ghost">See the menu</Link>
           </div>
         </div>
 
-        {/* Decorative repeat-line band — pure ornament, fades behind hero on mobile via the negative inset. */}
-        <div aria-hidden style={{
-          position: 'absolute', right: '-4rem', bottom: '-4rem', width: '24rem', height: '24rem',
-          background: 'repeating-linear-gradient(45deg, var(--flipd-sky) 0 2px, transparent 2px 14px)',
-          opacity: 0.18, borderRadius: '50%', zIndex: 1, pointerEvents: 'none',
+        {/* Decorative jukebox bubble — bottom-right, fades */}
+        <div aria-hidden="true" style={{
+          position: 'absolute', right: '-3rem', bottom: '-3rem',
+          width: '14rem', height: '14rem', borderRadius: '50%',
+          background: `radial-gradient(circle at 35% 30%, ${`var(--flipd-sky)`} 0%, transparent 60%)`,
+          opacity: 0.22, zIndex: 1, pointerEvents: 'none',
         }} />
       </section>
 
-      {/* ── BIG NUMBERS / spec strip ── */}
-      <section style={{ padding: 'clamp(3rem, 7vh, 5rem) clamp(1.5rem, 5vw, 3rem)', borderBottom: '1px solid rgba(14,26,42,0.08)' }}>
-        <div style={{ maxWidth: '72rem', margin: '0 auto', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 'clamp(1.5rem, 3vw, 2.5rem)' }}>
-          <Spec value="24h" label="Buttermilk brine, every piece" />
-          <Spec value="180°C" label="Fryer holds it, every piece" />
-          <Spec value="0" label="Reheats. Made-to-order only" />
-          <Spec value="100%" label="Hand-breaded. No machine." />
+      <hr className="flipd-chrome-rule" />
+
+      {/* ── TONIGHT'S BOARD ─ a chalkboard-style today's specials list
+          rendered as a paper board with typewritten copy ── */}
+      <section style={{
+        background: 'var(--flipd-ink)',
+        color: 'var(--flipd-cream)',
+        padding: 'clamp(3.5rem, 8vh, 5rem) clamp(1.5rem, 5vw, 3rem)',
+        position: 'relative',
+      }}>
+        <div style={{ maxWidth: '44rem', margin: '0 auto', textAlign: 'center' }}>
+          <p className="flipd-eyebrow" style={{ color: 'var(--flipd-red)', marginBottom: '0.6rem' }}>
+            Today&apos;s Board
+          </p>
+          <h2 className="flipd-display" style={{
+            fontSize: 'clamp(2.4rem, 6vw, 3.8rem)',
+            color: 'var(--flipd-sky)',
+            margin: 0,
+          }}>
+            now serving
+          </h2>
+
+          <div style={{
+            marginTop: '2rem',
+            padding: '1.8rem 1.4rem',
+            background: 'rgba(255,253,247,0.04)',
+            border: '1.5px dashed rgba(251,253,255,0.32)',
+            borderRadius: '0.6rem',
+          }}>
+            {TODAYS_BOARD.map((row, i) => (
+              <div
+                key={row.item}
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'baseline',
+                  gap: '1rem',
+                  padding: '0.55rem 0',
+                  borderBottom: i === TODAYS_BOARD.length - 1 ? 0 : '1px dotted rgba(251,253,255,0.18)',
+                  fontFamily: 'var(--flipd-type)',
+                  letterSpacing: '0.04em',
+                }}
+              >
+                <span style={{ textAlign: 'left' }}>{row.item}</span>
+                <span style={{ color: 'var(--flipd-sky)', whiteSpace: 'nowrap' }}>{row.price}</span>
+              </div>
+            ))}
+          </div>
+
+          <p className="flipd-type" style={{
+            fontSize: '0.78rem', marginTop: '1.4rem',
+            color: 'rgba(251,253,255,0.55)',
+            letterSpacing: '0.2em', textTransform: 'uppercase',
+          }}>
+            full menu inside
+          </p>
         </div>
       </section>
 
-      {/* ── HIGHLIGHTS — story.highlights as feature cards ── */}
-      <section style={{ padding: 'clamp(4rem, 9vh, 6rem) clamp(1.5rem, 5vw, 3rem)' }}>
+      <hr className="flipd-chrome-rule" />
+
+      {/* ── THE LONG WAY ─ how-we-cook spec strip, retro counter style ── */}
+      <section style={{
+        padding: 'clamp(4rem, 9vh, 6rem) clamp(1.5rem, 5vw, 3rem)',
+      }}>
         <div style={{ maxWidth: '72rem', margin: '0 auto' }}>
-          <p className="flipd-eyebrow" style={{ marginBottom: '1.25rem' }}>What we do</p>
-          <h2 className="flipd-display" style={{ fontSize: 'clamp(2.2rem, 4.5vw, 3.5rem)', margin: '0 0 3rem', maxWidth: '20ch' }}>
-            Chicken, done the long way.
+          <p className="flipd-eyebrow" style={{ marginBottom: '0.8rem' }}>How we cook</p>
+          <h2 className="flipd-display" style={{
+            fontSize: 'clamp(2.4rem, 5vw, 3.8rem)', margin: '0 0 2.6rem',
+            color: 'var(--flipd-ink)',
+            maxWidth: '24ch',
+          }}>
+            the long way, every time.
           </h2>
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '1rem' }}>
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))',
+            gap: '1.1rem',
+          }}>
+            <Spec value="24h" label="Buttermilk brine, every piece." />
+            <Spec value="180°C" label="Fryer holds it, every basket." />
+            <Spec value="0" label="Reheats. Cooked to order only." />
+            <Spec value="100%" label="Hand-breaded. No machine." />
+          </div>
+        </div>
+      </section>
+
+      <hr className="flipd-chrome-rule" />
+
+      {/* ── HIGHLIGHTS ─ what we do, formica cards ─ */}
+      <section style={{ padding: 'clamp(4rem, 9vh, 6rem) clamp(1.5rem, 5vw, 3rem)', background: 'var(--flipd-pale)' }}>
+        <div style={{ maxWidth: '72rem', margin: '0 auto' }}>
+          <p className="flipd-eyebrow" style={{ marginBottom: '0.8rem' }}>The booth, the bird, the shake</p>
+          <h2 className="flipd-display" style={{
+            fontSize: 'clamp(2.2rem, 4.5vw, 3.4rem)',
+            margin: '0 0 2.5rem', color: 'var(--flipd-ink)',
+            maxWidth: '20ch',
+          }}>
+            chicken, done the long way.
+          </h2>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '1.1rem' }}>
             {story.highlights.map((h) => (
               <div key={h} className="flipd-card">
-                <p style={{ fontFamily: "'Bricolage Grotesque', sans-serif", fontWeight: 800, fontSize: '1.25rem', lineHeight: 1.25, margin: 0, color: 'var(--flipd-ink)' }}>
+                <p className="flipd-type" style={{
+                  fontSize: '0.7rem', letterSpacing: '0.32em', textTransform: 'uppercase',
+                  color: 'var(--flipd-red)', margin: '0 0 0.6rem',
+                }}>
+                  · Today
+                </p>
+                <p style={{
+                  fontFamily: 'var(--flipd-marquee)',
+                  fontSize: '1.15rem',
+                  lineHeight: 1.3,
+                  letterSpacing: '0.02em',
+                  margin: 0,
+                  color: 'var(--flipd-ink)',
+                }}>
                   {h}
                 </p>
               </div>
@@ -94,23 +257,33 @@ export function FlipdLayout({ concept, concepts }: Props) {
       </section>
 
       {/* ── STORY ── */}
-      <section style={{ background: 'var(--flipd-pale)', padding: 'clamp(4rem, 10vh, 7rem) clamp(1.5rem, 5vw, 3rem)' }}>
-        <div style={{ maxWidth: '48rem', margin: '0 auto' }}>
-          <p className="flipd-eyebrow" style={{ marginBottom: '1.25rem' }}>The long way</p>
-          <p style={{ fontSize: 'clamp(1.1rem, 1.8vw, 1.35rem)', lineHeight: 1.6, color: 'rgba(14,26,42,0.85)', margin: 0, fontWeight: 500 }}>
-            {story.long}
+      <section style={{
+        padding: 'clamp(4rem, 10vh, 7rem) clamp(1.5rem, 5vw, 3rem)',
+        background: 'var(--flipd-cream)',
+      }}>
+        <div style={{ maxWidth: '46rem', margin: '0 auto' }}>
+          <p className="flipd-eyebrow" style={{ marginBottom: '0.9rem' }}>Pulled from the booth</p>
+          <p className="flipd-display" style={{
+            fontSize: 'clamp(1.6rem, 3.4vw, 2.4rem)',
+            lineHeight: 1.35,
+            color: 'var(--flipd-ink)',
+            margin: 0,
+          }}>
+            “{story.long}”
           </p>
         </div>
       </section>
+
+      <hr className="flipd-chrome-rule" />
 
       {/* ── HOURS + LOCATION ── */}
       <section style={{ padding: 'clamp(4rem, 9vh, 6rem) clamp(1.5rem, 5vw, 3rem)' }}>
         <div style={{ maxWidth: '72rem', margin: '0 auto', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'clamp(2rem, 5vw, 4rem)' }} className="flipd-visit-grid">
 
           <div>
-            <p className="flipd-eyebrow" style={{ marginBottom: '1.25rem' }}>Hours</p>
-            <div style={{ marginBottom: '1.5rem' }}><OpenStatusBadge hoursData={hoursData} /></div>
-            <div style={{ fontSize: '0.95rem' }}>
+            <p className="flipd-eyebrow" style={{ marginBottom: '1rem' }}>Hours</p>
+            <div style={{ marginBottom: '1.4rem' }}><OpenStatusBadge hoursData={hoursData} /></div>
+            <div className="flipd-type" style={{ fontSize: '0.95rem' }}>
               {hoursData?.hours && hoursData.hours.length > 0 ? (
                 <HoursGrid hoursData={hoursData} />
               ) : (
@@ -120,20 +293,26 @@ export function FlipdLayout({ concept, concepts }: Props) {
           </div>
 
           <div>
-            <p className="flipd-eyebrow" style={{ marginBottom: '1.25rem' }}>Where</p>
-            <p className="flipd-display" style={{ fontSize: '1.5rem', lineHeight: 1.3, fontWeight: 700, margin: '0 0 1rem' }}>
+            <p className="flipd-eyebrow" style={{ marginBottom: '1rem' }}>Where</p>
+            <p className="flipd-display" style={{
+              fontSize: '1.7rem', lineHeight: 1.3,
+              margin: '0 0 1rem', color: 'var(--flipd-ink)',
+            }}>
               {concept.address ?? 'Karachi · address TBA'}
             </p>
             {concept.phone && (
-              <p style={{ fontSize: '1rem', margin: 0 }}>
-                <a href={`tel:${concept.phone.replace(/\s/g, '')}`} style={{ color: 'var(--flipd-sky-deep)', textDecoration: 'none', borderBottom: '1.5px solid currentColor', fontWeight: 600 }}>
+              <p style={{ fontFamily: 'var(--flipd-type)', fontSize: '1rem', margin: 0 }}>
+                <a href={`tel:${concept.phone.replace(/\s/g, '')}`} style={{
+                  color: 'var(--flipd-red)', textDecoration: 'none',
+                  borderBottom: '1.5px solid currentColor', fontWeight: 700,
+                }}>
                   {concept.phone}
                 </a>
               </p>
             )}
             {reservations && (
               <div style={{ marginTop: '2rem' }}>
-                <Link href={`/reserve/${concept.slug}`} className="flipd-btn flipd-btn-ghost">Reserve a table</Link>
+                <Link href={`/reserve/${concept.slug}`} className="flipd-btn flipd-btn-ghost">Grab a booth</Link>
               </div>
             )}
           </div>
@@ -144,32 +323,72 @@ export function FlipdLayout({ concept, concepts }: Props) {
       <CrossBrandStrip
         current={concept}
         concepts={concepts}
-        accent="var(--flipd-sky-deep)"
+        accent="var(--flipd-red)"
         kicker="Also from the operator"
         heading="More from the same kitchen group."
       />
 
-      {/* ── FINAL CTA ── */}
-      <section style={{ background: 'var(--flipd-ink)', color: 'var(--flipd-cream)', padding: 'clamp(4rem, 10vh, 7rem) clamp(1.5rem, 5vw, 3rem)' }}>
-        <div style={{ maxWidth: '64rem', margin: '0 auto', textAlign: 'center' }}>
-          <p className="flipd-eyebrow" style={{ color: 'var(--flipd-sky)', marginBottom: '1rem' }}>Hungry now?</p>
-          <h2 className="flipd-display" style={{ fontSize: 'clamp(2.5rem, 6vw, 4.5rem)', margin: '0 0 2rem' }}>
-            Hot bird,<br /><span style={{ color: 'var(--flipd-sky)' }}>at your door.</span>
+      {/* ── FINAL CTA ── tile floor + neon CTA */}
+      <section style={{
+        padding: 'clamp(4rem, 10vh, 7rem) clamp(1.5rem, 5vw, 3rem)',
+        background: 'var(--flipd-ink)', color: 'var(--flipd-cream)',
+        textAlign: 'center',
+        position: 'relative', overflow: 'hidden',
+      }}>
+        <div style={{ position: 'relative', zIndex: 2, maxWidth: '52rem', margin: '0 auto' }}>
+          <p className="flipd-eyebrow" style={{ color: 'var(--flipd-sky)', marginBottom: '0.8rem' }}>
+            Hungry now?
+          </p>
+          <h2 className="flipd-marquee flipd-neon" style={{
+            fontSize: 'clamp(2.8rem, 6.5vw, 4.6rem)',
+            margin: '0 0 0.4rem',
+          }}>
+            HOT BIRD
           </h2>
+          <p className="flipd-display" style={{
+            fontSize: 'clamp(1.6rem, 4vw, 2.4rem)',
+            margin: '0 0 2.4rem',
+            color: 'var(--flipd-red)',
+          }}>
+            cold milkshake.
+          </p>
           <Link href={`/${concept.slug}`} className="flipd-btn">Order from Flipd →</Link>
         </div>
+
+        {/* Floor tiles peeking under — opacity-tinted so it doesn't fight
+            the CTA text */}
+        <div aria-hidden="true" className="flipd-tile" style={{
+          position: 'absolute', left: 0, right: 0, bottom: 0, height: '140px',
+          opacity: 0.18, zIndex: 1,
+        }} />
       </section>
+
+      {/* ── BOTTOM AWNING ─ matches the top so the page reads as a building */}
+      <div aria-hidden="true" className="flipd-awning" style={{ height: '24px' }} />
     </div>
   )
 }
 
 function Spec({ value, label }: { value: string; label: string }) {
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-      <span className="flipd-display" style={{ fontSize: 'clamp(2.5rem, 5vw, 3.75rem)', color: 'var(--flipd-sky-deep)' }}>
+    <div className="flipd-card" style={{ padding: '1.3rem 1.4rem' }}>
+      <span className="flipd-marquee" style={{
+        display: 'block',
+        fontSize: 'clamp(2.4rem, 4.5vw, 3.4rem)',
+        color: 'var(--flipd-red)',
+        lineHeight: 0.95,
+      }}>
         {value}
       </span>
-      <span style={{ fontSize: '0.88rem', color: 'rgba(14,26,42,0.7)', lineHeight: 1.4, maxWidth: '14rem' }}>{label}</span>
+      <span className="flipd-type" style={{
+        display: 'block',
+        marginTop: '0.6rem',
+        fontSize: '0.84rem',
+        color: 'rgba(14,26,42,0.78)',
+        lineHeight: 1.4,
+      }}>
+        {label}
+      </span>
     </div>
   )
 }

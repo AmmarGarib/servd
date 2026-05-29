@@ -1,7 +1,7 @@
 /* Inter for body text, Bricolage Grotesque for the kinetic display headlines
    that drive the new asymmetric / chunky look. Falls back to Inter Black if
    the display family fails to load — keeps the bold weight intact. */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&family=Amarante&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&family=Amarante&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Lobster&family=Bungee&family=Special+Elite&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -315,31 +315,140 @@
 }
 @media (max-width: 700px) { .stax-visit-grid { grid-template-columns: 1fr !important; } }
 
-/* flipd */
-.flipd-page { background: var(--flipd-cream); color: var(--flipd-ink); font-family: 'Inter', system-ui, sans-serif; }
-.flipd-page .flipd-display { font-family: 'Bricolage Grotesque', 'Inter', sans-serif; font-weight: 800; letter-spacing: -0.035em; line-height: 0.98; }
-.flipd-page .flipd-eyebrow { font-family: 'Inter', sans-serif; font-size: 0.72rem; font-weight: 700; letter-spacing: 0.24em; text-transform: uppercase; color: var(--flipd-sky-deep); }
+/* flipd — old-school American diner ───────────────────────────────────
+   Cream paper bg, Lobster cursive headlines that read like a neon sign,
+   Bungee for the marquee wordmark, Special Elite for typewritten copy.
+   Red awning stripes, chrome rules, sky-blue accents tie back to the
+   palette so the diner feels Flipd, not generic. */
+.flipd-page {
+  background: var(--flipd-cream);
+  color: var(--flipd-ink);
+  font-family: 'Inter', system-ui, sans-serif;
+}
+.flipd-page .flipd-display  { font-family: var(--flipd-script);  font-weight: 400; letter-spacing: 0.01em; line-height: 0.98; }
+.flipd-page .flipd-marquee  { font-family: var(--flipd-marquee); letter-spacing: 0.04em; line-height: 0.92; }
+.flipd-page .flipd-type     { font-family: var(--flipd-type);    letter-spacing: 0.02em; }
+.flipd-page .flipd-eyebrow  {
+  font-family: var(--flipd-type);
+  font-size: 0.78rem; font-weight: 400;
+  letter-spacing: 0.32em; text-transform: uppercase;
+  color: var(--flipd-red);
+}
+/* The signature diner CTA — chrome capsule, red border, marquee text */
 .flipd-page .flipd-btn {
   display: inline-flex; align-items: center; gap: 0.6rem;
-  font-family: 'Inter', sans-serif; font-size: 0.95rem; font-weight: 700;
-  padding: 1rem 1.75rem; background: var(--flipd-sky); color: var(--flipd-ink);
-  border: 0; border-radius: 999px; text-decoration: none;
-  transition: background 180ms ease, transform 180ms ease;
+  font-family: var(--flipd-marquee);
+  font-size: 0.92rem; letter-spacing: 0.06em;
+  padding: 0.95rem 1.7rem;
+  background: var(--flipd-cream);
+  color: var(--flipd-red);
+  border: 2px solid var(--flipd-red);
+  border-radius: 999px; text-decoration: none;
+  text-transform: uppercase;
+  box-shadow: 0 3px 0 var(--flipd-red), 0 6px 16px rgba(215,38,61,0.18);
+  transition: transform 140ms ease, box-shadow 140ms ease, background 180ms ease, color 180ms ease;
 }
-.flipd-page .flipd-btn:hover { background: var(--flipd-sky-deep); color: var(--flipd-cream); transform: translateY(-1px); }
-.flipd-page .flipd-btn-ghost { background: transparent; color: var(--flipd-ink); border: 1.5px solid var(--flipd-ink); }
-.flipd-page .flipd-btn-ghost:hover { background: var(--flipd-ink); color: var(--flipd-cream); }
-.flipd-page .flipd-card { background: var(--flipd-pale); border: 1.5px solid var(--flipd-ink); border-radius: 1.25rem; padding: 2rem; }
-@media (prefers-reduced-motion: reduce) { .flipd-page .flipd-btn:hover { transform: none; } }
+.flipd-page .flipd-btn:hover {
+  background: var(--flipd-red);
+  color: var(--flipd-cream);
+  transform: translateY(-2px);
+  box-shadow: 0 5px 0 var(--flipd-red-deep), 0 10px 24px rgba(215,38,61,0.32);
+}
+.flipd-page .flipd-btn:active {
+  transform: translateY(0);
+  box-shadow: 0 1px 0 var(--flipd-red);
+}
+/* Ghost variant — flipped: chrome capsule on ink border */
+.flipd-page .flipd-btn-ghost {
+  background: transparent; color: var(--flipd-ink);
+  border-color: var(--flipd-ink);
+  box-shadow: 0 3px 0 var(--flipd-ink), 0 6px 16px rgba(14,26,42,0.12);
+}
+.flipd-page .flipd-btn-ghost:hover {
+  background: var(--flipd-ink); color: var(--flipd-cream);
+  box-shadow: 0 5px 0 #06101c, 0 10px 24px rgba(14,26,42,0.28);
+}
+
+/* Card — formica counter look: pale blue top, chrome trim */
+.flipd-page .flipd-card {
+  background: var(--flipd-pale);
+  border: 2px solid var(--flipd-ink);
+  border-radius: 1rem;
+  padding: 1.8rem;
+  box-shadow: 0 4px 0 var(--flipd-ink), 0 8px 24px rgba(14,26,42,0.10);
+  position: relative;
+}
+
+/* Awning — diagonal red/cream stripes (classic candy-stripe canopy) */
+.flipd-awning {
+  background-image:
+    linear-gradient(45deg, var(--flipd-red) 25%, transparent 25%, transparent 50%,
+                          var(--flipd-red) 50%, var(--flipd-red) 75%, transparent 75%, transparent);
+  background-size: 36px 36px;
+  background-color: var(--flipd-cream);
+}
+
+/* Neon sign — outer halo cyan glow on cream */
+.flipd-neon {
+  color: var(--flipd-sky);
+  text-shadow:
+    0 0 4px var(--flipd-cream),
+    0 0 14px var(--flipd-sky),
+    0 0 28px var(--flipd-sky),
+    0 0 54px var(--flipd-sky-deep);
+}
+/* Neon — red variant, for the OPEN sign */
+.flipd-neon-red {
+  color: var(--flipd-red);
+  text-shadow:
+    0 0 4px var(--flipd-cream),
+    0 0 14px var(--flipd-red),
+    0 0 28px var(--flipd-red),
+    0 0 54px var(--flipd-red-deep);
+}
+
+/* Checkerboard floor — black-and-cream tiles. Apply to a fixed footer
+   strip so it reads as a diner floor without overwhelming the page. */
+.flipd-tile {
+  background-image:
+    linear-gradient(45deg, var(--flipd-ink) 25%, transparent 25%),
+    linear-gradient(-45deg, var(--flipd-ink) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, var(--flipd-ink) 75%),
+    linear-gradient(-45deg, transparent 75%, var(--flipd-ink) 75%);
+  background-size: 36px 36px;
+  background-position: 0 0, 0 18px, 18px -18px, -18px 0;
+  background-color: var(--flipd-cream);
+}
+
+/* Chrome rule — horizontal hairline with metallic gradient */
+.flipd-page .flipd-chrome-rule {
+  height: 3px; border: 0; margin: 0;
+  background: linear-gradient(180deg, #fff 0%, var(--flipd-chrome) 50%, #6b7180 100%);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .flipd-page .flipd-btn:hover { transform: none; }
+}
 @media (max-width: 700px) { .flipd-visit-grid { grid-template-columns: 1fr !important; } }
 
 :root {
-  /* ── Flipd brand tokens (cool diner: pale blue + sky accent) ───────────── */
+  /* ── Flipd brand tokens (old-school American diner) ──────────────────────
+       Sky blue + cream stay from the original Flipd palette; red and
+       chrome add the classic diner signage cues (awnings, booth piping,
+       neon, fenders). Lobster is the script for headlines; Bungee is the
+       marquee shouter (FLIPD logo, signage); Special Elite is the
+       typewritten body / "today's special" board copy. */
   --flipd-sky:          #3AA8FF;
   --flipd-sky-deep:     #1A78D6;
   --flipd-pale:         #E8F4FF;
   --flipd-ink:          #0E1A2A;
   --flipd-cream:        #FBFDFF;
+  --flipd-red:          #D7263D;            /* awning / piping */
+  --flipd-red-deep:     #A41525;            /* hover / shadow */
+  --flipd-chrome:       #C8CCD2;            /* booth chrome */
+  --flipd-script:       'Lobster', cursive;
+  --flipd-marquee:      'Bungee', 'Impact', sans-serif;
+  --flipd-type:         'Special Elite', 'Courier New', monospace;
 }
 
 html {

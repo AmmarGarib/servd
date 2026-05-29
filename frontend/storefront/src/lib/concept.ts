@@ -97,9 +97,9 @@ export const BRAND_STORIES: Record<string, BrandStory> = {
   },
   'stax': {
     tagline: 'Smashed, stacked, sauced.',
-    oneLiner: 'Double-smash burgers, loaded fries, house-made sauces. Delivery-first kitchen.',
-    long: 'Stax is what happens when a Pakistani burger obsession meets the smash technique. Two smash patties, aged cheddar, pickles, and a special sauce we&rsquo;ve been refining since day one. Loaded fries that earn the name. Everything cooked to order in our dedicated ghost kitchen and delivered to your door in under 40 minutes.',
-    highlights: ['Double-smash burgers', 'Loaded fries', 'House-made sauces', 'Ghost kitchen · delivery-first'],
+    oneLiner: 'Upscale smash-burger room — dry-aged patties, house-baked brioche, table service.',
+    long: 'Stax is a sit-down burger concept. Dry-aged beef on the cast iron, brioche we bake here every morning, sauces blended in-house. The room is built for a long lunch or a slow dinner — you bring people for the burger, you stay for the table.',
+    highlights: ['Dry-aged smash patties', 'House-baked brioche', 'Premium sides', 'Dine-in service'],
     hours: 'Lunch 12:00 PM – 3:00 PM · Dinner 7:00 PM – 11:00 PM',
   },
   'strata': {
@@ -112,7 +112,7 @@ export const BRAND_STORIES: Record<string, BrandStory> = {
   'flipd': {
     tagline: 'Buttermilk-brined, hand-breaded, hot.',
     oneLiner: 'Crispy chicken, every piece made-to-order. No reheats, no shortcuts.',
-    long: 'Flipd is GS Foods&rsquo; ode to fried chicken done right. Every piece sits in our buttermilk + spice brine for a full 24 hours before hitting the hand-breading station — that&rsquo;s why the chicken is juicy on the inside, even when the crust is loud. Sandwiches, tenders, and buckets that don&rsquo;t apologise. We&rsquo;ve tried shortcuts. We don&rsquo;t use them.',
+    long: 'Flipd is GS Foods’ ode to fried chicken done right. Every piece sits in our buttermilk + spice brine for a full 24 hours before hitting the hand-breading station — that’s why the chicken is juicy on the inside, even when the crust is loud. Sandwiches, tenders, and buckets that don’t apologise. We’ve tried shortcuts. We don’t use them.',
     highlights: ['24h buttermilk brine', 'Hand-breaded, never machine', '180°C fryer, every piece', 'Zero reheats'],
     hours: 'Lunch 12:00 PM – 3:00 PM · Dinner 7:00 PM – 11:00 PM',
   },
