@@ -306,7 +306,6 @@ export default function ConceptOrderPage() {
           onOpen={() => setCartOpen(true)}
           onClose={() => setCartOpen(false)}
           accent={accent}
-          taxRate={concept.taxRate / 100}
           onCheckout={() => {
             // On a brand custom domain (eatstax.com, stax.localhost:3002…),
             // hand the cart off to the canonical servd checkout via a URL
@@ -625,19 +624,18 @@ function ItemDetailModal({
 }
 
 function CartDrawer({
-  open, onOpen, onClose, accent, taxRate, onCheckout,
+  open, onOpen, onClose, accent, onCheckout,
 }: {
   open: boolean
   onOpen: () => void
   onClose: () => void
   accent: string
-  taxRate: number
   onCheckout: () => void
 }) {
+  // Tax is computed at checkout (payment-method aware), not here.
+  // The basket just shows subtotal.
   const cart = useCart()
   const subtotal = cart.subtotalCents()
-  const tax = Math.round(subtotal * taxRate)
-  const total = subtotal + tax
   const itemCount = cart.itemCount()
 
   if (!open) {
@@ -645,7 +643,7 @@ function CartDrawer({
     return (
       <button
         onClick={onOpen}
-        aria-label={`View cart — ${itemCount} item${itemCount === 1 ? '' : 's'}, ${fmt(total)}`}
+        aria-label={`View cart — ${itemCount} item${itemCount === 1 ? '' : 's'}, ${fmt(subtotal)}`}
         style={{
           position: 'fixed', bottom: '1.25rem', left: '50%', transform: 'translateX(-50%)', zIndex: 40,
           background: '#0a0a0a', color: 'white', border: 'none',
@@ -664,7 +662,7 @@ function CartDrawer({
           {itemCount}
         </span>
         <span>View basket</span>
-        <span style={{ opacity: 0.85 }}>{fmt(total)}</span>
+        <span style={{ opacity: 0.85 }}>{fmt(subtotal)}</span>
       </button>
     )
   }
@@ -727,21 +725,25 @@ function CartDrawer({
         {cart.items.length > 0 && (
           <footer style={{ padding: '1rem 1.5rem 1.25rem', borderTop: '1px solid var(--servd-line)' }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', marginBottom: '1rem', fontSize: '0.9rem' }}>
+              {/* Tax/GST is computed at checkout once the customer picks
+                  a payment method (8% on card-rails, 15% on cash), so
+                  the basket only shows subtotal here and notes that tax
+                  is added at the next step. */}
               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                 <span style={{ color: 'var(--servd-mute)' }}>Subtotal</span>
                 <span>{fmt(subtotal)}</span>
               </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span style={{ color: 'var(--servd-mute)' }}>GST ({(taxRate * 100).toFixed(0)}%)</span>
-                <span>{fmt(tax)}</span>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', color: 'var(--servd-mute)' }}>
+                <span>GST</span>
+                <span>added at checkout</span>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 800, fontSize: '1.05rem', marginTop: '0.4rem', paddingTop: '0.5rem', borderTop: '1px solid var(--servd-line)' }}>
-                <span>Total</span>
-                <span>{fmt(total)}</span>
+                <span>Total before tax</span>
+                <span>{fmt(subtotal)}</span>
               </div>
             </div>
             <button onClick={onCheckout} className="servd-btn-primary" style={{ width: '100%', padding: '1rem' }}>
-              Checkout · {fmt(total)}
+              Checkout · {fmt(subtotal)} + tax
             </button>
           </footer>
         )}

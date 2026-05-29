@@ -61,7 +61,12 @@ interface CartStore {
   totalCents: () => number
 }
 
-const TAX_RATE = 0.17
+// Tax is payment-method-aware (8% on card-rails, 15% on cash per the
+// admin config) and the customer hasn't picked a payment method yet
+// at this point in the funnel, so the cart store reports 0 tax. The
+// checkout page recomputes taxCents itself once paymentMethod is known
+// and the basket drawer hides the GST line entirely pre-checkout.
+const TAX_RATE = 0
 
 export const useCart = create<CartStore>()(
   persist(

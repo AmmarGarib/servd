@@ -63,7 +63,11 @@ export default function CheckoutPage() {
   const { concept: slug } = useParams<{ concept: string }>()
   const router = useRouter()
   const searchParams = useSearchParams()
-  const { items, subtotalCents, taxCents, totalCents, itemCount, clearCart, hydrateFromReorder } = useCart()
+  // taxCents/totalCents from the store are deprecated for this page —
+  // the page computes both locally so it can react to paymentMethod
+  // (see taxCentsLive / totalLive below). We still pull totalCents to
+  // hand to the promo-preview endpoint as the baseline.
+  const { items, subtotalCents, totalCents, itemCount, clearCart, hydrateFromReorder } = useCart()
   const token = useCustomerAuth((s) => s.token)
 
   // Per-brand checkout skin. Each brand keyword maps to a CSS class
@@ -199,8 +203,20 @@ export default function CheckoutPage() {
 
   const walletBalance    = account?.walletBalance ?? 0
   const loyaltyBalance   = account?.loyaltyAccount?.pointsBalance ?? 0
-  const loyaltyDeduction = Math.min(loyaltyPts * 10, totalCents())
-  const walletDeduction  = useWallet ? Math.min(walletBalance, Math.max(0, totalCents() - loyaltyDeduction)) : 0
+
+  // GST is payment-method-aware (per the admin tax config): cash pays
+  // the full 15% rate, card-rails — Keenu, JazzCash, EasyPaisa — get
+  // the discounted 8% rate that the processor passes through. We
+  // compute it locally here because the cart store can't know payment
+  // method at the time it builds the basket. `taxCentsLive` and
+  // `totalLive` replace the cart store's tax/total helpers throughout
+  // this page.
+  const taxRate = paymentMethod === 'cash' ? 0.15 : 0.08
+  const taxCentsLive = Math.round(subtotalCents() * taxRate)
+  const totalLive    = subtotalCents() + taxCentsLive
+
+  const loyaltyDeduction = Math.min(loyaltyPts * 10, totalLive)
+  const walletDeduction  = useWallet ? Math.min(walletBalance, Math.max(0, totalLive - loyaltyDeduction)) : 0
   // Tip — computed against subtotal + tax. Only applies to delivery
   // orders (no rider on dine-in / pickup / curbside, so no tip to
   // pool); we zero it out regardless of the chip the user happened to
@@ -208,12 +224,12 @@ export default function CheckoutPage() {
   const tipCents = fulfilmentType !== 'delivery' ? 0 :
     tipMode === 'custom'
       ? Math.max(0, Math.round((parseFloat(customTip) || 0) * 100))
-      : Math.round(totalCents() * (tipPctTable[tipMode] ?? 0))
+      : Math.round(totalLive * (tipPctTable[tipMode] ?? 0))
   // Gift card deduction — capped at order total
   const giftCardDeduction = giftCardStatus === 'valid'
-    ? Math.min(giftCardBalance, Math.max(0, totalCents() - loyaltyDeduction - walletDeduction - promoDiscountCents))
+    ? Math.min(giftCardBalance, Math.max(0, totalLive - loyaltyDeduction - walletDeduction - promoDiscountCents))
     : 0
-  const displayTotal     = Math.max(0, totalCents() - loyaltyDeduction - walletDeduction - promoDiscountCents - giftCardDeduction) + tipCents
+  const displayTotal     = Math.max(0, totalLive - loyaltyDeduction - walletDeduction - promoDiscountCents - giftCardDeduction) + tipCents
 
   const applyPromo = async () => {
     const code = promoCode.trim().toUpperCase()
@@ -671,7 +687,7 @@ export default function CheckoutPage() {
           <div className="rounded-xl p-3.5 space-y-2"
             style={{ background: 'rgba(0,0,0,0.04)', border: '1px solid rgba(0,0,0,0.06)' }}>
             <PriceLine label="Subtotal"    value={fmt(subtotalCents())} />
-            <PriceLine label="Tax (17% GST)" value={fmt(taxCents())} />
+            <PriceLine label={`GST (${(taxRate * 100).toFixed(0)}%)`} value={fmt(taxCentsLive)} />
             {tipCents > 0 && (
               <PriceLine label="Tip" value={fmt(tipCents)} accent="var(--servd-green-dark)" />
             )}
