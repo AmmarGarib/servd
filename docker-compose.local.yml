@@ -117,6 +117,8 @@ services:
     command: >
       sh -c "
         set -e;
+        echo '[local] installing system libs (prisma needs openssl on alpine)...';
+        apk add --no-cache openssl libc6-compat >/dev/null 2>&1 || true;
         echo '[local] installing api deps...';
         npm install --no-audit --no-fund;
         echo '[local] generating prisma client...';
@@ -124,7 +126,7 @@ services:
         case $$DATABASE_URL in
           *@db:5432*)
             echo '[local] bundled local database — migrating + seeding';
-            npx prisma migrate deploy;
+            npx prisma migrate deploy || echo '[local] migrate failed (continuing — server will still start)';
             if [ ! -f /seed-state/.seeded ]; then
               echo '[local] seeding Simmer / Stax / Flipd (first boot)...';
               if npm run db:seed; then touch /seed-state/.seeded; echo '[local] seed complete';
