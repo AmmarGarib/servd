@@ -51,12 +51,17 @@ async function getData(slug: string): Promise<{ concept: Concept, categories: Me
   if (!concept) concept = FALLBACK_CONCEPTS[slug]
   if (!concept) return null
 
-  // Try to load real categories. If the menu endpoint fails or is
-  // empty we hand back `[]` and the page renders the placeholder.
+  // Try to load real categories. Backend may return either a bare
+  // array (legacy shape) or `{ concept, categories: [...] }` (current
+  // shape) — handle both so a server-side migration doesn't break
+  // this page silently.
   let categories: MenuCategory[] = []
   try {
     const menuRes = await fetch(`${API_URL}/api/v1/storefront/${slug}/menu`, { cache: 'no-store' })
-    if (menuRes.ok) categories = await menuRes.json()
+    if (menuRes.ok) {
+      const payload = await menuRes.json() as MenuCategory[] | { categories?: MenuCategory[] }
+      categories = Array.isArray(payload) ? payload : (payload.categories ?? [])
+    }
   } catch { /* swallow */ }
 
   return { concept, categories }
@@ -69,12 +74,17 @@ export default async function BrandMenuPage({ params }: { params: Promise<{ slug
   const { concept, categories } = data
   const fmt = (cents: number) => `PKR ${(cents / 100).toLocaleString('en-PK', { maximumFractionDigits: 0 })}`
 
+  // A "published menu" requires at least one item somewhere — a
+  // category list with all empty `items[]` is still a draft as far as
+  // the customer is concerned.
+  const hasAnyItems = categories.some((c) => (c.items?.length ?? 0) > 0)
+
   // Simmer-branded surface: when the slug is `simmer` AND there's no
   // published menu yet, render the placeholder in the brand's own
   // typography + palette. Once the operator publishes a menu, the
   // page drops through to the generic table-style layout below so
   // pricing and availability stay accurate.
-  if (slug === 'simmer' && categories.length === 0) {
+  if (slug === 'simmer' && !hasAnyItems) {
     return <SimmerMenu slug={concept.slug} conceptName={concept.name} />
   }
 
