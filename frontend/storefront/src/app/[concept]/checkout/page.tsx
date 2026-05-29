@@ -126,6 +126,11 @@ export default function CheckoutPage() {
   const [curbsidePlate,    setCurbsidePlate]    = useState('')
   const [deliveryAddress,  setDeliveryAddress]  = useState('')
   const [deliveryNotes,    setDeliveryNotes]    = useState('')
+  // Dine-in: customer types the table label printed on the QR card at
+  // their seat. Backend resolves the label to a Table.id (case-
+  // insensitive); on miss the raw string is stored on the order so
+  // expo still sees it on the ticket.
+  const [tableLabel,       setTableLabel]       = useState('')
 
   // Saved addresses for logged-in users
   const [savedAddresses,      setSavedAddresses]      = useState<CustomerAddress[]>([])
@@ -294,6 +299,10 @@ export default function CheckoutPage() {
       setError('Please enter your delivery address')
       return
     }
+    if (fulfilmentType === 'dine-in' && !tableLabel.trim()) {
+      setError('Please enter your table number (printed on the QR card at your seat).')
+      return
+    }
     if ((paymentMethod === 'jazzcash' || paymentMethod === 'easypaisa') && !paymentPhone.trim()) {
       setError(`Please enter your ${paymentMethod === 'jazzcash' ? 'JazzCash' : 'EasyPaisa'} mobile number`)
       return
@@ -314,6 +323,9 @@ export default function CheckoutPage() {
             ...(fulfilmentType === 'curbside' && {
               curbsideVehicle: curbsideVehicle.trim(),
               ...(curbsidePlate.trim() && { curbsidePlate: curbsidePlate.trim() }),
+            }),
+            ...(fulfilmentType === 'dine-in' && {
+              tableLabel: tableLabel.trim(),
             }),
             promoCode: promoCode.trim() || undefined,
             useWallet,
@@ -362,6 +374,7 @@ export default function CheckoutPage() {
             // 'pickup' for guests since it's a logged-in-only feature
             // (status updates need an account).
             type: fulfilmentType === 'curbside' ? 'pickup' : fulfilmentType,
+            ...(fulfilmentType === 'dine-in' && { tableLabel: tableLabel.trim() }),
             notes: notes.trim() || undefined,
             items: items.map(i => ({
               menuItemId: i.menuItemId, name: i.name,
@@ -495,6 +508,26 @@ export default function CheckoutPage() {
               <p className="text-[11px] mt-1" style={{ color: 'var(--servd-mute)' }}>
                 Your order goes straight to your table.
               </p>
+            )}
+            {/* Dine-in table number — required for dine-in so the runner
+                knows which table to bring the plates to. Renders for both
+                the "single option" case (Simmer) and the chooser case
+                (Stax, Flipd) whenever dine-in is selected. */}
+            {fulfilmentType === 'dine-in' && (
+              <div className="space-y-2 mt-2">
+                <p className="text-[11px]" style={{ color: 'var(--servd-mute)' }}>
+                  What table are you at? The number is on the QR card at your seat (e.g. T-7, 12).
+                </p>
+                <input
+                  value={tableLabel} onChange={(e) => setTableLabel(e.target.value)}
+                  placeholder="Table number"
+                  maxLength={20}
+                  inputMode="text"
+                  autoCapitalize="characters"
+                  className="w-full rounded-lg px-3 py-2 text-sm uppercase tracking-wider"
+                  style={{ background: '#fff', border: '1px solid rgba(0,0,0,0.08)' }}
+                />
+              </div>
             )}
             {fulfilmentType === 'curbside' && (
               <div className="space-y-2 mt-2">

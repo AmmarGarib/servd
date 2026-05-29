@@ -25,6 +25,12 @@ const createDirectOrderSchema = z.object({
   deliveryLat: z.number().optional(),     // delivery zone lookup
   deliveryLng: z.number().optional(),
   tableId: z.string().uuid().optional(),
+  // Dine-in: customer types the table label printed on the QR card at
+  // their seat (e.g. "T-7", "12"). Server-side we look up the matching
+  // Table row for this concept and set Order.tableId on success;
+  // otherwise we patch the raw label into Order.rawPayload so expo
+  // can still see it. Required when type='dine-in'.
+  tableLabel: z.string().trim().min(1).max(20).optional(),
   // Curbside fields — only meaningful when type='curbside'. Customer enters
   // them at checkout so staff knows which car to run the food to.
   curbsideVehicle: z.string().min(2).max(80).optional(),
@@ -59,6 +65,8 @@ const createGuestOrderSchema = z.object({
   customerEmail: z.string().email().optional(),
   type: z.enum(['delivery', 'pickup', 'dine-in']).default('pickup'),
   deliveryAddress: z.string().optional(),
+  // Dine-in table label, see createDirectOrderSchema for semantics.
+  tableLabel: z.string().trim().min(1).max(20).optional(),
   notes: z.string().optional(),
   scheduledFor: z.string().datetime().optional(),
   promoCode: z.string().optional(),
@@ -570,6 +578,29 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
       if (body.curbsidePlate) orderPatch.curbsidePlate = body.curbsidePlate
       if (body.curbsideSpot)  orderPatch.curbsideSpot = body.curbsideSpot
     }
+    if (body.type === 'dine-in' && body.tableLabel) {
+      // Resolve the table label the customer typed at the QR card to an
+      // actual Table row for this concept. Case-insensitive on label.
+      // If no Table matches (operator hasn't set up the floor plan yet,
+      // or the customer typed a typo), store the raw string in
+      // rawPayload so the expo screen still shows it on the ticket.
+      const table = await prisma.table.findFirst({
+        where: {
+          conceptId: concept.id,
+          deletedAt: null,
+          label: { equals: body.tableLabel, mode: 'insensitive' },
+        },
+        select: { id: true },
+      })
+      if (table) {
+        orderPatch.tableId = table.id
+      } else {
+        orderPatch.rawPayload = {
+          ...(orderPatch.rawPayload as Record<string, unknown> | undefined),
+          tableLabelRaw: body.tableLabel,
+        }
+      }
+    }
     // Store payment phone (JazzCash/EasyPaisa) in rawPayload for later integration
     if (body.paymentPhone && (body.paymentGateway === 'jazzcash' || body.paymentGateway === 'easypaisa')) {
       orderPatch.rawPayload = { paymentPhone: body.paymentPhone, paymentGateway: body.paymentGateway }
@@ -845,6 +876,27 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
     }
 
     const { order } = await ingestOrder(dto)
+
+    // Dine-in: resolve the table label the guest typed at the QR card to
+    // an actual Table row. Same logic as the authenticated path above.
+    if (body.type === 'dine-in' && body.tableLabel) {
+      const table = await prisma.table.findFirst({
+        where: {
+          conceptId: concept.id,
+          deletedAt: null,
+          label: { equals: body.tableLabel, mode: 'insensitive' },
+        },
+        select: { id: true },
+      })
+      if (table) {
+        await prisma.order.update({ where: { id: order.id }, data: { tableId: table.id } })
+      } else {
+        await prisma.order.update({
+          where: { id: order.id },
+          data: { rawPayload: { tableLabelRaw: body.tableLabel } },
+        })
+      }
+    }
 
     if (body.cartId) {
       await settleCart(body.cartId, itemsForSettle, false)
