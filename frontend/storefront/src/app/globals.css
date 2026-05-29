@@ -149,6 +149,125 @@
   border-color: rgba(233,78,27,0.20) !important;
 }
 
+/* stax-checkout — blueprint industrial. Dark surface, dark cards,
+   cream signal accent. Same pattern as .simmer-checkout: remap the
+   --servd-* tokens the JSX already references + a few targeted
+   !important overrides for the inline `background: white` cards
+   and the focus-glow on inputs. */
+.stax-checkout {
+  --servd-ink:        var(--stax-grey-80);
+  --servd-mute:       var(--stax-grey-60);
+  --servd-line:       rgba(255,255,255,0.14);
+  --servd-surface:    var(--stax-grey-20);
+  --servd-green:      var(--stax-cream);
+  --servd-green-dark: var(--stax-cream);
+
+  background: var(--stax-blueprint);
+  color: var(--stax-grey-80);
+  font-family: var(--stax-display);
+  letter-spacing: 0.01em;
+}
+.stax-checkout h1,
+.stax-checkout h2,
+.stax-checkout h3 {
+  font-family: var(--stax-display);
+  letter-spacing: -0.02em;
+  color: var(--stax-grey-100);
+}
+/* Panel + sub-panel cards — dark on the blueprint */
+.stax-checkout .rounded-2xl[style*="background: white"],
+.stax-checkout .rounded-2xl[style*="background:#fff"],
+.stax-checkout .rounded-2xl[style*="background: #fff"],
+.stax-checkout .rounded-xl[style*="background: white"],
+.stax-checkout .rounded-xl[style*="background:#fff"],
+.stax-checkout .rounded-xl[style*="background: #fff"] {
+  background: var(--stax-grey-20) !important;
+  border-color: rgba(255,255,255,0.10) !important;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.4) !important;
+  color: var(--stax-grey-80);
+}
+/* Fulfilment / tip-rider blue washes → faint cream wash */
+.stax-checkout div[style*="rgba(30,58,138,0.06)"],
+.stax-checkout div[style*="rgba(30,58,138,0.08)"],
+.stax-checkout div[style*="rgba(30,58,138,0.25)"],
+.stax-checkout div[style*="rgba(30,58,138,0.2)"] {
+  background: rgba(242,235,218,0.06) !important;
+  border-color: rgba(242,235,218,0.18) !important;
+}
+/* Inputs + textareas — dark wash, light text, low-key border */
+.stax-checkout input[style*="background: #fff"],
+.stax-checkout input[style*="background:#fff"],
+.stax-checkout input[style*="background: white"],
+.stax-checkout textarea[style*="background: #fff"],
+.stax-checkout textarea[style*="background:#fff"],
+.stax-checkout textarea[style*="background: white"] {
+  background: rgba(255,255,255,0.06) !important;
+  color: var(--stax-grey-80) !important;
+  border-color: rgba(255,255,255,0.16) !important;
+}
+/* Bottom fixed CTA bar — dark blueprint wash */
+.stax-checkout .fixed.bottom-0 {
+  background: rgba(10,24,87,0.95) !important;
+  border-top-color: rgba(255,255,255,0.14) !important;
+}
+/* The Place Order pill hardcodes `color: '#fff'` inline; on a cream
+   button that's unreadable. Force dark ink for the CTA inside the
+   Stax checkout. */
+.stax-checkout .fixed.bottom-0 button {
+  color: var(--stax-blueprint-deep) !important;
+}
+/* The H1 "Checkout" defaults to text-lg + font-black; on Space Grotesk
+   it still feels thin against the dark blueprint. Bump to cream so it
+   reads as the page label, matching the brand's headline accent. */
+.stax-checkout h1 {
+  color: var(--stax-cream) !important;
+}
+
+/* flipd-checkout — cool diner. Pale cream surface, sky-blue signal,
+   deep navy ink. Same token-swap pattern as the others. */
+.flipd-checkout {
+  --servd-ink:        var(--flipd-ink);
+  --servd-mute:       rgba(14,26,42,0.62);
+  --servd-line:       rgba(14,26,42,0.14);
+  --servd-surface:    var(--flipd-pale);
+  --servd-green:      var(--flipd-sky-deep);
+  --servd-green-dark: var(--flipd-sky-deep);
+
+  background: var(--flipd-cream);
+  color: var(--flipd-ink);
+  font-family: 'Inter', system-ui, sans-serif;
+  letter-spacing: -0.005em;
+}
+.flipd-checkout h1,
+.flipd-checkout h2,
+.flipd-checkout h3 {
+  font-family: 'Bricolage Grotesque', 'Inter', sans-serif;
+  font-weight: 800;
+  letter-spacing: -0.035em;
+}
+/* Panel cards — pale blue instead of pure white so the surface and
+   the card don't collapse together */
+.flipd-checkout .rounded-2xl[style*="background: white"],
+.flipd-checkout .rounded-2xl[style*="background:#fff"],
+.flipd-checkout .rounded-2xl[style*="background: #fff"] {
+  background: var(--flipd-pale) !important;
+  border-color: rgba(14,26,42,0.14) !important;
+  box-shadow: 0 1px 3px rgba(14,26,42,0.06) !important;
+}
+/* Fulfilment / tip-rider washes → faint sky wash */
+.flipd-checkout div[style*="rgba(30,58,138,0.06)"],
+.flipd-checkout div[style*="rgba(30,58,138,0.08)"],
+.flipd-checkout div[style*="rgba(30,58,138,0.25)"],
+.flipd-checkout div[style*="rgba(30,58,138,0.2)"] {
+  background: rgba(58,168,255,0.08) !important;
+  border-color: rgba(58,168,255,0.22) !important;
+}
+/* Bottom CTA bar */
+.flipd-checkout .fixed.bottom-0 {
+  background: rgba(251,253,255,0.96) !important;
+  border-top-color: rgba(14,26,42,0.14) !important;
+}
+
 /* stax — industrial blueprint */
 .stax-page {
   background-color: var(--stax-blueprint);

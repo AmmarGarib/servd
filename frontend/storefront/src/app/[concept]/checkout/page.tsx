@@ -44,13 +44,22 @@ export default function CheckoutPage() {
   const { items, subtotalCents, taxCents, totalCents, itemCount, clearCart, hydrateFromReorder } = useCart()
   const token = useCustomerAuth((s) => s.token)
 
-  // Simmer is high-ticket plated-service dining — the cart is small,
-  // intentional, and shouldn't be diluted with sides from other brands.
-  // We also re-skin the checkout into Simmer's bone/forest-green/orange
-  // palette so the customer never leaves the brand world they ordered
-  // from. The skin is a CSS-variable swap (`.simmer-checkout` in
-  // globals.css) so we don't have to fork the whole 900-line JSX.
-  const isSimmer = slug === 'simmer'
+  // Per-brand checkout skin. Each brand keyword maps to a CSS class
+  // defined in globals.css that remaps the --servd-* tokens to the
+  // brand's palette (and overrides a few inline `background: white`
+  // cards). One JSX, three looks. Unknown slugs render the generic
+  // servd treatment.
+  const brandSkinClass =
+    slug === 'simmer' ? 'simmer-checkout' :
+    slug === 'stax'   ? 'stax-checkout'   :
+    slug === 'flipd'  ? 'flipd-checkout'  :
+    ''
+  // Cross-brand upsell ("want a side from another GS Foods kitchen?")
+  // — hidden only for Simmer. Simmer is high-ticket plated-service
+  // and a smash-burger pitch next to a tasting menu cheapens the room.
+  // Stax and Flipd are casual + delivery-first; cross-brand discovery
+  // helps them.
+  const hideCrossBrandUpsell = slug === 'simmer'
 
   // Cross-domain handoff: when a user builds a cart on a brand custom domain
   // (eatstax.com, stax.localhost:3002…) and clicks checkout, the brand site
@@ -342,7 +351,7 @@ export default function CheckoutPage() {
 
   return (
     <main
-      className={`min-h-screen pb-32 relative overflow-hidden${isSimmer ? ' simmer-checkout' : ''}`}
+      className={`min-h-screen pb-32 relative overflow-hidden${brandSkinClass ? ' ' + brandSkinClass : ''}`}
       style={{ background: 'transparent' }}
     >
 
@@ -625,10 +634,10 @@ export default function CheckoutPage() {
         </Panel>
 
         {/* Cross-brand upsell — surface 3 dishes from other GS Foods
-            kitchens. Hidden for Simmer: it's high-ticket plated-service
-            and a "want a burger with your tasting menu?" pitch would
-            cheapen the room. */}
-        {!isSimmer && <CrossBrandUpsell currentSlug={slug} />}
+            kitchens. Hidden for Simmer (high-ticket plated-service);
+            kept for Stax + Flipd where cross-brand discovery is on
+            mission. */}
+        {!hideCrossBrandUpsell && <CrossBrandUpsell currentSlug={slug} />}
 
         {token ? (
           <>
