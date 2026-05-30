@@ -51,45 +51,61 @@ export function FlipdLayout({ concept, concepts }: Props) {
         </div>
       )}
 
-      {/* ── HERO ─ neon wordmark behind a glass window ───────────────
-          Marquee FLIPD set with a sky-neon glow, Lobster tagline
-          beneath, "OPEN 24" red neon badge to the side. Built to
-          feel like the diner's window-front. */}
-      <section style={{
-        background: 'var(--flipd-cream)',
-        padding: 'clamp(4rem, 10vh, 7rem) clamp(1.5rem, 5vw, 3rem) clamp(3rem, 7vh, 5rem)',
-        position: 'relative', overflow: 'hidden',
-        textAlign: 'center',
-      }}>
+      {/* ── HERO ─ checkered wrapper background; FLIPD wordmark rides
+          on a plain white sign panel so it pops off the busy print
+          (no sky drop-shadow). Everything else floats directly on the
+          tile pattern. */}
+      <section
+        className="flipd-tile"
+        style={{
+          padding: 'clamp(4rem, 10vh, 7rem) clamp(1.5rem, 5vw, 3rem) clamp(3rem, 7vh, 5rem)',
+          position: 'relative', overflow: 'hidden',
+          textAlign: 'center',
+        }}
+      >
         <div style={{ maxWidth: '64rem', margin: '0 auto', position: 'relative', zIndex: 2 }}>
-          <p className="flipd-eyebrow" style={{ margin: 0 }}>
+          <p className="flipd-eyebrow" style={{
+            margin: 0,
+            // Cream halo so the typewriter eyebrow stays legible on
+            // the busy checker pattern.
+            textShadow: '0 0 6px var(--flipd-cream), 0 0 12px var(--flipd-cream)',
+          }}>
             Karachi · Est. 2026
           </p>
 
-          {/* Wordmark — solid ink Bungee marquee. No neon glow. The bold
-              tertiary against cream paper carries the diner-sign weight
-              all on its own. */}
-          <h1 className="flipd-marquee" style={{
-            fontSize: 'clamp(5rem, 17vw, 13rem)',
-            margin: '1.2rem 0 0.4rem',
-            lineHeight: 0.9,
-            color: 'var(--flipd-ink)',
-            textShadow: '0 4px 0 var(--flipd-sky)',
+          {/* Wordmark — solid ink Bungee marquee inside a plain white
+              card. The card is the "logo box" stamped onto the wrapper
+              print — no sky outline, no glow. */}
+          <div style={{
+            display: 'inline-block',
+            background: 'white',
+            padding: 'clamp(0.6rem, 2vh, 1.4rem) clamp(1rem, 3vw, 1.8rem)',
+            margin: '1.2rem 0 0.6rem',
+            border: '2px solid var(--flipd-ink)',
+            borderRadius: '0.6rem',
+            boxShadow: '0 6px 0 var(--flipd-ink), 0 14px 30px rgba(14,26,42,0.22)',
           }}>
-            FLIPD
-          </h1>
+            <h1 className="flipd-marquee" style={{
+              fontSize: 'clamp(5rem, 17vw, 13rem)',
+              margin: 0,
+              lineHeight: 0.9,
+              color: 'var(--flipd-ink)',
+            }}>
+              FLIPD
+            </h1>
+          </div>
 
           <p className="flipd-display" style={{
             fontSize: 'clamp(1.6rem, 4vw, 2.6rem)',
             margin: 0,
             color: 'var(--flipd-sky-deep)',
             lineHeight: 1.1,
+            textShadow: '0 0 6px var(--flipd-cream), 0 1px 0 var(--flipd-cream)',
           }}>
-            buttermilk &amp; hot honey
+            Open air, smashes, smash burgers.
           </p>
 
-          {/* OPEN sign — ink pill with a sky-blue pulse dot + sky-blue
-              marquee text. (No red neon.) */}
+          {/* OPEN sign — ink pill with sky-blue pulse + marquee text */}
           <div style={{
             display: 'inline-flex', alignItems: 'center', gap: '0.7rem',
             marginTop: '2.2rem',
@@ -111,26 +127,31 @@ export function FlipdLayout({ concept, concepts }: Props) {
             </span>
           </div>
 
-          <p className="flipd-type" style={{
-            fontSize: '1rem', maxWidth: '34rem', margin: '1.6rem auto 0',
-            color: 'rgba(14,26,42,0.78)',
+          {/* Body line in a small cream paper panel so the typewriter
+              copy reads against the checker pattern. */}
+          <div style={{
+            display: 'inline-block',
+            background: 'var(--flipd-cream)',
+            padding: '0.9rem 1.2rem',
+            marginTop: '1.6rem',
+            border: '1.5px solid var(--flipd-ink)',
+            borderRadius: '0.5rem',
+            maxWidth: '34rem',
           }}>
-            {story.oneLiner}
-          </p>
+            <p className="flipd-type" style={{
+              fontSize: '1rem',
+              margin: 0,
+              color: 'var(--flipd-ink)',
+            }}>
+              {story.oneLiner}
+            </p>
+          </div>
 
-          <div style={{ marginTop: '2.4rem', display: 'flex', gap: '0.75rem', flexWrap: 'wrap', justifyContent: 'center' }}>
-            <Link href={`/${concept.slug}`} className="flipd-btn">Order at the counter</Link>
+          <div style={{ marginTop: '2rem', display: 'flex', gap: '0.75rem', flexWrap: 'wrap', justifyContent: 'center' }}>
+            <Link href={`/${concept.slug}`} className="flipd-btn">Order between sets</Link>
             <Link href={`/brand/${concept.slug}/menu`} className="flipd-btn flipd-btn-ghost">See the menu</Link>
           </div>
         </div>
-
-        {/* Decorative jukebox bubble — bottom-right, fades */}
-        <div aria-hidden="true" style={{
-          position: 'absolute', right: '-3rem', bottom: '-3rem',
-          width: '14rem', height: '14rem', borderRadius: '50%',
-          background: `radial-gradient(circle at 35% 30%, ${`var(--flipd-sky)`} 0%, transparent 60%)`,
-          opacity: 0.22, zIndex: 1, pointerEvents: 'none',
-        }} />
       </section>
 
       {/* ── TONIGHT'S BOARD ─ a chalkboard-style today's specials list

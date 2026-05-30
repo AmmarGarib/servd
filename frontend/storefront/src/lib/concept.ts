@@ -102,11 +102,11 @@ export const BRAND_STORIES: Record<string, BrandStory> = {
     hours: 'Lunch 12:00 PM – 3:00 PM · Dinner 7:00 PM – 11:00 PM',
   },
   'flipd': {
-    tagline: 'Buttermilk-brined, hand-breaded, hot.',
-    oneLiner: 'Crispy chicken, every piece made-to-order. No reheats, no shortcuts.',
-    long: 'Flipd is GS Foods’ ode to fried chicken done right. Every piece sits in our buttermilk + spice brine for a full 24 hours before hitting the hand-breading station — that’s why the chicken is juicy on the inside, even when the crust is loud. Sandwiches, tenders, and buckets that don’t apologise. We’ve tried shortcuts. We don’t use them.',
-    highlights: ['24h buttermilk brine', 'Hand-breaded, never machine', '180°C fryer, every piece', 'Zero reheats'],
-    hours: 'Lunch 12:00 PM – 3:00 PM · Dinner 7:00 PM – 11:00 PM',
+    tagline: 'Open air, smashes, smash burgers.',
+    oneLiner: 'Smash burgers cooked court-side. Order between sets, eat at the bench.',
+    long: 'Flipd is the court-side burger. Dry-aged beef smashed on a cast-iron flat-top a few steps from the net, brioche toasted to order, sauces blended in-house. Built for the people who want a real burger right after they’ve put in real work. Open air, open fire, open all day.',
+    highlights: ['Cast-iron smash, court-side', 'Open-fire, open-air kitchen', 'Order between sets', 'Pick up at the bench'],
+    hours: 'Court hours — typically 10:00 AM – 10:00 PM',
   },
 }
 
