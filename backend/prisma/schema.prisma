@@ -367,6 +367,11 @@ model MenuItem {
   instructionsUrdu  String? @map("instructions_urdu")
   priceCents        Int
   imageUrl          String?
+  // Optional looping video shown in place of the still image on the
+  // storefront menu surface. When both are set, the storefront prefers
+  // the video and falls back to the image. Operator sets one or the
+  // other per item from the admin.
+  videoUrl          String?
   isAvailable       Boolean @default(true)
   portionsAvailable Int? // null = unlimited; set per service for live stock tracking
   displayOrder      Int     @default(0)

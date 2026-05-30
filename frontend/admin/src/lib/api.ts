@@ -340,6 +340,7 @@ export interface MenuItem {
   instructionsUrdu: string | null
   priceCents: number
   imageUrl: string | null
+  videoUrl: string | null
   isAvailable: boolean
   displayOrder: number
   modifierGroups: ModifierGroup[]

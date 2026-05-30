@@ -396,10 +396,13 @@ function EditItemDrawer({ item, onClose, onSaved }: { item: MenuItem; onClose: (
   const [description, setDescription] = useState(item.description ?? '')
   const [price, setPrice] = useState(String(item.priceCents / 100))
   const [imageUrl, setImageUrl] = useState(item.imageUrl ?? '')
+  const [videoUrl, setVideoUrl] = useState(item.videoUrl ?? '')
   const [instructions, setInstructions] = useState(item.instructions ?? '')
   const [instructionsUrdu, setInstructionsUrdu] = useState(item.instructionsUrdu ?? '')
   const [uploading, setUploading] = useState(false)
   const [uploadError, setUploadError] = useState('')
+  const [videoUploading, setVideoUploading] = useState(false)
+  const [videoUploadError, setVideoUploadError] = useState('')
 
   async function handleImageUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
@@ -423,6 +426,35 @@ function EditItemDrawer({ item, onClose, onSaved }: { item: MenuItem; onClose: (
     }
   }
 
+  async function handleVideoUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    // Storefront video tiles auto-play muted in a loop. Anything over
+    // ~10MB starts to hurt LCP on mobile, so we soft-warn at 10MB and
+    // hard-stop at 25MB.
+    if (file.size > 25 * 1024 * 1024) {
+      setVideoUploadError('Video is over 25 MB — please trim it before uploading.')
+      return
+    }
+    setVideoUploading(true)
+    setVideoUploadError('')
+    try {
+      const token = useAuthStore.getState().token
+      const qs = new URLSearchParams({ filename: file.name, contentType: file.type, category: 'menu' })
+      const res = await fetch(`${API_URL}/api/v1/media/upload-url?${qs}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      })
+      if (!res.ok) throw new Error('Failed to get upload URL')
+      const { uploadUrl, publicUrl } = await res.json() as { uploadUrl: string; publicUrl: string }
+      await fetch(uploadUrl, { method: 'PUT', body: file, headers: { 'Content-Type': file.type } })
+      setVideoUrl(publicUrl)
+    } catch {
+      setVideoUploadError('Upload failed — check R2 config')
+    } finally {
+      setVideoUploading(false)
+    }
+  }
+
   const save = useMutation({
     mutationFn: () => menuApi.updateItem(item.id, {
       name,
@@ -430,6 +462,7 @@ function EditItemDrawer({ item, onClose, onSaved }: { item: MenuItem; onClose: (
       description: description || undefined,
       priceCents: Math.round(parseFloat(price) * 100),
       imageUrl: imageUrl.trim() || undefined,
+      videoUrl: videoUrl.trim() || undefined,
       instructions: instructions.trim() || undefined,
       instructionsUrdu: instructionsUrdu.trim() || undefined,
     }),
@@ -464,6 +497,29 @@ function EditItemDrawer({ item, onClose, onSaved }: { item: MenuItem; onClose: (
               )}
             </div>
             {uploadError && <p className="text-xs text-kds-red mt-1">{uploadError}</p>}
+          </div>
+
+          {/* Video (optional) — when set, takes the place of the image
+              on the storefront menu (auto-plays muted in a loop). */}
+          <div>
+            <label className="text-xs text-kds-subtext">Item Video (optional — wins over image when set)</label>
+            <div className="mt-1 flex items-center gap-3">
+              {videoUrl
+                ? <video src={videoUrl} muted playsInline loop autoPlay className="h-16 w-16 rounded-lg object-cover border border-kds-border" />
+                : <div className="h-16 w-16 rounded-lg border border-dashed border-kds-border bg-kds-bg flex items-center justify-center text-2xl">▶</div>
+              }
+              <label className={`cursor-pointer rounded-lg border border-kds-border px-3 py-2 text-xs text-kds-subtext hover:text-kds-text transition-colors ${videoUploading ? 'opacity-50 pointer-events-none' : ''}`}>
+                {videoUploading ? 'Uploading…' : 'Upload Video'}
+                <input type="file" accept="video/mp4,video/webm" className="sr-only" onChange={handleVideoUpload} />
+              </label>
+              {videoUrl && (
+                <button onClick={() => setVideoUrl('')} className="text-xs text-kds-red hover:underline">Remove</button>
+              )}
+            </div>
+            <p className="text-[10px] text-kds-subtext mt-1">
+              MP4 or WebM, up to 25 MB. Loops silently on the storefront menu.
+            </p>
+            {videoUploadError && <p className="text-xs text-kds-red mt-1">{videoUploadError}</p>}
           </div>
 
           {/* Name */}

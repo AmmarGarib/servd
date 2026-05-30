@@ -16,6 +16,11 @@ const createItemSchema = z.object({
   instructionsUrdu: z.string().optional(),
   priceCents: z.number().int().min(0),
   imageUrl: z.string().url().optional(),
+  // Looping video shown in place of the image on the storefront menu.
+  // Both fields are independent — operator can set either, neither, or
+  // both (storefront prefers video). Either MP4 or WebM is fine; .mov
+  // / proprietary formats won't autoplay in mobile Safari.
+  videoUrl: z.string().url().optional(),
   isAvailable: z.boolean().default(true),
   displayOrder: z.number().int().default(0),
   stationId: z.string().uuid().nullable().optional(),

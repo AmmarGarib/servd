@@ -130,7 +130,7 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
             ],
           },
           select: {
-            id: true, name: true, description: true, priceCents: true, imageUrl: true,
+            id: true, name: true, description: true, priceCents: true, imageUrl: true, videoUrl: true,
             concept: { select: { name: true, slug: true, primaryColor: true } },
           },
           take: 30,

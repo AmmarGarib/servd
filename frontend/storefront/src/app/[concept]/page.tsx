@@ -24,7 +24,9 @@ interface Modifier   { id: string; name: string; priceDeltaCents: number; isDefa
 interface ModGroup   { id: string; name: string; minSelect: number; maxSelect: number; isRequired: boolean; modifiers: Modifier[] }
 interface MenuItem   {
   id: string; name: string; description: string | null; priceCents: number
-  imageUrl: string | null; isAvailable: boolean
+  imageUrl: string | null
+  videoUrl?: string | null
+  isAvailable: boolean
   allergens?: string[]
   dietary?: string[]
   spiceLevel?: number | null
@@ -359,7 +361,17 @@ function ItemCard({ item, onClick, accent }: { item: MenuItem; onClick: () => vo
         aspectRatio: '4/3',
         background: item.imageUrl ? `url(${item.imageUrl}) center/cover` : `linear-gradient(135deg, ${accent}22 0%, white 200%)`,
         position: 'relative',
+        overflow: 'hidden',
       }}>
+        {item.videoUrl && (
+          <video
+            src={item.videoUrl}
+            {...(item.imageUrl ? { poster: item.imageUrl } : {})}
+            autoPlay muted loop playsInline preload="metadata"
+            aria-hidden="true"
+            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
+          />
+        )}
         {disabled && (
           <span style={{
             position: 'absolute', top: '0.6rem', left: '0.6rem',
@@ -502,7 +514,17 @@ function ItemDetailModal({
           aspectRatio: '16/10',
           background: item.imageUrl ? `url(${item.imageUrl}) center/cover` : `linear-gradient(135deg, ${accent}22 0%, white 200%)`,
           position: 'relative',
+          overflow: 'hidden',
         }}>
+          {item.videoUrl && (
+            <video
+              src={item.videoUrl}
+              {...(item.imageUrl ? { poster: item.imageUrl } : {})}
+              autoPlay muted loop playsInline preload="metadata"
+              aria-hidden="true"
+              style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
+            />
+          )}
           <button onClick={onClose} aria-label="Close" style={{
             position: 'absolute', top: '0.75rem', right: '0.75rem',
             background: 'rgba(255,255,255,0.95)', border: 'none', borderRadius: '999px',

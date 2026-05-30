@@ -33,7 +33,9 @@ const FALLBACK_CONCEPTS: Record<string, Concept> = {
 }
 
 interface MenuItem {
-  id: string; name: string; description: string | null; priceCents: number; imageUrl: string | null
+  id: string; name: string; description: string | null; priceCents: number
+  imageUrl: string | null
+  videoUrl: string | null
   isAvailable?: boolean
 }
 interface MenuCategory { id: string; name: string; items: MenuItem[] }
@@ -166,19 +168,39 @@ export default async function BrandMenuPage({ params }: { params: Promise<{ slug
               }}>
                 {cat.items.map((item) => (
                   <article key={item.id} className="servd-card" style={{ display: 'flex', flexDirection: 'column', opacity: item.isAvailable === false ? 0.5 : 1 }}>
+                    {/* Media tile — prefer video when the operator's set
+                        one, fall back to the still image, then to a
+                        gradient placeholder. Videos auto-play silently
+                        in a loop; the muted + playsInline combo is
+                        what mobile Safari requires for autoplay. */}
                     <div style={{
                       aspectRatio: '4/3',
+                      position: 'relative',
+                      overflow: 'hidden',
                       background: item.imageUrl
                         ? `url(${item.imageUrl}) center/cover`
                         : `linear-gradient(135deg, var(--servd-green-soft) 0%, white 100%)`,
-                      position: 'relative',
                     }}>
+                      {item.videoUrl && (
+                        <video
+                          src={item.videoUrl}
+                          {...(item.imageUrl ? { poster: item.imageUrl } : {})}
+                          autoPlay muted loop playsInline preload="metadata"
+                          aria-hidden="true"
+                          style={{
+                            position: 'absolute', inset: 0,
+                            width: '100%', height: '100%',
+                            objectFit: 'cover',
+                          }}
+                        />
+                      )}
                       {item.isAvailable === false && (
                         <span style={{
                           position: 'absolute', top: '0.7rem', left: '0.7rem',
                           background: 'rgba(0,0,0,0.7)', color: 'white',
                           fontSize: '0.7rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase',
                           padding: '0.25rem 0.6rem', borderRadius: '999px',
+                          zIndex: 1,
                         }}>
                           Sold out
                         </span>
