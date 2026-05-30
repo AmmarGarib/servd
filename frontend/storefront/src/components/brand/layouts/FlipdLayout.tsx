@@ -64,41 +64,30 @@ export function FlipdLayout({ concept, concepts }: Props) {
         }}
       >
         <div style={{ maxWidth: '64rem', margin: '0 auto', position: 'relative', zIndex: 2 }}>
-          {/* Locale/year stamp — pill capsule (rounded ends, no longer
-              a rectangle) tilted left a few degrees so the stack stops
-              feeling linear. Reads like a stitched name-tag pinned to
-              the wrapper. */}
-          <div style={{
-            display: 'inline-block',
-            background: 'var(--flipd-cream)',
-            padding: '0.5rem 1.4rem',
-            border: '1.5px solid var(--flipd-ink)',
-            borderRadius: '999px',
-            transform: 'rotate(-4deg)',
-            boxShadow: '0 3px 0 var(--flipd-ink), 0 6px 14px rgba(14,26,42,0.18)',
-          }}>
-            <p className="flipd-eyebrow" style={{ margin: 0 }}>
-              Karachi · Est. 2026
-            </p>
-          </div>
-
-          {/* Wordmark — solid ink Bungee marquee inside a plain white
-              card. The card is the "logo box" stamped onto the wrapper
-              print — no sky outline, no glow. */}
+          {/* Wordmark card — single white box now contains both the
+              Karachi locale stamp (small, top) and the big sky-blue
+              FLIPD wordmark. Pulls the two pieces into one logo unit
+              so the stack is fewer, bolder shapes. */}
           <div style={{
             display: 'inline-block',
             background: 'white',
-            padding: 'clamp(0.6rem, 2vh, 1.4rem) clamp(1rem, 3vw, 1.8rem)',
-            margin: '1.2rem 0 0.6rem',
+            padding: 'clamp(0.7rem, 2vh, 1.4rem) clamp(1rem, 3vw, 1.8rem) clamp(0.9rem, 2.2vh, 1.6rem)',
+            margin: '0 0 0.6rem',
             border: '2px solid var(--flipd-ink)',
             borderRadius: '0.6rem',
             boxShadow: '0 6px 0 var(--flipd-ink), 0 14px 30px rgba(14,26,42,0.22)',
           }}>
+            <p className="flipd-eyebrow" style={{ margin: '0 0 0.4rem' }}>
+              Karachi · Est. &apos;26
+            </p>
             <h1 className="flipd-marquee" style={{
               fontSize: 'clamp(5rem, 17vw, 13rem)',
               margin: 0,
               lineHeight: 0.9,
-              color: 'var(--flipd-ink)',
+              color: 'var(--flipd-sky)',
+              // Ink ledge keeps the wordmark grounded the way the
+              // jersey-patch stitching does on the round badge below.
+              textShadow: '0 4px 0 var(--flipd-ink)',
             }}>
               FLIPD
             </h1>
