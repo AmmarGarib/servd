@@ -64,14 +64,21 @@ export function FlipdLayout({ concept, concepts }: Props) {
         }}
       >
         <div style={{ maxWidth: '64rem', margin: '0 auto', position: 'relative', zIndex: 2 }}>
-          <p className="flipd-eyebrow" style={{
-            margin: 0,
-            // Cream halo so the typewriter eyebrow stays legible on
-            // the busy checker pattern.
-            textShadow: '0 0 6px var(--flipd-cream), 0 0 12px var(--flipd-cream)',
+          {/* Small cream chip — pulls the locale/year stamp off the
+              checker pattern so the typewritten copy is actually
+              legible. Matches the FLIPD wordmark + tagline panel
+              styling but at a fraction of the size. */}
+          <div style={{
+            display: 'inline-block',
+            background: 'var(--flipd-cream)',
+            padding: '0.4rem 0.85rem',
+            border: '1.5px solid var(--flipd-ink)',
+            borderRadius: '0.4rem',
           }}>
-            Karachi · Est. 2026
-          </p>
+            <p className="flipd-eyebrow" style={{ margin: 0 }}>
+              Karachi · Est. 2026
+            </p>
+          </div>
 
           {/* Wordmark — solid ink Bungee marquee inside a plain white
               card. The card is the "logo box" stamped onto the wrapper
