@@ -126,9 +126,9 @@ export function FlipdLayout({ concept, concepts }: Props) {
               textTransform: 'uppercase',
               letterSpacing: '0.02em',
             }}>
-              Open air<br />
-              Smashes<br />
-              Smash burgers
+              Game<br />
+              Set<br />
+              Smash
             </p>
           </div>
 

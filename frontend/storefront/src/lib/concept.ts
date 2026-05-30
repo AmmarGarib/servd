@@ -102,9 +102,9 @@ export const BRAND_STORIES: Record<string, BrandStory> = {
     hours: 'Lunch 12:00 PM – 3:00 PM · Dinner 7:00 PM – 11:00 PM',
   },
   'flipd': {
-    tagline: 'Open air, smashes, smash burgers.',
+    tagline: 'Game, set, smash.',
     oneLiner: 'Smash burgers cooked court-side. Order between sets, eat at the bench.',
-    long: 'Flipd is the court-side burger. Dry-aged beef smashed on a cast-iron flat-top a few steps from the net, brioche toasted to order, sauces blended in-house. Built for the people who want a real burger right after they’ve put in real work. Open air, open fire, open all day.',
+    long: 'Flipd is the court-side burger. Dry-aged beef smashed on a cast-iron flat-top a few steps from the net, brioche toasted to order, sauces blended in-house. Built for the people who want a real burger right after they’ve put in real work. Game on, grill on, eat after the match.',
     highlights: ['Cast-iron smash, court-side', 'Open-fire, open-air kitchen', 'Order between sets', 'Pick up at the bench'],
     hours: 'Court hours — typically 10:00 AM – 10:00 PM',
   },
