@@ -185,28 +185,48 @@ export function HomeClient({ concepts }: Props) {
         <div className="container" style={{ paddingBottom: 'clamp(4rem, 8vw, 6rem)' }}>
           <div style={{ display: 'grid', gap: '1.25rem' }}>
             {brands.map((b) => (
-              <Link key={b.id} href={`/${b.slug}`} aria-label={`Order from ${b.name}`}
+              // Card wrapper — used to be a single Link to /${slug} (the
+              // order page), which meant tapping anywhere on a Stax /
+              // Simmer / Flipd card dropped customers straight onto the
+              // ordering surface and skipped the brand's own landing
+              // page entirely. CEO wants the card body to go to the
+              // brand microsite at /brand/${slug}; the "Order from X"
+              // pill stays as its own click target into the ordering
+              // flow. Two stacked Links so each surface has its own
+              // navigation intent.
+              <div key={b.id}
                 style={{
-                  display: 'block', textDecoration: 'none', color: 'inherit',
+                  display: 'block',
                   position: 'relative', overflow: 'hidden',
                   borderRadius: '1.5rem',
                   minHeight: 'clamp(320px, 42vw, 460px)',
                   background: `${b.accent} url(${b.img}) center/cover`,
                   boxShadow: '0 8px 24px rgba(0,0,0,0.12)',
                 }}>
+                {/* Full-card hit-area Link to the brand landing page */}
+                <Link href={`/brand/${b.slug}`}
+                  aria-label={`Visit ${b.name}'s landing page`}
+                  style={{
+                    position: 'absolute', inset: 0, zIndex: 1,
+                    borderRadius: 'inherit',
+                  }}
+                />
                 <div aria-hidden style={{
                   position: 'absolute', inset: 0,
                   background: 'linear-gradient(135deg, rgba(0,0,0,0.62) 0%, rgba(0,0,0,0.15) 55%, rgba(0,0,0,0.65) 100%)',
+                  pointerEvents: 'none',
                 }} />
                 <div aria-hidden style={{
                   position: 'absolute', top: 0, left: 0, right: 0, height: '6px',
                   background: b.accent,
+                  pointerEvents: 'none',
                 }} />
                 <div style={{
-                  position: 'relative', zIndex: 1, height: '100%',
+                  position: 'relative', zIndex: 2, height: '100%',
                   display: 'flex', flexDirection: 'column', justifyContent: 'space-between',
                   padding: 'clamp(1.5rem, 4vw, 2.5rem)', color: 'white',
                   minHeight: 'clamp(320px, 42vw, 460px)',
+                  pointerEvents: 'none',
                 }}>
                   <p className="eyebrow" style={{ color: 'rgba(255,255,255,0.8)' }}>
                     /{b.slug}
@@ -218,18 +238,30 @@ export function HomeClient({ concepts }: Props) {
                     <p style={{ marginTop: '0.75rem', fontSize: 'clamp(1rem, 1.4vw, 1.2rem)', color: 'rgba(255,255,255,0.92)', maxWidth: '28rem', lineHeight: 1.4, textShadow: '0 1px 6px rgba(0,0,0,0.45)' }}>
                       {b.story.tagline}
                     </p>
-                    <span style={{
-                      marginTop: '1.5rem', display: 'inline-flex', alignItems: 'center', gap: '0.5rem',
-                      background: 'white', color: 'var(--servd-ink)',
-                      fontFamily: 'var(--font-display)', fontWeight: 800,
-                      fontSize: '0.95rem',
-                      padding: '0.7rem 1.3rem', borderRadius: '999px',
-                    }}>
+                    {/* "Order from X" pill — independent Link to the
+                        ordering surface. pointer-events: auto so it
+                        beats the inherited none on the wrapper, and a
+                        higher z-index so it sits above the full-card
+                        cover Link. */}
+                    <Link href={`/${b.slug}`}
+                      aria-label={`Order from ${b.name}`}
+                      style={{
+                        marginTop: '1.5rem',
+                        display: 'inline-flex', alignItems: 'center', gap: '0.5rem',
+                        background: 'white', color: 'var(--servd-ink)',
+                        fontFamily: 'var(--font-display)', fontWeight: 800,
+                        fontSize: '0.95rem',
+                        padding: '0.7rem 1.3rem', borderRadius: '999px',
+                        textDecoration: 'none',
+                        position: 'relative', zIndex: 3,
+                        pointerEvents: 'auto',
+                      }}
+                    >
                       Order from {b.name} <span aria-hidden style={{ opacity: 0.6 }}>→</span>
-                    </span>
+                    </Link>
                   </div>
                 </div>
-              </Link>
+              </div>
             ))}
           </div>
         </div>
