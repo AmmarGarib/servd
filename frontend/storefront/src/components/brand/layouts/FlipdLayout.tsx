@@ -51,13 +51,6 @@ export function FlipdLayout({ concept, concepts }: Props) {
         </div>
       )}
 
-      {/* ── AWNING ─ sky-stripe band that caps the diner up top ── */}
-      <div aria-hidden="true" className="flipd-awning" style={{ height: '36px' }} />
-
-      {/* ── ENTRY FLOOR ─ first checkered band right under the awning so
-          the diner-tile cue lands inside the first scroll. */}
-      <div aria-hidden="true" className="flipd-tile" style={{ height: 'clamp(2rem, 4vh, 3.5rem)' }} />
-
       {/* ── HERO ─ neon wordmark behind a glass window ───────────────
           Marquee FLIPD set with a sky-neon glow, Lobster tagline
           beneath, "OPEN 24" red neon badge to the side. Built to
@@ -140,11 +133,6 @@ export function FlipdLayout({ concept, concepts }: Props) {
         }} />
       </section>
 
-      {/* Section transition · checkered diner-floor banner. Same .flipd-tile
-          pattern as the mid-page + bottom bands so the floor reads as one
-          continuous through-line connecting every section. */}
-      <div aria-hidden="true" className="flipd-tile" style={{ height: 'clamp(2.5rem, 5vh, 4rem)' }} />
-
       {/* ── TONIGHT'S BOARD ─ a chalkboard-style today's specials list
           rendered as a paper board with typewritten copy ── */}
       <section style={{
@@ -202,11 +190,6 @@ export function FlipdLayout({ concept, concepts }: Props) {
         </div>
       </section>
 
-      {/* ── DINER FLOOR ─ mid-page checkerboard band closes the Today's
-           Board section and walks the viewer into the "How we cook"
-           half of the page. Half the height of the bottom floor so it
-           reads as a transition, not the closer. */}
-      <div aria-hidden="true" className="flipd-tile" style={{ height: 'clamp(3rem, 6vh, 5rem)' }} />
 
       {/* ── THE LONG WAY ─ how-we-cook spec strip, retro counter style ── */}
       <section style={{
@@ -235,19 +218,40 @@ export function FlipdLayout({ concept, concepts }: Props) {
         </div>
       </section>
 
-      <div aria-hidden="true" className="flipd-tile" style={{ height: 'clamp(2.5rem, 5vh, 4rem)' }} />
 
-      {/* ── HIGHLIGHTS ─ what we do, formica cards ─ */}
-      <section style={{ padding: 'clamp(4rem, 9vh, 6rem) clamp(1.5rem, 5vw, 3rem)', background: 'var(--flipd-pale)' }}>
+      {/* ── HIGHLIGHTS / WRAPPER ─ full-bleed checkered diner-floor as
+            the entire section background. Reads like the brand's
+            takeout-paper print: pattern fills the surface, formica
+            cards sit on top like food in the basket. This is one of
+            the two "big checkered backgrounds" — see also the final
+            CTA section below. */}
+      <section
+        className="flipd-tile"
+        style={{ padding: 'clamp(5rem, 12vh, 8rem) clamp(1.5rem, 5vw, 3rem)' }}
+      >
         <div style={{ maxWidth: '72rem', margin: '0 auto' }}>
-          <p className="flipd-eyebrow" style={{ marginBottom: '0.8rem' }}>The booth, the bird, the shake</p>
-          <h2 className="flipd-display" style={{
-            fontSize: 'clamp(2.2rem, 4.5vw, 3.4rem)',
-            margin: '0 0 2.5rem', color: 'var(--flipd-ink)',
-            maxWidth: '20ch',
+          {/* Paper label sitting on the wrapper — solid cream backdrop
+              so the headline reads cleanly against the busy tile pattern,
+              like a sticker on the takeout box. */}
+          <div style={{
+            display: 'inline-block',
+            background: 'var(--flipd-cream)',
+            padding: 'clamp(1.2rem, 3vw, 2rem) clamp(1.4rem, 3.5vw, 2.4rem)',
+            border: '2px solid var(--flipd-ink)',
+            borderRadius: '0.5rem',
+            boxShadow: '0 4px 0 var(--flipd-ink), 0 10px 28px rgba(14,26,42,0.18)',
+            marginBottom: '2.5rem',
+            maxWidth: '100%',
           }}>
-            chicken, done the long way.
-          </h2>
+            <p className="flipd-eyebrow" style={{ marginBottom: '0.8rem' }}>The booth, the bird, the shake</p>
+            <h2 className="flipd-display" style={{
+              fontSize: 'clamp(2.2rem, 4.5vw, 3.4rem)',
+              margin: 0, color: 'var(--flipd-ink)',
+              maxWidth: '20ch',
+            }}>
+              chicken, done the long way.
+            </h2>
+          </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '1.1rem' }}>
             {story.highlights.map((h) => (
@@ -292,7 +296,6 @@ export function FlipdLayout({ concept, concepts }: Props) {
         </div>
       </section>
 
-      <div aria-hidden="true" className="flipd-tile" style={{ height: 'clamp(2.5rem, 5vh, 4rem)' }} />
 
       {/* ── HOURS + LOCATION ── */}
       <section style={{ padding: 'clamp(4rem, 9vh, 6rem) clamp(1.5rem, 5vw, 3rem)' }}>
@@ -346,21 +349,36 @@ export function FlipdLayout({ concept, concepts }: Props) {
         heading="More from the same kitchen group."
       />
 
-      {/* ── FINAL CTA ── tile floor + neon CTA */}
-      <section style={{
-        padding: 'clamp(4rem, 10vh, 7rem) clamp(1.5rem, 5vw, 3rem)',
-        background: 'var(--flipd-ink)', color: 'var(--flipd-cream)',
-        textAlign: 'center',
-        position: 'relative', overflow: 'hidden',
-      }}>
-        <div style={{ position: 'relative', zIndex: 2, maxWidth: '52rem', margin: '0 auto' }}>
+      {/* ── FINAL CTA / WRAPPER ─ second big full-bleed checkered
+            background. The CTA content rides in a solid ink sign panel
+            sitting on top of the tile so the wordmark is legible
+            against the busy print. Together with the Highlights wrapper
+            above, this gives the page two "wrapper-scale" checkered
+            surfaces that match the brand's packaging. */}
+      <section
+        className="flipd-tile"
+        style={{
+          padding: 'clamp(5rem, 14vh, 9rem) clamp(1.5rem, 5vw, 3rem)',
+          textAlign: 'center',
+        }}
+      >
+        <div style={{
+          position: 'relative',
+          maxWidth: '38rem',
+          margin: '0 auto',
+          background: 'var(--flipd-ink)',
+          color: 'var(--flipd-cream)',
+          padding: 'clamp(2.4rem, 6vh, 4rem) clamp(1.8rem, 4vw, 2.8rem)',
+          border: '3px solid var(--flipd-ink)',
+          borderRadius: '0.8rem',
+          boxShadow: '0 6px 0 var(--flipd-sky), 0 16px 40px rgba(14,26,42,0.32)',
+        }}>
           <p className="flipd-eyebrow" style={{ color: 'var(--flipd-sky)', marginBottom: '0.8rem' }}>
             Hungry now?
           </p>
-          {/* Solid cream marquee on the ink section. The 4px sky-blue
-              ledge under each glyph is the same offset used on the
-              hero FLIPD wordmark — keeps the diner-sign weight without
-              any glow. */}
+          {/* Solid cream marquee. The 4px sky-blue ledge under each
+              glyph is the same offset used on the hero FLIPD wordmark —
+              keeps the diner-sign weight without any glow. */}
           <h2 className="flipd-marquee" style={{
             fontSize: 'clamp(2.8rem, 6.5vw, 4.6rem)',
             margin: '0 0 0.4rem',
@@ -378,27 +396,8 @@ export function FlipdLayout({ concept, concepts }: Props) {
           </p>
           <Link href={`/${concept.slug}`} className="flipd-btn">Order from Flipd →</Link>
         </div>
-
-        {/* Floor tiles — full opacity, takes up the bottom third of the
-            CTA section so it reads as the actual diner floor under the
-            sign. Cuts off at the section edge and the bottom awning
-            closes the room. */}
-        <div aria-hidden="true" className="flipd-tile" style={{
-          position: 'absolute', left: 0, right: 0, bottom: 0, height: '280px',
-          opacity: 1, zIndex: 1,
-          // Soft ink-to-transparent fade at the top so the tile floor
-          // melts into the dark room above instead of starting on a
-          // hard line.
-          maskImage:        'linear-gradient(to top, black 60%, transparent 100%)',
-          WebkitMaskImage:  'linear-gradient(to top, black 60%, transparent 100%)',
-        } as React.CSSProperties} />
       </section>
 
-      {/* ── DINER FLOOR ─ full-width checkerboard band closes the page
-           on the cue the CEO wanted up front: an actual diner floor.
-           Tall enough (clamp 8-13vh) that it reads as a floor on phone
-           AND laptop, not as a thin awning. */}
-      <div aria-hidden="true" className="flipd-tile" style={{ height: 'clamp(5rem, 11vh, 9rem)' }} />
     </div>
   )
 }
