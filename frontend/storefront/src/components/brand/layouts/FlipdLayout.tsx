@@ -64,16 +64,18 @@ export function FlipdLayout({ concept, concepts }: Props) {
         }}
       >
         <div style={{ maxWidth: '64rem', margin: '0 auto', position: 'relative', zIndex: 2 }}>
-          {/* Small cream chip — pulls the locale/year stamp off the
-              checker pattern so the typewritten copy is actually
-              legible. Matches the FLIPD wordmark + tagline panel
-              styling but at a fraction of the size. */}
+          {/* Locale/year stamp — pill capsule (rounded ends, no longer
+              a rectangle) tilted left a few degrees so the stack stops
+              feeling linear. Reads like a stitched name-tag pinned to
+              the wrapper. */}
           <div style={{
             display: 'inline-block',
             background: 'var(--flipd-cream)',
-            padding: '0.4rem 0.85rem',
+            padding: '0.5rem 1.4rem',
             border: '1.5px solid var(--flipd-ink)',
-            borderRadius: '0.4rem',
+            borderRadius: '999px',
+            transform: 'rotate(-4deg)',
+            boxShadow: '0 3px 0 var(--flipd-ink), 0 6px 14px rgba(14,26,42,0.18)',
           }}>
             <p className="flipd-eyebrow" style={{ margin: 0 }}>
               Karachi · Est. 2026
@@ -108,17 +110,27 @@ export function FlipdLayout({ concept, concepts }: Props) {
               OPEN-NOW pill (the operator decided the pill carries no
               real info, and the body copy was redundant with the
               tagline above it). */}
+          {/* Tagline badge — perfect circle (border-radius 50%) tilted
+              slightly right. Three lines centred. The disc-shaped seal
+              breaks the linear stack the same way you'd see a round
+              court-side patch on a sports jersey. */}
           <div style={{
-            display: 'inline-block',
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
             background: 'var(--flipd-cream)',
-            padding: 'clamp(1rem, 2.5vh, 1.6rem) clamp(1.4rem, 4vw, 2.4rem)',
-            marginTop: '1.6rem',
-            border: '1.5px solid var(--flipd-ink)',
-            borderRadius: '0.5rem',
-            maxWidth: '36rem',
+            border: '2px solid var(--flipd-ink)',
+            borderRadius: '50%',
+            width: 'clamp(15rem, 70vw, 21rem)',
+            aspectRatio: '1 / 1',
+            marginTop: '1.8rem',
+            padding: '1.2rem',
+            textAlign: 'center',
+            transform: 'rotate(3deg)',
+            boxShadow: '0 6px 0 var(--flipd-ink), 0 14px 30px rgba(14,26,42,0.22)',
           }}>
             <p className="flipd-display" style={{
-              fontSize: 'clamp(1.6rem, 4vw, 2.6rem)',
+              fontSize: 'clamp(1.5rem, 5.2vw, 2.3rem)',
               margin: 0,
               color: 'var(--flipd-sky-deep)',
               lineHeight: 1.15,
