@@ -25,12 +25,12 @@ interface Props {
 // has the live items wired through; this is just for visual texture
 // on the "tonight's board" strip.
 const TODAYS_BOARD: { item: string; price: string }[] = [
-  { item: 'Hot Honey Tenders',  price: 'Rs 1,100' },
-  { item: 'The Diner Stack',    price: 'Rs 1,300' },
-  { item: 'Nashville Hot',      price: 'Rs 1,200' },
-  { item: 'Cheesy Tots',        price: 'Rs   600' },
-  { item: 'Cherry Cola Float',  price: 'Rs   650' },
-  { item: 'Strawberry Shake',   price: 'Rs   700' },
+  { item: 'The Court Classic',  price: 'Rs 1,200' },
+  { item: 'Double Smash',       price: 'Rs 1,500' },
+  { item: 'Bacon Smash',        price: 'Rs 1,650' },
+  { item: 'Hand-cut Fries',     price: 'Rs   500' },
+  { item: 'Smash Sauce Wings',  price: 'Rs   850' },
+  { item: 'Mango Lassi Shake',  price: 'Rs   700' },
 ]
 
 export function FlipdLayout({ concept, concepts }: Props) {
@@ -95,60 +95,37 @@ export function FlipdLayout({ concept, concepts }: Props) {
             </h1>
           </div>
 
-          <p className="flipd-display" style={{
-            fontSize: 'clamp(1.6rem, 4vw, 2.6rem)',
-            margin: 0,
-            color: 'var(--flipd-sky-deep)',
-            lineHeight: 1.1,
-            textShadow: '0 0 6px var(--flipd-cream), 0 1px 0 var(--flipd-cream)',
-          }}>
-            Open air, smashes, smash burgers.
-          </p>
-
-          {/* OPEN sign — ink pill with sky-blue pulse + marquee text */}
-          <div style={{
-            display: 'inline-flex', alignItems: 'center', gap: '0.7rem',
-            marginTop: '2.2rem',
-            padding: '0.55rem 1.2rem',
-            background: 'var(--flipd-ink)',
-            borderRadius: '999px',
-            border: '2px solid var(--flipd-ink)',
-          }}>
-            <span aria-hidden="true" style={{
-              width: '0.5rem', height: '0.5rem', borderRadius: '50%',
-              background: 'var(--flipd-sky)',
-              boxShadow: '0 0 8px var(--flipd-sky), 0 0 16px var(--flipd-sky)',
-            }} />
-            <span className="flipd-marquee" style={{
-              fontSize: '0.88rem', letterSpacing: '0.2em',
-              color: 'var(--flipd-sky)',
-            }}>
-              OPEN NOW
-            </span>
-          </div>
-
-          {/* Body line in a small cream paper panel so the typewriter
-              copy reads against the checker pattern. */}
+          {/* Tagline panel — three Lobster cursive lines in sky-deep
+              sitting inside a paper card on the wrapper. Replaces the
+              previous concept-note copy + duplicate inline tagline +
+              OPEN-NOW pill (the operator decided the pill carries no
+              real info, and the body copy was redundant with the
+              tagline above it). */}
           <div style={{
             display: 'inline-block',
             background: 'var(--flipd-cream)',
-            padding: '0.9rem 1.2rem',
+            padding: 'clamp(1rem, 2.5vh, 1.6rem) clamp(1.4rem, 4vw, 2.4rem)',
             marginTop: '1.6rem',
             border: '1.5px solid var(--flipd-ink)',
             borderRadius: '0.5rem',
-            maxWidth: '34rem',
+            maxWidth: '36rem',
           }}>
-            <p className="flipd-type" style={{
-              fontSize: '1rem',
+            <p className="flipd-display" style={{
+              fontSize: 'clamp(1.6rem, 4vw, 2.6rem)',
               margin: 0,
-              color: 'var(--flipd-ink)',
+              color: 'var(--flipd-sky-deep)',
+              lineHeight: 1.15,
+              textTransform: 'uppercase',
+              letterSpacing: '0.02em',
             }}>
-              {story.oneLiner}
+              Open air<br />
+              Smashes<br />
+              Smash burgers
             </p>
           </div>
 
           <div style={{ marginTop: '2rem', display: 'flex', gap: '0.75rem', flexWrap: 'wrap', justifyContent: 'center' }}>
-            <Link href={`/${concept.slug}`} className="flipd-btn">Order between sets</Link>
+            <Link href={`/${concept.slug}`} className="flipd-btn">Order now</Link>
             <Link href={`/brand/${concept.slug}/menu`} className="flipd-btn flipd-btn-ghost">See the menu</Link>
           </div>
         </div>
@@ -164,7 +141,7 @@ export function FlipdLayout({ concept, concepts }: Props) {
       }}>
         <div style={{ maxWidth: '44rem', margin: '0 auto', textAlign: 'center' }}>
           <p className="flipd-eyebrow" style={{ color: 'var(--flipd-sky)', marginBottom: '0.6rem' }}>
-            Today&apos;s Board
+            Court-side board
           </p>
           <h2 className="flipd-display" style={{
             fontSize: 'clamp(2.4rem, 6vw, 3.8rem)',
@@ -223,7 +200,7 @@ export function FlipdLayout({ concept, concepts }: Props) {
             color: 'var(--flipd-ink)',
             maxWidth: '24ch',
           }}>
-            the long way, every time.
+            cast-iron, court-side.
           </h2>
 
           <div style={{
@@ -231,10 +208,10 @@ export function FlipdLayout({ concept, concepts }: Props) {
             gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))',
             gap: '1.1rem',
           }}>
-            <Spec value="24h" label="Buttermilk brine, every piece." />
-            <Spec value="180°C" label="Fryer holds it, every basket." />
-            <Spec value="0" label="Reheats. Cooked to order only." />
-            <Spec value="100%" label="Hand-breaded. No machine." />
+            <Spec value="2x" label="Smash patties, dry-aged beef." />
+            <Spec value="260°C" label="Cast-iron flat-top, every smash." />
+            <Spec value="0" label="Reheats. Smashed to order only." />
+            <Spec value="100%" label="Brioche toasted court-side." />
           </div>
         </div>
       </section>
@@ -264,13 +241,13 @@ export function FlipdLayout({ concept, concepts }: Props) {
             marginBottom: '2.5rem',
             maxWidth: '100%',
           }}>
-            <p className="flipd-eyebrow" style={{ marginBottom: '0.8rem' }}>The booth, the bird, the shake</p>
+            <p className="flipd-eyebrow" style={{ marginBottom: '0.8rem' }}>The court, the smash, the shake</p>
             <h2 className="flipd-display" style={{
               fontSize: 'clamp(2.2rem, 4.5vw, 3.4rem)',
               margin: 0, color: 'var(--flipd-ink)',
               maxWidth: '20ch',
             }}>
-              chicken, done the long way.
+              burgers, smashed court-side.
             </h2>
           </div>
 
@@ -305,7 +282,7 @@ export function FlipdLayout({ concept, concepts }: Props) {
         background: 'var(--flipd-cream)',
       }}>
         <div style={{ maxWidth: '46rem', margin: '0 auto' }}>
-          <p className="flipd-eyebrow" style={{ marginBottom: '0.9rem' }}>Pulled from the booth</p>
+          <p className="flipd-eyebrow" style={{ marginBottom: '0.9rem' }}>Court-side notes</p>
           <p className="flipd-display" style={{
             fontSize: 'clamp(1.6rem, 3.4vw, 2.4rem)',
             lineHeight: 1.35,
@@ -354,7 +331,7 @@ export function FlipdLayout({ concept, concepts }: Props) {
             )}
             {reservations && (
               <div style={{ marginTop: '2rem' }}>
-                <Link href={`/reserve/${concept.slug}`} className="flipd-btn flipd-btn-ghost">Grab a booth</Link>
+                <Link href={`/reserve/${concept.slug}`} className="flipd-btn flipd-btn-ghost">Book a court</Link>
               </div>
             )}
           </div>
@@ -406,14 +383,14 @@ export function FlipdLayout({ concept, concepts }: Props) {
             color: 'var(--flipd-cream)',
             textShadow: '0 4px 0 var(--flipd-sky)',
           }}>
-            HOT BIRD
+            SMASH IT
           </h2>
           <p className="flipd-display" style={{
             fontSize: 'clamp(1.6rem, 4vw, 2.4rem)',
             margin: '0 0 2.4rem',
             color: 'var(--flipd-sky)',
           }}>
-            cold milkshake.
+            between sets.
           </p>
           <Link href={`/${concept.slug}`} className="flipd-btn">Order from Flipd →</Link>
         </div>
