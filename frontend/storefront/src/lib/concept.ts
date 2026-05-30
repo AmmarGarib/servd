@@ -69,8 +69,12 @@ export function typeIcon(t: string): string {
 // to the generic image below.
 const HERO_BY_SLUG: Record<string, string> = {
   'simmer':          'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?w=1200&q=85',
-  'stax':            'https://images.unsplash.com/photo-1568901346375-23c9450c58cd?w=1200&q=85',
-  'flipd':           'https://images.unsplash.com/photo-1626645738196-c2a7c87a8f58?w=1200&q=85',
+  // Stax — rustic toasted focaccia/rye sandwich on a wood board. Matches
+  // the upscale dine-in / Italian-leaning brand direction.
+  'stax':            'https://images.unsplash.com/photo-1559054663-e8d23213f55c?w=1200&q=85',
+  // Flipd — smash burger (was Stax's image; now belongs to Flipd, the
+  // court-side smash-burger brand).
+  'flipd':           'https://images.unsplash.com/photo-1568901346375-23c9450c58cd?w=1200&q=85',
 }
 
 export function conceptHeroImage(concept: Concept): string {
