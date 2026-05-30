@@ -51,8 +51,12 @@ export function FlipdLayout({ concept, concepts }: Props) {
         </div>
       )}
 
-      {/* ── AWNING ─ candy-stripe band that tops the diner ── */}
+      {/* ── AWNING ─ sky-stripe band that caps the diner up top ── */}
       <div aria-hidden="true" className="flipd-awning" style={{ height: '36px' }} />
+
+      {/* ── ENTRY FLOOR ─ first checkered band right under the awning so
+          the diner-tile cue lands inside the first scroll. */}
+      <div aria-hidden="true" className="flipd-tile" style={{ height: 'clamp(2rem, 4vh, 3.5rem)' }} />
 
       {/* ── HERO ─ neon wordmark behind a glass window ───────────────
           Marquee FLIPD set with a sky-neon glow, Lobster tagline
@@ -136,7 +140,10 @@ export function FlipdLayout({ concept, concepts }: Props) {
         }} />
       </section>
 
-      <hr className="flipd-chrome-rule" />
+      {/* Section transition · checkered diner-floor banner. Same .flipd-tile
+          pattern as the mid-page + bottom bands so the floor reads as one
+          continuous through-line connecting every section. */}
+      <div aria-hidden="true" className="flipd-tile" style={{ height: 'clamp(2.5rem, 5vh, 4rem)' }} />
 
       {/* ── TONIGHT'S BOARD ─ a chalkboard-style today's specials list
           rendered as a paper board with typewritten copy ── */}
@@ -228,7 +235,7 @@ export function FlipdLayout({ concept, concepts }: Props) {
         </div>
       </section>
 
-      <hr className="flipd-chrome-rule" />
+      <div aria-hidden="true" className="flipd-tile" style={{ height: 'clamp(2.5rem, 5vh, 4rem)' }} />
 
       {/* ── HIGHLIGHTS ─ what we do, formica cards ─ */}
       <section style={{ padding: 'clamp(4rem, 9vh, 6rem) clamp(1.5rem, 5vw, 3rem)', background: 'var(--flipd-pale)' }}>
@@ -285,7 +292,7 @@ export function FlipdLayout({ concept, concepts }: Props) {
         </div>
       </section>
 
-      <hr className="flipd-chrome-rule" />
+      <div aria-hidden="true" className="flipd-tile" style={{ height: 'clamp(2.5rem, 5vh, 4rem)' }} />
 
       {/* ── HOURS + LOCATION ── */}
       <section style={{ padding: 'clamp(4rem, 9vh, 6rem) clamp(1.5rem, 5vw, 3rem)' }}>
