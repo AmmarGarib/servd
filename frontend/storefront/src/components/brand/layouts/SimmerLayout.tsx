@@ -17,7 +17,6 @@ import Link from 'next/link'
 import type { Concept } from '../../../lib/concept'
 import { conceptHeroImage } from '../../../lib/concept'
 import { CrossBrandStrip } from '../parts/CrossBrandStrip'
-import { OpenStatusBadge, HoursGrid, useHoursData } from '../parts/OpenStatusBadge'
 import { SpeakeasyFridgeHero } from '../../kinetic/SpeakeasyFridgeHero'
 
 interface Props {
@@ -173,9 +172,85 @@ function CoupeSketch() {
   )
 }
 
+// ─── ElsewhereButton ────────────────────────────────────────────────
+// Outbound link button used in the "elsewhere" section. Uses the
+// simmer .action class as the base (bone border + tracked-lowercase
+// Times) and adds a small icon to the left. External URLs open in a
+// new tab; mailto:/tel: stay in place.
+function ElsewhereButton({ href, label, icon }: {
+  href: string
+  label: string
+  icon: React.ReactNode
+}) {
+  const isExternal = !href.startsWith('mailto:') && !href.startsWith('tel:') && !href.startsWith('/')
+  return (
+    <a
+      href={href}
+      {...(isExternal ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
+      className="action"
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: '0.55rem',
+        padding: '0.85rem 0.85rem',
+        // .action defaults to inline-block — flex above wins; this just
+        // keeps every cell width-uniform inside the grid.
+        width: '100%',
+      }}
+    >
+      {icon}
+      <span>{label}</span>
+    </a>
+  )
+}
+
+// ─── Outbound social/location icon set ──────────────────────────────
+// Minimal lucide-style strokes at 14px. Stroke inherits from
+// .action's color (simmer-bone) so the icon stays in palette.
+function MapsIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/>
+      <circle cx="12" cy="10" r="3"/>
+    </svg>
+  )
+}
+function InstagramIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="2" y="2" width="20" height="20" rx="5" ry="5"/>
+      <path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"/>
+      <line x1="17.5" y1="6.5" x2="17.51" y2="6.5"/>
+    </svg>
+  )
+}
+function FacebookIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M18 2h-3a5 5 0 0 0-5 5v3H7v4h3v8h4v-8h3l1-4h-4V7a1 1 0 0 1 1-1h3z"/>
+    </svg>
+  )
+}
+function WhatsAppIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>
+    </svg>
+  )
+}
+function MailIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/>
+      <polyline points="22,6 12,13 2,6"/>
+    </svg>
+  )
+}
+
 export function SimmerLayout({ concept, concepts }: Props) {
-  const hoursData = useHoursData(concept.slug)
-  const reservations = concept.reservationsEnabled !== false
+  // Hours + reservations CTA live in the chiller hero; this page no
+  // longer needs the hoursData hook or the reservations gate.
 
   // Classes (.simmer-page, .amarante, .utility, .signal, .rule, .wordmark,
   // .action, .action--signal, .simmer-visit-grid) live in globals.css.
@@ -318,40 +393,39 @@ export function SimmerLayout({ concept, concepts }: Props) {
 
       <hr className="rule" />
 
-      {/* ── HOURS + RESERVATIONS + VISIT ─────────────────────────────────── */}
+      {/* ── ELSEWHERE ────────────────────────────────────────────────────────
+          Replaces the old hours/visit/reservations block — all three were
+          already in the chiller hero (hours sticker on the floor of the
+          cooler, Reserve a table pill inside the open door). What's left
+          to add is off-platform reach: maps for the speakeasy door, the
+          @simmer_down handle for the feed, the other socials, a direct
+          line. Five outbound buttons; one orange signal carried by the
+          @simmer_down handle in the eyebrow row. */}
       <section style={{ padding: 'clamp(4rem, 9vh, 6rem) clamp(1.5rem, 5vw, 3rem)' }}>
-        <div style={{ maxWidth: '64rem', margin: '0 auto', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'clamp(2rem, 5vw, 4rem)' }} className="simmer-visit-grid">
-          <div>
-            <p className="utility" style={{ fontSize: '0.7rem', opacity: 0.7, marginBottom: '1.5rem' }}>hours</p>
-            <div style={{ marginBottom: '1.25rem' }}>
-              <OpenStatusBadge hoursData={hoursData} />
-            </div>
-            <div style={{ fontFamily: 'var(--simmer-body)', fontSize: '0.95rem', letterSpacing: '0.02em', opacity: 0.9 }}>
-              {hoursData?.hours && hoursData.hours.length > 0 ? (
-                <HoursGrid hoursData={hoursData} />
-              ) : (
-                <p style={{ opacity: 0.7 }}>Hours not published yet.</p>
-              )}
-            </div>
+        <div style={{ maxWidth: '38rem', margin: '0 auto' }}>
+          <div style={{
+            display: 'flex',
+            alignItems: 'baseline',
+            justifyContent: 'space-between',
+            paddingBottom: '0.9rem',
+            marginBottom: '1.6rem',
+            borderBottom: '1px solid rgba(237,230,211,0.18)',
+            gap: '1rem',
+            flexWrap: 'wrap',
+          }}>
+            <span className="utility" style={{ fontSize: '0.78rem' }}>elsewhere</span>
+            <span className="utility signal" style={{ fontSize: '0.78rem', whiteSpace: 'nowrap' }}>@simmer_down</span>
           </div>
-
-          <div>
-            <p className="utility" style={{ fontSize: '0.7rem', opacity: 0.7, marginBottom: '1.5rem' }}>visit</p>
-            <p className="amarante" style={{ fontSize: '1.6rem', lineHeight: 1.3, margin: '0 0 1rem' }}>
-              {concept.address ?? 'Bukhari Commercial, DHA Phase 6, Karachi'}
-            </p>
-            {concept.phone && (
-              <p style={{ fontFamily: 'var(--simmer-body)', fontSize: '1rem', letterSpacing: '0.02em', opacity: 0.85, margin: 0 }}>
-                <a href={`tel:${concept.phone.replace(/\s/g, '')}`} style={{ color: 'inherit', textDecoration: 'none', borderBottom: '1px solid rgba(237,230,211,0.3)' }}>
-                  {concept.phone}
-                </a>
-              </p>
-            )}
-            {reservations && (
-              <div style={{ marginTop: '2rem' }}>
-                <Link href={`/reserve/${concept.slug}`} className="action">book a table</Link>
-              </div>
-            )}
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))',
+            gap: '0.7rem',
+          }}>
+            <ElsewhereButton href="https://www.google.com/maps/search/?api=1&query=Bukhari+Commercial+DHA+Phase+6+Karachi" label="maps" icon={<MapsIcon />} />
+            <ElsewhereButton href="https://instagram.com/simmer_down"                                                       label="instagram" icon={<InstagramIcon />} />
+            <ElsewhereButton href="https://facebook.com/simmerdown"                                                          label="facebook"  icon={<FacebookIcon />} />
+            <ElsewhereButton href="https://wa.me/923001234567"                                                               label="whatsapp"  icon={<WhatsAppIcon />} />
+            <ElsewhereButton href="mailto:hello@eatsimmer.com"                                                               label="email"     icon={<MailIcon />} />
           </div>
         </div>
       </section>
