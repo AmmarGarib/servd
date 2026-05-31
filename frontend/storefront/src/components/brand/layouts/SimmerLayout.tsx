@@ -42,17 +42,25 @@ const STAMP = todayStamp()
 // Side: 'left' = card pinned to the left half, 'right' = right half.
 // The orange rail runs down the centre of the parent; a small
 // bone-and-orange dot sits on the rail at this stop's vertical centre.
-function ItineraryStop({ side, children }: { side: 'left' | 'right', children: React.ReactNode }) {
+function ItineraryStop({ side, label, children }: { side: 'left' | 'right', label: string, children: React.ReactNode }) {
   return (
     <div style={{
       position: 'relative',
       display: 'flex',
+      flexDirection: 'column',
+      alignItems: side === 'right' ? 'flex-end' : 'flex-start',
       marginBottom: '1.8rem',
     }}>
-      {/* Stop dot — pinned to the rail at the card's vertical centre */}
+      {/* Stop dot — pinned to the rail at the card's vertical centre.
+          Calculated against the walnut card's centre, not the wrapper
+          flex column (which now also holds the museum-label below the
+          card). The dot lives at top: (card-height + own-radius) / 2;
+          184px wide walnut + 12px padding on each side = 184px card,
+          which renders ~150px tall on the 5:4 aspect-ratio image plus
+          24px frame chrome ≈ 174px. Half ≈ 87px. */}
       <span aria-hidden="true" style={{
         position: 'absolute',
-        left: '50%', top: '50%',
+        left: '50%', top: '87px',
         width: '10px', height: '10px', borderRadius: '50%',
         background: 'var(--simmer-bone)',
         border: '1.5px solid var(--simmer-orange)',
@@ -93,6 +101,22 @@ function ItineraryStop({ side, children }: { side: 'left' | 'right', children: R
           </div>
         </div>
       </div>
+      {/* Museum-label line below the card, edge-aligned to the card's
+          side. Tracked-out lowercase utility-Times per the simmer brand
+          bible. Uses simmer-green ink so it reads against the bone
+          itinerary surface. */}
+      <p className="utility" style={{
+        fontSize: '0.78rem',
+        margin: '0.7rem 0 0',
+        color: 'var(--simmer-green)',
+        opacity: 0.85,
+        // Match the walnut card's edge so the label tucks under it
+        // rather than centring under the dot.
+        width: '184px',
+        textAlign: side === 'right' ? 'right' : 'left',
+      }}>
+        {label}
+      </p>
     </div>
   )
 }
@@ -229,7 +253,7 @@ export function SimmerLayout({ concept, concepts }: Props) {
               width: '1px', background: 'var(--simmer-orange)', opacity: 0.55,
             }}/>
 
-            <ItineraryStop side="left">
+            <ItineraryStop side="left" label="the space">
               <img
                 src={conceptHeroImage(concept)}
                 alt=""
@@ -237,11 +261,11 @@ export function SimmerLayout({ concept, concepts }: Props) {
               />
             </ItineraryStop>
 
-            <ItineraryStop side="right">
+            <ItineraryStop side="right" label="the plate">
               <PlateSketch />
             </ItineraryStop>
 
-            <ItineraryStop side="left">
+            <ItineraryStop side="left" label="the pour">
               <CoupeSketch />
             </ItineraryStop>
           </div>
