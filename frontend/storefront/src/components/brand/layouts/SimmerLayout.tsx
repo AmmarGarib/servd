@@ -248,21 +248,47 @@ export function SimmerLayout({ concept, concepts }: Props) {
         </div>
       </section>
 
-      {/* ── MENU CTA ────────────────────────────────────────────────────────
-          The menu lives at /brand/simmer/menu. This is the route in. */}
+      {/* ── WHAT'S NEXT ───────────────────────────────────────────────────
+          Replaces the old "the menu — read it / order from simmer" CTA
+          block. Per the simmer brand bible (Caption voice + single
+          orange signal per layout): short forward-looking note from the
+          kitchen on what's being tested for the next menu. Reward for
+          regulars; honest behind-the-line moment. Refresh weekly. The
+          date stamp in the header is the only orange accent in this
+          section — leave everything else bone/mute so the eye lands on
+          the date and the body copy. */}
       <section style={{ padding: 'clamp(5rem, 12vh, 8rem) clamp(1.5rem, 5vw, 3rem)' }}>
-        <div style={{ maxWidth: '54rem', margin: '0 auto', textAlign: 'center' }}>
-          <p className="utility" style={{ fontSize: '0.7rem', opacity: 0.7, marginBottom: '1.5rem' }}>the menu</p>
-          <p className="amarante" style={{ fontSize: 'clamp(2.2rem, 5vw, 3.6rem)', lineHeight: 1.05, margin: 0 }}>
-            ingredient-driven.<br />printed on the date you read it.
-          </p>
-          <p style={{ marginTop: '1.5rem', fontFamily: 'var(--simmer-body)', fontSize: '1.05rem', letterSpacing: '0.02em', opacity: 0.85, maxWidth: '36ch', marginLeft: 'auto', marginRight: 'auto' }}>
-            Today's menu is dated <span className="amarante signal" style={{ letterSpacing: '0.04em' }}>{STAMP}</span>. Read it before you sit.
-          </p>
-          <div style={{ marginTop: '2.5rem', display: 'flex', gap: '1rem', justifyContent: 'center', flexWrap: 'wrap' }}>
-            <Link href={`/brand/${concept.slug}/menu`} className="action action--signal">read the menu</Link>
-            <Link href={`/${concept.slug}`} className="action">order from simmer</Link>
+        <div style={{ maxWidth: '38rem', margin: '0 auto' }}>
+          <div style={{
+            display: 'flex',
+            alignItems: 'baseline',
+            justifyContent: 'space-between',
+            paddingBottom: '0.9rem',
+            marginBottom: '2rem',
+            borderBottom: '1px solid rgba(237,230,211,0.18)',
+          }}>
+            <span className="utility" style={{ fontSize: '0.78rem' }}>what&apos;s next</span>
+            <span className="utility signal" style={{ fontSize: '0.78rem', whiteSpace: 'nowrap' }}>{STAMP}</span>
           </div>
+          <p style={{
+            fontFamily: 'var(--simmer-body)',
+            fontSize: 'clamp(1.05rem, 1.5vw, 1.2rem)',
+            lineHeight: 1.75,
+            letterSpacing: '0.02em',
+            margin: 0,
+            color: 'var(--simmer-bone)',
+          }}>
+            We&apos;re testing a stone-fruit dessert for late June. Apricots came in two weeks early this year. The pastry team has been pulling late nights. If you sit again in three weeks, it might be on the table.
+          </p>
+          <p className="amarante" style={{
+            fontSize: '1.05rem',
+            fontStyle: 'italic',
+            marginTop: '2rem',
+            opacity: 0.7,
+            letterSpacing: '0.02em',
+          }}>
+            — the simmer team
+          </p>
         </div>
       </section>
 
