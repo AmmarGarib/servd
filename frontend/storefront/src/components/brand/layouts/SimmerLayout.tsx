@@ -173,13 +173,12 @@ function CoupeSketch() {
 }
 
 // ─── ElsewhereButton ────────────────────────────────────────────────
-// Outbound link button used in the "elsewhere" section. Uses the
-// simmer .action class as the base (bone border + tracked-lowercase
-// Times) and adds a small icon to the left. External URLs open in a
-// new tab; mailto:/tel: stay in place.
-function ElsewhereButton({ href, label, icon }: {
+// Outbound icon-only link. Bare svg, no border or label — sits in a
+// flex row at the bottom of the brand microsite. External URLs open
+// in a new tab; mailto:/tel: stay in place.
+function ElsewhereButton({ href, ariaLabel, icon }: {
   href: string
-  label: string
+  ariaLabel: string
   icon: React.ReactNode
 }) {
   const isExternal = !href.startsWith('mailto:') && !href.startsWith('tel:') && !href.startsWith('/')
@@ -187,30 +186,38 @@ function ElsewhereButton({ href, label, icon }: {
     <a
       href={href}
       {...(isExternal ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
-      className="action"
+      aria-label={ariaLabel}
       style={{
-        display: 'flex',
+        display: 'inline-flex',
         alignItems: 'center',
         justifyContent: 'center',
-        gap: '0.55rem',
-        padding: '0.85rem 0.85rem',
-        // .action defaults to inline-block — flex above wins; this just
-        // keeps every cell width-uniform inside the grid.
-        width: '100%',
+        width: '2.5rem',
+        height: '2.5rem',
+        color: 'var(--simmer-bone)',
+        opacity: 0.78,
+        transition: 'opacity 160ms ease, color 160ms ease',
+        textDecoration: 'none',
+      }}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.opacity = '1'
+        e.currentTarget.style.color = 'var(--simmer-orange)'
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.opacity = '0.78'
+        e.currentTarget.style.color = 'var(--simmer-bone)'
       }}
     >
       {icon}
-      <span>{label}</span>
     </a>
   )
 }
 
-// ─── Outbound social/location icon set ──────────────────────────────
-// Minimal lucide-style strokes at 14px. Stroke inherits from
-// .action's color (simmer-bone) so the icon stays in palette.
+// ─── Outbound icon set ──────────────────────────────────────────────
+// Minimal lucide-style strokes at 22px. Stroke inherits from the
+// parent link's `color` (bone by default, orange on hover).
 function MapsIcon() {
   return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/>
       <circle cx="12" cy="10" r="3"/>
     </svg>
@@ -218,30 +225,38 @@ function MapsIcon() {
 }
 function InstagramIcon() {
   return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <rect x="2" y="2" width="20" height="20" rx="5" ry="5"/>
       <path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"/>
       <line x1="17.5" y1="6.5" x2="17.51" y2="6.5"/>
     </svg>
   )
 }
+function TikTokIcon() {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      {/* Stylised "d-with-flag" form of the TikTok glyph */}
+      <path d="M9 12a4 4 0 1 0 4 4V4a5 5 0 0 0 5 5"/>
+    </svg>
+  )
+}
 function FacebookIcon() {
   return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="M18 2h-3a5 5 0 0 0-5 5v3H7v4h3v8h4v-8h3l1-4h-4V7a1 1 0 0 1 1-1h3z"/>
     </svg>
   )
 }
 function WhatsAppIcon() {
   return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>
     </svg>
   )
 }
 function MailIcon() {
   return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/>
       <polyline points="22,6 12,13 2,6"/>
     </svg>
@@ -417,15 +432,17 @@ export function SimmerLayout({ concept, concepts }: Props) {
             <span className="utility signal" style={{ fontSize: '0.78rem', whiteSpace: 'nowrap' }}>@simmer_down</span>
           </div>
           <div style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))',
-            gap: '0.7rem',
+            display: 'flex',
+            flexWrap: 'wrap',
+            justifyContent: 'center',
+            gap: 'clamp(1rem, 4vw, 2rem)',
           }}>
-            <ElsewhereButton href="https://www.google.com/maps/search/?api=1&query=Bukhari+Commercial+DHA+Phase+6+Karachi" label="maps" icon={<MapsIcon />} />
-            <ElsewhereButton href="https://instagram.com/simmer_down"                                                       label="instagram" icon={<InstagramIcon />} />
-            <ElsewhereButton href="https://facebook.com/simmerdown"                                                          label="facebook"  icon={<FacebookIcon />} />
-            <ElsewhereButton href="https://wa.me/923001234567"                                                               label="whatsapp"  icon={<WhatsAppIcon />} />
-            <ElsewhereButton href="mailto:hello@eatsimmer.com"                                                               label="email"     icon={<MailIcon />} />
+            <ElsewhereButton ariaLabel="instagram" href="https://instagram.com/simmer_down"                                                       icon={<InstagramIcon />} />
+            <ElsewhereButton ariaLabel="tiktok"    href="https://tiktok.com/@simmer_down"                                                         icon={<TikTokIcon />} />
+            <ElsewhereButton ariaLabel="facebook"  href="https://facebook.com/simmerdown"                                                          icon={<FacebookIcon />} />
+            <ElsewhereButton ariaLabel="whatsapp"  href="https://wa.me/923001234567"                                                               icon={<WhatsAppIcon />} />
+            <ElsewhereButton ariaLabel="maps"      href="https://www.google.com/maps/search/?api=1&query=Bukhari+Commercial+DHA+Phase+6+Karachi" icon={<MapsIcon />} />
+            <ElsewhereButton ariaLabel="email"     href="mailto:hello@eatsimmer.com"                                                               icon={<MailIcon />} />
           </div>
         </div>
       </section>
