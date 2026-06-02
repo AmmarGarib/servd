@@ -548,14 +548,21 @@ export async function authRoutes(fastify: FastifyInstance) {
   //
   // Use case: legacy accounts whose PIN was derived from their phone are
   // flagged pinMustReset=true and blocked from PIN login. This endpoint
-  // generates a fresh 6-digit CSPRNG PIN, replaces the bcrypt hash, and
-  // clears the flag. The plaintext PIN is returned ONCE — the admin
-  // copies it to the staff member out-of-band (paper slip handed over
-  // in person, written on their workforce card, etc).
+  // replaces the bcrypt hash and clears the flag.
+  //
+  // Body is optional. With no body, a fresh 6-digit CSPRNG PIN is generated
+  // and returned once in the response so the admin can hand it to the staff
+  // member out-of-band. With `{ pin: "<6 digits>" }`, the admin sets a
+  // specific value — useful when the staff member wants a memorable PIN
+  // (kept loosely random, never derived from PII).
   fastify.post<{ Params: { id: string } }>(
     '/staff/:id/issue-pin',
     { preHandler: requireAuth('admin') },
     async (req, reply) => {
+      const body = z.object({
+        pin: z.string().regex(/^\d{6}$/, 'PIN must be exactly 6 digits').optional(),
+      }).parse(req.body ?? {})
+
       const user = await prisma.user.findUnique({
         where: { id: req.params.id },
         select: { id: true, name: true, role: true, isActive: true, deletedAt: true },
@@ -563,22 +570,33 @@ export async function authRoutes(fastify: FastifyInstance) {
       if (!user || user.deletedAt) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'No such staff' } })
 
       // Collision check against every active PIN — see /auth/staff/signup
-      // for the same logic. Retry until we find a unique value.
+      // for the same logic. Retry until we find a unique value, or — when
+      // the admin supplied a specific PIN — reject if it clashes.
       const candidates = await prisma.user.findMany({
         where: { isActive: true, pin: { not: null }, accountStatus: 'active', id: { not: user.id } },
         select: { pin: true },
       })
+
       let pinPlain: string | null = null
-      for (let attempt = 0; attempt < 5; attempt++) {
-        const tryPin = generateRandomPin()
-        let collides = false
+      if (body.pin) {
         for (const c of candidates) {
-          if (c.pin && await bcrypt.compare(tryPin, c.pin)) { collides = true; break }
+          if (c.pin && await bcrypt.compare(body.pin, c.pin)) {
+            return reply.status(409).send({ error: { code: 'PIN_COLLISION', message: 'That PIN is already in use by another staff member. Pick a different value.' } })
+          }
         }
-        if (!collides) { pinPlain = tryPin; break }
-      }
-      if (!pinPlain) {
-        return reply.status(503).send({ error: { code: 'PIN_GENERATION_FAILED', message: 'Could not allocate a unique PIN. Try again.' } })
+        pinPlain = body.pin
+      } else {
+        for (let attempt = 0; attempt < 5; attempt++) {
+          const tryPin = generateRandomPin()
+          let collides = false
+          for (const c of candidates) {
+            if (c.pin && await bcrypt.compare(tryPin, c.pin)) { collides = true; break }
+          }
+          if (!collides) { pinPlain = tryPin; break }
+        }
+        if (!pinPlain) {
+          return reply.status(503).send({ error: { code: 'PIN_GENERATION_FAILED', message: 'Could not allocate a unique PIN. Try again.' } })
+        }
       }
 
       const pin = await hashPin(pinPlain)
@@ -590,6 +608,9 @@ export async function authRoutes(fastify: FastifyInstance) {
       return reply.status(200).send({
         id: user.id,
         name: user.name,
+        // Echo the PIN regardless of whether the admin supplied it (their
+        // copy may be on a different device, and the response is the
+        // canonical confirmation of what landed in the DB).
         pin: pinPlain,
         message: 'PIN reissued. Share it with the staff member now — it will not be shown again.',
       })
