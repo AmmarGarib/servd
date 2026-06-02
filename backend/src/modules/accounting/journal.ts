@@ -65,7 +65,6 @@ export const ACCT = {
   BANK:                '1020',
   CARD_RECEIVABLE:     '1030',
   CUSTOMER_AR:         '1110',
-  FOODPANDA_AR:        '1120',
   INVENTORY_FOOD:      '1210',
   INVENTORY_BEVERAGE:  '1220',
   INVENTORY_PACKAGING: '1230',
@@ -97,7 +96,6 @@ export const ACCT = {
   WAGES_MANAGEMENT:    '6032',
   WAGES_RIDERS:        '6035',
   CARD_FEES:           '6080',
-  FOODPANDA_COMMISSION:'6090',
 
   DISCOUNTS:           '7010',
   LOYALTY_REDEMPTIONS: '7020',

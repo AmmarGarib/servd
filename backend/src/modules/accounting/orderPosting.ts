@@ -99,7 +99,7 @@ function computeOrderCogsCents(order: OrderForPosting): number {
 
 interface SaleAccounting {
   // Customer-facing money flow (charged to a payment instrument)
-  totalChargedCents:   number   // hits cash drawer / card receivable / Foodpanda AR
+  totalChargedCents:   number   // hits cash drawer / card receivable
   walletAppliedCents:  number   // dr wallet liability
   // (Loyalty redemption is currently captured as discountCents — kept here in
   //  case we split the field later; default 0.)
@@ -111,9 +111,6 @@ interface SaleAccounting {
   grossRevenueCents: number     // cr revenue (subtotal before discount, ex-tax)
   serviceChargeCents: number    // cr 4100 service charge revenue
   tipCents:        number       // cr 2095 tips payable to staff
-
-  // Channel-specific
-  foodpandaCommissionCents: number
 }
 
 function computeSaleAccounting(order: OrderForPosting): SaleAccounting {
@@ -137,12 +134,6 @@ function computeSaleAccounting(order: OrderForPosting): SaleAccounting {
     serviceChargeCents -
     tipCents
 
-  // Per-concept negotiated rate, falls back to default 0.25 if unset.
-  const foodpandaCommissionCents =
-    order.source === 'foodpanda'
-      ? Math.round(totalChargedCents * (order.concept.foodpandaCommissionRate ?? 0.25))
-      : 0
-
   return {
     totalChargedCents,
     walletAppliedCents,
@@ -152,7 +143,6 @@ function computeSaleAccounting(order: OrderForPosting): SaleAccounting {
     grossRevenueCents,
     serviceChargeCents,
     tipCents,
-    foodpandaCommissionCents,
   }
 }
 
@@ -162,27 +152,17 @@ function buildSaleLines(order: OrderForPosting, sa: SaleAccounting, cogsCents: n
 
   // ── Debits: where the money / value moved TO ───────────────────────────
   if (sa.totalChargedCents > 0) {
-    if (order.source === 'foodpanda') {
-      const netDueFromFoodpanda = sa.totalChargedCents - sa.foodpandaCommissionCents
-      if (netDueFromFoodpanda > 0) {
-        lines.push({ accountCode: ACCT.FOODPANDA_AR, type: 'debit', amountCents: netDueFromFoodpanda, memo: conceptMemo })
-      }
-      if (sa.foodpandaCommissionCents > 0) {
-        lines.push({ accountCode: ACCT.FOODPANDA_COMMISSION, type: 'debit', amountCents: sa.foodpandaCommissionCents, memo: conceptMemo })
-      }
-    } else {
-      // Determine if cash or card from the payment record(s)
-      const cashPayments = order.payments.filter((p) => p.method === 'cash' && p.status === 'paid')
-      const cashTotal = cashPayments.reduce((s, p) => s + p.amountCents, 0)
-      const cardTotal = sa.totalChargedCents - cashTotal
+    // Determine if cash or card from the payment record(s)
+    const cashPayments = order.payments.filter((p) => p.method === 'cash' && p.status === 'paid')
+    const cashTotal = cashPayments.reduce((s, p) => s + p.amountCents, 0)
+    const cardTotal = sa.totalChargedCents - cashTotal
 
-      if (cashTotal > 0) {
-        const cashAccount = order.source === 'pos' ? ACCT.CASH_DRAWER : ACCT.CASH_ON_HAND
-        lines.push({ accountCode: cashAccount, type: 'debit', amountCents: cashTotal, memo: conceptMemo })
-      }
-      if (cardTotal > 0) {
-        lines.push({ accountCode: ACCT.CARD_RECEIVABLE, type: 'debit', amountCents: cardTotal, memo: conceptMemo })
-      }
+    if (cashTotal > 0) {
+      const cashAccount = order.source === 'pos' ? ACCT.CASH_DRAWER : ACCT.CASH_ON_HAND
+      lines.push({ accountCode: cashAccount, type: 'debit', amountCents: cashTotal, memo: conceptMemo })
+    }
+    if (cardTotal > 0) {
+      lines.push({ accountCode: ACCT.CARD_RECEIVABLE, type: 'debit', amountCents: cardTotal, memo: conceptMemo })
     }
   }
 

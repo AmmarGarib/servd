@@ -1,11 +1,8 @@
 // Reconciliation service.
 //
-// Two flows:
-//   1. Bank/gateway statement reconciliation — operator pastes CSV; we parse,
-//      auto-match against journal lines, and surface unmatched rows for the
-//      operator to investigate / book as adjustment journal entries.
-//   2. Foodpanda settlement reconciliation — compute expected payout from our
-//      orders, compare to actual reported by Foodpanda, post the variance.
+// Bank/gateway statement reconciliation — operator pastes CSV; we parse,
+// auto-match against journal lines, and surface unmatched rows for the
+// operator to investigate / book as adjustment journal entries.
 
 import { prisma } from '../../lib/prisma.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'

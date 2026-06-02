@@ -9,8 +9,8 @@ import type { OrderStatus, ItemStatus } from '@prisma/client'
 
 export const ORDER_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
   // The spec's lifecycle: incoming → confirmed → preparing → ready → completed.
-  // Cancellations can fork from any pre-completion state; rejections only
-  // happen at intake (Foodpanda rejects an order we can't fulfil).
+  // Cancellations can fork from any pre-completion state; rejections happen
+  // at intake when staff (or an automated rule) declines an order.
   received:  ['confirmed', 'cancelled', 'rejected', 'preparing'],
   confirmed: ['preparing', 'ready', 'cancelled'],
   preparing: ['ready', 'cancelled'],
@@ -47,8 +47,8 @@ export const ITEM_TRANSITIONS: Record<ItemStatus, ItemStatus[]> = {
  * `ApiError('INVALID_TRANSITION', 409)` when this returns false so the
  * client sees a 409 (not a 500) and the audit log captures the attempt.
  *
- * Same-state moves are always legal — repeated writes (Foodpanda retries the
- * "confirmed" webhook) shouldn't blow up, just no-op.
+ * Same-state moves are always legal — repeated writes (gateway webhook
+ * retries on the "confirmed" callback) shouldn't blow up, just no-op.
  */
 export function canTransitionOrder(from: OrderStatus, to: OrderStatus): boolean {
   if (from === to) return true

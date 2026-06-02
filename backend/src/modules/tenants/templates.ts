@@ -139,7 +139,7 @@ export const TEMPLATES: RestaurantTemplate[] = [
     key: 'cloud_kitchen',
     emoji: '🛵',
     label: 'Cloud kitchen / multi-brand',
-    blurb: 'Delivery-only, multiple brands out of one kitchen. Built for Foodpanda + Careem volume.',
+    blurb: 'Delivery-only, multiple brands out of one kitchen. Built for own-fleet, high-volume nightly service.',
     conceptType: 'digital',
     conceptName: 'Brand A',
     primaryColor: '#6366F1',

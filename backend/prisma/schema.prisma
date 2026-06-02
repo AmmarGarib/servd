@@ -21,8 +21,6 @@ enum ConceptType {
 
 enum OrderSource {
   servd
-  foodpanda
-  careem
   pos
   cart
   manual
@@ -241,11 +239,6 @@ model Concept {
   latitude         Float?
   longitude        Float?
   deliveryRadiusKm Float  @default(5) // how far this brand delivers from its outlet
-
-  // Foodpanda commission rate as a fraction (0.25 = 25%). Negotiated per
-  // concept; some brands have promotional discounts. Default mirrors the
-  // standard contract.
-  foodpandaCommissionRate Float @default(0.25)
 
   // FBR registration / tax invoice details. Required fields on Pakistani tax
   // invoices: STRN (Sales Tax Registration Number) and NTN (National Tax
@@ -2325,25 +2318,6 @@ model BankStatementLine {
   @@map("bank_statement_lines")
 }
 
-// Foodpanda payout reconciliation. One row per settlement received from
-// Foodpanda; we compute expected (sum of order net) vs actual (Foodpanda's
-// payout) and flag the variance for investigation.
-model FoodpandaSettlement {
-  id                  String   @id @default(uuid())
-  settlementDate      DateTime
-  reference           String? // Foodpanda's settlement ID
-  expectedAmountCents Int // computed: sum of (order total - commission) for orders in period
-  actualAmountCents   Int // what Foodpanda actually paid
-  varianceCents       Int      @default(0)
-  status              String   @default("open") // open | reconciled | written_off
-  notes               String?
-  recordedById        String?
-  createdAt           DateTime @default(now())
-  updatedAt           DateTime @updatedAt
-
-  @@index([settlementDate(sort: Desc)])
-  @@map("foodpanda_settlements")
-}
 
 // ─── Cost allocation ─────────────────────────────────────────────────────────
 //

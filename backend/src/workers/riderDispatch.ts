@@ -4,9 +4,9 @@
 // assigned, then picks the nearest available rider using Haversine distance
 // from the concept's lat/lng and assigns them.
 //
-// Delivery orders are identified by source (foodpanda, careem) or by the
-// presence of a delivery OTP (native delivery orders placed via storefront/cart
-// that generate an OTP at checkout). Dine-in and pure pickup orders are skipped.
+// Delivery orders are identified by the presence of a delivery OTP (orders
+// placed via storefront/cart generate an OTP at checkout). Dine-in and pure
+// pickup orders are skipped.
 //
 // If no riders are available the order is logged and left for the next tick or
 // for a human dispatcher to handle manually via /dispatch.

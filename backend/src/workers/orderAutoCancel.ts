@@ -60,8 +60,8 @@ async function runCancelSweep(): Promise<void> {
   // Fetch both cohorts in parallel — independent DB queries.
   const [stalledReceived, stalledConfirmed] = await Promise.all([
     // Digital orders stuck in 'received' > 30 min.
-    // Exclude foodpanda/careem (aggregator-managed), pos (staff-facing), and
-    // manual (operator-entered) — those have different workflows.
+    // Exclude pos (staff-facing) and manual (operator-entered) — those have
+    // different workflows where a stale 'received' just means staff are slow.
     prisma.order.findMany({
       where: {
         status: 'received',

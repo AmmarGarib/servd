@@ -123,9 +123,7 @@ export async function createPosOrder(input: PosOrderInput) {
   // CEO policy: GST is split by tender — cash @ taxRateCash, card/digital @
   // taxRateCard. Cashier picks the method up front (`input.paymentMethod`);
   // for unknown / pending methods we default to the cash rate so the
-  // customer never gets a smaller bill than they actually owe. Foodpanda /
-  // Careem orders ingested separately default to card rate (they always
-  // settle digitally) — see orders/service.ts ingestion.
+  // customer never gets a smaller bill than they actually owe.
   const intendedMethod = input.paymentMethod ?? 'cash'
   const effectiveRate = intendedMethod === 'cash'
     ? (concept.taxRateCash ?? concept.taxRate)
@@ -134,7 +132,7 @@ export async function createPosOrder(input: PosOrderInput) {
   const subtotal = itemTotal - discount
   const taxCents = Math.round(subtotal * taxRate)
   // Service charge applies to the post-tax subtotal so customers see the
-  // service line on top of (food + tax) — matches what aggregators display.
+  // service line on top of (food + tax).
   const serviceChargeCents = await computeServiceCharge(subtotal + taxCents, 'pos')
   const totalCents = subtotal + taxCents + serviceChargeCents
 
@@ -206,9 +204,7 @@ export async function processPayment(input: ProcessPaymentInput) {
   const result = await prisma.$transaction(async (tx) => {
     const order = await tx.order.findUnique({
       where: { id: input.orderId },
-      // B02: concept needed for foodpandaCommissionRate. Loading it here means
-      // the financial entry write below doesn't need a second round-trip.
-      include: { payments: true, concept: { select: { foodpandaCommissionRate: true } } },
+      include: { payments: true },
     })
     if (!order) throw new NotFoundError('Order', input.orderId)
 
@@ -285,21 +281,17 @@ export async function processPayment(input: ProcessPaymentInput) {
     if (allInstant) {
       const existingEntry = await tx.financialEntry.findFirst({ where: { orderId: order.id } })
       if (!existingEntry) {
-        // B02: per-brand commission rate; safe fallback only if unconfigured.
-        const commissionRate = order.source === 'foodpanda'
-          ? (order.concept?.foodpandaCommissionRate ?? 0.25)
-          : 0
-        const commission = Math.round(order.totalCents * commissionRate)
+        // Own-fleet ordering only — no aggregator commission to deduct.
         await tx.financialEntry.create({
           data: {
             orderId: order.id,
             conceptId: order.conceptId,
             channel: order.source,
             grossCents: order.totalCents,
-            commissionCents: commission,
+            commissionCents: 0,
             discountCents: order.discountCents,
             taxCents: order.taxCents,
-            netCents: order.totalCents - commission - order.discountCents,
+            netCents: order.totalCents - order.discountCents,
           },
         })
       }
