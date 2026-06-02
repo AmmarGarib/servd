@@ -7,6 +7,7 @@
 // alphabet. Looked up case-insensitively.
 
 import type { FastifyInstance } from 'fastify'
+import { randomBytes } from 'crypto'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, MANAGERS, ALL_STAFF } from '../auth/middleware.js'
@@ -16,8 +17,12 @@ import { postJournalEntry, ACCT } from '../accounting/journal.js'
 
 const ALPHABET = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ'  // no 0/O/1/I confusion
 function generateCode(): string {
+  // Use CSPRNG bytes mapped onto the unambiguous alphabet — Math.random's
+  // state is recoverable from a handful of outputs, so a leaked card code
+  // could expose the PRNG and let an attacker enumerate future cards.
   let block = ''
-  for (let i = 0; i < 8; i++) block += ALPHABET[Math.floor(Math.random() * ALPHABET.length)]
+  const bytes = randomBytes(8)
+  for (let i = 0; i < 8; i++) block += ALPHABET[bytes[i]! % ALPHABET.length]
   return `GS-${block.slice(0, 4)}-${block.slice(4)}`
 }
 

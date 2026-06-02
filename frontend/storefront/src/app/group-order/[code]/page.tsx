@@ -6,6 +6,7 @@
 import { useEffect, useState, useMemo } from 'react'
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
+import { useCustomerAuth } from '../../../store/customerAuth'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -28,6 +29,7 @@ export default function GroupOrderRoom() {
   const { code } = useParams<{ code: string }>()
   const searchParams = useSearchParams()
   const myName = searchParams.get('me') ?? ''
+  const token = useCustomerAuth((s) => s.token)
 
   const [go, setGo] = useState<GroupOrder | null>(null)
   const [menu, setMenu] = useState<Category[]>([])
@@ -35,12 +37,28 @@ export default function GroupOrderRoom() {
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
+  // Group orders are auth-gated server-side (anonymous submit was an unpaid-
+  // kitchen-ticket primitive). If we don't have a token, bounce to login and
+  // resume here after sign-in.
+  useEffect(() => {
+    if (!token) {
+      const next = encodeURIComponent(`/group-order/${code}?me=${encodeURIComponent(myName)}`)
+      router.replace(`/login?next=${next}`)
+    }
+  }, [token, code, myName, router])
+
+  const authHeaders = useMemo(
+    () => (token ? { Authorization: `Bearer ${token}` } as Record<string, string> : {}),
+    [token],
+  )
+
   // Load + poll
   useEffect(() => {
+    if (!token) return
     let cancelled = false
     async function fetchAll() {
       try {
-        const res = await fetch(`${API_URL}/api/v1/group-orders/${code}`)
+        const res = await fetch(`${API_URL}/api/v1/group-orders/${code}`, { headers: authHeaders })
         if (!res.ok) throw new Error('Group not found')
         const data = await res.json() as GroupOrder
         if (cancelled) return
@@ -51,11 +69,11 @@ export default function GroupOrderRoom() {
           if (m.ok && !cancelled) setMenu(await m.json() as Category[])
         }
 
-        // Auto-join as the named member if not already in
+        // Auto-join as the named member if not already in (idempotent server-side)
         if (myName && !data.members.some((m) => m.displayName === myName)) {
           await fetch(`${API_URL}/api/v1/group-orders/${code}/join`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', ...authHeaders },
             body: JSON.stringify({ displayName: myName }),
           })
         }
@@ -68,30 +86,34 @@ export default function GroupOrderRoom() {
     void fetchAll()
     const iv = setInterval(() => void fetchAll(), 3000)
     return () => { cancelled = true; clearInterval(iv) }
-  }, [code, myName, menu.length])
+  }, [code, myName, menu.length, token, authHeaders])
 
-  const myItems = useMemo(() => go?.items.filter((i) => i.memberId === meId) ?? [], [go, meId])
   const subtotal = useMemo(() => go?.items.reduce((s, i) => s + i.unitPriceCents * i.quantity, 0) ?? 0, [go])
   const tax = go ? Math.round(subtotal * (go.concept.taxRate / 100)) : 0
   const total = subtotal + tax
 
   const addItem = async (item: MenuItem) => {
     if (!meId || !go) return
+    // memberId is derived server-side from the authenticated customer — no
+    // longer accepted in the request body.
     await fetch(`${API_URL}/api/v1/group-orders/${code}/items`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ memberId: meId, menuItemId: item.id, quantity: 1 }),
+      headers: { 'Content-Type': 'application/json', ...authHeaders },
+      body: JSON.stringify({ menuItemId: item.id, quantity: 1 }),
     })
   }
   const removeItem = async (id: string) => {
-    await fetch(`${API_URL}/api/v1/group-orders/${code}/items/${id}`, { method: 'DELETE' })
+    await fetch(`${API_URL}/api/v1/group-orders/${code}/items/${id}`, {
+      method: 'DELETE',
+      headers: authHeaders,
+    })
   }
   const submit = async () => {
     if (!go) return
     setBusy(true)
     try {
-      await fetch(`${API_URL}/api/v1/group-orders/${code}/lock`,   { method: 'POST' })
-      const res = await fetch(`${API_URL}/api/v1/group-orders/${code}/submit`, { method: 'POST' })
+      await fetch(`${API_URL}/api/v1/group-orders/${code}/lock`, { method: 'POST', headers: authHeaders })
+      const res = await fetch(`${API_URL}/api/v1/group-orders/${code}/submit`, { method: 'POST', headers: authHeaders })
       const data = await res.json() as { orderId: string }
       router.push(`/${go.concept.slug}/order/${data.orderId}`)
     } finally { setBusy(false) }

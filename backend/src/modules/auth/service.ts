@@ -76,6 +76,13 @@ export async function staffPinLogin(pin: string) {
   )
   const matchedUser = results.find((r) => r.match)?.user ?? null
 
+  // Admin login MUST use email+password, not PIN. A 6-digit PIN is brute-
+  // forceable enough that the CEO's account shouldn't depend on it alone;
+  // PIN login stays for shift staff who clock in on shared tablets.
+  if (matchedUser && matchedUser.role === 'admin') {
+    throw new UnauthorizedError('Admin accounts must sign in with email and password')
+  }
+
   if (!matchedUser) {
     // Distinguish "wrong PIN" from "your account is still pending". Knowing
     // approval is pending tells the new hire they're not crazy — without
@@ -93,10 +100,11 @@ export async function staffPinLogin(pin: string) {
     throw new UnauthorizedError('PIN not recognised — or your account is still awaiting approval')
   }
 
-  // PIN login is the primary admin login (per CEO decision), so it issues a
-  // full access + refresh pair just like password login does. The PIN-typed
-  // token still ships for KDS/POS shared-device flows that want a 12-hour
-  // station session that can't accidentally hit back-office routes.
+  // PIN login is the day-to-day login for shift staff (clocks them in on a
+  // shared tablet), so it issues a full access + refresh pair just like
+  // password login does. The PIN-typed token still ships for KDS/POS shared-
+  // device flows that want a 12-hour station session. Admin role is blocked
+  // above — admins must use email + password.
   const accessToken = jwt.sign(
     { sub: matchedUser.id, email: matchedUser.email, role: matchedUser.role, type: 'access' } satisfies StaffTokenPayload,
     JWT_SECRET,

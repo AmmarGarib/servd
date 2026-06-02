@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify'
+import { randomBytes } from 'crypto'
 import bcrypt from 'bcryptjs'                  // PIN collision check on staff signup
 import { z } from 'zod'
 import { staffLogin, staffPinLogin, refreshStaffToken, customerRegister, customerLogin, verifyMagicLink, requestMagicLink, hashPassword, hashPin } from './service.js'
@@ -402,16 +403,20 @@ export async function authRoutes(fastify: FastifyInstance) {
   // Workflow:
   //   1. New hire fills the signup form on /login (name, email, phone, role).
   //   2. POST /auth/staff/signup creates a User row with status='pending'.
-  //      PIN is auto-derived from the last 4 digits of their phone (matches
-  //      every other staff member's PIN convention).
-  //   3. CEO reviews pending accounts under the user dropdown → /configuration/
-  //      pending-approvals and approves/rejects.
+  //      PIN is a freshly-generated 6-digit random value, shown ONCE in the
+  //      signup response so the new hire can save it. Phone-derived PINs
+  //      used to be the default — that meant anyone who knew a staff member's
+  //      phone (business cards, Instagram, reservation history) had their
+  //      admin PIN. CSPRNG closes that.
+  //   3. CEO reviews pending accounts and approves/rejects.
   //   4. Until approved, PIN login is blocked at the service layer.
 
-  function pinFromPhone(phone: string): string {
-    const digits = phone.replace(/\D/g, '')
-    if (digits.length < 4) throw new AppError('PHONE_TOO_SHORT', 'Phone must have at least 4 digits to derive a PIN', 400)
-    return digits.slice(-4)
+  function generateRandomPin(): string {
+    // 6-digit PIN, 10^6 = 1M keyspace. Combined with per-user + per-IP
+    // lockout on /auth/pin, this is brute-force-resistant.
+    const buf = randomBytes(4)
+    const n = buf.readUInt32BE(0) % 1_000_000
+    return n.toString().padStart(6, '0')
   }
 
   // POST /auth/staff/signup — public, IP-rate-limited. Creates a pending User.
@@ -436,26 +441,32 @@ export async function authRoutes(fastify: FastifyInstance) {
       })
     }
 
-    const pinPlain = pinFromPhone(body.phone)
-    // PIN collision guard: another *active* user with the same last-4 would
-    // make PIN login ambiguous (the first bcrypt match wins). Reject before
-    // we create the row so the new hire can use a different phone.
-    const candidates = await prisma.user.findMany({
-      where: { isActive: true, pin: { not: null }, accountStatus: 'active' },
-    })
-    for (const c of candidates) {
-      if (c.pin && await bcrypt.compare(pinPlain, c.pin)) {
-        return reply.status(409).send({
-          error: {
-            code: 'PIN_COLLISION',
-            message: `The last 4 digits of your phone (${pinPlain}) clash with an existing PIN. Use a different number.`,
-          },
+    // Generate a unique PIN. PIN login is identified by the PIN itself
+    // (no username), so a collision would make the first bcrypt match win.
+    // Retry up to 5 times against the live active-PIN set before giving up.
+    let pinPlain: string | null = null
+    {
+      const candidates = await prisma.user.findMany({
+        where: { isActive: true, pin: { not: null }, accountStatus: 'active' },
+        select: { pin: true },
+      })
+      for (let attempt = 0; attempt < 5; attempt++) {
+        const tryPin = generateRandomPin()
+        let collides = false
+        for (const c of candidates) {
+          if (c.pin && await bcrypt.compare(tryPin, c.pin)) { collides = true; break }
+        }
+        if (!collides) { pinPlain = tryPin; break }
+      }
+      if (!pinPlain) {
+        return reply.status(503).send({
+          error: { code: 'PIN_GENERATION_FAILED', message: 'Could not allocate a unique PIN. Try again.' },
         })
       }
     }
 
     // Random unusable password hash — we don't use password login at all.
-    const password = await hashPassword(Math.random().toString(36) + Date.now())
+    const password = await hashPassword(randomBytes(16).toString('hex'))
     const pin      = await hashPin(pinPlain)
 
     const user = await prisma.user.create({
@@ -473,9 +484,13 @@ export async function authRoutes(fastify: FastifyInstance) {
       select: { id: true, name: true, email: true, role: true, phone: true, accountStatus: true },
     })
 
+    // PIN is returned ONCE in this response. The new hire must save it now —
+    // the hashed value lives in the DB and we can't recover the plaintext later.
+    // The CEO approval flow does NOT re-display it.
     return reply.status(201).send({
       ...user,
-      message: 'Account created. The CEO will review and activate your PIN shortly.',
+      pin: pinPlain,
+      message: 'Account created. Save your PIN now — you will not see it again. The CEO will review and activate it shortly.',
     })
   })
 

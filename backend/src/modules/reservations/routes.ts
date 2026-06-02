@@ -16,6 +16,7 @@
 
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import type { Prisma } from '@prisma/client'
+import { randomBytes } from 'crypto'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, MANAGERS, ALL_STAFF } from '../auth/middleware.js'
@@ -275,7 +276,7 @@ export async function reservationRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuth(...ALL_STAFF) },
     async (req) => {
       const body = createSchema.partial().parse(req.body)
-      const r = await prisma.reservation.findUnique({ where: { id: req.params.id } })
+      const r = await prisma.reservation.findFirst({ where: { id: req.params.id, concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null } } })
       if (!r) throw new NotFoundError('Reservation', req.params.id)
       await assertConceptAccess(req.staffUser!, r.conceptId)
 
@@ -332,7 +333,7 @@ export async function reservationRoutes(fastify: FastifyInstance) {
     '/:id/seat',
     { preHandler: requireAuth(...ALL_STAFF) },
     async (req) => {
-      const r = await prisma.reservation.findUnique({ where: { id: req.params.id } })
+      const r = await prisma.reservation.findFirst({ where: { id: req.params.id, concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null } } })
       if (!r) throw new NotFoundError('Reservation', req.params.id)
       await assertConceptAccess(req.staffUser!, r.conceptId)
       const body = z.object({ tableId: z.string().uuid().optional() }).parse(req.body)
@@ -366,7 +367,7 @@ export async function reservationRoutes(fastify: FastifyInstance) {
     '/:id/complete',
     { preHandler: requireAuth(...ALL_STAFF) },
     async (req) => {
-      const r = await prisma.reservation.findUnique({ where: { id: req.params.id } })
+      const r = await prisma.reservation.findFirst({ where: { id: req.params.id, concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null } } })
       if (!r) throw new NotFoundError('Reservation', req.params.id)
       await assertConceptAccess(req.staffUser!, r.conceptId)
       const completed = await prisma.$transaction(async (tx) => {
@@ -415,7 +416,7 @@ export async function reservationRoutes(fastify: FastifyInstance) {
     '/:id/cancel',
     { preHandler: requireAuth(...ALL_STAFF) },
     async (req) => {
-      const r = await prisma.reservation.findUnique({ where: { id: req.params.id } })
+      const r = await prisma.reservation.findFirst({ where: { id: req.params.id, concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null } } })
       if (!r) throw new NotFoundError('Reservation', req.params.id)
       await assertConceptAccess(req.staffUser!, r.conceptId)
       const body = z.object({ reason: z.string().max(300).optional() }).parse(req.body ?? {})
@@ -822,8 +823,10 @@ export async function reservationRoutes(fastify: FastifyInstance) {
       })
       if (match) customerId = match.id
 
-      // Generate confirmation token (32 chars)
-      const confirmToken = Array.from({ length: 32 }, () => Math.floor(Math.random() * 36).toString(36)).join('')
+      // Generate confirmation token — CSPRNG, not Math.random (xorshift128+
+      // state is recoverable from a single 32-char emission, which would let
+      // an attacker predict and cancel any subsequent guest's reservation).
+      const confirmToken = randomBytes(16).toString('hex')
 
       const r = await withTableOverlapGuard(() =>
         prisma.reservation.create({
@@ -1141,7 +1144,7 @@ export async function reservationRoutes(fastify: FastifyInstance) {
         amountCents: z.number().int().min(100).max(1_000_000),
         gatewayRef:  z.string().min(3).max(120),
       }).parse(req.body)
-      const r = await prisma.reservation.findUnique({ where: { id: req.params.id } })
+      const r = await prisma.reservation.findFirst({ where: { id: req.params.id, concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null } } })
       if (!r) throw new NotFoundError('Reservation', req.params.id)
       await assertConceptAccess(req.staffUser!, r.conceptId)
       return prisma.reservation.update({
@@ -1155,7 +1158,7 @@ export async function reservationRoutes(fastify: FastifyInstance) {
     '/:id/deposit-release',
     { preHandler: requireAuth(...MANAGERS) },
     async (req) => {
-      const r = await prisma.reservation.findUnique({ where: { id: req.params.id } })
+      const r = await prisma.reservation.findFirst({ where: { id: req.params.id, concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null } } })
       if (!r) throw new NotFoundError('Reservation', req.params.id)
       await assertConceptAccess(req.staffUser!, r.conceptId)
       await audit({
@@ -1179,8 +1182,11 @@ export async function reservationRoutes(fastify: FastifyInstance) {
     '/:id/deposit-capture',
     { preHandler: requireAuth(...MANAGERS) },
     async (req) => {
-      const r = await prisma.reservation.findUnique({
-        where: { id: req.params.id },
+      const r = await prisma.reservation.findFirst({
+        where: {
+          id: req.params.id,
+          concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
+        },
         select: { id: true, conceptId: true, depositCents: true },
       })
       if (!r) throw new NotFoundError('Reservation', req.params.id)
@@ -1207,7 +1213,14 @@ async function transition(
   status: 'confirmed' | 'no_show',
   req: FastifyRequest,
 ) {
-  const r = await prisma.reservation.findUnique({ where: { id: reservationId } })
+  // Tenant-scoped lookup — `assertConceptAccess` below bypasses for
+  // management roles, so this filter is the real boundary.
+  const r = await prisma.reservation.findFirst({
+    where: {
+      id: reservationId,
+      concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
+    },
+  })
   if (!r) throw new NotFoundError('Reservation', reservationId)
   await assertConceptAccess(req.staffUser!, r.conceptId)
   const updated = await prisma.reservation.update({

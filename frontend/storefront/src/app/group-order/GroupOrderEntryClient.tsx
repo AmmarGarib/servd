@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
+import { useCustomerAuth } from '../../store/customerAuth'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -21,6 +22,7 @@ interface Props {
 export function GroupOrderEntryClient({ brands }: Props) {
   const router = useRouter()
   const params = useSearchParams()
+  const token = useCustomerAuth((s) => s.token)
   const [mode, setMode] = useState<'start' | 'join'>('start')
 
   // Start
@@ -35,11 +37,18 @@ export function GroupOrderEntryClient({ brands }: Props) {
 
   const start = async () => {
     if (!conceptSlug || !name) return
+    // Group orders now require a logged-in customer (anonymous group submit
+    // was an unpaid-kitchen-ticket primitive). Bounce to login first.
+    if (!token) {
+      const next = encodeURIComponent(`/group-order?brand=${conceptSlug}`)
+      router.push(`/login?next=${next}`)
+      return
+    }
     setBusy(true); setErr(null)
     try {
       const res = await fetch(`${API_URL}/api/v1/group-orders`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ conceptSlug, initiatorName: name }),
       })
       if (!res.ok) throw new Error('Could not start group')

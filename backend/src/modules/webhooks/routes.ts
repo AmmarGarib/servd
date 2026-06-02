@@ -10,6 +10,7 @@ import { prisma } from '../../lib/prisma.js'
 import { redis } from '../../lib/redis.js'
 import { requireAuth, MANAGERS } from '../auth/middleware.js'
 import { handleWaMessage, type WaIncomingMessage } from '../../adapters/whatsapp/conversation.js'
+import { promises as dns } from 'dns'
 import {
   parseConversationIdFromAddress,
   findSupplierByEmail,
@@ -145,8 +146,30 @@ export async function webhookRoutes(fastify: FastifyInstance) {
   fastify.post('/whatsapp', { config: { rateLimit: { max: 120, timeWindow: '1 minute' } } }, async (req, reply) => {
     // The global content-type parser above wraps JSON bodies as { parsed, raw }.
     // Unwrap to get at the actual Meta payload.
-    const wrapped = req.body as { parsed?: any } | undefined
+    const wrapped = req.body as { parsed?: any; raw?: string } | undefined
     const body = (wrapped?.parsed ?? req.body) as any
+    const raw  = wrapped?.raw ?? ''
+
+    // Verify Meta's `x-hub-signature-256` HMAC over the raw body. Without this,
+    // anyone on the internet could POST `{from:"+92<victim>",interactive:{...}}`
+    // and place orders, send messages, or trigger the reorder-last flow as
+    // any registered customer. The app secret is the same one issued in the
+    // Meta dashboard alongside the verify token.
+    const appSecret = process.env['WHATSAPP_APP_SECRET']
+    if (!appSecret) {
+      // Fail closed in production. In dev the secret may not be configured;
+      // skip verification only when NODE_ENV !== 'production'.
+      if (process.env['NODE_ENV'] === 'production') {
+        fastify.log.error('[WhatsApp] WHATSAPP_APP_SECRET not set — refusing inbound')
+        return reply.status(503).send({ error: { code: 'NOT_CONFIGURED', message: 'WhatsApp webhook signature secret missing' } })
+      }
+    } else {
+      const sig = req.headers['x-hub-signature-256'] as string | undefined
+      if (!verifyHmac(appSecret, sig, raw)) {
+        fastify.log.warn({ ip: req.ip }, '[WhatsApp] invalid signature, rejecting')
+        return reply.status(401).send({ error: { code: 'INVALID_SIGNATURE', message: 'WhatsApp signature verification failed' } })
+      }
+    }
 
     // Ack immediately — Meta requires < 5s response
     reply.status(200).send({ received: true })
@@ -343,6 +366,63 @@ export async function webhookRoutes(fastify: FastifyInstance) {
 // They live here rather than /setup so they're accessible to managers (not
 // just admins) and co-located with the inbound webhook logic for discoverability.
 
+// Outbound URLs from operator input MUST be vetted before we fetch them — the
+// API server sits inside our VPC and can reach internal services, cloud
+// metadata, and admin panels that the public internet can't. A naive fetch()
+// would let any manager exfiltrate AWS IAM creds via http://169.254.169.254/
+// or pivot through localhost services.
+//
+// Rules:
+//   - https only (no http, file, ftp, gopher, etc.)
+//   - hostname must resolve only to public IPs (no loopback, link-local,
+//     RFC1918, or AWS/GCP metadata addresses)
+//   - revalidate at fetch time too — DNS rebinding could otherwise flip the
+//     answer between the check and the request
+function isPrivateIp(ip: string): boolean {
+  // IPv4
+  const m4 = ip.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/)
+  if (m4) {
+    const [a, b] = [parseInt(m4[1]!, 10), parseInt(m4[2]!, 10)]
+    if (a === 10) return true                                       // 10.0.0.0/8
+    if (a === 127) return true                                      // loopback
+    if (a === 169 && b === 254) return true                         // link-local + AWS metadata
+    if (a === 172 && b >= 16 && b <= 31) return true                // 172.16/12
+    if (a === 192 && b === 168) return true                         // 192.168/16
+    if (a === 100 && b >= 64 && b <= 127) return true               // CG-NAT
+    if (a === 0) return true                                        // 0.0.0.0/8
+    if (a >= 224) return true                                       // multicast + reserved
+    return false
+  }
+  // IPv6
+  const lower = ip.toLowerCase()
+  if (lower === '::1') return true                                  // loopback
+  if (lower.startsWith('fe80:')) return true                        // link-local
+  if (lower.startsWith('fc') || lower.startsWith('fd')) return true // unique local
+  if (lower.startsWith('::ffff:')) return isPrivateIp(lower.slice(7))
+  return false
+}
+
+async function assertSafeOutboundUrl(rawUrl: string): Promise<void> {
+  let u: URL
+  try { u = new URL(rawUrl) } catch { throw new AppError('INVALID_URL', 'URL is malformed', 400) }
+  if (u.protocol !== 'https:') {
+    throw new AppError('INVALID_URL', 'Webhook URL must use https://', 400)
+  }
+  // Resolve all A/AAAA records — any one private IP fails the check.
+  const host = u.hostname
+  let addrs: { address: string }[] = []
+  try {
+    addrs = await dns.lookup(host, { all: true })
+  } catch {
+    throw new AppError('UNRESOLVABLE_HOST', `Could not resolve ${host}`, 400)
+  }
+  for (const a of addrs) {
+    if (isPrivateIp(a.address)) {
+      throw new AppError('PRIVATE_HOST', `${host} resolves to a private address (${a.address}); webhooks must target public hosts`, 400)
+    }
+  }
+}
+
 export async function webhookManagementRoutes(fastify: FastifyInstance) {
   const ENDPOINT_EVENTS = [
     'order.placed', 'order.confirmed', 'order.dispatched', 'order.delivered',
@@ -373,6 +453,8 @@ export async function webhookManagementRoutes(fastify: FastifyInstance) {
       notes:  z.string().max(200).nullable().optional(),
     }).parse(req.body)
 
+    await assertSafeOutboundUrl(body.url)
+
     const secret = body.secret ?? crypto.randomBytes(32).toString('hex')
     const endpoint = await prisma.webhookSubscription.create({
       data: {
@@ -398,6 +480,8 @@ export async function webhookManagementRoutes(fastify: FastifyInstance) {
         isActive: z.boolean().optional(),
         notes:    z.string().max(200).nullable().optional(),
       }).parse(req.body)
+
+      if (body.url) await assertSafeOutboundUrl(body.url)
 
       const existing = await prisma.webhookSubscription.findFirst({
         where: { id: req.params.id, deletedAt: null },
@@ -449,6 +533,15 @@ export async function webhookManagementRoutes(fastify: FastifyInstance) {
         return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Endpoint not found' } })
       }
 
+      // Re-validate the URL at fetch time. The check at create/update protects
+      // against simple cases, but DNS rebinding could otherwise flip the
+      // answer between persistence and dispatch. Re-running blocks that race.
+      try {
+        await assertSafeOutboundUrl(sub.url)
+      } catch (err) {
+        return reply.status(400).send({ error: { code: (err as AppError).code ?? 'INVALID_URL', message: (err as Error).message } })
+      }
+
       const pingPayload = { event: 'ping', timestamp: new Date().toISOString(), subscriptionId: sub.id }
       const body = JSON.stringify(pingPayload)
       const signature = crypto.createHmac('sha256', sub.secret).update(body).digest('hex')
@@ -468,12 +561,18 @@ export async function webhookManagementRoutes(fastify: FastifyInstance) {
           },
           body,
           signal: controller.signal,
+          // Disable redirects — otherwise the SSRF allowlist is trivially
+          // bypassed by a public URL that 302s to http://169.254.169.254.
+          redirect: 'manual',
         })
         clearTimeout(timeout)
         const responseMs = Date.now() - startMs
-        const respBody   = (await res.text().catch(() => '')).slice(0, 500)
+        // Persist the raw body to the delivery record so operators can debug
+        // their integration, but DO NOT return it to the API caller — that
+        // would turn this endpoint into an unauthenticated HTTP read primitive
+        // for whatever the upstream URL responds with.
+        const respBodyForLog = (await res.text().catch(() => '')).slice(0, 500)
 
-        // Persist delivery record so it shows up in /deliveries
         await prisma.webhookDelivery.create({
           data: {
             subscriptionId: sub.id,
@@ -481,14 +580,14 @@ export async function webhookManagementRoutes(fastify: FastifyInstance) {
             url: sub.url,
             requestBody: body,
             responseCode: res.status,
-            responseBody: respBody,
+            responseBody: respBodyForLog,
             status: res.ok ? 'success' : res.status >= 500 ? 'failed_5xx' : 'failed_4xx',
             durationMs: responseMs,
             attemptNumber: 1,
           },
         })
 
-        return { success: res.ok, statusCode: res.status, responseMs, responseBody: respBody }
+        return { success: res.ok, statusCode: res.status, responseMs }
       } catch (err) {
         clearTimeout(timeout)
         const responseMs = Date.now() - startMs

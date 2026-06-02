@@ -1,8 +1,8 @@
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
-import { requireAuth, ALL_STAFF, MANAGERS } from '../auth/middleware.js'
-import { NotFoundError } from '../../lib/errors.js'
+import { requireAuth, requireCustomerAuth, ALL_STAFF, MANAGERS } from '../auth/middleware.js'
+import { AppError, NotFoundError } from '../../lib/errors.js'
 
 const createSchema = z.object({
   orderId: z.string().uuid().optional(),
@@ -10,9 +10,12 @@ const createSchema = z.object({
   customerName: z.string().optional(),
   customerPhone: z.string().optional(),
   title: z.string().min(1).max(200),
-  description: z.string().min(1),
+  description: z.string().min(1).max(4000),
   category: z.enum(['wrong_item', 'missing_item', 'quality', 'service', 'delivery', 'other']),
-  priority: z.enum(['low', 'medium', 'high', 'urgent']).default('medium'),
+  // priority is NOT accepted from the client. Anonymous submitters used to be
+  // able to pin every fake complaint to the top of the staff inbox by sending
+  // priority='urgent'. We force 'medium' here and let staff re-classify on
+  // PATCH if needed.
 })
 
 export async function complaintRoutes(fastify: FastifyInstance) {
@@ -83,13 +86,50 @@ export async function complaintRoutes(fastify: FastifyInstance) {
     return { stats: { open, inProgress } }
   })
 
-  // POST /complaints — create (staff or unauthenticated storefront)
-  // Tighter per-IP rate limit since this is unauthenticated and writes to a staff inbox.
+  // POST /complaints — create (authenticated customers only).
+  //
+  // Originally accepted unauthenticated submissions with a client-supplied
+  // `priority='urgent'` field, which spam attackers used to pin fake red-
+  // priority rows to the top of the staff inbox. Now: customer auth required,
+  // priority is server-controlled, and the complaint must reference a real
+  // order owned by the caller so a single account can't open complaints
+  // against arbitrary concepts.
   fastify.post('/', {
+    preHandler: requireCustomerAuth,
     config: { rateLimit: { max: 5, timeWindow: '1 minute' } },
   }, async (req, reply) => {
     const body = createSchema.parse(req.body)
-    const complaint = await prisma.orderComplaint.create({ data: body })
+
+    // If the complaint references an Order, prove the caller owns it (and
+    // pull conceptId from the order so the body's conceptId can't be used
+    // to file complaints against a brand the customer never visited).
+    let conceptId = body.conceptId
+    let customerId: string | null = req.customer!.id
+    if (body.orderId) {
+      const order = await prisma.order.findFirst({
+        where: { id: body.orderId, customerId: req.customer!.id },
+        select: { id: true, conceptId: true, customerId: true },
+      })
+      if (!order) {
+        throw new AppError('ORDER_NOT_FOUND', 'No order with that id on your account', 404)
+      }
+      conceptId = order.conceptId
+      customerId = order.customerId ?? req.customer!.id
+    }
+
+    const complaint = await prisma.orderComplaint.create({
+      data: {
+        orderId:       body.orderId,
+        conceptId,
+        customerId,
+        title:         body.title,
+        description:   body.description,
+        category:      body.category,
+        // Server-controlled — never client. Staff can re-prioritise on PATCH.
+        priority:      'medium',
+      },
+    })
+
     // Cross-module: refresh the customer's rollups so the host stand sees
     // the complaint reflected on their next reservation render.
     if (complaint.customerId) {

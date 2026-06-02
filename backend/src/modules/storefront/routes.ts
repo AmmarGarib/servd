@@ -45,8 +45,11 @@ const createDirectOrderSchema = z.object({
       menuItemId: z.string().uuid(),
       quantity: z.number().int().min(1),
       notes: z.string().optional(),
+      // Client supplies only modifier ids — name and priceDelta are looked up
+      // server-side from the DB. Accepting them from the client would let an
+      // attacker pass `priceDeltaCents: -9999999` and zero the order total.
       modifiers: z
-        .array(z.object({ modifierId: z.string().uuid(), name: z.string(), priceDeltaCents: z.number().int() }))
+        .array(z.object({ modifierId: z.string().uuid() }))
         .default([]),
     }),
   ),
@@ -57,30 +60,6 @@ const createDirectOrderSchema = z.object({
   giftCardCode: z.string().optional(),                              // redeem against this order
 })
 
-const createGuestOrderSchema = z.object({
-  conceptSlug: z.string(),
-  cartId: z.string().optional(),
-  customerName: z.string().min(1),
-  customerPhone: z.string().optional(),
-  customerEmail: z.string().email().optional(),
-  type: z.enum(['delivery', 'pickup', 'dine-in']).default('pickup'),
-  deliveryAddress: z.string().optional(),
-  // Dine-in table label, see createDirectOrderSchema for semantics.
-  tableLabel: z.string().trim().min(1).max(20).optional(),
-  notes: z.string().optional(),
-  scheduledFor: z.string().datetime().optional(),
-  promoCode: z.string().optional(),
-  qrCodeId: z.string().uuid().optional(),
-  items: z.array(
-    z.object({
-      menuItemId: z.string().uuid(),
-      name: z.string(),
-      priceCents: z.number().int(),
-      quantity: z.number().int().min(1),
-      notes: z.string().optional(),
-    }),
-  ),
-})
 
 const reserveSchema = z.object({
   cartId: z.string().min(1),
@@ -433,10 +412,40 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
     for (const item of body.items) {
       const menuItem = await prisma.menuItem.findFirst({
         where: { id: item.menuItemId, conceptId: concept.id, isAvailable: true, deletedAt: null },
+        include: {
+          modifierGroups: {
+            include: { modifiers: { where: { deletedAt: null } } },
+          },
+        },
       })
       if (!menuItem) throw new AppError('ITEM_UNAVAILABLE', `Item ${item.menuItemId} is not available`, 400)
 
-      const modTotal = item.modifiers.reduce((s, m) => s + m.priceDeltaCents, 0)
+      // Build the lookup table from the DB — only modifiers actually
+      // attached to this menu item's groups are accepted. Stops the bill
+      // being tampered with by submitting negative priceDelta values or
+      // unrelated modifier ids.
+      const validMods = new Map<string, { id: string; name: string; priceDeltaCents: number }>()
+      for (const g of menuItem.modifierGroups) {
+        for (const m of g.modifiers) {
+          validMods.set(m.id, { id: m.id, name: m.name, priceDeltaCents: m.priceDeltaCents })
+        }
+      }
+
+      const resolvedMods: Array<{ modifierId: string; name: string; priceDeltaCents: number }> = []
+      let modTotal = 0
+      for (const incoming of item.modifiers) {
+        const m = validMods.get(incoming.modifierId)
+        if (!m) {
+          throw new AppError(
+            'INVALID_MODIFIER',
+            `Modifier ${incoming.modifierId} does not belong to item ${menuItem.name}`,
+            400,
+          )
+        }
+        modTotal += m.priceDeltaCents
+        resolvedMods.push({ modifierId: m.id, name: m.name, priceDeltaCents: m.priceDeltaCents })
+      }
+
       const lineTotal = (menuItem.priceCents + modTotal) * item.quantity
       itemTotal += lineTotal
 
@@ -446,7 +455,7 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
         name: menuItem.name,
         quantity: item.quantity,
         unitPriceCents: menuItem.priceCents,
-        modifiers: item.modifiers,
+        modifiers: resolvedMods,
         notes: item.notes,
       })
     }
@@ -799,121 +808,29 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
     },
   )
 
-  // POST /storefront/guest-orders — no auth required, for walk-in / first-time customers
-  fastify.post('/guest-orders', { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (req, reply) => {
-    const body = createGuestOrderSchema.parse(req.body)
-
-    const concept = await prisma.concept.findFirst({
-      where: { slug: body.conceptSlug, isActive: true },
+  // POST /storefront/guest-orders — REMOVED.
+  //
+  // Anonymous order placement was a free-food primitive: anyone on the
+  // internet could POST a payload with `payment.status: 'pending'` and the
+  // kitchen would fire the ticket before a real payment ever cleared. Plus
+  // the naughty-list gate only triggered on previously-banned phones, so
+  // first-time abusers were never caught.
+  //
+  // Per CEO decision: every storefront order requires a logged-in customer.
+  // Sign-up uses magic-link or phone OTP — both verify a real contact channel.
+  fastify.post('/guest-orders', async (_req, reply) => {
+    return reply.status(410).send({
+      error: {
+        code: 'GUEST_ORDERS_DISABLED',
+        message: 'Guest checkout has been removed. Please sign in or create an account to place an order.',
+      },
     })
-    if (!concept) throw new NotFoundError('Concept', body.conceptSlug)
-
-    // Naughty-list gate — block guest orders whose phone/email is on the ban
-    // list. The customer didn't think they could outsmart us by ordering as
-    // a guest after their account got banned.
-    const { assertNotBanned } = await import('../../lib/banCheck.js')
-    await assertNotBanned({
-      email: body.customerEmail ?? null,
-      phone: body.customerPhone ?? null,
-      ip:    req.ip ?? null,
-      intent: 'order',
-    })
-
-    let itemTotal = 0
-    const resolvedItems = []
-    const itemsForSettle: Array<{ menuItemId: string; quantity: number; portionsAvailable: number | null }> = []
-
-    for (const item of body.items) {
-      const menuItem = await prisma.menuItem.findFirst({
-        where: { id: item.menuItemId, conceptId: concept.id, isAvailable: true, deletedAt: null },
-      })
-      if (!menuItem) throw new AppError('ITEM_UNAVAILABLE', `Item ${item.menuItemId} is not available`, 400)
-
-      const lineTotal = menuItem.priceCents * item.quantity
-      itemTotal += lineTotal
-
-      resolvedItems.push({
-        externalItemId: item.menuItemId,
-        menuItemId: item.menuItemId,
-        name: menuItem.name,
-        quantity: item.quantity,
-        unitPriceCents: menuItem.priceCents,
-        modifiers: [],
-        notes: item.notes,
-      })
-
-      itemsForSettle.push({
-        menuItemId: item.menuItemId,
-        quantity: item.quantity,
-        portionsAvailable: menuItem.portionsAvailable ?? null,
-      })
-    }
-
-    // Reservation deposit path — same rule as the main checkout: storefront
-    // tenders are digital by default, so use the card rate.
-    const envTaxRate = Number(process.env['DEFAULT_TAX_RATE'])
-    const taxRate = (concept as { taxRateCard?: number }).taxRateCard
-      ?? concept.taxRate
-      ?? (Number.isFinite(envTaxRate) ? envTaxRate : 8)
-    const taxCents = Math.round(itemTotal * (taxRate / 100))
-    const totalCents = itemTotal + taxCents
-
-    const dto: OrderDTO = {
-      source: 'servd',
-      external_id: `guest-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-      concept_id: concept.id,
-      placed_at: new Date().toISOString(),
-      scheduled_for: body.scheduledFor ?? null,
-      is_pre_order: !!body.scheduledFor,
-      customer_id: null,
-      customer_name: body.customerName,
-      table_id: null,
-      items: resolvedItems,
-      payment: { provider: 'cash' as never, amountCents: totalCents, status: 'pending' },
-      loyalty_points_earned: null,
-      delivery_notes: body.deliveryAddress ?? body.notes ?? null,
-      estimated_pickup: null,
-    }
-
-    const { order } = await ingestOrder(dto)
-
-    // Dine-in: resolve the table label the guest typed at the QR card to
-    // an actual Table row. Same logic as the authenticated path above.
-    if (body.type === 'dine-in' && body.tableLabel) {
-      const table = await prisma.table.findFirst({
-        where: {
-          conceptId: concept.id,
-          deletedAt: null,
-          label: { equals: body.tableLabel, mode: 'insensitive' },
-        },
-        select: { id: true },
-      })
-      if (table) {
-        await prisma.order.update({ where: { id: order.id }, data: { tableId: table.id } })
-      } else {
-        await prisma.order.update({
-          where: { id: order.id },
-          data: { rawPayload: { tableLabelRaw: body.tableLabel } },
-        })
-      }
-    }
-
-    if (body.cartId) {
-      await settleCart(body.cartId, itemsForSettle, false)
-      // Mark any recorded abandoned cart as recovered
-      await prisma.abandonedCart.updateMany({
-        where: { cartId: body.cartId, recoveredAt: null },
-        data: { recoveredAt: new Date() },
-      })
-    }
-    if (body.qrCodeId) {
-      await prisma.qrCode.update({ where: { id: body.qrCodeId }, data: { conversions: { increment: 1 } } }).catch(() => {})
-    }
-
-    return reply.status(201).send({ id: order.id, status: order.status, totalCents, taxCents, itemTotal })
   })
 
-  // GET /storefront/guest-orders/:id — public order status (no auth, by ID)
+  // GET /storefront/guest-orders/:id — public order status (no auth, by ID).
+  // Still reachable for existing tracking links shared via SMS — the order id
+  // is a UUID v4, so it's not enumerable, and the response carries no PII
+  // beyond what the customer already received in their confirmation message.
   fastify.get<{ Params: { id: string } }>('/guest-orders/:id', async (req) => {
     const order = await prisma.order.findUnique({
       where: { id: req.params.id },

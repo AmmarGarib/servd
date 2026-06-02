@@ -169,11 +169,17 @@ export async function orderRoutes(fastify: FastifyInstance) {
     '/:id/curbside/running-out',
     { preHandler: requireAuthOrPin(...ALL_STAFF) },
     async (req) => {
-      const order = await prisma.order.findUnique({
-        where: { id: req.params.id },
+      // Lookup is scoped by tenant — assertConceptAccess alone bypasses the
+      // concept ACL for management-tier roles, which would otherwise let a
+      // manager in tenant A mutate orders in tenant B.
+      const order = await prisma.order.findFirst({
+        where: {
+          id: req.params.id,
+          concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
+        },
         select: { id: true, conceptId: true, curbsideVehicle: true },
       })
-      if (!order) throw new AppError('NOT_FOUND', 'Order not found', 404)
+      if (!order) throw new AppError('NOT_FOUND', 'Order not found in your active company', 404)
       if (!order.curbsideVehicle) throw new AppError('NOT_CURBSIDE', 'Order is not a curbside order', 422)
       await assertConceptAccess(req.staffUser!, order.conceptId)
 
@@ -206,8 +212,15 @@ export async function orderRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuthOrPin(...ALL_STAFF) },
     async (req) => {
       const { notes } = z.object({ notes: z.string().max(1000) }).parse(req.body)
-      const order = await prisma.order.findUnique({ where: { id: req.params.id }, select: { id: true, conceptId: true } })
-      if (!order) throw new AppError('NOT_FOUND', 'Order not found', 404)
+      // Tenant-scoped lookup — see /curbside/running-out for the rationale.
+      const order = await prisma.order.findFirst({
+        where: {
+          id: req.params.id,
+          concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
+        },
+        select: { id: true, conceptId: true },
+      })
+      if (!order) throw new AppError('NOT_FOUND', 'Order not found in your active company', 404)
       await assertConceptAccess(req.staffUser!, order.conceptId)
       return prisma.order.update({ where: { id: req.params.id }, data: { deliveryNotes: notes }, select: { id: true, deliveryNotes: true } })
     },
@@ -222,11 +235,15 @@ export async function orderRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuthOrPin(...ALL_STAFF) },
     async (req, reply) => {
       const body = z.object({ reason: z.string().max(500).optional() }).parse(req.body ?? {})
-      const order = await prisma.order.findUnique({
-        where: { id: req.params.id },
+      // Tenant-scoped — assertConceptAccess bypasses for management roles.
+      const order = await prisma.order.findFirst({
+        where: {
+          id: req.params.id,
+          concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
+        },
         select: { id: true, conceptId: true, customerId: true, totalCents: true },
       })
-      if (!order) throw new AppError('NOT_FOUND', 'Order not found', 404)
+      if (!order) throw new AppError('NOT_FOUND', 'Order not found in your active company', 404)
       await assertConceptAccess(req.staffUser!, order.conceptId)
       if (!order.customerId) {
         return reply.status(422).send({ error: { code: 'NO_CUSTOMER', message: 'Cash-unpaid strike requires a linked customer.' } })
@@ -263,11 +280,16 @@ export async function orderRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuthOrPin(...ALL_STAFF) },
     async (req, reply) => {
       const body = z.object({ reason: z.string().max(500).optional() }).parse(req.body ?? {})
-      const order = await prisma.order.findUnique({
-        where: { id: req.params.id },
+      // Tenant-scoped — assertConceptAccess bypasses for management roles, so
+      // the lookup itself must enforce the tenant boundary.
+      const order = await prisma.order.findFirst({
+        where: {
+          id: req.params.id,
+          concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
+        },
         select: { id: true, conceptId: true, customerId: true, totalCents: true, status: true },
       })
-      if (!order) throw new AppError('NOT_FOUND', 'Order not found', 404)
+      if (!order) throw new AppError('NOT_FOUND', 'Order not found in your active company', 404)
       await assertConceptAccess(req.staffUser!, order.conceptId)
       if (!order.customerId) {
         return reply.status(422).send({ error: { code: 'NO_CUSTOMER', message: 'Refused-at-door strike requires a linked customer.' } })

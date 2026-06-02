@@ -1,8 +1,15 @@
+// Rider CRUD + assignment + ratings.
+//
+// Tenant model: every Rider carries a tenantId (added in migration
+// 20260602100000_rider_tenant_id) so a manager in tenant A cannot enumerate,
+// mutate, rate, or unassign tenant B's riders. Every query in this module
+// filters by `tenantId IN req.staffUser!.tenantFilter` accordingly.
+
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, ALL_STAFF, MANAGERS } from '../auth/middleware.js'
-import { NotFoundError } from '../../lib/errors.js'
+import { AppError, NotFoundError } from '../../lib/errors.js'
 
 const riderSchema = z.object({
   name: z.string().min(1),
@@ -11,14 +18,45 @@ const riderSchema = z.object({
   notes: z.string().optional(),
 })
 
+// `tenantFilter` from auth middleware is `string | { in: string[] } | null`.
+// Prisma's scalar-where input accepts that shape directly. A `null` filter
+// means the staff user has no tenant assignment — they should see nothing.
+type TenantFilter = string | { in: string[] } | null
+
+// Helper: assert a Rider exists in the caller's tenant scope, or throw 404.
+async function loadRiderInTenant(riderId: string, tenantFilter: TenantFilter) {
+  if (tenantFilter == null) throw new NotFoundError('Rider', riderId)
+  const rider = await prisma.rider.findFirst({
+    where: { id: riderId, deletedAt: null, tenantId: tenantFilter },
+  })
+  if (!rider) throw new NotFoundError('Rider', riderId)
+  return rider
+}
+
+// On create, tenantId must be a single string — not the portfolio array. If
+// the caller is in portfolio view they must explicitly switch into a tenant
+// first; we don't guess which tenant a brand-new rider should belong to.
+function resolveSingleTenant(tenantFilter: TenantFilter): string {
+  if (typeof tenantFilter === 'string') return tenantFilter
+  if (tenantFilter && 'in' in tenantFilter && tenantFilter.in.length === 1) return tenantFilter.in[0]!
+  throw new AppError(
+    'TENANT_AMBIGUOUS',
+    'Switch into a single tenant before creating a rider — portfolio view cannot decide where the rider belongs.',
+    400,
+  )
+}
+
 export async function riderRoutes(fastify: FastifyInstance) {
   // GET /riders
-  fastify.get('/', { preHandler: requireAuth(...ALL_STAFF) }, async () => {
+  fastify.get('/', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
     return prisma.rider.findMany({
-      where: { deletedAt: null },
+      where: { deletedAt: null, tenantId: req.staffUser!.tenantFilter ?? { in: [] } },
       include: {
         orders: {
-          where: { status: { in: ['confirmed', 'preparing', 'ready'] } },
+          where: {
+            status: { in: ['confirmed', 'preparing', 'ready'] },
+            concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
+          },
           select: { id: true, status: true, conceptId: true, placedAt: true,
             concept: { select: { name: true } }, customer: { select: { name: true } }, customerName: true },
           take: 1,
@@ -32,7 +70,8 @@ export async function riderRoutes(fastify: FastifyInstance) {
   // POST /riders
   fastify.post('/', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
     const body = riderSchema.parse(req.body)
-    const rider = await prisma.rider.create({ data: body })
+    const tenantId = resolveSingleTenant(req.staffUser!.tenantFilter)
+    const rider = await prisma.rider.create({ data: { ...body, tenantId } })
     return reply.status(201).send(rider)
   })
 
@@ -42,9 +81,8 @@ export async function riderRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuth(...MANAGERS) },
     async (req) => {
       const body = riderSchema.partial().parse(req.body)
-      const rider = await prisma.rider.findFirst({ where: { id: req.params.id, deletedAt: null } })
-      if (!rider) throw new NotFoundError('Rider', req.params.id)
-      return prisma.rider.update({ where: { id: req.params.id }, data: body })
+      const rider = await loadRiderInTenant(req.params.id, req.staffUser!.tenantFilter)
+      return prisma.rider.update({ where: { id: rider.id }, data: body })
     },
   )
 
@@ -56,9 +94,8 @@ export async function riderRoutes(fastify: FastifyInstance) {
       const { status } = z.object({
         status: z.enum(['available', 'busy', 'offline']),
       }).parse(req.body)
-      const rider = await prisma.rider.findFirst({ where: { id: req.params.id, deletedAt: null } })
-      if (!rider) throw new NotFoundError('Rider', req.params.id)
-      return prisma.rider.update({ where: { id: req.params.id }, data: { status } })
+      const rider = await loadRiderInTenant(req.params.id, req.staffUser!.tenantFilter)
+      return prisma.rider.update({ where: { id: rider.id }, data: { status } })
     },
   )
 
@@ -67,12 +104,14 @@ export async function riderRoutes(fastify: FastifyInstance) {
     '/:id',
     { preHandler: requireAuth(...MANAGERS) },
     async (req, reply) => {
-      await prisma.rider.update({ where: { id: req.params.id }, data: { deletedAt: new Date(), isActive: false } })
+      const rider = await loadRiderInTenant(req.params.id, req.staffUser!.tenantFilter)
+      await prisma.rider.update({ where: { id: rider.id }, data: { deletedAt: new Date(), isActive: false } })
       return reply.status(204).send()
     },
   )
 
-  // POST /riders/assign — assign rider to an order
+  // POST /riders/assign — assign rider to an order. Both must be in the
+  // caller's tenant. Stops cross-tenant fleet hijacking.
   fastify.post<{ Body: { orderId: string; riderId: string } }>(
     '/assign',
     { preHandler: requireAuth(...ALL_STAFF) },
@@ -83,8 +122,15 @@ export async function riderRoutes(fastify: FastifyInstance) {
       }).parse(req.body)
 
       const [order, rider] = await Promise.all([
-        prisma.order.findUnique({ where: { id: orderId } }),
-        prisma.rider.findFirst({ where: { id: riderId, deletedAt: null, isActive: true } }),
+        prisma.order.findFirst({
+          where: {
+            id: orderId,
+            concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
+          },
+        }),
+        prisma.rider.findFirst({
+          where: { id: riderId, deletedAt: null, isActive: true, tenantId: req.staffUser!.tenantFilter ?? { in: [] } },
+        }),
       ])
 
       if (!order) throw new NotFoundError('Order', orderId)
@@ -105,7 +151,12 @@ export async function riderRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuth(...ALL_STAFF) },
     async (req) => {
       const { orderId } = z.object({ orderId: z.string().uuid() }).parse(req.body)
-      const order = await prisma.order.findUnique({ where: { id: orderId } })
+      const order = await prisma.order.findFirst({
+        where: {
+          id: orderId,
+          concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
+        },
+      })
       if (!order) throw new NotFoundError('Order', orderId)
 
       let riderFreeAfter = false
@@ -135,11 +186,17 @@ export async function riderRoutes(fastify: FastifyInstance) {
     '/:id/history',
     { preHandler: requireAuth(...ALL_STAFF) },
     async (req) => {
-      const rider = await prisma.rider.findFirst({ where: { id: req.params.id, deletedAt: null } })
-      if (!rider) throw new NotFoundError('Rider', req.params.id)
+      const rider = await loadRiderInTenant(req.params.id, req.staffUser!.tenantFilter)
 
       const orders = await prisma.order.findMany({
-        where: { riderId: req.params.id, status: 'completed' },
+        where: {
+          riderId: rider.id,
+          status: 'completed',
+          // Defence in depth: rider tenant === order tenant should always
+          // hold, but enforce on the query so a mis-assigned legacy row
+          // never leaks across tenants.
+          concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
+        },
         include: { concept: { select: { name: true } } },
         orderBy: { completedAt: 'desc' },
         take: 50,
@@ -150,8 +207,6 @@ export async function riderRoutes(fastify: FastifyInstance) {
   )
 
   // POST /riders/:id/rate — rate a rider after delivery
-  // Staff rates on behalf of customer (ALL_STAFF); one rating per order enforced
-  // by the @unique constraint on RiderRating.orderId.
   fastify.post<{ Params: { id: string } }>(
     '/:id/rate',
     { preHandler: requireAuth(...ALL_STAFF) },
@@ -162,21 +217,22 @@ export async function riderRoutes(fastify: FastifyInstance) {
         comment: z.string().max(500).optional(),
       }).parse(req.body)
 
-      const rider = await prisma.rider.findFirst({ where: { id: req.params.id, deletedAt: null } })
-      if (!rider) throw new NotFoundError('Rider', req.params.id)
+      const rider = await loadRiderInTenant(req.params.id, req.staffUser!.tenantFilter)
 
-      // Verify the order exists and was handled by this rider
       const order = await prisma.order.findFirst({
-        where: { id: body.orderId, riderId: req.params.id },
+        where: {
+          id: body.orderId,
+          riderId: rider.id,
+          concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
+        },
       })
       if (!order) {
         return reply.status(400).send({ error: { code: 'INVALID_ORDER', message: 'Order not found or not assigned to this rider' } })
       }
 
-      // Create the rating; throws P2002 (unique constraint) if already rated
       const ratingRecord = await prisma.riderRating.create({
         data: {
-          riderId: req.params.id,
+          riderId: rider.id,
           orderId: body.orderId,
           rating: body.rating,
           comment: body.comment,
@@ -188,14 +244,13 @@ export async function riderRoutes(fastify: FastifyInstance) {
         throw err
       })
 
-      // Recompute avgRating from all existing ratings for this rider
       const agg = await prisma.riderRating.aggregate({
-        where: { riderId: req.params.id },
+        where: { riderId: rider.id },
         _avg: { rating: true },
         _count: { rating: true },
       })
       await prisma.rider.update({
-        where: { id: req.params.id },
+        where: { id: rider.id },
         data: { avgRating: agg._avg.rating ?? null },
       })
 
@@ -212,18 +267,16 @@ export async function riderRoutes(fastify: FastifyInstance) {
     '/:id/ratings',
     { preHandler: requireAuth(...MANAGERS) },
     async (req) => {
-      const rider = await prisma.rider.findFirst({ where: { id: req.params.id, deletedAt: null } })
-      if (!rider) throw new NotFoundError('Rider', req.params.id)
+      const rider = await loadRiderInTenant(req.params.id, req.staffUser!.tenantFilter)
 
       const ratings = await prisma.riderRating.findMany({
-        where: { riderId: req.params.id },
+        where: { riderId: rider.id },
         include: {
           rider: { select: { name: true, avgRating: true } },
         },
         orderBy: { createdAt: 'desc' },
       })
 
-      // Attach basic order info (status, concept) from the Order table
       const orderIds = ratings.map((r) => r.orderId)
       const orders = await prisma.order.findMany({
         where: { id: { in: orderIds } },
@@ -248,11 +301,10 @@ export async function riderRoutes(fastify: FastifyInstance) {
         notes: z.string().max(500).optional(),
       }).parse(req.body)
 
-      const rider = await prisma.rider.findFirst({ where: { id: req.params.id, deletedAt: null } })
-      if (!rider) throw new NotFoundError('Rider', req.params.id)
+      const rider = await loadRiderInTenant(req.params.id, req.staffUser!.tenantFilter)
 
       return prisma.rider.update({
-        where: { id: req.params.id },
+        where: { id: rider.id },
         data: {
           status: body.status,
           ...(body.notes !== undefined && { notes: body.notes }),
@@ -262,14 +314,17 @@ export async function riderRoutes(fastify: FastifyInstance) {
   )
 
   // GET /riders/available — list riders who are currently available
-  // Includes last-known location so dispatch can pick the closest.
-  // NOTE: registered before /:id routes because Fastify matches in registration order.
   fastify.get(
     '/available',
     { preHandler: requireAuth(...ALL_STAFF) },
-    async () => {
+    async (req) => {
       return prisma.rider.findMany({
-        where: { deletedAt: null, isActive: true, status: 'available' },
+        where: {
+          deletedAt: null,
+          isActive: true,
+          status: 'available',
+          tenantId: req.staffUser!.tenantFilter ?? { in: [] },
+        },
         select: {
           id: true,
           name: true,

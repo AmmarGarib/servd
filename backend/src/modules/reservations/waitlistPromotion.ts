@@ -20,6 +20,7 @@
 //     cancel triggers another attempt.
 //   - The token uniqueness constraint prevents accidental duplicate offers.
 
+import { randomBytes } from 'crypto'
 import { prisma } from '../../lib/prisma.js'
 import { sendSms, sendEmail } from '../../lib/notify.js'
 import { emitReservationEvent } from '../../lib/ws.js'
@@ -62,8 +63,9 @@ export async function tryPromoteWaitlist(freed: FreedSlot): Promise<{ promoted: 
     return { promoted: false, reason: 'candidate has no contact info' }
   }
 
-  // Generate a token. Same shape as confirmToken (32 chars, base36).
-  const token = Array.from({ length: 32 }, () => Math.floor(Math.random() * 36).toString(36)).join('')
+  // CSPRNG token — Math.random's xorshift state is leaked by a single emission,
+  // which would let an attacker race to claim a promoted waitlist slot.
+  const token = randomBytes(16).toString('hex')
   const expiresAt = new Date(Date.now() + PROMOTION_TTL_MIN * 60_000)
 
   const promoted = await prisma.reservation.update({

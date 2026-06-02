@@ -359,43 +359,13 @@ export default function CheckoutPage() {
         clearCart()
         router.push(`/${slug}/order/${order.id}`)
       } else {
-        if (!name.trim()) { setError('Please enter your name'); setLoading(false); return }
-        const res = await fetch(`${API_URL}/api/v1/storefront/guest-orders`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            conceptSlug: slug,
-            customerName: name.trim(),
-            customerPhone: phone.trim() || undefined,
-            // Guest orders honour the brand's allowed-fulfilment list
-            // too — Simmer guests get 'dine-in', Flipd guests can pick
-            // delivery, etc. Backend's guest-orders schema accepts
-            // 'pickup' | 'delivery' | 'dine-in'; curbside falls back to
-            // 'pickup' for guests since it's a logged-in-only feature
-            // (status updates need an account).
-            type: fulfilmentType === 'curbside' ? 'pickup' : fulfilmentType,
-            ...(fulfilmentType === 'dine-in' && { tableLabel: tableLabel.trim() }),
-            notes: notes.trim() || undefined,
-            items: items.map(i => ({
-              menuItemId: i.menuItemId, name: i.name,
-              priceCents: i.priceCents, quantity: i.quantity, notes: i.notes,
-              modifiers: (i.modifiers ?? []).map(m => ({
-                modifierId: m.modifierId ?? '',
-                name: m.name,
-                priceDeltaCents: m.priceDeltaCents,
-              })).filter(m => m.modifierId),
-            })),
-          }),
-        })
-        if (!res.ok) {
-          const d = await res.json() as { error?: { message?: string } }
-          throw new Error(d?.error?.message ?? 'Failed to place order')
-        }
-        const order = await res.json() as { id: string }
-        _orderPlaced.current = true
-        trackOrderPlaced(order.id, slug, displayTotal, 'cash')
-        clearCart()
-        router.push(`/${slug}/order/${order.id}`)
+        // Guest checkout is no longer available — anonymous order placement
+        // was abused (free kitchen tickets fired before payment ever cleared).
+        // Push the user to login, then resume here after they sign in.
+        setLoading(false)
+        const next = encodeURIComponent(`/${slug}/checkout`)
+        router.push(`/login?next=${next}`)
+        return
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Something went wrong'

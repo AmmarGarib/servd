@@ -2639,6 +2639,12 @@ model AutomationTrigger {
 
 model Rider {
   id              String      @id @default(uuid())
+  // Tenant scope. Was nullable historically (Rider predates multi-tenant);
+  // backfilled from each rider's first delivery's concept.tenantId in the
+  // migration. New riders must specify a tenant. Dispatch routes filter by
+  // this so a cashier in tenant A can't see tenant B's fleet GPS / orders.
+  tenantId        String?
+  tenant          Tenant?     @relation(fields: [tenantId], references: [id])
   name            String
   phone           String      @unique
   vehicleType     VehicleType @default(bike)
@@ -2662,6 +2668,7 @@ model Rider {
   locations RiderLocation[]
   ratings   RiderRating[]
 
+  @@index([tenantId])
   @@map("riders")
 }
 
@@ -4123,6 +4130,7 @@ model Tenant {
   concepts       Concept[]
   users          User[]
   members        TenantMember[]
+  riders         Rider[]
   suppliers      Supplier[]      @relation("TenantSuppliers")
   inventoryItems InventoryItem[] @relation("TenantInventoryItems")
   departments    Department[]
