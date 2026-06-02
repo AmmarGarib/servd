@@ -83,6 +83,14 @@ export async function staffPinLogin(pin: string) {
     throw new UnauthorizedError('Admin accounts must sign in with email and password')
   }
 
+  // Legacy PIN rotation gate. Any account whose PIN was derived from the
+  // last 4 digits of the phone (i.e. all pre-rotation accounts) is flagged
+  // pinMustReset=true by the user_pin_must_reset migration. Login is blocked
+  // until an admin issues a fresh CSPRNG PIN.
+  if (matchedUser && (matchedUser as { pinMustReset?: boolean }).pinMustReset) {
+    throw new UnauthorizedError('Your PIN needs to be reissued by an admin before you can sign in. Ask the CEO to rotate it from /workforce.')
+  }
+
   if (!matchedUser) {
     // Distinguish "wrong PIN" from "your account is still pending". Knowing
     // approval is pending tells the new hire they're not crazy — without

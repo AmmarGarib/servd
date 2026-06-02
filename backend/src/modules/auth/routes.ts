@@ -66,6 +66,15 @@ const STAFF_ROLE = z.enum(STAFF_ROLE_VALUES)
 // CEO-only assignment includes `admin` so the founder can promote a successor.
 const STAFF_ROLE_WITH_ADMIN = z.enum(['admin', ...STAFF_ROLE_VALUES])
 
+// 6-digit PIN, 10^6 = 1M keyspace. Combined with per-IP lockout on /auth/pin,
+// this is brute-force-resistant in practice. Used by both staff signup and
+// the admin-driven re-issue flow for legacy PIN rotation.
+function generateRandomPin(): string {
+  const buf = randomBytes(4)
+  const n = buf.readUInt32BE(0) % 1_000_000
+  return n.toString().padStart(6, '0')
+}
+
 function haversineMeters(lat1: number, lng1: number, lat2: number, lng2: number): number {
   const R = 6_371_000
   const toRad = (d: number) => (d * Math.PI) / 180
@@ -411,14 +420,6 @@ export async function authRoutes(fastify: FastifyInstance) {
   //   3. CEO reviews pending accounts and approves/rejects.
   //   4. Until approved, PIN login is blocked at the service layer.
 
-  function generateRandomPin(): string {
-    // 6-digit PIN, 10^6 = 1M keyspace. Combined with per-user + per-IP
-    // lockout on /auth/pin, this is brute-force-resistant.
-    const buf = randomBytes(4)
-    const n = buf.readUInt32BE(0) % 1_000_000
-    return n.toString().padStart(6, '0')
-  }
-
   // POST /auth/staff/signup — public, IP-rate-limited. Creates a pending User.
   fastify.post('/staff/signup', async (req, reply) => {
     const ip = req.ip ?? 'unknown'
@@ -540,6 +541,61 @@ export async function authRoutes(fastify: FastifyInstance) {
         select: { id: true, name: true, accountStatus: true },
       })
       return reply.status(200).send(updated)
+    },
+  )
+
+  // POST /auth/staff/:id/issue-pin — admin rotates a staff member's PIN.
+  //
+  // Use case: legacy accounts whose PIN was derived from their phone are
+  // flagged pinMustReset=true and blocked from PIN login. This endpoint
+  // generates a fresh 6-digit CSPRNG PIN, replaces the bcrypt hash, and
+  // clears the flag. The plaintext PIN is returned ONCE — the admin
+  // copies it to the staff member out-of-band (paper slip handed over
+  // in person, written on their workforce card, etc).
+  fastify.post<{ Params: { id: string } }>(
+    '/staff/:id/issue-pin',
+    { preHandler: requireAuth('admin') },
+    async (req, reply) => {
+      const user = await prisma.user.findUnique({
+        where: { id: req.params.id },
+        select: { id: true, name: true, role: true, isActive: true, deletedAt: true },
+      })
+      if (!user || user.deletedAt) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'No such staff' } })
+      if (user.role === 'admin') {
+        return reply.status(422).send({ error: { code: 'ADMIN_NO_PIN', message: 'Admin accounts must use email + password — PIN login is disabled for admins.' } })
+      }
+
+      // Collision check against every active PIN — see /auth/staff/signup
+      // for the same logic. Retry until we find a unique value.
+      const candidates = await prisma.user.findMany({
+        where: { isActive: true, pin: { not: null }, accountStatus: 'active', id: { not: user.id } },
+        select: { pin: true },
+      })
+      let pinPlain: string | null = null
+      for (let attempt = 0; attempt < 5; attempt++) {
+        const tryPin = generateRandomPin()
+        let collides = false
+        for (const c of candidates) {
+          if (c.pin && await bcrypt.compare(tryPin, c.pin)) { collides = true; break }
+        }
+        if (!collides) { pinPlain = tryPin; break }
+      }
+      if (!pinPlain) {
+        return reply.status(503).send({ error: { code: 'PIN_GENERATION_FAILED', message: 'Could not allocate a unique PIN. Try again.' } })
+      }
+
+      const pin = await hashPin(pinPlain)
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { pin, pinMustReset: false },
+      })
+
+      return reply.status(200).send({
+        id: user.id,
+        name: user.name,
+        pin: pinPlain,
+        message: 'PIN reissued. Share it with the staff member now — it will not be shown again.',
+      })
     },
   )
 

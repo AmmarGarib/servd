@@ -96,6 +96,12 @@ export async function feedbackRoutes(fastify: FastifyInstance) {
   // GET /feedback/summary — aggregates for the dashboard. NPS bucket counts
   // (promoters 9-10, passives 7-8, detractors 0-6), CSAT average, recent
   // open-suggestion count.
+  //
+  // Aggregates filter on `customerId: { not: null }`. Anonymous submissions
+  // (no customer JWT) were being used to drag the public NPS/CSAT scores
+  // arbitrarily — 30/hr per IP × a residential proxy pool was enough to
+  // bury real signal. We still store the anonymous rows so staff can read
+  // them in the inbox, but they no longer move the public scoreboard.
   fastify.get<{ Querystring: { conceptId?: string; days?: string } }>(
     '/summary',
     { preHandler: requireAuth(...MANAGERS) },
@@ -104,6 +110,7 @@ export async function feedbackRoutes(fastify: FastifyInstance) {
       const since = new Date(Date.now() - days * 86_400_000)
       const where = {
         createdAt: { gte: since },
+        customerId: { not: null },
         ...(req.query.conceptId && { conceptId: req.query.conceptId }),
       } as const
 

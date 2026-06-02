@@ -747,6 +747,11 @@ model User {
   phone           String? // staff contact + source for the 4-digit PIN
   password        String // bcrypt hash
   pin             String? // bcrypt hash of PIN
+  // Set true for legacy accounts whose PIN was derived from the last 4 digits
+  // of their phone number. Login is blocked for these accounts until an admin
+  // re-issues a CSPRNG PIN via POST /auth/staff/:id/issue-pin. New signups
+  // ship with this false because their PIN is already CSPRNG-generated.
+  pinMustReset    Boolean       @default(false)
   role            UserRole      @default(kitchen)
   // Free-text job title shown next to the role chip in /workforce. The role
   // enum is the *category* (FOH / BOH / Procurement / etc); jobTitle is what
