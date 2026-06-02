@@ -561,9 +561,6 @@ export async function authRoutes(fastify: FastifyInstance) {
         select: { id: true, name: true, role: true, isActive: true, deletedAt: true },
       })
       if (!user || user.deletedAt) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'No such staff' } })
-      if (user.role === 'admin') {
-        return reply.status(422).send({ error: { code: 'ADMIN_NO_PIN', message: 'Admin accounts must use email + password — PIN login is disabled for admins.' } })
-      }
 
       // Collision check against every active PIN — see /auth/staff/signup
       // for the same logic. Retry until we find a unique value.

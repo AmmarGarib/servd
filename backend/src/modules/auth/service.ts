@@ -76,18 +76,20 @@ export async function staffPinLogin(pin: string) {
   )
   const matchedUser = results.find((r) => r.match)?.user ?? null
 
-  // Admin login MUST use email+password, not PIN. A 6-digit PIN is brute-
-  // forceable enough that the CEO's account shouldn't depend on it alone;
-  // PIN login stays for shift staff who clock in on shared tablets.
-  if (matchedUser && matchedUser.role === 'admin') {
-    throw new UnauthorizedError('Admin accounts must sign in with email and password')
-  }
-
   // Legacy PIN rotation gate. Any account whose PIN was derived from the
   // last 4 digits of the phone (i.e. all pre-rotation accounts) is flagged
   // pinMustReset=true by the user_pin_must_reset migration. Login is blocked
   // until an admin issues a fresh CSPRNG PIN.
-  if (matchedUser && (matchedUser as { pinMustReset?: boolean }).pinMustReset) {
+  //
+  // Admin accounts are EXCLUDED from this gate because the admin is the one
+  // who issues PINs to everyone else — locking them out is a chicken-and-egg
+  // bootstrap break. Admins get nagged on every login to rotate (handled in
+  // the response payload) but aren't blocked.
+  if (
+    matchedUser
+    && matchedUser.role !== 'admin'
+    && (matchedUser as { pinMustReset?: boolean }).pinMustReset
+  ) {
     throw new UnauthorizedError('Your PIN needs to be reissued by an admin before you can sign in. Ask the CEO to rotate it from /workforce.')
   }
 
