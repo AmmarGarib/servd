@@ -48,15 +48,22 @@ export const prisma = basePrisma.$extends({
     async $allOperations({ args, query }) {
       if (!ENFORCE_RLS) return query(args)
       const ctx = getRlsContext()
-      if (!ctx || (!ctx.tenantId && !ctx.customerId)) {
-        return query(args)
-      }
+      if (!ctx) return query(args)             // outside a request — let serviceClient policies apply
       // `set_config(name, value, is_local=true)` binds the var for the
       // current transaction only — no leakage between pooled connections.
-      // Doing both vars in one SELECT keeps it to a single extra round-trip.
+      // Both vars are always SET (possibly to empty string) so policies can
+      // tell apart "service mode" (NULL — no SET ran) from "request mode
+      // without auth yet" (empty string — SET ran with no value). The
+      // former is allowed everywhere, the latter is denied — that's how
+      // unauthed routes fail closed.
+      //
+      // tenant_ids is a comma-joined list to support portfolio mode (one
+      // staff member who's a member of multiple tenants browsing all of
+      // them at once). Policies use string_to_array to test membership.
+      const tenantIds = (ctx.tenantIds ?? []).join(',')
       const [, result] = await basePrisma.$transaction([
         basePrisma.$executeRaw`SELECT
-          set_config('app.tenant_id',   ${ctx.tenantId   ?? ''}, true),
+          set_config('app.tenant_ids', ${tenantIds},          true),
           set_config('app.customer_id', ${ctx.customerId ?? ''}, true)`,
         query(args),
       ])

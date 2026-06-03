@@ -43,7 +43,9 @@ COPY --chown=servd:nodejs --from=builder /app/dist   ./dist
 COPY --chown=servd:nodejs --from=builder /app/prisma ./prisma
 
 COPY package.json ./
+COPY --chown=servd:nodejs entrypoint.sh ./entrypoint.sh
+RUN chmod +x ./entrypoint.sh
 
 USER servd
 EXPOSE 3001
-CMD ["node", "dist/src/index.js"]
+ENTRYPOINT ["./entrypoint.sh"]

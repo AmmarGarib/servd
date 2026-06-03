@@ -13,7 +13,12 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
 
 export interface RlsContext {
-  tenantId?:    string | null
+  /**
+   * The tenants this request is allowed to touch. Single-tenant staff: one
+   * element. Staff in portfolio mode: every tenant they're a member of.
+   * Customers + workers: empty array — they're scoped by other means.
+   */
+  tenantIds?:   string[]
   customerId?:  string | null
   staffUserId?: string | null
 }

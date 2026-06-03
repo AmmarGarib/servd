@@ -98,7 +98,14 @@ async function attachStaffPrincipal(req: FastifyRequest, payload: { sub: string;
     tenantFilter,
     memberTenantIds: Array.from(memberTenantIds),
   }
-  setRlsContext({ tenantId: effectiveTenantId, staffUserId: payload.sub })
+  // RLS scope: in single-tenant view, just the active tenant. In portfolio
+  // view (or non-GET writes), expand to every tenant the operator belongs
+  // to — matches how tenantFilter is computed above. Policies use the same
+  // expansion when checking row visibility.
+  const rlsTenantIds = (typeof tenantFilter === 'object' && tenantFilter !== null && 'in' in tenantFilter)
+    ? tenantFilter.in
+    : (effectiveTenantId ? [effectiveTenantId] : [])
+  setRlsContext({ tenantIds: rlsTenantIds, staffUserId: payload.sub })
 }
 
 export function requireAuth(...allowedRoles: UserRole[]) {
