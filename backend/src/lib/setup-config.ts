@@ -5,7 +5,11 @@
 // Caching: a 60-second in-memory cache keeps order-creation hot path fast.
 // Settings rarely change; staleness is bounded.
 
-import { prisma } from './prisma.js'
+// Operator-wide configuration. Reads can be invoked from customer-authed
+// or pre-auth contexts (checkout's delivery fee + refund policy, receipt
+// printing, POS service charge) — route via serviceClient so the singleton
+// config tables don't have to add a customer-readable clause.
+import { serviceClient as prisma } from './prisma.js'
 
 const CACHE_TTL_MS = 60_000
 type Cached<T> = { value: T; expiresAt: number }
