@@ -1,11 +1,18 @@
 'use client'
 // /dashboard — the chooser. Three split dashboards live one level
-// deeper at /dashboard/ceo, /dashboard/boh, /dashboard/foh. This
-// landing presents all three as big tiles so staff (regardless of
-// role) can pick the right view. Future iteration: route automatically
-// based on staff role on sign-in.
+// deeper at /dashboard/ceo, /dashboard/boh, /dashboard/foh. Tiles are
+// filtered by the same role→module map that drives sidebar visibility,
+// so the CEO scorecard (revenue, margin, AOV per brand) is only offered
+// to roles that have the `ceo_overview` module — by default that's
+// admin + management; the CEO can tighten further at
+// /configuration/role-modules.
 
 import Link from 'next/link'
+import { useMemo } from 'react'
+import { usePermissions } from '../../hooks/useCan'
+import { useRoleModules, modulesForRole } from '../../store/roleModules'
+import { useViewAsRole } from '../../store/viewAsRole'
+import type { AppRole, ModuleId } from '../../lib/appRoles'
 
 interface Tile {
   href:    string
@@ -14,6 +21,8 @@ interface Tile {
   meant:   string
   accent:  string
   dim:     string
+  /** Hides the tile unless the effective role has this module. */
+  module?: ModuleId
 }
 
 const TILES: Tile[] = [
@@ -24,6 +33,7 @@ const TILES: Tile[] = [
     meant:  'For ownership — revenue, margin, AOV, repeat-rate, per-brand. Glanceable scorecards, daily-cadence.',
     accent: '#00D4B1',
     dim:    'rgba(0,212,177,0.10)',
+    module: 'ceo_overview',
   },
   {
     href:   '/dashboard/boh',
@@ -44,6 +54,31 @@ const TILES: Tile[] = [
 ]
 
 export default function DashboardChooser() {
+  const { data: me, isLoading } = usePermissions()
+  const viewAsRole = useViewAsRole((s) => s.role)
+  const overrides  = useRoleModules((s) => s.overrides)
+
+  // Mirror AppShell: real admin/CEO sees everything unless they're impersonating
+  // a specific role via the view-as switcher; everyone else is gated by their
+  // role→modules allow-list.
+  const allowedModules = useMemo<Set<ModuleId> | null>(() => {
+    if (!me) return null
+    const isSuper = me.role === 'admin'
+    if (isSuper && !viewAsRole) return null
+    const effectiveRole = (isSuper && viewAsRole ? viewAsRole : me.role) as AppRole
+    return new Set<ModuleId>(modulesForRole(effectiveRole, overrides))
+  }, [me, viewAsRole, overrides])
+
+  // While the /permissions/me round-trip is in flight we hide module-gated
+  // tiles. A brief "you can't see this" flash is preferable to flashing a
+  // CEO tile at someone who can't actually open it.
+  const visibleTiles = TILES.filter((t) => {
+    if (!t.module) return true
+    if (isLoading || !me) return false
+    if (!allowedModules) return true                 // real admin/CEO
+    return allowedModules.has(t.module)
+  })
+
   return (
     <main style={{ minHeight: '100vh', background: '#0a0d12', color: '#E8EAF0', padding: '2rem 1.25rem 6rem' }}>
       <div style={{ maxWidth: '64rem', margin: '0 auto' }}>
@@ -69,7 +104,7 @@ export default function DashboardChooser() {
           gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
           gap: '1rem',
         }}>
-          {TILES.map((t) => (
+          {visibleTiles.map((t) => (
             <Link key={t.href} href={t.href}
               style={{
                 display: 'block',

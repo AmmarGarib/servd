@@ -58,7 +58,7 @@ const NAV: NavSection[] = [
   {
     title: 'Executive',
     items: [
-      { href: '/configuration',                 label: 'CEO Overview',        icon: '👑', module: 'ceo_overview' },
+      { href: '/dashboard/ceo',                 label: 'CEO Overview',        icon: '👑', module: 'ceo_overview' },
       { href: '/workforce',                     label: 'Workforce',           icon: '👥', module: 'staff_directory', children: [
         { href: '/workforce?tab=positions',         label: 'Positions (budget)', module: 'staff_directory' },
         { href: '/workforce?category=management',  label: 'Management',     module: 'staff_management' },

@@ -10,9 +10,14 @@
 // numbers reconcile with /reports.
 
 import Link from 'next/link'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../../../lib/api'
+import { usePermissions } from '../../../hooks/useCan'
+import { useRoleModules, modulesForRole } from '../../../store/roleModules'
+import { useViewAsRole } from '../../../store/viewAsRole'
+import type { AppRole } from '../../../lib/appRoles'
 
 type Period = 'today' | 'week' | 'month'
 
@@ -49,31 +54,70 @@ function pkr(cents: number): string {
 }
 
 export default function CeoDashboardPage() {
+  const router = useRouter()
   const [period, setPeriod] = useState<Period>('today')
   const range = useMemo(() => rangeFor(period), [period])
+
+  // Module gate — mirror the chooser + AppShell logic. The CEO dashboard
+  // exposes revenue, margin, AOV, repeat-rate per brand; only roles with
+  // `ceo_overview` in their module map should reach it, even by typing the
+  // URL directly. Real admin (CEO) always passes unless impersonating.
+  const { data: me, isLoading: permsLoading } = usePermissions()
+  const viewAsRole = useViewAsRole((s) => s.role)
+  const overrides  = useRoleModules((s) => s.overrides)
+  const canViewCeo = useMemo(() => {
+    if (!me) return null
+    const isSuper = me.role === 'admin'
+    if (isSuper && !viewAsRole) return true
+    const effectiveRole = (isSuper && viewAsRole ? viewAsRole : me.role) as AppRole
+    return new Set(modulesForRole(effectiveRole, overrides)).has('ceo_overview')
+  }, [me, viewAsRole, overrides])
+
+  useEffect(() => {
+    if (canViewCeo === false) router.replace('/dashboard')
+  }, [canViewCeo, router])
 
   const { data: concepts } = useQuery({
     queryKey: ['ceo', 'concepts'],
     queryFn:  () => api.get<Concept[]>('/concepts'),
+    enabled:  canViewCeo === true,
   })
 
   const { data: sales } = useQuery({
     queryKey: ['ceo', 'sales', range.from, range.to],
     queryFn:  () => api.get<SalesTotals>(`/reports/sales?dateFrom=${range.from}&dateTo=${range.to}`),
     refetchInterval: 60_000,
+    enabled:  canViewCeo === true,
   })
 
   const { data: top } = useQuery({
     queryKey: ['ceo', 'top-items', range.from, range.to],
     queryFn:  () => api.get<TopResp>(`/reports/top-items?dateFrom=${range.from}&dateTo=${range.to}&limit=5`),
     refetchInterval: 120_000,
+    enabled:  canViewCeo === true,
   })
 
   const { data: segments } = useQuery({
     queryKey: ['ceo', 'segments'],
     queryFn:  () => api.get<SmartSeg>('/crm/smart-segments'),
     refetchInterval: 300_000,
+    enabled:  canViewCeo === true,
   })
+
+  if (permsLoading || canViewCeo === null) {
+    return (
+      <main style={{ minHeight: '100vh', background: '#0a0d12', color: '#6E7186', padding: '4rem 1.4rem', textAlign: 'center', fontSize: '0.85rem' }}>
+        Checking access…
+      </main>
+    )
+  }
+  if (canViewCeo === false) {
+    return (
+      <main style={{ minHeight: '100vh', background: '#0a0d12', color: '#E8EAF0', padding: '4rem 1.4rem', textAlign: 'center' }}>
+        <p style={{ color: '#6E7186', fontSize: '0.85rem' }}>This view is restricted to ownership. Redirecting…</p>
+      </main>
+    )
+  }
 
   const totals     = sales?.totals
   const gross      = totals?.gross ?? 0
