@@ -87,6 +87,16 @@ export default function CheckoutPage() {
   // helps them.
   const hideCrossBrandUpsell = slug === 'simmer'
 
+  // Guest checkout is gone — every order needs a logged-in customer. Bounce
+  // unauthenticated visitors to /login with a return URL so their cart still
+  // makes it back here after they sign in.
+  useEffect(() => {
+    if (!token) {
+      const next = encodeURIComponent(`/${slug}/checkout`)
+      router.replace(`/login?next=${next}`)
+    }
+  }, [token, slug, router])
+
   // Cross-domain handoff: when a user builds a cart on a brand custom domain
   // (eatstax.com, stax.localhost:3002…) and clicks checkout, the brand site
   // appends the cart as a base64url-encoded token. Hydrate on mount, then
@@ -587,8 +597,8 @@ export default function CheckoutPage() {
                   </div>
                 )}
 
-                {/* Show text input for: guests, or when "new address" is selected, or no saved addresses */}
-                {(!token || showNewAddressInput || savedAddresses.length === 0) && (
+                {/* Show text input when "new address" is selected or no saved addresses exist. */}
+                {(showNewAddressInput || savedAddresses.length === 0) && (
                   <input
                     value={deliveryAddress} onChange={(e) => setDeliveryAddress(e.target.value)}
                     placeholder="Full delivery address"

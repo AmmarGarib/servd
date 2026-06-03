@@ -1,6 +1,6 @@
 'use client'
 import { useEffect, useState, useRef } from 'react'
-import { useParams } from 'next/navigation'
+import { useParams, useRouter, usePathname } from 'next/navigation'
 import Link from 'next/link'
 import { fmt, isLight } from '../../../../lib/ui'
 import { useCustomerAuth } from '../../../../store/customerAuth'
@@ -49,13 +49,26 @@ const STATUS_CONFIG: Record<string, { headline: string; sub: string }> = {
 
 export default function OrderStatusPage() {
   const { concept: slug, id } = useParams<{ concept: string; id: string }>()
+  const router = useRouter()
+  const pathname = usePathname()
   const token = useCustomerAuth((s) => s.token)
   const [order,    setOrder]    = useState<OrderStatus | null>(null)
   const [notFound, setNotFound] = useState(false)
   const [flash,    setFlash]    = useState(false)
   const prevStatus = useRef<string | null>(null)
 
+  // Guest order viewing is gone — every order tracker requires sign-in.
+  // Bounce to login with a return URL so the customer lands back here after
+  // authenticating. Old SMS tracker links flow through this same path.
   useEffect(() => {
+    if (!token) {
+      const ret = encodeURIComponent(pathname ?? `/${slug}/order/${id}`)
+      router.replace(`/login?return=${ret}`)
+    }
+  }, [token, router, pathname, slug, id])
+
+  useEffect(() => {
+    if (!token) return
     let stopped = false
     let iv: ReturnType<typeof setInterval> | null = null
     const stop = () => { if (iv) { clearInterval(iv); iv = null } stopped = true }
@@ -63,35 +76,33 @@ export default function OrderStatusPage() {
     const poll = async () => {
       if (stopped) return
       try {
-        let data: OrderStatus | null = null
-        if (token) {
-          const res = await fetch(`${API_URL}/api/v1/storefront/orders/${id}`, {
-            headers: { Authorization: `Bearer ${token}` },
-          })
-          if (res.ok) data = await res.json() as OrderStatus
+        const res = await fetch(`${API_URL}/api/v1/storefront/orders/${id}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        })
+        if (res.status === 401 || res.status === 403) {
+          const ret = encodeURIComponent(pathname ?? `/${slug}/order/${id}`)
+          router.replace(`/login?return=${ret}`)
+          stop()
+          return
         }
-        if (!data) {
-          const res = await fetch(`${API_URL}/api/v1/storefront/guest-orders/${id}`)
-          if (res.status === 404) { setNotFound(true); stop(); return }
-          if (res.ok) data = await res.json() as OrderStatus
+        if (res.status === 404) { setNotFound(true); stop(); return }
+        if (!res.ok) return
+        const data = await res.json() as OrderStatus
+        if (prevStatus.current && prevStatus.current !== data.status) {
+          setFlash(true)
+          setTimeout(() => setFlash(false), 900)
         }
-        if (data) {
-          if (prevStatus.current && prevStatus.current !== data.status) {
-            setFlash(true)
-            setTimeout(() => setFlash(false), 900)
-          }
-          prevStatus.current = data.status
-          setOrder(data)
-          if (data.status === 'completed' || data.status === 'cancelled' || data.status === 'refunded') {
-            stop()
-          }
+        prevStatus.current = data.status
+        setOrder(data)
+        if (data.status === 'completed' || data.status === 'cancelled' || data.status === 'refunded') {
+          stop()
         }
       } catch { /* keep polling */ }
     }
     void poll()
     iv = setInterval(() => void poll(), 10000)
     return () => stop()
-  }, [id, token])
+  }, [id, token, router, pathname, slug])
 
   if (notFound) return (
     <main className="flex min-h-screen flex-col items-center justify-center gap-5 px-4" style={{ background: 'var(--servd-bg)' }}>

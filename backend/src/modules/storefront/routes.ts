@@ -18,6 +18,16 @@ function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): nu
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
 }
 
+// Snap rider coordinates to a ~110m grid before returning to customers.
+// 3 decimal places of latitude = ~111m; same in longitude at Karachi's
+// latitude (24°N) = ~101m. Enough for "rider is in this neighborhood"
+// without enabling turn-by-turn stalking. Full precision stays internal
+// to dispatch and the rider tablet.
+function bufferCoord(v: number | null | undefined): number | null {
+  if (v == null) return null
+  return Math.round(v * 1000) / 1000
+}
+
 const createDirectOrderSchema = z.object({
   conceptSlug: z.string(),
   type: z.enum(['delivery', 'pickup', 'dine-in', 'curbside']),
@@ -785,7 +795,11 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
         select: { id: true },
       })
 
-      // Attach the rider's last-known location if a rider is assigned
+      // Attach the rider's last-known location if a rider is assigned.
+      // Coordinates are deliberately blurred to ~110m (3 decimal places) so
+      // the customer sees the rider's rough neighborhood for ETA confidence
+      // without being able to stalk them turn-by-turn. Dispatch + tablet keep
+      // full precision via /dispatch/riders/:id/track for operational use.
       let riderInfo: {
         id: string; name: string; phone: string; vehicleType: string
         lastLat: number | null; lastLng: number | null; lastReportedAt: string | null
@@ -798,8 +812,8 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
         })
         riderInfo = {
           ...order.rider,
-          lastLat:        loc?.lat ?? null,
-          lastLng:        loc?.lng ?? null,
+          lastLat:        bufferCoord(loc?.lat),
+          lastLng:        bufferCoord(loc?.lng),
           lastReportedAt: loc?.recordedAt.toISOString() ?? null,
         }
       }
@@ -827,41 +841,23 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
     })
   })
 
-  // GET /storefront/guest-orders/:id — public order status (no auth, by ID).
-  // Still reachable for existing tracking links shared via SMS — the order id
-  // is a UUID v4, so it's not enumerable, and the response carries no PII
-  // beyond what the customer already received in their confirmation message.
-  fastify.get<{ Params: { id: string } }>('/guest-orders/:id', async (req) => {
-    const order = await prisma.order.findUnique({
-      where: { id: req.params.id },
-      include: {
-        items: true,
-        concept: { select: { name: true, slug: true, primaryColor: true } },
-        rider: { select: { id: true, name: true, phone: true, vehicleType: true } },
+  // GET /storefront/guest-orders/:id — REMOVED.
+  //
+  // Returned full order detail (items, totals, rider name + phone + live
+  // location) to anyone with the UUID. Order IDs aren't enumerable, but they
+  // leak through SMS tracking links, screenshots, support tickets, etc. Once
+  // out, the URL exposed PII indefinitely. Per CEO decision: viewing an order
+  // requires sign-in.
+  //
+  // Old SMS links still hit this path — they get a 410 with a code the
+  // storefront tracker UI can detect and redirect to /login.
+  fastify.get('/guest-orders/:id', async (_req, reply) => {
+    return reply.status(410).send({
+      error: {
+        code: 'GUEST_ORDERS_DISABLED',
+        message: 'Sign in to view this order.',
       },
     })
-    if (!order) throw new NotFoundError('Order', req.params.id)
-
-    // Attach rider's last-known location
-    let riderInfo: {
-      id: string; name: string; phone: string; vehicleType: string
-      lastLat: number | null; lastLng: number | null; lastReportedAt: string | null
-    } | null = null
-    if (order.rider) {
-      const loc = await prisma.riderLocation.findFirst({
-        where: { riderId: order.rider.id },
-        orderBy: { recordedAt: 'desc' },
-        select: { lat: true, lng: true, recordedAt: true },
-      })
-      riderInfo = {
-        ...order.rider,
-        lastLat:        loc?.lat ?? null,
-        lastLng:        loc?.lng ?? null,
-        lastReportedAt: loc?.recordedAt.toISOString() ?? null,
-      }
-    }
-
-    return { ...order, rider: riderInfo }
   })
 
   // GET /storefront/account — customer profile + loyalty + wallet + referrals
