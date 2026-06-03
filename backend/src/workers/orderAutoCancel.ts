@@ -19,7 +19,7 @@
 
 import { Queue, Worker } from 'bullmq'
 import { redis } from '../lib/redis.js'
-import { prisma } from '../lib/prisma.js'
+import { serviceClient as prisma } from '../lib/prisma.js'
 import { sendOrderStatusUpdate } from '../lib/notify.js'
 
 const QUEUE_NAME = 'order-auto-cancel'

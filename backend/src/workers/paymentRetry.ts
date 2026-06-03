@@ -23,7 +23,7 @@
 
 import { Queue, Worker } from 'bullmq'
 import { redis } from '../lib/redis.js'
-import { prisma } from '../lib/prisma.js'
+import { serviceClient as prisma } from '../lib/prisma.js'
 
 const QUEUE_NAME    = 'payment-retry'
 const RUN_EVERY_MS  = 10 * 60_000   // 10 minutes

@@ -13,7 +13,7 @@
 
 import { Queue, Worker } from 'bullmq'
 import { redis } from '../lib/redis.js'
-import { prisma } from '../lib/prisma.js'
+import { serviceClient as prisma } from '../lib/prisma.js'
 import { postLoyaltyExpire } from '../modules/accounting/loyaltyPosting.js'
 
 const EXPIRY_DAYS = 365

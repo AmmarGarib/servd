@@ -13,7 +13,8 @@ import swagger from '@fastify/swagger'
 import swaggerUi from '@fastify/swagger-ui'
 
 import { initWebSocket } from './lib/ws.js'
-import { prisma } from './lib/prisma.js'
+import { serviceClient as prisma } from './lib/prisma.js'
+import { runWithRlsContext } from './lib/rlsContext.js'
 import { redis } from './lib/redis.js'
 import { AppError, errorResponse } from './lib/errors.js'
 import { ZodError } from 'zod'
@@ -161,6 +162,14 @@ async function build() {
   // ─── Plugins ───────────────────────────────────────────────────────────────
 
   await fastify.register(helmet, { contentSecurityPolicy: false })
+
+  // RLS context bootstrap — every request runs inside an AsyncLocalStorage
+  // bubble so auth middleware can stash tenant_id / customer_id once the
+  // JWT clears, and the Prisma extension picks those up to scope queries.
+  // Workers and webhooks don't go through this — they import `serviceClient`.
+  fastify.addHook('onRequest', (_req, _reply, done) => {
+    runWithRlsContext({}, () => done())
+  })
 
   // CORS allowlist lives in lib/corsAllowlist.ts — handles the canonical
   // servd hosts AND each brand's custom domain (eatstax.com, bukharirice.com,

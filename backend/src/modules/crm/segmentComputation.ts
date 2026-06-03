@@ -5,7 +5,7 @@
 // Safe to run multiple times (idempotent via full replace).
 
 import { Prisma } from '@prisma/client'
-import { prisma } from '../../lib/prisma.js'
+import { serviceClient as prisma } from '../../lib/prisma.js'
 
 interface SegmentDef {
   slug: string

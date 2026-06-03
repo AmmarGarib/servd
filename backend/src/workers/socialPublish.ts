@@ -1,6 +1,6 @@
 import { Worker, Queue } from 'bullmq'
 import { redis } from '../lib/redis.js'
-import { prisma } from '../lib/prisma.js'
+import { serviceClient as prisma } from '../lib/prisma.js'
 import { publishInstagramPost, publishFacebookPost } from '../lib/meta-social.js'
 
 const QUEUE_NAME = 'social-publish'

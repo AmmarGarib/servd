@@ -22,7 +22,7 @@
 // `buildPayload`, not a re-architecture.
 
 import { redis } from '../../lib/redis.js'
-import { prisma } from '../../lib/prisma.js'
+import { serviceClient as prisma } from '../../lib/prisma.js'
 
 const SRB_BASE = process.env['SRB_ENV'] === 'production'
   ? 'https://e.srb.gos.pk/api'

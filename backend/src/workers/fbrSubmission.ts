@@ -6,7 +6,7 @@
 
 import { Worker } from 'bullmq'
 import { redis } from '../lib/redis.js'
-import { prisma } from '../lib/prisma.js'
+import { serviceClient as prisma } from '../lib/prisma.js'
 import { buildFbrDataForOrder, submitFbrInvoice } from '../adapters/fbr/index.js'
 import type { FbrSubmissionJob } from '../lib/queue.js'
 

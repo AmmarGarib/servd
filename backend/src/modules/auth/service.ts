@@ -1,7 +1,7 @@
 import bcrypt from 'bcryptjs'
 import jwt, { type SignOptions } from 'jsonwebtoken'
 import { nanoid } from 'nanoid'
-import { prisma } from '../../lib/prisma.js'
+import { serviceClient as prisma } from '../../lib/prisma.js'
 import { AppError, NotFoundError, UnauthorizedError } from '../../lib/errors.js'
 import { sendMagicLink } from '../../lib/notify.js'
 

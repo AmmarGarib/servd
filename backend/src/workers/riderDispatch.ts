@@ -13,7 +13,7 @@
 
 import { Queue, Worker } from 'bullmq'
 import { redis } from '../lib/redis.js'
-import { prisma } from '../lib/prisma.js'
+import { serviceClient as prisma } from '../lib/prisma.js'
 
 const QUEUE_NAME = 'rider-dispatch'
 const RUN_EVERY_MS = 2 * 60_000

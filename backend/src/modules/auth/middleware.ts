@@ -2,7 +2,11 @@ import type { FastifyRequest, FastifyReply } from 'fastify'
 import { verifyStaffToken, verifyCustomerToken } from './service.js'
 import { ForbiddenError, UnauthorizedError } from '../../lib/errors.js'
 import type { UserRole } from '@prisma/client'
-import { prisma } from '../../lib/prisma.js'
+// Auth middleware runs BEFORE the RLS context is populated — the whole point
+// of these lookups is to figure out who the caller is. Use `serviceClient` so
+// the queries don't trip over policies that haven't seen the tenant id yet.
+import { serviceClient as prisma } from '../../lib/prisma.js'
+import { setRlsContext } from '../../lib/rlsContext.js'
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -94,6 +98,7 @@ async function attachStaffPrincipal(req: FastifyRequest, payload: { sub: string;
     tenantFilter,
     memberTenantIds: Array.from(memberTenantIds),
   }
+  setRlsContext({ tenantId: effectiveTenantId, staffUserId: payload.sub })
 }
 
 export function requireAuth(...allowedRoles: UserRole[]) {
@@ -175,6 +180,7 @@ export async function requireCustomerAuth(req: FastifyRequest, _reply: FastifyRe
   const token = authHeader.slice(7)
   const payload = verifyCustomerToken(token)
   req.customer = { id: payload.sub }
+  setRlsContext({ customerId: payload.sub })
 }
 
 // Role groupings. `manager` is the legacy alias retained for back-compat with

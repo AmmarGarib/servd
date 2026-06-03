@@ -11,7 +11,7 @@
 //   Concept.fbrPosId — the POSID assigned by FBR at POS registration
 
 import { redis } from '../../lib/redis.js'
-import { prisma } from '../../lib/prisma.js'
+import { serviceClient as prisma } from '../../lib/prisma.js'
 
 const PRAL_BASE = process.env['FBR_ENV'] === 'production'
   ? 'https://esp.pral.com.pk/FBRIntegration/api'

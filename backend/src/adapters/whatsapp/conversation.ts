@@ -7,7 +7,7 @@
 // customerId when a member is detected, so loyalty points + history accrue
 // correctly without requiring sign-in.
 
-import { prisma } from '../../lib/prisma.js'
+import { serviceClient as prisma } from '../../lib/prisma.js'
 import { sendText, sendInteractiveList, sendButtons } from '../../lib/whatsapp.js'
 import {
   getSession, saveSession, clearSession, newSession,

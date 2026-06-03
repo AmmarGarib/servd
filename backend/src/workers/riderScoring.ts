@@ -3,7 +3,7 @@
 // rolling window so dispatch can review.
 
 import cron from 'node-cron'
-import { prisma } from '../lib/prisma.js'
+import { serviceClient as prisma } from '../lib/prisma.js'
 import { flagException } from '../lib/exceptions.js'
 
 const WINDOW_DAYS = 14

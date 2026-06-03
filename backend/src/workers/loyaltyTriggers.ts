@@ -1,6 +1,6 @@
 import { Queue, Worker } from 'bullmq'
 import { redis } from '../lib/redis.js'
-import { prisma } from '../lib/prisma.js'
+import { serviceClient as prisma } from '../lib/prisma.js'
 import { sendEmail, sendSms } from '../lib/notify.js'
 
 export function startLoyaltyTriggerWorker() {

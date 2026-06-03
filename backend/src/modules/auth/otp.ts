@@ -4,7 +4,7 @@
 // before the row is invalidated and the caller must request a new one.
 
 import crypto from 'crypto'
-import { prisma } from '../../lib/prisma.js'
+import { serviceClient as prisma } from '../../lib/prisma.js'
 import { sendText } from '../../lib/whatsapp.js'
 import { AppError } from '../../lib/errors.js'
 

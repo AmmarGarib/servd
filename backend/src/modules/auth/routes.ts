@@ -5,7 +5,7 @@ import { z } from 'zod'
 import { staffLogin, staffPinLogin, refreshStaffToken, customerRegister, customerLogin, verifyMagicLink, requestMagicLink, hashPassword, hashPin } from './service.js'
 import { requestOtp, verifyOtp, normalisePhone } from './otp.js'
 import { requireAuth, ADMIN_ONLY, MANAGERS, ALL_STAFF } from './middleware.js'
-import { prisma } from '../../lib/prisma.js'
+import { serviceClient as prisma } from '../../lib/prisma.js'
 import { resolveTenantScope, tenantWhere } from '../../lib/tenantScope.js'
 import { AppError } from '../../lib/errors.js'
 import {

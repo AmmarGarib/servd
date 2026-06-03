@@ -11,7 +11,7 @@
 
 import { Worker } from 'bullmq'
 import { redis } from '../lib/redis.js'
-import { prisma } from '../lib/prisma.js'
+import { serviceClient as prisma } from '../lib/prisma.js'
 import { buildSrbDataForOrder, submitSrbInvoice } from '../adapters/srb/index.js'
 import type { SrbSubmissionJob } from '../lib/queue.js'
 

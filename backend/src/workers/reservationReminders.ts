@@ -10,7 +10,7 @@
 
 import { Queue, Worker } from 'bullmq'
 import { redis } from '../lib/redis.js'
-import { prisma } from '../lib/prisma.js'
+import { serviceClient as prisma } from '../lib/prisma.js'
 import { sendSms, sendEmail } from '../lib/notify.js'
 
 const QUEUE_NAME = 'reservation-reminders'

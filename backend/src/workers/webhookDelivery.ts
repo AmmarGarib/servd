@@ -10,7 +10,7 @@
 import { Worker } from 'bullmq'
 import { createHmac } from 'crypto'
 import { redis } from '../lib/redis.js'
-import { prisma } from '../lib/prisma.js'
+import { serviceClient as prisma } from '../lib/prisma.js'
 import type { WebhookDeliveryJob } from '../lib/queue.js'
 
 const TIMEOUT_MS = 10_000

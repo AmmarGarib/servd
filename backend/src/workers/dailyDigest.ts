@@ -1,5 +1,5 @@
 import cron from 'node-cron'
-import { prisma } from '../lib/prisma.js'
+import { serviceClient as prisma } from '../lib/prisma.js'
 import { sendEmail } from '../lib/notify.js'
 
 async function runDailyDigest() {

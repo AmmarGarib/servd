@@ -7,7 +7,7 @@
 // schedules from DB on each operator change.
 
 import cron from 'node-cron'
-import { prisma } from '../lib/prisma.js'
+import { serviceClient as prisma } from '../lib/prisma.js'
 import { sendEmail } from '../lib/notify.js'
 
 type ReportType = 'sales_daily' | 'shift_summary' | 'low_stock' | 'food_cost' | 'ap_aging' | 'menu_engineering'
