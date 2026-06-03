@@ -3,11 +3,16 @@ import { notFound } from 'next/navigation'
 import type { Concept, ServiceHourSlot } from '../../../../lib/concept'
 import { typeLabel } from '../../../../lib/concept'
 
+// force-dynamic + cache: 'no-store' so a single API outage at deploy
+// time can't poison the ISR cache and return 404s for the lifetime of
+// the container (see CLAUDE.md "Fetch caching gotcha").
+export const dynamic = 'force-dynamic'
+
 const API_URL = process.env.INTERNAL_API_URL ?? process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
 async function getConcept(slug: string) {
   try {
-    const res = await fetch(`${API_URL}/api/v1/storefront/concepts`, { next: { revalidate: 60 } })
+    const res = await fetch(`${API_URL}/api/v1/storefront/concepts`, { cache: 'no-store' })
     if (!res.ok) return null
     const all: Concept[] = await res.json()
     return all.find((c) => c.slug === slug) ?? null

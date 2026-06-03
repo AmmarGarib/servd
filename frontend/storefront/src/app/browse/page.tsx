@@ -6,7 +6,7 @@ export const dynamic = 'force-dynamic'
 const API_URL = process.env.INTERNAL_API_URL ?? process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
 async function getConcepts(): Promise<Concept[]> {
-  const res = await fetch(`${API_URL}/api/v1/storefront/concepts`, { next: { revalidate: 60 } })
+  const res = await fetch(`${API_URL}/api/v1/storefront/concepts`, { cache: 'no-store' })
   if (!res.ok) throw new Error(`Concepts API returned ${res.status}`)
   return res.json()
 }
