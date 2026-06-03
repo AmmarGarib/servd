@@ -34,6 +34,14 @@ services:
       API_URL: "https://api.servd.garibsons.app"
       WEB_URL: "https://admin.servd.garibsons.app"
       STOREFRONT_URL: "https://app.servd.garibsons.app"
+      # Row-level security enforcement. When "1", the Prisma extension at
+      # src/lib/prisma.ts injects SET LOCAL app.tenant_ids / app.customer_id
+      # on every request-scoped query, and the policies created by the
+      # 20260603071500_enable_rls_phase2 + 20260603073000_enable_rls_phase3
+      # migrations gate row visibility. Workers + webhook handlers use the
+      # `serviceClient` (no extension) which leaves session vars unset, so
+      # policies short-circuit on app_is_service_mode() and let them through.
+      RLS_ENFORCE: "1"
     # Let the image's ENTRYPOINT handle startup. It runs:
     #   1. prisma migrate resolve --applied 0_init (idempotent baseline)
     #   2. prisma migrate deploy (best effort, doesn't block on failure)
