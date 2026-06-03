@@ -48,11 +48,11 @@ export function CrossBrandUpsell({ currentSlug, max = 3 }: Props) {
       <div className="flex items-baseline justify-between mb-3">
         <div>
           <p className="text-[10px] font-black uppercase tracking-[0.2em]"
-            style={{ color: 'rgba(24,22,15,0.38)' }}>
-            🍽️ &nbsp;From our other kitchens
+            style={{ color: 'var(--servd-mute)' }}>
+            From our other kitchens
           </p>
-          <p className="font-black text-base mt-1" style={{ color: '#18160f' }}>Want to add a side from another GS Foods brand?</p>
-          <p className="text-xs mt-0.5" style={{ color: 'rgba(24,22,15,0.55)' }}>
+          <p className="font-black text-base mt-1" style={{ color: 'var(--servd-ink)' }}>Want to add a side from another GS Foods brand?</p>
+          <p className="text-xs mt-0.5" style={{ color: 'var(--servd-mute)' }}>
             One operator, three kitchens. Tap to browse — we&rsquo;ll save your current cart.
           </p>
         </div>
@@ -88,10 +88,10 @@ export function CrossBrandUpsell({ currentSlug, max = 3 }: Props) {
                 {p.brandName}
               </p>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '0.4rem' }}>
-                <span style={{ fontSize: '0.92rem', fontWeight: 800, letterSpacing: '-0.01em', color: '#18160f' }}>{p.dish}</span>
+                <span style={{ fontSize: '0.92rem', fontWeight: 800, letterSpacing: '-0.01em', color: 'var(--servd-ink)' }}>{p.dish}</span>
                 <span style={{ fontSize: '0.85rem', fontWeight: 800, color: p.color, whiteSpace: 'nowrap' }}>{p.price}</span>
               </div>
-              <p style={{ fontSize: '0.74rem', color: 'rgba(24,22,15,0.55)', lineHeight: 1.35 }}>{p.blurb}</p>
+              <p style={{ fontSize: '0.74rem', color: 'var(--servd-mute)', lineHeight: 1.35 }}>{p.blurb}</p>
             </div>
           </Link>
         ))}

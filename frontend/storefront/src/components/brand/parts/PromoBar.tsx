@@ -65,7 +65,7 @@ export function PromoBar({ concept, brandName, brandSlug, accent }: Props) {
       }}
     >
       <span style={{ color: 'var(--servd-green)' }}>RS. 200 OFF</span> your first order with{' '}
-      <code style={{ background: 'rgba(30,58,138,0.18)', color: 'var(--servd-green)', padding: '0.1rem 0.4rem', borderRadius: '4px', fontWeight: 800 }}>FRESH200</code>
+      <code style={{ background: 'rgba(58,14,105,0.18)', color: 'var(--servd-green)', padding: '0.1rem 0.4rem', borderRadius: '4px', fontWeight: 800 }}>FRESH200</code>
       {' · '}
       <span style={{ opacity: 0.8 }}>Free delivery over Rs. 1,500</span>
       {' · '}

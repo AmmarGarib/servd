@@ -98,7 +98,7 @@ export function Hero(block: HeroBlock) {
                     fontSize: 'clamp(1.1rem, 2.4vw, 1.6rem)',
                     padding: 'clamp(1.1rem, 2.6vw, 1.6rem) clamp(2.5rem, 6vw, 4rem)',
                     borderRadius: '999px', textDecoration: 'none',
-                    boxShadow: '0 14px 36px rgba(30,58,138,0.4)',
+                    boxShadow: '0 14px 36px rgba(58,14,105,0.4)',
                   }}>
                   {block.primaryCta.text}
                 </Link>

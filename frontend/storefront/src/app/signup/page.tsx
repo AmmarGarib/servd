@@ -148,7 +148,7 @@ export default function SignupPage() {
   const inpStyle = { background: 'white', border: '1.5px solid var(--servd-line)', color: 'var(--servd-ink)' }
   const onFocus = (e: React.FocusEvent<HTMLInputElement>) => {
     e.currentTarget.style.borderColor = 'var(--servd-green)'
-    e.currentTarget.style.boxShadow   = '0 0 0 3px rgba(30,58,138,0.16)'
+    e.currentTarget.style.boxShadow   = '0 0 0 3px rgba(58,14,105,0.16)'
   }
   const onBlur = (e: React.FocusEvent<HTMLInputElement>) => {
     e.currentTarget.style.borderColor = 'var(--servd-line)'
@@ -157,7 +157,7 @@ export default function SignupPage() {
   const primaryBtnStyle = (busy: boolean) => ({
     background: busy ? 'var(--servd-surface)' : 'var(--servd-green)',
     color: busy ? 'var(--servd-mute)' : '#0a0a0a',
-    boxShadow: busy ? 'none' : '0 6px 18px rgba(30,58,138,0.28)',
+    boxShadow: busy ? 'none' : '0 6px 18px rgba(58,14,105,0.28)',
   })
 
   return (
@@ -178,7 +178,7 @@ export default function SignupPage() {
 
             {error && <ErrorToast message={error} onDismiss={() => setError('')} />}
             {emailTaken && (
-              <div className="mb-4 rounded-2xl px-4 py-3" style={{ background: 'rgba(30,58,138,0.08)', border: '1px solid rgba(30,58,138,0.25)' }}>
+              <div className="mb-4 rounded-2xl px-4 py-3" style={{ background: 'rgba(58,14,105,0.08)', border: '1px solid rgba(58,14,105,0.25)' }}>
                 <Link href="/login" className="text-sm font-black" style={{ color: 'var(--servd-green-dark)' }}>→ Sign in to your existing account</Link>
               </div>
             )}

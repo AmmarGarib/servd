@@ -250,7 +250,7 @@ function BrowseCard({ concept }: { concept: Concept }) {
           position: 'absolute',
           top: '0.85rem',
           right: '0.85rem',
-          background: status.open ? 'rgba(30,58,138,0.95)' : 'rgba(0,0,0,0.7)',
+          background: status.open ? 'rgba(58,14,105,0.95)' : 'rgba(0,0,0,0.7)',
           color: status.open ? 'var(--servd-black)' : 'white',
           fontSize: '0.7rem',
           fontWeight: 700,

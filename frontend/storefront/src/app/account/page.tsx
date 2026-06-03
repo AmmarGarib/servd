@@ -34,7 +34,7 @@ const STATUS_CONFIG: Record<string, { bg: string; text: string; label: string; b
   received:  { bg: 'rgba(59,130,246,0.12)',  text: '#2563eb', label: 'Received',  bar: '#3b82f6' },
   confirmed: { bg: 'rgba(99,102,241,0.12)',  text: '#4f46e5', label: 'Confirmed', bar: '#6366f1' },
   preparing: { bg: 'rgba(234,179,8,0.12)',   text: '#d97706', label: 'Preparing', bar: '#eab308' },
-  ready:     { bg: 'rgba(30,58,138,0.12)',   text: 'var(--servd-green-dark)', label: 'Ready!',    bar: 'var(--servd-green)' },
+  ready:     { bg: 'rgba(58,14,105,0.12)',   text: 'var(--servd-green-dark)', label: 'Ready!',    bar: 'var(--servd-green)' },
   completed: { bg: 'rgba(0,0,0,0.05)',       text: 'var(--servd-mute)', label: 'Completed', bar: 'rgba(0,0,0,0.18)' },
   cancelled: { bg: 'rgba(239,68,68,0.1)',    text: '#dc2626', label: 'Cancelled', bar: '#ef4444' },
 }
@@ -137,7 +137,7 @@ export default function AccountPage() {
         <div className="relative h-14 w-14">
           <div className="absolute inset-0 rounded-full" style={{ border: '2px solid rgba(0,0,0,0.07)' }} />
           <div className="absolute inset-0 rounded-full animate-spin"
-            style={{ border: '2px solid transparent', borderTopColor: 'rgba(0,212,177,0.6)' }} />
+            style={{ border: '2px solid transparent', borderTopColor: 'rgba(58,14,105,0.6)' }} />
         </div>
         <p className="text-sm" style={{ color: 'var(--servd-mute)' }}>Loading account…</p>
       </div>
@@ -151,7 +151,7 @@ export default function AccountPage() {
       <p className="text-sm" style={{ color: '#dc2626' }}>{error || 'Account not found'}</p>
       <Link href="/browse"
         className="rounded-2xl font-black px-8 py-3.5 text-sm transition-all hover:scale-[1.02]"
-        style={{ background: 'var(--servd-green)', color: '#fff', boxShadow: '0 4px 20px rgba(0,212,177,0.3)' }}>
+        style={{ background: 'var(--servd-green)', color: '#fff', boxShadow: '0 4px 20px rgba(58,14,105,0.3)' }}>
         Browse brands
       </Link>
     </main>
@@ -228,7 +228,7 @@ export default function AccountPage() {
               style={{ background: 'var(--servd-green)' }} />
             <div className="p-4 flex flex-col items-center text-center gap-3 h-full pb-5">
               <div className="h-16 w-16 rounded-2xl flex items-center justify-center font-black text-2xl text-white mt-1"
-                style={{ background: 'var(--servd-green)', boxShadow: '0 0 20px rgba(30,58,138,0.28)' }}>
+                style={{ background: 'var(--servd-green)', boxShadow: '0 0 20px rgba(58,14,105,0.28)' }}>
                 {initials}
               </div>
               <div>
@@ -322,14 +322,14 @@ export default function AccountPage() {
             <div className="h-px flex-1" style={{ background: 'rgba(0,0,0,0.07)' }} />
             <button onClick={() => setShowAddAddr(!showAddAddr)}
               className="text-[10px] font-black px-2.5 py-1 rounded-full transition-all"
-              style={{ background: 'rgba(30,58,138,0.1)', color: 'var(--servd-green-dark)', border: '1px solid rgba(30,58,138,0.2)' }}>
+              style={{ background: 'rgba(58,14,105,0.1)', color: 'var(--servd-green-dark)', border: '1px solid rgba(58,14,105,0.2)' }}>
               + Add
             </button>
           </div>
 
           {showAddAddr && (
             <div className="rounded-2xl p-4 mb-3 space-y-3"
-              style={{ background: '#fff', border: '1px solid rgba(30,58,138,0.2)', boxShadow: '0 2px 8px rgba(0,0,0,0.04)' }}>
+              style={{ background: '#fff', border: '1px solid rgba(58,14,105,0.2)', boxShadow: '0 2px 8px rgba(0,0,0,0.04)' }}>
               <div>
                 <label className="text-[10px] font-black uppercase tracking-wide" style={{ color: 'rgba(15,26,15,0.45)' }}>Label (e.g. Home, Work, Gym)</label>
                 <input value={addrForm.label} onChange={(e) => setAddrForm({ ...addrForm, label: e.target.value })}
@@ -376,9 +376,9 @@ export default function AccountPage() {
             <div className="space-y-2">
               {addresses.map((addr) => (
                 <div key={addr.id} className="rounded-2xl p-4 flex items-center gap-3"
-                  style={{ background: 'white', border: addr.isDefault ? '1px solid rgba(30,58,138,0.3)' : '1px solid var(--servd-line)', boxShadow: '0 1px 3px rgba(0,0,0,0.04)' }}>
+                  style={{ background: 'white', border: addr.isDefault ? '1px solid rgba(58,14,105,0.3)' : '1px solid var(--servd-line)', boxShadow: '0 1px 3px rgba(0,0,0,0.04)' }}>
                   <div className="h-9 w-9 rounded-xl flex items-center justify-center shrink-0"
-                    style={{ background: addr.isDefault ? 'rgba(30,58,138,0.12)' : 'var(--servd-surface)', color: addr.isDefault ? 'var(--servd-green-dark)' : 'var(--servd-mute)' }}>
+                    style={{ background: addr.isDefault ? 'rgba(58,14,105,0.12)' : 'var(--servd-surface)', color: addr.isDefault ? 'var(--servd-green-dark)' : 'var(--servd-mute)' }}>
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                       <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/>
                       <circle cx="12" cy="10" r="3"/>
@@ -389,7 +389,7 @@ export default function AccountPage() {
                       <p className="font-black text-sm" style={{ color: '#0f1a0f' }}>{addr.label}</p>
                       {addr.isDefault && (
                         <span className="text-[9px] font-black uppercase tracking-wide px-1.5 py-0.5 rounded-full"
-                          style={{ background: 'rgba(30,58,138,0.12)', color: 'var(--servd-green-dark)' }}>Default</span>
+                          style={{ background: 'rgba(58,14,105,0.12)', color: 'var(--servd-green-dark)' }}>Default</span>
                       )}
                     </div>
                     <p className="text-xs line-clamp-1 mt-0.5" style={{ color: 'rgba(15,26,15,0.45)' }}>{addr.address}</p>
@@ -418,7 +418,7 @@ export default function AccountPage() {
 
         {/* ── How to earn more ── */}
         <div className="mb-3 rounded-2xl p-4"
-          style={{ background: 'linear-gradient(135deg, rgba(30,58,138,0.06) 0%, rgba(0,212,177,0.06) 100%)', border: '1px solid rgba(30,58,138,0.15)' }}>
+          style={{ background: 'linear-gradient(135deg, rgba(58,14,105,0.06) 0%, rgba(58,14,105,0.06) 100%)', border: '1px solid rgba(58,14,105,0.15)' }}>
           <div className="flex items-center gap-2 mb-2">
             <p className="text-[9px] font-black uppercase tracking-[0.28em]"
               style={{ color: 'var(--servd-mute)' }}>How to earn</p>
@@ -433,7 +433,7 @@ export default function AccountPage() {
                 className="rounded-xl p-3 flex flex-col gap-1.5"
                 style={{
                   background: 'rgba(255,255,255,0.7)',
-                  border: '1px solid rgba(30,58,138,0.12)',
+                  border: '1px solid rgba(58,14,105,0.12)',
                   animation: `revealUp 0.4s ${i * 0.06}s both`,
                 }}>
                 <div className="text-xl">{tip.emoji}</div>
@@ -694,7 +694,7 @@ function LoyaltyTransactionsSection({ token }: { token: string | null }) {
         <button
           onClick={() => setOpen(!open)}
           className="text-[10px] font-black px-2.5 py-1 rounded-full transition-all"
-          style={{ background: 'rgba(30,58,138,0.1)', color: 'var(--servd-green-dark)', border: '1px solid rgba(30,58,138,0.2)' }}>
+          style={{ background: 'rgba(58,14,105,0.1)', color: 'var(--servd-green-dark)', border: '1px solid rgba(58,14,105,0.2)' }}>
           {open ? 'Hide' : `Show ${recent.length}`}
         </button>
       </div>
@@ -715,7 +715,7 @@ function LoyaltyTransactionsSection({ token }: { token: string | null }) {
                 <div className="flex items-center gap-3 min-w-0 flex-1">
                   <div className="h-7 w-7 rounded-xl flex items-center justify-center shrink-0 text-xs"
                     style={{
-                      background: isEarn ? 'rgba(30,58,138,0.1)' : isRedeem ? 'rgba(239,68,68,0.1)' : 'rgba(0,0,0,0.05)',
+                      background: isEarn ? 'rgba(58,14,105,0.1)' : isRedeem ? 'rgba(239,68,68,0.1)' : 'rgba(0,0,0,0.05)',
                     }}>
                     {isEarn ? '↑' : isRedeem ? '↓' : '~'}
                   </div>
@@ -813,8 +813,8 @@ function MyBookingsSection({ token }: { token: string | null }) {
             return (
               <div key={r.id} className="rounded-xl p-3 flex items-start gap-3"
                 style={{
-                  background: isCancelled ? 'rgba(239,68,68,0.05)' : 'rgba(30,58,138,0.05)',
-                  border: isCancelled ? '1px solid rgba(239,68,68,0.15)' : '1px solid rgba(30,58,138,0.15)',
+                  background: isCancelled ? 'rgba(239,68,68,0.05)' : 'rgba(58,14,105,0.05)',
+                  border: isCancelled ? '1px solid rgba(239,68,68,0.15)' : '1px solid rgba(58,14,105,0.15)',
                   opacity: isCancelled ? 0.65 : 1,
                 }}>
                 <div className="min-w-0 flex-1">
@@ -928,7 +928,7 @@ function MyReviewsSection({ token }: { token: string | null }) {
               <div className="flex flex-wrap gap-1.5 mt-2">
                 {r.tags.map((t) => (
                   <span key={t} className="text-[10px] font-bold px-1.5 py-0.5 rounded"
-                    style={{ background: 'rgba(30,58,138,0.1)', color: '#15803d' }}>{t}</span>
+                    style={{ background: 'rgba(58,14,105,0.1)', color: '#15803d' }}>{t}</span>
                 ))}
               </div>
             )}
@@ -1070,7 +1070,7 @@ function SupportSection({ orders }: { orders: Order[] }) {
         </button>
       ) : (
         <div className="rounded-2xl p-5 space-y-3"
-          style={{ background: '#fff', border: '1px solid rgba(30,58,138,0.25)', boxShadow: '0 2px 8px rgba(0,0,0,0.04)' }}>
+          style={{ background: '#fff', border: '1px solid rgba(58,14,105,0.25)', boxShadow: '0 2px 8px rgba(0,0,0,0.04)' }}>
           <div className="flex items-center justify-between">
             <p className="font-black text-sm" style={{ color: 'var(--servd-ink)' }}>Tell us what went wrong</p>
             <button onClick={() => setOpen(false)} className="text-xs" style={{ color: 'var(--servd-mute)' }}>Close</button>
@@ -1078,7 +1078,7 @@ function SupportSection({ orders }: { orders: Order[] }) {
 
           {success && (
             <div className="rounded-xl px-3 py-2 text-xs font-bold"
-              style={{ background: 'rgba(30,58,138,0.1)', color: 'var(--servd-green-dark)', border: '1px solid rgba(30,58,138,0.25)' }}>
+              style={{ background: 'rgba(58,14,105,0.1)', color: 'var(--servd-green-dark)', border: '1px solid rgba(58,14,105,0.25)' }}>
               ✓ Got it — a manager will reach out within 24 hours.
             </div>
           )}
@@ -1111,7 +1111,7 @@ function SupportSection({ orders }: { orders: Order[] }) {
                 <button key={c.key} onClick={() => setCategory(c.key)}
                   className="rounded-xl px-2 py-2 text-xs font-bold transition-all flex flex-col items-center gap-1"
                   style={category === c.key
-                    ? { background: 'rgba(30,58,138,0.1)', border: '1px solid rgba(30,58,138,0.35)', color: 'var(--servd-green-dark)' }
+                    ? { background: 'rgba(58,14,105,0.1)', border: '1px solid rgba(58,14,105,0.35)', color: 'var(--servd-green-dark)' }
                     : { background: 'rgba(0,0,0,0.03)', border: '1px solid rgba(0,0,0,0.08)', color: 'var(--servd-mute)' }}>
                   <span>{c.emoji}</span>
                   {c.label}

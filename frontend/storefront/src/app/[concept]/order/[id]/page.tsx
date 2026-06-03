@@ -104,7 +104,7 @@ export default function OrderStatusPage() {
       </div>
       <Link href={`/${slug}`}
         className="rounded-2xl font-black px-8 py-4 text-sm transition-transform active:scale-[0.98]"
-        style={{ background: 'var(--servd-green)', color: 'white', boxShadow: '0 6px 18px rgba(30,58,138,0.28)' }}>
+        style={{ background: 'var(--servd-green)', color: 'white', boxShadow: '0 6px 18px rgba(58,14,105,0.28)' }}>
         Back to menu
       </Link>
     </main>
@@ -265,7 +265,7 @@ export default function OrderStatusPage() {
           </div>
 
           {order.rider && (
-            <div className="px-4 py-3 border-b" style={{ borderColor: 'var(--servd-line)', background: 'rgba(30,58,138,0.06)' }}>
+            <div className="px-4 py-3 border-b" style={{ borderColor: 'var(--servd-line)', background: 'rgba(58,14,105,0.06)' }}>
               <div className="flex items-center gap-3">
                 <span style={{ color: 'var(--servd-green-dark)' }}><BikeIcon /></span>
                 <div className="flex-1 min-w-0">
@@ -324,7 +324,7 @@ export default function OrderStatusPage() {
         )}
         {order.curbsideVehicle && order.curbsideArrivedAt && !order.curbsideRunnerOutAt && (
           <div className="rounded-2xl px-4 py-3.5 text-center"
-            style={{ background: 'rgba(30,58,138,0.1)', border: '1px solid rgba(30,58,138,0.35)', color: 'var(--servd-green-dark)' }}>
+            style={{ background: 'rgba(58,14,105,0.1)', border: '1px solid rgba(58,14,105,0.35)', color: 'var(--servd-green-dark)' }}>
             <p className="font-black text-sm">We see you. Bringing your food now.</p>
             <p className="text-xs mt-0.5 opacity-70">{order.curbsideVehicle}</p>
           </div>
@@ -340,7 +340,7 @@ export default function OrderStatusPage() {
         {order.status === 'completed' && token && (
           <Link href={`/orders/${order.id}/review`}
             className="block w-full rounded-3xl overflow-hidden transition-transform active:scale-[0.98]"
-            style={{ background: 'var(--servd-green)', boxShadow: '0 6px 18px rgba(30,58,138,0.28)' }}>
+            style={{ background: 'var(--servd-green)', boxShadow: '0 6px 18px rgba(58,14,105,0.28)' }}>
             <div className="px-6 py-5 flex items-center justify-between gap-4">
               <div>
                 <p className="font-display font-black text-lg leading-tight" style={{ fontFamily: 'var(--font-display)', color: '#0a0a0a' }}>How was it?</p>
@@ -390,7 +390,7 @@ function CurbsideArrivedButton({ orderId, onArrived }: { orderId: string; onArri
       style={{
         background: 'var(--servd-green)', color: 'white',
         border: '1px solid var(--servd-green-dark)',
-        boxShadow: '0 6px 18px rgba(30,58,138,0.28)',
+        boxShadow: '0 6px 18px rgba(58,14,105,0.28)',
         opacity: busy ? 0.6 : 1,
       }}>
       <CarIcon />

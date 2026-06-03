@@ -14,16 +14,16 @@ export function isLight(hex: string): boolean {
 export function hexToRgb(hex: string): [number, number, number] {
   const s = hex.replace('#', '').padEnd(6, '0')
   return [
-    parseInt(s.slice(0, 2), 16) || 99,
-    parseInt(s.slice(2, 4), 16) || 102,
-    parseInt(s.slice(4, 6), 16) || 241,
+    parseInt(s.slice(0, 2), 16) || 58,
+    parseInt(s.slice(2, 4), 16) || 14,
+    parseInt(s.slice(4, 6), 16) || 105,
   ]
 }
 
 export function deriveColors(primary: string | null) {
-  const [r, g, b] = hexToRgb(primary ?? '#6366f1')
+  const [r, g, b] = hexToRgb(primary ?? '#3A0E69')
   return {
-    mid:   primary ?? '#6366f1',
+    mid:   primary ?? '#3A0E69',
     dark:  `rgb(${Math.max(0, r - 90)}, ${Math.max(0, g - 90)}, ${Math.max(0, b - 90)})`,
     light: `rgb(${Math.min(255, r + 50)}, ${Math.min(255, g + 50)}, ${Math.min(255, b + 50)})`,
   }

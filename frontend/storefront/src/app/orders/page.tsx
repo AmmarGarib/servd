@@ -94,7 +94,7 @@ const STATUS_BADGE: Record<string, { bg: string; text: string; label: string }> 
   received:  { bg: 'rgba(59,130,246,0.12)', text: '#2563eb', label: 'Received' },
   confirmed: { bg: 'rgba(99,102,241,0.12)', text: '#4f46e5', label: 'Confirmed' },
   preparing: { bg: 'rgba(234,179,8,0.15)',  text: '#a16207', label: 'In the kitchen' },
-  ready:     { bg: 'rgba(30,58,138,0.15)',  text: '#15803d', label: 'Ready' },
+  ready:     { bg: 'rgba(58,14,105,0.15)',  text: '#15803d', label: 'Ready' },
   completed: { bg: 'rgba(0,0,0,0.06)',      text: 'var(--servd-mute)', label: 'Delivered' },
   cancelled: { bg: 'rgba(239,68,68,0.12)',  text: '#dc2626', label: 'Cancelled' },
   refunded:  { bg: 'rgba(239,68,68,0.12)',  text: '#dc2626', label: 'Refunded' },

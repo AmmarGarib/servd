@@ -141,10 +141,10 @@
 /* "Tip the rider" / fulfilment chooser tints use a blue-ish wash on
    the servd default; remap to a faint orange wash so they tie to the
    single accent colour. */
-.simmer-checkout div[style*="rgba(30,58,138,0.06)"],
-.simmer-checkout div[style*="rgba(30,58,138,0.08)"],
-.simmer-checkout div[style*="rgba(30,58,138,0.25)"],
-.simmer-checkout div[style*="rgba(30,58,138,0.2)"] {
+.simmer-checkout div[style*="rgba(58,14,105,0.06)"],
+.simmer-checkout div[style*="rgba(58,14,105,0.08)"],
+.simmer-checkout div[style*="rgba(58,14,105,0.25)"],
+.simmer-checkout div[style*="rgba(58,14,105,0.2)"] {
   background: rgba(233,78,27,0.06) !important;
   border-color: rgba(233,78,27,0.20) !important;
 }
@@ -187,10 +187,10 @@
   color: var(--stax-grey-80);
 }
 /* Fulfilment / tip-rider blue washes → faint cream wash */
-.stax-checkout div[style*="rgba(30,58,138,0.06)"],
-.stax-checkout div[style*="rgba(30,58,138,0.08)"],
-.stax-checkout div[style*="rgba(30,58,138,0.25)"],
-.stax-checkout div[style*="rgba(30,58,138,0.2)"] {
+.stax-checkout div[style*="rgba(58,14,105,0.06)"],
+.stax-checkout div[style*="rgba(58,14,105,0.08)"],
+.stax-checkout div[style*="rgba(58,14,105,0.25)"],
+.stax-checkout div[style*="rgba(58,14,105,0.2)"] {
   background: rgba(242,235,218,0.06) !important;
   border-color: rgba(242,235,218,0.18) !important;
 }
@@ -255,10 +255,10 @@
   box-shadow: 0 1px 3px rgba(14,26,42,0.06) !important;
 }
 /* Fulfilment / tip-rider washes → faint sky wash */
-.flipd-checkout div[style*="rgba(30,58,138,0.06)"],
-.flipd-checkout div[style*="rgba(30,58,138,0.08)"],
-.flipd-checkout div[style*="rgba(30,58,138,0.25)"],
-.flipd-checkout div[style*="rgba(30,58,138,0.2)"] {
+.flipd-checkout div[style*="rgba(58,14,105,0.06)"],
+.flipd-checkout div[style*="rgba(58,14,105,0.08)"],
+.flipd-checkout div[style*="rgba(58,14,105,0.25)"],
+.flipd-checkout div[style*="rgba(58,14,105,0.2)"] {
   background: rgba(58,168,255,0.08) !important;
   border-color: rgba(58,168,255,0.22) !important;
 }
