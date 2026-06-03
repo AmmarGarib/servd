@@ -2,7 +2,7 @@
 import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
 import type { Concept } from '../../lib/concept'
-import { typeLabel, typeIcon, conceptHeroImage, brandStory } from '../../lib/concept'
+import { typeLabel, conceptHeroImage, brandStory } from '../../lib/concept'
 import { isOpenNow, fmtHourWindow } from '../../lib/hours'
 import { trackSearch, trackFilterApplied, track } from '../../lib/analytics'
 
@@ -244,7 +244,7 @@ function BrowseCard({ concept }: { concept: Concept }) {
           padding: '0.3rem 0.65rem',
           borderRadius: '999px',
         }}>
-          {typeIcon(concept.type)} {typeLabel(concept.type)}
+          {typeLabel(concept.type)}
         </span>
         <span style={{
           position: 'absolute',

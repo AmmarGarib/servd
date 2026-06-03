@@ -1,7 +1,7 @@
 'use client'
 import Link from 'next/link'
 import type { Concept } from '../../../lib/concept'
-import { typeIcon, typeLabel, conceptHeroImage } from '../../../lib/concept'
+import { typeLabel, conceptHeroImage } from '../../../lib/concept'
 
 interface Props {
   current: Concept
@@ -65,7 +65,7 @@ export function CrossBrandStrip({ current, concepts, accent, kicker, heading }: 
                   padding: '0.3rem 0.65rem',
                   borderRadius: '999px',
                 }}>
-                  {typeIcon(c.type)} {typeLabel(c.type)}
+                  {typeLabel(c.type)}
                 </div>
               </div>
               <div style={{ padding: '1.25rem 1.4rem', display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>

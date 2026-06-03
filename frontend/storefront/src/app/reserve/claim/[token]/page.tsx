@@ -137,7 +137,7 @@ export default function ClaimOfferPage() {
   return (
     <Centered>
       <p style={{ fontSize: '0.85rem', letterSpacing: '0.18em', textTransform: 'uppercase', color: 'var(--servd-mute)', marginBottom: '0.5rem' }}>
-        ✨ A table opened up
+        A table opened up
       </p>
       <h1 style={{ fontSize: 'clamp(1.75rem, 5vw, 2.75rem)', fontWeight: 800, lineHeight: 1.15, marginBottom: '0.75rem' }}>
         {offer.concept.name}

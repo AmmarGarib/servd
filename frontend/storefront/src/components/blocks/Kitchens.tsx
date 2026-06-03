@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import type { KitchensBlock } from '../../lib/blocks'
 import type { Concept } from '../../lib/concept'
-import { typeLabel, typeIcon, conceptHeroImage } from '../../lib/concept'
+import { typeLabel, conceptHeroImage } from '../../lib/concept'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -61,7 +61,7 @@ export async function Kitchens({ block }: { block: KitchensBlock }) {
                   fontSize: '0.7rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase',
                   padding: '0.3rem 0.65rem', borderRadius: '999px',
                 }}>
-                  {typeIcon(c.type)} {typeLabel(c.type)}
+                  {typeLabel(c.type)}
                 </div>
               </div>
               <div style={{ padding: '1.25rem 1.4rem' }}>

@@ -425,9 +425,37 @@ export default function AccountPage() {
           </div>
           <div className="grid grid-cols-3 gap-2">
             {[
-              { emoji: '⭐', title: 'Order',     desc: '1 pt per Rs. 10 spent' },
-              { emoji: '📝', title: 'Review',    desc: '+50 pts per review'     },
-              { emoji: '👥', title: 'Refer',     desc: '+200 pts per friend'    },
+              {
+                title: 'Order', desc: '1 pt per Rs. 10 spent',
+                icon: (
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                    strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+                  </svg>
+                ),
+              },
+              {
+                title: 'Review', desc: '+50 pts per review',
+                icon: (
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                    strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                    <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                  </svg>
+                ),
+              },
+              {
+                title: 'Refer', desc: '+200 pts per friend',
+                icon: (
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                    strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+                    <circle cx="9" cy="7" r="4"/>
+                    <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+                    <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+                  </svg>
+                ),
+              },
             ].map((tip, i) => (
               <div key={tip.title}
                 className="rounded-xl p-3 flex flex-col gap-1.5"
@@ -435,8 +463,9 @@ export default function AccountPage() {
                   background: 'rgba(255,255,255,0.7)',
                   border: '1px solid rgba(58,14,105,0.12)',
                   animation: `revealUp 0.4s ${i * 0.06}s both`,
+                  color: 'var(--servd-green-dark)',
                 }}>
-                <div className="text-xl">{tip.emoji}</div>
+                {tip.icon}
                 <p className="font-black text-[0.72rem] leading-tight" style={{ color: 'var(--servd-ink)' }}>{tip.title}</p>
                 <p className="text-[0.6rem] leading-snug" style={{ color: 'var(--servd-mute)' }}>{tip.desc}</p>
               </div>
@@ -1101,19 +1130,18 @@ function SupportSection({ orders }: { orders: Order[] }) {
             <label className="text-[10px] font-black uppercase tracking-wide" style={{ color: 'rgba(15,26,15,0.45)' }}>Category</label>
             <div className="mt-1 grid grid-cols-3 gap-1.5">
               {([
-                { key: 'wrong_item',    label: 'Wrong item',    emoji: '❌' },
-                { key: 'missing_item',  label: 'Missing item',  emoji: '🤷' },
-                { key: 'quality',       label: 'Quality',       emoji: '😞' },
-                { key: 'service',       label: 'Service',       emoji: '🤨' },
-                { key: 'delivery',      label: 'Delivery',      emoji: '🛵' },
-                { key: 'other',         label: 'Other',         emoji: '💬' },
+                { key: 'wrong_item',    label: 'Wrong item'    },
+                { key: 'missing_item',  label: 'Missing item'  },
+                { key: 'quality',       label: 'Quality'       },
+                { key: 'service',       label: 'Service'       },
+                { key: 'delivery',      label: 'Delivery'      },
+                { key: 'other',         label: 'Other'         },
               ] as const).map((c) => (
                 <button key={c.key} onClick={() => setCategory(c.key)}
-                  className="rounded-xl px-2 py-2 text-xs font-bold transition-all flex flex-col items-center gap-1"
+                  className="rounded-xl px-2 py-3 text-xs font-bold transition-all flex items-center justify-center text-center"
                   style={category === c.key
                     ? { background: 'rgba(58,14,105,0.1)', border: '1px solid rgba(58,14,105,0.35)', color: 'var(--servd-green-dark)' }
                     : { background: 'rgba(0,0,0,0.03)', border: '1px solid rgba(0,0,0,0.08)', color: 'var(--servd-mute)' }}>
-                  <span>{c.emoji}</span>
                   {c.label}
                 </button>
               ))}

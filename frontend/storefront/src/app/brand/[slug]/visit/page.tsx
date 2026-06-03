@@ -123,7 +123,12 @@ export default async function BrandVisitPage({ params }: { params: Promise<{ slu
                   fontSize: '0.95rem',
                   color: 'var(--servd-ink)',
                 }}>
-                  <span style={{ fontSize: '1.25rem', marginRight: '0.5rem' }}>📍</span>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--servd-green-dark)"
+                    strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"
+                    style={{ display: 'inline-block', verticalAlign: '-3px', marginRight: '0.5rem' }}>
+                    <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/>
+                    <circle cx="12" cy="10" r="3"/>
+                  </svg>
                   {concept.address}
                 </div>
               ) : null}

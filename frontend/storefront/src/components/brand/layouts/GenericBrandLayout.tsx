@@ -1,7 +1,7 @@
 'use client'
 import Link from 'next/link'
 import type { Concept } from '../../../lib/concept'
-import { brandStory, conceptHeroImage, typeIcon, typeLabel } from '../../../lib/concept'
+import { brandStory, conceptHeroImage, typeLabel } from '../../../lib/concept'
 import { PromoBar } from '../parts/PromoBar'
 import { CrossBrandStrip } from '../parts/CrossBrandStrip'
 import { BottomCTA } from '../parts/BottomCTA'
@@ -54,7 +54,7 @@ export function GenericBrandLayout({ concept, concepts }: Props) {
       }}>
         <div className="container" style={{ position: 'relative', zIndex: 1 }}>
           <p style={{ fontSize: '0.7rem', fontWeight: 700, letterSpacing: '0.32em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.78)', marginBottom: '0.85rem' }}>
-            A servd kitchen · GS Foods · {typeIcon(concept.type)} {typeLabel(concept.type)}
+            A servd kitchen · GS Foods · {typeLabel(concept.type)}
           </p>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem', marginBottom: '1rem', flexWrap: 'wrap' }}>
             <h1 style={{

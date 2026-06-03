@@ -168,7 +168,14 @@ export default function ReservePage() {
     return (
       <div style={{ minHeight: '60vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2rem' }}>
         <div style={{ textAlign: 'center', maxWidth: '32rem' }}>
-          <div style={{ fontSize: '3rem', marginBottom: '0.5rem' }}>🍽️</div>
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--servd-mute)"
+            strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"
+            style={{ display: 'inline-block', marginBottom: '0.75rem' }}>
+            <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
+            <line x1="16" y1="2" x2="16" y2="6"/>
+            <line x1="8" y1="2" x2="8" y2="6"/>
+            <line x1="3" y1="10" x2="21" y2="10"/>
+          </svg>
           <h1 style={{ fontSize: 'clamp(1.6rem, 4vw, 2.25rem)', fontWeight: 800, marginBottom: '0.75rem' }}>
             Reservations not available right now.
           </h1>

@@ -54,13 +54,6 @@ export function typeLabel(t: string): string {
   return 'Order'
 }
 
-export function typeIcon(t: string): string {
-  if (t === 'digital')    return '🛵'
-  if (t === 'cart')       return '🚚'
-  if (t === 'restaurant') return '🍽️'
-  return '•'
-}
-
 // Stock hero images keyed on slug.
 // Replace with real photography when art direction is delivered.
 // HERO_BY_SLUG — fallback hero image per concept slug. Operator can
