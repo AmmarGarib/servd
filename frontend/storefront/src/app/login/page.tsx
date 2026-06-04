@@ -1,30 +1,13 @@
 'use client'
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { useCustomerAuth } from '../../store/customerAuth'
+import { ErrorToast } from '../../components/ui/ErrorToast'
 
 // /login — restyled to the on-system --servd-* tokens + Bricolage Grotesque
 // display. Replaces the legacy teal→indigo gradient + placeholder "S" mark
 // with the real servd wordmark and a single green primary CTA.
-
-function ErrorToast({ message, onDismiss }: { message: string; onDismiss: () => void }) {
-  useEffect(() => {
-    const t = setTimeout(onDismiss, 6000)
-    return () => clearTimeout(t)
-  }, [message, onDismiss])
-  return (
-    <div className="fixed top-4 left-1/2 z-[9999] w-[calc(100vw-2rem)] max-w-sm"
-      style={{ transform: 'translateX(-50%)', animation: 'slideDownFade 0.25s cubic-bezier(0.22,1,0.36,1) both' }}>
-      <div className="flex items-start gap-3 rounded-2xl px-4 py-3.5 shadow-xl"
-        style={{ background: '#fff1f1', border: '1.5px solid #ef4444', boxShadow: '0 8px 32px rgba(239,68,68,0.18)' }}>
-        <span aria-hidden style={{ width: 18, height: 18, borderRadius: 999, background: '#ef4444', flex: 'none', marginTop: 2 }} />
-        <p className="flex-1 text-sm font-bold leading-snug" style={{ color: '#c0392b' }}>{message}</p>
-        <button onClick={onDismiss} className="text-red-400 hover:text-red-600 text-lg leading-none shrink-0">×</button>
-      </div>
-    </div>
-  )
-}
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -36,6 +19,7 @@ export default function LoginPage() {
   const [password, setPassword] = useState('')
   const [loading,  setLoading]  = useState(false)
   const [error,    setError]    = useState('')
+  const [showPassword, setShowPassword] = useState(false)
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -85,16 +69,36 @@ export default function LoginPage() {
 
         <form onSubmit={e => { void handleSubmit(e) }} className="space-y-3">
           <div>
-            <label className="block text-[10px] font-black uppercase tracking-[0.22em] mb-1.5" style={{ color: 'var(--servd-mute)' }}>Email</label>
-            <input type="email" value={email} onChange={e => setEmail(e.target.value)}
+            <label htmlFor="login-email" className="block text-[10px] font-black uppercase tracking-[0.22em] mb-1.5" style={{ color: 'var(--servd-mute)' }}>Email</label>
+            <input id="login-email" type="email" autoComplete="email" value={email} onChange={e => setEmail(e.target.value)}
               placeholder="you@example.com" autoFocus required
               className={inp} style={inpStyle} onFocus={onFocus} onBlur={onBlur} />
           </div>
           <div>
-            <label className="block text-[10px] font-black uppercase tracking-[0.22em] mb-1.5" style={{ color: 'var(--servd-mute)' }}>Password</label>
-            <input type="password" value={password} onChange={e => setPassword(e.target.value)}
-              placeholder="••••••••" required
-              className={inp} style={inpStyle} onFocus={onFocus} onBlur={onBlur} />
+            <label htmlFor="login-password" className="block text-[10px] font-black uppercase tracking-[0.22em] mb-1.5" style={{ color: 'var(--servd-mute)' }}>Password</label>
+            <div className="relative">
+              <input id="login-password" type={showPassword ? 'text' : 'password'} autoComplete="current-password"
+                value={password} onChange={e => setPassword(e.target.value)}
+                placeholder="••••••••" required
+                className={inp + ' pr-12'} style={inpStyle} onFocus={onFocus} onBlur={onBlur} />
+              <button type="button" onClick={() => setShowPassword(v => !v)}
+                aria-label={showPassword ? 'Hide password' : 'Show password'}
+                aria-pressed={showPassword}
+                className="absolute right-3 top-1/2 -translate-y-1/2 p-2 rounded-lg"
+                style={{ color: 'var(--servd-mute)' }}>
+                {showPassword ? (
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/>
+                    <line x1="1" y1="1" x2="23" y2="23"/>
+                  </svg>
+                ) : (
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                    <circle cx="12" cy="12" r="3"/>
+                  </svg>
+                )}
+              </button>
+            </div>
           </div>
           <button type="submit" disabled={loading}
             className="w-full rounded-2xl py-4 font-black text-[0.95rem] transition-all disabled:opacity-40 active:scale-[0.98] mt-1"

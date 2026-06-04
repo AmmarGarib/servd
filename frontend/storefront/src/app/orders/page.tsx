@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useCustomerAuth } from '../../store/customerAuth'
 import { useCart, type CartItemModifier } from '../../store/cart'
+import { ErrorToast } from '../../components/ui/ErrorToast'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -22,7 +23,12 @@ interface Profile {
   orders: Order[]
 }
 
-function ReorderButton({ orderId, conceptSlug, token }: { orderId: string; conceptSlug: string; token: string }) {
+function ReorderButton({ orderId, conceptSlug, token, onError }: {
+  orderId: string
+  conceptSlug: string
+  token: string
+  onError: (msg: string) => void
+}) {
   const router = useRouter()
   const hydrate = useCart((s) => s.hydrateFromReorder)
   const [busy, setBusy] = useState(false)
@@ -57,14 +63,19 @@ function ReorderButton({ orderId, conceptSlug, token }: { orderId: string; conce
           modifiers: i.modifiers ?? [],
         }))
       if (items.length === 0) {
-        alert('Sorry — none of the items from that order are available right now.')
+        onError('Sorry — none of the items from that order are available right now.')
         return
       }
       hydrate(data.conceptSlug, items)
-      if (data.notice) alert(data.notice)
-      router.push(`/${data.conceptSlug}`)
+      // Notice ("3 items were unavailable and removed") flows through to
+      // the brand page via querystring so the cart drawer can surface it
+      // in context rather than us yanking the user with an alert.
+      const target = data.notice
+        ? `/${data.conceptSlug}?reorderNotice=${encodeURIComponent(data.notice)}`
+        : `/${data.conceptSlug}`
+      router.push(target)
     } catch (e) {
-      alert((e as Error).message)
+      onError((e as Error).message)
     } finally {
       setBusy(false)
     }
@@ -90,15 +101,11 @@ function ReorderButton({ orderId, conceptSlug, token }: { orderId: string; conce
   )
 }
 
-const STATUS_BADGE: Record<string, { bg: string; text: string; label: string }> = {
-  received:  { bg: 'rgba(59,130,246,0.12)', text: '#2563eb', label: 'Received' },
-  confirmed: { bg: 'rgba(99,102,241,0.12)', text: '#4f46e5', label: 'Confirmed' },
-  preparing: { bg: 'rgba(234,179,8,0.15)',  text: '#a16207', label: 'In the kitchen' },
-  ready:     { bg: 'rgba(58,14,105,0.15)',  text: '#15803d', label: 'Ready' },
-  completed: { bg: 'rgba(0,0,0,0.06)',      text: 'var(--servd-mute)', label: 'Delivered' },
-  cancelled: { bg: 'rgba(239,68,68,0.12)',  text: '#dc2626', label: 'Cancelled' },
-  refunded:  { bg: 'rgba(239,68,68,0.12)',  text: '#dc2626', label: 'Refunded' },
-}
+// Status palette + labels moved to lib/orderStatus.ts so /account and
+// /[concept]/order/[id] share the same surface (was previously drifting
+// — "Ready" had a purple bg + green text here, the inverse of the brand
+// palette). statusFor handles unknown statuses with a sensible default.
+import { statusFor } from '../../lib/orderStatus'
 
 export default function OrdersPage() {
   const router = useRouter()
@@ -128,6 +135,7 @@ export default function OrdersPage() {
 
   return (
     <div style={{ background: 'var(--servd-bg)', minHeight: '70vh' }}>
+      {error && <ErrorToast message={error} onDismiss={() => setError('')} />}
       <section className="section-tight" style={{ borderBottom: '1px solid var(--servd-line)' }}>
         <div className="container">
           <p style={{ color: 'var(--servd-green-dark)', fontWeight: 700, fontSize: '0.75rem', letterSpacing: '0.18em', textTransform: 'uppercase', marginBottom: '0.5rem' }}>
@@ -160,7 +168,7 @@ export default function OrdersPage() {
           ) : (
             <div style={{ display: 'grid', gap: '0.85rem' }}>
               {profile.orders.map((o) => {
-                const badge = STATUS_BADGE[o.status] ?? { bg: 'rgba(0,0,0,0.06)', text: 'var(--servd-mute)', label: o.status }
+                const badge = statusFor(o.status)
                 const itemSummary = o.items.slice(0, 2).map((i) => `${i.quantity}× ${i.name}`).join(', ')
                 const more = o.items.length > 2 ? ` +${o.items.length - 2} more` : ''
                 return (
@@ -190,7 +198,7 @@ export default function OrdersPage() {
                     <div style={{ textAlign: 'right', display: 'flex', flexDirection: 'column', gap: '0.4rem', alignItems: 'flex-end' }}>
                       <p style={{ fontWeight: 800, fontSize: '1.05rem' }}>{fmtPkr(o.totalCents)}</p>
                       <div style={{ display: 'flex', gap: '0.4rem' }}>
-                        <ReorderButton orderId={o.id} conceptSlug={o.concept.slug} token={token!} />
+                        <ReorderButton orderId={o.id} conceptSlug={o.concept.slug} token={token!} onError={setError} />
                         <Link
                           href={['preparing', 'received', 'confirmed', 'ready'].includes(o.status)
                             ? `/${o.concept.slug}/order/${o.id}`

@@ -7,6 +7,7 @@
 import Link from 'next/link'
 import type { Concept } from '../../lib/concept'
 import { conceptHeroImage, brandStory, brandAccent } from '../../lib/concept'
+import { OpenNowPill } from '../../components/brand/parts/OpenNowPill'
 
 const API_URL = process.env.INTERNAL_API_URL ?? process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -74,12 +75,9 @@ export default async function ReservePage() {
                       position: 'relative',
                     }}>
                       <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, transparent 50%, rgba(0,0,0,0.55) 100%)' }} />
-                      <div style={{
-                        position: 'absolute', top: '0.85rem', left: '0.85rem',
-                        background: 'rgba(255,255,255,0.92)', color: 'var(--servd-black)',
-                        fontSize: '0.7rem', fontWeight: 700, letterSpacing: '0.1em',
-                        textTransform: 'uppercase', padding: '0.3rem 0.65rem', borderRadius: '999px',
-                      }}>Dine-in</div>
+                      <div style={{ position: 'absolute', top: '0.85rem', left: '0.85rem' }}>
+                        <OpenNowPill slug={c.slug} fallback="Dine-in" />
+                      </div>
                     </div>
                     <div style={{ padding: '1.25rem 1.4rem', display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
                       <h2 style={{ fontFamily: 'var(--font-display)', fontSize: '1.4rem', fontWeight: 800, letterSpacing: '-0.02em' }}>

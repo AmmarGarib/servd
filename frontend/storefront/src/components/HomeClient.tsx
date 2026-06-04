@@ -46,10 +46,15 @@ export function HomeClient({ concepts }: Props) {
     }))
 
   // Hero food image cycles every 3.5s — leads with the photograph,
-  // royal blue is the chrome around it.
+  // royal blue is the chrome around it. Stacked image layers with
+  // opacity crossfade (GPU-compositable, 60fps, no repaints) instead of
+  // animating background-image on one element. Respects the OS's
+  // reduced-motion preference: stops the auto-cycle, holds on whichever
+  // brand happens to be first in the list.
   const [activeIdx, setActiveIdx] = useState(0)
   useEffect(() => {
     if (brands.length === 0) return
+    if (typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
     const t = setInterval(() => setActiveIdx((i) => (i + 1) % brands.length), 3500)
     return () => clearInterval(t)
   }, [brands.length])
@@ -68,15 +73,20 @@ export function HomeClient({ concepts }: Props) {
         display: 'flex', alignItems: 'stretch',
       }}>
 
-        {/* Food background — full opacity, full bleed. */}
-        {live && (
-          <div aria-hidden style={{
+        {/* Food background — stacked image layers, GPU-compositable
+            opacity crossfade. Animating background-image (the prior
+            approach) re-paints the entire layer on every change, which
+            we never see at 60fps on low-end Android. */}
+        {brands.map((b, i) => (
+          <div key={b.id} aria-hidden style={{
             position: 'absolute', inset: 0, zIndex: 0,
-            backgroundImage: `url(${live.img})`,
+            backgroundImage: `url(${b.img})`,
             backgroundSize: 'cover', backgroundPosition: 'center',
-            transition: 'background-image 900ms ease-in-out',
+            opacity: i === activeIdx ? 1 : 0,
+            transition: 'opacity 900ms ease-in-out',
+            willChange: 'opacity',
           }} />
-        )}
+        ))}
 
         {/* Royal wash — keeps type legible without hiding the food.
             Bottom-heavy gradient so the food shows clearly in the
@@ -158,7 +168,13 @@ export function HomeClient({ concepts }: Props) {
             {live && (
               <p style={{ color: 'rgba(255,255,255,0.85)', fontSize: '0.95rem', fontWeight: 500, textShadow: '0 1px 6px rgba(0,0,0,0.4)' }}>
                 <span style={{ color: 'rgba(255,255,255,0.55)', textTransform: 'uppercase', letterSpacing: '0.2em', fontSize: '0.7rem', marginRight: '0.65rem' }}>Tonight from</span>
-                <Link href={`/${live.slug}`} style={{ color: 'white', fontWeight: 800, textDecoration: 'none', borderBottom: '2px solid rgba(255,255,255,0.5)', paddingBottom: '0.1rem' }}>
+                <Link href={`/${live.slug}`}
+                  style={{
+                    color: 'white', fontWeight: 800, textDecoration: 'none',
+                    borderBottom: '2px solid rgba(255,255,255,0.5)',
+                    paddingBlock: '0.6rem',  // expanded hit area, ~44px tap target
+                    display: 'inline-block', lineHeight: 1,
+                  }}>
                   {live.name}
                 </Link>
                 <span style={{ marginLeft: '0.75rem', opacity: 0.85 }}>— {live.story.tagline}</span>
@@ -408,6 +424,8 @@ export function HomeClient({ concepts }: Props) {
               textDecoration: 'underline',
               textUnderlineOffset: '4px',
               textDecorationColor: 'rgba(255,255,255,0.4)',
+              padding: '0.6rem 0.4rem',  // 44pt min touch height
+              display: 'inline-block', lineHeight: 1,
             }}>
               Already a member? Sign in
             </Link>

@@ -79,9 +79,11 @@ export function CrossBrandUpsell({ currentSlug, max = 3 }: Props) {
               background: `linear-gradient(135deg, ${p.color} 0%, ${p.color}cc 100%)`,
               display: 'grid',
               placeItems: 'center',
-              fontSize: '2.6rem',
+              fontFamily: 'var(--font-display)', fontWeight: 800,
+              fontSize: '3.2rem', color: 'white',
+              letterSpacing: '-0.04em', lineHeight: 1,
             }}>
-              <span aria-hidden="true">{p.emoji}</span>
+              <span aria-hidden="true">{p.brandName[0]}</span>
             </div>
             <div style={{ padding: '0.7rem 0.85rem 0.85rem', display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
               <p style={{ fontSize: '0.65rem', fontWeight: 700, color: p.color, letterSpacing: '0.1em', textTransform: 'uppercase' }}>

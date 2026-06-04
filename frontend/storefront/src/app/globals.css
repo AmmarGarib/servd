@@ -73,6 +73,36 @@
         app-router server boundaries reliably) ─────────────────────────── */
 }
 
+/* ── Global a11y: focus-visible rings + reduced-motion ────────────────────
+   The storefront uses focus:outline-none on inputs and replaces with a
+   custom box-shadow, but buttons + links had no replacement — keyboard
+   users couldn't see what was focused after Tab. This rule restores a
+   visible ring on every interactive element WITHOUT overriding the input
+   shadow pattern (focus-visible only fires on keyboard focus, not click).
+
+   The reduced-motion guard kills every running animation/transition for
+   users who've opted out of motion in their OS. Hits the cycling hero,
+   glow-pulse on the order tracker, float keyframe on empty states, the
+   revealUp stagger on checkout, etc. */
+
+button:focus-visible,
+a:focus-visible,
+[role="button"]:focus-visible,
+summary:focus-visible {
+  outline: 2px solid var(--servd-green);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 /* simmer */
 .simmer-page { background: var(--simmer-green); color: var(--simmer-bone); font-family: var(--simmer-body); letter-spacing: 0.04em; }
 .simmer-page .amarante  { font-family: var(--simmer-display); letter-spacing: 0.02em; }
@@ -93,12 +123,29 @@
 .simmer-page .action--signal:hover { background: var(--simmer-orange); color: var(--simmer-green); }
 @media (max-width: 700px) { .simmer-visit-grid { grid-template-columns: 1fr !important; } }
 
-/* simmer-checkout — overlays the generic servd checkout with the simmer
-   palette so customers buying high-ticket Simmer items don't get tossed
-   into a foreign-looking white-card flow. We remap the --servd-* tokens
-   that the checkout JSX already references, plus a few !important
-   overrides for the inline `background: white` panel cards. */
-.simmer-checkout {
+/* ═══════════════════════════════════════════════════════════════════════════
+   Brand-skinned ordering surfaces.
+
+   The .X-ordering class lives on the wrapper of BOTH the menu page
+   (/[concept]) and the checkout page (/[concept]/checkout), so the brand
+   carries through from menu → item modal → cart drawer → checkout in one
+   continuous voice. Previously these surfaces dropped to the generic
+   --servd-* treatment, which felt like a foreign white room the moment
+   a customer left the brand microsite.
+
+   Each brand block does three things:
+     1. Token remap — overrides --servd-ink, --servd-mute, --servd-line,
+        --servd-surface, --servd-green, --servd-green-dark so every component
+        that styles through those vars picks up the brand palette for free.
+     2. Type stack swap — h1/h2/h3 use the brand's display family.
+     3. Targeted !important overrides for inline `background: white|#fff` cards,
+        the sticky cart drawer, the bottom CTA bar, item modal — places where
+        the JSX hardcodes a colour we need to repaint.
+   ═══════════════════════════════════════════════════════════════════════════ */
+/* simmer — night-mode editorial. Bone surface, forest ink, orange signal,
+   Amarante display + Times body. Per the simmer-brand SKILL.md: single
+   orange signal per viewport, no white, no gradients, no emojis. */
+.simmer-ordering {
   /* token remap — touches everything the checkout already styles
      through CSS vars (text, accents, borders, surfaces, CTAs) */
   --servd-ink:        var(--simmer-green);
@@ -116,45 +163,69 @@
 /* Display type — Simmer uses Amarante for headings, not the servd
    Bricolage. We don't override every <p>/<span> though; the body
    stays Times via the font-family above. */
-.simmer-checkout h1,
-.simmer-checkout h2,
-.simmer-checkout h3 {
+.simmer-ordering h1,
+.simmer-ordering h2,
+.simmer-ordering h3 {
   font-family: var(--simmer-display);
   letter-spacing: 0.02em;
   font-weight: 400;
 }
 /* Panel cards — the JSX hardcodes `background: white`. Tint them to a
    light bone so they read as paper-on-table, not white-on-bone. */
-.simmer-checkout .rounded-2xl[style*="background: white"],
-.simmer-checkout .rounded-2xl[style*="background:#fff"],
-.simmer-checkout .rounded-2xl[style*="background: #fff"] {
+.simmer-ordering .rounded-2xl[style*="background: white"],
+.simmer-ordering .rounded-2xl[style*="background:#fff"],
+.simmer-ordering .rounded-2xl[style*="background: #fff"] {
   background: #f9f3df !important;
   border-color: rgba(27,45,42,0.14) !important;
   box-shadow: 0 1px 3px rgba(27,45,42,0.06) !important;
 }
 /* The fixed bottom CTA bar uses rgba white — bump it to a bone wash
    so it doesn't read as a foreign chrome strip. */
-.simmer-checkout .fixed.bottom-0 {
+.simmer-ordering .fixed.bottom-0 {
   background: rgba(237,230,211,0.96) !important;
   border-top-color: rgba(27,45,42,0.18) !important;
 }
 /* "Tip the rider" / fulfilment chooser tints use a blue-ish wash on
    the servd default; remap to a faint orange wash so they tie to the
    single accent colour. */
-.simmer-checkout div[style*="rgba(58,14,105,0.06)"],
-.simmer-checkout div[style*="rgba(58,14,105,0.08)"],
-.simmer-checkout div[style*="rgba(58,14,105,0.25)"],
-.simmer-checkout div[style*="rgba(58,14,105,0.2)"] {
+.simmer-ordering div[style*="rgba(58,14,105,0.06)"],
+.simmer-ordering div[style*="rgba(58,14,105,0.08)"],
+.simmer-ordering div[style*="rgba(58,14,105,0.25)"],
+.simmer-ordering div[style*="rgba(58,14,105,0.2)"] {
   background: rgba(233,78,27,0.06) !important;
   border-color: rgba(233,78,27,0.20) !important;
 }
+/* Menu page — the outer wrapper, the sticky category nav, the item
+   modal + cart drawer all hardcode a white-ish surface inline. Repaint
+   them in bone so the brand wraps the whole ordering journey. */
+.simmer-ordering[style*="background: #fff"],
+.simmer-ordering[style*="background: white"],
+.simmer-ordering [style*="background: '#fff"],
+.simmer-ordering [style*="background:'#fff"] {
+  background: var(--simmer-bone) !important;
+}
+.simmer-ordering [style*="rgba(255,255,255,0.95)"] {
+  background: rgba(249,243,223,0.96) !important;
+  border-color: rgba(27,45,42,0.14) !important;
+}
+.simmer-ordering [style*="rgba(255,255,255,0.9)"] {
+  background: rgba(249,243,223,0.92) !important;
+}
+/* Buttons + accents are bricolage/black by default; simmer wants
+   Times-set type with a slim orange edge. The primary CTAs in cart
+   drawer + place-order pill keep their shape but adopt the signal. */
+.simmer-ordering button[style*="background: var(--servd-green)"],
+.simmer-ordering button[style*="background:var(--servd-green)"] {
+  letter-spacing: 0.14em !important;
+  text-transform: lowercase !important;
+}
 
 /* stax-checkout — blueprint industrial. Dark surface, dark cards,
-   cream signal accent. Same pattern as .simmer-checkout: remap the
+   cream signal accent. Same pattern as .simmer-ordering: remap the
    --servd-* tokens the JSX already references + a few targeted
    !important overrides for the inline `background: white` cards
    and the focus-glow on inputs. */
-.stax-checkout {
+.stax-ordering {
   --servd-ink:        var(--stax-grey-80);
   --servd-mute:       var(--stax-grey-60);
   --servd-line:       rgba(255,255,255,0.14);
@@ -167,65 +238,97 @@
   font-family: var(--stax-display);
   letter-spacing: 0.01em;
 }
-.stax-checkout h1,
-.stax-checkout h2,
-.stax-checkout h3 {
+.stax-ordering h1,
+.stax-ordering h2,
+.stax-ordering h3 {
   font-family: var(--stax-display);
   letter-spacing: -0.02em;
   color: var(--stax-grey-100);
 }
 /* Panel + sub-panel cards — dark on the blueprint */
-.stax-checkout .rounded-2xl[style*="background: white"],
-.stax-checkout .rounded-2xl[style*="background:#fff"],
-.stax-checkout .rounded-2xl[style*="background: #fff"],
-.stax-checkout .rounded-xl[style*="background: white"],
-.stax-checkout .rounded-xl[style*="background:#fff"],
-.stax-checkout .rounded-xl[style*="background: #fff"] {
+.stax-ordering .rounded-2xl[style*="background: white"],
+.stax-ordering .rounded-2xl[style*="background:#fff"],
+.stax-ordering .rounded-2xl[style*="background: #fff"],
+.stax-ordering .rounded-xl[style*="background: white"],
+.stax-ordering .rounded-xl[style*="background:#fff"],
+.stax-ordering .rounded-xl[style*="background: #fff"] {
   background: var(--stax-grey-20) !important;
   border-color: rgba(255,255,255,0.10) !important;
   box-shadow: 0 1px 3px rgba(0,0,0,0.4) !important;
   color: var(--stax-grey-80);
 }
 /* Fulfilment / tip-rider blue washes → faint cream wash */
-.stax-checkout div[style*="rgba(58,14,105,0.06)"],
-.stax-checkout div[style*="rgba(58,14,105,0.08)"],
-.stax-checkout div[style*="rgba(58,14,105,0.25)"],
-.stax-checkout div[style*="rgba(58,14,105,0.2)"] {
+.stax-ordering div[style*="rgba(58,14,105,0.06)"],
+.stax-ordering div[style*="rgba(58,14,105,0.08)"],
+.stax-ordering div[style*="rgba(58,14,105,0.25)"],
+.stax-ordering div[style*="rgba(58,14,105,0.2)"] {
   background: rgba(242,235,218,0.06) !important;
   border-color: rgba(242,235,218,0.18) !important;
 }
 /* Inputs + textareas — dark wash, light text, low-key border */
-.stax-checkout input[style*="background: #fff"],
-.stax-checkout input[style*="background:#fff"],
-.stax-checkout input[style*="background: white"],
-.stax-checkout textarea[style*="background: #fff"],
-.stax-checkout textarea[style*="background:#fff"],
-.stax-checkout textarea[style*="background: white"] {
+.stax-ordering input[style*="background: #fff"],
+.stax-ordering input[style*="background:#fff"],
+.stax-ordering input[style*="background: white"],
+.stax-ordering textarea[style*="background: #fff"],
+.stax-ordering textarea[style*="background:#fff"],
+.stax-ordering textarea[style*="background: white"] {
   background: rgba(255,255,255,0.06) !important;
   color: var(--stax-grey-80) !important;
   border-color: rgba(255,255,255,0.16) !important;
 }
 /* Bottom fixed CTA bar — dark blueprint wash */
-.stax-checkout .fixed.bottom-0 {
+.stax-ordering .fixed.bottom-0 {
   background: rgba(10,24,87,0.95) !important;
   border-top-color: rgba(255,255,255,0.14) !important;
 }
 /* The Place Order pill hardcodes `color: '#fff'` inline; on a cream
    button that's unreadable. Force dark ink for the CTA inside the
    Stax checkout. */
-.stax-checkout .fixed.bottom-0 button {
+.stax-ordering .fixed.bottom-0 button {
   color: var(--stax-blueprint-deep) !important;
 }
 /* The H1 "Checkout" defaults to text-lg + font-black; on Space Grotesk
    it still feels thin against the dark blueprint. Bump to cream so it
    reads as the page label, matching the brand's headline accent. */
-.stax-checkout h1 {
+.stax-ordering h1 {
   color: var(--stax-cream) !important;
+}
+/* Menu page — wrapper + sticky nav + modal surfaces. Replace the white
+   inline backgrounds with the blueprint dark so the menu reads as the
+   same workshop the brand microsite established. */
+.stax-ordering[style*="background: #fff"],
+.stax-ordering[style*="background: white"] {
+  background: var(--stax-blueprint) !important;
+}
+.stax-ordering [style*="background: '#fff'"],
+.stax-ordering [style*="background: '#fff', "],
+.stax-ordering [style*="background:'#fff'"],
+.stax-ordering [style*="background: '#fff',"] {
+  background: var(--stax-grey-20) !important;
+  color: var(--stax-grey-80) !important;
+}
+.stax-ordering [style*="rgba(255,255,255,0.95)"] {
+  background: rgba(10,24,87,0.95) !important;
+  border-color: rgba(255,255,255,0.14) !important;
+  backdrop-filter: blur(16px);
+}
+.stax-ordering [style*="rgba(255,255,255,0.9)"] {
+  background: rgba(10,24,87,0.92) !important;
+}
+/* Menu item cards — keep the dark surface treatment + mono spec touches */
+.stax-ordering h3,
+.stax-ordering h2 {
+  color: var(--stax-cream) !important;
+}
+/* All-caps spec eyebrow on buttons + headlines for industrial flavour */
+.stax-ordering button[style*="background: var(--servd-green)"] {
+  text-transform: uppercase !important;
+  letter-spacing: 0.08em !important;
 }
 
 /* flipd-checkout — cool diner. Pale cream surface, sky-blue signal,
    deep navy ink. Same token-swap pattern as the others. */
-.flipd-checkout {
+.flipd-ordering {
   --servd-ink:        var(--flipd-ink);
   --servd-mute:       rgba(14,26,42,0.62);
   --servd-line:       rgba(14,26,42,0.14);
@@ -238,34 +341,50 @@
   font-family: 'Inter', system-ui, sans-serif;
   letter-spacing: -0.005em;
 }
-.flipd-checkout h1,
-.flipd-checkout h2,
-.flipd-checkout h3 {
+.flipd-ordering h1,
+.flipd-ordering h2,
+.flipd-ordering h3 {
   font-family: 'Bricolage Grotesque', 'Inter', sans-serif;
   font-weight: 800;
   letter-spacing: -0.035em;
 }
 /* Panel cards — pale blue instead of pure white so the surface and
    the card don't collapse together */
-.flipd-checkout .rounded-2xl[style*="background: white"],
-.flipd-checkout .rounded-2xl[style*="background:#fff"],
-.flipd-checkout .rounded-2xl[style*="background: #fff"] {
+.flipd-ordering .rounded-2xl[style*="background: white"],
+.flipd-ordering .rounded-2xl[style*="background:#fff"],
+.flipd-ordering .rounded-2xl[style*="background: #fff"] {
   background: var(--flipd-pale) !important;
   border-color: rgba(14,26,42,0.14) !important;
   box-shadow: 0 1px 3px rgba(14,26,42,0.06) !important;
 }
 /* Fulfilment / tip-rider washes → faint sky wash */
-.flipd-checkout div[style*="rgba(58,14,105,0.06)"],
-.flipd-checkout div[style*="rgba(58,14,105,0.08)"],
-.flipd-checkout div[style*="rgba(58,14,105,0.25)"],
-.flipd-checkout div[style*="rgba(58,14,105,0.2)"] {
+.flipd-ordering div[style*="rgba(58,14,105,0.06)"],
+.flipd-ordering div[style*="rgba(58,14,105,0.08)"],
+.flipd-ordering div[style*="rgba(58,14,105,0.25)"],
+.flipd-ordering div[style*="rgba(58,14,105,0.2)"] {
   background: rgba(58,168,255,0.08) !important;
   border-color: rgba(58,168,255,0.22) !important;
 }
 /* Bottom CTA bar */
-.flipd-checkout .fixed.bottom-0 {
+.flipd-ordering .fixed.bottom-0 {
   background: rgba(251,253,255,0.96) !important;
   border-top-color: rgba(14,26,42,0.14) !important;
+}
+/* Menu page — outer wrapper, sticky category nav, item modal + cart drawer */
+.flipd-ordering[style*="background: #fff"],
+.flipd-ordering[style*="background: white"] {
+  background: var(--flipd-cream) !important;
+}
+.flipd-ordering [style*="background: '#fff'"],
+.flipd-ordering [style*="background:'#fff'"] {
+  background: var(--flipd-pale) !important;
+}
+.flipd-ordering [style*="rgba(255,255,255,0.95)"] {
+  background: rgba(245,251,255,0.97) !important;
+  border-color: rgba(14,26,42,0.12) !important;
+}
+.flipd-ordering [style*="rgba(255,255,255,0.9)"] {
+  background: rgba(245,251,255,0.92) !important;
 }
 
 /* stax — industrial blueprint */
@@ -628,6 +747,26 @@ a { color: inherit; }
 @keyframes shimmer {
   from { background-position: 250% center; }
   to   { background-position: -250% center; }
+}
+
+/* Skeleton loading shimmer — sweeps left→right across a gradient placeholder
+   so the user reads the layout as "loading", not "broken". Used by the menu
+   skeleton on /[concept] and anywhere else we render pre-data scaffolding. */
+@keyframes skeletonShimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* Visually hidden text for screen-reader announcements that don't need to
+   render visually (skeleton "Loading menu…", icon-only button context, etc). */
+.sr-only {
+  position: absolute !important;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden;
+  clip: rect(0,0,0,0);
+  white-space: nowrap;
+  border: 0;
 }
 
 @keyframes fadeUp {

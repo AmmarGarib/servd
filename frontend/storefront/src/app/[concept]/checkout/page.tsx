@@ -70,15 +70,16 @@ export default function CheckoutPage() {
   const { items, subtotalCents, totalCents, itemCount, clearCart, hydrateFromReorder } = useCart()
   const token = useCustomerAuth((s) => s.token)
 
-  // Per-brand checkout skin. Each brand keyword maps to a CSS class
-  // defined in globals.css that remaps the --servd-* tokens to the
-  // brand's palette (and overrides a few inline `background: white`
-  // cards). One JSX, three looks. Unknown slugs render the generic
-  // servd treatment.
+  // Per-brand ordering skin. Same class system as /[concept]/page.tsx so
+  // the brand carries through from menu → modal → cart → checkout in one
+  // continuous voice. CSS lives in globals.css under the .X-ordering
+  // selectors: token remap (--servd-ink / --servd-green / etc. → brand
+  // palette) plus targeted !important overrides for the inline
+  // `background: white` cards the JSX hardcodes.
   const brandSkinClass =
-    slug === 'simmer' ? 'simmer-checkout' :
-    slug === 'stax'   ? 'stax-checkout'   :
-    slug === 'flipd'  ? 'flipd-checkout'  :
+    slug === 'simmer' ? 'simmer-ordering' :
+    slug === 'stax'   ? 'stax-ordering'   :
+    slug === 'flipd'  ? 'flipd-ordering'  :
     ''
   // Cross-brand upsell ("want a side from another GS Foods kitchen?")
   // — hidden only for Simmer. Simmer is high-ticket plated-service
@@ -197,7 +198,7 @@ export default function CheckoutPage() {
   }, [])
 
   if (itemCount() === 0) return (
-    <main className="flex min-h-screen flex-col items-center justify-center gap-5 px-4"
+    <main className={`flex min-h-screen flex-col items-center justify-center gap-5 px-4${brandSkinClass ? ' ' + brandSkinClass : ''}`}
       style={{ background: 'transparent' }}>
       <svg width="80" height="80" viewBox="0 0 24 24" fill="none" stroke="var(--servd-mute)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
         <circle cx="9" cy="21" r="1"/>
@@ -205,14 +206,38 @@ export default function CheckoutPage() {
         <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/>
       </svg>
       <div className="text-center space-y-2">
-        <p className="font-black text-2xl tracking-tight" style={{ color: 'var(--servd-ink)' }}>Your cart is empty</p>
-        <p className="text-sm" style={{ color: 'var(--servd-mute)' }}>Add some items and come back</p>
+        <p className="font-black text-2xl tracking-tight" style={{ color: 'var(--servd-ink)' }}>
+          Your cart&rsquo;s empty
+        </p>
+        <p className="text-sm" style={{ color: 'var(--servd-mute)' }}>
+          Pick something from {slug ? slug.charAt(0).toUpperCase() + slug.slice(1) : 'the menu'} to get going.
+        </p>
       </div>
       <Link href={`/${slug}`}
         className="mt-1 rounded-2xl font-black px-8 py-4 text-sm transition-all hover:scale-[1.02] active:scale-[0.98]"
         style={{ background: 'var(--servd-green)', color: 'white', boxShadow: '0 6px 18px rgba(58,14,105,0.28)' }}>
-        Back to Menu
+        See the {slug ? slug.charAt(0).toUpperCase() + slug.slice(1) : ''} menu
       </Link>
+      {/* Quick switch to the other brands so an empty-cart visitor doesn't
+          have to back out to the home page to change kitchens. */}
+      <div className="flex flex-col items-center gap-1.5 pt-2">
+        <p className="text-[10px] font-bold uppercase tracking-[0.22em]" style={{ color: 'var(--servd-dim)' }}>
+          or pick a different kitchen
+        </p>
+        <div className="flex gap-2 flex-wrap justify-center">
+          {['stax', 'simmer', 'flipd'].filter((s) => s !== slug).map((s) => (
+            <Link key={s} href={`/${s}`}
+              className="rounded-full px-4 py-2 text-xs font-bold transition-colors"
+              style={{
+                background: 'var(--servd-surface)',
+                color: 'var(--servd-ink)',
+                border: '1px solid var(--servd-line)',
+              }}>
+              {s.charAt(0).toUpperCase() + s.slice(1)}
+            </Link>
+          ))}
+        </div>
+      </div>
     </main>
   )
 
@@ -591,7 +616,12 @@ export default function CheckoutPage() {
                       style={showNewAddressInput
                         ? { background: 'rgba(58,14,105,0.1)', border: '1.5px solid var(--servd-green)' }
                         : { background: '#fff', border: '1px dashed rgba(0,0,0,0.12)' }}>
-                      <span className="text-base shrink-0">✏️</span>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                        strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"
+                        className="shrink-0" style={{ color: 'var(--servd-mute)' }}>
+                        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                        <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                      </svg>
                       <span className="text-xs font-semibold" style={{ color: 'var(--servd-ink)' }}>Enter a different address</span>
                     </button>
                   </div>

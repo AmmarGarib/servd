@@ -33,11 +33,30 @@ interface MenuItem   {
   modifierGroups?: ModGroup[]
 }
 
-const DIETARY_BADGE: Record<string, { label: string; color: string }> = {
-  vegetarian:  { label: '🌿 Veg',     color: 'rgba(58,14,105,0.15)' },
-  vegan:       { label: '🌱 Vegan',   color: 'rgba(58,14,105,0.15)' },
-  halal:       { label: 'Halal',      color: 'rgba(58,14,105,0.15)' },
-  gluten_free: { label: 'GF',         color: 'rgba(245,158,11,0.15)' },
+// SVG icons used by dietary + spice badges below. Emoji glyphs were a
+// platform-fingerprint risk (font fallback differs per OS, kerning varies
+// per platform → CLS) and violate the storefront's no-emoji-as-structural-
+// icon rule.
+function LeafIcon() {
+  return (
+    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M11 20A7 7 0 0 1 9.8 6.1C15.5 5 17 4.48 19.2 2.96c.97 6.43.95 10.39-2.95 12.36C12.6 17.5 8 17 8 13"/>
+    </svg>
+  )
+}
+function FlameIcon() {
+  return (
+    <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/>
+    </svg>
+  )
+}
+
+const DIETARY_BADGE: Record<string, { label: string; color: string; withIcon: boolean }> = {
+  vegetarian:  { label: 'Veg',   color: 'rgba(58,14,105,0.15)',  withIcon: true  },
+  vegan:       { label: 'Vegan', color: 'rgba(58,14,105,0.15)',  withIcon: true  },
+  halal:       { label: 'Halal', color: 'rgba(58,14,105,0.15)',  withIcon: false },
+  gluten_free: { label: 'GF',    color: 'rgba(245,158,11,0.15)', withIcon: false },
 }
 interface Category   { id: string; name: string; sortOrder: number; items: MenuItem[] }
 interface Concept    {
@@ -166,9 +185,33 @@ export default function ConceptOrderPage() {
   }
 
   if (!concept || !categories) {
+    // Menu skeleton — same hero stripe + category nav strip + 4 item rows
+    // as the real page, just shimmer-tinted. Reserves the layout so the
+    // real menu doesn't push content around on hydrate (avoids CLS).
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div role="status" className="text-s-muted text-sm">Loading menu…</div>
+      <div role="status" aria-label="Loading menu" style={{ background: '#fff', minHeight: '100vh' }}>
+        <div style={{ height: '260px', background: 'linear-gradient(90deg, var(--servd-surface), #f0f0f0, var(--servd-surface))', backgroundSize: '200% 100%', animation: 'skeletonShimmer 1.4s ease-in-out infinite' }} />
+        <div style={{ padding: '1rem 1rem 0', display: 'flex', gap: '0.5rem', overflowX: 'hidden' }}>
+          {Array.from({ length: 4 }).map((_, i) => (
+            <span key={i} style={{ width: '4.5rem', height: '2rem', borderRadius: '999px', background: 'var(--servd-surface)', flex: 'none' }} />
+          ))}
+        </div>
+        <div style={{ padding: '1.25rem', display: 'grid', gap: '0.85rem' }}>
+          {Array.from({ length: 5 }).map((_, i) => (
+            <div key={i} style={{
+              display: 'grid', gridTemplateColumns: '1fr 5rem', gap: '0.75rem',
+              padding: '0.85rem', borderRadius: '1rem',
+              background: 'var(--servd-surface)', border: '1px solid var(--servd-line)',
+            }}>
+              <div>
+                <div style={{ height: '0.95rem', width: '60%', background: '#eaeaea', borderRadius: '4px', marginBottom: '0.4rem' }} />
+                <div style={{ height: '0.75rem', width: '90%', background: '#f1f1f1', borderRadius: '4px' }} />
+              </div>
+              <div style={{ height: '4rem', borderRadius: '0.6rem', background: '#eaeaea' }} />
+            </div>
+          ))}
+        </div>
+        <span className="sr-only">Loading menu…</span>
       </div>
     )
   }
@@ -177,8 +220,20 @@ export default function ConceptOrderPage() {
   const itemTotal = cart.itemCount()
   const hasItems = itemTotal > 0
 
+  // Per-brand skin — same class system as /[concept]/checkout. Wraps the
+  // ordering surface in the brand's design language (token remap + a few
+  // targeted overrides in globals.css) so the menu / item modal / cart
+  // drawer feel like the brand the customer just walked into, not the
+  // generic servd treatment.
+  const brandSkinClass =
+    slug === 'simmer' ? 'simmer-ordering' :
+    slug === 'stax'   ? 'stax-ordering'   :
+    slug === 'flipd'  ? 'flipd-ordering'  :
+    ''
+
   return (
-    <div style={{ background: '#fff', minHeight: '100vh', paddingBottom: hasItems ? '7rem' : '0' }}>
+    <div className={brandSkinClass}
+      style={{ background: '#fff', minHeight: '100vh', paddingBottom: hasItems ? '7rem' : '0' }}>
       {/* Hero */}
       <section
         style={{
@@ -394,17 +449,26 @@ function ItemCard({ item, onClick, accent }: { item: MenuItem; onClick: () => vo
               const b = DIETARY_BADGE[d]
               return (
                 <span key={d} style={{
+                  display: 'inline-flex', alignItems: 'center', gap: '0.25rem',
                   fontSize: '0.65rem', fontWeight: 700, letterSpacing: '0.05em',
                   padding: '0.15rem 0.45rem', borderRadius: '999px',
                   background: b?.color ?? 'rgba(0,0,0,0.06)', color: 'var(--servd-ink)',
                 }}>
+                  {b?.withIcon && <LeafIcon />}
                   {b?.label ?? d}
                 </span>
               )
             })}
             {(item.spiceLevel ?? 0) > 0 && (
-              <span style={{ fontSize: '0.65rem', fontWeight: 700, padding: '0.15rem 0.45rem', borderRadius: '999px', background: 'rgba(220,38,38,0.12)', color: '#991b1b' }}>
-                {'🌶️'.repeat(Math.min(item.spiceLevel ?? 0, 3))}
+              <span aria-label={`Spice level ${Math.min(item.spiceLevel ?? 0, 3)} of 3`}
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: '0.1rem',
+                  fontSize: '0.65rem', fontWeight: 700, padding: '0.15rem 0.45rem',
+                  borderRadius: '999px', background: 'rgba(220,38,38,0.12)', color: '#991b1b',
+                }}>
+                {Array.from({ length: Math.min(item.spiceLevel ?? 0, 3) }).map((_, i) => (
+                  <FlameIcon key={i} />
+                ))}
               </span>
             )}
           </div>

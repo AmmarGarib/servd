@@ -38,14 +38,9 @@ const STEP_INDEX: Record<string, number> = {
   received: 0, confirmed: 1, preparing: 2, ready: 3, completed: 4, cancelled: -1,
 }
 
-const STATUS_CONFIG: Record<string, { headline: string; sub: string }> = {
-  received:  { headline: 'Order received',   sub: 'Waiting for the kitchen to confirm.' },
-  confirmed: { headline: 'Order confirmed',  sub: 'Getting ready to cook.' },
-  preparing: { headline: 'In the kitchen',   sub: 'Your order is being prepared.' },
-  ready:     { headline: 'Ready',             sub: 'Head to the counter to collect.' },
-  completed: { headline: 'Order complete',   sub: 'Enjoy your meal.' },
-  cancelled: { headline: 'Order cancelled',  sub: 'Something went wrong with this order.' },
-}
+// Headline + sub copy moved to lib/orderStatus.ts so all three order
+// surfaces (/orders, /account, this tracker) share the same wording.
+import { statusFor } from '../../../../lib/orderStatus'
 
 export default function OrderStatusPage() {
   const { concept: slug, id } = useParams<{ concept: string; id: string }>()
@@ -143,7 +138,7 @@ export default function OrderStatusPage() {
   const isReady     = order.status === 'ready'
   const isPreparing = order.status === 'preparing'
   const isDone      = order.status === 'completed' || isCancelled
-  const cfg         = STATUS_CONFIG[order.status] ?? STATUS_CONFIG['received']!
+  const cfg         = statusFor(order.status)
 
   const heroBg     = isCancelled ? 'rgba(239,68,68,0.06)' : `color-mix(in srgb, ${color} 8%, white)`
   const heroBorder = isCancelled ? '1px solid rgba(239,68,68,0.22)' : `1px solid color-mix(in srgb, ${color} 25%, transparent)`

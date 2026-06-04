@@ -30,14 +30,9 @@ interface CustomerAddress {
   id: string; label: string; address: string; lat?: number | null; lng?: number | null; isDefault: boolean
 }
 
-const STATUS_CONFIG: Record<string, { bg: string; text: string; label: string; bar: string }> = {
-  received:  { bg: 'rgba(59,130,246,0.12)',  text: '#2563eb', label: 'Received',  bar: '#3b82f6' },
-  confirmed: { bg: 'rgba(99,102,241,0.12)',  text: '#4f46e5', label: 'Confirmed', bar: '#6366f1' },
-  preparing: { bg: 'rgba(234,179,8,0.12)',   text: '#d97706', label: 'Preparing', bar: '#eab308' },
-  ready:     { bg: 'rgba(58,14,105,0.12)',   text: 'var(--servd-green-dark)', label: 'Ready!',    bar: 'var(--servd-green)' },
-  completed: { bg: 'rgba(0,0,0,0.05)',       text: 'var(--servd-mute)', label: 'Completed', bar: 'rgba(0,0,0,0.18)' },
-  cancelled: { bg: 'rgba(239,68,68,0.1)',    text: '#dc2626', label: 'Cancelled', bar: '#ef4444' },
-}
+// STATUS_CONFIG moved to lib/orderStatus.ts so /orders + /[concept]/order/[id]
+// share the same colours and labels. statusFor handles unknown statuses.
+import { statusFor } from '../../lib/orderStatus'
 const TIER_COLOR: Record<string, string> = { bronze: '#cd7f32', silver: '#c0c0c0', gold: '#ffd700' }
 const TIER_THRESHOLDS = [
   { name: 'bronze', label: 'Bronze', nextAt: 1000 },
@@ -484,7 +479,14 @@ export default function AccountPage() {
           {profile.orders.length === 0 ? (
             <div className="rounded-2xl p-10 text-center"
               style={{ background: '#fff', border: '1px solid rgba(0,0,0,0.07)', boxShadow: '0 2px 8px rgba(0,0,0,0.04)' }}>
-              <div className="text-4xl mb-3" style={{ animation: 'float 3s ease-in-out infinite' }}>🍽</div>
+              <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="var(--servd-mute)"
+                strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"
+                style={{ margin: '0 auto 0.75rem' }}>
+                <path d="M3 11h18"/>
+                <path d="M12 11v9"/>
+                <path d="M5 11a7 7 0 0 1 14 0"/>
+                <path d="M3 20h18"/>
+              </svg>
               <p className="text-sm" style={{ color: 'var(--servd-mute)' }}>No orders yet</p>
               <Link href="/browse"
                 className="inline-block mt-3 text-sm font-bold transition-colors"
@@ -495,7 +497,7 @@ export default function AccountPage() {
           ) : (
             <div className="space-y-2">
               {profile.orders.map((order, i) => {
-                const sc = STATUS_CONFIG[order.status] ?? STATUS_CONFIG['completed']!
+                const sc = statusFor(order.status)
                 return (
                   <Link
                     key={order.id}
