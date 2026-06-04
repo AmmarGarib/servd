@@ -18,6 +18,7 @@ import type { Concept } from '../../../lib/concept'
 import { conceptHeroImage } from '../../../lib/concept'
 import { CrossBrandStrip } from '../parts/CrossBrandStrip'
 import { SpeakeasyFridgeHero } from '../../kinetic/SpeakeasyFridgeHero'
+import { locationFor, whatsappLink } from '../../../lib/brandLocations'
 
 interface Props {
   concept: Concept
@@ -437,12 +438,27 @@ export function SimmerLayout({ concept, concepts }: Props) {
             justifyContent: 'center',
             gap: 'clamp(1rem, 4vw, 2rem)',
           }}>
-            <ElsewhereButton ariaLabel="instagram" href="https://instagram.com/simmer_down"                                                       icon={<InstagramIcon />} />
-            <ElsewhereButton ariaLabel="tiktok"    href="https://tiktok.com/@simmer_down"                                                         icon={<TikTokIcon />} />
-            <ElsewhereButton ariaLabel="facebook"  href="https://facebook.com/simmerdown"                                                          icon={<FacebookIcon />} />
-            <ElsewhereButton ariaLabel="whatsapp"  href="https://wa.me/923001234567"                                                               icon={<WhatsAppIcon />} />
-            <ElsewhereButton ariaLabel="maps"      href="https://www.google.com/maps/search/?api=1&query=Bukhari+Commercial+DHA+Phase+6+Karachi" icon={<MapsIcon />} />
-            <ElsewhereButton ariaLabel="email"     href="mailto:hello@eatsimmer.com"                                                               icon={<MailIcon />} />
+            {(() => {
+              // Pull canonical NAP from lib/brandLocations so the WhatsApp + Maps
+              // links are byte-identical with the Restaurant schema on this page,
+              // the /locations/bukhari-commercial geo page, and the GBP listing
+              // (per the local-seo skill — inconsistent NAP dilutes Maps prominence).
+              const loc = locationFor('simmer')
+              const mapsHref = loc
+                ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${loc.name} ${loc.area} ${loc.city}`)}`
+                : 'https://www.google.com/maps/search/?api=1&query=Simmer+Karachi'
+              const waHref = loc ? whatsappLink(loc, 'hi simmer') : 'https://wa.me/'
+              return (
+                <>
+                  <ElsewhereButton ariaLabel="instagram" href="https://instagram.com/simmer_down" icon={<InstagramIcon />} />
+                  <ElsewhereButton ariaLabel="tiktok"    href="https://tiktok.com/@simmer_down"   icon={<TikTokIcon />} />
+                  <ElsewhereButton ariaLabel="facebook"  href="https://facebook.com/simmerdown"   icon={<FacebookIcon />} />
+                  <ElsewhereButton ariaLabel="whatsapp"  href={waHref}                            icon={<WhatsAppIcon />} />
+                  <ElsewhereButton ariaLabel="maps"      href={mapsHref}                          icon={<MapsIcon />} />
+                  <ElsewhereButton ariaLabel="email"     href="mailto:hello@eatsimmer.com"        icon={<MailIcon />} />
+                </>
+              )
+            })()}
           </div>
         </div>
       </section>

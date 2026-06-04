@@ -954,12 +954,46 @@ export default function CheckoutPage() {
         </Panel>
 
         {error && (
-          <div className="flex items-start gap-2.5 rounded-xl px-4 py-3 text-sm font-medium"
+          <div role="alert" aria-live="assertive"
+            className="flex items-start gap-2.5 rounded-xl px-4 py-3 text-sm font-medium"
             style={{ background: 'rgba(239,68,68,0.07)', border: '1px solid rgba(239,68,68,0.2)', color: '#dc2626' }}>
-            <span className="shrink-0 mt-0.5">⚠</span>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"
+              className="shrink-0 mt-0.5">
+              <circle cx="12" cy="12" r="10"/>
+              <line x1="12" y1="8" x2="12" y2="12"/>
+              <line x1="12" y1="16" x2="12.01" y2="16"/>
+            </svg>
             <span>{error}</span>
           </div>
         )}
+
+        {/* ── Trust strip — per the CRO skill: address the three top
+              objections ("will this work for me / what if it doesn't /
+              can I get out") right before the place-order button. Each
+              line is fact, not puffery. */}
+        <div className="rounded-xl p-3.5" style={{ background: 'rgba(58,14,105,0.04)', border: '1px solid rgba(58,14,105,0.12)' }}>
+          <ul className="space-y-1.5 text-xs" style={{ color: 'var(--servd-mute)' }}>
+            <li className="flex items-start gap-2">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--servd-green-dark)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="shrink-0 mt-0.5">
+                <polyline points="20 6 9 17 4 12"/>
+              </svg>
+              <span><strong style={{ color: 'var(--servd-ink)' }}>Our rider, our pricing.</strong> No third-party aggregator markup.</span>
+            </li>
+            <li className="flex items-start gap-2">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--servd-green-dark)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="shrink-0 mt-0.5">
+                <polyline points="20 6 9 17 4 12"/>
+              </svg>
+              <span><strong style={{ color: 'var(--servd-ink)' }}>Cancel free</strong> until the kitchen confirms.</span>
+            </li>
+            <li className="flex items-start gap-2">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--servd-green-dark)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="shrink-0 mt-0.5">
+                <polyline points="20 6 9 17 4 12"/>
+              </svg>
+              <span><strong style={{ color: 'var(--servd-ink)' }}>Cash on delivery</strong> if you prefer.</span>
+            </li>
+          </ul>
+        </div>
       </div>
 
       {/* ── Fixed CTA ── */}

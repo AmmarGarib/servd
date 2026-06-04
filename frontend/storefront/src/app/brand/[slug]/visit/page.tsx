@@ -2,6 +2,8 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import type { Concept, ServiceHourSlot } from '../../../../lib/concept'
 import { typeLabel } from '../../../../lib/concept'
+import { faqSchema, jsonLdScript } from '../../../../lib/jsonLd'
+import { locationFor } from '../../../../lib/brandLocations'
 
 // force-dynamic + cache: 'no-store' so a single API outage at deploy
 // time can't poison the ISR cache and return 404s for the lifetime of
@@ -58,8 +60,35 @@ export default async function BrandVisitPage({ params }: { params: Promise<{ slu
   const hasGeo = concept.latitude != null && concept.longitude != null
   const hoursTable = buildHoursTable(concept.serviceHours ?? [])
 
+  // FAQ schema — LLMs (Perplexity, ChatGPT, Google AI Overviews) lift
+  // these verbatim when answering "best small plates Karachi parking" or
+  // "is simmer halal" / "what's the dress code at simmer". This is the
+  // AI-citation move from the ai-seo skill. Per concept, tuned to the
+  // brand's actual posture; falls back to generic restaurant FAQ if
+  // brandLocations isn't filled in.
+  const loc = locationFor(slug)
+  const faq = [
+    { question: `Where is ${concept.name} located?`,
+      answer:    loc ? `${concept.name} is at ${loc.area}, ${loc.city}.` : `${concept.name} is in Karachi.` },
+    { question: `Does ${concept.name} take reservations?`,
+      answer:    loc?.acceptsReservations
+        ? `Yes — book a table at /reserve/${slug}, or message us on WhatsApp.`
+        : `${concept.name} is walk-in friendly. For delivery and pickup, order at /${slug}.` },
+    { question: `Is the food halal?`,
+      answer:    `All ${concept.name} kitchens serve halal-only meat. No pork, no alcohol on the cooking line.` },
+    { question: `Does ${concept.name} deliver?`,
+      answer:    loc?.acceptsReservations === false
+        ? `Yes. Order direct at /${slug} for delivery, pickup, or curbside. We use our own fleet — no third-party aggregator.`
+        : `${concept.name} is primarily dine-in. For delivery from our sister kitchens, see /browse.` },
+    { question: `What's the dress code?`,
+      answer:    `Smart casual works everywhere. ${concept.name === 'Simmer' ? 'Simmer is a dimly-lit room; the dressier you are the more it suits the space.' : 'No formal requirement.'}` },
+    { question: `Is there parking?`,
+      answer:    `Street parking is available around the venue. We recommend arriving 10 minutes early on weekends.` },
+  ]
+
   return (
     <>
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLdScript(faqSchema(faq)) }} />
       <section className="section-tight" style={{ borderBottom: '1px solid var(--servd-line)' }}>
         <div className="container">
           <p style={{ color: 'var(--servd-green-dark)', fontWeight: 700, fontSize: '0.75rem', letterSpacing: '0.18em', textTransform: 'uppercase', marginBottom: '0.5rem' }}>

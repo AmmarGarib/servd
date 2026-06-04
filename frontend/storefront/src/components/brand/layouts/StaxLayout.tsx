@@ -72,6 +72,40 @@ export function StaxLayout({ concept, concepts }: Props) {
 
       <hr className="stax-rule" />
 
+      {/* ── STATUS BOARD — "what's coming out of the kitchen right now."
+            Industrial spec voice. Reads like a workshop board, not a
+            promo. Operator can keep it static; the few-times-a-week
+            update earns the eyeball that returning customers come
+            looking for. */}
+      <section style={{ padding: 'clamp(2.5rem, 6vh, 4rem) clamp(1.5rem, 5vw, 3rem)' }}>
+        <div style={{ maxWidth: '76rem', margin: '0 auto' }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: '2rem', marginBottom: '1.25rem' }}>
+            <span className="stax-spec">07 / STATUS · LIVE</span>
+            <span className="stax-spec" style={{ color: 'var(--stax-grey-60)' }}>updated daily</span>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', border: '1px solid var(--stax-line)' }}>
+            <div style={{ padding: '1.5rem 1.4rem', borderRight: '1px solid var(--stax-line)' }}>
+              <p className="stax-spec" style={{ marginBottom: '0.5rem' }}>GRILL</p>
+              <p className="stax-mono" style={{ fontSize: '0.95rem', margin: 0, color: 'var(--stax-grey-80)' }}>HOT · 240°C</p>
+            </div>
+            <div style={{ padding: '1.5rem 1.4rem', borderRight: '1px solid var(--stax-line)' }}>
+              <p className="stax-spec" style={{ marginBottom: '0.5rem' }}>BUNS</p>
+              <p className="stax-mono" style={{ fontSize: '0.95rem', margin: 0, color: 'var(--stax-grey-80)' }}>BAKED · IN-HOUSE</p>
+            </div>
+            <div style={{ padding: '1.5rem 1.4rem', borderRight: '1px solid var(--stax-line)' }}>
+              <p className="stax-spec" style={{ marginBottom: '0.5rem' }}>PATTY</p>
+              <p className="stax-mono" style={{ fontSize: '0.95rem', margin: 0, color: 'var(--stax-grey-80)' }}>DRY-AGED 28d</p>
+            </div>
+            <div style={{ padding: '1.5rem 1.4rem' }}>
+              <p className="stax-spec" style={{ marginBottom: '0.5rem' }}>SAUCES</p>
+              <p className="stax-mono" style={{ fontSize: '0.95rem', margin: 0, color: 'var(--stax-grey-80)' }}>HOUSE · DAILY</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <hr className="stax-rule" />
+
       {/* ── SPEC SHEET — story.highlights as numbered specs, monospace ── */}
       <section style={{ padding: 'clamp(4rem, 9vh, 6rem) clamp(1.5rem, 5vw, 3rem)' }}>
         <div style={{ maxWidth: '76rem', margin: '0 auto' }}>

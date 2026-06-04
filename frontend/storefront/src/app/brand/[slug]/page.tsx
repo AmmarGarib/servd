@@ -6,11 +6,13 @@
 // as the only fallback so brand pages match the depth of the servd home.
 
 import { notFound } from 'next/navigation'
-import { brandAccent, type Concept } from '../../../lib/concept'
+import { brandAccent, brandStory, type Concept } from '../../../lib/concept'
 import type { Block } from '../../../lib/blocks'
 import { PageRenderer } from '../../../components/blocks/PageRenderer'
 import { BrandFallback } from '../../../components/brand/BrandFallback'
 import ConceptViewTracker from '../../../components/ConceptViewTracker'
+import { locationFor } from '../../../lib/brandLocations'
+import { restaurantSchema, breadcrumbSchema, jsonLdScript } from '../../../lib/jsonLd'
 
 const API_URL = process.env.INTERNAL_API_URL ?? process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -81,9 +83,28 @@ export default async function BrandHome({
   if (!found) notFound()
   const concept: Concept = { ...found, primaryColor: brandAccent(found.slug, found.primaryColor) }
 
+  // JSON-LD: Restaurant + breadcrumb. Drives Google rich results (rating
+  // stars, Knowledge Panel, Maps prominence) and AI search citations.
+  // Falls back gracefully when the brand doesn't have a brandLocations
+  // entry yet — schema just isn't rendered.
+  const loc = locationFor(slug)
+  const ld = loc
+    ? [
+        restaurantSchema({
+          loc,
+          description: concept.description ?? brandStory(slug).tagline,
+        }),
+        breadcrumbSchema([
+          { name: 'servd',     url: 'https://servd-app.garibsons.app/' },
+          { name: concept.name, url: `https://servd-app.garibsons.app/brand/${slug}` },
+        ]),
+      ]
+    : null
+
   if (blocks.length === 0) {
     return (
       <>
+        {ld && <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLdScript(ld) }} />}
         <ConceptViewTracker conceptId={concept.id} slug={slug} />
         <BrandFallback concept={concept} concepts={concepts} />
       </>
@@ -92,6 +113,7 @@ export default async function BrandHome({
 
   return (
     <>
+      {ld && <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLdScript(ld) }} />}
       <ConceptViewTracker conceptId={concept.id} slug={slug} />
       <PageRenderer
         blocks={blocks}

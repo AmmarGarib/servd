@@ -66,8 +66,15 @@ interface Concept    {
   latitude?: number | null; longitude?: number | null
 }
 
-function fmt(cents: number): string {
-  return `PKR ${(cents / 100).toLocaleString('en-PK', { maximumFractionDigits: 0 })}`
+// Currency rendering — brand-aware per the marketing bundle.
+// Simmer's brand bible specifies `1200`, no prefix, tax-exclusive
+// (premium positioning; the PKR prefix reads transactional). Casual
+// brands (Stax, Flipd) keep the press-format `PKR 1,200`.
+function fmtFor(slug: string | null | undefined) {
+  return (cents: number): string => {
+    const n = (cents / 100).toLocaleString('en-PK', { maximumFractionDigits: 0 })
+    return slug === 'simmer' ? n : `PKR ${n}`
+  }
 }
 
 // Slug → display name: "garnish-station" → "Garnish Station".
@@ -219,6 +226,7 @@ export default function ConceptOrderPage() {
   const accent = concept.primaryColor ?? 'var(--servd-green-dark)'
   const itemTotal = cart.itemCount()
   const hasItems = itemTotal > 0
+  const fmt = fmtFor(slug)
 
   // Per-brand skin — same class system as /[concept]/checkout. Wraps the
   // ordering surface in the brand's design language (token remap + a few
@@ -327,7 +335,7 @@ export default function ConceptOrderPage() {
           <section key={cat.id} id={`cat-${cat.id}`} style={{ scrollMarginTop: '120px' }}>
             <h2 style={{ fontSize: 'clamp(1.4rem, 3vw, 1.85rem)', marginBottom: '1.25rem' }}>{cat.name}</h2>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1rem' }}>
-              {cat.items.map((item) => <ItemCard key={item.id} item={item} onClick={() => setOpenItem(item)} accent={accent} />)}
+              {cat.items.map((item) => <ItemCard key={item.id} item={item} onClick={() => setOpenItem(item)} accent={accent} fmt={fmt} />)}
             </div>
           </section>
         ))}
@@ -339,6 +347,7 @@ export default function ConceptOrderPage() {
           item={openItem}
           conceptSlug={concept.slug}
           accent={accent}
+          fmt={fmt}
           onClose={() => setOpenItem(null)}
           onAdd={(item, qty, modifiers, finalPriceCents, notes) => {
             for (let i = 0; i < qty; i++) {
@@ -363,6 +372,7 @@ export default function ConceptOrderPage() {
           onOpen={() => setCartOpen(true)}
           onClose={() => setCartOpen(false)}
           accent={accent}
+          fmt={fmt}
           onCheckout={() => {
             // On a brand custom domain (eatstax.com, stax.localhost:3002…),
             // hand the cart off to the canonical servd checkout via a URL
@@ -390,7 +400,7 @@ export default function ConceptOrderPage() {
 
 // ───── Components ───────────────────────────────────────────────────────────
 
-function ItemCard({ item, onClick, accent }: { item: MenuItem; onClick: () => void; accent: string }) {
+function ItemCard({ item, onClick, accent, fmt }: { item: MenuItem; onClick: () => void; accent: string; fmt: (cents: number) => string }) {
   const disabled = !item.isAvailable
   return (
     <button
@@ -488,11 +498,12 @@ function ItemCard({ item, onClick, accent }: { item: MenuItem; onClick: () => vo
 }
 
 function ItemDetailModal({
-  item, accent, onClose, onAdd,
+  item, accent, onClose, onAdd, fmt,
 }: {
   item: MenuItem
   conceptSlug: string
   accent: string
+  fmt: (cents: number) => string
   onClose: () => void
   onAdd: (
     item: MenuItem,
@@ -710,13 +721,14 @@ function ItemDetailModal({
 }
 
 function CartDrawer({
-  open, onOpen, onClose, accent, onCheckout,
+  open, onOpen, onClose, accent, onCheckout, fmt,
 }: {
   open: boolean
   onOpen: () => void
   onClose: () => void
   accent: string
   onCheckout: () => void
+  fmt: (cents: number) => string
 }) {
   // Tax is computed at checkout (payment-method aware), not here.
   // The basket just shows subtotal.

@@ -4,6 +4,8 @@ import Link from 'next/link'
 import type { Concept } from '../lib/concept'
 import { brandAccent, brandStory, conceptHeroImage } from '../lib/concept'
 import { useScrollReveal } from './kinetic/motionHooks'
+import { OpenNowPill } from './brand/parts/OpenNowPill'
+import { BRAND_LOCATIONS, locationFor, whatsappLink } from '../lib/brandLocations'
 
 // servd home — the FOOD hub.
 //
@@ -123,8 +125,8 @@ export function HomeClient({ concepts }: Props) {
               margin: 0,
               textShadow: '0 2px 16px rgba(0,0,0,0.35)',
             }}>
-              Cooked&nbsp;tonight.<br />
-              <span className="display-italic" style={{ color: 'rgba(255,255,255,0.78)' }}>At your door.</span>
+              Karachi&rsquo;s kitchens,<br />
+              <span className="display-italic" style={{ color: 'rgba(255,255,255,0.78)' }}>direct to your door.</span>
             </h1>
             <p style={{
               marginTop: '1.75rem',
@@ -134,7 +136,7 @@ export function HomeClient({ concepts }: Props) {
               lineHeight: 1.4,
               textShadow: '0 1px 8px rgba(0,0,0,0.4)',
             }}>
-              Three kitchens. One bag. No aggregator markup. Order direct from the people who cook the food.
+              Three GS Foods kitchens — Simmer, Stax, Flipd. One bag, one delivery, our own riders. No third-party markup.
             </p>
           </div>
 
@@ -283,6 +285,74 @@ export function HomeClient({ concepts }: Props) {
         </div>
       </section>
 
+      {/* ── OPEN NOW STRIP ─ Live status + address per brand. Hours wrong
+            on Google is the #1 Karachi mistake; surface them on the
+            home so the customer never has to wonder which one's open. */}
+      <section style={{ background: 'var(--servd-surface)', borderBlock: '1px solid var(--servd-line)' }}>
+        <div className="container" style={{ paddingTop: '2rem', paddingBottom: '2rem' }}>
+          <p className="eyebrow eyebrow-accent" style={{ marginBottom: '1rem' }}>Right now</p>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1rem' }}>
+            {brands.map((b) => {
+              const loc = locationFor(b.slug)
+              return (
+                <div key={b.id} style={{
+                  background: 'white', padding: '1rem 1.1rem',
+                  borderRadius: '0.85rem', border: '1px solid var(--servd-line)',
+                  display: 'flex', flexDirection: 'column', gap: '0.45rem',
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <span style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: '1.05rem', color: 'var(--servd-ink)' }}>
+                      {b.name}
+                    </span>
+                    <span style={{ marginLeft: 'auto' }}>
+                      <OpenNowPill slug={b.slug} fallback="Today" />
+                    </span>
+                  </div>
+                  {loc && !loc.area.startsWith('TODO') && (
+                    <p style={{ color: 'var(--servd-mute)', fontSize: '0.82rem', lineHeight: 1.4, margin: 0 }}>
+                      {loc.area}
+                    </p>
+                  )}
+                  {loc && (
+                    <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', marginTop: '0.4rem' }}>
+                      <Link href={`/${b.slug}`} style={{ color: b.accent, fontSize: '0.78rem', fontWeight: 700, textDecoration: 'none' }}>
+                        Order →
+                      </Link>
+                      <span style={{ color: 'var(--servd-dim)', fontSize: '0.78rem' }}>·</span>
+                      <a href={whatsappLink(loc, `hi ${b.name.toLowerCase()}`)}
+                        target="_blank" rel="noopener noreferrer"
+                        style={{ color: 'var(--servd-mute)', fontSize: '0.78rem', fontWeight: 700, textDecoration: 'none' }}>
+                        WhatsApp
+                      </a>
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      </section>
+
+      {/* ── ANTI-AGGREGATOR STRIP ─ One line, hard to miss. The brief
+            anti-aggregator stance is a positioning advantage no one
+            else in Karachi can claim — surface it. */}
+      <section style={{ background: 'var(--servd-ink)', color: 'white', padding: '2.5rem 0' }}>
+        <div className="container" style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '1rem' }}>
+          <p style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(1.15rem, 2vw, 1.5rem)', fontWeight: 700, lineHeight: 1.3, margin: 0, maxWidth: '38rem' }}>
+            Order direct. Our rider, our pricing, our tip to him.<br />
+            <span style={{ opacity: 0.7 }}>No third party in the kitchen.</span>
+          </p>
+          <Link href="/browse" style={{
+            background: 'white', color: 'var(--servd-ink)',
+            fontWeight: 800, fontSize: '0.92rem',
+            padding: '0.85rem 1.5rem', borderRadius: '999px', textDecoration: 'none',
+            display: 'inline-flex', alignItems: 'center', gap: '0.5rem',
+          }}>
+            See the kitchens <span aria-hidden style={{ opacity: 0.6 }}>→</span>
+          </Link>
+        </div>
+      </section>
+
       {/* ── INSIDERS — servd loyalty membership pitch. Replaces the
             promise-numbers strip. Single CTA: become a member. ──── */}
       <section style={{ background: 'var(--servd-green)', color: 'white', padding: 'clamp(4rem, 8vh, 7rem) 0', position: 'relative', overflow: 'hidden' }}>
@@ -326,8 +396,13 @@ export function HomeClient({ concepts }: Props) {
             </p>
           </div>
 
-          {/* Three perks — light tinted cards on royal so they read.
-              Middle one bumped up to read as the headline perk. */}
+          {/* Per-brand Insiders perks. Per the loyalty-program skill:
+              simmer (premium) gets exclusive recognition framing — no
+              points, no "buy N get 1," no coupony language; stax + flipd
+              (casual, higher-frequency) get a clean generous points
+              mechanic. Same brand-keyed card pattern as the brand grid
+              above so the section reads as "Insiders at each kitchen,
+              tuned to the kitchen." */}
           <div style={{
             display: 'grid',
             gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
@@ -336,21 +411,27 @@ export function HomeClient({ concepts }: Props) {
           }}>
             {[
               {
-                badge: '24h', tag: 'First access',
-                head: 'Drops before they list',
-                body: 'New stacks, omakase nights, Friday-only tenders. Insiders get a 24-hour window before public booking.',
+                slug: 'simmer',
+                accent: 'rgba(233,78,27,0.95)',
+                badge: '◇', tag: 'Simmer · regulars',
+                head: 'The regulars’ list',
+                body: 'Quiet recognition. First word on the next menu drop. A held table when the room is full. Now and then the chef sends out a plate. No card, no points — you’re known here.',
                 featured: false,
               },
               {
-                badge: '★', tag: 'Off-menu',
-                head: 'The hidden menus',
-                body: 'Build-your-own plates, off-menu sandwiches, dishes the chefs run for friends. Members only.',
+                slug: 'stax',
+                accent: 'rgba(255,255,255,0.18)',
+                badge: '★', tag: 'Stax · stack club',
+                head: 'Stack five, the sixth’s on us',
+                body: 'Order five from Stax, the sixth burger’s on the house. Insiders also get first dibs on Friday-only stacks before they go public.',
                 featured: true,
               },
               {
-                badge: '+', tag: 'Free perks',
-                head: 'Points on every order',
-                body: 'Earn 1 pt per Rs. 10 spent. Free weekday lunch delivery. Redeem points for a meal at 2,000.',
+                slug: 'flipd',
+                accent: 'rgba(58,168,255,0.95)',
+                badge: '+', tag: 'Flipd · points',
+                head: 'Points on every box',
+                body: 'Earn 1 point per Rs. 10 spent at Flipd. Free weekday lunch delivery for members. Redeem points for a meal at 2,000.',
                 featured: false,
               },
             ].map((p) => (
@@ -399,12 +480,32 @@ export function HomeClient({ concepts }: Props) {
             ))}
           </div>
 
-          {/* Single Insiders CTA — white pill against royal */}
+          {/* Insiders CTAs — two routes per the WhatsApp-marketing skill:
+              the regulars' list is a WhatsApp-first asset (the dominant
+              channel in PK; broadcasts beat email open rates 4-5x). The
+              web signup stays as the backup route so guests who don't
+              want WhatsApp aren't shut out. */}
           <div style={{
             marginTop: 'clamp(2.5rem, 5vw, 3.5rem)',
             display: 'flex', flexWrap: 'wrap',
             alignItems: 'center', gap: '1rem',
           }}>
+            <a
+              href={whatsappLink(BRAND_LOCATIONS['simmer']!, 'add me to servd insiders')}
+              target="_blank" rel="noopener noreferrer"
+              style={{
+                background: '#25D366',
+                color: 'white',
+                fontFamily: 'var(--font-display)', fontWeight: 800,
+                fontSize: '1.05rem',
+                padding: '1rem 1.85rem',
+                borderRadius: '999px',
+                textDecoration: 'none',
+                display: 'inline-flex', alignItems: 'center', gap: '0.6rem',
+                boxShadow: '0 12px 32px rgba(0,0,0,0.22)',
+              }}>
+              Join on WhatsApp <span aria-hidden style={{ opacity: 0.7 }}>→</span>
+            </a>
             <Link href="/signup?insider=1" style={{
               background: 'white',
               color: 'var(--servd-green)',
@@ -414,9 +515,8 @@ export function HomeClient({ concepts }: Props) {
               borderRadius: '999px',
               textDecoration: 'none',
               display: 'inline-flex', alignItems: 'center', gap: '0.6rem',
-              boxShadow: '0 12px 32px rgba(0,0,0,0.22)',
             }}>
-              Become an Insider <span aria-hidden style={{ opacity: 0.6 }}>→</span>
+              Or sign up with email
             </Link>
             <Link href="/login" style={{
               color: 'rgba(255,255,255,0.85)',
