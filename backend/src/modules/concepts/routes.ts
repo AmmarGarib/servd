@@ -51,6 +51,14 @@ const updateConceptSchema = createConceptSchema.partial().omit({ slug: true }).e
   latitude:        z.number().min(-90).max(90).nullable().optional(),
   longitude:       z.number().min(-180).max(180).nullable().optional(),
   deliveryRadiusKm: z.number().min(0).max(50).optional(),
+  // Public-facing contact + address. Surfaces on the storefront /visit page,
+  // /locations geo pages, schema.org Restaurant JSON-LD, brand microsite
+  // footer + Maps link. NAP must be byte-identical with GBP / foodpanda
+  // (per the local-seo skill) — operator owns the canonical strings here.
+  phone:           z.string().max(40).nullable().optional(),
+  whatsapp:        z.string().max(40).nullable().optional(),
+  address:         z.string().max(500).nullable().optional(),
+  addressLocality: z.string().max(200).nullable().optional(),
   // FBR / tax invoice details
   strn:             z.string().max(40).nullable().optional(),
   ntn:              z.string().max(40).nullable().optional(),

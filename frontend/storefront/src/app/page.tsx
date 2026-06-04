@@ -9,7 +9,7 @@ import { PageRenderer } from '../components/blocks/PageRenderer'
 import { HomeClient } from '../components/HomeClient'
 import type { Block } from '../lib/blocks'
 import type { Concept } from '../lib/concept'
-import { BRAND_LOCATIONS } from '../lib/brandLocations'
+import { fetchBrandLocations } from '../lib/brandLocations'
 import { organizationSchema, websiteSchema, restaurantSchema, jsonLdScript } from '../lib/jsonLd'
 import { brandStory } from '../lib/concept'
 
@@ -40,15 +40,18 @@ async function getConcepts(): Promise<Concept[]> {
 }
 
 export default async function HomePage() {
-  const [blocks, concepts] = await Promise.all([
+  const [blocks, concepts, brandLocations] = await Promise.all([
     getHomeBlocks(),
     getConcepts(),
+    fetchBrandLocations(API_URL),
   ])
 
   // JSON-LD: Organization (servd) + WebSite (search-box) + one Restaurant
   // graph per brand. Carrying the brand Restaurant nodes on the home page
   // helps Karachi "restaurants near me" hits find each concept directly
-  // from the operator entry point.
+  // from the operator entry point. Brand-location data flows live from
+  // the Concept rows (admin-editable) with a hardcoded fallback so a fresh
+  // database still renders a plausible schema.
   const schema = [
     organizationSchema({
       name:    'servd',
@@ -57,7 +60,7 @@ export default async function HomePage() {
       sameAs:  ['https://instagram.com/simmer_down'],
     }),
     websiteSchema(),
-    ...Object.values(BRAND_LOCATIONS).map((loc) =>
+    ...Object.values(brandLocations).map((loc) =>
       restaurantSchema({ loc, description: brandStory(loc.slug).tagline })
     ),
   ]

@@ -11,7 +11,7 @@ import type { Block } from '../../../lib/blocks'
 import { PageRenderer } from '../../../components/blocks/PageRenderer'
 import { BrandFallback } from '../../../components/brand/BrandFallback'
 import ConceptViewTracker from '../../../components/ConceptViewTracker'
-import { locationFor } from '../../../lib/brandLocations'
+import { locationFromConcept } from '../../../lib/brandLocations'
 import { restaurantSchema, breadcrumbSchema, jsonLdScript } from '../../../lib/jsonLd'
 
 const API_URL = process.env.INTERNAL_API_URL ?? process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
@@ -85,26 +85,26 @@ export default async function BrandHome({
 
   // JSON-LD: Restaurant + breadcrumb. Drives Google rich results (rating
   // stars, Knowledge Panel, Maps prominence) and AI search citations.
-  // Falls back gracefully when the brand doesn't have a brandLocations
-  // entry yet — schema just isn't rendered.
-  const loc = locationFor(slug)
-  const ld = loc
-    ? [
-        restaurantSchema({
-          loc,
-          description: concept.description ?? brandStory(slug).tagline,
-        }),
-        breadcrumbSchema([
-          { name: 'servd',     url: 'https://servd-app.garibsons.app/' },
-          { name: concept.name, url: `https://servd-app.garibsons.app/brand/${slug}` },
-        ]),
-      ]
-    : null
+  // BrandLocation is built from the live Concept row (admin-edited NAP)
+  // merged over the hardcoded fallback, so a partially-filled concept
+  // still renders a sensible schema.
+  const loc = locationFromConcept(concept)
+  const ld = [
+    restaurantSchema({
+      loc,
+      description: concept.description ?? brandStory(slug).tagline,
+      hours:       concept.serviceHours ?? undefined,
+    }),
+    breadcrumbSchema([
+      { name: 'servd',      url: 'https://servd-app.garibsons.app/' },
+      { name: concept.name, url: `https://servd-app.garibsons.app/brand/${slug}` },
+    ]),
+  ]
 
   if (blocks.length === 0) {
     return (
       <>
-        {ld && <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLdScript(ld) }} />}
+        <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLdScript(ld) }} />
         <ConceptViewTracker conceptId={concept.id} slug={slug} />
         <BrandFallback concept={concept} concepts={concepts} />
       </>
@@ -113,7 +113,7 @@ export default async function BrandHome({
 
   return (
     <>
-      {ld && <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLdScript(ld) }} />}
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLdScript(ld) }} />
       <ConceptViewTracker conceptId={concept.id} slug={slug} />
       <PageRenderer
         blocks={blocks}

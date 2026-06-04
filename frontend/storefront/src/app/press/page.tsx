@@ -10,10 +10,11 @@
 // is professional creators — they read through hype instantly.
 
 import Link from 'next/link'
-import { BRAND_LOCATIONS, whatsappLink } from '../../lib/brandLocations'
+import { fetchBrandLocations, whatsappLink, locationFor } from '../../lib/brandLocations'
 import { breadcrumbSchema, jsonLdScript } from '../../lib/jsonLd'
 
 const SITE = 'https://servd-app.garibsons.app'
+const API_URL = process.env.INTERNAL_API_URL ?? process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
 export const dynamic = 'force-dynamic'
 
@@ -23,7 +24,7 @@ export const metadata = {
   alternates:  { canonical: `${SITE}/press` },
 }
 
-export default function PressPage() {
+export default async function PressPage() {
   const schema = breadcrumbSchema([
     { name: 'servd', url: `${SITE}/` },
     { name: 'Press', url: `${SITE}/press` },
@@ -31,7 +32,9 @@ export default function PressPage() {
 
   // Pick the brand to surface as the primary press WhatsApp — Simmer is the
   // press-friendliest of the three (premium, room-led, reservation-based).
-  const pressContact = BRAND_LOCATIONS['simmer']!
+  // Live-edited values win; fallback const used if API is unreachable.
+  const brands = await fetchBrandLocations(API_URL)
+  const pressContact = brands['simmer'] ?? locationFor('simmer')!
 
   return (
     <main style={{ background: 'var(--servd-bg)', color: 'var(--servd-ink)', minHeight: '100dvh' }}>

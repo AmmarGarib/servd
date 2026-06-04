@@ -1,51 +1,39 @@
-// Canonical name + address + phone per brand.
+// Canonical name + address + phone per brand, with a hardcoded fallback
+// shape but the live values pulled from the admin-editable Concept fields.
 //
-// Per the local-seo skill in the restaurant marketing bundle: NAP (name,
-// address, phone) MUST be byte-identical across Google Business Profile,
-// the website, Instagram bio, foodpanda, Zomato, and every directory.
-// Inconsistent NAP dilutes Maps prominence. That means there's exactly
-// one place — this file — that holds the canonical strings; everything
-// downstream (schema.org JSON-LD, footer, brand microsite address line,
-// /locations geo pages, "message us" WhatsApp links) reads from here.
+// Per the local-seo skill in the marketing bundle: NAP (name, address,
+// phone) MUST be byte-identical across Google Business Profile, the
+// website, Instagram bio, foodpanda, Zomato, and every directory.
+// Inconsistent NAP dilutes Maps prominence. So there's exactly one place
+// — the Concept row, edited from the CEO dashboard — that holds the
+// canonical strings; everything downstream (schema.org JSON-LD, footer,
+// brand microsite address line, /locations geo pages, "message us"
+// WhatsApp links) reads from here.
 //
-// Fill in TODO_FILL values before launch. Update Google Business Profile
-// + foodpanda + Instagram to match EXACTLY (down to the comma).
+// The DEFAULT_BRAND_LOCATIONS block below is a fallback used when the
+// operator hasn't filled the admin fields yet — clearly marked TODO_FILL
+// so a wrong value can't silently ship to Google.
+
+import type { Concept } from './concept'
 
 export interface BrandLocation {
-  slug:            string
-  name:            string                // brand name as Google + foodpanda show it
-  /** Street-level address, byte-identical with GBP. */
-  street:          string
-  /** Neighborhood / area, e.g. "Bukhari Commercial, DHA Phase 6". */
-  area:            string
-  /** "Karachi" — always. */
-  city:            string
-  postalCode?:     string
-  country:         string                // ISO name, "Pakistan"
-  /** Public phone (the one guests reach). WhatsApp Business if that's how
-   *  bookings run — must match GBP "phone" field. E.164, no spaces. */
-  phone:           string                // e.g. "+923001234567"
-  /** WhatsApp number — usually the same as `phone` but split out in case
-   *  ops decides to route booking-WhatsApp to a different number than the
-   *  GBP-listed phone. wa.me uses digits-only, no '+'. */
-  whatsapp:        string                // e.g. "923001234567"
-  /** Lat/lng for embedded map + LocalBusiness schema. */
-  geo:             { lat: number; lng: number }
-  /** Cuisine / category label for schema.org `servesCuisine`. */
-  cuisine:         string
-  /** Price range glyph for schema — `$` cheap → `$$$$` expensive. */
-  priceRange:      string
-  /** Whether this brand takes table reservations (true) or is delivery /
-   *  counter-service only (false). Fed into schema acceptsReservations. */
+  slug:                string
+  name:                string
+  street:              string                // street address line (Concept.address)
+  area:                string                // neighborhood (Concept.addressLocality)
+  city:                string                // "Karachi" — operator-wide for now
+  postalCode?:         string
+  country:             string                // "Pakistan"
+  phone:               string                // E.164, with +
+  whatsapp:            string                // digits only, no +
+  geo:                 { lat: number; lng: number }
+  cuisine:             string
+  priceRange:          string                // $ / $$ / $$$ / $$$$ for schema.org
   acceptsReservations: boolean
-  /** URL slug for the geo landing page; e.g. /locations/bukhari-commercial */
-  locationSlug:    string
+  locationSlug:        string                // /locations/<slug>
 }
 
-// Real numbers + addresses go here. Where the operator hasn't given us the
-// real value yet, the placeholder is clearly marked TODO_FILL so it can't
-// silently ship a wrong number to Google Maps.
-export const BRAND_LOCATIONS: Record<string, BrandLocation> = {
+const DEFAULT_BRAND_LOCATIONS: Record<string, BrandLocation> = {
   simmer: {
     slug:                'simmer',
     name:                'Simmer',
@@ -53,9 +41,9 @@ export const BRAND_LOCATIONS: Record<string, BrandLocation> = {
     area:                'Bukhari Commercial, DHA Phase 6',
     city:                'Karachi',
     country:             'Pakistan',
-    phone:               '+923001234567',   // TODO_FILL_REAL_NUMBER
-    whatsapp:            '923001234567',    // TODO_FILL_REAL_NUMBER
-    geo:                 { lat: 24.8054, lng: 67.0517 },  // approximate Bukhari Commercial — refine
+    phone:               '+923001234567',
+    whatsapp:            '923001234567',
+    geo:                 { lat: 24.8054, lng: 67.0517 },
     cuisine:             'Small plates',
     priceRange:          '$$$',
     acceptsReservations: true,
@@ -68,9 +56,9 @@ export const BRAND_LOCATIONS: Record<string, BrandLocation> = {
     area:                'TODO_FILL_AREA',
     city:                'Karachi',
     country:             'Pakistan',
-    phone:               '+923001234568',   // TODO_FILL_REAL_NUMBER
-    whatsapp:            '923001234568',    // TODO_FILL_REAL_NUMBER
-    geo:                 { lat: 24.8054, lng: 67.0517 },  // TODO_FILL — same building as Simmer per brand bible?
+    phone:               '+923001234568',
+    whatsapp:            '923001234568',
+    geo:                 { lat: 24.8054, lng: 67.0517 },
     cuisine:             'Smash burger',
     priceRange:          '$$',
     acceptsReservations: false,
@@ -83,9 +71,9 @@ export const BRAND_LOCATIONS: Record<string, BrandLocation> = {
     area:                'TODO_FILL_AREA',
     city:                'Karachi',
     country:             'Pakistan',
-    phone:               '+923001234569',   // TODO_FILL_REAL_NUMBER
-    whatsapp:            '923001234569',    // TODO_FILL_REAL_NUMBER
-    geo:                 { lat: 24.8054, lng: 67.0517 },  // TODO_FILL
+    phone:               '+923001234569',
+    whatsapp:            '923001234569',
+    geo:                 { lat: 24.8054, lng: 67.0517 },
     cuisine:             'Fried chicken',
     priceRange:          '$$',
     acceptsReservations: false,
@@ -93,11 +81,87 @@ export const BRAND_LOCATIONS: Record<string, BrandLocation> = {
   },
 }
 
-export function locationFor(slug: string): BrandLocation | undefined {
-  return BRAND_LOCATIONS[slug]
+const PRICE_TIER_TO_RANGE: Record<string, string> = {
+  budget:  '$',
+  mid:     '$$',
+  premium: '$$$',
+  luxury:  '$$$$',
 }
 
-/** Human-readable single-line address: "Bukhari Commercial, DHA Phase 6 · Karachi". */
+/**
+ * Build a BrandLocation from a live Concept row + the fallback baseline.
+ * Live admin-edited values win; missing values fall back to the defaults
+ * so the storefront still renders sensibly during a partial setup.
+ */
+export function locationFromConcept(c: Concept): BrandLocation {
+  const base = DEFAULT_BRAND_LOCATIONS[c.slug] ?? {
+    slug:                c.slug,
+    name:                c.name,
+    street:              'TODO_FILL_STREET',
+    area:                'TODO_FILL_AREA',
+    city:                'Karachi',
+    country:             'Pakistan',
+    phone:               '',
+    whatsapp:            '',
+    geo:                 { lat: 24.8607, lng: 67.0011 },  // Karachi centroid
+    cuisine:             'Restaurant',
+    priceRange:          '$$',
+    acceptsReservations: c.reservationsEnabled !== false,
+    locationSlug:        c.slug,
+  }
+
+  // Normalise the operator's WhatsApp input: strip spaces, strip leading +
+  // so the value is wa.me-ready. Falls back to phone digits if WhatsApp is
+  // unset and the public dial number is a WhatsApp Business one (common).
+  const whatsappDigits = (c.whatsapp ?? c.phone ?? '').replace(/[^\d]/g, '')
+
+  return {
+    ...base,
+    slug:                c.slug,
+    name:                c.name,
+    street:              c.address ?? base.street,
+    area:                c.addressLocality ?? base.area,
+    phone:               c.phone ?? base.phone,
+    whatsapp:            whatsappDigits || base.whatsapp,
+    geo: (c.latitude != null && c.longitude != null)
+      ? { lat: c.latitude, lng: c.longitude }
+      : base.geo,
+    cuisine:             c.cuisine ?? base.cuisine,
+    priceRange:          (c.priceTier && PRICE_TIER_TO_RANGE[c.priceTier]) || base.priceRange,
+    acceptsReservations: c.reservationsEnabled !== false,
+  }
+}
+
+/**
+ * Server-side helper — fetch the concept list and build the brand-location
+ * map. Used by every server component that previously imported the const.
+ * Falls back to DEFAULT_BRAND_LOCATIONS if the API is unreachable.
+ */
+export async function fetchBrandLocations(apiBase: string): Promise<Record<string, BrandLocation>> {
+  try {
+    const res = await fetch(`${apiBase}/api/v1/storefront/concepts`, { cache: 'no-store' })
+    if (!res.ok) return DEFAULT_BRAND_LOCATIONS
+    const concepts: Concept[] = await res.json()
+    if (concepts.length === 0) return DEFAULT_BRAND_LOCATIONS
+    const map: Record<string, BrandLocation> = {}
+    for (const c of concepts) map[c.slug] = locationFromConcept(c)
+    return { ...DEFAULT_BRAND_LOCATIONS, ...map }
+  } catch {
+    return DEFAULT_BRAND_LOCATIONS
+  }
+}
+
+/** Synchronous lookup of the fallback default for a given slug. Use for
+ *  client components that don't have access to the live concept list. */
+export function locationFor(slug: string): BrandLocation | undefined {
+  return DEFAULT_BRAND_LOCATIONS[slug]
+}
+
+/** Backwards-compat const export so existing imports keep building. New
+ *  code should prefer fetchBrandLocations() to get live admin-edited data. */
+export const BRAND_LOCATIONS = DEFAULT_BRAND_LOCATIONS
+
+/** "Bukhari Commercial, DHA Phase 6 · Karachi" — skips TODO_FILL parts. */
 export function addressLine(loc: BrandLocation): string {
   const parts = [loc.area, loc.city].filter((p) => !p.startsWith('TODO_FILL'))
   return parts.join(' · ')

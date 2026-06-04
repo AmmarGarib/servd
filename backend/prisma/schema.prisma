@@ -231,9 +231,14 @@ model Concept {
   differentiator      String? // wedge — "in-house lamination, not bakery buns"
   brandVoice          String? // tone notes — "loud, urban, no-precious-paragraphs"
 
-  // Physical presence — phone + address shown on storefront /visit page
-  phone   String? // public contact number, E.164 preferred
-  address String? // full street address shown on visit page
+  // Physical presence — phone + address shown on storefront /visit page,
+  // /locations geo page, schema.org Restaurant JSON-LD, brand microsite
+  // footer + Maps link. Editable from the admin dashboard so the operator
+  // doesn't need a code change to fix a wrong number on Google.
+  phone           String? // public dial number, E.164 preferred (+923001234567)
+  whatsapp        String? // guest-facing WhatsApp number, digits only (923001234567)
+  address         String? // street address line
+  addressLocality String? // neighbourhood / area ("Bukhari Commercial, DHA Phase 6")
 
   // Delivery geography — null = no restriction (global / dine-in / pickup)
   latitude         Float?

@@ -7,21 +7,19 @@
 
 import { notFound } from 'next/navigation'
 import Link from 'next/link'
-import { BRAND_LOCATIONS, addressLine, whatsappLink, locationFor } from '../../../lib/brandLocations'
+import { addressLine, whatsappLink, fetchBrandLocations } from '../../../lib/brandLocations'
 import { restaurantSchema, breadcrumbSchema, jsonLdScript } from '../../../lib/jsonLd'
 import { brandStory } from '../../../lib/concept'
 
 const SITE = 'https://servd-app.garibsons.app'
+const API_URL = process.env.INTERNAL_API_URL ?? process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
 export const dynamic = 'force-dynamic'
 
-export async function generateStaticParams() {
-  return Object.values(BRAND_LOCATIONS).map((b) => ({ loc: b.locationSlug }))
-}
-
 export async function generateMetadata({ params }: { params: Promise<{ loc: string }> }) {
   const { loc } = await params
-  const brand = Object.values(BRAND_LOCATIONS).find((b) => b.locationSlug === loc)
+  const brands = await fetchBrandLocations(API_URL)
+  const brand = Object.values(brands).find((b) => b.locationSlug === loc || b.slug === loc)
   if (!brand) return { title: 'Location not found' }
   return {
     title:       `${brand.name} · ${brand.area} · ${brand.city}`,
@@ -32,7 +30,12 @@ export async function generateMetadata({ params }: { params: Promise<{ loc: stri
 
 export default async function LocationPage({ params }: { params: Promise<{ loc: string }> }) {
   const { loc: locSlug } = await params
-  const brand = Object.values(BRAND_LOCATIONS).find((b) => b.locationSlug === locSlug)
+  const brands = await fetchBrandLocations(API_URL)
+  // Match by locationSlug first (operator-friendly URL like
+  // /locations/bukhari-commercial), fall back to concept slug
+  // (/locations/simmer) so freshly-added concepts work without a custom
+  // locationSlug field in the DB.
+  const brand = Object.values(brands).find((b) => b.locationSlug === locSlug || b.slug === locSlug)
   if (!brand) notFound()
   const story = brandStory(brand.slug)
   const mapsQuery = encodeURIComponent(`${brand.name} ${brand.area} ${brand.city}`)

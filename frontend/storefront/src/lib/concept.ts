@@ -18,11 +18,19 @@ export interface Concept {
   // — used for the brand-page promo strip and hero subhead respectively.
   heroTagline?: string | null
   announcementBanner?: string | null
-  // Physical presence — included in /storefront/concepts response
-  phone?:    string | null
-  address?:  string | null
-  latitude?:  number | null
-  longitude?: number | null
+  // Physical presence — included in /storefront/concepts response. NAP is
+  // edited from admin CEO dashboard so the operator can fix a wrong number
+  // on Google without a code deploy. brandLocations.ts merges these over a
+  // hardcoded fallback so the storefront still renders sensibly while the
+  // operator is filling them in for the first time.
+  phone?:           string | null
+  whatsapp?:        string | null
+  address?:         string | null
+  addressLocality?: string | null
+  cuisine?:         string | null
+  priceTier?:       string | null
+  latitude?:        number | null
+  longitude?:       number | null
   // Service hours from DB
   serviceHours?: ServiceHourSlot[]
   // Per-brand reservations master toggle. Controlled from

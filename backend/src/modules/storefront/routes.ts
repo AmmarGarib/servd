@@ -373,7 +373,9 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
         logoUrl: true, primaryColor: true, heroTagline: true, announcementBanner: true,
         latitude: true, longitude: true, deliveryRadiusKm: true,
         reservationsEnabled: true,
-        phone: true, address: true,
+        phone: true, whatsapp: true,
+        address: true, addressLocality: true,
+        cuisine: true, priceTier: true,
         serviceHours: {
           select: { dayOfWeek: true, openMin: true, closeMin: true },
           orderBy: [{ dayOfWeek: 'asc' }, { openMin: 'asc' }],

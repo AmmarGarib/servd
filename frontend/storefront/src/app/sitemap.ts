@@ -1,17 +1,23 @@
 import type { MetadataRoute } from 'next'
-import { BRAND_LOCATIONS } from '../lib/brandLocations'
+import { fetchBrandLocations } from '../lib/brandLocations'
 
 // Sitemap covers every customer-facing URL Google + LLMs need to crawl.
 // Per the local-seo + ai-seo skills: without a sitemap, AI surfaces and
 // Google can't index the per-brand pages efficiently. Excludes account /
 // checkout / order trackers — those are post-auth and have no SEO value.
+//
+// Brand list is fetched from the live Concept rows so adding a new
+// concept in admin instantly puts its URLs in the sitemap on the next
+// request; no code change needed.
 
 const SITE = 'https://servd-app.garibsons.app'
+const API_URL = process.env.INTERNAL_API_URL ?? process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 const now  = new Date()
 
-export default function sitemap(): MetadataRoute.Sitemap {
-  const brandSlugs = Object.keys(BRAND_LOCATIONS)
-  const locationSlugs = Object.values(BRAND_LOCATIONS).map((b) => b.locationSlug)
+export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
+  const brandLocations = await fetchBrandLocations(API_URL)
+  const brandSlugs = Object.keys(brandLocations)
+  const locationSlugs = Object.values(brandLocations).map((b) => b.locationSlug)
 
   const top: MetadataRoute.Sitemap = [
     { url: `${SITE}/`,        lastModified: now, changeFrequency: 'daily',   priority: 1.0 },
