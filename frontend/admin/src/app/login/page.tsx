@@ -1,5 +1,5 @@
 'use client'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuthStore } from '../../store/auth'
 
@@ -11,9 +11,11 @@ type Mode = 'pin' | 'signup'
 /**
  * The single staff login page. Two modes:
  *
- *   pin    — Default. Every active staff member signs in with a 4-digit PIN.
- *            The CEO's PIN is 1973; every other staff PIN is the last 4 digits
- *            of the phone number they registered.
+ *   pin    — Default. Staff sign in with a 4–8 digit PIN. Most staff use the
+ *            last 4 digits of their registered phone; the CEO and any
+ *            admin-issued PINs are 6 digits. The pad accepts up to 8 and
+ *            submits on the explicit "Sign in" button (it deliberately does
+ *            NOT auto-fire at 4 — that locked out longer-PIN users).
  *
  *   signup — A new hire fills name, email, phone, role. We create a User row
  *            with status='pending'; PIN is auto-derived from their phone.
@@ -121,10 +123,37 @@ export default function StaffLoginPage() {
     if (pin.length >= 8 || loading) return
     const next = pin + d
     setPin(next)
-    if (next.length >= 4) setTimeout(() => void submitPin(next), 120)
+    // PINs are variable length (4–8 digits): most staff use the 4-digit
+    // last-of-phone PIN, the CEO and any admin-issued PINs are 6 digits.
+    // The client can't know the length, so we DON'T auto-submit at 4 — that
+    // truncated a 6-digit PIN and then froze the pad on `loading`, locking
+    // longer-PIN users out. Auto-submit only when the field is full (8), the
+    // one length where no further input is possible; otherwise the user taps
+    // "Sign in" when done.
+    if (next.length === 8) setTimeout(() => void submitPin(next), 120)
   }
 
-  function pressBack() { if (!loading) setPin((p) => p.slice(0, -1)) }
+  function pressBack() { if (!loading) { setError(''); setPin((p) => p.slice(0, -1)) } }
+
+  function trySubmit() {
+    if (loading || pin.length < 4) return
+    void submitPin(pin)
+  }
+
+  // Physical-keyboard support — the CEO often signs in from a laptop, not the
+  // tablet keypad. Digits type, Backspace deletes, Enter submits (when ≥4).
+  useEffect(() => {
+    if (mode !== 'pin' || signupDone) return
+    function onKey(e: KeyboardEvent) {
+      if (loading) return
+      if (e.key.length === 1 && e.key >= '0' && e.key <= '9') { e.preventDefault(); pressDigit(e.key) }
+      else if (e.key === 'Backspace') { e.preventDefault(); pressBack() }
+      else if (e.key === 'Enter')     { e.preventDefault(); trySubmit() }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pin, loading, mode, signupDone])
 
   const PAD = ['1','2','3','4','5','6','7','8','9','','0','⌫']
 
@@ -191,9 +220,11 @@ export default function StaffLoginPage() {
 
           {mode === 'pin' ? (
             <>
-              {/* PIN dots */}
+              {/* PIN dots — grow with the entered digits so longer (6-digit)
+                  PINs get real feedback past the 4th digit. Minimum 4 outline
+                  placeholders, expands up to the 8-digit max as you type. */}
               <div className="flex justify-center gap-3 mb-2">
-                {Array.from({ length: 6 }).map((_, i) => (
+                {Array.from({ length: Math.max(4, pin.length) }).map((_, i) => (
                   <div key={i}
                     className="h-3 w-3 rounded-full border-2 transition-all duration-100"
                     style={{
@@ -257,6 +288,22 @@ export default function StaffLoginPage() {
                   )
                 })}
               </div>
+
+              {/* Sign in — explicit submit. Required because PINs vary in
+                  length (4–8) and the pad no longer auto-fires at 4. Enabled
+                  once the minimum 4 digits are in. */}
+              <button
+                onClick={trySubmit}
+                disabled={loading || pin.length < 4}
+                className="w-full mt-3 rounded-2xl py-4 text-sm font-black transition-all active:scale-[0.98] disabled:opacity-30 disabled:cursor-not-allowed"
+                style={{
+                  background: (loading || pin.length < 4)
+                    ? 'rgba(255,255,255,0.06)'
+                    : 'linear-gradient(135deg, #00D4B1 0%, #6366F1 100%)',
+                  color: (loading || pin.length < 4) ? 'rgba(255,255,255,0.4)' : '#000',
+                }}>
+                {loading ? (status || 'Signing in…') : 'Sign in'}
+              </button>
             </>
           ) : (
             <form onSubmit={(e) => { void submitSignup(e) }} className="space-y-3">

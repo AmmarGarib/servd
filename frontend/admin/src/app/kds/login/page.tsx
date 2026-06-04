@@ -52,10 +52,18 @@ export default function KDSLoginPage() {
     if (pin.length >= 8 || loading) return
     const next = pin + d
     setPin(next)
-    if (next.length >= 4) setTimeout(() => void submitPin(next), 100)
+    // PINs are 4–8 digits; don't auto-fire at 4 (that truncated 6-digit
+    // manager/CEO PINs and froze the pad). Auto-submit only when full (8);
+    // otherwise the user taps "Sign in".
+    if (next.length === 8) setTimeout(() => void submitPin(next), 100)
   }
 
   function pressBack() { setPin((p) => p.slice(0, -1)); setError('') }
+
+  function trySubmit() {
+    if (loading || pin.length < 4) return
+    void submitPin(pin)
+  }
 
   return (
     <div className="min-h-screen bg-[#080a0d] flex flex-col items-center justify-center px-6 select-none"
@@ -73,7 +81,7 @@ export default function KDSLoginPage() {
       {/* PIN dots */}
       <div className={`flex gap-4 mb-6 transition-all ${shake ? 'animate-[shake_0.4s_ease]' : ''}`}
         style={{ animation: shake ? 'shake 0.4s ease' : undefined }}>
-        {Array.from({ length: 6 }).map((_, i) => (
+        {Array.from({ length: Math.max(4, pin.length) }).map((_, i) => (
           <div key={i}
             className="h-4 w-4 rounded-full border-2 transition-all duration-100"
             style={{
@@ -129,6 +137,19 @@ export default function KDSLoginPage() {
           )
         })}
       </div>
+
+      {/* Explicit submit — PINs are variable length (4–8), the pad no longer
+          auto-fires at 4. Enabled once 4 digits are in. */}
+      <button
+        onClick={trySubmit}
+        disabled={loading || pin.length < 4}
+        className="w-full max-w-xs mt-4 rounded-2xl py-4 text-sm font-black transition-all active:scale-[0.98] disabled:opacity-25"
+        style={{
+          background: (loading || pin.length < 4) ? 'rgba(255,255,255,0.05)' : 'rgba(0,212,177,0.9)',
+          color: (loading || pin.length < 4) ? 'rgba(255,255,255,0.4)' : '#001512',
+        }}>
+        {loading ? 'Verifying…' : 'Sign in'}
+      </button>
 
       <style>{`
         @keyframes shake {

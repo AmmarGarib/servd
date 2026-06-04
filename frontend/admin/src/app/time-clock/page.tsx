@@ -98,7 +98,7 @@ export default function TimeClockPage() {
 
   async function clockIn() {
     if (pin.length < 4) {
-      setFeedback('Type your 4-digit PIN.')
+      setFeedback('Type your PIN.')
       return
     }
     setStage('capturing')
