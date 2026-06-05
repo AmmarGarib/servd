@@ -159,6 +159,11 @@ export default function CeoDashboardPage() {
           <Scorecard label="Prime cost"  value="—"                   accent="#F59E0B" sub="needs recipe COGS"   />
         </div>
 
+        {/* Marketing & growth — CAC / CRC / ROAS / ARPU / LTV. Same numbers
+            the Brand Manager owns; surfaced here for ownership. Spend is
+            entered under Management → Marketing Spend. */}
+        <MarketingGrowthSection from={range.from} to={range.to} />
+
         {/* Per-brand grid */}
         <Section title="By brand" hint="same period, scoped per brand">
           <div style={{ display: 'grid', gap: '0.7rem', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
@@ -226,6 +231,52 @@ export default function CeoDashboardPage() {
         </Section>
       </div>
     </main>
+  )
+}
+
+// ── Marketing & growth section ───────────────────────────────────────────────
+// Pulls the same marketing-finance KPIs the Brand Manager owns (all brands,
+// current period) and surfaces them on the CEO dashboard. CAC / CRC / ROAS show
+// "—" until spend is entered under Management → Marketing Spend.
+interface GrowthMetrics {
+  customers: { distinct: number; new: number; returning: number }
+  spend:     { acquisitionCents: number; retentionCents: number }
+  kpis: {
+    aovCents: number | null; arpuCents: number | null; ltvCents: number
+    cacCents: number | null; crcCents: number | null; roas: number | null
+  }
+}
+
+function MarketingGrowthSection({ from, to }: { from: string; to: string }) {
+  const { data } = useQuery({
+    queryKey: ['ceo', 'growth', from, to],
+    queryFn:  () => api.get<GrowthMetrics>(`/management/brand-metrics?dateFrom=${from}&dateTo=${to}`),
+    refetchInterval: 120_000,
+  })
+  const k = data?.kpis
+  const dash = (c: number | null | undefined) => (c == null ? '—' : pkr(c))
+  const roas = k?.roas == null ? '—' : `${k.roas.toFixed(1)}×`
+  const hasSpend = (data?.spend.acquisitionCents ?? 0) + (data?.spend.retentionCents ?? 0) > 0
+
+  return (
+    <Section
+      title="Marketing & growth"
+      hint={hasSpend ? 'acquisition, retention & return on spend' : 'enter spend → Management · Marketing Spend'}
+    >
+      <div style={{ display: 'grid', gap: '0.7rem', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))' }}>
+        <Scorecard label="ROAS"  value={roas}             accent="#00D4B1" sub="return on ad spend" />
+        <Scorecard label="CAC"   value={dash(k?.cacCents)} accent="#4F8EF7" sub="cost to acquire" />
+        <Scorecard label="CRC"   value={dash(k?.crcCents)} accent="#6366F1" sub="cost to retain" />
+        <Scorecard label="ARPU"  value={dash(k?.arpuCents)} accent="#A855F7" sub="revenue / user" />
+        <Scorecard label="LTV"   value={dash(k?.ltvCents)} accent="#22C55E" sub="lifetime spend" />
+      </div>
+      <div style={{ marginTop: '0.7rem', display: 'flex', gap: '1.4rem', flexWrap: 'wrap', color: '#6E7186', fontSize: '0.78rem', fontVariantNumeric: 'tabular-nums' }}>
+        <span><span style={{ color: '#9aa0b4' }}>{(data?.customers.new ?? 0).toLocaleString()}</span> new customers</span>
+        <span><span style={{ color: '#9aa0b4' }}>{(data?.customers.returning ?? 0).toLocaleString()}</span> returning</span>
+        <span><span style={{ color: '#9aa0b4' }}>{dash(data?.spend.acquisitionCents)}</span> acquisition spend</span>
+        <span><span style={{ color: '#9aa0b4' }}>{dash(data?.spend.retentionCents)}</span> retention spend</span>
+      </div>
+    </Section>
   )
 }
 

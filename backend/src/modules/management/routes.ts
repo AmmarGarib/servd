@@ -286,6 +286,29 @@ export async function managementRoutes(fastify: FastifyInstance) {
   // ── Marketing spend CRUD ──────────────────────────────────────────────────
   const monthRx = /^\d{4}-(0[1-9]|1[0-2])$/
 
+  // List the last N months of spend rows (optionally one brand) — powers the
+  // Marketing Spend grid in the Management tab. Returns the month axis so the
+  // frontend can render an editable cell even for months with no row yet.
+  fastify.get<{ Querystring: { conceptId?: string; months?: string } }>(
+    '/marketing-spend/list',
+    { preHandler: requireAuth(...MARKETING_TEAM) },
+    async (req) => {
+      const { conceptId } = req.query
+      const n = Math.min(Math.max(parseInt(req.query.months ?? '12', 10) || 12, 1), 24)
+      const now = new Date()
+      const months: string[] = []
+      for (let i = 0; i < n; i++) {
+        const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
+        months.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`)
+      }
+      const rows = await prisma.marketingSpend.findMany({
+        where: { month: { in: months }, ...(conceptId ? { conceptId } : {}) },
+        select: { conceptId: true, month: true, acquisitionCents: true, retentionCents: true, note: true },
+      })
+      return { months, rows }
+    },
+  )
+
   fastify.get<{ Querystring: { conceptId?: string; month?: string } }>(
     '/marketing-spend',
     { preHandler: requireAuth(...MARKETING_TEAM) },

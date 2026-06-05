@@ -86,6 +86,7 @@ const NAV: NavSection[] = [
     title: 'Management',
     items: [
       { href: '/dashboard/brand', label: 'Brand Dashboard', icon: '📣', module: 'brand_dashboard' },
+      { href: '/dashboard/spend', label: 'Marketing Spend', icon: '💸', module: 'brand_dashboard' },
       { href: '/dashboard/fnb',   label: 'F&B Dashboard',   icon: '🍽️', module: 'fnb_dashboard' },
     ],
   },
