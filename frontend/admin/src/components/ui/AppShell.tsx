@@ -69,7 +69,6 @@ const NAV: NavSection[] = [
         { href: '/workforce?category=marketing',   label: 'Marketing',      module: 'staff_marketing' },
         { href: '/workforce?category=finance',     label: 'Finance',        module: 'staff_finance' },
         { href: '/workforce?category=hr',          label: 'HR',             module: 'staff_hr' },
-        { href: '/scheduling',                     label: 'Scheduling',     module: 'scheduling' },
         { href: '/payroll',                        label: 'Payroll runs',   module: 'payroll' },
         { href: '/tip-pools',                      label: 'Tip pools',      module: 'payroll' },
       ]},
@@ -121,6 +120,11 @@ const NAV: NavSection[] = [
         { href: '/refunds',         label: 'Refunds',  module: 'refunds' },
       ]},
       { href: '/ops',       label: 'Ops Center',   icon: '⚡', module: 'ops' },
+      // Scheduling lives here — not just under the CEO-only Workforce submenu —
+      // so manager roles that hold the `scheduling` module (F&B Manager, GM,
+      // FOH Management) can reach the staff rota. Workforce *admin* (allowances,
+      // categories, onboarding, payroll) stays CEO-only up in Executive.
+      { href: '/scheduling', label: 'Scheduling',  icon: '📅', module: 'scheduling' },
     ],
   },
   {
