@@ -201,15 +201,20 @@ export async function requireCustomerAuth(req: FastifyRequest, _reply: FastifyRe
 // transiently on Windows if a dev process holds the DLL). The migration adds
 // the values; the cast keeps TS happy until the next clean generate.
 export const ADMIN_ONLY = ['admin'] as UserRole[]
-export const MANAGERS = ['admin', 'manager', 'management', 'foh_management', 'boh_management'] as UserRole[]
+// fnb_manager is a full ops manager (BOH + FOH) — folded into MANAGERS so it
+// passes every manager-tier endpoint (reports, kds, inventory, reservations…).
+export const MANAGERS = ['admin', 'manager', 'management', 'foh_management', 'boh_management', 'fnb_manager'] as UserRole[]
 export const CASHIERS = [...MANAGERS, 'cashier', 'foh'] as UserRole[]
 export const KITCHEN_STAFF = [...MANAGERS, 'kitchen', 'expediter', 'boh', 'boh_management'] as UserRole[]
-export const MARKETING_TEAM = [...MANAGERS, 'marketing'] as UserRole[]
+// brand_manager is marketing-tier (NOT a full ops manager) — added to the
+// marketing team only, so it reaches CRM/reviews/campaigns + the Brand
+// dashboard endpoints without inheriting refund/comp/PO authority.
+export const MARKETING_TEAM = [...MANAGERS, 'marketing', 'brand_manager'] as UserRole[]
 export const PROCUREMENT_TEAM = [...MANAGERS, 'procurement'] as UserRole[]
 export const FINANCE_TEAM = [...MANAGERS, 'finance'] as UserRole[]
 export const HR_TEAM = [...MANAGERS, 'hr'] as UserRole[]
 export const ALL_STAFF = [
   'admin', 'manager', 'management', 'foh_management', 'boh_management',
   'foh', 'boh', 'kitchen', 'expediter', 'cashier',
-  'procurement', 'marketing', 'finance', 'hr',
+  'procurement', 'marketing', 'brand_manager', 'fnb_manager', 'finance', 'hr',
 ] as UserRole[]

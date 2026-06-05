@@ -24,45 +24,47 @@ export interface Permission {
 //   foh, boh, kitchen, expediter, cashier, procurement, marketing, finance, hr.
 // Specialist roles (procurement / finance / hr) default to a tight allow-list
 // scoped to their domain; the CEO can edit the matrix at /configuration/roles.
+// brand_manager = marketing-tier manager (Brand dashboard owner).
+// fnb_manager   = ops manager over BOH + FOH (F&B dashboard owner).
 const ON: Record<UserRole, boolean> = {
   admin: true,  manager: true,  management: true,  foh_management: true, boh_management: true,
   foh: true,    boh: true,      kitchen: true,     expediter: true,      cashier: true,
-  procurement: true, marketing: true, finance: true, hr: true,
+  procurement: true, marketing: true, brand_manager: true, fnb_manager: true, finance: true, hr: true,
 }
 const MGR: Record<UserRole, boolean> = {
   admin: true,  manager: true,  management: true,  foh_management: true, boh_management: true,
   foh: false,   boh: false,     kitchen: false,    expediter: false,     cashier: false,
-  procurement: false, marketing: false, finance: false, hr: false,
+  procurement: false, marketing: false, brand_manager: true, fnb_manager: true, finance: false, hr: false,
 }
 const ADMIN: Record<UserRole, boolean> = {
   admin: true,  manager: false, management: false, foh_management: false, boh_management: false,
   foh: false,   boh: false,     kitchen: false,    expediter: false,      cashier: false,
-  procurement: false, marketing: false, finance: false, hr: false,
+  procurement: false, marketing: false, brand_manager: false, fnb_manager: false, finance: false, hr: false,
 }
 const KITCHEN: Record<UserRole, boolean> = {
   admin: true,  manager: true,  management: true,  foh_management: false, boh_management: true,
   foh: false,   boh: true,      kitchen: true,     expediter: true,       cashier: false,
-  procurement: false, marketing: false, finance: false, hr: false,
+  procurement: false, marketing: false, brand_manager: false, fnb_manager: true, finance: false, hr: false,
 }
 const POS: Record<UserRole, boolean> = {
   admin: true,  manager: true,  management: true,  foh_management: true, boh_management: false,
   foh: true,    boh: false,     kitchen: false,    expediter: false,     cashier: true,
-  procurement: false, marketing: false, finance: false, hr: false,
+  procurement: false, marketing: false, brand_manager: false, fnb_manager: true, finance: false, hr: false,
 }
 const MARKETING: Record<UserRole, boolean> = {
   admin: true,  manager: true,  management: true,  foh_management: false, boh_management: false,
   foh: false,   boh: false,     kitchen: false,    expediter: false,      cashier: false,
-  procurement: false, marketing: true,  finance: false, hr: false,
+  procurement: false, marketing: true,  brand_manager: true, fnb_manager: false, finance: false, hr: false,
 }
 const FINANCE: Record<UserRole, boolean> = {
   admin: true,  manager: true,  management: true,  foh_management: false, boh_management: false,
   foh: false,   boh: false,     kitchen: false,    expediter: false,      cashier: false,
-  procurement: false, marketing: false, finance: true, hr: false,
+  procurement: false, marketing: false, brand_manager: false, fnb_manager: false, finance: true, hr: false,
 }
 const NONE: Record<UserRole, boolean> = {
   admin: true,  manager: false, management: false, foh_management: false, boh_management: false,
   foh: false,   boh: false,     kitchen: false,    expediter: false,      cashier: false,
-  procurement: false, marketing: false, finance: false, hr: false,
+  procurement: false, marketing: false, brand_manager: false, fnb_manager: false, finance: false, hr: false,
 }
 // Suppress unused warning when FINANCE isn't referenced in the catalogue yet.
 void FINANCE
@@ -155,7 +157,7 @@ export async function seedPermissions(prisma: PrismaClient): Promise<{ inserted:
   const ROLES = [
     'admin', 'manager', 'management', 'foh_management', 'boh_management',
     'foh', 'boh', 'kitchen', 'expediter', 'cashier',
-    'procurement', 'marketing', 'finance', 'hr',
+    'procurement', 'marketing', 'brand_manager', 'fnb_manager', 'finance', 'hr',
   ] as UserRole[]
   const existing = await prisma.rolePermission.findMany({
     select: { role: true, permission: true },

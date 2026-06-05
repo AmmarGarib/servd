@@ -33,6 +33,8 @@ const ROLE_TO_WAGE_ACCOUNT: Record<UserRole, string> = {
   kitchen:        ACCT.WAGES_KITCHEN,
   procurement:    ACCT.WAGES_MANAGEMENT,
   marketing:      ACCT.WAGES_MANAGEMENT,
+  brand_manager:  ACCT.WAGES_MANAGEMENT,
+  fnb_manager:    ACCT.WAGES_MANAGEMENT,
   finance:        ACCT.WAGES_MANAGEMENT,
   hr:             ACCT.WAGES_MANAGEMENT,
 }

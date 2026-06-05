@@ -27,6 +27,8 @@ export type AppRole =
   | 'cashier'
   | 'procurement'
   | 'marketing'
+  | 'brand_manager'     // marketing/brand manager — owns the Brand dashboard
+  | 'fnb_manager'       // food & beverage manager (BOH + FOH) — owns the F&B dashboard
   | 'finance'
   | 'hr'
 
@@ -51,6 +53,8 @@ export const APP_ROLES: RoleMeta[] = [
   { value: 'cashier',         label: 'Cashier',          emoji: '💳',  description: 'POS + curbside + basic dashboard' },
   { value: 'procurement',     label: 'Procurement',      emoji: '🏭',  description: 'Supplier chat, POs, inventory receipt' },
   { value: 'marketing',       label: 'Marketing',        emoji: '🚀',  description: 'CRM, campaigns, reviews, complaints, content' },
+  { value: 'brand_manager',   label: 'Brand Manager',    emoji: '📣',  description: 'Owns the Brand dashboard — CAC, ROAS, ARPU, LTV, AOV. Marketing + growth.' },
+  { value: 'fnb_manager',     label: 'F&B Manager',      emoji: '🍽️',  description: 'Owns the F&B dashboard — kitchen throughput, menu, food cost, quality. BOH + FOH.' },
   { value: 'finance',         label: 'Finance',          emoji: '💰',  description: 'P&L, payroll, accounting, reconciliation' },
   { value: 'hr',              label: 'HR / Workforce',   emoji: '👥',  description: 'Staff records, attendance, payroll, scheduling' },
 ]
@@ -68,6 +72,8 @@ export function roleLabel(role: string | undefined | null): string {
 export type ModuleId =
   // Executive (CEO only by default)
   | 'ceo_overview' | 'role_management' | 'role_modules' | 'audit_log' | 'tenants'
+  // Management — manager-tier dashboards (Brand Manager, F&B Manager)
+  | 'brand_dashboard' | 'fnb_dashboard'
   // Live
   | 'dashboard' | 'ops' | 'orders' | 'refunds' | 'curbside' | 'kds_all' | 'kds_dashboard' | 'expo_station' | 'chain'
   // Service
@@ -97,7 +103,7 @@ export interface ModuleMeta {
   id: ModuleId
   label: string
   /** Which top-level NAV section this lives in — used by the editor UI to group items */
-  section: 'Executive' | 'Live' | 'Service' | 'Kitchen' | 'Marketing' | 'Finance' | 'Workforce' | 'Setup'
+  section: 'Executive' | 'Management' | 'Live' | 'Service' | 'Kitchen' | 'Marketing' | 'Finance' | 'Workforce' | 'Setup'
 }
 
 export const MODULES: ModuleMeta[] = [
@@ -105,6 +111,8 @@ export const MODULES: ModuleMeta[] = [
   { id: 'role_management',    label: 'Roles & Permissions', section: 'Executive' },
   { id: 'role_modules',       label: 'Module Access',       section: 'Executive' },
   { id: 'audit_log',          label: 'Audit Log',           section: 'Executive' },
+  { id: 'brand_dashboard',    label: 'Brand Dashboard',     section: 'Management' },
+  { id: 'fnb_dashboard',      label: 'F&B Dashboard',       section: 'Management' },
   { id: 'tenants',            label: 'Tenants / Brands',    section: 'Executive' },
 
   { id: 'dashboard',          label: 'Dashboard',           section: 'Live' },
@@ -217,6 +225,28 @@ export const DEFAULT_MODULE_ACCESS: Record<AppRole, ModuleId[]> = {
   marketing: [
     'marketing_workspace', 'crm', 'campaigns', 'complaints', 'reviews',
     'calendar', 'media', 'promos', 'brands', 'analytics',
+  ],
+
+  // Brand Manager — the Brand dashboard + the full marketing surface. No ops
+  // (refunds, kds, inventory) — they own growth, not the floor.
+  brand_manager: [
+    'brand_dashboard',
+    'marketing_workspace', 'crm', 'campaigns', 'complaints', 'reviews',
+    'calendar', 'media', 'promos', 'brands', 'analytics',
+  ],
+
+  // F&B Manager — the F&B dashboard + the kitchen & service surfaces they run
+  // across BOH + FOH: menu, recipes, inventory, KDS, reservations, floor,
+  // reports, plus food-quality complaints/reviews and the staff they manage.
+  fnb_manager: [
+    'fnb_dashboard',
+    'dashboard', 'ops', 'orders', 'refunds', 'curbside',
+    'kds_all', 'kds_dashboard', 'expo_station',
+    'menu', 'components', 'recipes', 'par_sheet', 'inventory', 'kds_config',
+    'pos', 'reservations', 'reservations_admin', 'scheduling', 'tables', 'dispatch', 'riders',
+    'complaints', 'reviews',
+    'staff_directory', 'staff_foh', 'staff_boh', 'kitchen_staff',
+    'reports',
   ],
 
   finance: [

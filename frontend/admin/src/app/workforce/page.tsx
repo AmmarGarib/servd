@@ -137,8 +137,8 @@ const CATEGORIES: Category[] = [
     key: 'management',
     label: 'Management',
     emoji: '🧑‍💼',
-    blurb: 'GMs, FOH & BOH leads, the people who run the floor day-to-day.',
-    roles: ['management', 'foh_management', 'boh_management'],
+    blurb: 'GMs, FOH & BOH leads, the F&B manager — the people who run the floor day-to-day.',
+    roles: ['management', 'foh_management', 'boh_management', 'fnb_manager'],
   },
   {
     key: 'foh',
@@ -167,8 +167,8 @@ const CATEGORIES: Category[] = [
     key: 'marketing',
     label: 'Marketing',
     emoji: '🚀',
-    blurb: 'CRM, campaigns, reviews, content calendar.',
-    roles: ['marketing'],
+    blurb: 'Brand manager, CRM, campaigns, reviews, content calendar.',
+    roles: ['marketing', 'brand_manager'],
   },
   {
     key: 'finance',

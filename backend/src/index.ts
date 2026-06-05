@@ -52,6 +52,7 @@ import { posRoutes } from './modules/pos/routes.js'
 import { inventoryRoutes } from './modules/inventory/routes.js'
 import { tableRoutes } from './modules/tables/routes.js'
 import { reportRoutes } from './modules/reports/routes.js'
+import { managementRoutes } from './modules/management/routes.js'
 import { accountingRoutes } from './modules/accounting/routes.js'
 import { crmRoutes } from './modules/crm/routes.js'
 import { loyaltyRoutes } from './modules/loyalty/routes.js'
@@ -258,6 +259,7 @@ async function build() {
       await api.register(inventoryRoutes, { prefix: '/inventory' })
       await api.register(tableRoutes, { prefix: '/tables' })
       await api.register(reportRoutes, { prefix: '/reports' })
+      await api.register(managementRoutes, { prefix: '/management' })
       await api.register(accountingRoutes, { prefix: '/accounting' })
       await api.register(financeRoutes, { prefix: '/finance' })
       await api.register(crmRoutes, { prefix: '/crm' })

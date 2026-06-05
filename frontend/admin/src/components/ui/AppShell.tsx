@@ -79,6 +79,17 @@ const NAV: NavSection[] = [
     ],
   },
   {
+    // Management — manager-tier dashboards. Each manager sees only their own
+    // (gated by module): the Brand Manager gets Brand, the F&B Manager gets
+    // F&B. The CEO + GM see both. For the managers themselves, Executive is
+    // hidden, so this becomes the first section in their sidebar.
+    title: 'Management',
+    items: [
+      { href: '/dashboard/brand', label: 'Brand Dashboard', icon: '📣', module: 'brand_dashboard' },
+      { href: '/dashboard/fnb',   label: 'F&B Dashboard',   icon: '🍽️', module: 'fnb_dashboard' },
+    ],
+  },
+  {
     title: 'Live',
     items: [
       { href: '/dashboard', label: 'Dashboard',    icon: '⬡', module: 'dashboard' },

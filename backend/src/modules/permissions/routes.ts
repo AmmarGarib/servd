@@ -16,7 +16,7 @@ import {
 const ROLES = [
   'admin', 'manager', 'management', 'foh_management', 'boh_management',
   'foh', 'boh', 'kitchen', 'expediter', 'cashier',
-  'procurement', 'marketing', 'finance', 'hr',
+  'procurement', 'marketing', 'brand_manager', 'fnb_manager', 'finance', 'hr',
 ] as UserRole[]
 const ROLE_VALUES = ROLES as readonly string[]
 

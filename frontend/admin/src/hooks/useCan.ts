@@ -93,6 +93,8 @@ function useEffectiveCan(): Set<string> | null {
     boh:            'kitchen',
     procurement:    'manager',
     marketing:      'manager',
+    brand_manager:  'manager',
+    fnb_manager:    'manager',
     finance:        'manager',
     hr:             'manager',
   }

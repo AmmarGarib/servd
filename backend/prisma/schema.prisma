@@ -73,6 +73,8 @@ enum UserRole {
   cashier // POS + curbside
   procurement // supplier chat, POs, inventory receipt
   marketing // CRM, campaigns, reviews, complaints, content
+  brand_manager // marketing/brand manager — owns the Brand dashboard (CAC, ROAS, ARPU, LTV…)
+  fnb_manager // food & beverage manager — owns BOH + FOH; owns the F&B dashboard
   finance // P&L, payroll, accounting, reconciliation
   hr // staff records, attendance, payroll, scheduling
 }
@@ -4857,4 +4859,36 @@ model Position {
   @@index([conceptId])
   @@index([departmentId])
   @@map("positions")
+}
+
+// ─── MarketingSpend ───────────────────────────────────────────────────────────
+// Operator-entered marketing spend, per brand, per calendar month. This is the
+// missing input that turns CAC / CRC / ROAS from impossible into real numbers —
+// order data alone can't produce them (CAC = spend ÷ new customers,
+// ROAS = revenue ÷ spend). The Brand Manager fills this in on their dashboard;
+// the management metrics endpoints pro-rate it across the selected period.
+//
+// Split into acquisition (ads / discovery aimed at NEW customers) and retention
+// (CRM / loyalty / win-back aimed at EXISTING customers) so CAC and CRC can be
+// computed separately. ROAS uses the blended total.
+//
+// conceptId is required (spend is attributed to one brand); a cross-brand
+// campaign is split across brands by the operator. No formal relations — kept
+// as plain scalar FKs so we don't have to add back-relations to Concept/Tenant.
+model MarketingSpend {
+  id               String   @id @default(uuid())
+  tenantId         String? // tenant scope (RLS)
+  conceptId        String // brand this spend is attributed to
+  month            String // "YYYY-MM"
+  acquisitionCents Int      @default(0) // spend aimed at acquiring NEW customers
+  retentionCents   Int      @default(0) // spend aimed at retaining EXISTING customers
+  note             String? // optional operator note (channel mix, campaign, …)
+  updatedById      String? // staff user who last edited
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@unique([conceptId, month])
+  @@index([tenantId])
+  @@index([conceptId, month])
+  @@map("marketing_spend")
 }
