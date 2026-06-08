@@ -69,8 +69,6 @@ const NAV: NavSection[] = [
         { href: '/workforce?category=marketing',   label: 'Marketing',      module: 'staff_marketing' },
         { href: '/workforce?category=finance',     label: 'Finance',        module: 'staff_finance' },
         { href: '/workforce?category=hr',          label: 'HR',             module: 'staff_hr' },
-        { href: '/payroll',                        label: 'Payroll runs',   module: 'payroll' },
-        { href: '/tip-pools',                      label: 'Tip pools',      module: 'payroll' },
       ]},
       { href: '/configuration/pending-approvals', label: 'Pending Signups',  icon: '⏳', module: 'role_management' },
       { href: '/configuration/roles',           label: 'Roles & Permissions', icon: '🔐', module: 'role_management' },
@@ -120,11 +118,16 @@ const NAV: NavSection[] = [
         { href: '/refunds',         label: 'Refunds',  module: 'refunds' },
       ]},
       { href: '/ops',       label: 'Ops Center',   icon: '⚡', module: 'ops' },
-      // Scheduling lives here — not just under the CEO-only Workforce submenu —
-      // so manager roles that hold the `scheduling` module (F&B Manager, GM,
-      // FOH Management) can reach the staff rota. Workforce *admin* (allowances,
-      // categories, onboarding, payroll) stays CEO-only up in Executive.
+      // People-ops that aren't CEO-only: Scheduling (F&B Manager, GM, FOH
+      // Management) and Payroll (HR, Finance, GM) live here so the roles that
+      // hold those modules can reach them — the CEO-gated Executive section
+      // would otherwise hide them. Module gating keeps each row scoped to the
+      // right roles. Workforce *admin* — staff allowances, categories,
+      // onboarding — stays CEO-only up in Executive.
       { href: '/scheduling', label: 'Scheduling',  icon: '📅', module: 'scheduling' },
+      { href: '/payroll',    label: 'Payroll runs', icon: '🧾', module: 'payroll', children: [
+        { href: '/tip-pools', label: 'Tip pools', module: 'payroll' },
+      ]},
     ],
   },
   {
