@@ -7,6 +7,34 @@ import { sendEmail, sendSms } from '../../lib/notify.js'
 import { computeAllSegments, getSegmentsWithMembers } from './segmentComputation.js'
 import { deliverToCustomer } from '../../lib/customer-channels.js'
 
+// ─── Campaign link / open tracking helpers ────────────────────────────────────
+// Rewrite links in outbound campaign content to route through the public
+// /t/c/:sendId redirect (records a click, then forwards), and embed a 1x1 open
+// pixel in email. Per-recipient sendId attributes engagement → CTR / open rate.
+const URL_RX = /(https?:\/\/[^\s<>"')]+)/g
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+function trackUrl(target: string, sendId: string, apiBase: string): string {
+  return `${apiBase}/api/v1/t/c/${sendId}?u=${encodeURIComponent(target)}`
+}
+function trackedHtml(body: string, sendId: string, apiBase: string): string {
+  let out = ''
+  let last = 0
+  body.replace(URL_RX, (m: string, _g1: string, offset: number) => {
+    out += escapeHtml(body.slice(last, offset))
+    out += `<a href="${trackUrl(m, sendId, apiBase)}">${escapeHtml(m)}</a>`
+    last = offset + m.length
+    return m
+  })
+  out += escapeHtml(body.slice(last))
+  const pixel = `<img src="${apiBase}/api/v1/t/o/${sendId}" width="1" height="1" alt="" style="display:none" />`
+  return `<p>${out}</p>${pixel}`
+}
+function trackedText(body: string, sendId: string, apiBase: string): string {
+  return body.replace(URL_RX, (m) => trackUrl(m, sendId, apiBase))
+}
+
 const segmentFilterSchema = z.object({
   minSpendCents: z.number().int().optional(),
   maxSpendCents: z.number().int().optional(),
@@ -443,26 +471,46 @@ export async function crmRoutes(fastify: FastifyInstance) {
 
       const campaignId = req.params.id
       const recipientCount = customers.length
+      const apiBase = process.env['API_URL'] ?? 'http://localhost:3001'
 
       // Fire-and-forget — don't block the HTTP response (2000 sends at 100ms each = 200s)
       void (async () => {
         let sent = 0
         for (const c of customers) {
+          // One CampaignSend per recipient — the unit click/open tracking
+          // attributes to. Created first so its id can be baked into the links.
+          let send: { id: string }
+          try {
+            send = await prisma.campaignSend.create({
+              data: { campaignId, customerId: c.id, status: 'queued' },
+              select: { id: true },
+            })
+          } catch (err) {
+            fastify.log.warn({ customerId: c.id, err }, 'CampaignSend row create failed')
+            continue
+          }
           try {
             if (campaign.channel === 'email' && c.email) {
-              await sendEmail(c.email, campaign.subject ?? campaign.name, `<p>${campaign.body}</p>`)
+              await sendEmail(c.email, campaign.subject ?? campaign.name, trackedHtml(campaign.body, send.id, apiBase))
               sent++
             } else if ((campaign.channel === 'sms' || campaign.channel === 'whatsapp') && c.phone) {
-              await sendSms(c.phone, campaign.body)
+              await sendSms(c.phone, trackedText(campaign.body, send.id, apiBase))
               sent++
+            } else {
+              await prisma.campaignSend.update({ where: { id: send.id }, data: { status: 'failed', errorMsg: 'no contact for channel' } })
+              continue
             }
+            await prisma.campaignSend.update({ where: { id: send.id }, data: { status: 'sent', sentAt: new Date() } })
           } catch (err) {
+            await prisma.campaignSend
+              .update({ where: { id: send.id }, data: { status: 'failed', errorMsg: String((err as Error).message).slice(0, 280) } })
+              .catch(() => { /* ignore */ })
             fastify.log.warn({ customerId: c.id, err }, 'Campaign send failed for customer')
           }
         }
         await prisma.campaign.update({
           where: { id: campaignId },
-          data: { status: 'sent', sentAt: new Date() },
+          data: { status: 'sent', sentAt: new Date(), recipientCount },
         })
         fastify.log.info({ campaignId, sent, total: recipientCount }, 'Campaign broadcast complete')
       })()

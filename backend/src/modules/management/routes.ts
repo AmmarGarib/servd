@@ -13,11 +13,81 @@
 // role groups that own each surface.
 
 import type { FastifyInstance } from 'fastify'
+import type { Prisma } from '@prisma/client'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, MANAGERS, MARKETING_TEAM } from '../auth/middleware.js'
-import { profitAndLoss } from '../accounting/reports.js'
+import { profitAndLoss, cashFlow } from '../accounting/reports.js'
 import { labourPctReport } from '../payroll/service.js'
+
+// ── Per-brand P&L (revenue-share allocation) ──────────────────────────────────
+// The general ledger books COGS / labour / opex company-wide (journal lines
+// carry no conceptId), while real per-brand REVENUE lives on FinancialEntry. We
+// attribute the shared cost lines to each brand by its share of gross revenue —
+// so the per-brand numbers reconcile to the company books, at the cost of
+// cost-*ratios* being company-blended. The genuinely differentiated per-brand
+// food-cost % is computed separately (recipe-based) on the client. Shared by
+// /brand-pl and /executive-overview.
+async function computeBrandPl(conceptId: string | undefined, from: Date, to: Date, tenantFilter: Prisma.ConceptWhereInput['tenantId']) {
+  const conceptScope: Prisma.ConceptWhereInput = { tenantId: tenantFilter, deletedAt: null }
+  const [pl, labour] = await Promise.all([profitAndLoss(from, to), labourPctReport(from, to)])
+  const companyCogs   = pl.totals.cogsCents
+  const companyContra = pl.totals.contraRevenueCents
+  const companyOpex   = pl.totals.opexCents
+  const companyLabour = labour.labourCents
+
+  const entries = await prisma.financialEntry.findMany({
+    where: { ...(conceptId ? { conceptId } : {}), concept: conceptScope, entryDate: { gte: from, lte: to } },
+    select: { conceptId: true, grossCents: true, netCents: true, taxCents: true, concept: { select: { name: true } } },
+  })
+  const perBrand = new Map<string, { name: string; grossCents: number; netCents: number; taxCents: number; orders: number }>()
+  for (const e of entries) {
+    const b = perBrand.get(e.conceptId) ?? { name: e.concept.name, grossCents: 0, netCents: 0, taxCents: 0, orders: 0 }
+    b.grossCents += e.grossCents; b.netCents += e.netCents; b.taxCents += e.taxCents; b.orders += 1
+    perBrand.set(e.conceptId, b)
+  }
+  // Allocation base = TOTAL gross across the tenant (all brands) so shares are
+  // stable even when a single brand is requested.
+  const allEntries = conceptId
+    ? await prisma.financialEntry.groupBy({ by: ['conceptId'], where: { concept: conceptScope, entryDate: { gte: from, lte: to } }, _sum: { grossCents: true } })
+    : Array.from(perBrand.entries()).map(([id, b]) => ({ conceptId: id, _sum: { grossCents: b.grossCents } }))
+  const totalGross = allEntries.reduce((s, r) => s + (r._sum.grossCents ?? 0), 0)
+
+  function alloc(brandGross: number) {
+    const share = totalGross > 0 ? brandGross / totalGross : 0
+    const cogsCents   = Math.round(companyCogs * share)
+    const contraCents = Math.round(companyContra * share)
+    const opexCents   = Math.round(companyOpex * share)
+    const labourCents = Math.round(companyLabour * share)
+    const grossProfitCents = brandGross - cogsCents - contraCents
+    const netProfitCents   = grossProfitCents - opexCents
+    const pctOf = (c: number) => (brandGross > 0 ? Number(((c / brandGross) * 100).toFixed(2)) : 0)
+    return {
+      revenueCents: brandGross, cogsCents, contraCents, opexCents, labourCents,
+      grossProfitCents, netProfitCents,
+      grossMarginPct: pctOf(grossProfitCents),
+      netMarginPct:   pctOf(netProfitCents),
+      foodCostPct:    pctOf(cogsCents),
+      labourPct:      pctOf(labourCents),
+      primeCostPct:   pctOf(cogsCents + labourCents),
+    }
+  }
+
+  const brands = Array.from(perBrand.entries()).map(([id, b]) => ({ conceptId: id, name: b.name, orders: b.orders, taxCents: b.taxCents, ...alloc(b.grossCents) }))
+  const companyGross = Array.from(perBrand.values()).reduce((s, b) => s + b.grossCents, 0)
+  const company = {
+    revenueCents: pl.totals.revenueCents || companyGross,
+    cogsCents: companyCogs, contraCents: companyContra, opexCents: companyOpex, labourCents: companyLabour,
+    grossProfitCents: pl.totals.grossProfitCents, netProfitCents: pl.totals.netProfitCents,
+    grossMarginPct: pl.totals.grossMarginPct,
+    netMarginPct: pl.totals.revenueCents > 0 ? Number(((pl.totals.netProfitCents / pl.totals.revenueCents) * 100).toFixed(2)) : 0,
+    foodCostPct: pl.totals.revenueCents > 0 ? Number(((companyCogs / pl.totals.revenueCents) * 100).toFixed(2)) : 0,
+    labourPct: labour.labourPct,
+    primeCostPct: pl.totals.revenueCents > 0 ? Number((((companyCogs + companyLabour) / pl.totals.revenueCents) * 100).toFixed(2)) : 0,
+  }
+  const selected = conceptId ? (brands.find((b) => b.conceptId === conceptId) ?? null) : null
+  return { period: { from: from.toISOString(), to: to.toISOString() }, conceptId: conceptId ?? null, company, brands, selected, allocation: 'revenue-share' as const }
+}
 
 // ── date helpers ─────────────────────────────────────────────────────────────
 function dateRange(dateFrom?: string, dateTo?: string): { from: Date; to: Date } {
@@ -350,101 +420,57 @@ export async function managementRoutes(fastify: FastifyInstance) {
     return reply.status(200).send(row)
   })
 
-  // ── Per-brand P&L ─────────────────────────────────────────────────────────
-  // GET /management/brand-pl?conceptId&dateFrom&dateTo
-  //
-  // The general ledger books COGS / labour / opex company-wide (journal lines
-  // carry no conceptId), while real per-brand REVENUE lives on FinancialEntry.
-  // So we attribute the shared cost lines to each brand by its share of gross
-  // revenue. This guarantees the per-brand numbers sum back to the company
-  // books (reconciles), at the cost of cost-*ratios* being company-blended —
-  // the genuinely differentiated per-brand food-cost % is computed separately
-  // (recipe-based) on the client. Revenue and absolute profit contribution per
-  // brand are real. Labour comes from posted payroll runs.
+  // GET /management/brand-pl?conceptId&dateFrom&dateTo — per-brand P&L.
   fastify.get<{ Querystring: { conceptId?: string; dateFrom?: string; dateTo?: string } }>(
     '/brand-pl',
     { preHandler: requireAuth(...MANAGERS) },
     async (req) => {
       const { conceptId, dateFrom, dateTo } = req.query
       const { from, to } = dateRange(dateFrom, dateTo)
+      return computeBrandPl(conceptId, from, to, req.staffUser!.tenantFilter)
+    },
+  )
+
+  // GET /management/executive-overview?conceptId&dateFrom&dateTo — consolidated
+  // "money" payload in one round-trip: scoped sales totals + daily series (for
+  // sparklines) + per-brand P&L + company cash-flow net. Lets the CEO dashboard
+  // render its heaviest section from a single call instead of four.
+  fastify.get<{ Querystring: { conceptId?: string; dateFrom?: string; dateTo?: string } }>(
+    '/executive-overview',
+    { preHandler: requireAuth(...MANAGERS) },
+    async (req) => {
+      const { conceptId, dateFrom, dateTo } = req.query
+      const { from, to } = dateRange(dateFrom, dateTo)
       const tenantFilter = req.staffUser!.tenantFilter
+      const conceptScope: Prisma.ConceptWhereInput = { tenantId: tenantFilter, deletedAt: null }
 
-      // Company P&L + labour (whole books, the source of truth for cost totals).
-      const [pl, labour] = await Promise.all([
-        profitAndLoss(from, to),
-        labourPctReport(from, to),
+      const [pl, cf, salesEntries] = await Promise.all([
+        computeBrandPl(conceptId, from, to, tenantFilter),
+        cashFlow(from, to),
+        prisma.financialEntry.findMany({
+          where: { ...(conceptId ? { conceptId } : {}), concept: conceptScope, entryDate: { gte: from, lte: to } },
+          select: { entryDate: true, grossCents: true, netCents: true, taxCents: true },
+        }),
       ])
-      const companyCogs   = pl.totals.cogsCents
-      const companyContra = pl.totals.contraRevenueCents
-      const companyOpex   = pl.totals.opexCents
-      const companyLabour = labour.labourCents
 
-      // Real per-brand revenue from FinancialEntry (tenant-scoped).
-      const entries = await prisma.financialEntry.findMany({
-        where: {
-          ...(conceptId ? { conceptId } : {}),
-          concept: { tenantId: tenantFilter, deletedAt: null },
-          entryDate: { gte: from, lte: to },
-        },
-        select: { conceptId: true, grossCents: true, netCents: true, taxCents: true, concept: { select: { name: true } } },
-      })
-
-      const perBrand = new Map<string, { name: string; grossCents: number; netCents: number; taxCents: number; orders: number }>()
-      for (const e of entries) {
-        const b = perBrand.get(e.conceptId) ?? { name: e.concept.name, grossCents: 0, netCents: 0, taxCents: 0, orders: 0 }
-        b.grossCents += e.grossCents; b.netCents += e.netCents; b.taxCents += e.taxCents; b.orders += 1
-        perBrand.set(e.conceptId, b)
+      const totals = { gross: 0, net: 0, tax: 0, orders: salesEntries.length }
+      const dayMap = new Map<string, { date: string; gross: number; orders: number }>()
+      for (const e of salesEntries) {
+        totals.gross += e.grossCents; totals.net += e.netCents; totals.tax += e.taxCents
+        const d = e.entryDate.toISOString().slice(0, 10)
+        const b = dayMap.get(d) ?? { date: d, gross: 0, orders: 0 }
+        b.gross += e.grossCents; b.orders += 1; dayMap.set(d, b)
       }
-      // Allocation base = TOTAL gross across the tenant in the period (always
-      // all brands, even when a single brand is requested) so shares are stable.
-      const allEntries = conceptId
-        ? await prisma.financialEntry.groupBy({
-            by: ['conceptId'],
-            where: { concept: { tenantId: tenantFilter, deletedAt: null }, entryDate: { gte: from, lte: to } },
-            _sum: { grossCents: true },
-          })
-        : Array.from(perBrand.entries()).map(([id, b]) => ({ conceptId: id, _sum: { grossCents: b.grossCents } }))
-      const totalGross = allEntries.reduce((s, r) => s + (r._sum.grossCents ?? 0), 0)
+      const series = Array.from(dayMap.values()).sort((a, b) => a.date.localeCompare(b.date))
 
-      function alloc(brandGross: number) {
-        const share = totalGross > 0 ? brandGross / totalGross : 0
-        const cogsCents   = Math.round(companyCogs * share)
-        const contraCents = Math.round(companyContra * share)
-        const opexCents   = Math.round(companyOpex * share)
-        const labourCents = Math.round(companyLabour * share)
-        const grossProfitCents = brandGross - cogsCents - contraCents
-        const netProfitCents   = grossProfitCents - opexCents
-        const pctOf = (c: number) => (brandGross > 0 ? Number(((c / brandGross) * 100).toFixed(2)) : 0)
-        return {
-          revenueCents: brandGross, cogsCents, contraCents, opexCents, labourCents,
-          grossProfitCents, netProfitCents,
-          grossMarginPct: pctOf(grossProfitCents),
-          netMarginPct:   pctOf(netProfitCents),
-          foodCostPct:    pctOf(cogsCents),
-          labourPct:      pctOf(labourCents),
-          primeCostPct:   pctOf(cogsCents + labourCents),
-        }
+      return {
+        period: { from: from.toISOString(), to: to.toISOString() },
+        conceptId: conceptId ?? null,
+        sales: { totals },
+        pl,
+        cashFlowNetCents: cf.totals.netCents,
+        series,
       }
-
-      const brands = Array.from(perBrand.entries()).map(([id, b]) => ({
-        conceptId: id, name: b.name, orders: b.orders, taxCents: b.taxCents, ...alloc(b.grossCents),
-      }))
-
-      const companyGross = Array.from(perBrand.values()).reduce((s, b) => s + b.grossCents, 0)
-      const company = {
-        revenueCents: pl.totals.revenueCents || companyGross,
-        cogsCents: companyCogs, contraCents: companyContra, opexCents: companyOpex, labourCents: companyLabour,
-        grossProfitCents: pl.totals.grossProfitCents, netProfitCents: pl.totals.netProfitCents,
-        grossMarginPct: pl.totals.grossMarginPct,
-        netMarginPct: pl.totals.revenueCents > 0 ? Number(((pl.totals.netProfitCents / pl.totals.revenueCents) * 100).toFixed(2)) : 0,
-        foodCostPct: pl.totals.revenueCents > 0 ? Number(((companyCogs / pl.totals.revenueCents) * 100).toFixed(2)) : 0,
-        labourPct: labour.labourPct,
-        primeCostPct: pl.totals.revenueCents > 0 ? Number((((companyCogs + companyLabour) / pl.totals.revenueCents) * 100).toFixed(2)) : 0,
-      }
-
-      // `selected` is the block the caller asked for: a single brand, else company.
-      const selected = conceptId ? (brands.find((b) => b.conceptId === conceptId) ?? null) : null
-      return { period: { from: from.toISOString(), to: to.toISOString() }, conceptId: conceptId ?? null, company, brands, selected, allocation: 'revenue-share' }
     },
   )
 }

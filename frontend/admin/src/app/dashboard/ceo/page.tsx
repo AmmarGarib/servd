@@ -227,27 +227,30 @@ function BrandSelectCard({ label, sublabel, conceptId, selected, onSelect, fromI
 // ─── 1. Money ─────────────────────────────────────────────────────────────────
 interface PlBlock { revenueCents?: number; cogsCents?: number; contraCents?: number; opexCents?: number; labourCents?: number; grossProfitCents?: number; netProfitCents?: number; grossMarginPct?: number; netMarginPct?: number; foodCostPct?: number; labourPct?: number; primeCostPct?: number }
 interface BrandPl { company?: PlBlock; selected?: PlBlock | null }
-interface SeriesResp { series?: Array<{ date: string; gross: number; net: number; orders: number }> }
-interface CashFlow { totals?: { inflowCents?: number; outflowCents?: number; netCents?: number } }
+interface ExecOverview {
+  sales?: { totals?: { gross?: number; net?: number; tax?: number; orders?: number } }
+  pl?: BrandPl
+  cashFlowNetCents?: number
+  series?: Array<{ date: string; gross: number; orders: number }>
+}
 interface MenuEngItem { priceCents?: number; qtySold?: number; foodCostCents?: number; grossMarginPct?: number; quadrant?: string; hasRecipe?: boolean }
 
 function MoneySection({ scope, isCompany }: { scope: Scope; isCompany: boolean }) {
-  const { conceptId, fromISO, toISO, fromDate, toDate } = scope
-  const sales = useQuery({ queryKey: ['ceo', 'sales', conceptId, fromISO, toISO], queryFn: () => api.get<SalesResp>(`/reports/sales${qs({ conceptId, dateFrom: fromISO, dateTo: toISO })}`), refetchInterval: 60_000 })
-  const bpl = useQuery({ queryKey: ['ceo', 'brand-pl', conceptId, fromDate, toDate], queryFn: () => api.get<BrandPl>(`/management/brand-pl${qs({ conceptId, dateFrom: fromDate, dateTo: toDate })}`), refetchInterval: 300_000 })
-  const cash = useQuery({ queryKey: ['ceo', 'cashflow', fromDate, toDate], queryFn: () => api.get<CashFlow>(`/accounting/cash-flow${qs({ dateFrom: fromDate, dateTo: toDate })}`), refetchInterval: 300_000 })
-  const series = useQuery({ queryKey: ['ceo', 'series', conceptId, fromISO, toISO], queryFn: () => api.get<SeriesResp>(`/reports/series${qs({ conceptId, dateFrom: fromISO, dateTo: toISO })}`) })
+  const { conceptId, fromISO, toISO } = scope
+  // One consolidated call for the heaviest section: sales totals + series +
+  // per-brand P&L + cash-flow net (replaces four separate round-trips).
+  const ov = useQuery({ queryKey: ['ceo', 'exec-ov', conceptId, fromISO, toISO], queryFn: () => api.get<ExecOverview>(`/management/executive-overview${qs({ conceptId, dateFrom: fromISO, dateTo: toISO })}`), refetchInterval: 120_000 })
   const menuEng = useQuery({
     queryKey: ['ceo', 'menu-eng-cost', conceptId, fromISO, toISO],
     queryFn:  () => api.get<MenuEngItem[]>(`/reports/menu-engineering${qs({ conceptId, dateFrom: fromISO, dateTo: toISO })}`),
     enabled:  !!conceptId,
   })
 
-  const t = sales.data?.totals
+  const t = ov.data?.sales?.totals
   const gross = t?.gross ?? 0
   const orders = t?.orders ?? 0
   const aov = orders > 0 ? Math.round(gross / orders) : null
-  const block = isCompany ? bpl.data?.company : bpl.data?.selected
+  const block = isCompany ? ov.data?.pl?.company : ov.data?.pl?.selected
 
   // Differentiated per-brand food cost from recipe costing; company uses ledger ratio.
   const recipeFoodPct = useMemo(() => {
@@ -260,8 +263,8 @@ function MoneySection({ scope, isCompany }: { scope: Scope; isCompany: boolean }
   const labourPct = block?.labourPct ?? null
   const primePct = (foodPct != null && labourPct != null) ? foodPct + labourPct : null
 
-  const grossSpark = (series.data?.series ?? []).map((s) => s.gross)
-  const ordersSpark = (series.data?.series ?? []).map((s) => s.orders)
+  const grossSpark = (ov.data?.series ?? []).map((s) => s.gross)
+  const ordersSpark = (ov.data?.series ?? []).map((s) => s.orders)
   const tag = isCompany ? 'co.' : 'alloc'
 
   return (
@@ -279,7 +282,7 @@ function MoneySection({ scope, isCompany }: { scope: Scope; isCompany: boolean }
         <Scorecard label="Tax collected" value={pkr(t?.tax)} accent="#A855F7" sub="FBR + provincial" />
         <Scorecard label="OpEx"         value={pkr(block?.opexCents)} accent="#6E7186" sub="operating expense" tag={tag} />
         <Scorecard label="Discounts"    value={pkr(block?.contraCents)} accent="#6E7186" sub="contra-revenue" tag={tag} />
-        <Scorecard label="Cash flow"    value={pkr(cash.data?.totals?.netCents)} accent="#4F8EF7" sub="net in − out" tag="co." />
+        <Scorecard label="Cash flow"    value={pkr(ov.data?.cashFlowNetCents)} accent="#4F8EF7" sub="net in − out" tag="co." />
       </Grid>
     </Section>
   )
@@ -342,7 +345,7 @@ function DemandSection({ scope }: { scope: Scope }) {
 
 // ─── 3. Customers & growth ────────────────────────────────────────────────────
 interface SmartSeg { summary?: { totalCustomers?: number; repeatRate?: number; avgOrderValueCents?: number }; segments?: Array<{ key?: string; label?: string; count?: number }> }
-interface MarketingPerf { campaigns?: number; promosCreated?: number; promoUsages?: number; contentEvents?: number; mediaUploads?: number; totalActions?: number }
+interface MarketingPerf { campaigns?: number; campaignClicks?: number; campaignOpens?: number; ctr?: number | null; openRate?: number | null; promosCreated?: number; promoUsages?: number; contentEvents?: number; mediaUploads?: number; totalActions?: number }
 
 function CustomersSection({ scope }: { scope: Scope }) {
   const { conceptId, fromISO, toISO, days } = scope
@@ -368,6 +371,8 @@ function CustomersSection({ scope }: { scope: Scope }) {
         <Scorecard label="Acq. spend"     value={pkr(bm.data?.spend?.acquisitionCents)} accent="#6E7186" sub="marketing — new" />
         <Scorecard label="Retention spend" value={pkr(bm.data?.spend?.retentionCents)} accent="#6E7186" sub="marketing — repeat" />
         <Scorecard label="Total customers" value={num(seg.data?.summary?.totalCustomers)} accent="#6366F1" sub="all-time base" tag="co." />
+        <Scorecard label="Email CTR"      value={pct(mk.data?.ctr ?? undefined)} accent="#EC4899" sub={`${num(mk.data?.campaignClicks)} clicks`} tag="co." />
+        <Scorecard label="Open rate"      value={pct(mk.data?.openRate ?? undefined)} accent="#EC4899" sub={`${num(mk.data?.campaignOpens)} opens`} tag="co." />
         <Scorecard label="Mktg actions"   value={num(mk.data?.totalActions)} accent="#EC4899" sub={`${num(mk.data?.promoUsages)} redemptions`} tag="co." />
       </Grid>
 
@@ -566,9 +571,9 @@ interface ExceptionStats { open?: number; acknowledged?: number; last24h?: numbe
 interface ReconSummary { totalShifts?: number; balancedShifts?: number }
 
 function LossControlSection({ scope }: { scope: Scope }) {
-  const { fromDate, toDate } = scope
+  const { fromISO, toISO } = scope
   const exc = useQuery({ queryKey: ['ceo', 'exceptions'], queryFn: () => api.get<ExceptionStats>('/crosschecks/exceptions/stats'), refetchInterval: 300_000 })
-  const recon = useQuery({ queryKey: ['ceo', 'recon', fromDate, toDate], queryFn: () => api.get<ReconSummary>(`/reconciliation/summary${qs({ dateFrom: fromDate, dateTo: toDate })}`), refetchInterval: 300_000 })
+  const recon = useQuery({ queryKey: ['ceo', 'recon', fromISO, toISO], queryFn: () => api.get<ReconSummary>(`/reconciliation/summary${qs({ dateFrom: fromISO, dateTo: toISO })}`), refetchInterval: 300_000 })
   const balanced = recon.data?.totalShifts ? (recon.data.balancedShifts ?? 0) / recon.data.totalShifts * 100 : null
   return (
     <Section title="Loss control" hint="trust & cash integrity (company-wide)">

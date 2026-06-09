@@ -2602,6 +2602,14 @@ model CampaignSend {
   status     String    @default("queued") // queued|sent|failed|bounced
   errorMsg   String?
 
+  // Engagement tracking — incremented by the public /t/c/:id (click) and
+  // /t/o/:id (open pixel) endpoints. firstClickedAt/firstOpenedAt give unique
+  // click/open rates; the counts give raw totals.
+  clickCount     Int       @default(0)
+  openCount      Int       @default(0)
+  firstClickedAt DateTime?
+  firstOpenedAt  DateTime?
+
   campaign Campaign @relation(fields: [campaignId], references: [id])
   customer Customer @relation(fields: [customerId], references: [id])
 
