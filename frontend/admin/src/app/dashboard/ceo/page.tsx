@@ -302,8 +302,8 @@ function DemandSection({ scope }: { scope: Scope }) {
   const topItems = arr<TopItemRow>(top.data, 'items')
   const quad = useMemo(() => {
     const items = menuEng.data ?? []
-    const c = { star: 0, plowHorse: 0, puzzle: 0, dog: 0 } as Record<string, number>
-    for (const i of items) if (i.quadrant && c[i.quadrant] != null) c[i.quadrant]++
+    const c: Record<string, number> = { star: 0, plowHorse: 0, puzzle: 0, dog: 0 }
+    for (const i of items) { const q = i.quadrant; if (q && q in c) c[q] = (c[q] ?? 0) + 1 }
     return c
   }, [menuEng.data])
   const forecastTotal = (forecast.data?.items ?? []).reduce((s, i) => s + (i.totalPredicted ?? 0), 0)
