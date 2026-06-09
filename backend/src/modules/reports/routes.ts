@@ -207,4 +207,74 @@ export async function reportRoutes(fastify: FastifyInstance) {
       return { items, conceptId, generatedAt: new Date().toISOString() }
     },
   )
+
+  // GET /reports/series — daily revenue/orders buckets (powers sparklines).
+  // Gap-fills missing days with zeros so the trend line is continuous.
+  fastify.get<{ Querystring: { conceptId?: string; dateFrom?: string; dateTo?: string } }>(
+    '/series',
+    { preHandler: requireAuth(...MANAGERS) },
+    async (req) => {
+      const { conceptId, dateFrom, dateTo } = req.query
+      const { from, to } = dateRange(dateFrom, dateTo, 30)
+      const entries = await prisma.financialEntry.findMany({
+        where: { ...(conceptId && { conceptId }), entryDate: { gte: from, lte: to } },
+        select: { entryDate: true, grossCents: true, netCents: true },
+      })
+      const buckets = new Map<string, { date: string; gross: number; net: number; orders: number }>()
+      for (const e of entries) {
+        const d = e.entryDate.toISOString().slice(0, 10)
+        const b = buckets.get(d) ?? { date: d, gross: 0, net: 0, orders: 0 }
+        b.gross += e.grossCents; b.net += e.netCents; b.orders += 1
+        buckets.set(d, b)
+      }
+      const series: Array<{ date: string; gross: number; net: number; orders: number }> = []
+      const cur = new Date(from); cur.setUTCHours(0, 0, 0, 0)
+      const end = new Date(to); end.setUTCHours(0, 0, 0, 0)
+      let guard = 0
+      while (cur <= end && guard++ < 400) {
+        const key = cur.toISOString().slice(0, 10)
+        series.push(buckets.get(key) ?? { date: key, gross: 0, net: 0, orders: 0 })
+        cur.setUTCDate(cur.getUTCDate() + 1)
+      }
+      return { series }
+    },
+  )
+
+  // GET /reports/delivery — own-fleet delivery speed from order timestamps.
+  // avgMinutes = placedAt → (OTP-verified | completed). Segment-level transit
+  // (accept→pickup→drop) needs the rider app's GPS stream — flagged below.
+  fastify.get<{ Querystring: { conceptId?: string; dateFrom?: string; dateTo?: string; targetMinutes?: string } }>(
+    '/delivery',
+    { preHandler: requireAuth(...MANAGERS) },
+    async (req) => {
+      const { conceptId, dateFrom, dateTo } = req.query
+      const { from, to } = dateRange(dateFrom, dateTo)
+      const target = req.query.targetMinutes ? parseInt(req.query.targetMinutes, 10) : 45
+      const orders = await prisma.order.findMany({
+        where: {
+          ...(conceptId && { conceptId }),
+          fulfilmentType: 'delivery',
+          placedAt: { gte: from, lte: to },
+          completedAt: { not: null },
+        },
+        select: { placedAt: true, completedAt: true, deliveryOtpVerifiedAt: true },
+      })
+      let total = 0, sumMin = 0, onTime = 0
+      for (const o of orders) {
+        const done = o.deliveryOtpVerifiedAt ?? o.completedAt
+        if (!done) continue
+        const min = (done.getTime() - o.placedAt.getTime()) / 60000
+        if (min < 0 || min > 600) continue // drop corrupt / stale outliers
+        total++; sumMin += min
+        if (min <= target) onTime++
+      }
+      return {
+        deliveries: total,
+        avgMinutes: total ? Number((sumMin / total).toFixed(1)) : null,
+        onTimePct:  total ? Number(((onTime / total) * 100).toFixed(1)) : null,
+        targetMinutes: target,
+        gpsDepthAvailable: false,
+      }
+    },
+  )
 }

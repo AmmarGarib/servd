@@ -156,6 +156,7 @@ export default function CeoDashboardPage() {
         <CustomersSection scope={scope} />
         <FunnelSection scope={scope} />
         <OperationsSection scope={scope} />
+        <DeliverySection scope={scope} />
         <QualitySection scope={scope} />
         {!isCompany && <ReservationsSection scope={scope} />}
         <InventorySection scope={scope} />
@@ -224,17 +225,18 @@ function BrandSelectCard({ label, sublabel, conceptId, selected, onSelect, fromI
 }
 
 // ─── 1. Money ─────────────────────────────────────────────────────────────────
-interface PlLedger { totals?: { revenueCents?: number; cogsCents?: number; grossProfitCents?: number; grossMarginPct?: number; opexCents?: number; contraRevenueCents?: number; netProfitCents?: number } }
-interface LabourPct { revenueCents?: number; labourCents?: number; labourPct?: number }
+interface PlBlock { revenueCents?: number; cogsCents?: number; contraCents?: number; opexCents?: number; labourCents?: number; grossProfitCents?: number; netProfitCents?: number; grossMarginPct?: number; netMarginPct?: number; foodCostPct?: number; labourPct?: number; primeCostPct?: number }
+interface BrandPl { company?: PlBlock; selected?: PlBlock | null }
+interface SeriesResp { series?: Array<{ date: string; gross: number; net: number; orders: number }> }
 interface CashFlow { totals?: { inflowCents?: number; outflowCents?: number; netCents?: number } }
 interface MenuEngItem { priceCents?: number; qtySold?: number; foodCostCents?: number; grossMarginPct?: number; quadrant?: string; hasRecipe?: boolean }
 
 function MoneySection({ scope, isCompany }: { scope: Scope; isCompany: boolean }) {
   const { conceptId, fromISO, toISO, fromDate, toDate } = scope
   const sales = useQuery({ queryKey: ['ceo', 'sales', conceptId, fromISO, toISO], queryFn: () => api.get<SalesResp>(`/reports/sales${qs({ conceptId, dateFrom: fromISO, dateTo: toISO })}`), refetchInterval: 60_000 })
-  const pl = useQuery({ queryKey: ['ceo', 'pl', fromDate, toDate], queryFn: () => api.get<PlLedger>(`/accounting/pl-ledger${qs({ dateFrom: fromDate, dateTo: toDate })}`), refetchInterval: 300_000 })
-  const labour = useQuery({ queryKey: ['ceo', 'labour', fromDate, toDate], queryFn: () => api.get<LabourPct>(`/payroll/labour-pct${qs({ dateFrom: fromDate, dateTo: toDate })}`), refetchInterval: 300_000 })
+  const bpl = useQuery({ queryKey: ['ceo', 'brand-pl', conceptId, fromDate, toDate], queryFn: () => api.get<BrandPl>(`/management/brand-pl${qs({ conceptId, dateFrom: fromDate, dateTo: toDate })}`), refetchInterval: 300_000 })
   const cash = useQuery({ queryKey: ['ceo', 'cashflow', fromDate, toDate], queryFn: () => api.get<CashFlow>(`/accounting/cash-flow${qs({ dateFrom: fromDate, dateTo: toDate })}`), refetchInterval: 300_000 })
+  const series = useQuery({ queryKey: ['ceo', 'series', conceptId, fromISO, toISO], queryFn: () => api.get<SeriesResp>(`/reports/series${qs({ conceptId, dateFrom: fromISO, dateTo: toISO })}`) })
   const menuEng = useQuery({
     queryKey: ['ceo', 'menu-eng-cost', conceptId, fromISO, toISO],
     queryFn:  () => api.get<MenuEngItem[]>(`/reports/menu-engineering${qs({ conceptId, dateFrom: fromISO, dateTo: toISO })}`),
@@ -245,33 +247,38 @@ function MoneySection({ scope, isCompany }: { scope: Scope; isCompany: boolean }
   const gross = t?.gross ?? 0
   const orders = t?.orders ?? 0
   const aov = orders > 0 ? Math.round(gross / orders) : null
+  const block = isCompany ? bpl.data?.company : bpl.data?.selected
 
-  // Food cost %: company → ledger COGS/revenue; per-brand → weighted from recipe costing.
-  const companyFoodPct = pl.data?.totals?.revenueCents ? ((pl.data.totals.cogsCents ?? 0) / pl.data.totals.revenueCents) * 100 : null
-  const brandFoodPct = useMemo(() => {
+  // Differentiated per-brand food cost from recipe costing; company uses ledger ratio.
+  const recipeFoodPct = useMemo(() => {
     const items = menuEng.data ?? []
     let cost = 0, rev = 0
     for (const i of items) { const q = i.qtySold ?? 0; cost += (i.foodCostCents ?? 0) * q; rev += (i.priceCents ?? 0) * q }
     return rev > 0 ? (cost / rev) * 100 : null
   }, [menuEng.data])
-  const foodPct = isCompany ? companyFoodPct : brandFoodPct
-  const labourPct = labour.data?.labourPct ?? null
+  const foodPct = isCompany ? (block?.foodCostPct ?? null) : (recipeFoodPct ?? block?.foodCostPct ?? null)
+  const labourPct = block?.labourPct ?? null
   const primePct = (foodPct != null && labourPct != null) ? foodPct + labourPct : null
 
+  const grossSpark = (series.data?.series ?? []).map((s) => s.gross)
+  const ordersSpark = (series.data?.series ?? []).map((s) => s.orders)
+  const tag = isCompany ? 'co.' : 'alloc'
+
   return (
-    <Section title="The money" hint={isCompany ? 'company-wide P&L' : `${scope.brandName} sales · P&L is company-wide`}>
+    <Section title="The money" hint={isCompany ? 'company-wide P&L' : `${scope.brandName} · shared costs revenue-share allocated`}>
       <Grid>
-        <Scorecard label="Net revenue"  value={pkr(t?.net ?? gross)} accent="#00D4B1" sub={`${orders} orders`} />
-        <Scorecard label="Avg ticket"   value={pkr(aov)} accent="#4F8EF7" sub="per order" />
-        <Scorecard label="Gross profit" value={pkr(pl.data?.totals?.grossProfitCents)} accent="#22C55E" sub="rev − COGS" tag="co." />
-        <Scorecard label="Gross margin" value={pct(pl.data?.totals?.grossMarginPct)} accent="#22C55E" sub="of revenue" tag="co." />
+        <Scorecard label="Net revenue"  value={pkr(t?.net ?? gross)} accent="#00D4B1" sub={`${orders} orders`} spark={grossSpark} />
+        <Scorecard label="Avg ticket"   value={pkr(aov)} accent="#4F8EF7" sub="per order" spark={ordersSpark} />
+        <Scorecard label="Gross profit" value={pkr(block?.grossProfitCents)} accent="#22C55E" sub="rev − COGS" tag={tag} />
+        <Scorecard label="Gross margin" value={pct(block?.grossMarginPct)} accent="#22C55E" sub="of revenue" tag={tag} />
         <Scorecard label="Food cost"    value={pct(foodPct)} accent="#F59E0B" sub={isCompany ? 'COGS / rev' : 'recipe-weighted'} />
-        <Scorecard label="Labour"       value={pct(labourPct)} accent="#F59E0B" sub="wages / rev" tag="co." />
-        <Scorecard label="Prime cost"   value={pct(primePct)} accent="#EF4444" sub="food + labour" tag={isCompany ? undefined : 'approx'} />
-        <Scorecard label="Net profit"   value={pkr(pl.data?.totals?.netProfitCents)} accent="#00D4B1" sub="bottom line" tag="co." />
+        <Scorecard label="Labour"       value={pct(labourPct)} accent="#F59E0B" sub="wages / rev" tag={tag} />
+        <Scorecard label="Prime cost"   value={pct(primePct)} accent="#EF4444" sub="food + labour" />
+        <Scorecard label="Net profit"   value={pkr(block?.netProfitCents)} accent="#00D4B1" sub="bottom line" tag={tag} />
+        <Scorecard label="Net margin"   value={pct(block?.netMarginPct)} accent="#00D4B1" sub="profit / rev" tag={tag} />
         <Scorecard label="Tax collected" value={pkr(t?.tax)} accent="#A855F7" sub="FBR + provincial" />
-        <Scorecard label="OpEx"         value={pkr(pl.data?.totals?.opexCents)} accent="#6E7186" sub="operating expense" tag="co." />
-        <Scorecard label="Discounts"    value={pkr(pl.data?.totals?.contraRevenueCents)} accent="#6E7186" sub="contra-revenue" tag="co." />
+        <Scorecard label="OpEx"         value={pkr(block?.opexCents)} accent="#6E7186" sub="operating expense" tag={tag} />
+        <Scorecard label="Discounts"    value={pkr(block?.contraCents)} accent="#6E7186" sub="contra-revenue" tag={tag} />
         <Scorecard label="Cash flow"    value={pkr(cash.data?.totals?.netCents)} accent="#4F8EF7" sub="net in − out" tag="co." />
       </Grid>
     </Section>
@@ -493,6 +500,23 @@ function QualitySection({ scope }: { scope: Scope }) {
   )
 }
 
+// ─── Delivery (own fleet) ─────────────────────────────────────────────────────
+interface DeliveryResp { deliveries?: number; avgMinutes?: number | null; onTimePct?: number | null; targetMinutes?: number }
+
+function DeliverySection({ scope }: { scope: Scope }) {
+  const { conceptId, fromISO, toISO } = scope
+  const d = useQuery({ queryKey: ['ceo', 'delivery', conceptId, fromISO, toISO], queryFn: () => api.get<DeliveryResp>(`/reports/delivery${qs({ conceptId, dateFrom: fromISO, dateTo: toISO })}`) })
+  return (
+    <Section title="Delivery" hint="own-fleet speed — from order timestamps">
+      <Grid>
+        <Scorecard label="Deliveries" value={num(d.data?.deliveries)} accent="#6366F1" sub="completed in period" />
+        <Scorecard label="Avg time"   value={mins(d.data?.avgMinutes ?? undefined)} accent="#4F8EF7" sub="placed → delivered" />
+        <Scorecard label="On-time"    value={pct(d.data?.onTimePct ?? undefined)} accent="#22C55E" sub={`≤ ${d.data?.targetMinutes ?? 45} min`} />
+      </Grid>
+    </Section>
+  )
+}
+
 // ─── 7. Reservations (per-brand) ──────────────────────────────────────────────
 interface ResvAnalytics { totals?: { bookings?: number; completed?: number; noShow?: number; cancelled?: number; covers?: number }; rates?: { noShowPct?: number; occupancyPct?: number; repeatGuestPct?: number } }
 
@@ -604,7 +628,21 @@ function Grid({ children }: { children: React.ReactNode }) {
   return <div style={{ display: 'grid', gap: '0.7rem', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))' }}>{children}</div>
 }
 
-function Scorecard({ label, value, sub, accent, tag }: { label: string; value: string; sub?: string; accent: string; tag?: string }) {
+function Sparkline({ data, accent }: { data: number[]; accent: string }) {
+  const pts = data.filter((n) => Number.isFinite(n))
+  if (pts.length < 2) return null
+  const max = Math.max(...pts), min = Math.min(...pts)
+  const range = max - min || 1
+  const w = 100, h = 20
+  const path = pts.map((v, i) => `${((i / (pts.length - 1)) * w).toFixed(2)},${(h - ((v - min) / range) * h).toFixed(2)}`).join(' ')
+  return (
+    <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" style={{ width: '100%', height: '20px', marginTop: '0.5rem', display: 'block' }}>
+      <polyline points={path} fill="none" stroke={accent} strokeWidth="1.5" vectorEffect="non-scaling-stroke" opacity="0.85" />
+    </svg>
+  )
+}
+
+function Scorecard({ label, value, sub, accent, tag, spark }: { label: string; value: string; sub?: string; accent: string; tag?: string; spark?: number[] }) {
   return (
     <div style={{ background: '#11151c', border: '1px solid #1d222b', borderRadius: '1rem', padding: '1rem 1.1rem', position: 'relative', overflow: 'hidden' }}>
       <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: '2px', background: accent, opacity: 0.7 }} />
@@ -614,6 +652,7 @@ function Scorecard({ label, value, sub, accent, tag }: { label: string; value: s
       </div>
       <p style={{ fontSize: 'clamp(1.25rem, 2.4vw, 1.6rem)', fontWeight: 800, letterSpacing: '-0.02em', margin: '0.5rem 0 0', fontVariantNumeric: 'tabular-nums' }}>{value}</p>
       {sub && <p style={{ color: '#6E7186', fontSize: '0.72rem', margin: '0.3rem 0 0' }}>{sub}</p>}
+      {spark && spark.length > 1 && <Sparkline data={spark} accent={accent} />}
     </div>
   )
 }
