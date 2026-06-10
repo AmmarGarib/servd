@@ -6,6 +6,7 @@ import { Eye, EyeOff } from 'lucide-react'
 import { useCustomerAuth } from '../../store/customerAuth'
 import { ErrorToast } from '../../components/ui/ErrorToast'
 import { SmokeyBackground } from '../../components/ui/SmokeyBackground'
+import { MagneticButton } from '../../components/ui/MagneticButton'
 
 // /signup — glassmorphism card over the servd-purple WebGL shader. The two-step
 // WhatsApp-OTP flow (details → request-otp → register) is unchanged; only the
@@ -226,11 +227,11 @@ export default function SignupPage() {
                 <p className="text-[11px] leading-snug pt-1 text-white/55">
                   We&rsquo;ll send a 6-digit code to your WhatsApp to verify the number.
                 </p>
-                <button type="submit" disabled={loading}
+                <MagneticButton type="submit" disabled={loading}
                   className="w-full rounded-2xl py-3.5 font-black text-[0.95rem] transition-all disabled:opacity-40 active:scale-[0.98] mt-1"
                   style={primaryBtnStyle(loading)}>
                   {loading ? 'Sending code…' : 'Continue →'}
-                </button>
+                </MagneticButton>
               </form>
             </>
           ) : (
@@ -279,11 +280,11 @@ export default function SignupPage() {
                   </div>
                 </div>
 
-                <button type="submit" disabled={loading || otp.length < 4}
+                <MagneticButton type="submit" disabled={loading || otp.length < 4}
                   className="w-full rounded-2xl py-3.5 font-black text-[0.95rem] transition-all disabled:opacity-40 active:scale-[0.98] mt-1"
                   style={primaryBtnStyle(loading)}>
                   {loading ? 'Verifying…' : 'Verify & create account'}
-                </button>
+                </MagneticButton>
 
                 <div className="flex items-center justify-between pt-2 text-xs">
                   <button type="button" onClick={() => { setStep('details'); setOtp(''); setError('') }}

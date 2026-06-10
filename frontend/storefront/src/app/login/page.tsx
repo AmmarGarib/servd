@@ -6,6 +6,7 @@ import { ArrowRight, Eye, EyeOff } from 'lucide-react'
 import { useCustomerAuth } from '../../store/customerAuth'
 import { ErrorToast } from '../../components/ui/ErrorToast'
 import { SmokeyBackground } from '../../components/ui/SmokeyBackground'
+import { MagneticButton } from '../../components/ui/MagneticButton'
 
 // /login — glassmorphism card over an interactive servd-purple WebGL shader.
 // Auth flow (email/password → /auth/customer/login → setAuth → /account) is
@@ -82,12 +83,12 @@ export default function LoginPage() {
               </div>
             </div>
 
-            <button type="submit" disabled={loading}
-              className="group w-full flex items-center justify-center gap-2 rounded-2xl py-3.5 font-black text-[0.95rem] transition-all disabled:opacity-40 active:scale-[0.98] bg-white text-[#3A0E69] hover:bg-white/90"
+            <MagneticButton type="submit" disabled={loading}
+              className="group w-full rounded-2xl py-3.5 font-black text-[0.95rem] transition-all disabled:opacity-40 active:scale-[0.98] bg-white text-[#3A0E69] hover:bg-white/90"
               style={{ boxShadow: '0 8px 24px rgba(0,0,0,0.25)' }}>
               {loading ? 'Signing in…' : 'Sign in'}
               {!loading && <ArrowRight className="h-5 w-5 transition-transform group-hover:translate-x-1" />}
-            </button>
+            </MagneticButton>
           </form>
 
           <p className="text-center text-sm mt-6 text-white/60">
