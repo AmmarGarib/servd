@@ -1,6 +1,7 @@
 'use client'
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
+import { MagneticLink } from './ui/MagneticButton'
 import type { Concept } from '../lib/concept'
 import { brandAccent, brandStory, conceptHeroImage } from '../lib/concept'
 import { useScrollReveal } from './kinetic/motionHooks'
@@ -142,7 +143,7 @@ export function HomeClient({ concepts }: Props) {
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem', alignItems: 'center' }}>
-              <Link href="/browse" style={{
+              <MagneticLink href="/browse" style={{
                 background: 'white',
                 color: 'var(--servd-green)',
                 fontFamily: 'var(--font-display)', fontWeight: 800,
@@ -154,8 +155,8 @@ export function HomeClient({ concepts }: Props) {
                 boxShadow: '0 12px 32px rgba(0,0,0,0.28)',
               }}>
                 Order now <span aria-hidden style={{ opacity: 0.65 }}>→</span>
-              </Link>
-              <Link href="#brands" style={{
+              </MagneticLink>
+              <MagneticLink href="#brands" style={{
                 color: 'white', fontWeight: 700, fontSize: '0.95rem',
                 padding: '1.1rem 1.5rem', borderRadius: '999px',
                 background: 'rgba(255,255,255,0.12)',
@@ -164,7 +165,7 @@ export function HomeClient({ concepts }: Props) {
                 backdropFilter: 'blur(6px)',
               }}>
                 See the kitchens
-              </Link>
+              </MagneticLink>
             </div>
 
             {live && (
@@ -342,14 +343,14 @@ export function HomeClient({ concepts }: Props) {
             Order direct. Our rider, our pricing, our tip to him.<br />
             <span style={{ opacity: 0.7 }}>No third party in the kitchen.</span>
           </p>
-          <Link href="/browse" style={{
+          <MagneticLink href="/browse" style={{
             background: 'white', color: 'var(--servd-ink)',
             fontWeight: 800, fontSize: '0.92rem',
             padding: '0.85rem 1.5rem', borderRadius: '999px', textDecoration: 'none',
             display: 'inline-flex', alignItems: 'center', gap: '0.5rem',
           }}>
             See the kitchens <span aria-hidden style={{ opacity: 0.6 }}>→</span>
-          </Link>
+          </MagneticLink>
         </div>
       </section>
 
@@ -506,7 +507,7 @@ export function HomeClient({ concepts }: Props) {
               }}>
               Join on WhatsApp <span aria-hidden style={{ opacity: 0.7 }}>→</span>
             </a>
-            <Link href="/signup?insider=1" style={{
+            <MagneticLink href="/signup?insider=1" style={{
               background: 'white',
               color: 'var(--servd-green)',
               fontFamily: 'var(--font-display)', fontWeight: 800,
@@ -517,7 +518,7 @@ export function HomeClient({ concepts }: Props) {
               display: 'inline-flex', alignItems: 'center', gap: '0.6rem',
             }}>
               Or sign up with email
-            </Link>
+            </MagneticLink>
             <Link href="/login" style={{
               color: 'rgba(255,255,255,0.85)',
               fontWeight: 700, fontSize: '0.95rem',

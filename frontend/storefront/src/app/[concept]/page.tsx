@@ -13,6 +13,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
+import { MagneticButton, MagneticLink } from '@/components/ui/MagneticButton'
 import { useCart } from '../../store/cart'
 import { conceptHeroImage } from '../../lib/concept'
 import { useBrandSlug, getServdHost } from '../../lib/host'
@@ -183,8 +184,8 @@ export default function ConceptOrderPage() {
             The kitchen hasn&rsquo;t published a menu to the order system. Flag down your server — they&rsquo;ll take the order from the printed card. Reservations are open below.
           </p>
           <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center', flexWrap: 'wrap' }}>
-            <Link href={`/brand/${slug}/menu`} className="servd-btn-primary">See the menu</Link>
-            <Link href={`/reserve/${slug}`} className="servd-btn-primary" style={{ background: 'var(--servd-mute)', color: 'white' }}>Reserve a table</Link>
+            <MagneticLink href={`/brand/${slug}/menu`} className="servd-btn-primary">See the menu</MagneticLink>
+            <MagneticLink href={`/reserve/${slug}`} className="servd-btn-primary" style={{ background: 'var(--servd-mute)', color: 'white' }}>Reserve a table</MagneticLink>
           </div>
         </div>
       </div>
@@ -840,9 +841,9 @@ function CartDrawer({
                 <span>{fmt(subtotal)}</span>
               </div>
             </div>
-            <button onClick={onCheckout} className="servd-btn-primary" style={{ width: '100%', padding: '1rem' }}>
+            <MagneticButton onClick={onCheckout} className="servd-btn-primary" style={{ width: '100%', padding: '1rem' }}>
               Checkout · {fmt(subtotal)} + tax
-            </button>
+            </MagneticButton>
           </footer>
         )}
       </div>

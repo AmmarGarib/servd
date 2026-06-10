@@ -6,6 +6,7 @@
 import { useState } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
+import { MagneticLink } from '@/components/ui/MagneticButton'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -72,7 +73,7 @@ export default function ReserveConfirmPage() {
             <p style={{ color: 'var(--servd-mute)', marginBottom: '1.5rem' }}>
               Sorry to miss you. Book again any time.
             </p>
-            <Link href="/browse" className="servd-btn-primary">Browse brands</Link>
+            <MagneticLink href="/browse" className="servd-btn-primary">Browse brands</MagneticLink>
           </>
         )}
 

@@ -12,6 +12,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
+import { MagneticButton, MagneticLink } from '@/components/ui/MagneticButton'
 import { useBrandSlug } from '../../../lib/host'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
@@ -158,7 +159,7 @@ export default function ReservePage() {
           <p style={{ color: 'var(--servd-mute)', marginBottom: '1.5rem' }}>
             Check your phone — we&rsquo;ve sent a confirmation link with your booking. {data?.concept.name} will see it in their dashboard.
           </p>
-          <Link href={backToBrandHref} className="servd-btn-primary">Back to {data?.concept.name}</Link>
+          <MagneticLink href={backToBrandHref} className="servd-btn-primary">Back to {data?.concept.name}</MagneticLink>
         </div>
       </div>
     )
@@ -182,7 +183,7 @@ export default function ReservePage() {
           <p style={{ color: 'var(--servd-mute)', marginBottom: '1.5rem' }}>
             This brand isn&rsquo;t accepting bookings online. Order ahead, or walk in — we&rsquo;ll seat you.
           </p>
-          <Link href={backToBrandHref} className="servd-btn-primary">Back to brand</Link>
+          <MagneticLink href={backToBrandHref} className="servd-btn-primary">Back to brand</MagneticLink>
         </div>
       </div>
     )
@@ -314,9 +315,9 @@ export default function ReservePage() {
                 <p role="alert" style={{ marginTop: '0.75rem', color: '#b91c1c', fontSize: '0.85rem' }}>{error}</p>
               )}
 
-              <button type="submit" disabled={submitting || !name.trim() || !phone.trim()} className="servd-btn-primary" style={{ marginTop: '1rem', width: '100%', padding: '1rem' }}>
+              <MagneticButton type="submit" disabled={submitting || !name.trim() || !phone.trim()} className="servd-btn-primary" style={{ marginTop: '1rem', width: '100%', padding: '1rem' }}>
                 {submitting ? 'Booking…' : 'Confirm booking'}
-              </button>
+              </MagneticButton>
               <p style={{ fontSize: '0.7rem', color: 'var(--servd-dim)', textAlign: 'center', marginTop: '0.75rem' }}>
                 You&rsquo;ll get an SMS confirmation. Reminders 24h and 2h before.
               </p>
