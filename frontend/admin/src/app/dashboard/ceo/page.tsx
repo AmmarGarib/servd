@@ -22,6 +22,7 @@ import { usePermissions } from '../../../hooks/useCan'
 import { useRoleModules, modulesForRole } from '../../../store/roleModules'
 import { useViewAsRole } from '../../../store/viewAsRole'
 import type { AppRole } from '../../../lib/appRoles'
+import { LoadingScreen } from '../../../components/ui/Loader'
 
 type Period = 'today' | 'week' | 'month'
 type Scope = { conceptId: string | null; fromISO: string; toISO: string; fromDate: string; toDate: string; days: number; brandName: string }
@@ -111,7 +112,11 @@ export default function CeoDashboardPage() {
   })
 
   if (permsLoading || canViewCeo === null) {
-    return <main style={shellMuted}>Checking access…</main>
+    return (
+      <main style={{ minHeight: '100vh', background: '#0a0d12', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <LoadingScreen label="Checking access…" />
+      </main>
+    )
   }
   if (canViewCeo === false) {
     return <main style={shellMuted}>This view is restricted to ownership. Redirecting…</main>

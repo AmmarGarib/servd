@@ -363,3 +363,34 @@
     touch-action: manipulation;
   }
 }
+
+/* ─── servd loader — the universal spinner ─────────────────────────────────────
+   9-cell ripple grid. Cells fade in/out in a diagonal wave; each cell's colour
+   is set inline via --cell-color (see <Loader />), so the same animation themes
+   to any brand palette. Pure CSS — no styled-components. */
+@keyframes servd-loader-ripple {
+  0%   { background-color: transparent; }
+  30%  { background-color: var(--cell-color); }
+  60%  { background-color: transparent; }
+  100% { background-color: transparent; }
+}
+.servd-loader {
+  --cell-size: 52px;
+  --cell-spacing: 1px;
+  display: flex;
+  flex-wrap: wrap;
+  width:  calc(3 * (var(--cell-size) + 2 * var(--cell-spacing)));
+  height: calc(3 * (var(--cell-size) + 2 * var(--cell-spacing)));
+}
+.servd-loader-cell {
+  flex: 0 0 var(--cell-size);
+  margin: var(--cell-spacing);
+  box-sizing: border-box;
+  border-radius: 4px;
+  background-color: transparent;
+  animation: 1.5s servd-loader-ripple ease infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  /* Respect reduced-motion: hold cells faintly visible instead of pulsing. */
+  .servd-loader-cell { animation: none; background-color: var(--cell-color); opacity: 0.35; }
+}
