@@ -2,25 +2,17 @@
 import { useState, useEffect, useRef } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
+import { Eye, EyeOff } from 'lucide-react'
 import { useCustomerAuth } from '../../store/customerAuth'
 import { ErrorToast } from '../../components/ui/ErrorToast'
+import { SmokeyBackground } from '../../components/ui/SmokeyBackground'
 
-// /signup — restyled to the on-system --servd-* tokens + Bricolage Grotesque
-// display. SVG-iconed benefit chips (no emoji structural icons), per-input
-// autoComplete hints so the OS surfaces the right autofill + SMS one-time
-// code, six-box OTP entry, password show/hide toggle, inline validation.
+// /signup — glassmorphism card over the servd-purple WebGL shader. The two-step
+// WhatsApp-OTP flow (details → request-otp → register) is unchanged; only the
+// presentation is new.
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
-/**
- * F19 signup flow — two-step:
- *   Step 1: collect name, email, password, phone, referral code. Server
- *           dispatches a WhatsApp OTP for the phone and we move to step 2.
- *   Step 2: collect the 6-digit code. Submitting calls register with phone
- *           + otpCode; server re-verifies and stamps phoneVerifiedAt.
- *
- * Resend after 30s cooldown. Never echo the code back to the client.
- */
 export default function SignupPage() {
   const router  = useRouter()
   const params  = useSearchParams()
@@ -44,29 +36,20 @@ export default function SignupPage() {
   const [emailTaken, setEmailTaken] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
 
-  // Per-field inline validation state. Populated on blur (not keystroke)
-  // so the user finishes typing before they get yelled at; cleared on
-  // change so corrections immediately remove the error.
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
   const setFieldError = (k: string, msg: string) => setFieldErrors((m) => ({ ...m, [k]: msg }))
   const clearFieldError = (k: string) => setFieldErrors((m) => { const n = { ...m }; delete n[k]; return n })
 
-  // Six-box OTP entry: each digit lives in its own narrow input, focus
-  // auto-advances on input and auto-reverses on backspace, paste fills
-  // all six at once. Matches the OS / fintech UI convention customers
-  // expect for code entry.
   const otpRefs = useRef<Array<HTMLInputElement | null>>([])
   const handleOtpChange = (idx: number, raw: string) => {
     const digits = raw.replace(/\D/g, '')
     if (!digits) {
-      // Backspace into empty box — clear this index and step back.
       const next = otp.split('')
       next[idx] = ''
       setOtp(next.join(''))
       return
     }
     if (digits.length > 1) {
-      // Paste: fill from this index forward.
       const merged = (otp.slice(0, idx) + digits).slice(0, 6).padEnd(6, '').trim()
       setOtp(merged)
       const lastFilled = Math.min(idx + digits.length, 5)
@@ -79,9 +62,7 @@ export default function SignupPage() {
     if (idx < 5) otpRefs.current[idx + 1]?.focus()
   }
   const handleOtpKeyDown = (idx: number, e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Backspace' && !otp[idx] && idx > 0) {
-      otpRefs.current[idx - 1]?.focus()
-    }
+    if (e.key === 'Backspace' && !otp[idx] && idx > 0) otpRefs.current[idx - 1]?.focus()
     if (e.key === 'ArrowLeft' && idx > 0) otpRefs.current[idx - 1]?.focus()
     if (e.key === 'ArrowRight' && idx < 5) otpRefs.current[idx + 1]?.focus()
   }
@@ -117,12 +98,10 @@ export default function SignupPage() {
     e.preventDefault()
     setEmailTaken(false)
     setError('')
-
     if (password.length < 8) { setError('Password must be at least 8 characters'); return }
     if (password !== confirm) { setError('Passwords do not match'); return }
     const digits = phone.replace(/\D/g, '')
     if (digits.length < 10) { setError('Enter a valid mobile number'); return }
-
     setLoading(true)
     const sent = await requestOtp()
     setLoading(false)
@@ -169,195 +148,191 @@ export default function SignupPage() {
     }
   }
 
+  // ── Glass styling shared with the field helpers ──
   const inp = (extra = '') =>
-    `w-full rounded-2xl px-4 py-4 text-sm font-semibold focus:outline-none transition-all placeholder:text-black/30 ${extra}`
-  const inpStyle = { background: 'white', border: '1.5px solid var(--servd-line)', color: 'var(--servd-ink)' }
+    `w-full rounded-2xl px-4 py-3.5 text-sm font-semibold text-white placeholder:text-white/35 focus:outline-none transition-all ${extra}`
+  const inpStyle: React.CSSProperties = { background: 'rgba(255,255,255,0.10)', border: '1px solid rgba(255,255,255,0.20)', color: 'white' }
   const onFocus = (e: React.FocusEvent<HTMLInputElement>) => {
-    e.currentTarget.style.borderColor = 'var(--servd-green)'
-    e.currentTarget.style.boxShadow   = '0 0 0 3px rgba(58,14,105,0.16)'
+    e.currentTarget.style.borderColor = 'rgba(255,255,255,0.6)'
+    e.currentTarget.style.boxShadow   = '0 0 0 3px rgba(255,255,255,0.12)'
   }
   const onBlur = (e: React.FocusEvent<HTMLInputElement>) => {
-    e.currentTarget.style.borderColor = 'var(--servd-line)'
+    e.currentTarget.style.borderColor = 'rgba(255,255,255,0.20)'
     e.currentTarget.style.boxShadow   = 'none'
   }
-  const primaryBtnStyle = (busy: boolean) => ({
-    background: busy ? 'var(--servd-surface)' : 'var(--servd-green)',
-    color: busy ? 'var(--servd-mute)' : '#0a0a0a',
-    boxShadow: busy ? 'none' : '0 6px 18px rgba(58,14,105,0.28)',
+  const primaryBtnStyle = (busy: boolean): React.CSSProperties => ({
+    background: busy ? 'rgba(255,255,255,0.12)' : 'white',
+    color: busy ? 'rgba(255,255,255,0.6)' : '#3A0E69',
+    boxShadow: busy ? 'none' : '0 8px 24px rgba(0,0,0,0.25)',
   })
 
   return (
-    <main className="flex flex-col items-center justify-center px-5 py-12" style={{ minHeight: '100dvh', background: 'var(--servd-bg)' }}>
+    <main className="relative flex items-center justify-center px-5 py-12" style={{ minHeight: '100dvh', background: '#160726' }}>
+      <SmokeyBackground color="#3A0E69" backdropBlur="sm" />
 
-      <Link href="/" aria-label="servd home" className="mb-8" style={{
-        fontFamily: 'var(--font-display)', fontSize: '1.85rem', fontWeight: 800, letterSpacing: '-0.045em',
-        color: 'var(--servd-black)', textDecoration: 'none', display: 'inline-flex', alignItems: 'baseline', gap: '0.1rem',
-      }}>
-        servd<span style={{ color: 'var(--servd-green)' }}>.</span>
-      </Link>
+      <div className="relative z-10 w-full max-w-sm">
+        <Link href="/" aria-label="servd home" className="mb-6 block text-center"
+          style={{ fontFamily: 'var(--font-display)', fontSize: '1.85rem', fontWeight: 800, letterSpacing: '-0.045em', color: 'white', textDecoration: 'none' }}>
+          servd<span style={{ color: '#C9A6F0' }}>.</span>
+        </Link>
 
-      <div className="w-full max-w-sm rounded-3xl px-6 py-8" style={{ background: 'white', border: '1px solid var(--servd-line)', boxShadow: '0 1px 3px rgba(0,0,0,0.04)', animation: 'fadeSlideUp 0.4s both' }}>
-        {step === 'details' ? (
-          <>
-            <h1 className="font-display font-black tracking-tight mb-1" style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(2rem, 6vw, 2.4rem)', color: 'var(--servd-ink)', letterSpacing: '-0.03em' }}>Create account</h1>
-            <p className="text-sm mb-6" style={{ color: 'var(--servd-mute)' }}>Free. Earn points on every order.</p>
+        <div className="w-full rounded-3xl px-7 py-8 bg-white/10 backdrop-blur-xl border border-white/20 shadow-2xl" style={{ animation: 'fadeSlideUp 0.4s both' }}>
+          {step === 'details' ? (
+            <>
+              <h1 className="font-black tracking-tight text-white mb-1" style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(1.9rem, 6vw, 2.3rem)', letterSpacing: '-0.03em' }}>Create account</h1>
+              <p className="text-sm mb-6 text-white/60">Free. Earn points on every order.</p>
 
-            {error && <ErrorToast message={error} onDismiss={() => setError('')} />}
-            {emailTaken && (
-              <div className="mb-4 rounded-2xl px-4 py-3" style={{ background: 'rgba(58,14,105,0.08)', border: '1px solid rgba(58,14,105,0.25)' }}>
-                <Link href="/login" className="text-sm font-black" style={{ color: 'var(--servd-green-dark)' }}>→ Sign in to your existing account</Link>
-              </div>
-            )}
+              {error && <ErrorToast message={error} onDismiss={() => setError('')} />}
+              {emailTaken && (
+                <div className="mb-4 rounded-2xl px-4 py-3" style={{ background: 'rgba(255,255,255,0.10)', border: '1px solid rgba(255,255,255,0.25)' }}>
+                  <Link href="/login" className="text-sm font-black text-white">→ Sign in to your existing account</Link>
+                </div>
+              )}
 
-            <form onSubmit={e => { void handleStep1(e) }} className="space-y-3" noValidate>
-              <Field id="signup-name" label="Full name" type="text" autoComplete="name"
-                value={name} onChange={(v) => { setName(v); clearFieldError('name') }}
-                onValidate={() => name.trim().length < 2 ? setFieldError('name', 'Please enter your full name') : clearFieldError('name')}
-                placeholder="Your name" autoFocus error={fieldErrors['name']}
-                inp={inp} inpStyle={inpStyle} onFocus={onFocus} onBlur={onBlur} />
+              <form onSubmit={e => { void handleStep1(e) }} className="space-y-3" noValidate>
+                <Field id="signup-name" label="Full name" type="text" autoComplete="name"
+                  value={name} onChange={(v) => { setName(v); clearFieldError('name') }}
+                  onValidate={() => name.trim().length < 2 ? setFieldError('name', 'Please enter your full name') : clearFieldError('name')}
+                  placeholder="Your name" autoFocus error={fieldErrors['name']}
+                  inp={inp} inpStyle={inpStyle} onFocus={onFocus} onBlur={onBlur} />
 
-              <Field id="signup-email" label="Email" type="email" autoComplete="email"
-                value={email} onChange={(v) => { setEmail(v); clearFieldError('email') }}
-                onValidate={() => /\S+@\S+\.\S+/.test(email.trim()) ? clearFieldError('email') : setFieldError('email', 'Please enter a valid email')}
-                placeholder="you@example.com" error={fieldErrors['email']}
-                inp={inp} inpStyle={inpStyle} onFocus={onFocus} onBlur={onBlur} />
+                <Field id="signup-email" label="Email" type="email" autoComplete="email"
+                  value={email} onChange={(v) => { setEmail(v); clearFieldError('email') }}
+                  onValidate={() => /\S+@\S+\.\S+/.test(email.trim()) ? clearFieldError('email') : setFieldError('email', 'Please enter a valid email')}
+                  placeholder="you@example.com" error={fieldErrors['email']}
+                  inp={inp} inpStyle={inpStyle} onFocus={onFocus} onBlur={onBlur} />
 
-              <Field id="signup-phone" label="Mobile (WhatsApp)" type="tel" autoComplete="tel"
-                inputMode="tel"
-                value={phone} onChange={(v) => { setPhone(v); clearFieldError('phone') }}
-                onValidate={() => phone.replace(/\D/g, '').length < 10 ? setFieldError('phone', 'Phone needs at least 10 digits') : clearFieldError('phone')}
-                placeholder="0300 1234567" error={fieldErrors['phone']}
-                inp={inp} inpStyle={inpStyle} onFocus={onFocus} onBlur={onBlur} />
+                <Field id="signup-phone" label="Mobile (WhatsApp)" type="tel" autoComplete="tel"
+                  inputMode="tel"
+                  value={phone} onChange={(v) => { setPhone(v); clearFieldError('phone') }}
+                  onValidate={() => phone.replace(/\D/g, '').length < 10 ? setFieldError('phone', 'Phone needs at least 10 digits') : clearFieldError('phone')}
+                  placeholder="0300 1234567" error={fieldErrors['phone']}
+                  inp={inp} inpStyle={inpStyle} onFocus={onFocus} onBlur={onBlur} />
 
-              <PasswordField id="signup-password" label="Password" autoComplete="new-password"
-                value={password} onChange={(v) => { setPassword(v); clearFieldError('password') }}
-                onValidate={() => password.length < 8 ? setFieldError('password', 'At least 8 characters') : clearFieldError('password')}
-                placeholder="8+ characters" error={fieldErrors['password']}
-                show={showPassword} onToggle={() => setShowPassword(v => !v)}
-                inp={inp} inpStyle={inpStyle} onFocus={onFocus} onBlur={onBlur} />
+                <PasswordField id="signup-password" label="Password" autoComplete="new-password"
+                  value={password} onChange={(v) => { setPassword(v); clearFieldError('password') }}
+                  onValidate={() => password.length < 8 ? setFieldError('password', 'At least 8 characters') : clearFieldError('password')}
+                  placeholder="8+ characters" error={fieldErrors['password']}
+                  show={showPassword} onToggle={() => setShowPassword(v => !v)}
+                  inp={inp} inpStyle={inpStyle} onFocus={onFocus} onBlur={onBlur} />
 
-              <PasswordField id="signup-confirm" label="Confirm password" autoComplete="new-password"
-                value={confirm} onChange={(v) => { setConfirm(v); clearFieldError('confirm') }}
-                onValidate={() => confirm !== password ? setFieldError('confirm', "Passwords don't match") : clearFieldError('confirm')}
-                placeholder="Repeat password" error={fieldErrors['confirm']}
-                show={showPassword} onToggle={() => setShowPassword(v => !v)}
-                inp={inp} inpStyle={inpStyle} onFocus={onFocus} onBlur={onBlur} />
+                <PasswordField id="signup-confirm" label="Confirm password" autoComplete="new-password"
+                  value={confirm} onChange={(v) => { setConfirm(v); clearFieldError('confirm') }}
+                  onValidate={() => confirm !== password ? setFieldError('confirm', "Passwords don't match") : clearFieldError('confirm')}
+                  placeholder="Repeat password" error={fieldErrors['confirm']}
+                  show={showPassword} onToggle={() => setShowPassword(v => !v)}
+                  inp={inp} inpStyle={inpStyle} onFocus={onFocus} onBlur={onBlur} />
 
-              <p className="text-[11px] leading-snug pt-1" style={{ color: 'var(--servd-mute)' }}>
-                We&rsquo;ll send a 6-digit code to your WhatsApp to verify the number.
+                <p className="text-[11px] leading-snug pt-1 text-white/55">
+                  We&rsquo;ll send a 6-digit code to your WhatsApp to verify the number.
+                </p>
+                <button type="submit" disabled={loading}
+                  className="w-full rounded-2xl py-3.5 font-black text-[0.95rem] transition-all disabled:opacity-40 active:scale-[0.98] mt-1"
+                  style={primaryBtnStyle(loading)}>
+                  {loading ? 'Sending code…' : 'Continue →'}
+                </button>
+              </form>
+            </>
+          ) : (
+            <>
+              <h1 className="font-black tracking-tight text-white mb-1" style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(1.9rem, 6vw, 2.3rem)', letterSpacing: '-0.03em' }}>Verify your number</h1>
+              <p className="text-sm mb-6 text-white/60">
+                We sent a code to <span className="font-semibold text-white">{phone}</span>
               </p>
-              <button type="submit" disabled={loading}
-                className="w-full rounded-2xl py-4 font-black text-[0.95rem] transition-all disabled:opacity-40 active:scale-[0.98] mt-1"
-                style={primaryBtnStyle(loading)}>
-                {loading ? 'Sending code…' : 'Continue →'}
-              </button>
-            </form>
-          </>
-        ) : (
-          <>
-            <h1 className="font-display font-black tracking-tight mb-1" style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(2rem, 6vw, 2.4rem)', color: 'var(--servd-ink)', letterSpacing: '-0.03em' }}>Verify your number</h1>
-            <p className="text-sm mb-6" style={{ color: 'var(--servd-mute)' }}>
-              We sent a code to <span className="font-semibold" style={{ color: 'var(--servd-ink)' }}>{phone}</span>
-            </p>
 
-            {error && <ErrorToast message={error} onDismiss={() => setError('')} />}
+              {error && <ErrorToast message={error} onDismiss={() => setError('')} />}
 
-            <form onSubmit={e => { void handleStep2(e) }} className="space-y-3">
-              <div>
-                <label className="block text-[10px] font-black uppercase tracking-[0.22em] mb-1.5" style={{ color: 'var(--servd-mute)' }}>6-digit code</label>
-                {/* Hidden input carries the autoComplete="one-time-code" hint
-                    so iOS surfaces the SMS code from the notification banner.
-                    The visible six boxes are the actual interactive UI. */}
-                <input type="text" inputMode="numeric" autoComplete="one-time-code"
-                  pattern="[0-9]*" maxLength={6} value={otp}
-                  onChange={e => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                  style={{ position: 'absolute', width: 1, height: 1, opacity: 0, pointerEvents: 'none' }}
-                  tabIndex={-1} aria-hidden="true" />
-                <div className="flex gap-2 justify-between">
-                  {Array.from({ length: 6 }).map((_, i) => (
-                    <input
-                      key={i}
-                      ref={(el) => { otpRefs.current[i] = el }}
-                      type="text" inputMode="numeric" pattern="[0-9]*" maxLength={1}
-                      value={otp[i] ?? ''}
-                      onChange={(e) => handleOtpChange(i, e.target.value)}
-                      onKeyDown={(e) => handleOtpKeyDown(i, e)}
-                      onPaste={(e) => {
-                        e.preventDefault()
-                        const pasted = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, 6)
-                        if (pasted) {
-                          setOtp(pasted.padEnd(6, '').trim())
-                          const target = Math.min(pasted.length, 5)
-                          setTimeout(() => otpRefs.current[target]?.focus(), 0)
-                        }
-                      }}
-                      autoFocus={i === 0}
-                      aria-label={`Digit ${i + 1} of 6`}
-                      className="w-11 h-14 text-center text-xl font-black rounded-xl focus:outline-none transition-all"
-                      style={inpStyle}
-                      onFocus={onFocus}
-                      onBlur={onBlur}
-                    />
-                  ))}
+              <form onSubmit={e => { void handleStep2(e) }} className="space-y-3">
+                <div>
+                  <label className="block text-[10px] font-black uppercase tracking-[0.22em] mb-1.5 text-white/55">6-digit code</label>
+                  <input type="text" inputMode="numeric" autoComplete="one-time-code"
+                    pattern="[0-9]*" maxLength={6} value={otp}
+                    onChange={e => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                    style={{ position: 'absolute', width: 1, height: 1, opacity: 0, pointerEvents: 'none' }}
+                    tabIndex={-1} aria-hidden="true" />
+                  <div className="flex gap-2 justify-between">
+                    {Array.from({ length: 6 }).map((_, i) => (
+                      <input
+                        key={i}
+                        ref={(el) => { otpRefs.current[i] = el }}
+                        type="text" inputMode="numeric" pattern="[0-9]*" maxLength={1}
+                        value={otp[i] ?? ''}
+                        onChange={(e) => handleOtpChange(i, e.target.value)}
+                        onKeyDown={(e) => handleOtpKeyDown(i, e)}
+                        onPaste={(e) => {
+                          e.preventDefault()
+                          const pasted = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, 6)
+                          if (pasted) {
+                            setOtp(pasted.padEnd(6, '').trim())
+                            const target = Math.min(pasted.length, 5)
+                            setTimeout(() => otpRefs.current[target]?.focus(), 0)
+                          }
+                        }}
+                        autoFocus={i === 0}
+                        aria-label={`Digit ${i + 1} of 6`}
+                        className="w-11 h-14 text-center text-xl font-black rounded-xl focus:outline-none transition-all text-white"
+                        style={inpStyle}
+                        onFocus={onFocus}
+                        onBlur={onBlur}
+                      />
+                    ))}
+                  </div>
                 </div>
+
+                <button type="submit" disabled={loading || otp.length < 4}
+                  className="w-full rounded-2xl py-3.5 font-black text-[0.95rem] transition-all disabled:opacity-40 active:scale-[0.98] mt-1"
+                  style={primaryBtnStyle(loading)}>
+                  {loading ? 'Verifying…' : 'Verify & create account'}
+                </button>
+
+                <div className="flex items-center justify-between pt-2 text-xs">
+                  <button type="button" onClick={() => { setStep('details'); setOtp(''); setError('') }}
+                    className="font-bold text-white/55 hover:text-white transition-colors">
+                    ← Change number
+                  </button>
+                  <button type="button" disabled={resendCooldown > 0 || loading}
+                    onClick={() => { void requestOtp() }}
+                    className="font-bold text-white hover:text-white/80 disabled:opacity-40 transition-colors">
+                    {resendCooldown > 0 ? `Resend in ${resendCooldown}s` : 'Resend code'}
+                  </button>
+                </div>
+              </form>
+            </>
+          )}
+
+          {step === 'details' && (
+            <>
+              <div className="grid grid-cols-3 gap-2 mt-5">
+                {[
+                  { icon: <StarIcon />,  label: 'Earn points' },
+                  { icon: <PinIcon />,   label: 'Track orders' },
+                  { icon: <GiftIcon />,  label: 'Member perks' },
+                ].map((b) => (
+                  <div key={b.label} className="flex flex-col items-center gap-1.5 py-3 rounded-2xl"
+                    style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.18)' }}>
+                    <span style={{ color: 'rgba(255,255,255,0.85)', display: 'inline-flex' }}>{b.icon}</span>
+                    <span className="text-[10px] font-bold text-white/60">{b.label}</span>
+                  </div>
+                ))}
               </div>
 
-              <button type="submit" disabled={loading || otp.length < 4}
-                className="w-full rounded-2xl py-4 font-black text-[0.95rem] transition-all disabled:opacity-40 active:scale-[0.98] mt-1"
-                style={primaryBtnStyle(loading)}>
-                {loading ? 'Verifying…' : 'Verify & create account'}
-              </button>
+              <p className="text-center text-sm mt-5 text-white/60">
+                Already have an account?{' '}
+                <Link href="/login" className="font-black text-white hover:text-white/80 transition-colors">Sign in →</Link>
+              </p>
+            </>
+          )}
+        </div>
 
-              <div className="flex items-center justify-between pt-2 text-xs">
-                <button type="button" onClick={() => { setStep('details'); setOtp(''); setError('') }}
-                  className="font-bold" style={{ color: 'var(--servd-mute)' }}>
-                  ← Change number
-                </button>
-                <button type="button" disabled={resendCooldown > 0 || loading}
-                  onClick={() => { void requestOtp() }}
-                  className="font-bold disabled:opacity-40"
-                  style={{ color: 'var(--servd-green-dark)' }}>
-                  {resendCooldown > 0 ? `Resend in ${resendCooldown}s` : 'Resend code'}
-                </button>
-              </div>
-            </form>
-          </>
-        )}
-
-        {step === 'details' && (
-          <>
-            <div className="grid grid-cols-3 gap-2 mt-5">
-              {[
-                { icon: <StarIcon />,  label: 'Earn points' },
-                { icon: <PinIcon />,   label: 'Track orders' },
-                { icon: <GiftIcon />,  label: 'Member perks' },
-              ].map((b) => (
-                <div key={b.label} className="flex flex-col items-center gap-1.5 py-3 rounded-2xl"
-                  style={{ background: 'var(--servd-surface)', border: '1px solid var(--servd-line)' }}>
-                  <span style={{ color: 'var(--servd-green-dark)', display: 'inline-flex' }}>{b.icon}</span>
-                  <span className="text-[10px] font-bold" style={{ color: 'var(--servd-mute)' }}>{b.label}</span>
-                </div>
-              ))}
-            </div>
-
-            <p className="text-center text-sm mt-5" style={{ color: 'var(--servd-mute)' }}>
-              Already have an account?{' '}
-              <Link href="/login" className="font-black" style={{ color: 'var(--servd-green-dark)' }}>Sign in →</Link>
-            </p>
-          </>
-        )}
+        <Link href="/" className="mt-6 block text-center text-xs font-semibold text-white/50 hover:text-white/80 transition-colors" style={{ textDecoration: 'none' }}>
+          ← Back to home
+        </Link>
       </div>
-
-      <Link href="/" className="mt-6 text-xs font-semibold" style={{ color: 'var(--servd-mute)', textDecoration: 'none' }}>
-        ← Back to home
-      </Link>
     </main>
   )
 }
 
 // ─── Form field helpers ────────────────────────────────────────────────────
-// Field — plain labeled input with inline error placement (per WCAG: error
-// adjacent to the field that caused it, not buried in a global toast).
 interface FieldProps {
   id: string
   label: string
@@ -378,7 +353,7 @@ interface FieldProps {
 function Field(p: FieldProps) {
   return (
     <div>
-      <label htmlFor={p.id} className="block text-[10px] font-black uppercase tracking-[0.22em] mb-1.5" style={{ color: 'var(--servd-mute)' }}>{p.label}</label>
+      <label htmlFor={p.id} className="block text-[10px] font-black uppercase tracking-[0.22em] mb-1.5 text-white/55">{p.label}</label>
       <input id={p.id} type={p.type} autoComplete={p.autoComplete}
         inputMode={p.inputMode}
         value={p.value} onChange={(e) => p.onChange(e.target.value)}
@@ -388,7 +363,7 @@ function Field(p: FieldProps) {
         onFocus={p.onFocus}
         onBlur={(e) => { p.onBlur(e); p.onValidate() }} />
       {p.error && (
-        <p id={`${p.id}-err`} role="alert" className="mt-1 text-[11px] font-semibold" style={{ color: '#c0392b' }}>{p.error}</p>
+        <p id={`${p.id}-err`} role="alert" className="mt-1 text-[11px] font-semibold" style={{ color: '#ffb4ab' }}>{p.error}</p>
       )}
     </div>
   )
@@ -401,7 +376,7 @@ interface PasswordFieldProps extends Omit<FieldProps, 'type' | 'inputMode'> {
 function PasswordField(p: PasswordFieldProps) {
   return (
     <div>
-      <label htmlFor={p.id} className="block text-[10px] font-black uppercase tracking-[0.22em] mb-1.5" style={{ color: 'var(--servd-mute)' }}>{p.label}</label>
+      <label htmlFor={p.id} className="block text-[10px] font-black uppercase tracking-[0.22em] mb-1.5 text-white/55">{p.label}</label>
       <div className="relative">
         <input id={p.id} type={p.show ? 'text' : 'password'} autoComplete={p.autoComplete}
           value={p.value} onChange={(e) => p.onChange(e.target.value)}
@@ -413,23 +388,12 @@ function PasswordField(p: PasswordFieldProps) {
         <button type="button" onClick={p.onToggle}
           aria-label={p.show ? 'Hide password' : 'Show password'}
           aria-pressed={p.show}
-          className="absolute right-3 top-1/2 -translate-y-1/2 p-2 rounded-lg"
-          style={{ color: 'var(--servd-mute)' }}>
-          {p.show ? (
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/>
-              <line x1="1" y1="1" x2="23" y2="23"/>
-            </svg>
-          ) : (
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
-              <circle cx="12" cy="12" r="3"/>
-            </svg>
-          )}
+          className="absolute right-3 top-1/2 -translate-y-1/2 p-2 rounded-lg text-white/50 hover:text-white/80 transition-colors">
+          {p.show ? <EyeOff size={18} /> : <Eye size={18} />}
         </button>
       </div>
       {p.error && (
-        <p id={`${p.id}-err`} role="alert" className="mt-1 text-[11px] font-semibold" style={{ color: '#c0392b' }}>{p.error}</p>
+        <p id={`${p.id}-err`} role="alert" className="mt-1 text-[11px] font-semibold" style={{ color: '#ffb4ab' }}>{p.error}</p>
       )}
     </div>
   )
