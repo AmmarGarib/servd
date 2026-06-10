@@ -65,7 +65,7 @@ export function HomeClient({ concepts }: Props) {
   const pageRef = useScrollReveal<HTMLDivElement>()
 
   return (
-    <div ref={pageRef} style={{ background: 'var(--servd-bg)', color: 'var(--servd-ink)' }}>
+    <div ref={pageRef} style={{ background: 'var(--servd-bg)', color: 'var(--servd-ink)', display: 'flex', flexDirection: 'column' }}>
 
       {/* ── HERO ─ Full-bleed food photo + deep royal wash with the
             wordmark on top. The food is the hero, not the blue. */}
@@ -188,7 +188,7 @@ export function HomeClient({ concepts }: Props) {
 
       {/* ── BRAND CARDS ─ Each one is a full-bleed food block leading
             into the order flow. */}
-      <section id="brands" style={{ background: 'var(--servd-bg)' }}>
+      <section id="brands" className="reveal-on-scroll" style={{ background: 'var(--servd-bg)', order: 2 }}>
         <div className="container" style={{ paddingTop: 'clamp(4rem, 8vw, 6rem)', paddingBottom: '2rem' }}>
           <p className="eyebrow eyebrow-accent">The kitchens</p>
           <h2 className="display" style={{ fontSize: 'clamp(2.5rem, 6vw, 4.5rem)', maxWidth: '900px', margin: '0.5rem 0 1rem', letterSpacing: '-0.04em' }}>
@@ -288,7 +288,7 @@ export function HomeClient({ concepts }: Props) {
       {/* ── OPEN NOW STRIP ─ Live status + address per brand. Hours wrong
             on Google is the #1 Karachi mistake; surface them on the
             home so the customer never has to wonder which one's open. */}
-      <section style={{ background: 'var(--servd-surface)', borderBlock: '1px solid var(--servd-line)' }}>
+      <section className="reveal-on-scroll" style={{ background: 'var(--servd-surface)', borderBlock: '1px solid var(--servd-line)', order: 3 }}>
         <div className="container" style={{ paddingTop: '2rem', paddingBottom: '2rem' }}>
           <p className="eyebrow eyebrow-accent" style={{ marginBottom: '1rem' }}>Right now</p>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1rem' }}>
@@ -336,7 +336,7 @@ export function HomeClient({ concepts }: Props) {
       {/* ── ANTI-AGGREGATOR STRIP ─ One line, hard to miss. The brief
             anti-aggregator stance is a positioning advantage no one
             else in Karachi can claim — surface it. */}
-      <section style={{ background: 'var(--servd-ink)', color: 'white', padding: '2.5rem 0' }}>
+      <section className="reveal-on-scroll" style={{ background: 'var(--servd-ink)', color: 'white', padding: '2.5rem 0', order: 4 }}>
         <div className="container" style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '1rem' }}>
           <p style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(1.15rem, 2vw, 1.5rem)', fontWeight: 700, lineHeight: 1.3, margin: 0, maxWidth: '38rem' }}>
             Order direct. Our rider, our pricing, our tip to him.<br />
@@ -355,7 +355,7 @@ export function HomeClient({ concepts }: Props) {
 
       {/* ── INSIDERS — servd loyalty membership pitch. Replaces the
             promise-numbers strip. Single CTA: become a member. ──── */}
-      <section style={{ background: 'var(--servd-green)', color: 'white', padding: 'clamp(4rem, 8vh, 7rem) 0', position: 'relative', overflow: 'hidden' }}>
+      <section className="reveal-on-scroll" style={{ background: 'var(--servd-green)', color: 'white', padding: 'clamp(4rem, 8vh, 7rem) 0', position: 'relative', overflow: 'hidden', order: 1 }}>
         {/* Soft ambient glow so the section reads as 'premium tier' */}
         <div aria-hidden style={{
           position: 'absolute', inset: 0,
