@@ -1124,3 +1124,32 @@ button:hover > .kinetic-caret::after { transform: translateX(6px); }
   50%  { transform: scale(1.012, 0.99) translateY(-2px); }
   100% { transform: scale(0.995, 1.008) translateY(1px); }
 }
+
+/* ─── servd loader — the universal spinner (storefront, purple palette) ─────────
+   9-cell ripple grid; cell colour fed via --cell-color so the wave themes to
+   any brand. Pure CSS, no deps. Matches the admin loader's motion. */
+@keyframes servd-loader-ripple {
+  0%   { background-color: transparent; }
+  30%  { background-color: var(--cell-color); }
+  60%  { background-color: transparent; }
+  100% { background-color: transparent; }
+}
+.servd-loader {
+  --cell-size: 52px;
+  --cell-spacing: 1px;
+  display: flex;
+  flex-wrap: wrap;
+  width:  calc(3 * (var(--cell-size) + 2 * var(--cell-spacing)));
+  height: calc(3 * (var(--cell-size) + 2 * var(--cell-spacing)));
+}
+.servd-loader-cell {
+  flex: 0 0 var(--cell-size);
+  margin: var(--cell-spacing);
+  box-sizing: border-box;
+  border-radius: 4px;
+  background-color: transparent;
+  animation: 1.5s servd-loader-ripple ease infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .servd-loader-cell { animation: none; background-color: var(--cell-color); opacity: 0.35; }
+}
