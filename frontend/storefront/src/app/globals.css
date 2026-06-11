@@ -1,7 +1,7 @@
 /* Inter for body text, Bricolage Grotesque for the kinetic display headlines
    that drive the new asymmetric / chunky look. Falls back to Inter Black if
    the display family fails to load — keeps the bold weight intact. */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&family=Amarante&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Lobster&family=Bungee&family=Special+Elite&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&family=Amarante&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Lobster&family=Bungee&family=Special+Elite&family=Syne:wght@400;600;700;800&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -38,6 +38,7 @@
   /* Display font for the kinetic look — used on hero headlines, eyebrow
      labels, marquee text, anywhere we want the "agency-modern" feel. */
   --font-display:       'Bricolage Grotesque', 'Inter', system-ui, sans-serif;
+  --font-wordmark:      'Syne', 'Bricolage Grotesque', system-ui, sans-serif;
 
   /* ── Simmer brand tokens (per simmer-brand SKILL.md) ─────────────────────
      Forest green surface, bone ink, fiery orange signal. Night mode is the

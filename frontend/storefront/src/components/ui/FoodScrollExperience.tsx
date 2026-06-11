@@ -13,6 +13,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
+import { MagneticLink } from './MagneticButton'
 
 // Placeholder food photos (Unsplash, CORS-enabled for WebGL textures). Swapped
 // out the moment the operator adds images in the admin block editor.
@@ -34,7 +35,7 @@ interface Props {
 export default function FoodScrollExperience({
   images,
   heading = 'servd',
-  sublines = ['real kitchens, no middlemen', 'fresh · fast · yours'],
+  sublines = ['Get Servd!'],
 }: Props) {
   const imgs = images && images.length > 0 ? images : PLACEHOLDER_FOODS
   const sectionRef = useRef<HTMLDivElement>(null)
@@ -175,7 +176,7 @@ export default function FoodScrollExperience({
   }, [imgs])
 
   return (
-    <section ref={sectionRef} aria-label="servd — the food" style={{ position: 'relative', height: '320vh', background: '#0E0618' }}>
+    <section ref={sectionRef} aria-label="servd — the food" style={{ position: 'relative', height: '240vh', background: '#0E0618' }}>
       <div style={{ position: 'sticky', top: 0, height: '100vh', overflow: 'hidden' }}>
         {mode === 'webgl' ? (
           <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', display: 'block' }} />
@@ -189,14 +190,24 @@ export default function FoodScrollExperience({
           </div>
         )}
 
-        {/* Overlay copy — bone on purple, single orange spark. */}
+        {/* Hero overlay — wordmark (Syne) + tagline + CTAs, bone on purple with
+            a single orange spark. Container is click-through; the CTA row opts
+            back into pointer events. */}
         <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: '2rem', pointerEvents: 'none' }}>
-          <h2 style={{ fontFamily: 'var(--font-display)', fontWeight: 800, color: '#EDE6D3', fontSize: 'clamp(2.5rem, 9vw, 7rem)', letterSpacing: '-0.03em', lineHeight: 0.95, textShadow: '0 8px 40px rgba(0,0,0,0.55)', margin: 0 }}>
+          <h1 style={{ fontFamily: 'var(--font-wordmark)', fontWeight: 800, color: '#EDE6D3', fontSize: 'clamp(3.2rem, 12vw, 9rem)', letterSpacing: '-0.04em', lineHeight: 0.88, textShadow: '0 8px 48px rgba(0,0,0,0.55)', margin: 0 }}>
             {heading}<span style={{ color: '#E94E1B' }}>.</span>
-          </h2>
+          </h1>
           {sublines.map((s, i) => (
-            <p key={i} style={{ color: 'rgba(237,230,211,0.82)', fontSize: 'clamp(0.95rem, 2vw, 1.25rem)', fontWeight: 500, margin: '0.5rem 0 0', textShadow: '0 2px 12px rgba(0,0,0,0.5)' }}>{s}</p>
+            <p key={i} style={{ fontFamily: 'var(--font-wordmark)', color: 'rgba(237,230,211,0.92)', fontSize: 'clamp(1.15rem, 3.2vw, 2rem)', fontWeight: 600, letterSpacing: '0.01em', margin: '1rem 0 0', textShadow: '0 2px 14px rgba(0,0,0,0.55)' }}>{s}</p>
           ))}
+          <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', justifyContent: 'center', marginTop: '2rem', pointerEvents: 'auto' }}>
+            <MagneticLink href="/browse" style={{ background: 'white', color: '#3A0E69', fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 'clamp(1rem, 1.4vw, 1.15rem)', padding: '1.05rem 2rem', borderRadius: '999px', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: '0.6rem', boxShadow: '0 12px 32px rgba(0,0,0,0.35)' }}>
+              Order now <span aria-hidden style={{ opacity: 0.65 }}>→</span>
+            </MagneticLink>
+            <MagneticLink href="#brands" style={{ color: 'white', fontWeight: 700, fontSize: '0.95rem', padding: '1.05rem 1.5rem', borderRadius: '999px', background: 'rgba(255,255,255,0.12)', border: '1px solid rgba(255,255,255,0.35)', textDecoration: 'none', backdropFilter: 'blur(6px)' }}>
+              See the kitchens
+            </MagneticLink>
+          </div>
         </div>
 
         {/* Scroll progress bar. */}
