@@ -151,7 +151,7 @@ export async function managementRoutes(fastify: FastifyInstance) {
 
       // Revenue + order count from posted financial entries (reconciles with /reports).
       const sales = await prisma.financialEntry.aggregate({
-        where: { ...(conceptId ? { conceptId } : {}), entryDate: { gte: from, lte: to } },
+        where: { ...(conceptId ? { conceptId } : {}), concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null }, entryDate: { gte: from, lte: to } },
         _sum: { grossCents: true, netCents: true },
         _count: true,
       })
@@ -166,6 +166,7 @@ export async function managementRoutes(fastify: FastifyInstance) {
           status: 'completed',
           customerId: { not: null },
           ...(conceptId ? { conceptId } : {}),
+          concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
           placedAt: { gte: from, lte: to },
         },
       })
@@ -179,10 +180,12 @@ export async function managementRoutes(fastify: FastifyInstance) {
       const returningCustomers = Math.max(0, distinctCustomers - newCustomers)
 
       // Lifetime value — average total spend across this brand's ordering base.
+      // Customer has no tenant column, so scope LTV to customers who have at
+      // least one order in this tenant (and brand, if filtered).
       const ltvAgg = await prisma.customer.aggregate({
         where: {
           firstOrderAt: { not: null },
-          ...(conceptId ? { orders: { some: { conceptId } } } : {}),
+          orders: { some: { ...(conceptId ? { conceptId } : {}), concept: { tenantId: req.staffUser!.tenantFilter } } },
         },
         _avg: { totalSpentCents: true },
         _count: true,
@@ -192,11 +195,11 @@ export async function managementRoutes(fastify: FastifyInstance) {
       // Reputation + complaints (cheap, useful context on the brand dash).
       const [ratingAgg, openComplaints] = await Promise.all([
         prisma.orderReview.aggregate({
-          where: { ...(conceptId ? { conceptId } : {}), createdAt: { gte: from, lte: to } },
+          where: { ...(conceptId ? { conceptId } : {}), concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null }, createdAt: { gte: from, lte: to } },
           _avg: { rating: true }, _count: true,
         }),
         prisma.orderComplaint.count({
-          where: { ...(conceptId ? { conceptId } : {}), status: { in: ['open', 'in_progress'] } },
+          where: { ...(conceptId ? { conceptId } : {}), concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null }, status: { in: ['open', 'in_progress'] } },
         }),
       ])
 
@@ -247,7 +250,7 @@ export async function managementRoutes(fastify: FastifyInstance) {
 
       // Sales totals.
       const sales = await prisma.financialEntry.aggregate({
-        where: { ...(conceptId ? { conceptId } : {}), entryDate: { gte: from, lte: to } },
+        where: { ...(conceptId ? { conceptId } : {}), concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null }, entryDate: { gte: from, lte: to } },
         _sum: { grossCents: true, netCents: true },
         _count: true,
       })
@@ -262,7 +265,7 @@ export async function managementRoutes(fastify: FastifyInstance) {
         where: {
           status: { not: 'voided' },
           menuItemId: { not: null },
-          order: { status: 'completed', ...(conceptId ? { conceptId } : {}), placedAt: { gte: from, lte: to } },
+          order: { status: 'completed', ...(conceptId ? { conceptId } : {}), concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null }, placedAt: { gte: from, lte: to } },
         },
         orderBy: { _sum: { quantity: 'desc' } },
         take: 8,
@@ -278,7 +281,7 @@ export async function managementRoutes(fastify: FastifyInstance) {
       const fired = await prisma.orderItem.findMany({
         where: {
           firedAt: { not: null }, completedAt: { not: null }, status: 'bumped',
-          order: { ...(conceptId ? { conceptId } : {}), placedAt: { gte: from, lte: to } },
+          order: { ...(conceptId ? { conceptId } : {}), concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null }, placedAt: { gte: from, lte: to } },
         },
         select: { firedAt: true, completedAt: true, stationId: true, station: { select: { name: true } } },
       })
@@ -302,24 +305,25 @@ export async function managementRoutes(fastify: FastifyInstance) {
         prisma.orderComplaint.count({
           where: {
             ...(conceptId ? { conceptId } : {}),
+            concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
             category: { in: ['quality', 'wrong_item', 'missing_item'] },
             createdAt: { gte: from, lte: to },
           },
         }),
         prisma.orderComplaint.groupBy({
           by: ['category'],
-          where: { ...(conceptId ? { conceptId } : {}), createdAt: { gte: from, lte: to } },
+          where: { ...(conceptId ? { conceptId } : {}), concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null }, createdAt: { gte: from, lte: to } },
           _count: true,
         }),
         prisma.orderReview.aggregate({
-          where: { ...(conceptId ? { conceptId } : {}), createdAt: { gte: from, lte: to } },
+          where: { ...(conceptId ? { conceptId } : {}), concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null }, createdAt: { gte: from, lte: to } },
           _avg: { rating: true }, _count: true,
         }),
       ])
 
       // Stock health (tenant-scoped — inventory isn't per-brand).
       const inventory = await prisma.inventoryItem.findMany({
-        where: { deletedAt: null },
+        where: { deletedAt: null, tenantId: req.staffUser!.tenantFilter },
         select: { name: true, currentStock: true, parLevel: true },
       })
       const lowStock = inventory.filter((i) => i.currentStock <= i.parLevel)
@@ -329,7 +333,7 @@ export async function managementRoutes(fastify: FastifyInstance) {
 
       // Waste cost in the period (tenant-scoped).
       const wasteAgg = await prisma.wasteLog.aggregate({
-        where: { recordedAt: { gte: from, lte: to } },
+        where: { recordedAt: { gte: from, lte: to }, inventoryItem: { tenantId: req.staffUser!.tenantFilter } },
         _sum: { estimatedCostCents: true }, _count: true,
       })
 

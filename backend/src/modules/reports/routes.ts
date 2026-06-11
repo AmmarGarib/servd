@@ -26,6 +26,7 @@ export async function reportRoutes(fastify: FastifyInstance) {
         ...(conceptId && { conceptId }),
         ...(locationId && { locationId }),
         ...(channel && { channel }),
+        concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
         entryDate: { gte: from, lte: to },
       },
       select: { grossCents: true, netCents: true, commissionCents: true, taxCents: true, entryDate: true, channel: true },
@@ -70,6 +71,7 @@ export async function reportRoutes(fastify: FastifyInstance) {
           order: {
             status: 'completed',
             ...(conceptId && { conceptId }),
+            concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
             placedAt: { gte: from, lte: to },
           },
         },
@@ -102,6 +104,7 @@ export async function reportRoutes(fastify: FastifyInstance) {
           status: 'bumped',
           order: {
             ...(conceptId && { conceptId }),
+            concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
             placedAt: { gte: from, lte: to },
           },
         },
@@ -138,6 +141,7 @@ export async function reportRoutes(fastify: FastifyInstance) {
       const entries = await prisma.financialEntry.findMany({
         where: {
           ...(conceptId && { conceptId }),
+          concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
           entryDate: { gte: from, lte: to },
         },
         select: { channel: true, grossCents: true, netCents: true },
@@ -166,7 +170,7 @@ export async function reportRoutes(fastify: FastifyInstance) {
       const items = await prisma.orderItem.findMany({
         where: {
           firedAt: { not: null }, completedAt: { not: null }, status: 'bumped',
-          order: { ...(conceptId && { conceptId }), placedAt: { gte: from, lte: to } },
+          order: { ...(conceptId && { conceptId }), concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null }, placedAt: { gte: from, lte: to } },
         },
         select: { firedAt: true, completedAt: true, stationId: true, station: { select: { name: true } } },
       })
@@ -217,7 +221,7 @@ export async function reportRoutes(fastify: FastifyInstance) {
       const { conceptId, dateFrom, dateTo } = req.query
       const { from, to } = dateRange(dateFrom, dateTo, 30)
       const entries = await prisma.financialEntry.findMany({
-        where: { ...(conceptId && { conceptId }), entryDate: { gte: from, lte: to } },
+        where: { ...(conceptId && { conceptId }), concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null }, entryDate: { gte: from, lte: to } },
         select: { entryDate: true, grossCents: true, netCents: true },
       })
       const buckets = new Map<string, { date: string; gross: number; net: number; orders: number }>()
@@ -253,6 +257,7 @@ export async function reportRoutes(fastify: FastifyInstance) {
       const orders = await prisma.order.findMany({
         where: {
           ...(conceptId && { conceptId }),
+          concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
           fulfilmentType: 'delivery',
           placedAt: { gte: from, lte: to },
           completedAt: { not: null },
