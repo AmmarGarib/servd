@@ -1,7 +1,12 @@
 'use client'
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
+import dynamic from 'next/dynamic'
 import { MagneticLink } from './ui/MagneticButton'
+
+// WebGL food-scroll band — client-only (three.js touches window/WebGL), so it
+// must never SSR. Sits directly below the hero (default order 0, after it in DOM).
+const FoodScrollExperience = dynamic(() => import('./ui/FoodScrollExperience'), { ssr: false })
 import type { Concept } from '../lib/concept'
 import { brandAccent, brandStory, conceptHeroImage } from '../lib/concept'
 import { useScrollReveal } from './kinetic/motionHooks'
@@ -21,6 +26,7 @@ import { BRAND_LOCATIONS, locationFor, whatsappLink } from '../lib/brandLocation
 
 interface Props {
   concepts: Concept[]
+  experienceImages?: string[]
 }
 
 // Fallback brand cards — used when the live concepts API returns nothing
@@ -31,7 +37,7 @@ const FALLBACK_BRANDS = [
   { id: 'fallback-flipd',  name: 'Flipd',  slug: 'flipd',  primaryColor: null },
 ] as Array<Pick<Concept, 'id' | 'name' | 'slug' | 'primaryColor'>>
 
-export function HomeClient({ concepts }: Props) {
+export function HomeClient({ concepts, experienceImages }: Props) {
   const source = concepts.filter((c) => ['simmer', 'stax', 'flipd'].includes(c.slug))
   // If the live concept list came back empty (api blip), fall through
   // to the hardcoded fallback so the home page never looks blank.
@@ -186,6 +192,11 @@ export function HomeClient({ concepts }: Props) {
           </div>
         </div>
       </section>
+
+      {/* ── FOOD SCROLL EXPERIENCE ─ immersive WebGL band directly below the
+            hero (default order 0, after it in DOM). Images are admin-editable
+            via the SiteLayout slug `servd:home-experience`; placeholders until set. */}
+      <FoodScrollExperience images={experienceImages} />
 
       {/* ── BRAND CARDS ─ Each one is a full-bleed food block leading
             into the order flow. */}

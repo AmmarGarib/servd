@@ -31,6 +31,25 @@ async function getHomeBlocks(): Promise<Block[]> {
   } catch { return [] }
 }
 
+// Admin-editable food imagery for the home FoodScrollExperience band. Operators
+// add an image/gallery block to the SiteLayout slug `servd:home-experience`
+// (existing /content block editor + media picker); empty → component uses
+// placeholders.
+async function getExperienceImages(): Promise<string[]> {
+  try {
+    const res = await fetch(`${API_URL}/api/v1/site-layouts/servd:home-experience`, { cache: 'no-store' })
+    if (!res.ok) return []
+    const body = await res.json() as LayoutResponse
+    const blocks = Array.isArray(body.blocks) ? body.blocks : []
+    const urls: string[] = []
+    for (const b of blocks) {
+      if (b.type === 'gallery') for (const im of b.images) { if (im?.url) urls.push(im.url) }
+      else if (b.type === 'image' && b.url) urls.push(b.url)
+    }
+    return urls
+  } catch { return [] }
+}
+
 async function getConcepts(): Promise<Concept[]> {
   try {
     const res = await fetch(`${API_URL}/api/v1/storefront/concepts`, { cache: 'no-store' })
@@ -40,10 +59,11 @@ async function getConcepts(): Promise<Concept[]> {
 }
 
 export default async function HomePage() {
-  const [blocks, concepts, brandLocations] = await Promise.all([
+  const [blocks, concepts, brandLocations, experienceImages] = await Promise.all([
     getHomeBlocks(),
     getConcepts(),
     fetchBrandLocations(API_URL),
+    getExperienceImages(),
   ])
 
   // JSON-LD: Organization (servd) + WebSite (search-box) + one Restaurant
@@ -68,7 +88,7 @@ export default async function HomePage() {
   return (
     <>
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLdScript(schema) }} />
-      {blocks.length === 0 ? <HomeClient concepts={concepts} /> : <PageRenderer blocks={blocks} />}
+      {blocks.length === 0 ? <HomeClient concepts={concepts} experienceImages={experienceImages} /> : <PageRenderer blocks={blocks} />}
     </>
   )
 }
