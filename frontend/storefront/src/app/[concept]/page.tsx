@@ -265,7 +265,8 @@ export default function ConceptOrderPage() {
             </Link>
           </div>
           <h1 style={{ fontSize: 'clamp(2rem, 5vw, 3.25rem)', fontWeight: 900, letterSpacing: '-0.04em', marginBottom: '0.5rem' }}>
-            {concept.name}
+            {/* simmer brand rule: the wordmark is always lowercase. */}
+            {slug === 'simmer' ? concept.name.toLowerCase() : concept.name}
           </h1>
           {concept.description && (
             <p style={{ color: 'rgba(255,255,255,0.85)', maxWidth: '36rem', fontSize: '1rem' }}>

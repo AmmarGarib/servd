@@ -5,6 +5,9 @@ import { StorefrontFooter } from '../components/StorefrontFooter'
 import { FeedbackWidget } from '../components/feedback/FeedbackWidget'
 
 export const metadata: Metadata = {
+  // Absolute base for og:image / canonical resolution. Single source for the
+  // public host — flip via NEXT_PUBLIC_SITE_URL when the domain moves to servd.pk.
+  metadataBase: new URL(process.env['NEXT_PUBLIC_SITE_URL'] ?? 'https://servd-app.garibsons.app'),
   title: { default: 'servd — order from your favourite kitchens', template: '%s · servd' },
   description: 'Three kitchens. One cart. Order direct from Simmer, Stax, and Flipd — delivered fresh.',
   applicationName: 'servd',
@@ -22,7 +25,7 @@ export const metadata: Metadata = {
 }
 
 export const viewport: Viewport = {
-  themeColor: 'var(--servd-green)',
+  themeColor: '#3A0E69',
   colorScheme: 'light',
   width: 'device-width',
   initialScale: 1,
