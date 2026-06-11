@@ -3,6 +3,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { useCustomerAuth } from '../../store/customerAuth'
+import { LoadingScreen } from '../../components/ui/Loader'
 import { fmt } from '../../lib/ui'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
@@ -128,14 +129,7 @@ export default function AccountPage() {
 
   if (loading) return (
     <main className="flex min-h-screen items-center justify-center" style={{ background: 'transparent' }}>
-      <div className="flex flex-col items-center gap-4">
-        <div className="relative h-14 w-14">
-          <div className="absolute inset-0 rounded-full" style={{ border: '2px solid rgba(0,0,0,0.07)' }} />
-          <div className="absolute inset-0 rounded-full animate-spin"
-            style={{ border: '2px solid transparent', borderTopColor: 'rgba(58,14,105,0.6)' }} />
-        </div>
-        <p className="text-sm" style={{ color: 'var(--servd-mute)' }}>Loading account…</p>
-      </div>
+      <LoadingScreen label="Loading account…" minHeight="auto" />
     </main>
   )
 
