@@ -4,6 +4,32 @@ This file is read automatically by Claude Code when working on this repo.
 It captures the deploy flow, common pitfalls, and project conventions
 that aren't obvious from the code itself.
 
+## ⚠️ Corrections (2026-06-11 audit) — read before trusting older sections
+
+Parts of this file have drifted from reality. Until the relevant sections are
+rewritten, trust these corrections:
+
+- **Storefront visual migration is DONE**, not "in progress." The legacy
+  "premium" system (`#00D4B1` teal → `#6366F1` indigo, `#18160f` ink,
+  `PremiumInput`) is fully removed from `frontend/storefront/src`. The whole
+  storefront is on `--servd-*` tokens. **The servd storefront brand is deep
+  royal PURPLE (`#3A0E69`), not teal/green** — note `--servd-green` holds a
+  purple value (legacy var name). The admin app is still teal→indigo.
+- **The three "404 routes" are fixed** (`/<concept>/menu`, `/<concept>/order`,
+  `/reserve` all exist/redirect).
+- **Deploy reality is unsettled.** A `.github/workflows/build-and-push.yml` and
+  a `deploy/` dir both exist, but the in-repo `deploy/webhook-server.js` builds
+  from source on the box while observed prod deploys this cycle updated purely
+  via Docker Hub image pushes (`ammargarib/servd:{api,admin,storefront}`) +
+  the webhook. Treat the deploy mechanism as "verify against the box," not as
+  documented below.
+- **Stax** brand palette is blueprint **blue** (`#0A1857`), not "light grey +
+  deep purple" as stated later.
+- Open risks flagged by the audit (not yet fixed): client-only role/module
+  permissions (no `RoleModuleAccess` model), unscoped tenant data in
+  `/reports/*` + `/management/*` + accounting P&L, lockfile drift in the
+  storefront (`three`/`framer-motion` not in `package-lock.json`).
+
 ## What this is
 
 `servd` is the in-house restaurant management system for **GS Foods** — a

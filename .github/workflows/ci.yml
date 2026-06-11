@@ -1,0 +1,78 @@
+name: CI
+
+# Quality gate on every PR (and pushes to feature branches) — before anything
+# reaches main + the build-and-push deploy. Backend: typecheck + unit tests.
+# Frontends: next build IS the typecheck. Docker builds are intentionally NOT
+# run here (they happen on merge in build-and-push.yml) to keep PR feedback fast.
+
+on:
+  pull_request:
+  push:
+    branches-ignore: [main]
+
+# Cancel superseded runs on the same ref to save minutes.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: npx prisma generate
+      - run: npx tsc -p tsconfig.json --noEmit
+      - run: npx vitest run
+        env:
+          # Tests should use their own test DB/mocks; surface missing config loudly.
+          NODE_ENV: test
+
+  storefront:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend/storefront
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/storefront/package-lock.json
+      # NOTE: matches the storefront Dockerfile (npm install, not ci) — the
+      # lockfile is known-drifted (three/framer-motion). Switch to `npm ci`
+      # once the lockfile is regenerated + validated in a clean env.
+      - run: npm install --legacy-peer-deps --no-audit --no-fund
+      - run: npm run build
+        env:
+          NEXT_TELEMETRY_DISABLED: '1'
+          NEXT_PUBLIC_API_URL: https://servd-api.garibsons.app
+          NEXT_PUBLIC_WS_URL: wss://servd-api.garibsons.app
+
+  admin:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend/admin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/admin/package-lock.json
+      - run: npm install --legacy-peer-deps --no-audit --no-fund
+      - run: npm run build
+        env:
+          NEXT_TELEMETRY_DISABLED: '1'
+          NEXT_PUBLIC_API_URL: https://servd-api.garibsons.app
+          NEXT_PUBLIC_WS_URL: wss://servd-api.garibsons.app

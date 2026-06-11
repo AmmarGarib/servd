@@ -17,6 +17,17 @@ const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 const inputCls =
   'w-full rounded-2xl px-4 py-3.5 text-sm font-semibold text-white bg-white/10 border border-white/20 placeholder:text-white/35 focus:outline-none focus:border-white/60 focus:bg-white/[0.16] transition-all'
 
+// Where to send the user after auth. Checkout sends ?next=, the order tracker
+// sends ?return= — honour both. Only same-origin relative paths (open-redirect
+// guard: no absolute URLs, no protocol-relative //host).
+function postAuthDest(): string {
+  if (typeof window === 'undefined') return '/account'
+  const sp = new URLSearchParams(window.location.search)
+  const p = sp.get('next') || sp.get('return')
+  if (p && p.startsWith('/') && !p.startsWith('//')) return p
+  return '/account'
+}
+
 export default function LoginPage() {
   const router  = useRouter()
   const setAuth = useCustomerAuth((s) => s.setAuth)
@@ -40,7 +51,7 @@ export default function LoginPage() {
       const data = await res.json() as { token?: string; customer?: { id: string }; error?: { message?: string } }
       if (!res.ok) { setError(data.error?.message ?? 'Invalid email or password'); return }
       setAuth(data.token!, data.customer!.id)
-      router.replace('/account')
+      router.replace(postAuthDest())
     } catch (err) {
       console.error('[login] fetch error:', err)
       setError('Could not reach the server. Make sure the API is running.')

@@ -141,7 +141,9 @@ export default function SignupPage() {
         return
       }
       setAuth(data.token!, data.customer!.id)
-      router.replace('/account')
+      // Honour ?next=/?return= (checkout / order tracker) — same-origin only.
+      const dest = params.get('next') || params.get('return')
+      router.replace(dest && dest.startsWith('/') && !dest.startsWith('//') ? dest : '/account')
     } catch {
       setError('Could not reach the server. Make sure the API is running.')
     } finally {

@@ -3,9 +3,11 @@ import Link from 'next/link'
 import dynamic from 'next/dynamic'
 import { MagneticLink } from './ui/MagneticButton'
 
-// WebGL food-scroll band — client-only (three.js touches window/WebGL), so it
-// must never SSR. Sits directly below the hero (default order 0, after it in DOM).
-const FoodScrollExperience = dynamic(() => import('./ui/FoodScrollExperience'), { ssr: false })
+// WebGL food-scroll hero. Code-split (three.js is heavy) but SSR'd so the
+// wordmark/tagline/CTAs paint instantly and are SEO-visible — no blank
+// above-the-fold, no CLS. WebGL itself only initialises in the client effect
+// (all window/canvas access is guarded there), so server render is safe.
+const FoodScrollExperience = dynamic(() => import('./ui/FoodScrollExperience'))
 import type { Concept } from '../lib/concept'
 import { brandAccent, brandStory, conceptHeroImage } from '../lib/concept'
 import { useScrollReveal } from './kinetic/motionHooks'
