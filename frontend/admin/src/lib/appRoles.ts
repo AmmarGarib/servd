@@ -252,7 +252,10 @@ export const DEFAULT_MODULE_ACCESS: Record<AppRole, ModuleId[]> = {
     'pos', 'reservations', 'reservations_admin', 'scheduling', 'tables', 'dispatch', 'riders',
     'complaints', 'reviews',
     'staff_directory', 'staff_foh', 'staff_boh', 'kitchen_staff',
-    'reports',
+    // Owner policy: F&B manager is a company-financials viewer (P&L + accounting
+    // + revenue reports) alongside finance + CEO. Matches the backend
+    // FINANCIALS_VIEWERS tier; operational FOH/BOH managers are excluded.
+    'finance_pl', 'accounting', 'reports',
   ],
 
   finance: [

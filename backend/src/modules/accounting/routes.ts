@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyReply } from 'fastify'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
-import { requireAuth, MANAGERS, ADMIN_ONLY } from '../auth/middleware.js'
+import { requireAuth, FINANCIALS_VIEWERS, ADMIN_ONLY } from '../auth/middleware.js'
 import { AppError } from '../../lib/errors.js'
 import { resolveDateRange, parsePktEndOfDay, fmtPktDate } from './dates.js'
 import { trialBalance, balanceSheet, profitAndLoss, cashFlow } from './reports.js'
@@ -34,7 +34,7 @@ export async function accountingRoutes(fastify: FastifyInstance) {
 
   fastify.get<{
     Querystring: { conceptId?: string; dateFrom?: string; dateTo?: string; period?: string }
-  }>('/pl', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
+  }>('/pl', { preHandler: requireAuth(...FINANCIALS_VIEWERS) }, async (req) => {
     const { conceptId, dateFrom, dateTo } = req.query
 
     const defaultFrom = new Date(Date.now() - 90 * 86_400_000)
@@ -91,7 +91,7 @@ export async function accountingRoutes(fastify: FastifyInstance) {
 
   fastify.get<{ Querystring: { accountId?: string; dateFrom?: string; dateTo?: string; limit?: string; cursor?: string; format?: string } }>(
     '/ledger',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: requireAuth(...FINANCIALS_VIEWERS) },
     async (req, reply) => {
       const { accountId, dateFrom, dateTo, limit: limitStr, cursor, format } = req.query
       const limit = Math.min(parseInt(limitStr ?? '50', 10), 1000)
@@ -199,7 +199,7 @@ export async function accountingRoutes(fastify: FastifyInstance) {
 
   // ─── Chart of accounts ───────────────────────────────────────────────────
 
-  fastify.get('/accounts', { preHandler: requireAuth(...MANAGERS) }, async () => {
+  fastify.get('/accounts', { preHandler: requireAuth(...FINANCIALS_VIEWERS) }, async () => {
     return prisma.account.findMany({ where: { isActive: true }, orderBy: { code: 'asc' } })
   })
 
@@ -207,7 +207,7 @@ export async function accountingRoutes(fastify: FastifyInstance) {
 
   fastify.get<{ Querystring: { asOf?: string; format?: string } }>(
     '/trial-balance',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: requireAuth(...FINANCIALS_VIEWERS) },
     async (req, reply) => {
       const asOf = req.query.asOf ? parsePktEndOfDay(req.query.asOf) : new Date()
       const report = await trialBalance(asOf)
@@ -231,7 +231,7 @@ export async function accountingRoutes(fastify: FastifyInstance) {
 
   fastify.get<{ Querystring: { asOf?: string; format?: string } }>(
     '/balance-sheet',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: requireAuth(...FINANCIALS_VIEWERS) },
     async (req, reply) => {
       const asOf = req.query.asOf ? parsePktEndOfDay(req.query.asOf) : new Date()
       const report = await balanceSheet(asOf)
@@ -255,7 +255,7 @@ export async function accountingRoutes(fastify: FastifyInstance) {
 
   fastify.get<{ Querystring: { dateFrom?: string; dateTo?: string; format?: string } }>(
     '/pl-ledger',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: requireAuth(...FINANCIALS_VIEWERS) },
     async (req, reply) => {
       const { from, to } = resolveDateRange(req.query.dateFrom, req.query.dateTo)
       const report = await profitAndLoss(from, to)
@@ -282,7 +282,7 @@ export async function accountingRoutes(fastify: FastifyInstance) {
 
   fastify.get<{ Querystring: { dateFrom?: string; dateTo?: string; format?: string } }>(
     '/cash-flow',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: requireAuth(...FINANCIALS_VIEWERS) },
     async (req, reply) => {
       const { from, to } = resolveDateRange(req.query.dateFrom, req.query.dateTo)
       const report = await cashFlow(from, to)
@@ -304,7 +304,7 @@ export async function accountingRoutes(fastify: FastifyInstance) {
 
   fastify.get<{ Querystring: { limit?: string } }>(
     '/activity-feed',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: requireAuth(...FINANCIALS_VIEWERS) },
     async (req) => {
       const limit = Math.min(parseInt(req.query.limit ?? '30', 10), 100)
       const [entries, audits, orders] = await Promise.all([
@@ -345,7 +345,7 @@ export async function accountingRoutes(fastify: FastifyInstance) {
 
   fastify.get<{ Querystring: { action?: string; entity?: string; userId?: string; limit?: string; cursor?: string } }>(
     '/audit-log',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: requireAuth(...FINANCIALS_VIEWERS) },
     async (req) => {
       const limit = Math.min(parseInt(req.query.limit ?? '100', 10), 500)
       const rows = await prisma.auditLog.findMany({
@@ -368,7 +368,7 @@ export async function accountingRoutes(fastify: FastifyInstance) {
 
   fastify.get<{ Querystring: { dateFrom?: string; dateTo?: string; format?: string } }>(
     '/sales-tax-return',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: requireAuth(...FINANCIALS_VIEWERS) },
     async (req, reply) => {
       const { from, to } = resolveDateRange(req.query.dateFrom, req.query.dateTo)
       const report = await salesTaxReturn(from, to)
@@ -402,7 +402,7 @@ export async function accountingRoutes(fastify: FastifyInstance) {
 
   // ─── Period close ────────────────────────────────────────────────────────
 
-  fastify.get('/period-close', { preHandler: requireAuth(...MANAGERS) }, async () => {
+  fastify.get('/period-close', { preHandler: requireAuth(...FINANCIALS_VIEWERS) }, async () => {
     const lock = await prisma.periodLock.findFirst({
       orderBy: { lockedThrough: 'desc' },
       select: { lockedThrough: true, lockedAt: true, lockedBy: true, note: true },

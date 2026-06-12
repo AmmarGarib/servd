@@ -212,6 +212,13 @@ export const KITCHEN_STAFF = [...MANAGERS, 'kitchen', 'expediter', 'boh', 'boh_m
 export const MARKETING_TEAM = [...MANAGERS, 'marketing', 'brand_manager'] as UserRole[]
 export const PROCUREMENT_TEAM = [...MANAGERS, 'procurement'] as UserRole[]
 export const FINANCE_TEAM = [...MANAGERS, 'finance'] as UserRole[]
+// Narrow tier for COMPANY-LEVEL FINANCIALS (P&L, ledger, exec revenue dashboards,
+// revenue reports). Per owner policy: finance officer, CEO/exec, and the F&B
+// manager only — operational managers (manager / foh_management / boh_management)
+// are deliberately excluded. 'management' is the CEO/exec role; 'admin' is the
+// owner superuser. Keep this DISTINCT from FINANCE_TEAM (which is intentionally
+// broad: MANAGERS + finance, for non-confidential finance-adjacent endpoints).
+export const FINANCIALS_VIEWERS = ['admin', 'management', 'finance', 'fnb_manager'] as UserRole[]
 export const HR_TEAM = [...MANAGERS, 'hr'] as UserRole[]
 export const ALL_STAFF = [
   'admin', 'manager', 'management', 'foh_management', 'boh_management',

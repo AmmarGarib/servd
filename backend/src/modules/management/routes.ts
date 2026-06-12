@@ -16,7 +16,7 @@ import type { FastifyInstance } from 'fastify'
 import type { Prisma } from '@prisma/client'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
-import { requireAuth, MANAGERS, MARKETING_TEAM } from '../auth/middleware.js'
+import { requireAuth, FINANCIALS_VIEWERS, MARKETING_TEAM } from '../auth/middleware.js'
 import { profitAndLoss, cashFlow } from '../accounting/reports.js'
 import { labourPctReport } from '../payroll/service.js'
 
@@ -243,7 +243,7 @@ export async function managementRoutes(fastify: FastifyInstance) {
   // Kitchen throughput + sales + food-quality signals + stock health.
   fastify.get<{ Querystring: { conceptId?: string; dateFrom?: string; dateTo?: string } }>(
     '/fnb-metrics',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: requireAuth(...FINANCIALS_VIEWERS) },
     async (req) => {
       const { conceptId, dateFrom, dateTo } = req.query
       const { from, to } = dateRange(dateFrom, dateTo)
@@ -427,7 +427,7 @@ export async function managementRoutes(fastify: FastifyInstance) {
   // GET /management/brand-pl?conceptId&dateFrom&dateTo — per-brand P&L.
   fastify.get<{ Querystring: { conceptId?: string; dateFrom?: string; dateTo?: string } }>(
     '/brand-pl',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: requireAuth(...FINANCIALS_VIEWERS) },
     async (req) => {
       const { conceptId, dateFrom, dateTo } = req.query
       const { from, to } = dateRange(dateFrom, dateTo)
@@ -441,7 +441,7 @@ export async function managementRoutes(fastify: FastifyInstance) {
   // render its heaviest section from a single call instead of four.
   fastify.get<{ Querystring: { conceptId?: string; dateFrom?: string; dateTo?: string } }>(
     '/executive-overview',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: requireAuth(...FINANCIALS_VIEWERS) },
     async (req) => {
       const { conceptId, dateFrom, dateTo } = req.query
       const { from, to } = dateRange(dateFrom, dateTo)

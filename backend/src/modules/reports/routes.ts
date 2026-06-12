@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify'
 import { prisma } from '../../lib/prisma.js'
-import { requireAuth, MANAGERS } from '../auth/middleware.js'
+import { requireAuth, MANAGERS, FINANCIALS_VIEWERS } from '../auth/middleware.js'
 import { getMenuEngineering } from './menu-engineering.js'
 import { getDemandForecast } from './demand-forecast.js'
 
@@ -17,7 +17,7 @@ export async function reportRoutes(fastify: FastifyInstance) {
   // GET /reports/sales — totals + by-hour breakdown
   fastify.get<{
     Querystring: { conceptId?: string; locationId?: string; channel?: string; dateFrom?: string; dateTo?: string }
-  }>('/sales', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
+  }>('/sales', { preHandler: requireAuth(...FINANCIALS_VIEWERS) }, async (req) => {
     const { conceptId, locationId, channel, dateFrom, dateTo } = req.query
     const { from, to } = dateRange(dateFrom, dateTo)
 
@@ -133,7 +133,7 @@ export async function reportRoutes(fastify: FastifyInstance) {
   // GET /reports/by-source — sales breakdown by order source
   fastify.get<{ Querystring: { conceptId?: string; dateFrom?: string; dateTo?: string } }>(
     '/by-source',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: requireAuth(...FINANCIALS_VIEWERS) },
     async (req) => {
       const { conceptId, dateFrom, dateTo } = req.query
       const { from, to } = dateRange(dateFrom, dateTo)
@@ -216,7 +216,7 @@ export async function reportRoutes(fastify: FastifyInstance) {
   // Gap-fills missing days with zeros so the trend line is continuous.
   fastify.get<{ Querystring: { conceptId?: string; dateFrom?: string; dateTo?: string } }>(
     '/series',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: requireAuth(...FINANCIALS_VIEWERS) },
     async (req) => {
       const { conceptId, dateFrom, dateTo } = req.query
       const { from, to } = dateRange(dateFrom, dateTo, 30)
