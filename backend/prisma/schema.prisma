@@ -1490,6 +1490,10 @@ model Order {
   // (outside Sindh) OR the SRB worker hasn't processed the order yet.
   srbInvoiceNumber String?
 
+  // SRB invoice-verification QR link returned alongside srbInvoiceNumber. Per
+  // the SRB POS spec this link MUST be rendered as a QR code on the receipt.
+  srbQrCodeLink String?
+
   // raw platform payload stored for audit/debug
   rawPayload Json?
 

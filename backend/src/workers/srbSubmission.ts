@@ -29,15 +29,15 @@ export function startSrbSubmissionWorker() {
           return { skipped: true }
         }
 
-        const srbInvoiceNumber = await submitSrbInvoice(data)
+        const { srbInvoiceId, qrCodeLink } = await submitSrbInvoice(data)
 
         await prisma.order.update({
           where: { id: orderId },
-          data: { srbInvoiceNumber },
+          data: { srbInvoiceNumber: srbInvoiceId, srbQrCodeLink: qrCodeLink },
         })
 
-        console.info(`[SRB] Invoice submitted for order ${orderId}: ${srbInvoiceNumber}`)
-        return { srbInvoiceNumber }
+        console.info(`[SRB] Invoice submitted for order ${orderId}: ${srbInvoiceId}`)
+        return { srbInvoiceNumber: srbInvoiceId }
       },
       {
         connection: redis,
