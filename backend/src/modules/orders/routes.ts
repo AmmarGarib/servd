@@ -220,12 +220,14 @@ export async function orderRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuthOrPin(...ALL_STAFF) },
     async (req, reply) => {
       const { status } = updateOrderStatusSchema.parse(req.body)
-      const order = await getOrder(req.params.id)
-      await assertConceptAccess(req.staffUser!, order.conceptId)
-      const concept = await prisma.concept.findFirst({
-        where: { id: order.conceptId, tenantId: req.staffUser!.tenantFilter, deletedAt: null },
+      // Tenant-scoped lookup FIRST — never fetch (or reveal the existence of)
+      // an order outside the caller's company before the scope check.
+      const order = await prisma.order.findFirst({
+        where: { id: req.params.id, concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null } },
+        select: { id: true, conceptId: true },
       })
-      if (!concept) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Order not found in your active company' } })
+      if (!order) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Order not found in your active company' } })
+      await assertConceptAccess(req.staffUser!, order.conceptId)
       return updateOrderStatus(req.params.id, status as never)
     },
   )

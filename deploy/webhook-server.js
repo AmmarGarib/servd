@@ -16,7 +16,17 @@
 const http  = require('http');
 const path  = require('path');
 const fs    = require('fs');
+const crypto = require('crypto');
 const { spawn } = require('child_process');
+
+// Constant-time secret comparison — `!==` leaks where the mismatch occurs,
+// letting an attacker brute-force the secret character-by-character.
+function secretMatches(incoming, expected) {
+  const a = Buffer.from(String(incoming), 'utf8');
+  const b = Buffer.from(String(expected), 'utf8');
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(a, b);
+}
 
 const PORT       = parseInt(process.env.WEBHOOK_PORT || '9000', 10);
 const SECRET     = (process.env.WEBHOOK_SECRET || '').trim();
@@ -104,10 +114,20 @@ const server = http.createServer((req, res) => {
   if (req.method === 'POST' && url.pathname === '/deploy') {
     const incoming = (
       (req.headers['x-deploy-secret'] || '') ||
+      // Deprecated: query-string secrets leak into proxy/access logs. Send
+      // X-Deploy-Secret instead; this fallback remains only until the CI
+      // secret is rotated to the header form.
       (url.searchParams.get('secret')  || '')
     ).trim();
 
-    if (SECRET && incoming !== SECRET) {
+    // Fail CLOSED: no configured secret means no deploys — previously an
+    // unset WEBHOOK_SECRET silently disabled auth entirely.
+    if (!SECRET) {
+      res.writeHead(503, { 'Content-Type': 'text/plain' });
+      res.end('503 — WEBHOOK_SECRET not configured; refusing deploys\n');
+      return;
+    }
+    if (!secretMatches(incoming, SECRET)) {
       res.writeHead(403, { 'Content-Type': 'text/plain' });
       res.end('403 Forbidden — wrong or missing secret\n');
       return;

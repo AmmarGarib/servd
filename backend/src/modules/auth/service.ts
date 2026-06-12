@@ -31,8 +31,10 @@ export interface CustomerTokenPayload {
 // ─── Staff auth ───────────────────────────────────────────────────────────────
 
 export async function staffLogin(email: string, password: string) {
+  // accountStatus gate matches PIN login — `pending` (awaiting CEO approval)
+  // and `suspended` accounts must not be able to password-login either.
   const user = await prisma.user.findFirst({
-    where: { email: email.toLowerCase(), isActive: true, deletedAt: null },
+    where: { email: email.toLowerCase(), isActive: true, deletedAt: null, accountStatus: 'active' },
   })
 
   if (!user) throw new UnauthorizedError('Invalid credentials')

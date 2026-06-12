@@ -2,8 +2,11 @@ import { Redis } from 'ioredis'
 
 const redisUrl = process.env['REDIS_URL'] ?? 'redis://localhost:6379'
 
+// TLS certificate validation is ON by default — disabling it silently allows
+// MITM of session/rate-limit/queue traffic. If the Redis host genuinely uses a
+// self-signed cert, opt out explicitly with REDIS_TLS_INSECURE=1 (and know why).
 const tlsOptions = redisUrl.startsWith('rediss://')
-  ? { tls: { rejectUnauthorized: false } }
+  ? { tls: { rejectUnauthorized: process.env['REDIS_TLS_INSECURE'] !== '1' } }
   : {}
 
 // Exponential backoff: 200ms → 400ms → … → 30s ceiling

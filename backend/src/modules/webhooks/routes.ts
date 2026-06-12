@@ -179,9 +179,11 @@ export async function webhookRoutes(fastify: FastifyInstance) {
     // Meta dashboard alongside the verify token.
     const appSecret = process.env['WHATSAPP_APP_SECRET']
     if (!appSecret) {
-      // Fail closed in production. In dev the secret may not be configured;
-      // skip verification only when NODE_ENV !== 'production'.
-      if (process.env['NODE_ENV'] === 'production') {
+      // Fail closed in EVERY environment. A staging box with the secret unset
+      // would otherwise accept unsigned webhooks — i.e. anyone could inject
+      // fake WhatsApp messages and place orders as any registered customer.
+      // Local dev can opt out explicitly with ALLOW_UNSIGNED_WEBHOOKS=1.
+      if (process.env['ALLOW_UNSIGNED_WEBHOOKS'] !== '1') {
         fastify.log.error('[WhatsApp] WHATSAPP_APP_SECRET not set — refusing inbound')
         return reply.status(503).send({ error: { code: 'NOT_CONFIGURED', message: 'WhatsApp webhook signature secret missing' } })
       }

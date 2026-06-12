@@ -174,7 +174,18 @@ export async function crmRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuth(...ALL_STAFF) },
     async (req) => {
       const customer = await prisma.customer.findFirst({
-        where: { id: req.params.id, deletedAt: null },
+        where: {
+          id: req.params.id,
+          deletedAt: null,
+          // Tenant scope (same rule as GET /crm/customers/:id): staff can only
+          // open the profile of a customer who has actually interacted with a
+          // concept in their company. Without this, any staff login could pull
+          // ANY customer's PII + order history by UUID.
+          OR: [
+            { orders:       { some: { concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null } } } },
+            { reservations: { some: { concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null } } } },
+          ],
+        },
         select: {
           id: true, name: true, email: true, phone: true, isBlacklisted: true,
           blacklistReason: true, birthdayMmDd: true,

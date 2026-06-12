@@ -47,8 +47,15 @@ async function attachStaffPrincipal(req: FastifyRequest, payload: { sub: string;
   }
   const u = await prisma.user.findUnique({
     where: { id: payload.sub },
-    select: { tenantId: true, name: true },
+    select: { tenantId: true, name: true, isActive: true, accountStatus: true, deletedAt: true },
   })
+
+  // Revocation-on-deactivation: a JWT outlives its user's employment unless we
+  // re-check status on every request. Without this, a fired/suspended staffer
+  // keeps full API access until their token expires.
+  if (!u || !u.isActive || u.deletedAt !== null || u.accountStatus !== 'active') {
+    throw new UnauthorizedError('Account is no longer active')
+  }
 
   // Portfolio mode: when the frontend has flipped "All companies" on, every
   // GET carries `x-servd-portfolio: 1`. Expand the tenant filter to every
