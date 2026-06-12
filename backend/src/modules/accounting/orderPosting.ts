@@ -201,7 +201,9 @@ function buildSaleLines(order: OrderForPosting, sa: SaleAccounting, cogsCents: n
     lines.push({ accountCode: ACCT.INVENTORY_FOOD, type: 'credit', amountCents: cogsCents, memo: `Inventory derecognised for ${conceptMemo}` })
   }
 
-  return lines
+  // Every line on this entry belongs to a single order → tag with its brand so
+  // per-brand revenue AND cost are measured (not estimated) in the brand P&L.
+  return lines.map((l) => ({ ...l, conceptId: order.conceptId }))
 }
 
 export interface PostOrderResult {

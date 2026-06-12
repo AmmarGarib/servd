@@ -17,7 +17,7 @@ import type { Prisma } from '@prisma/client'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, FINANCIALS_VIEWERS, MARKETING_TEAM } from '../auth/middleware.js'
-import { profitAndLoss, cashFlow } from '../accounting/reports.js'
+import { profitAndLoss, cashFlow, pnlByConcept } from '../accounting/reports.js'
 import { labourPctReport } from '../payroll/service.js'
 
 // ── Per-brand P&L (revenue-share allocation) ──────────────────────────────────
@@ -30,11 +30,32 @@ import { labourPctReport } from '../payroll/service.js'
 // /brand-pl and /executive-overview.
 async function computeBrandPl(conceptId: string | undefined, from: Date, to: Date, tenantFilter: Prisma.ConceptWhereInput['tenantId']) {
   const conceptScope: Prisma.ConceptWhereInput = { tenantId: tenantFilter, deletedAt: null }
-  const [pl, labour] = await Promise.all([profitAndLoss(from, to), labourPctReport(from, to)])
+  const [pl, labour, conceptPnl] = await Promise.all([
+    profitAndLoss(from, to),
+    labourPctReport(from, to),
+    pnlByConcept(from, to),
+  ])
   const companyCogs   = pl.totals.cogsCents
   const companyContra = pl.totals.contraRevenueCents
   const companyOpex   = pl.totals.opexCents
   const companyLabour = labour.labourCents
+
+  // MEASURED per-brand cost from tagged ledger lines (order/shift postings carry
+  // a conceptId). What isn't tagged — shared overhead, manual entries, and any
+  // historical lines posted before brand-tagging — is the "shared remainder",
+  // which we still allocate across brands by revenue share. So the report reads
+  // as: actual brand cost + this brand's slice of shared cost.
+  const measured = new Map<string, { cogs: number; contra: number; opex: number }>()
+  let taggedCogs = 0, taggedContra = 0, taggedOpex = 0
+  for (const b of conceptPnl) {
+    if (!b.conceptId) continue
+    measured.set(b.conceptId, { cogs: b.cogsCents, contra: b.contraRevenueCents, opex: b.opexCents })
+    taggedCogs += b.cogsCents; taggedContra += b.contraRevenueCents; taggedOpex += b.opexCents
+  }
+  const sharedCogs   = Math.max(0, companyCogs   - taggedCogs)
+  const sharedContra = Math.max(0, companyContra - taggedContra)
+  const sharedOpex   = Math.max(0, companyOpex   - taggedOpex)
+  const measuredCogsPct = companyCogs > 0 ? Number(((taggedCogs / companyCogs) * 100).toFixed(1)) : 0
 
   const entries = await prisma.financialEntry.findMany({
     where: { ...(conceptId ? { conceptId } : {}), concept: conceptScope, entryDate: { gte: from, lte: to } },
@@ -53,11 +74,12 @@ async function computeBrandPl(conceptId: string | undefined, from: Date, to: Dat
     : Array.from(perBrand.entries()).map(([id, b]) => ({ conceptId: id, _sum: { grossCents: b.grossCents } }))
   const totalGross = allEntries.reduce((s, r) => s + (r._sum.grossCents ?? 0), 0)
 
-  function alloc(brandGross: number) {
+  function alloc(brandId: string, brandGross: number) {
     const share = totalGross > 0 ? brandGross / totalGross : 0
-    const cogsCents   = Math.round(companyCogs * share)
-    const contraCents = Math.round(companyContra * share)
-    const opexCents   = Math.round(companyOpex * share)
+    const m = measured.get(brandId) ?? { cogs: 0, contra: 0, opex: 0 }
+    const cogsCents   = m.cogs   + Math.round(sharedCogs   * share)
+    const contraCents = m.contra + Math.round(sharedContra * share)
+    const opexCents   = m.opex   + Math.round(sharedOpex   * share)
     const labourCents = Math.round(companyLabour * share)
     const grossProfitCents = brandGross - cogsCents - contraCents
     const netProfitCents   = grossProfitCents - opexCents
@@ -73,7 +95,7 @@ async function computeBrandPl(conceptId: string | undefined, from: Date, to: Dat
     }
   }
 
-  const brands = Array.from(perBrand.entries()).map(([id, b]) => ({ conceptId: id, name: b.name, orders: b.orders, taxCents: b.taxCents, ...alloc(b.grossCents) }))
+  const brands = Array.from(perBrand.entries()).map(([id, b]) => ({ conceptId: id, name: b.name, orders: b.orders, taxCents: b.taxCents, ...alloc(id, b.grossCents) }))
   const companyGross = Array.from(perBrand.values()).reduce((s, b) => s + b.grossCents, 0)
   const company = {
     revenueCents: pl.totals.revenueCents || companyGross,
@@ -86,7 +108,16 @@ async function computeBrandPl(conceptId: string | undefined, from: Date, to: Dat
     primeCostPct: pl.totals.revenueCents > 0 ? Number((((companyCogs + companyLabour) / pl.totals.revenueCents) * 100).toFixed(2)) : 0,
   }
   const selected = conceptId ? (brands.find((b) => b.conceptId === conceptId) ?? null) : null
-  return { period: { from: from.toISOString(), to: to.toISOString() }, conceptId: conceptId ?? null, company, brands, selected, allocation: 'revenue-share' as const }
+  return {
+    period: { from: from.toISOString(), to: to.toISOString() },
+    conceptId: conceptId ?? null,
+    company, brands, selected,
+    allocation: 'measured-cost+shared-allocated' as const,
+    // Transparency for the dashboard: how much of company COGS is measured per
+    // brand vs still allocated by revenue share (rises toward 100% as tagged
+    // orders replace historical untagged data).
+    basis: { measuredCogsPct, sharedCogsCents: sharedCogs, sharedOpexCents: sharedOpex },
+  }
 }
 
 // ── date helpers ─────────────────────────────────────────────────────────────
