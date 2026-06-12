@@ -293,7 +293,7 @@ export function HomeClient({ concepts, experienceImages }: Props) {
               {
                 slug: 'simmer',
                 accent: 'rgba(233,78,27,0.95)',
-                badge: '◇', tag: 'Simmer · regulars',
+                badge: '◇', tag: 'simmer · regulars',
                 head: 'The regulars’ list',
                 body: 'Quiet recognition. First word on the next menu drop. A held table when the room is full. Now and then the chef sends out a plate. No card, no points — you’re known here.',
                 featured: false,

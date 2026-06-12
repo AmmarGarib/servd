@@ -1,7 +1,7 @@
 'use client'
 import Link from 'next/link'
 import type { Concept } from '../../../lib/concept'
-import { brandStory, conceptHeroImage, typeLabel } from '../../../lib/concept'
+import { brandStory, conceptHeroImage, typeLabel, formatBrandName } from '../../../lib/concept'
 import { PromoBar } from '../parts/PromoBar'
 import { CrossBrandStrip } from '../parts/CrossBrandStrip'
 import { BottomCTA } from '../parts/BottomCTA'
@@ -37,7 +37,7 @@ export function GenericBrandLayout({ concept, concepts }: Props) {
 
   return (
     <div style={{ background: '#fff', color: 'var(--servd-ink)' }}>
-      <PromoBar brandName={concept.name} brandSlug={concept.slug} accent={accent} />
+      <PromoBar brandName={formatBrandName(concept.name)} brandSlug={concept.slug} accent={accent} />
 
       <section style={{
         position: 'relative',
@@ -65,7 +65,7 @@ export function GenericBrandLayout({ concept, concepts }: Props) {
               margin: 0,
               maxWidth: '62rem',
             }}>
-              {concept.name}.
+              {formatBrandName(concept.name)}.
             </h1>
             <OpenStatusBadge hoursData={hoursData} accentColor="var(--servd-green)" size="md" />
           </div>
@@ -83,7 +83,7 @@ export function GenericBrandLayout({ concept, concepts }: Props) {
               textDecoration: 'none', borderRadius: '999px',
               boxShadow: '0 16px 38px rgba(0,0,0,0.25)',
             }}>
-              Order from {concept.name} →
+              Order from {formatBrandName(concept.name)} →
             </Link>
             <Link href={`/brand/${concept.slug}/menu`} style={{
               padding: 'clamp(1rem, 1.8vw, 1.2rem) clamp(1.75rem, 3.2vw, 2.2rem)',
@@ -153,7 +153,7 @@ export function GenericBrandLayout({ concept, concepts }: Props) {
             The story
           </p>
           <h2 style={{ fontSize: 'clamp(1.5rem, 3vw, 2.25rem)', letterSpacing: '-0.02em', marginBottom: '1.25rem' }}>
-            Why {concept.name}?
+            Why {formatBrandName(concept.name)}?
           </h2>
           <p style={{ fontSize: '1.05rem', lineHeight: 1.6 }}
             dangerouslySetInnerHTML={{ __html: story.long }}
@@ -170,7 +170,7 @@ export function GenericBrandLayout({ concept, concepts }: Props) {
             From your neighbours
           </p>
           <h2 style={{ fontSize: 'clamp(1.75rem, 3.5vw, 2.5rem)', letterSpacing: '-0.02em', textAlign: 'center', marginBottom: '2.5rem' }}>
-            <span style={{ color: accent }}>4.8 stars</span> from {concept.name} regulars
+            <span style={{ color: accent }}>4.8 stars</span> from {formatBrandName(concept.name)} regulars
           </h2>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '1.25rem' }}>
             {GENERIC_REVIEWS.map((r, i) => (
@@ -193,7 +193,7 @@ export function GenericBrandLayout({ concept, concepts }: Props) {
       </section>
 
       <CrossBrandStrip current={concept} concepts={concepts} accent={accent} />
-      <BottomCTA brandName={concept.name} brandSlug={concept.slug} accent={accent} />
+      <BottomCTA brandName={formatBrandName(concept.name)} brandSlug={concept.slug} accent={accent} />
     </div>
   )
 }

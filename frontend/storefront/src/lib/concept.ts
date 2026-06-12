@@ -55,6 +55,14 @@ export function brandAccent(slug: string, fallback: string | null | undefined): 
   return BRAND_ACCENT_OVERRIDES[slug] ?? fallback ?? '#22c55e'
 }
 
+/** The Simmer wordmark is ALWAYS lowercase per brand guidelines — capital-S
+ *  "Simmer" anywhere user-visible is a bug. Other brands render as stored.
+ *  Wrap any user-visible brand/concept name with this. */
+export function formatBrandName(name: string | null | undefined): string {
+  const n = (name ?? '').trim()
+  return n.toLowerCase() === 'simmer' ? 'simmer' : n
+}
+
 export function typeLabel(t: string): string {
   if (t === 'digital')    return 'Delivery'
   if (t === 'cart')       return 'Walk-up'
@@ -95,7 +103,7 @@ export const BRAND_STORIES: Record<string, BrandStory> = {
   'simmer': {
     tagline: 'Slow nights, plated softly.',
     oneLiner: 'Fine-casual mocktail bar and small-plates kitchen — intimate room, seasonal menu.',
-    long: 'Simmer is GS Foods’ flagship plated-service concept. The menu rotates with the season — small plates built to share, hand-crafted mocktails, and a room that knows when to fade and when to glow. We cook because we care about the table. Every dish is plated as if it’s going to someone we know.',
+    long: 'simmer is GS Foods’ flagship plated-service concept. The menu rotates with the season — small plates built to share, hand-crafted mocktails, and a room that knows when to fade and when to glow. We cook because we care about the table. Every dish is plated as if it’s going to someone we know.',
     highlights: ['Plated table service', 'Hand-built mocktails', 'Seasonal small plates', 'Mains & desserts', 'Reservations welcome'],
     hours: 'Dinner 7:00 PM – 10:30 PM · Late Night 10:30 PM – 2:30 AM',
   },

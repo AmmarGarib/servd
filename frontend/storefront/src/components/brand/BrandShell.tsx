@@ -2,6 +2,7 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import type { Concept } from '../../lib/concept'
+import { formatBrandName } from '../../lib/concept'
 import { useBrandSlug, getServdHost } from '../../lib/host'
 import { KineticShape } from '../kinetic/KineticShape'
 import { isLight } from '../../lib/ui'
@@ -68,7 +69,7 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
 
   return (
     <nav
-      aria-label={`${concept.name} navigation`}
+      aria-label={`${formatBrandName(concept.name)} navigation`}
       style={{
         position: 'sticky',
         top: 0,
@@ -103,7 +104,7 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
           fontFamily: 'var(--font-display)',
           letterSpacing: '-0.02em',
         }}>
-          {concept.name.charAt(0)}
+          {formatBrandName(concept.name).charAt(0)}
         </span>
         <span style={{
           fontFamily: 'var(--font-display)',
@@ -111,7 +112,7 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
           fontWeight: 800,
           letterSpacing: '-0.035em',
         }}>
-          {concept.name}
+          {formatBrandName(concept.name)}
         </span>
       </Link>
 
@@ -145,7 +146,7 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
             the brand. Sits right after the link group. */}
         <Link
           href={`/${concept.slug}`}
-          aria-label={`Order from ${concept.name}`}
+          aria-label={`Order from ${formatBrandName(concept.name)}`}
           className="brand-pill"
           style={{ padding: '0.55rem 1.15rem', fontSize: '0.92rem', marginLeft: '0.5rem' }}
         >
@@ -199,7 +200,7 @@ function BrandFooter({ concept, onBrandHost, accent }: { concept: Concept; onBra
             <span className="display-italic" style={{ color: accent }}> Let's eat.</span>
           </h2>
           <Link href={`/${concept.slug}`} className="brand-pill">
-            Order from {concept.name} →
+            Order from {formatBrandName(concept.name)} →
           </Link>
         </div>
 
@@ -219,7 +220,7 @@ function BrandFooter({ concept, onBrandHost, accent }: { concept: Concept; onBra
               color: 'white',
               marginBottom: '0.5rem',
             }}>
-              {concept.name}
+              {formatBrandName(concept.name)}
               <span style={{ color: accent }}>.</span>
             </div>
             <p style={{ fontSize: '0.95rem', color: 'rgba(255,255,255,0.55)', maxWidth: '20rem', lineHeight: 1.5 }}>
@@ -229,7 +230,7 @@ function BrandFooter({ concept, onBrandHost, accent }: { concept: Concept; onBra
 
           <div>
             <h3 className="eyebrow" style={{ color: 'rgba(255,255,255,0.45)', marginBottom: '1rem' }}>
-              {concept.name}
+              {formatBrandName(concept.name)}
             </h3>
             <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'grid', gap: '0.7rem' }}>
               <li><Link href={onBrandHost ? '/menu'  : `/brand/${concept.slug}/menu`}  style={footerLinkStyle}>Menu</Link></li>
@@ -283,7 +284,7 @@ function BrandFooter({ concept, onBrandHost, accent }: { concept: Concept; onBra
           fontSize: '0.78rem',
           color: 'rgba(255,255,255,0.4)',
         }}>
-          <span>© {new Date().getFullYear()} {concept.name} · GS Foods Pvt. Ltd.</span>
+          <span>© {new Date().getFullYear()} {formatBrandName(concept.name)} · GS Foods Pvt. Ltd.</span>
           <Link href={servdHome} style={{ color: 'rgba(255,255,255,0.55)', textDecoration: 'none' }}>
             back to servd<span style={{ color: accent }}>.</span> →
           </Link>

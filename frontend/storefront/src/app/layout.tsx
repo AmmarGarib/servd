@@ -9,7 +9,7 @@ export const metadata: Metadata = {
   // public host — flip via NEXT_PUBLIC_SITE_URL when the domain moves to servd.pk.
   metadataBase: new URL(process.env['NEXT_PUBLIC_SITE_URL'] ?? 'https://servd-app.garibsons.app'),
   title: { default: 'servd — order from your favourite kitchens', template: '%s · servd' },
-  description: 'Three kitchens. One cart. Order direct from Simmer, Stax, and Flipd — delivered fresh.',
+  description: 'Three kitchens. One cart. Order direct from simmer, Stax, and Flipd — delivered fresh.',
   applicationName: 'servd',
   formatDetection: { telephone: false, email: false, address: false },
   manifest: '/manifest.webmanifest',
