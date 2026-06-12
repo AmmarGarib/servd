@@ -15,7 +15,7 @@
 // After both succeed: clear cart, print receipt (best-effort), bounce back
 // to POS.
 
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { View, Text, ScrollView, Pressable, Alert } from 'react-native'
 import { useRouter } from 'expo-router'
 import { useMutation } from '@tanstack/react-query'
@@ -60,6 +60,12 @@ export default function TenderScreen() {
   const [pickedTender, setPickedTender] = useState<Tender>('cash')
   const [amountStr, setAmountStr] = useState('')
   const [tenders, setTenders] = useState<TenderEntry[]>([])
+
+  // Stable idempotency key for this ring-up. A double-tap or a retry reuses it,
+  // so the server dedupes to ONE order instead of firing duplicate tickets. A
+  // fresh tender screen (next sale) gets a new key.
+  const idemKey = useRef<string>('')
+  if (!idemKey.current) idemKey.current = `pos-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
 
   const due = subtotal + tipCents
   const paidSoFar = tenders.reduce((s, t) => s + t.amountCents, 0)
@@ -115,6 +121,7 @@ export default function TenderScreen() {
       //    server-side and binds to the shift.
       const order = await api.post<{ id: string }>('/pos/orders', {
         conceptId: pos.conceptId,
+        idempotencyKey: idemKey.current,
         tableId: pos.tableId,
         customerId: pos.customerId,
         shiftId: shift.shiftId,
@@ -313,7 +320,7 @@ export default function TenderScreen() {
             size="xl"
             full
             busy={fire.isPending}
-            disabled={!fullyPaid || pos.lines.length === 0}
+            disabled={!fullyPaid || pos.lines.length === 0 || fire.isPending}
             onPress={() => fire.mutate()}
           />
 

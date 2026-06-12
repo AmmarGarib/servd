@@ -1,5 +1,5 @@
 'use client'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useMutation } from '@tanstack/react-query'
 import { posApi } from '../../lib/api'
 import { usePosStore } from '../../store/pos'
@@ -22,6 +22,16 @@ export function PaymentModal({ taxRate, onClose }: PaymentModalProps) {
   const [compReason, setCompReason] = useState('')
   const [createdOrderId, setCreatedOrderId] = useState<string | null>(null)
 
+  // Stable idempotency key for this checkout — a double-click or a retry after a
+  // failed payment reuses it, so the server returns the SAME order instead of
+  // creating (and firing) a duplicate.
+  const idemKey = useRef<string>('')
+  if (!idemKey.current) {
+    idemKey.current = (typeof crypto !== 'undefined' && crypto.randomUUID)
+      ? `pos-${crypto.randomUUID()}`
+      : `pos-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+  }
+
   const fmt = (cents: number) => `PKR ${(cents / 100).toFixed(0)}`
 
   const tenderedCents = method === 'cash' ? Math.round(parseFloat(tendered || '0') * 100) : 0
@@ -32,6 +42,7 @@ export function PaymentModal({ taxRate, onClose }: PaymentModalProps) {
       // 1. Create POS order
       const order = await posApi.createOrder({
         conceptId,
+        idempotencyKey: idemKey.current,
         tableId,
         customerId,
         shiftId,

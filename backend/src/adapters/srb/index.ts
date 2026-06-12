@@ -177,6 +177,7 @@ export async function buildSrbDataForOrder(orderId: string): Promise<SrbOrderDat
     where: { id: orderId },
     include: {
       concept: { select: { name: true, invoiceLegalName: true, ntn: true, srbPosId: true, taxRateCash: true, taxRateCard: true, taxRate: true } },
+      items: { where: { status: { not: 'voided' } }, include: { modifiers: true } },
       payments: { where: { status: 'paid' } },
       customer: { select: { name: true, phone: true, ntn: true, cnic: true } },
     },
@@ -196,10 +197,18 @@ export async function buildSrbDataForOrder(orderId: string): Promise<SrbOrderDat
     ? (order.concept.taxRateCash ?? order.concept.taxRate)
     : (order.concept.taxRateCard ?? order.concept.taxRate))
 
-  // saleValue = gross, pre-discount, ex-tax, ex-service-charge.
-  // order.totalCents = (itemTotal − discount) + tax + serviceCharge, so:
-  //   itemTotal (pre-discount, ex-tax) = total − tax − serviceCharge + discount
-  const saleValueCents = order.totalCents - order.taxCents - order.serviceChargeCents + order.discountCents
+  // saleValue = gross taxable sale, PRE-discount, ex-tax. Computed straight from
+  // the line items so it's correct for EVERY order source (POS, storefront,
+  // group) regardless of how delivery fees / tips / service charge / wallet sit
+  // in totalCents. Every order path taxes this same pre-discount base, so
+  // saleValue × rate matches the tax that was charged.
+  const saleValueCents = order.items.reduce((sum, it) => {
+    const mods = it.modifiers.reduce((m, mod) => m + mod.priceDeltaCents * it.quantity, 0)
+    return sum + it.unitPriceCents * it.quantity + mods
+  }, 0)
+
+  // All price reductions on the supply (POS line discount + storefront promo).
+  const discountCents = order.discountCents + order.promoDiscountCents
 
   return {
     invoiceId: `SRB-${order.id.slice(-12).toUpperCase()}`,
@@ -210,7 +219,7 @@ export async function buildSrbDataForOrder(orderId: string): Promise<SrbOrderDat
     invoiceType: 1,
     rateValue,
     saleValueCents,
-    discountCents: order.discountCents,
+    discountCents,
     modeOfPay,
     consumer: {
       name:   order.customer?.name ?? order.customerName,
@@ -219,5 +228,31 @@ export async function buildSrbDataForOrder(orderId: string): Promise<SrbOrderDat
       email:  null,
       address: null,
     },
+  }
+}
+
+// ─── Sales-return (refund) ─────────────────────────────────────────────────────
+//
+// SRB models a refund as a separate invoiceType=2 ("Sales Return") submission
+// for the returned value. We derive the return's taxable sale value from the
+// (tax-inclusive) refund amount so the spec formula holds:
+//   saleValue = refundNet / (1 + rate/100);  taxAmount = saleValue × rate
+// The return carries its own unique invoiceId so it never collides with the
+// original sale or with other partial refunds on the same order.
+
+export async function buildSrbReturnForRefund(orderId: string, refundAmountCents: number, refundRef: string): Promise<SrbOrderData | null> {
+  const base = await buildSrbDataForOrder(orderId)
+  if (!base) return null
+
+  const refundNet = Math.max(0, refundAmountCents)
+  const saleValueCents = Math.round(refundNet / (1 + base.rateValue / 100))
+
+  return {
+    ...base,
+    invoiceId: `SRBRET-${orderId.slice(-10).toUpperCase()}-${refundRef.slice(-6).toUpperCase()}`,
+    invoiceType: 2,
+    invoiceDateTime: new Date(),
+    saleValueCents,
+    discountCents: 0,
   }
 }

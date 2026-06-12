@@ -38,6 +38,10 @@ const posOrderSchema = z.object({
   discountCents: z.number().int().min(0).default(0),
   discountReason: z.string().optional(),
   managerOverridePin: z.string().min(4).max(8).optional(),     // required when discount/override exceeds cashier cap
+  // Client-generated key, stable across retries of the SAME ring-up, so a
+  // double-tap or an offline-queue resend dedupes to ONE order instead of
+  // firing duplicate tickets. Falls back to a timestamp when absent.
+  idempotencyKey: z.string().min(8).max(100).optional(),
 })
 
 const paymentSchema = z.object({

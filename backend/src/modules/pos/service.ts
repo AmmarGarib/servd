@@ -31,6 +31,9 @@ export interface PosOrderInput {
   }>
   discountCents?: number
   discountReason?: string
+  // Stable client key for idempotent order creation (double-tap / offline resend
+  // dedupe). Used as the order's external_id.
+  idempotencyKey?: string
   // CEO policy: GST splits by tender. Cashier picks the intended payment
   // method when ringing up so the bill on the receipt matches what gets
   // collected. 'cash' → taxRateCash (default 15%); anything else →
@@ -39,6 +42,17 @@ export interface PosOrderInput {
 }
 
 export async function createPosOrder(input: PosOrderInput) {
+  // Idempotency: a double-tapped "complete & fire" or an offline-queue resend
+  // carries the SAME idempotencyKey. If we've already created that order, return
+  // it untouched — no second ticket, no re-flagging, no duplicate charge.
+  if (input.idempotencyKey) {
+    const existing = await prisma.order.findUnique({
+      where: { source_externalId: { source: 'pos' as never, externalId: input.idempotencyKey } },
+      include: { items: { include: { modifiers: true } } },
+    })
+    if (existing) return existing
+  }
+
   // Calculate total
   const itemTotal = input.items.reduce((sum, item) => {
     const modTotal = item.modifiers.reduce((ms, m) => ms + m.priceDeltaCents, 0)
@@ -141,7 +155,7 @@ export async function createPosOrder(input: PosOrderInput) {
 
   const dto: OrderDTO = {
     source: 'pos',
-    external_id: `pos-${Date.now()}`,
+    external_id: input.idempotencyKey ?? `pos-${Date.now()}`,
     concept_id: input.conceptId,
     placed_at: new Date().toISOString(),
     customer_id: input.customerId ?? null,
@@ -224,6 +238,23 @@ async function submitSrbForReceipt(orderId: string): Promise<{ srbInvoiceId: str
     getSrbQueue()
       ?.add('submit', { orderId })
       .catch((e: Error) => console.warn('[SRB] Failed to enqueue fallback submission:', e.message))
+    return null
+  }
+}
+
+// SRB sales-return for a refund (invoiceType 2). Best-effort synchronous — the
+// normal-invoice retry queue can't carry a return, so on failure we log a
+// compliance error for manual follow-up rather than silently dropping it.
+// Returns the SRB return invoice id on success.
+async function submitSrbReturnForRefund(orderId: string, refundAmountCents: number, refundRef: string): Promise<string | null> {
+  try {
+    const { buildSrbReturnForRefund, submitSrbInvoice } = await import('../../adapters/srb/index.js')
+    const data = await buildSrbReturnForRefund(orderId, refundAmountCents, refundRef)
+    if (!data) return null // concept not SRB-registered
+    const { srbInvoiceId } = await withTimeout(submitSrbInvoice(data), 8000, 'SRB return')
+    return srbInvoiceId
+  } catch (err) {
+    console.error(`[SRB] COMPLIANCE: sales-return submission failed for order ${orderId} (refund ${refundRef}): ${(err as Error).message}`)
     return null
   }
 }
@@ -794,15 +825,18 @@ export async function refundOrder(input: CompRefundInput) {
     },
   })
 
+  // File the SRB sales-return (invoiceType 2) for the refunded value.
+  const srbReturnInvoiceNo = await submitSrbReturnForRefund(input.orderId, input.amountCents, refundPayment.id)
+
   await audit({
     action: 'order_refund',
     entity: 'Order',
     entityId: input.orderId,
     userId: input.actorId,
-    metadata: { amountCents: input.amountCents, reason: input.reason, photoUrl: input.photoUrl, approverId, refundPaymentId: refundPayment.id, adjustments },
+    metadata: { amountCents: input.amountCents, reason: input.reason, photoUrl: input.photoUrl, approverId, refundPaymentId: refundPayment.id, adjustments, srbReturnInvoiceNo },
   })
   await notifyOwnerIfThreshold(input.amountCents, policy, 'refund', input.orderId, input.reason, input.actorId)
-  return refundPayment
+  return { ...refundPayment, srbReturnInvoiceNo }
 }
 
 // ─── Discount / price-override helpers ───────────────────────────────────────
