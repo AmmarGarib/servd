@@ -12,7 +12,7 @@
 import { Worker } from 'bullmq'
 import { redis } from '../lib/redis.js'
 import { serviceClient as prisma } from '../lib/prisma.js'
-import { buildSrbDataForOrder, submitSrbInvoice } from '../adapters/srb/index.js'
+import { buildSrbDataForOrder, buildSrbReturnForRefund, submitSrbInvoice } from '../adapters/srb/index.js'
 import type { SrbSubmissionJob } from '../lib/queue.js'
 
 export function startSrbSubmissionWorker() {
@@ -20,7 +20,22 @@ export function startSrbSubmissionWorker() {
     const worker = new Worker<SrbSubmissionJob>(
       'srb-submission',
       async (job) => {
-        const { orderId } = job.data
+        const { orderId, kind, refundAmountCents, refundRef } = job.data
+
+        // Sales-return (refund) path — invoiceType 2. Doesn't touch the order's
+        // sale invoice fields; the return id is recorded by the refund audit log.
+        if (kind === 'return') {
+          console.info(`[SRB] Submitting sales-return for order ${orderId}, attempt ${job.attemptsMade + 1}`)
+          const ret = await buildSrbReturnForRefund(orderId, refundAmountCents ?? 0, refundRef ?? job.id ?? orderId)
+          if (!ret) {
+            console.info(`[SRB] Return for order ${orderId} skipped — concept has no srbPosId`)
+            return { skipped: true }
+          }
+          const { srbInvoiceId } = await submitSrbInvoice(ret)
+          console.info(`[SRB] Sales-return submitted for order ${orderId}: ${srbInvoiceId}`)
+          return { srbInvoiceNumber: srbInvoiceId, kind: 'return' }
+        }
+
         console.info(`[SRB] Submitting invoice for order ${orderId}, attempt ${job.attemptsMade + 1}`)
 
         const data = await buildSrbDataForOrder(orderId)

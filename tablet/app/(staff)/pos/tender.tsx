@@ -30,14 +30,15 @@ import { Keypad } from '../../../src/components/Keypad'
 import { Panel, Pill } from '../../../src/components/Panel'
 import { printReceipt, isPrinterReady } from '../../../src/lib/printer'
 
-type Tender = 'cash' | 'card' | 'jazzcash' | 'easypaisa'
+// JazzCash / Easypaisa are intentionally NOT POS tenders — those belong in the
+// customer wallet (future), not at the till. The backend only accepts these
+// methods (F-PAY02), so offering more here just produced failed sales.
+type Tender = 'cash' | 'card'
 
 // Maps tender UI value to the backend's payment method enum.
 const METHOD_FOR_TENDER: Record<Tender, string> = {
-  cash:      'cash',
-  card:      'card',
-  jazzcash:  'jazzcash_wallet',
-  easypaisa: 'easypaisa_wallet',
+  cash: 'cash',
+  card: 'card',
 }
 
 interface TenderEntry {
@@ -214,7 +215,7 @@ export default function TenderScreen() {
           {/* Tender method */}
           <Panel title="Tender method">
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-              {(['cash', 'card', 'jazzcash', 'easypaisa'] as const).map(t => (
+              {(['cash', 'card'] as const).map(t => (
                 <Pressable
                   key={t}
                   onPress={() => setPickedTender(t)}

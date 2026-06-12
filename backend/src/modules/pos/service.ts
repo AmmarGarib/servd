@@ -242,10 +242,10 @@ async function submitSrbForReceipt(orderId: string): Promise<{ srbInvoiceId: str
   }
 }
 
-// SRB sales-return for a refund (invoiceType 2). Best-effort synchronous — the
-// normal-invoice retry queue can't carry a return, so on failure we log a
-// compliance error for manual follow-up rather than silently dropping it.
-// Returns the SRB return invoice id on success.
+// SRB sales-return for a refund (invoiceType 2). Tries synchronously so the
+// return invoice id can be recorded immediately; on timeout/error it enqueues a
+// durable retry (the worker handles kind:'return') so a compliance filing is
+// never lost. Returns the SRB return invoice id on success.
 async function submitSrbReturnForRefund(orderId: string, refundAmountCents: number, refundRef: string): Promise<string | null> {
   try {
     const { buildSrbReturnForRefund, submitSrbInvoice } = await import('../../adapters/srb/index.js')
@@ -254,7 +254,10 @@ async function submitSrbReturnForRefund(orderId: string, refundAmountCents: numb
     const { srbInvoiceId } = await withTimeout(submitSrbInvoice(data), 8000, 'SRB return')
     return srbInvoiceId
   } catch (err) {
-    console.error(`[SRB] COMPLIANCE: sales-return submission failed for order ${orderId} (refund ${refundRef}): ${(err as Error).message}`)
+    console.warn(`[SRB] sales-return sync failed for order ${orderId} (refund ${refundRef}); enqueuing retry: ${(err as Error).message}`)
+    getSrbQueue()
+      ?.add('submit', { orderId, kind: 'return', refundAmountCents, refundRef })
+      .catch((e: Error) => console.error(`[SRB] COMPLIANCE: failed to enqueue sales-return retry for ${orderId}: ${e.message}`))
     return null
   }
 }
