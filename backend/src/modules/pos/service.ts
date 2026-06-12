@@ -129,12 +129,15 @@ export async function createPosOrder(input: PosOrderInput) {
     ? (concept.taxRateCash ?? concept.taxRate)
     : (concept.taxRateCard ?? concept.taxRate)
   const taxRate = effectiveRate / 100
-  const subtotal = itemTotal - discount
-  const taxCents = Math.round(subtotal * taxRate)
-  // Service charge applies to the post-tax subtotal so customers see the
-  // service line on top of (food + tax).
-  const serviceChargeCents = await computeServiceCharge(subtotal + taxCents, 'pos')
-  const totalCents = subtotal + taxCents + serviceChargeCents
+  // SRB POS rule: GST is charged on the PRE-discount sale value — the discount
+  // does NOT reduce the taxable base. So taxAmount = saleValue × rate, and the
+  // discount then comes off the tax-inclusive total:
+  //   net = saleValue + tax − discount   (matches the SRB invoice payload)
+  const taxCents = Math.round(itemTotal * taxRate)
+  const netAfterDiscount = itemTotal + taxCents - discount
+  // Service charge sits on top of the net (food + tax − discount).
+  const serviceChargeCents = await computeServiceCharge(netAfterDiscount, 'pos')
+  const totalCents = netAfterDiscount + serviceChargeCents
 
   const dto: OrderDTO = {
     source: 'pos',
@@ -192,6 +195,38 @@ export interface ProcessPaymentInput {
 // Card / wallet payments require gateway confirmation before being marked 'paid'.
 // Cash and comp settle instantly at the till.
 const INSTANT_SETTLE: Set<PaymentMethod> = new Set(['cash', 'comp'])
+
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    p,
+    new Promise<T>((_, reject) => setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms)),
+  ])
+}
+
+// SRB submission for the receipt QR. Tries the live gateway synchronously (so
+// the QR can print on the receipt) but NEVER blocks the sale: on any error or
+// timeout it falls back to the async retry queue and returns null. Returns the
+// SRB invoice id + QR link on success. Silently returns null when the concept
+// isn't SRB-registered.
+async function submitSrbForReceipt(orderId: string): Promise<{ srbInvoiceId: string; qrCodeLink: string | null } | null> {
+  try {
+    const { buildSrbDataForOrder, submitSrbInvoice } = await import('../../adapters/srb/index.js')
+    const data = await buildSrbDataForOrder(orderId)
+    if (!data) return null // not SRB-registered — nothing to do
+    const result = await withTimeout(submitSrbInvoice(data), 8000, 'SRB submit')
+    await prisma.order.update({
+      where: { id: orderId },
+      data: { srbInvoiceNumber: result.srbInvoiceId, srbQrCodeLink: result.qrCodeLink },
+    })
+    return result
+  } catch (err) {
+    console.warn(`[SRB] sync submit failed for ${orderId}; falling back to queue: ${(err as Error).message}`)
+    getSrbQueue()
+      ?.add('submit', { orderId })
+      .catch((e: Error) => console.warn('[SRB] Failed to enqueue fallback submission:', e.message))
+    return null
+  }
+}
 
 export async function processPayment(input: ProcessPaymentInput) {
   if (input.payments.length === 0) {
@@ -300,23 +335,22 @@ export async function processPayment(input: ProcessPaymentInput) {
     return { payments: createdPayments }
   })
 
-  // Tax-invoicing fan-out — fire-and-forget, never blocks payment response.
-  // FBR (federal) and SRB (provincial Sindh) each get a job. Both workers
-  // silent-skip when the order's concept has no POSID for that authority,
-  // so concepts outside Sindh just don't queue SRB work. Only fired for
-  // instant-settle orders; card/wallet orders are queued from the gateway
-  // webhook once the payment confirms.
+  // Tax-invoicing fan-out. FBR (federal) stays fire-and-forget. SRB (Sindh) is
+  // attempted SYNCHRONOUSLY so the invoice-verification QR can print on the
+  // receipt (the SRB spec requires the QR on the invoice) — but it NEVER blocks
+  // or fails the sale: on timeout/error submitSrbForReceipt falls back to the
+  // async retry queue. Only for instant-settle orders; card/wallet orders submit
+  // from the gateway webhook once the payment confirms.
   const allInstantSettle = input.payments.every((p) => INSTANT_SETTLE.has(p.method))
+  let srb: { srbInvoiceId: string; qrCodeLink: string | null } | null = null
   if (allInstantSettle) {
     getFbrQueue()
       ?.add('submit', { orderId: input.orderId })
       .catch((err: Error) => console.warn('[FBR] Failed to enqueue invoice submission:', err.message))
-    getSrbQueue()
-      ?.add('submit', { orderId: input.orderId })
-      .catch((err: Error) => console.warn('[SRB] Failed to enqueue invoice submission:', err.message))
+    srb = await submitSrbForReceipt(input.orderId)
   }
 
-  return result
+  return { ...result, srb }
 }
 
 // ─── Shift management ─────────────────────────────────────────────────────────

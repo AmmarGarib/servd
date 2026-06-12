@@ -311,6 +311,10 @@ export async function posRoutes(fastify: FastifyInstance) {
         paidCents,
         tenderType:    primaryTender,
         placedAt:      order.placedAt.toISOString(),
+        // SRB compliance — printed as "SRB Invoice No" + verification QR when
+        // the order's concept is SRB-registered and submission has succeeded.
+        srbInvoiceNo:  order.srbInvoiceNumber ?? null,
+        srbQrLink:     order.srbQrCodeLink ?? null,
       }
     },
   )
