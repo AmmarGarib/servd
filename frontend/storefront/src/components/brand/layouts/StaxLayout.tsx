@@ -10,6 +10,7 @@
 // the menu API exposes per-brand items.
 
 import Link from 'next/link'
+import dynamic from 'next/dynamic'
 import type { Concept } from '../../../lib/concept'
 import { CrossBrandStrip } from '../parts/CrossBrandStrip'
 import { OpenStatusBadge, HoursGrid, useHoursData } from '../parts/OpenStatusBadge'
@@ -24,6 +25,10 @@ interface Props {
 // a parts catalogue. Pure ornament, but it ties the visual language to
 // the workshop reference.
 const SPECS = ['00', '01', '02', '03', '04', '05'] as const
+
+// Animated blueprint-grid hero background (WebGL2). ssr:false — WebGL can't SSR;
+// reduced-motion falls back to the section's static CSS grid.
+const StaxGridBackground = dynamic(() => import('../../ui/StaxGridBackground'), { ssr: false })
 
 export function StaxLayout({ concept, concepts }: Props) {
   const hoursData = useHoursData(concept.slug)
@@ -41,9 +46,11 @@ export function StaxLayout({ concept, concepts }: Props) {
         </div>
       )}
 
-      {/* ── HERO ─ Industrial header: spec tag, wordmark, spec line, sub. ── */}
-      <section className="stax-grid-bg" style={{ padding: 'clamp(4rem, 12vh, 8rem) clamp(1.5rem, 5vw, 3rem) clamp(3rem, 6vh, 4rem)' }}>
-        <div style={{ maxWidth: '76rem', margin: '0 auto' }}>
+      {/* ── HERO ─ Industrial header: spec tag, wordmark, spec line, sub.
+            Animated blueprint-grid shader behind; content lifted above it. ── */}
+      <section className="stax-grid-bg" style={{ position: 'relative', overflow: 'hidden', padding: 'clamp(4rem, 12vh, 8rem) clamp(1.5rem, 5vw, 3rem) clamp(3rem, 6vh, 4rem)' }}>
+        <StaxGridBackground />
+        <div style={{ position: 'relative', zIndex: 1, maxWidth: '76rem', margin: '0 auto' }}>
           <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '2rem', flexWrap: 'wrap', marginBottom: '2rem' }}>
             <span className="stax-spec">{SPECS[0]} / KITCHEN — KARACHI</span>
             <span className="stax-spec" style={{ color: 'var(--stax-grey-60)' }}>SPEC SHEET · v.2026</span>
