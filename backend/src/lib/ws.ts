@@ -6,6 +6,7 @@ import { Server as SocketIOServer } from 'socket.io'
 import { createAdapter } from '@socket.io/redis-adapter'
 import { redisPub, redisSub } from './redis.js'
 import { isAllowedOrigin } from './corsAllowlist.js'
+import { parseCookieHeader, ACCESS_COOKIE } from './cookies.js'
 import type { FastifyInstance } from 'fastify'
 import { verifyStaffToken } from '../modules/auth/service.js'
 import { prisma } from './prisma.js'
@@ -43,7 +44,10 @@ export function initWebSocket(fastify: FastifyInstance): SocketIOServer {
   io.use(async (socket, next) => {
     const auth = socket.handshake.auth as { token?: string }
     const queryToken = (socket.handshake.query as { token?: string })?.token
-    const token = auth?.token ?? queryToken
+    // Manager web holds no token in JS — it connects withCredentials and the
+    // access token rides in the httpOnly cookie.
+    const cookieToken = parseCookieHeader(socket.handshake.headers.cookie, ACCESS_COOKIE)
+    const token = auth?.token ?? queryToken ?? cookieToken
     if (!token) return next(new Error('UNAUTHORIZED'))
     try {
       // KDS screens use PIN tokens; admin/manager browser sessions use access

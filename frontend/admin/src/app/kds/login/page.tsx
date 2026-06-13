@@ -9,7 +9,7 @@ const PAD = ['1','2','3','4','5','6','7','8','9','','0','⌫']
 export default function KDSLoginPage() {
   const router = useRouter()
   const setAuth = useAuthStore((s) => s.setAuth)
-  const token   = useAuthStore((s) => s.token)
+  const user    = useAuthStore((s) => s.user)
 
   const [pin,     setPin]     = useState('')
   const [name,    setName]    = useState('')   // station operator name, sent with the PIN
@@ -19,8 +19,8 @@ export default function KDSLoginPage() {
 
   // Already authenticated — go straight to KDS
   useEffect(() => {
-    if (token) router.replace('/kds/all')
-  }, [token, router])
+    if (user) router.replace('/kds/all')
+  }, [user, router])
 
   async function submitPin(pinVal: string) {
     if (pinVal.length < 4 || loading) return
@@ -30,6 +30,7 @@ export default function KDSLoginPage() {
       const res = await fetch(`${API_URL}/api/v1/auth/pin`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',                          // accept the httpOnly session cookie
         body: JSON.stringify({ identifier: name.trim(), pin: pinVal }),
       })
       if (!res.ok) {

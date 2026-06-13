@@ -34,20 +34,23 @@ async function refreshAccessToken(): Promise<string | null> {
   if (_refreshing) return _refreshing
   _refreshing = (async () => {
     try {
+      // refreshToken may be null after a reload (we no longer persist it) — the
+      // httpOnly refresh cookie carries it, so always attempt the refresh.
       const refreshToken = getRefreshToken()
-      if (!refreshToken) return null
       const res = await fetch(`${API_URL}/api/v1/auth/refresh`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ refreshToken }),
+        credentials: 'include',
+        body: JSON.stringify(refreshToken ? { refreshToken } : {}),
       })
       if (!res.ok) return null
-      const data = (await res.json()) as { accessToken: string }
-      // F43: write the new access token back through the store so persistence
-      // and any subscribers (e.g. the socket reconnect logic) see the update.
+      const data = (await res.json()) as { accessToken?: string }
+      // Mirror the rotated token into memory for the WS handshake. The cookie is
+      // the real credential; return a sentinel so the request retries even when
+      // the body carries no token.
       const cur = useAuthStore.getState()
-      if (cur.user) cur.setAuth(cur.user, data.accessToken, refreshToken)
-      return data.accessToken
+      if (cur.user && data.accessToken) cur.setAuth(cur.user, data.accessToken, refreshToken ?? undefined)
+      return data.accessToken ?? 'cookie'
     } finally {
       _refreshing = null
     }
@@ -175,6 +178,10 @@ async function request<T>(path: string, options: RequestInit = {}, retry = true,
 
   const res = await fetch(`${API_URL}/api/v1${path}`, {
     ...options,
+    // Send the httpOnly session cookie. Bearer is still attached when an
+    // in-memory token exists (fresh login this session); after a reload there's
+    // no token and the cookie alone authenticates.
+    credentials: 'include',
     headers: {
       'Content-Type': 'application/json',
       ...(token && { Authorization: `Bearer ${token}` }),

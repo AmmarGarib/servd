@@ -65,6 +65,7 @@ export default function StaffLoginPage() {
       const res = await fetch(`${API_URL}/api/v1/auth/pin`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',                          // accept the httpOnly session cookie
         body:    JSON.stringify({ identifier: pinName.trim(), pin: pinVal, ...coords }),
       })
       if (!res.ok) {

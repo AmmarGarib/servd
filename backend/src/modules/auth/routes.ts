@@ -6,6 +6,7 @@ import { staffLogin, staffPinLogin, refreshStaffToken, customerRegister, custome
 import { requestOtp, verifyOtp, normalisePhone } from './otp.js'
 import { requireAuth, requireAuthOrPin, requireCustomerAuth, ADMIN_ONLY, MANAGERS, ALL_STAFF } from './middleware.js'
 import { revokeBearer, revokeAllForSubject } from '../../lib/tokenRevocation.js'
+import { setAuthCookies, setAccessCookie, clearAuthCookies, readCookie, ACCESS_COOKIE, REFRESH_COOKIE } from '../../lib/cookies.js'
 import { serviceClient as prisma } from '../../lib/prisma.js'
 import { resolveTenantScope, tenantWhere } from '../../lib/tenantScope.js'
 import { AppError } from '../../lib/errors.js'
@@ -103,6 +104,9 @@ export async function authRoutes(fastify: FastifyInstance) {
       await recordFailure(STAFF_PASSWORD_LIMIT, ip)
       throw err
     }
+    // Manager web: also set httpOnly session cookies (the token stays out of
+    // JS). Tablet/mobile ignore these and keep using the body tokens + Bearer.
+    setAuthCookies(reply, result.accessToken, result.refreshToken)
     return reply.status(200).send(result)
   })
 
@@ -214,6 +218,7 @@ export async function authRoutes(fastify: FastifyInstance) {
       },
     })
 
+    setAuthCookies(reply, result.accessToken, result.refreshToken)
     return reply.status(200).send(result)
   })
 
@@ -271,8 +276,13 @@ export async function authRoutes(fastify: FastifyInstance) {
 
   // POST /auth/refresh — refresh access token
   fastify.post('/refresh', async (req, reply) => {
-    const body = refreshSchema.parse(req.body)
-    const result = await refreshStaffToken(body.refreshToken)
+    // Refresh token from the body (tablet/mobile) OR the httpOnly cookie
+    // (manager web, which holds no token in JS).
+    const body = refreshSchema.partial().parse(req.body ?? {})
+    const refreshToken = body.refreshToken || readCookie(req, REFRESH_COOKIE)
+    if (!refreshToken) return reply.status(401).send({ error: { code: 'NO_REFRESH', message: 'No refresh token provided' } })
+    const result = await refreshStaffToken(refreshToken)
+    setAccessCookie(reply, result.accessToken)   // rotate the web session cookie
     return reply.status(200).send(result)
   })
 
@@ -281,8 +291,12 @@ export async function authRoutes(fastify: FastifyInstance) {
   // list for the remainder of their life. Accepts PIN sessions too (KDS).
   fastify.post('/logout', { preHandler: requireAuthOrPin(...ALL_STAFF) }, async (req, reply) => {
     await revokeBearer(req.headers.authorization)
+    // Manager web sends no Bearer — revoke whatever's in the cookies, then clear.
+    const cookieAt = readCookie(req, ACCESS_COOKIE);  if (cookieAt) await revokeBearer(`Bearer ${cookieAt}`)
+    const cookieRt = readCookie(req, REFRESH_COOKIE); if (cookieRt) await revokeBearer(`Bearer ${cookieRt}`)
     const body = z.object({ refreshToken: z.string().optional() }).parse(req.body ?? {})
     if (body.refreshToken) await revokeBearer(`Bearer ${body.refreshToken}`)
+    clearAuthCookies(reply)
     return reply.status(200).send({ ok: true })
   })
 

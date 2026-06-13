@@ -16,12 +16,12 @@ const FEATURES = [
 const STOREFRONT_URL = process.env['NEXT_PUBLIC_STOREFRONT_URL'] ?? 'http://localhost:3002'
 
 export default function LandingPage() {
-  const token = useAuthStore((s) => s.token)
+  const user = useAuthStore((s) => s.user)
   const router = useRouter()
 
   useEffect(() => {
-    if (token) router.replace('/dashboard')
-  }, [token, router])
+    if (user) router.replace('/dashboard')
+  }, [user, router])
 
   return (
     <div className="min-h-screen bg-s-bg overflow-hidden">

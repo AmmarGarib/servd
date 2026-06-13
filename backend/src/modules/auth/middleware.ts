@@ -8,6 +8,16 @@ import type { UserRole } from '@prisma/client'
 import { serviceClient as prisma } from '../../lib/prisma.js'
 import { setRlsContext } from '../../lib/rlsContext.js'
 import { isRevoked } from '../../lib/tokenRevocation.js'
+import { readCookie, ACCESS_COOKIE } from '../../lib/cookies.js'
+
+// Staff access token comes from EITHER a Bearer header (tablet / mobile) OR the
+// httpOnly session cookie (manager web). The web app no longer holds the token
+// in JS at all — the cookie is its credential.
+function tokenFromRequest(req: FastifyRequest): string | null {
+  const h = req.headers.authorization
+  if (h?.startsWith('Bearer ')) return h.slice(7)
+  return readCookie(req, ACCESS_COOKIE)
+}
 
 // Reject a token that's been logged out or whose subject's sessions were
 // invalidated (password change / deactivation / role change). Best-effort:
@@ -127,11 +137,10 @@ async function attachStaffPrincipal(req: FastifyRequest, payload: { sub: string;
 
 export function requireAuth(...allowedRoles: UserRole[]) {
   return async (req: FastifyRequest, _reply: FastifyReply) => {
-    const authHeader = req.headers.authorization
-    if (!authHeader?.startsWith('Bearer ')) {
-      throw new UnauthorizedError('Missing or malformed Authorization header')
+    const token = tokenFromRequest(req)
+    if (!token) {
+      throw new UnauthorizedError('Missing authentication')
     }
-    const token = authHeader.slice(7)
     const payload = verifyStaffToken(token, 'access')
     await assertNotRevoked(token, payload)
     await attachStaffPrincipal(req, payload, allowedRoles)
@@ -145,11 +154,10 @@ export function requireAuth(...allowedRoles: UserRole[]) {
  */
 export function requirePinSession(...allowedRoles: UserRole[]) {
   return async (req: FastifyRequest, _reply: FastifyReply) => {
-    const authHeader = req.headers.authorization
-    if (!authHeader?.startsWith('Bearer ')) {
-      throw new UnauthorizedError('Missing or malformed Authorization header')
+    const token = tokenFromRequest(req)
+    if (!token) {
+      throw new UnauthorizedError('Missing authentication')
     }
-    const token = authHeader.slice(7)
     const payload = verifyStaffToken(token, 'pin')
     await assertNotRevoked(token, payload)
     await attachStaffPrincipal(req, payload, allowedRoles)
@@ -180,11 +188,10 @@ export async function requireRefresh(req: FastifyRequest, _reply: FastifyReply) 
  */
 export function requireAuthOrPin(...allowedRoles: UserRole[]) {
   return async (req: FastifyRequest, _reply: FastifyReply) => {
-    const authHeader = req.headers.authorization
-    if (!authHeader?.startsWith('Bearer ')) {
-      throw new UnauthorizedError('Missing or malformed Authorization header')
+    const token = tokenFromRequest(req)
+    if (!token) {
+      throw new UnauthorizedError('Missing authentication')
     }
-    const token = authHeader.slice(7)
     let payload
     try {
       payload = verifyStaffToken(token, 'access')
