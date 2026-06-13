@@ -14,6 +14,7 @@ import {
   recordFailure,
   clearFailures,
   PIN_LIMIT,
+  PIN_USER_LIMIT,
   STAFF_PASSWORD_LIMIT,
   CUSTOMER_PASSWORD_LIMIT,
   MAGIC_LINK_VERIFY_LIMIT,
@@ -109,8 +110,15 @@ export async function authRoutes(fastify: FastifyInstance) {
   fastify.post('/pin', async (req, reply) => {
     const ip = req.ip ?? 'unknown'
     await checkRateLimit(PIN_LIMIT, ip)
+    // Per-person lockout — keyed by the typed name/email. Now possible because
+    // staff identify themselves before the PIN (5 wrong tries → 1h lockout for
+    // THAT person, independent of the per-IP limit above).
+    const idKeyRaw = (req.body as { identifier?: unknown })?.identifier
+    const idKey = typeof idKeyRaw === 'string' ? idKeyRaw.trim().toLowerCase() : ''
+    if (idKey) await checkRateLimit(PIN_USER_LIMIT, idKey)
 
     const body = z.object({
+      identifier: z.string().min(1).max(120).optional(), // staff name or email — entered before the PIN (clients send it; optional during rollout)
       pin: z.string().min(4).max(8),
       lat: z.number().min(-90).max(90).optional(),
       lng: z.number().min(-180).max(180).optional(),
@@ -119,10 +127,12 @@ export async function authRoutes(fastify: FastifyInstance) {
 
     let result: Awaited<ReturnType<typeof staffPinLogin>>
     try {
-      result = await staffPinLogin(body.pin)
+      result = await staffPinLogin(body.identifier, body.pin)
       await clearFailures(PIN_LIMIT, ip)
+      if (idKey) await clearFailures(PIN_USER_LIMIT, idKey)
     } catch (err) {
       await recordFailure(PIN_LIMIT, ip)
+      if (idKey) await recordFailure(PIN_USER_LIMIT, idKey)
       throw err
     }
 

@@ -32,6 +32,7 @@ export default function StaffLoginPage() {
 
   // ── PIN state
   const [pin,     setPin]     = useState('')
+  const [pinName, setPinName] = useState('')   // staff name entered before the PIN
   const [error,   setError]   = useState('')
   const [status,  setStatus]  = useState('')
   const [loading, setLoading] = useState(false)
@@ -64,7 +65,7 @@ export default function StaffLoginPage() {
       const res = await fetch(`${API_URL}/api/v1/auth/pin`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ pin: pinVal, ...coords }),
+        body:    JSON.stringify({ identifier: pinName.trim(), pin: pinVal, ...coords }),
       })
       if (!res.ok) {
         const d = await res.json() as { error?: { message?: string } }
@@ -220,6 +221,18 @@ export default function StaffLoginPage() {
 
           {mode === 'pin' ? (
             <>
+              {/* Name first — lets the server check ONE PIN and lock out a
+                  single bad guesser. */}
+              <input
+                type="text"
+                value={pinName}
+                onChange={(e) => setPinName(e.target.value)}
+                placeholder="Your name"
+                autoComplete="off"
+                className="w-full mb-4 rounded-xl px-4 py-3 text-center text-s-text outline-none"
+                style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)' }}
+              />
+
               {/* PIN dots — grow with the entered digits so longer (6-digit)
                   PINs get real feedback past the 4th digit. Minimum 4 outline
                   placeholders, expands up to the 8-digit max as you type. */}

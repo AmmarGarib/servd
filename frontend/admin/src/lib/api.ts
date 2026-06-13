@@ -234,8 +234,8 @@ export const authApi = {
       '/auth/login',
       { email, password },
     ),
-  pin: (pin: string) =>
-    api.post<{ token: string; user: { id: string; name: string; role: string } }>('/auth/pin', { pin }),
+  pin: (identifier: string, pin: string) =>
+    api.post<{ token: string; user: { id: string; name: string; role: string } }>('/auth/pin', { identifier, pin }),
   refresh: (refreshToken: string) =>
     api.post<{ accessToken: string }>('/auth/refresh', { refreshToken }),
 }

@@ -12,6 +12,7 @@ export default function KDSLoginPage() {
   const token   = useAuthStore((s) => s.token)
 
   const [pin,     setPin]     = useState('')
+  const [name,    setName]    = useState('')   // station operator name, sent with the PIN
   const [error,   setError]   = useState('')
   const [loading, setLoading] = useState(false)
   const [shake,   setShake]   = useState(false)
@@ -29,7 +30,7 @@ export default function KDSLoginPage() {
       const res = await fetch(`${API_URL}/api/v1/auth/pin`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pin: pinVal }),
+        body: JSON.stringify({ identifier: name.trim(), pin: pinVal }),
       })
       if (!res.ok) {
         const d = await res.json() as { error?: { message?: string } }
@@ -77,6 +78,17 @@ export default function KDSLoginPage() {
         </div>
         <p className="text-sm font-bold" style={{ color: 'rgba(255,255,255,0.5)' }}>Kitchen Display</p>
       </div>
+
+      {/* Operator name — sent with the PIN so the server checks one hash. */}
+      <input
+        type="text"
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        placeholder="Your name"
+        autoComplete="off"
+        className="w-full max-w-xs mb-5 rounded-2xl px-4 py-3 text-center outline-none"
+        style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.09)', color: 'rgba(255,255,255,0.85)' }}
+      />
 
       {/* PIN dots */}
       <div className={`flex gap-4 mb-6 transition-all ${shake ? 'animate-[shake_0.4s_ease]' : ''}`}
