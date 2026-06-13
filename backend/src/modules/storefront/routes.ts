@@ -1210,11 +1210,13 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
         },
       })
 
-      if (!promo) return reply.send({ valid: false, reason: 'Code not found or inactive' })
+      if (!promo) return reply.send({ valid: false, reason: 'This code isn’t valid' })
 
       const now = new Date()
-      if (promo.startAt > now) return reply.send({ valid: false, reason: 'Code is not yet active' })
-      if (promo.endAt   < now) return reply.send({ valid: false, reason: 'Code has expired' })
+      // Same generic reason for not-yet-active / expired as for not-found, so the
+      // endpoint can't be used to enumerate which codes actually exist.
+      if (promo.startAt > now) return reply.send({ valid: false, reason: 'This code isn’t valid' })
+      if (promo.endAt   < now) return reply.send({ valid: false, reason: 'This code isn’t valid' })
       if (promo.minOrderCents != null && subtotalCents < promo.minOrderCents) {
         const min = (promo.minOrderCents / 100).toFixed(0)
         return reply.send({ valid: false, reason: `Minimum order of PKR ${min} required` })

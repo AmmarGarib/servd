@@ -321,7 +321,10 @@ export async function authRoutes(fastify: FastifyInstance) {
     const body = z.object({
       name:     z.string().min(1).max(80),
       email:    z.string().email(),
-      password: z.string().min(8, 'Password must be at least 8 characters'),
+      password: z.string()
+        .min(8, 'Password must be at least 8 characters')
+        .regex(/[a-zA-Z]/, 'Password must contain a letter')
+        .regex(/[0-9]/, 'Password must contain a number'),
       // F19: phone + OTP. Both optional today because legacy clients won't
       // send them, but new web/storefront flows always do. Server validates
       // the OTP one more time before stamping phoneVerifiedAt.

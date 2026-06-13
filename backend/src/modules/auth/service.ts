@@ -239,7 +239,7 @@ export async function customerRegister(
     const token = jwt.sign(
       { sub: customer.id, type: 'customer' } satisfies CustomerTokenPayload,
       JWT_SECRET,
-      { expiresIn: '30d' },
+      { expiresIn: '14d' },
     )
     return { token, customer: { id: customer.id, name: customer.name, email: customer.email } }
   }
@@ -273,7 +273,7 @@ export async function customerRegister(
   const token = jwt.sign(
     { sub: customer.id, type: 'customer' } satisfies CustomerTokenPayload,
     JWT_SECRET,
-    { expiresIn: '30d' },
+    { expiresIn: '14d' },
   )
 
   return {
@@ -295,7 +295,7 @@ export async function customerLogin(email: string, password: string) {
   const token = jwt.sign(
     { sub: customer.id, type: 'customer' } satisfies CustomerTokenPayload,
     JWT_SECRET,
-    { expiresIn: '30d' },
+    { expiresIn: '14d' },
   )
 
   return {
@@ -361,7 +361,7 @@ export async function verifyMagicLink(token: string) {
   const customerToken = jwt.sign(
     { sub: link.customer.id, type: 'customer' } satisfies CustomerTokenPayload,
     JWT_SECRET,
-    { expiresIn: '30d' },
+    { expiresIn: '14d' },
   )
 
   return {
