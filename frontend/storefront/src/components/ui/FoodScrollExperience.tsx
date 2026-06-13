@@ -141,12 +141,7 @@ export default function FoodScrollExperience({
           </div>
         </div>
 
-        {/* Scroll hint + progress bar. */}
-        {!reduced && (
-          <div style={{ position: 'absolute', left: 0, right: 0, bottom: '1.4rem', textAlign: 'center', color: 'rgba(237,230,211,0.6)', fontSize: '0.85rem', letterSpacing: '0.1em', pointerEvents: 'none' }}>
-            scroll to fly through the kitchens ↓
-          </div>
-        )}
+        {/* Scroll progress bar. */}
         <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: '3px', background: 'rgba(237,230,211,0.12)' }}>
           <div style={{ height: '100%', width: 'calc(var(--p) * 100%)', background: 'linear-gradient(90deg, #6D28D9, #E94E1B)' }} />
         </div>
