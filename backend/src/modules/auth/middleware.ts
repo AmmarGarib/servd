@@ -7,6 +7,16 @@ import type { UserRole } from '@prisma/client'
 // the queries don't trip over policies that haven't seen the tenant id yet.
 import { serviceClient as prisma } from '../../lib/prisma.js'
 import { setRlsContext } from '../../lib/rlsContext.js'
+import { isRevoked } from '../../lib/tokenRevocation.js'
+
+// Reject a token that's been logged out or whose subject's sessions were
+// invalidated (password change / deactivation / role change). Best-effort:
+// see lib/tokenRevocation.ts — a Redis outage fails open.
+async function assertNotRevoked(token: string, payload: { sub: string; iat?: number }): Promise<void> {
+  if (await isRevoked(token, payload.sub, payload.iat)) {
+    throw new UnauthorizedError('Session has been revoked — please sign in again')
+  }
+}
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -123,6 +133,7 @@ export function requireAuth(...allowedRoles: UserRole[]) {
     }
     const token = authHeader.slice(7)
     const payload = verifyStaffToken(token, 'access')
+    await assertNotRevoked(token, payload)
     await attachStaffPrincipal(req, payload, allowedRoles)
   }
 }
@@ -140,6 +151,7 @@ export function requirePinSession(...allowedRoles: UserRole[]) {
     }
     const token = authHeader.slice(7)
     const payload = verifyStaffToken(token, 'pin')
+    await assertNotRevoked(token, payload)
     await attachStaffPrincipal(req, payload, allowedRoles)
   }
 }
@@ -155,6 +167,7 @@ export async function requireRefresh(req: FastifyRequest, _reply: FastifyReply) 
   }
   const token = authHeader.slice(7)
   const payload = verifyStaffToken(token, 'refresh')
+  await assertNotRevoked(token, payload)
   // No role gate — every staff member should be able to refresh their own session.
   await attachStaffPrincipal(req, payload, [])
 }
@@ -181,6 +194,7 @@ export function requireAuthOrPin(...allowedRoles: UserRole[]) {
       if ((e as { code?: string }).code !== 'INVALID_TOKEN_TYPE') throw e
       payload = verifyStaffToken(token, 'pin')
     }
+    await assertNotRevoked(token, payload)
     await attachStaffPrincipal(req, payload, allowedRoles)
   }
 }
@@ -193,6 +207,7 @@ export async function requireCustomerAuth(req: FastifyRequest, _reply: FastifyRe
 
   const token = authHeader.slice(7)
   const payload = verifyCustomerToken(token)
+  await assertNotRevoked(token, payload)
   req.customer = { id: payload.sub }
   setRlsContext({ customerId: payload.sub })
 }

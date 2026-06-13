@@ -4,7 +4,8 @@ import bcrypt from 'bcryptjs'                  // PIN collision check on staff s
 import { z } from 'zod'
 import { staffLogin, staffPinLogin, refreshStaffToken, customerRegister, customerLogin, verifyMagicLink, requestMagicLink, hashPassword, hashPin } from './service.js'
 import { requestOtp, verifyOtp, normalisePhone } from './otp.js'
-import { requireAuth, ADMIN_ONLY, MANAGERS, ALL_STAFF } from './middleware.js'
+import { requireAuth, requireAuthOrPin, requireCustomerAuth, ADMIN_ONLY, MANAGERS, ALL_STAFF } from './middleware.js'
+import { revokeBearer, revokeAllForSubject } from '../../lib/tokenRevocation.js'
 import { serviceClient as prisma } from '../../lib/prisma.js'
 import { resolveTenantScope, tenantWhere } from '../../lib/tenantScope.js'
 import { AppError } from '../../lib/errors.js'
@@ -263,6 +264,22 @@ export async function authRoutes(fastify: FastifyInstance) {
     const body = refreshSchema.parse(req.body)
     const result = await refreshStaffToken(body.refreshToken)
     return reply.status(200).send(result)
+  })
+
+  // POST /auth/logout — revoke the caller's session. JWTs are stateless, so we
+  // add the presented token (and refresh token, if sent) to the Redis deny
+  // list for the remainder of their life. Accepts PIN sessions too (KDS).
+  fastify.post('/logout', { preHandler: requireAuthOrPin(...ALL_STAFF) }, async (req, reply) => {
+    await revokeBearer(req.headers.authorization)
+    const body = z.object({ refreshToken: z.string().optional() }).parse(req.body ?? {})
+    if (body.refreshToken) await revokeBearer(`Bearer ${body.refreshToken}`)
+    return reply.status(200).send({ ok: true })
+  })
+
+  // POST /auth/customer/logout — revoke the customer's session token.
+  fastify.post('/customer/logout', { preHandler: requireCustomerAuth }, async (req, reply) => {
+    await revokeBearer(req.headers.authorization)
+    return reply.status(200).send({ ok: true })
   })
 
   // GET /auth/location-config — get on-site sign-in config
@@ -543,6 +560,7 @@ export async function authRoutes(fastify: FastifyInstance) {
         data: { accountStatus: 'suspended', isActive: false },
         select: { id: true, name: true, accountStatus: true },
       })
+      await revokeAllForSubject(req.params.id) // kill the rejected user's sessions now
       return reply.status(200).send(updated)
     },
   )
@@ -924,6 +942,11 @@ export async function authRoutes(fastify: FastifyInstance) {
         })
       })
       if (!user) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'No such staff' } })
+      // Kill outstanding sessions when an access-affecting field changes — a
+      // deactivated / demoted / re-PINned user must not keep a live token.
+      if (body.isActive === false || body.role != null || body.pin != null) {
+        await revokeAllForSubject(req.params.id)
+      }
       return {
         ...user,
         hasPin: !!user.pin,
@@ -946,6 +969,7 @@ export async function authRoutes(fastify: FastifyInstance) {
         where: { id: req.params.id },
         data: { deletedAt: new Date(), isActive: false },
       })
+      await revokeAllForSubject(req.params.id) // kill the deleted user's sessions now
       return reply.status(204).send()
     },
   )
