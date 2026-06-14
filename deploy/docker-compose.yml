@@ -22,9 +22,10 @@ services:
 
   # ─────────── Backend API (Fastify + Prisma) ───────────────────────────────
   api:
-    build:
-      context: ../backend
-      dockerfile: Dockerfile
+    # Prebuilt image from Docker Hub — production does NOT build from source
+    # on the box (see CLAUDE.md). Pinned to an immutable SHA tag so `up`
+    # always pulls the intended build instead of reusing a stale local layer.
+    image: ammargarib/servd:api-d61b3f0
     restart: unless-stopped
     env_file: .env.production
     environment:
@@ -57,13 +58,9 @@ services:
 
   # ─────────── Admin Panel (Next.js) ────────────────────────────────────────
   admin:
-    build:
-      context: ../frontend/admin
-      dockerfile: Dockerfile
-      args:
-        NEXT_PUBLIC_API_URL: "${PUBLIC_API_URL}"
-        NEXT_PUBLIC_WS_URL: "${PUBLIC_WS_URL}"
-        NEXT_PUBLIC_SENTRY_DSN: "${SENTRY_DSN_ADMIN:-}"
+    # Prebuilt image from Docker Hub. NEXT_PUBLIC_* values are baked at image
+    # build time (CI / out-of-band build), not here.
+    image: ammargarib/servd:admin-d61b3f0
     restart: unless-stopped
     environment:
       NODE_ENV: "production"
@@ -78,13 +75,9 @@ services:
 
   # ─────────── Customer Storefront (Next.js) ────────────────────────────────
   storefront:
-    build:
-      context: ../frontend/storefront
-      dockerfile: Dockerfile
-      args:
-        NEXT_PUBLIC_API_URL: "${PUBLIC_API_URL}"
-        NEXT_PUBLIC_WS_URL: "${PUBLIC_WS_URL}"
-        NEXT_PUBLIC_SENTRY_DSN: "${SENTRY_DSN_STOREFRONT:-}"
+    # Prebuilt image from Docker Hub. NEXT_PUBLIC_* values are baked at image
+    # build time (CI / out-of-band build), not here.
+    image: ammargarib/servd:storefront-d61b3f0
     restart: unless-stopped
     environment:
       NODE_ENV: "production"
