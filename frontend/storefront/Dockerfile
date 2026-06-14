@@ -3,7 +3,12 @@ FROM node:20-alpine AS base
 FROM base AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm install --legacy-peer-deps
+# --no-audit/--no-fund: the post-install audit request is non-essential and,
+# when the registry audit endpoint is unreachable, npm 10.8.x aborts the whole
+# install ("Exit handler never called!") leaving node_modules without .bin —
+# which surfaced as `next: not found` at build time. Skipping it makes the
+# build resilient and faster.
+RUN npm install --legacy-peer-deps --no-audit --no-fund
 
 FROM base AS builder
 WORKDIR /app

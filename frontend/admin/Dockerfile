@@ -3,7 +3,9 @@ FROM node:20-alpine AS base
 FROM base AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm install --legacy-peer-deps
+# --no-audit/--no-fund: see storefront Dockerfile — avoids npm 10.8.x aborting
+# the install when the audit endpoint is unreachable.
+RUN npm install --legacy-peer-deps --no-audit --no-fund
 
 FROM base AS builder
 WORKDIR /app

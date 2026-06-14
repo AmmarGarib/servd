@@ -4,13 +4,13 @@ FROM node:20-alpine AS base
 FROM base AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev
+RUN npm ci --omit=dev --no-audit --no-fund
 
 # ── builder: full install + compile ──────────────────────────────────────────
 FROM base AS builder
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci
+RUN npm ci --no-audit --no-fund
 COPY src/ ./src/
 COPY tsconfig.json ./
 COPY prisma/ ./prisma/
