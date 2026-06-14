@@ -26,8 +26,9 @@ interface Props {
 // the workshop reference.
 const SPECS = ['00', '01', '02', '03', '04', '05'] as const
 
-// Animated blueprint-grid hero background (WebGL2). ssr:false — WebGL can't SSR;
-// reduced-motion falls back to the section's static CSS grid.
+// Animated blueprint-grid background (WebGL2), fixed behind the WHOLE page so
+// every panel sits on the moving blueprint. ssr:false — WebGL can't SSR;
+// reduced-motion falls back to the static CSS grid on .stax-page.
 const StaxGridBackground = dynamic(() => import('../../ui/StaxGridBackground'), { ssr: false })
 
 export function StaxLayout({ concept, concepts }: Props) {
@@ -40,17 +41,22 @@ export function StaxLayout({ concept, concepts }: Props) {
   // .stax-visit-grid) live in globals.css.
   return (
     <div className="stax-page">
+      {/* Page-wide moving blueprint — fixed behind every panel; content above.
+          z-index 0 keeps it under the sticky nav (z-50). */}
+      <div aria-hidden style={{ position: 'fixed', inset: 0, zIndex: 0, pointerEvents: 'none' }}>
+        <StaxGridBackground />
+      </div>
+
+      <div style={{ position: 'relative', zIndex: 1 }}>
       {concept.announcementBanner && (
         <div role="status" style={{ background: 'var(--stax-blueprint-deep)', color: 'var(--stax-cream)', padding: '0.7rem 1.5rem', textAlign: 'center', fontFamily: 'var(--stax-mono)', fontSize: '0.78rem', letterSpacing: '0.18em', textTransform: 'uppercase' }}>
           {concept.announcementBanner}
         </div>
       )}
 
-      {/* ── HERO ─ Industrial header: spec tag, wordmark, spec line, sub.
-            Animated blueprint-grid shader behind; content lifted above it. ── */}
-      <section className="stax-grid-bg" style={{ position: 'relative', overflow: 'hidden', padding: 'clamp(4rem, 12vh, 8rem) clamp(1.5rem, 5vw, 3rem) clamp(3rem, 6vh, 4rem)' }}>
-        <StaxGridBackground />
-        <div style={{ position: 'relative', zIndex: 1, maxWidth: '76rem', margin: '0 auto' }}>
+      {/* ── HERO ─ Industrial header: spec tag, wordmark, spec line, sub. ── */}
+      <section style={{ padding: 'clamp(4rem, 12vh, 8rem) clamp(1.5rem, 5vw, 3rem) clamp(3rem, 6vh, 4rem)' }}>
+        <div style={{ maxWidth: '76rem', margin: '0 auto' }}>
           <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '2rem', flexWrap: 'wrap', marginBottom: '2rem' }}>
             <span className="stax-spec">{SPECS[0]} / KITCHEN — KARACHI</span>
             <span className="stax-spec" style={{ color: 'var(--stax-grey-60)' }}>SPEC SHEET · v.2026</span>
@@ -195,8 +201,8 @@ export function StaxLayout({ concept, concepts }: Props) {
 
       <hr className="stax-rule" />
 
-      {/* ── CROSS-BRAND STRIP ── */}
-      <div style={{ background: 'var(--stax-blueprint-deep)' }}>
+      {/* ── CROSS-BRAND STRIP — transparent so the blueprint shows through ── */}
+      <div>
         <CrossBrandStrip
           current={concept}
           concepts={concepts}
@@ -206,8 +212,8 @@ export function StaxLayout({ concept, concepts }: Props) {
         />
       </div>
 
-      {/* ── CTA STRIP ── */}
-      <section style={{ background: 'var(--stax-blueprint-deep)', color: 'var(--stax-cream)', padding: 'clamp(4rem, 10vh, 7rem) clamp(1.5rem, 5vw, 3rem)' }}>
+      {/* ── CTA STRIP — transparent over the blueprint ── */}
+      <section style={{ color: 'var(--stax-cream)', padding: 'clamp(4rem, 10vh, 7rem) clamp(1.5rem, 5vw, 3rem)' }}>
         <div style={{ maxWidth: '64rem', margin: '0 auto', textAlign: 'center' }}>
           <span className="stax-spec" style={{ color: 'rgba(236,234,230,0.5)' }}>{SPECS[5]} · ORDER</span>
           <h2 className="stax-display" style={{ fontSize: 'clamp(2.2rem, 5vw, 4rem)', margin: '1rem 0 2rem' }}>
@@ -218,6 +224,7 @@ export function StaxLayout({ concept, concepts }: Props) {
           </Link>
         </div>
       </section>
+      </div>
     </div>
   )
 }

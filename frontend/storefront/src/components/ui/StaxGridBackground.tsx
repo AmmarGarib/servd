@@ -31,8 +31,8 @@ const float THIN_WIDTH   = 0.010;
 const float MAJOR_WIDTH  = 0.018;
 const float SCROLL_SPEED = 0.02;
 
-const float VIGNETTE_AMT = 0.28;
-const float MESH_AMT     = 0.85;
+const float VIGNETTE_AMT = 0.12;
+const float MESH_AMT     = 0.40;
 const float NOISE_AMT    = 0.030;
 const float DITHER_DARK  = 0.010;
 const float DITHER_LIGHT = 0.004;
@@ -75,10 +75,10 @@ float majorGridAA(vec2 uv, float scale, float stepN, float width){
 // mesh-gradient: 4 тёмно-синие/глубокие точки
 vec3 meshGradient(vec2 uv){
   vec2 p0=vec2(-0.70,-0.45), p1=vec2(0.75,-0.35), p2=vec2(-0.65,0.65), p3=vec2(0.80,0.55);
-  vec3 c0=vec3(0.05,0.10,0.26);  // deep navy
-  vec3 c1=vec3(0.08,0.16,0.36);  // royal navy
-  vec3 c2=vec3(0.03,0.09,0.22);  // abyss
-  vec3 c3=vec3(0.10,0.20,0.40);  // cobalt
+  vec3 c0=vec3(0.030,0.075,0.27);  // blueprint deep
+  vec3 c1=vec3(0.039,0.094,0.341); // #0A1857 royal blue (Stax base)
+  vec3 c2=vec3(0.025,0.065,0.24);  // deeper
+  vec3 c3=vec3(0.055,0.120,0.40);  // cobalt lift
   float e=2.0;
   float w0=pow(1.0/(0.2+distance(uv,p0)),e);
   float w1=pow(1.0/(0.2+distance(uv,p1)),e);
@@ -120,8 +120,8 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord)
   float t = iTime;
   vec2 uv = (fragCoord - 0.5*R) / max(R.y, 1.0);
 
-  vec3 baseDeep = vec3(0.03,0.06,0.12);
-  vec3 baseTint = vec3(0.05,0.09,0.18);
+  vec3 baseDeep = vec3(0.030,0.075,0.27);
+  vec3 baseTint = vec3(0.045,0.100,0.34);
   float vgrad   = smoothstep(-0.92, 0.55, -uv.y);
   vec3  bg      = mix(baseDeep, baseTint, vgrad);
   bg            = mix(bg, meshGradient(uv), MESH_AMT);
@@ -136,12 +136,12 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord)
   float thin  = gridLineAA (uvAnim, GRID_SCALE, THIN_WIDTH);
   float major = majorGridAA(uvAnim, GRID_SCALE, MAJOR_STEP, MAJOR_WIDTH);
 
-  vec3 lineThin  = vec3(0.58,0.66,0.95);
-  vec3 lineMajor = vec3(0.78,0.84,1.00);
+  vec3 lineThin  = vec3(0.62,0.65,0.72);    // grey minor lines
+  vec3 lineMajor = vec3(0.949,0.922,0.855); // bone major lines
 
   vec3 col = bg
-           + lineThin  * thin  * 0.25
-           + lineMajor * major * 0.52;
+           + lineThin  * thin  * 0.22
+           + lineMajor * major * 0.42;
 
 
   vec2 uMajor = uvAnim * (GRID_SCALE / MAJOR_STEP);
@@ -160,7 +160,7 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord)
 
     float nearMajor = major;
     float asciiMask = asciiLineSel * nearMajor;
-    vec3 asciiColor = mix(vec3(0.50,0.70,1.0), meshGradient(uv), 0.25);
+    vec3 asciiColor = mix(vec3(0.90,0.88,0.80), meshGradient(uv), 0.25);
 
     col = mix(col, col + asciiColor * glyph * 0.30, ASCII_AMT * asciiMask);
   }
