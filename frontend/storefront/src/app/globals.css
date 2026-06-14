@@ -55,8 +55,11 @@
         annotations. Multiple greys for text hierarchy. */
   --stax-blueprint:        #0A1857;            /* deep royal blue surface */
   --stax-blueprint-deep:   #050F3D;            /* darker — gradient end */
-  --stax-line:             rgba(255,255,255,0.16); /* major grid */
-  --stax-line-faint:       rgba(255,255,255,0.07); /* minor grid */
+  --stax-line:             rgba(255,255,255,0.16); /* borders / rules */
+  --stax-line-faint:       rgba(255,255,255,0.07);
+  /* Moving blueprint grid — bone lines on the blue-grey field. */
+  --stax-grid:             rgba(242,235,218,0.22); /* major grid (bone) */
+  --stax-grid-faint:       rgba(242,235,218,0.09); /* minor grid (bone) */
   --stax-cream:            #F2EBDA;            /* annotation labels, headlines */
   --stax-cream-dim:        rgba(242,235,218,0.7);
   --stax-grey-100:         #FFFFFF;            /* brightest text */
@@ -392,17 +395,43 @@ summary:focus-visible {
   background-color: var(--stax-blueprint);
   background-image:
     /* major grid (100px) */
-    linear-gradient(to right, var(--stax-line) 1px, transparent 1px),
-    linear-gradient(to bottom, var(--stax-line) 1px, transparent 1px),
+    linear-gradient(to right, var(--stax-grid) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--stax-grid) 1px, transparent 1px),
     /* minor grid (20px) */
-    linear-gradient(to right, var(--stax-line-faint) 1px, transparent 1px),
-    linear-gradient(to bottom, var(--stax-line-faint) 1px, transparent 1px),
+    linear-gradient(to right, var(--stax-grid-faint) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--stax-grid-faint) 1px, transparent 1px),
     /* radial wash so the grid doesn't read flat */
     radial-gradient(ellipse 80% 60% at 50% 0%, color-mix(in srgb, var(--stax-blueprint) 75%, white 25%) 0%, var(--stax-blueprint) 60%, var(--stax-blueprint-deep) 100%);
   background-size: 100px 100px, 100px 100px, 20px 20px, 20px 20px, auto;
   background-position: 0 0, 0 0, 0 0, 0 0, center;
+  /* The blueprint drifts diagonally behind every panel. The radial wash
+     (5th layer) stays pinned to `center` in the keyframe so only the grid
+     moves. */
+  animation: staxBlueprintDrift 32s linear infinite;
   color: var(--stax-grey-80);
   font-family: var(--stax-display);
+}
+/* Moving blueprint over the solid deep-blue panels (cross-brand + CTA),
+   where the page-level grid is painted over. Same lines, same cadence, so
+   the motion reads continuous from one panel to the next. */
+.stax-page .stax-grid-live {
+  background-color: var(--stax-blueprint-deep);
+  background-image:
+    linear-gradient(to right, var(--stax-grid) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--stax-grid) 1px, transparent 1px),
+    linear-gradient(to right, var(--stax-grid-faint) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--stax-grid-faint) 1px, transparent 1px);
+  background-size: 100px 100px, 100px 100px, 20px 20px, 20px 20px;
+  background-position: 0 0, 0 0, 0 0, 0 0;
+  animation: staxBlueprintDrift 32s linear infinite;
+}
+@keyframes staxBlueprintDrift {
+  from { background-position: 0 0, 0 0, 0 0, 0 0, center; }
+  to   { background-position: 100px 100px, 100px 100px, 100px 100px, 100px 100px, center; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .stax-page,
+  .stax-page .stax-grid-live { animation: none; }
 }
 .stax-page .stax-mono { font-family: var(--stax-mono); letter-spacing: 0.02em; color: var(--stax-grey-60); }
 .stax-page .stax-spec { font-family: var(--stax-mono); font-size: 0.72rem; letter-spacing: 0.18em; text-transform: uppercase; color: var(--stax-cream); }

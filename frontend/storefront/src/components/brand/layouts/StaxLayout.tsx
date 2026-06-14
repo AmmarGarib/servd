@@ -189,7 +189,7 @@ export function StaxLayout({ concept, concepts }: Props) {
       <hr className="stax-rule" />
 
       {/* ── CROSS-BRAND STRIP ── */}
-      <div style={{ background: 'var(--stax-blueprint-deep)' }}>
+      <div className="stax-grid-live">
         <CrossBrandStrip
           current={concept}
           concepts={concepts}
@@ -200,7 +200,7 @@ export function StaxLayout({ concept, concepts }: Props) {
       </div>
 
       {/* ── CTA STRIP ── */}
-      <section style={{ background: 'var(--stax-blueprint-deep)', color: 'var(--stax-cream)', padding: 'clamp(4rem, 10vh, 7rem) clamp(1.5rem, 5vw, 3rem)' }}>
+      <section className="stax-grid-live" style={{ color: 'var(--stax-cream)', padding: 'clamp(4rem, 10vh, 7rem) clamp(1.5rem, 5vw, 3rem)' }}>
         <div style={{ maxWidth: '64rem', margin: '0 auto', textAlign: 'center' }}>
           <span className="stax-spec" style={{ color: 'rgba(236,234,230,0.5)' }}>{SPECS[5]} · ORDER</span>
           <h2 className="stax-display" style={{ fontSize: 'clamp(2.2rem, 5vw, 4rem)', margin: '1rem 0 2rem' }}>
