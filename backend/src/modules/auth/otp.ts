@@ -71,7 +71,7 @@ export async function requestOtp(opts: {
     // Don't leak the WA error to the client — surface a generic message. The
     // dev-only fallback below lets us continue testing locally without WA.
     if (process.env['NODE_ENV'] === 'production') {
-      throw new AppError('OTP_SEND_FAILED', 'Could not send verification code. Try again in a moment.', 502)
+      throw new AppError('OTP_SEND_FAILED', 'Could not send verification code. Try again in a moment.', 503)
     }
     // Never print the OTP (or full phone) into logs by default — container/CI
     // logs outlive the moment. Echo requires an explicit local-dev opt-in.
