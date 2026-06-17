@@ -15,7 +15,7 @@ export const dynamic = 'force-dynamic'
 
 export const metadata = {
   title: 'Reserve a table',
-  description: 'Book a table at a servd brand — Simmer, and any other kitchen that takes reservations.',
+  description: 'Book a table at a servd brand — simmer, and any other kitchen that takes reservations.',
 }
 
 async function getReservableConcepts(): Promise<Concept[]> {

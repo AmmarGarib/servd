@@ -12,6 +12,7 @@ import type { Concept } from '../lib/concept'
 import { fetchBrandLocations } from '../lib/brandLocations'
 import { organizationSchema, websiteSchema, restaurantSchema, jsonLdScript } from '../lib/jsonLd'
 import { brandStory } from '../lib/concept'
+import { parseHeroBlock } from '../lib/heroConfig'
 
 const API_URL = process.env.INTERNAL_API_URL ?? process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -31,6 +32,18 @@ async function getHomeBlocks(): Promise<Block[]> {
   } catch { return [] }
 }
 
+// Operator-editable landing hero (background image + the expanding photo/video),
+// stored as a `scrollHero` block under the SiteLayout slug `servd:hero` and
+// edited in Admin → Marketing → Landing Hero. Empty → food placeholders.
+async function getHeroConfig() {
+  try {
+    const res = await fetch(`${API_URL}/api/v1/site-layouts/servd:hero`, { cache: 'no-store' })
+    if (!res.ok) return parseHeroBlock(null)
+    const body = await res.json() as LayoutResponse
+    return parseHeroBlock(body.blocks)
+  } catch { return parseHeroBlock(null) }
+}
+
 async function getConcepts(): Promise<Concept[]> {
   try {
     const res = await fetch(`${API_URL}/api/v1/storefront/concepts`, { cache: 'no-store' })
@@ -40,10 +53,11 @@ async function getConcepts(): Promise<Concept[]> {
 }
 
 export default async function HomePage() {
-  const [blocks, concepts, brandLocations] = await Promise.all([
+  const [blocks, concepts, brandLocations, heroConfig] = await Promise.all([
     getHomeBlocks(),
     getConcepts(),
     fetchBrandLocations(API_URL),
+    getHeroConfig(),
   ])
 
   // JSON-LD: Organization (servd) + WebSite (search-box) + one Restaurant
@@ -68,7 +82,7 @@ export default async function HomePage() {
   return (
     <>
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLdScript(schema) }} />
-      {blocks.length === 0 ? <HomeClient concepts={concepts} /> : <PageRenderer blocks={blocks} />}
+      {blocks.length === 0 ? <HomeClient concepts={concepts} heroConfig={heroConfig} /> : <PageRenderer blocks={blocks} />}
     </>
   )
 }

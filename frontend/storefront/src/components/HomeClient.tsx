@@ -1,6 +1,9 @@
 'use client'
-import { useEffect, useState } from 'react'
 import Link from 'next/link'
+import { MagneticLink } from './ui/MagneticButton'
+import { LandingScrollHero } from './LandingScrollHero'
+import type { HeroConfig } from '../lib/heroConfig'
+
 import type { Concept } from '../lib/concept'
 import { brandAccent, brandStory, conceptHeroImage } from '../lib/concept'
 import { useScrollReveal } from './kinetic/motionHooks'
@@ -20,6 +23,7 @@ import { BRAND_LOCATIONS, locationFor, whatsappLink } from '../lib/brandLocation
 
 interface Props {
   concepts: Concept[]
+  heroConfig: HeroConfig
 }
 
 // Fallback brand cards — used when the live concepts API returns nothing
@@ -30,7 +34,7 @@ const FALLBACK_BRANDS = [
   { id: 'fallback-flipd',  name: 'Flipd',  slug: 'flipd',  primaryColor: null },
 ] as Array<Pick<Concept, 'id' | 'name' | 'slug' | 'primaryColor'>>
 
-export function HomeClient({ concepts }: Props) {
+export function HomeClient({ concepts, heroConfig }: Props) {
   const source = concepts.filter((c) => ['simmer', 'stax', 'flipd'].includes(c.slug))
   // If the live concept list came back empty (api blip), fall through
   // to the hardcoded fallback so the home page never looks blank.
@@ -47,148 +51,20 @@ export function HomeClient({ concepts }: Props) {
       img:    conceptHeroImage({ ...c, type: 'restaurant', description: null, logoUrl: null } as Concept),
     }))
 
-  // Hero food image cycles every 3.5s — leads with the photograph,
-  // royal blue is the chrome around it. Stacked image layers with
-  // opacity crossfade (GPU-compositable, 60fps, no repaints) instead of
-  // animating background-image on one element. Respects the OS's
-  // reduced-motion preference: stops the auto-cycle, holds on whichever
-  // brand happens to be first in the list.
-  const [activeIdx, setActiveIdx] = useState(0)
-  useEffect(() => {
-    if (brands.length === 0) return
-    if (typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
-    const t = setInterval(() => setActiveIdx((i) => (i + 1) % brands.length), 3500)
-    return () => clearInterval(t)
-  }, [brands.length])
-  const live = brands[activeIdx] ?? brands[0]
-
   const pageRef = useScrollReveal<HTMLDivElement>()
 
   return (
-    <div ref={pageRef} style={{ background: 'var(--servd-bg)', color: 'var(--servd-ink)' }}>
+    <div ref={pageRef} style={{ background: 'var(--servd-bg)', color: 'var(--servd-ink)', display: 'flex', flexDirection: 'column' }}>
 
-      {/* ── HERO ─ Full-bleed food photo + deep royal wash with the
-            wordmark on top. The food is the hero, not the blue. */}
-      <section className="relative overflow-hidden" style={{
-        minHeight: 'min(100vh, 920px)',
-        color: 'white',
-        display: 'flex', alignItems: 'stretch',
-      }}>
-
-        {/* Food background — stacked image layers, GPU-compositable
-            opacity crossfade. Animating background-image (the prior
-            approach) re-paints the entire layer on every change, which
-            we never see at 60fps on low-end Android. */}
-        {brands.map((b, i) => (
-          <div key={b.id} aria-hidden style={{
-            position: 'absolute', inset: 0, zIndex: 0,
-            backgroundImage: `url(${b.img})`,
-            backgroundSize: 'cover', backgroundPosition: 'center',
-            opacity: i === activeIdx ? 1 : 0,
-            transition: 'opacity 900ms ease-in-out',
-            willChange: 'opacity',
-          }} />
-        ))}
-
-        {/* Royal wash — keeps type legible without hiding the food.
-            Bottom-heavy gradient so the food shows clearly in the
-            upper third and the CTAs sit on a darker base. */}
-        <div aria-hidden style={{
-          position: 'absolute', inset: 0, zIndex: 1,
-          background: 'linear-gradient(180deg, color-mix(in srgb, var(--servd-green) 35%, transparent) 0%, color-mix(in srgb, var(--servd-green) 65%, transparent) 50%, color-mix(in srgb, var(--servd-green-dark) 96%, transparent) 100%)',
-        }} />
-
-        <div className="container relative z-10" style={{
-          paddingTop: 'clamp(4rem, 9vw, 7rem)',
-          paddingBottom: 'clamp(4rem, 9vw, 7rem)',
-          display: 'flex', flexDirection: 'column',
-          justifyContent: 'space-between',
-          gap: 'clamp(3rem, 8vw, 5rem)',
-        }}>
-
-          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', justifyContent: 'space-between', gap: '1rem' }}>
-            <p className="eyebrow" style={{ color: 'rgba(255,255,255,0.85)' }}>
-              servd · the kitchen, direct
-            </p>
-            <p className="eyebrow" style={{ color: 'rgba(255,255,255,0.65)' }}>
-              Karachi · {brands.length} kitchens
-            </p>
-          </div>
-
-          <div>
-            <h1 className="display" style={{
-              fontSize: 'clamp(3.5rem, 12vw, 9.5rem)',
-              color: 'white',
-              maxWidth: '1100px',
-              lineHeight: 0.92,
-              letterSpacing: '-0.045em',
-              margin: 0,
-              textShadow: '0 2px 16px rgba(0,0,0,0.35)',
-            }}>
-              Karachi&rsquo;s kitchens,<br />
-              <span className="display-italic" style={{ color: 'rgba(255,255,255,0.78)' }}>direct to your door.</span>
-            </h1>
-            <p style={{
-              marginTop: '1.75rem',
-              fontSize: 'clamp(1.1rem, 1.8vw, 1.45rem)',
-              color: 'rgba(255,255,255,0.9)',
-              maxWidth: '40rem',
-              lineHeight: 1.4,
-              textShadow: '0 1px 8px rgba(0,0,0,0.4)',
-            }}>
-              Three GS Foods kitchens — Simmer, Stax, Flipd. One bag, one delivery, our own riders. No third-party markup.
-            </p>
-          </div>
-
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem', alignItems: 'center' }}>
-              <Link href="/browse" style={{
-                background: 'white',
-                color: 'var(--servd-green)',
-                fontFamily: 'var(--font-display)', fontWeight: 800,
-                fontSize: 'clamp(1rem, 1.4vw, 1.15rem)',
-                padding: '1.1rem 2rem',
-                borderRadius: '999px',
-                textDecoration: 'none',
-                display: 'inline-flex', alignItems: 'center', gap: '0.6rem',
-                boxShadow: '0 12px 32px rgba(0,0,0,0.28)',
-              }}>
-                Order now <span aria-hidden style={{ opacity: 0.65 }}>→</span>
-              </Link>
-              <Link href="#brands" style={{
-                color: 'white', fontWeight: 700, fontSize: '0.95rem',
-                padding: '1.1rem 1.5rem', borderRadius: '999px',
-                background: 'rgba(255,255,255,0.12)',
-                border: '1px solid rgba(255,255,255,0.35)',
-                textDecoration: 'none',
-                backdropFilter: 'blur(6px)',
-              }}>
-                See the kitchens
-              </Link>
-            </div>
-
-            {live && (
-              <p style={{ color: 'rgba(255,255,255,0.85)', fontSize: '0.95rem', fontWeight: 500, textShadow: '0 1px 6px rgba(0,0,0,0.4)' }}>
-                <span style={{ color: 'rgba(255,255,255,0.55)', textTransform: 'uppercase', letterSpacing: '0.2em', fontSize: '0.7rem', marginRight: '0.65rem' }}>Tonight from</span>
-                <Link href={`/${live.slug}`}
-                  style={{
-                    color: 'white', fontWeight: 800, textDecoration: 'none',
-                    borderBottom: '2px solid rgba(255,255,255,0.5)',
-                    paddingBlock: '0.6rem',  // expanded hit area, ~44px tap target
-                    display: 'inline-block', lineHeight: 1,
-                  }}>
-                  {live.name}
-                </Link>
-                <span style={{ marginLeft: '0.75rem', opacity: 0.85 }}>— {live.story.tagline}</span>
-              </p>
-            )}
-          </div>
-        </div>
-      </section>
+      {/* ── HERO ─ the scroll-expansion media hero. Background image + the
+            expanding photo/video are operator-editable via Admin → Marketing
+            → Landing Hero (SiteLayout slug `servd:hero`); food placeholders
+            until the operator sets them. */}
+      <LandingScrollHero config={heroConfig} />
 
       {/* ── BRAND CARDS ─ Each one is a full-bleed food block leading
             into the order flow. */}
-      <section id="brands" style={{ background: 'var(--servd-bg)' }}>
+      <section id="brands" className="reveal-on-scroll" style={{ background: 'var(--servd-bg)', order: 2 }}>
         <div className="container" style={{ paddingTop: 'clamp(4rem, 8vw, 6rem)', paddingBottom: '2rem' }}>
           <p className="eyebrow eyebrow-accent">The kitchens</p>
           <h2 className="display" style={{ fontSize: 'clamp(2.5rem, 6vw, 4.5rem)', maxWidth: '900px', margin: '0.5rem 0 1rem', letterSpacing: '-0.04em' }}>
@@ -288,7 +164,7 @@ export function HomeClient({ concepts }: Props) {
       {/* ── OPEN NOW STRIP ─ Live status + address per brand. Hours wrong
             on Google is the #1 Karachi mistake; surface them on the
             home so the customer never has to wonder which one's open. */}
-      <section style={{ background: 'var(--servd-surface)', borderBlock: '1px solid var(--servd-line)' }}>
+      <section className="reveal-on-scroll" style={{ background: 'var(--servd-surface)', borderBlock: '1px solid var(--servd-line)', order: 3 }}>
         <div className="container" style={{ paddingTop: '2rem', paddingBottom: '2rem' }}>
           <p className="eyebrow eyebrow-accent" style={{ marginBottom: '1rem' }}>Right now</p>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1rem' }}>
@@ -336,26 +212,26 @@ export function HomeClient({ concepts }: Props) {
       {/* ── ANTI-AGGREGATOR STRIP ─ One line, hard to miss. The brief
             anti-aggregator stance is a positioning advantage no one
             else in Karachi can claim — surface it. */}
-      <section style={{ background: 'var(--servd-ink)', color: 'white', padding: '2.5rem 0' }}>
+      <section className="reveal-on-scroll" style={{ background: 'var(--servd-ink)', color: 'white', padding: '2.5rem 0', order: 4 }}>
         <div className="container" style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '1rem' }}>
           <p style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(1.15rem, 2vw, 1.5rem)', fontWeight: 700, lineHeight: 1.3, margin: 0, maxWidth: '38rem' }}>
             Order direct. Our rider, our pricing, our tip to him.<br />
             <span style={{ opacity: 0.7 }}>No third party in the kitchen.</span>
           </p>
-          <Link href="/browse" style={{
+          <MagneticLink href="/browse" style={{
             background: 'white', color: 'var(--servd-ink)',
             fontWeight: 800, fontSize: '0.92rem',
             padding: '0.85rem 1.5rem', borderRadius: '999px', textDecoration: 'none',
             display: 'inline-flex', alignItems: 'center', gap: '0.5rem',
           }}>
             See the kitchens <span aria-hidden style={{ opacity: 0.6 }}>→</span>
-          </Link>
+          </MagneticLink>
         </div>
       </section>
 
       {/* ── INSIDERS — servd loyalty membership pitch. Replaces the
             promise-numbers strip. Single CTA: become a member. ──── */}
-      <section style={{ background: 'var(--servd-green)', color: 'white', padding: 'clamp(4rem, 8vh, 7rem) 0', position: 'relative', overflow: 'hidden' }}>
+      <section className="reveal-on-scroll" style={{ background: 'var(--servd-green)', color: 'white', padding: 'clamp(4rem, 8vh, 7rem) 0', position: 'relative', overflow: 'hidden', order: 1 }}>
         {/* Soft ambient glow so the section reads as 'premium tier' */}
         <div aria-hidden style={{
           position: 'absolute', inset: 0,
@@ -413,7 +289,7 @@ export function HomeClient({ concepts }: Props) {
               {
                 slug: 'simmer',
                 accent: 'rgba(233,78,27,0.95)',
-                badge: '◇', tag: 'Simmer · regulars',
+                badge: '◇', tag: 'simmer · regulars',
                 head: 'The regulars’ list',
                 body: 'Quiet recognition. First word on the next menu drop. A held table when the room is full. Now and then the chef sends out a plate. No card, no points — you’re known here.',
                 featured: false,
@@ -506,7 +382,7 @@ export function HomeClient({ concepts }: Props) {
               }}>
               Join on WhatsApp <span aria-hidden style={{ opacity: 0.7 }}>→</span>
             </a>
-            <Link href="/signup?insider=1" style={{
+            <MagneticLink href="/signup?insider=1" style={{
               background: 'white',
               color: 'var(--servd-green)',
               fontFamily: 'var(--font-display)', fontWeight: 800,
@@ -517,7 +393,7 @@ export function HomeClient({ concepts }: Props) {
               display: 'inline-flex', alignItems: 'center', gap: '0.6rem',
             }}>
               Or sign up with email
-            </Link>
+            </MagneticLink>
             <Link href="/login" style={{
               color: 'rgba(255,255,255,0.85)',
               fontWeight: 700, fontSize: '0.95rem',

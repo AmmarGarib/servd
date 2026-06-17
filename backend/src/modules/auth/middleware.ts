@@ -7,6 +7,26 @@ import type { UserRole } from '@prisma/client'
 // the queries don't trip over policies that haven't seen the tenant id yet.
 import { serviceClient as prisma } from '../../lib/prisma.js'
 import { setRlsContext } from '../../lib/rlsContext.js'
+import { isRevoked } from '../../lib/tokenRevocation.js'
+import { readCookie, ACCESS_COOKIE } from '../../lib/cookies.js'
+
+// Staff access token comes from EITHER a Bearer header (tablet / mobile) OR the
+// httpOnly session cookie (manager web). The web app no longer holds the token
+// in JS at all — the cookie is its credential.
+function tokenFromRequest(req: FastifyRequest): string | null {
+  const h = req.headers.authorization
+  if (h?.startsWith('Bearer ')) return h.slice(7)
+  return readCookie(req, ACCESS_COOKIE)
+}
+
+// Reject a token that's been logged out or whose subject's sessions were
+// invalidated (password change / deactivation / role change). Best-effort:
+// see lib/tokenRevocation.ts — a Redis outage fails open.
+async function assertNotRevoked(token: string, payload: { sub: string; iat?: number }): Promise<void> {
+  if (await isRevoked(token, payload.sub, payload.iat)) {
+    throw new UnauthorizedError('Session has been revoked — please sign in again')
+  }
+}
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -47,8 +67,15 @@ async function attachStaffPrincipal(req: FastifyRequest, payload: { sub: string;
   }
   const u = await prisma.user.findUnique({
     where: { id: payload.sub },
-    select: { tenantId: true, name: true },
+    select: { tenantId: true, name: true, isActive: true, accountStatus: true, deletedAt: true },
   })
+
+  // Revocation-on-deactivation: a JWT outlives its user's employment unless we
+  // re-check status on every request. Without this, a fired/suspended staffer
+  // keeps full API access until their token expires.
+  if (!u || !u.isActive || u.deletedAt !== null || u.accountStatus !== 'active') {
+    throw new UnauthorizedError('Account is no longer active')
+  }
 
   // Portfolio mode: when the frontend has flipped "All companies" on, every
   // GET carries `x-servd-portfolio: 1`. Expand the tenant filter to every
@@ -110,12 +137,12 @@ async function attachStaffPrincipal(req: FastifyRequest, payload: { sub: string;
 
 export function requireAuth(...allowedRoles: UserRole[]) {
   return async (req: FastifyRequest, _reply: FastifyReply) => {
-    const authHeader = req.headers.authorization
-    if (!authHeader?.startsWith('Bearer ')) {
-      throw new UnauthorizedError('Missing or malformed Authorization header')
+    const token = tokenFromRequest(req)
+    if (!token) {
+      throw new UnauthorizedError('Missing authentication')
     }
-    const token = authHeader.slice(7)
     const payload = verifyStaffToken(token, 'access')
+    await assertNotRevoked(token, payload)
     await attachStaffPrincipal(req, payload, allowedRoles)
   }
 }
@@ -127,12 +154,12 @@ export function requireAuth(...allowedRoles: UserRole[]) {
  */
 export function requirePinSession(...allowedRoles: UserRole[]) {
   return async (req: FastifyRequest, _reply: FastifyReply) => {
-    const authHeader = req.headers.authorization
-    if (!authHeader?.startsWith('Bearer ')) {
-      throw new UnauthorizedError('Missing or malformed Authorization header')
+    const token = tokenFromRequest(req)
+    if (!token) {
+      throw new UnauthorizedError('Missing authentication')
     }
-    const token = authHeader.slice(7)
     const payload = verifyStaffToken(token, 'pin')
+    await assertNotRevoked(token, payload)
     await attachStaffPrincipal(req, payload, allowedRoles)
   }
 }
@@ -148,6 +175,7 @@ export async function requireRefresh(req: FastifyRequest, _reply: FastifyReply) 
   }
   const token = authHeader.slice(7)
   const payload = verifyStaffToken(token, 'refresh')
+  await assertNotRevoked(token, payload)
   // No role gate — every staff member should be able to refresh their own session.
   await attachStaffPrincipal(req, payload, [])
 }
@@ -160,11 +188,10 @@ export async function requireRefresh(req: FastifyRequest, _reply: FastifyReply) 
  */
 export function requireAuthOrPin(...allowedRoles: UserRole[]) {
   return async (req: FastifyRequest, _reply: FastifyReply) => {
-    const authHeader = req.headers.authorization
-    if (!authHeader?.startsWith('Bearer ')) {
-      throw new UnauthorizedError('Missing or malformed Authorization header')
+    const token = tokenFromRequest(req)
+    if (!token) {
+      throw new UnauthorizedError('Missing authentication')
     }
-    const token = authHeader.slice(7)
     let payload
     try {
       payload = verifyStaffToken(token, 'access')
@@ -174,6 +201,7 @@ export function requireAuthOrPin(...allowedRoles: UserRole[]) {
       if ((e as { code?: string }).code !== 'INVALID_TOKEN_TYPE') throw e
       payload = verifyStaffToken(token, 'pin')
     }
+    await assertNotRevoked(token, payload)
     await attachStaffPrincipal(req, payload, allowedRoles)
   }
 }
@@ -186,6 +214,7 @@ export async function requireCustomerAuth(req: FastifyRequest, _reply: FastifyRe
 
   const token = authHeader.slice(7)
   const payload = verifyCustomerToken(token)
+  await assertNotRevoked(token, payload)
   req.customer = { id: payload.sub }
   setRlsContext({ customerId: payload.sub })
 }
@@ -212,6 +241,13 @@ export const KITCHEN_STAFF = [...MANAGERS, 'kitchen', 'expediter', 'boh', 'boh_m
 export const MARKETING_TEAM = [...MANAGERS, 'marketing', 'brand_manager'] as UserRole[]
 export const PROCUREMENT_TEAM = [...MANAGERS, 'procurement'] as UserRole[]
 export const FINANCE_TEAM = [...MANAGERS, 'finance'] as UserRole[]
+// Narrow tier for COMPANY-LEVEL FINANCIALS (P&L, ledger, exec revenue dashboards,
+// revenue reports). Per owner policy: finance officer, CEO/exec, and the F&B
+// manager only — operational managers (manager / foh_management / boh_management)
+// are deliberately excluded. 'management' is the CEO/exec role; 'admin' is the
+// owner superuser. Keep this DISTINCT from FINANCE_TEAM (which is intentionally
+// broad: MANAGERS + finance, for non-confidential finance-adjacent endpoints).
+export const FINANCIALS_VIEWERS = ['admin', 'management', 'finance', 'fnb_manager'] as UserRole[]
 export const HR_TEAM = [...MANAGERS, 'hr'] as UserRole[]
 export const ALL_STAFF = [
   'admin', 'manager', 'management', 'foh_management', 'boh_management',

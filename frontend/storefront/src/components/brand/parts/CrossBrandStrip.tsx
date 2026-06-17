@@ -1,7 +1,7 @@
 'use client'
 import Link from 'next/link'
 import type { Concept } from '../../../lib/concept'
-import { typeLabel, conceptHeroImage } from '../../../lib/concept'
+import { typeLabel, conceptHeroImage, formatBrandName } from '../../../lib/concept'
 
 interface Props {
   current: Concept
@@ -26,7 +26,7 @@ export function CrossBrandStrip({ current, concepts, accent, kicker, heading }: 
               {kicker ?? 'Other GS Foods kitchens'}
             </p>
             <h2 style={{ fontSize: 'clamp(1.75rem, 3.5vw, 2.5rem)', letterSpacing: '-0.02em' }}>
-              {heading ?? `Liked ${current.name}? Try one of these.`}
+              {heading ?? `Liked ${formatBrandName(current.name)}? Try one of these.`}
             </h2>
             <p style={{ color: 'var(--servd-mute)', fontSize: '0.95rem', marginTop: '0.4rem', maxWidth: '32rem' }}>
               Same operator, same standards. Different cuisine, different vibe — and you can pair them in one cart.
@@ -42,7 +42,7 @@ export function CrossBrandStrip({ current, concepts, accent, kicker, heading }: 
             <Link
               key={c.id}
               href={`/brand/${c.slug}`}
-              aria-label={`Visit ${c.name}`}
+              aria-label={`Visit ${formatBrandName(c.name)}`}
               className="servd-card"
               style={{ textDecoration: 'none', color: 'inherit', display: 'flex', flexDirection: 'column' }}
             >
@@ -69,14 +69,14 @@ export function CrossBrandStrip({ current, concepts, accent, kicker, heading }: 
                 </div>
               </div>
               <div style={{ padding: '1.25rem 1.4rem', display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
-                <h3 style={{ fontSize: '1.2rem', fontWeight: 800 }}>{c.name}</h3>
+                <h3 style={{ fontSize: '1.2rem', fontWeight: 800 }}>{formatBrandName(c.name)}</h3>
                 {c.description && (
                   <p style={{ color: 'var(--servd-mute)', fontSize: '0.875rem', lineHeight: 1.4 }}>
                     {c.description}
                   </p>
                 )}
                 <span style={{ marginTop: '0.4rem', fontSize: '0.85rem', fontWeight: 800, color: c.primaryColor ?? 'var(--servd-green-dark)' }}>
-                  Visit {c.name} →
+                  Visit {formatBrandName(c.name)} →
                 </span>
               </div>
             </Link>

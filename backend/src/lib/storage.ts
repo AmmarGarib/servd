@@ -19,7 +19,12 @@ const BUCKET = process.env['R2_BUCKET_NAME'] ?? 'servd-media'
 const PUBLIC_URL = process.env['R2_PUBLIC_URL'] ?? ''
 const PRESIGN_EXPIRY_SECONDS = 300 // 5 minutes
 
-const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif']
+const ALLOWED_TYPES = [
+  'image/jpeg', 'image/png', 'image/webp', 'image/gif',
+  // Video — used by the storefront landing hero (operators upload a short
+  // background/foreground clip). Kept to web-friendly containers.
+  'video/mp4', 'video/webm', 'video/quicktime',
+]
 
 export async function getSignedUploadUrl(filename: string, contentType: string, folder = 'menu') {
   if (!ALLOWED_TYPES.includes(contentType)) {

@@ -83,9 +83,12 @@ export async function marketingActivityRoutes(fastify: FastifyInstance) {
       const days = Math.min(parseInt(req.query.days ?? '30', 10), 365)
       const since = new Date(Date.now() - days * 86_400_000)
 
-      const [campaigns, promosCreated, promoUsages, contentEvents, mediaUploads, marketingActions] = await Promise.all([
+      const [campaigns, clickers, openers, promosCreated, promoUsages, contentEvents, mediaUploads, marketingActions] = await Promise.all([
         // Campaign sends — sentAt is when it actually went out
         prisma.campaignSend.count({ where: { sentAt: { gte: since } } }).catch(() => 0),
+        // Unique clickers / openers (for CTR + open rate)
+        prisma.campaignSend.count({ where: { sentAt: { gte: since }, firstClickedAt: { not: null } } }).catch(() => 0),
+        prisma.campaignSend.count({ where: { sentAt: { gte: since }, firstOpenedAt: { not: null } } }).catch(() => 0),
         // Promos
         prisma.promoCode.count({ where: { createdAt: { gte: since } } }).catch(() => 0),
         // Promo redemptions (impact)
@@ -102,6 +105,10 @@ export async function marketingActivityRoutes(fastify: FastifyInstance) {
         windowDays: days,
         since:      since.toISOString(),
         campaigns,
+        campaignClicks: clickers,
+        campaignOpens:  openers,
+        ctr:      campaigns > 0 ? Number(((clickers / campaigns) * 100).toFixed(1)) : null,
+        openRate: campaigns > 0 ? Number(((openers / campaigns) * 100).toFixed(1)) : null,
         promosCreated,
         promoUsages,
         contentEvents,

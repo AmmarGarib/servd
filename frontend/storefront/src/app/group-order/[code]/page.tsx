@@ -6,6 +6,7 @@
 import { useEffect, useState, useMemo } from 'react'
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
+import { MagneticLink } from '@/components/ui/MagneticButton'
 import { useCustomerAuth } from '../../../store/customerAuth'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
@@ -121,7 +122,7 @@ export default function GroupOrderRoom() {
 
   if (error) return <div className="container-narrow section text-center"><h1 className="text-2xl font-bold">{error}</h1><Link href="/group-order" className="text-[color:var(--servd-green-dark)] underline">Try again</Link></div>
   if (!go) return <div className="container-narrow section">Loading group…</div>
-  if (go.status === 'submitted' && go.orderId) return <div className="container-narrow section text-center"><h1 className="text-2xl font-bold mb-3">Group submitted!</h1><Link href={`/${go.concept.slug}/order/${go.orderId}`} className="servd-btn-primary">Track order →</Link></div>
+  if (go.status === 'submitted' && go.orderId) return <div className="container-narrow section text-center"><h1 className="text-2xl font-bold mb-3">Group submitted!</h1><MagneticLink href={`/${go.concept.slug}/order/${go.orderId}`} className="servd-btn-primary">Track order →</MagneticLink></div>
 
   return (
     <div className="container section">

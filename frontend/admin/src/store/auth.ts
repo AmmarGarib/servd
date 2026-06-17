@@ -49,6 +49,11 @@ export const useAuthStore = create<AuthState>()(
         return user ? roles.includes(user.role) : false
       },
     }),
-    { name: 'servd-auth', partialize: (s) => ({ user: s.user, token: s.token, refreshToken: s.refreshToken }) },
+    // SECURITY: persist ONLY the user identity — never the tokens. The access
+    // token now lives in an httpOnly cookie the browser sends automatically, so
+    // it's no longer readable by JS / stealable from localStorage by XSS. Any
+    // in-memory token (kept this session for the WS handshake) is gone on
+    // reload, where the cookie re-authenticates instead.
+    { name: 'servd-auth', partialize: (s) => ({ user: s.user }) },
   ),
 )

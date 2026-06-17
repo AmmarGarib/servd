@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify'
 import { prisma } from '../../lib/prisma.js'
-import { requireAuth, MANAGERS } from '../auth/middleware.js'
+import { requireAuth, MANAGERS, FINANCIALS_VIEWERS } from '../auth/middleware.js'
 import { getMenuEngineering } from './menu-engineering.js'
 import { getDemandForecast } from './demand-forecast.js'
 
@@ -17,7 +17,7 @@ export async function reportRoutes(fastify: FastifyInstance) {
   // GET /reports/sales — totals + by-hour breakdown
   fastify.get<{
     Querystring: { conceptId?: string; locationId?: string; channel?: string; dateFrom?: string; dateTo?: string }
-  }>('/sales', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
+  }>('/sales', { preHandler: requireAuth(...FINANCIALS_VIEWERS) }, async (req) => {
     const { conceptId, locationId, channel, dateFrom, dateTo } = req.query
     const { from, to } = dateRange(dateFrom, dateTo)
 
@@ -26,6 +26,7 @@ export async function reportRoutes(fastify: FastifyInstance) {
         ...(conceptId && { conceptId }),
         ...(locationId && { locationId }),
         ...(channel && { channel }),
+        concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
         entryDate: { gte: from, lte: to },
       },
       select: { grossCents: true, netCents: true, commissionCents: true, taxCents: true, entryDate: true, channel: true },
@@ -70,6 +71,7 @@ export async function reportRoutes(fastify: FastifyInstance) {
           order: {
             status: 'completed',
             ...(conceptId && { conceptId }),
+            concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
             placedAt: { gte: from, lte: to },
           },
         },
@@ -102,6 +104,7 @@ export async function reportRoutes(fastify: FastifyInstance) {
           status: 'bumped',
           order: {
             ...(conceptId && { conceptId }),
+            concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
             placedAt: { gte: from, lte: to },
           },
         },
@@ -130,7 +133,7 @@ export async function reportRoutes(fastify: FastifyInstance) {
   // GET /reports/by-source — sales breakdown by order source
   fastify.get<{ Querystring: { conceptId?: string; dateFrom?: string; dateTo?: string } }>(
     '/by-source',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: requireAuth(...FINANCIALS_VIEWERS) },
     async (req) => {
       const { conceptId, dateFrom, dateTo } = req.query
       const { from, to } = dateRange(dateFrom, dateTo)
@@ -138,6 +141,7 @@ export async function reportRoutes(fastify: FastifyInstance) {
       const entries = await prisma.financialEntry.findMany({
         where: {
           ...(conceptId && { conceptId }),
+          concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
           entryDate: { gte: from, lte: to },
         },
         select: { channel: true, grossCents: true, netCents: true },
@@ -166,7 +170,7 @@ export async function reportRoutes(fastify: FastifyInstance) {
       const items = await prisma.orderItem.findMany({
         where: {
           firedAt: { not: null }, completedAt: { not: null }, status: 'bumped',
-          order: { ...(conceptId && { conceptId }), placedAt: { gte: from, lte: to } },
+          order: { ...(conceptId && { conceptId }), concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null }, placedAt: { gte: from, lte: to } },
         },
         select: { firedAt: true, completedAt: true, stationId: true, station: { select: { name: true } } },
       })
@@ -205,6 +209,77 @@ export async function reportRoutes(fastify: FastifyInstance) {
       const days = dStr ? Math.min(parseInt(dStr, 10), 30) : 7
       const items = await getDemandForecast({ conceptId, days })
       return { items, conceptId, generatedAt: new Date().toISOString() }
+    },
+  )
+
+  // GET /reports/series — daily revenue/orders buckets (powers sparklines).
+  // Gap-fills missing days with zeros so the trend line is continuous.
+  fastify.get<{ Querystring: { conceptId?: string; dateFrom?: string; dateTo?: string } }>(
+    '/series',
+    { preHandler: requireAuth(...FINANCIALS_VIEWERS) },
+    async (req) => {
+      const { conceptId, dateFrom, dateTo } = req.query
+      const { from, to } = dateRange(dateFrom, dateTo, 30)
+      const entries = await prisma.financialEntry.findMany({
+        where: { ...(conceptId && { conceptId }), concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null }, entryDate: { gte: from, lte: to } },
+        select: { entryDate: true, grossCents: true, netCents: true },
+      })
+      const buckets = new Map<string, { date: string; gross: number; net: number; orders: number }>()
+      for (const e of entries) {
+        const d = e.entryDate.toISOString().slice(0, 10)
+        const b = buckets.get(d) ?? { date: d, gross: 0, net: 0, orders: 0 }
+        b.gross += e.grossCents; b.net += e.netCents; b.orders += 1
+        buckets.set(d, b)
+      }
+      const series: Array<{ date: string; gross: number; net: number; orders: number }> = []
+      const cur = new Date(from); cur.setUTCHours(0, 0, 0, 0)
+      const end = new Date(to); end.setUTCHours(0, 0, 0, 0)
+      let guard = 0
+      while (cur <= end && guard++ < 400) {
+        const key = cur.toISOString().slice(0, 10)
+        series.push(buckets.get(key) ?? { date: key, gross: 0, net: 0, orders: 0 })
+        cur.setUTCDate(cur.getUTCDate() + 1)
+      }
+      return { series }
+    },
+  )
+
+  // GET /reports/delivery — own-fleet delivery speed from order timestamps.
+  // avgMinutes = placedAt → (OTP-verified | completed). Segment-level transit
+  // (accept→pickup→drop) needs the rider app's GPS stream — flagged below.
+  fastify.get<{ Querystring: { conceptId?: string; dateFrom?: string; dateTo?: string; targetMinutes?: string } }>(
+    '/delivery',
+    { preHandler: requireAuth(...MANAGERS) },
+    async (req) => {
+      const { conceptId, dateFrom, dateTo } = req.query
+      const { from, to } = dateRange(dateFrom, dateTo)
+      const target = req.query.targetMinutes ? parseInt(req.query.targetMinutes, 10) : 45
+      const orders = await prisma.order.findMany({
+        where: {
+          ...(conceptId && { conceptId }),
+          concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
+          fulfilmentType: 'delivery',
+          placedAt: { gte: from, lte: to },
+          completedAt: { not: null },
+        },
+        select: { placedAt: true, completedAt: true, deliveryOtpVerifiedAt: true },
+      })
+      let total = 0, sumMin = 0, onTime = 0
+      for (const o of orders) {
+        const done = o.deliveryOtpVerifiedAt ?? o.completedAt
+        if (!done) continue
+        const min = (done.getTime() - o.placedAt.getTime()) / 60000
+        if (min < 0 || min > 600) continue // drop corrupt / stale outliers
+        total++; sumMin += min
+        if (min <= target) onTime++
+      }
+      return {
+        deliveries: total,
+        avgMinutes: total ? Number((sumMin / total).toFixed(1)) : null,
+        onTimePct:  total ? Number(((onTime / total) * 100).toFixed(1)) : null,
+        targetMinutes: target,
+        gpsDepthAvailable: false,
+      }
     },
   )
 }

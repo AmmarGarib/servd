@@ -8,6 +8,7 @@ import { prisma } from '../../lib/prisma.js'
 import { ACCT, postJournalEntry, revenueCodeForConcept, type JournalLineInput } from './journal.js'
 
 interface ConceptBucket {
+  conceptId: string
   conceptSlug: string
   grossRevenueCents: number
   taxCents: number
@@ -19,7 +20,7 @@ export async function postShiftClose(shiftId: string): Promise<{ posted: boolean
   const shift = await prisma.shift.findUnique({
     where: { id: shiftId },
     include: {
-      payments: { include: { order: { include: { concept: { select: { slug: true } } } } } },
+      payments: { include: { order: { include: { concept: { select: { id: true, slug: true } } } } } },
     },
   })
   if (!shift) return { posted: false, entryId: null, reason: 'shift_not_found' }
@@ -54,6 +55,7 @@ export async function postShiftClose(shiftId: string): Promise<{ posted: boolean
       order.promoDiscountCents
 
     const bucket = byConcept.get(slug) ?? {
+      conceptId: order.concept.id,
       conceptSlug: slug,
       grossRevenueCents: 0,
       taxCents: 0,
@@ -95,11 +97,11 @@ export async function postShiftClose(shiftId: string): Promise<{ posted: boolean
   let totalGrossRevenue = 0
   for (const b of byConcept.values()) {
     if (b.walletAppliedCents > 0) {
-      lines.push({ accountCode: ACCT.WALLET_LIABILITY, type: 'debit', amountCents: b.walletAppliedCents, memo: `Wallet applied @ ${b.conceptSlug}` })
+      lines.push({ accountCode: ACCT.WALLET_LIABILITY, type: 'debit', amountCents: b.walletAppliedCents, memo: `Wallet applied @ ${b.conceptSlug}`, conceptId: b.conceptId })
       totalWalletApplied += b.walletAppliedCents
     }
     if (b.discountCents > 0) {
-      lines.push({ accountCode: ACCT.DISCOUNTS, type: 'debit', amountCents: b.discountCents, memo: `Discounts @ ${b.conceptSlug}` })
+      lines.push({ accountCode: ACCT.DISCOUNTS, type: 'debit', amountCents: b.discountCents, memo: `Discounts @ ${b.conceptSlug}`, conceptId: b.conceptId })
       totalDiscount += b.discountCents
     }
     totalTax          += b.taxCents
@@ -124,6 +126,7 @@ export async function postShiftClose(shiftId: string): Promise<{ posted: boolean
         type: 'credit',
         amountCents: b.grossRevenueCents,
         memo: `Revenue @ ${b.conceptSlug}`,
+        conceptId: b.conceptId,
       })
     }
   }

@@ -38,6 +38,10 @@ const posOrderSchema = z.object({
   discountCents: z.number().int().min(0).default(0),
   discountReason: z.string().optional(),
   managerOverridePin: z.string().min(4).max(8).optional(),     // required when discount/override exceeds cashier cap
+  // Client-generated key, stable across retries of the SAME ring-up, so a
+  // double-tap or an offline-queue resend dedupes to ONE order instead of
+  // firing duplicate tickets. Falls back to a timestamp when absent.
+  idempotencyKey: z.string().min(8).max(100).optional(),
 })
 
 const paymentSchema = z.object({
@@ -113,6 +117,12 @@ export async function posRoutes(fastify: FastifyInstance) {
         where: { id: req.params.id, user: { tenantId: req.staffUser!.tenantId } },
       })
       if (!shift) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Shift not found in your active company' } })
+      // Ownership: a cashier may only close their OWN shift. Closing someone
+      // else's drawer (to bury a variance or shift blame onto the closer) is a
+      // manager-tier action.
+      if (shift.userId !== req.staffUser!.id && !MANAGERS.includes(req.staffUser!.role)) {
+        return reply.status(403).send({ error: { code: 'NOT_YOUR_SHIFT', message: 'Only the shift owner or a manager can close this shift' } })
+      }
       return closeShift(req.params.id, closingFloatCents, notes)
     },
   )
@@ -235,6 +245,11 @@ export async function posRoutes(fastify: FastifyInstance) {
       if (shift.status !== 'open') {
         return reply.status(400).send({ error: { code: 'SHIFT_CLOSED', message: 'Cannot record cash movements on a closed shift' } })
       }
+      // Ownership: cash drops/payouts hit the drawer the cashier is accountable
+      // for — only the shift owner or a manager may record them.
+      if (shift.userId !== req.staffUser!.id && !MANAGERS.includes(req.staffUser!.role)) {
+        return reply.status(403).send({ error: { code: 'NOT_YOUR_SHIFT', message: 'Only the shift owner or a manager can record cash movements' } })
+      }
 
       const movement = await prisma.cashMovement.create({
         data: {
@@ -311,6 +326,10 @@ export async function posRoutes(fastify: FastifyInstance) {
         paidCents,
         tenderType:    primaryTender,
         placedAt:      order.placedAt.toISOString(),
+        // SRB compliance — printed as "SRB Invoice No" + verification QR when
+        // the order's concept is SRB-registered and submission has succeeded.
+        srbInvoiceNo:  order.srbInvoiceNumber ?? null,
+        srbQrLink:     order.srbQrCodeLink ?? null,
       }
     },
   )

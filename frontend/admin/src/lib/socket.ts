@@ -18,6 +18,10 @@ export function getSocket(opts?: { stationId?: string; conceptId?: string; role?
     const token = useAuthStore.getState().token
     lastToken = token
     socket = io(WS_URL, {
+      // withCredentials sends the httpOnly cookie at the handshake; token is
+      // still passed when present (fresh login), and the server falls back to
+      // the cookie after a reload when there's no in-memory token.
+      withCredentials: true,
       auth: (cb) => cb({ token: useAuthStore.getState().token, ...opts }),
       transports: ['websocket', 'polling'],
       reconnection: true,

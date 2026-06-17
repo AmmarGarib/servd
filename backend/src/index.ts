@@ -53,6 +53,7 @@ import { inventoryRoutes } from './modules/inventory/routes.js'
 import { tableRoutes } from './modules/tables/routes.js'
 import { reportRoutes } from './modules/reports/routes.js'
 import { managementRoutes } from './modules/management/routes.js'
+import { trackingRoutes } from './modules/tracking/routes.js'
 import { accountingRoutes } from './modules/accounting/routes.js'
 import { crmRoutes } from './modules/crm/routes.js'
 import { loyaltyRoutes } from './modules/loyalty/routes.js'
@@ -314,6 +315,7 @@ async function build() {
       await api.register(positionRoutes,          { prefix: '/positions' })
       await api.register(expoRoutes,              { prefix: '/expo' })
       await api.register(parSheetRoutes,          { prefix: '/par-sheet' })
+      await api.register(trackingRoutes,          { prefix: '/t' }) // public: campaign click/open tracking
 
       // Meta OAuth.
       //   GET /api/v1/integrations/social/status    → { configured, connected, page, ig } (authed)

@@ -3,6 +3,7 @@
 // can replace the visuals while keeping the semantics (role/aria) intact.
 
 import type { ReactNode } from 'react'
+import { Loader } from './ui/Loader'
 
 interface StatusProps {
   title: string
@@ -42,27 +43,13 @@ export function ErrorState({ title, message, action }: StatusProps) {
   )
 }
 
-// Inline loader — for in-component use rather than route-level loading.
+// Inline loader — the branded servd ripple, for in-component use rather than
+// route-level loading. `size` is the overall footprint; the 3×3 grid scales to fit.
 export function Spinner({ size = 24, label = 'Loading' }: { size?: number; label?: string }) {
   return (
-    <span role="status" aria-label={label} style={{ display: 'inline-block' }}>
-      <span
-        aria-hidden="true"
-        style={{
-          display: 'inline-block',
-          width: size,
-          height: size,
-          border: '2px solid rgba(0,0,0,0.08)',
-          borderTopColor: '#4ade80',
-          borderRadius: '50%',
-          animation: 'spin 0.8s linear infinite',
-        }}
-      />
+    <span role="status" aria-label={label} style={{ display: 'inline-flex' }}>
+      <Loader size={Math.max(8, Math.round(size / 3))} />
       <span className="sr-only">{label}</span>
-      <style>{`
-        @keyframes spin { to { transform: rotate(360deg); } }
-        @media (prefers-reduced-motion: reduce) { span[aria-hidden="true"] { animation: none; opacity: 0.5; } }
-      `}</style>
     </span>
   )
 }

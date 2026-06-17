@@ -28,6 +28,7 @@ export default function TimeClockPage() {
   const streamRef = useRef<MediaStream | null>(null)
 
   const [pin, setPin] = useState('')
+  const [name, setName] = useState('')   // entered before the PIN at clock-in
   const [stage, setStage] = useState<Stage>('idle')
   const [feedback, setFeedback] = useState<string>('')
   const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null)
@@ -120,6 +121,7 @@ export default function TimeClockPage() {
       const result = await api.post<{ accessToken: string; user: { name: string; role: string } }>(
         '/auth/pin',
         {
+          identifier: name.trim(),
           pin,
           ...(coords && { lat: coords.lat, lng: coords.lng }),
           ...(selfieUrl && { selfieUrl }),
@@ -189,6 +191,15 @@ export default function TimeClockPage() {
         {/* PIN pad */}
         {(stage === 'idle' || stage === 'pin' || stage === 'error') && (
           <>
+            <input
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Your name"
+              autoComplete="off"
+              className="w-full mb-3 rounded-xl px-4 py-3 text-center text-white outline-none"
+              style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)' }}
+            />
             <div className="text-center mb-3">
               <span className="text-4xl font-black text-white tracking-[0.5em]" style={{ fontFamily: 'monospace' }}>
                 {pin.split('').map(() => '●').join('') || '____'}

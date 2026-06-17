@@ -39,7 +39,8 @@ export async function reviewRoutes(fastify: FastifyInstance) {
         },
       },
       orderBy: { createdAt: 'desc' },
-      take: limit ? parseInt(limit, 10) : 50,
+      // Cap pagination — an uncapped ?limit= is a free full-table dump + DoS.
+      take: Math.min(Math.max(parseInt(limit ?? '50', 10) || 50, 1), 200),
     })
 
     const avg = reviews.length

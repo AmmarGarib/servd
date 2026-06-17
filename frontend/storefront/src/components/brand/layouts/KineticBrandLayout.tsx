@@ -1,7 +1,7 @@
 'use client'
 import Link from 'next/link'
 import type { Concept } from '../../../lib/concept'
-import { conceptHeroImage } from '../../../lib/concept'
+import { conceptHeroImage, formatBrandName } from '../../../lib/concept'
 import { KineticShape } from '../../kinetic/KineticShape'
 import { MarqueeText } from '../../kinetic/MarqueeStrip'
 import { DragRail } from '../../kinetic/DragRail'
@@ -141,7 +141,7 @@ export function KineticBrandLayout({ concept, concepts }: Props) {
               <span className="eyebrow eyebrow-accent" style={{ display: 'block', marginBottom: '0.5rem' }}>
                 What we do
               </span>
-              {concept.name} is one of three kitchens on the servd network. We focus on what we cook best — and let the other kitchens do the rest. Order from {concept.name} alone, or mix in dishes from Simmer and Flipd. Same bag, same delivery.
+              {formatBrandName(concept.name)} is one of three kitchens on the servd network. We focus on what we cook best — and let the other kitchens do the rest. Order from {formatBrandName(concept.name)} alone, or mix in dishes from simmer and Flipd. Same bag, same delivery.
             </p>
             <h2 className="display" style={{ fontSize: 'clamp(2.5rem, 6vw, 4.5rem)' }}>
               One kitchen.<br />

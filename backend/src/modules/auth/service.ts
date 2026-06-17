@@ -31,8 +31,10 @@ export interface CustomerTokenPayload {
 // ─── Staff auth ───────────────────────────────────────────────────────────────
 
 export async function staffLogin(email: string, password: string) {
+  // accountStatus gate matches PIN login — `pending` (awaiting CEO approval)
+  // and `suspended` accounts must not be able to password-login either.
   const user = await prisma.user.findFirst({
-    where: { email: email.toLowerCase(), isActive: true, deletedAt: null },
+    where: { email: email.toLowerCase(), isActive: true, deletedAt: null, accountStatus: 'active' },
   })
 
   if (!user) throw new UnauthorizedError('Invalid credentials')
@@ -59,22 +61,37 @@ export async function staffLogin(email: string, password: string) {
   }
 }
 
-export async function staffPinLogin(pin: string) {
-  // Only `active` accounts can complete PIN login. `pending` (self-signed-up,
-  // waiting for CEO approval) and `suspended` (ex-staff) are filtered out so
-  // they can't bcrypt-collide their way into a session.
-  const users = await prisma.user.findMany({
-    where: { isActive: true, pin: { not: null }, deletedAt: null, accountStatus: 'active' },
-  })
+export async function staffPinLogin(identifier: string | undefined, pin: string) {
+  // Staff now identify themselves (name or email) BEFORE the PIN. That lets us:
+  //   • compare ONE PIN hash instead of every staff member's (no O(n) bcrypt
+  //     loop → no timing leak / DoS), and
+  //   • rate-limit failed attempts per person (done at the route).
+  // Only `active` accounts can complete PIN login — `pending` (awaiting CEO
+  // approval) and `suspended` (ex-staff) are excluded.
+  const idTrim = (identifier ?? '').trim()
+  const candidates = idTrim
+    ? await prisma.user.findMany({
+        where: {
+          isActive: true, pin: { not: null }, deletedAt: null, accountStatus: 'active',
+          OR: [
+            { email: idTrim.toLowerCase() },
+            { name: { equals: idTrim, mode: 'insensitive' } },
+          ],
+        },
+      })
+    // TEMPORARY fallback for any client not yet sending the name — legacy
+    // all-staff scan. Kept so a client glitch can't lock everyone out during
+    // rollout; remove once every login surface sends `identifier`.
+    : await prisma.user.findMany({
+        where: { isActive: true, pin: { not: null }, deletedAt: null, accountStatus: 'active' },
+      })
 
-  // Run all bcrypt comparisons in parallel — O(n) sequential was ~100ms * n staff
-  const results = await Promise.all(
-    users.map(async (user) => ({
-      user,
-      match: user.pin ? await bcrypt.compare(pin, user.pin) : false,
-    })),
-  )
-  const matchedUser = results.find((r) => r.match)?.user ?? null
+  // Name isn't guaranteed unique, so compare against the (usually one) matches.
+  // The candidate set is tiny and scoped to the typed name — not all staff.
+  let matchedUser: (typeof candidates)[number] | null = null
+  for (const user of candidates) {
+    if (user.pin && await bcrypt.compare(pin, user.pin)) { matchedUser = user; break }
+  }
 
   // Legacy PIN rotation gate. Any account whose PIN was derived from the
   // last 4 digits of the phone (i.e. all pre-rotation accounts) is flagged
@@ -237,7 +254,7 @@ export async function customerRegister(
     const token = jwt.sign(
       { sub: customer.id, type: 'customer' } satisfies CustomerTokenPayload,
       JWT_SECRET,
-      { expiresIn: '30d' },
+      { expiresIn: '14d' },
     )
     return { token, customer: { id: customer.id, name: customer.name, email: customer.email } }
   }
@@ -271,7 +288,7 @@ export async function customerRegister(
   const token = jwt.sign(
     { sub: customer.id, type: 'customer' } satisfies CustomerTokenPayload,
     JWT_SECRET,
-    { expiresIn: '30d' },
+    { expiresIn: '14d' },
   )
 
   return {
@@ -293,7 +310,7 @@ export async function customerLogin(email: string, password: string) {
   const token = jwt.sign(
     { sub: customer.id, type: 'customer' } satisfies CustomerTokenPayload,
     JWT_SECRET,
-    { expiresIn: '30d' },
+    { expiresIn: '14d' },
   )
 
   return {
@@ -359,7 +376,7 @@ export async function verifyMagicLink(token: string) {
   const customerToken = jwt.sign(
     { sub: link.customer.id, type: 'customer' } satisfies CustomerTokenPayload,
     JWT_SECRET,
-    { expiresIn: '30d' },
+    { expiresIn: '14d' },
   )
 
   return {

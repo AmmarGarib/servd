@@ -71,7 +71,7 @@ export function roleLabel(role: string | undefined | null): string {
 /** Module IDs — must match the `module` tag on every nav item in AppShell. */
 export type ModuleId =
   // Executive (CEO only by default)
-  | 'ceo_overview' | 'role_management' | 'role_modules' | 'audit_log' | 'tenants'
+  | 'ceo_overview' | 'business_info' | 'role_management' | 'role_modules' | 'audit_log' | 'tenants'
   // Management — manager-tier dashboards (Brand Manager, F&B Manager)
   | 'brand_dashboard' | 'fnb_dashboard'
   // Live
@@ -108,6 +108,7 @@ export interface ModuleMeta {
 
 export const MODULES: ModuleMeta[] = [
   { id: 'ceo_overview',       label: 'CEO Overview',        section: 'Executive' },
+  { id: 'business_info',      label: 'Business Info',       section: 'Executive' },
   { id: 'role_management',    label: 'Roles & Permissions', section: 'Executive' },
   { id: 'role_modules',       label: 'Module Access',       section: 'Executive' },
   { id: 'audit_log',          label: 'Audit Log',           section: 'Executive' },
@@ -172,12 +173,17 @@ export const MODULES: ModuleMeta[] = [
   { id: 'staff_hr',           label: 'HR',                  section: 'Workforce' },
   { id: 'kitchen_staff',      label: 'Kitchen Brigade',     section: 'Workforce' },
 
+  // Account config — Integrations / Notifications / Help now live in the
+  // Executive sidebar section (the standalone "Setup" group was retired).
+  { id: 'integrations',       label: 'Integrations',        section: 'Executive' },
+  { id: 'notifications',      label: 'Notifications',       section: 'Executive' },
+  { id: 'help',               label: 'Help & Support',      section: 'Executive' },
+  // Still-defined modules that aren't in the primary sidebar: the first-run
+  // wizard (reachable from the Dashboard checklist), the Configuration Hub
+  // deep-links, and the legacy Brands & Stations gate.
   { id: 'onboarding',         label: 'Onboarding',          section: 'Setup' },
   { id: 'configuration',      label: 'Configuration Hub',   section: 'Setup' },
   { id: 'settings',           label: 'Brands & Stations',   section: 'Setup' },
-  { id: 'integrations',       label: 'Integrations',        section: 'Setup' },
-  { id: 'notifications',      label: 'Notifications',       section: 'Setup' },
-  { id: 'help',               label: 'Help & Support',      section: 'Setup' },
 ]
 
 const ALL_MODULE_IDS = MODULES.map((m) => m.id)
@@ -246,7 +252,10 @@ export const DEFAULT_MODULE_ACCESS: Record<AppRole, ModuleId[]> = {
     'pos', 'reservations', 'reservations_admin', 'scheduling', 'tables', 'dispatch', 'riders',
     'complaints', 'reviews',
     'staff_directory', 'staff_foh', 'staff_boh', 'kitchen_staff',
-    'reports',
+    // Owner policy: F&B manager is a company-financials viewer (P&L + accounting
+    // + revenue reports) alongside finance + CEO. Matches the backend
+    // FINANCIALS_VIEWERS tier; operational FOH/BOH managers are excluded.
+    'finance_pl', 'accounting', 'reports',
   ],
 
   finance: [

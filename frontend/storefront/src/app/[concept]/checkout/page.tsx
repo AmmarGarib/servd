@@ -6,7 +6,6 @@ import { useCart } from '../../../store/cart'
 import { useCustomerAuth } from '../../../store/customerAuth'
 import { fmt } from '../../../lib/ui'
 import { decodeCartToken } from '../../../lib/cartHandoff'
-import { CrossBrandUpsell } from '../../../components/CrossBrandUpsell'
 import { trackCheckoutStarted, trackCheckoutAbandoned, trackOrderPlaced, trackPromoApplied, trackPromoFailed } from '../../../lib/analytics'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
@@ -82,11 +81,6 @@ export default function CheckoutPage() {
     slug === 'flipd'  ? 'flipd-ordering'  :
     ''
   // Cross-brand upsell ("want a side from another GS Foods kitchen?")
-  // — hidden only for Simmer. Simmer is high-ticket plated-service
-  // and a smash-burger pitch next to a tasting menu cheapens the room.
-  // Stax and Flipd are casual + delivery-first; cross-brand discovery
-  // helps them.
-  const hideCrossBrandUpsell = slug === 'simmer'
 
   // Guest checkout is gone — every order needs a logged-in customer. Bounce
   // unauthenticated visitors to /login with a return URL so their cart still
@@ -759,11 +753,10 @@ export default function CheckoutPage() {
           </div>
         </Panel>
 
-        {/* Cross-brand upsell — surface 3 dishes from other GS Foods
-            kitchens. Hidden for Simmer (high-ticket plated-service);
-            kept for Stax + Flipd where cross-brand discovery is on
-            mission. */}
-        {!hideCrossBrandUpsell && <CrossBrandUpsell currentSlug={slug} />}
+        {/* Cross-brand upsell removed from checkout: it linked to another
+            brand at peak intent, and switching brand calls cart.clearCart()
+            (single-concept cart), silently destroying the order it was meant
+            to grow. Re-introduce only behind a real multi-kitchen cart. */}
 
         {token ? (
           <>

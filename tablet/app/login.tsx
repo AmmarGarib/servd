@@ -11,7 +11,7 @@
 // punch-in atomic action. Cancel selfie = no clock in.
 
 import { useState, useRef, useEffect } from 'react'
-import { View, Text, Alert, Pressable, ActivityIndicator } from 'react-native'
+import { View, Text, Alert, Pressable, ActivityIndicator, TextInput } from 'react-native'
 import { useRouter } from 'expo-router'
 import { CameraView, useCameraPermissions } from 'expo-camera'
 import * as FileSystem from 'expo-file-system'
@@ -33,6 +33,7 @@ interface UploadUrlResp { url: string; key: string; publicUrl: string }
 
 export default function LoginScreen() {
   const router = useRouter()
+  const [name, setName] = useState('')
   const [pin, setPin] = useState('')
   const [busy, setBusy] = useState(false)
   const [cameraPerm, requestCameraPerm] = useCameraPermissions()
@@ -71,6 +72,7 @@ export default function LoginScreen() {
   }
 
   async function submit() {
+    if (!name.trim()) { Alert.alert('Enter your name', 'Type your name first, then your PIN.'); return }
     if (pin.length < 4) return
     setBusy(true)
     try {
@@ -91,6 +93,7 @@ export default function LoginScreen() {
       const fix = await fixPromise
 
       const resp = await api.post<PinResp>('/auth/pin', {
+        identifier: name.trim(),
         pin,
         ...(fix && { lat: fix.lat, lng: fix.lng, accuracyM: fix.accuracyM }),
         ...(selfieUrl && { selfieUrl }),
@@ -137,6 +140,23 @@ export default function LoginScreen() {
 
       {/* Right — keypad */}
       <View style={{ flex: 1, padding: 32, justifyContent: 'center' }}>
+        <Text style={{ color: theme.textDim, fontSize: 14, letterSpacing: 1.5, fontWeight: '700', textAlign: 'center', marginBottom: 12 }}>
+          YOUR NAME
+        </Text>
+        <TextInput
+          value={name}
+          onChangeText={setName}
+          placeholder="Type your name"
+          placeholderTextColor={theme.textMuted}
+          autoCapitalize="words"
+          editable={!busy}
+          style={{
+            backgroundColor: theme.panelAlt, color: theme.text,
+            borderRadius: 10, borderWidth: 1, borderColor: theme.border,
+            paddingVertical: 12, paddingHorizontal: 16, fontSize: 16,
+            textAlign: 'center', marginBottom: 24,
+          }}
+        />
         <Text style={{ color: theme.textDim, fontSize: 14, letterSpacing: 1.5, fontWeight: '700', textAlign: 'center', marginBottom: 16 }}>
           ENTER PIN
         </Text>

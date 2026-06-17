@@ -1,6 +1,7 @@
 'use client'
 
 import Link from 'next/link'
+import { MagneticLink } from '@/components/ui/MagneticButton'
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useCustomerAuth } from '../../store/customerAuth'
@@ -163,7 +164,7 @@ export default function OrdersPage() {
             <div className="servd-card" style={{ padding: '4rem 2rem', textAlign: 'center' }}>
               <h2 style={{ fontSize: '1.4rem', marginBottom: '0.75rem' }}>No orders yet</h2>
               <p style={{ color: 'var(--servd-mute)', marginBottom: '2rem' }}>Once you order, it&rsquo;ll show up here for re-ordering with one tap.</p>
-              <Link href="/browse" className="servd-btn-primary">Browse brands</Link>
+              <MagneticLink href="/browse" className="servd-btn-primary">Browse brands</MagneticLink>
             </div>
           ) : (
             <div style={{ display: 'grid', gap: '0.85rem' }}>

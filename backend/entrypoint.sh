@@ -6,10 +6,11 @@
 #   2. prisma migrate deploy                      (apply any new migrations)
 #   3. node dist/src/index.js                     (boot the API)
 #
-# Each migration step is best-effort. A non-zero exit (baseline already
-# applied, transient DB blip, etc.) logs and continues so the API still
-# boots against the existing schema — the previous shell-and-chain command
-# crashed the container whenever migrate-deploy returned non-zero.
+# The baseline resolve is best-effort (it's expected to no-op once applied).
+# migrate deploy, however, is FATAL on failure: booting the API against a stale
+# schema silently serves wrong data (incl. financial totals) mid-service, which
+# is far worse than a visibly-failed deploy the operator can roll back. `migrate
+# deploy` is idempotent — a non-zero exit means a real migration failure.
 
 set -u
 
@@ -18,8 +19,10 @@ npx prisma migrate resolve --applied 0_init 2>&1 || \
   echo "[entrypoint] migrate resolve returned non-zero (often expected if already applied), continuing"
 
 echo "[entrypoint] applying any new migrations…"
-npx prisma migrate deploy 2>&1 || \
-  echo "[entrypoint] migrate deploy returned non-zero, continuing — API will run against existing schema"
+if ! npx prisma migrate deploy 2>&1; then
+  echo "[entrypoint] FATAL: prisma migrate deploy failed — refusing to boot against a stale schema. Roll back or fix the migration."
+  exit 1
+fi
 
 echo "[entrypoint] starting API…"
 exec node dist/src/index.js

@@ -6,6 +6,7 @@ import { ingestOrder, listOrders, getOrder, updateOrderStatus, updateItemStatus 
 import { assertConceptAccess, filterConceptIdsForStaff } from '../../lib/conceptAccess.js'
 import { audit } from '../../lib/audit.js'
 import { AppError } from '../../lib/errors.js'
+import { getFbrQueue, getSrbQueue } from '../../lib/queue.js'
 import type { OrderDTO } from '@servd/types'
 
 const createOrderSchema = z.object({
@@ -106,7 +107,7 @@ export async function orderRoutes(fastify: FastifyInstance) {
     },
   )
 
-  // POST /orders — manual order creation
+  // POST /orders — manual order creation (server / cashier manual intake)
   fastify.post('/', { preHandler: requireAuthOrPin(...ALL_STAFF) }, async (req, reply) => {
     const dto = createOrderSchema.parse(req.body) as OrderDTO
     await assertConceptAccess(req.staffUser!, dto.concept_id)
@@ -115,8 +116,31 @@ export async function orderRoutes(fastify: FastifyInstance) {
       where: { id: dto.concept_id, tenantId: req.staffUser!.tenantFilter, deletedAt: null },
     })
     if (!concept) return reply.status(403).send({ error: { code: 'CROSS_TENANT', message: 'Concept does not belong to your active company' } })
+
+    // SRB alignment: compute GST server-side on the PRE-discount item total
+    // (manual orders carry no discount), so taxCents is correct and the SRB
+    // filing matches the books — never trust a client-supplied amount for a
+    // taxable sale. Mirrors the POS tax rule (cash → taxRateCash, else card).
+    const itemTotal = dto.items.reduce((s, it) => {
+      const mods = (it.modifiers ?? []).reduce((m, x) => m + x.priceDeltaCents, 0)
+      return s + (it.unitPriceCents + mods) * it.quantity
+    }, 0)
+    const isCash = dto.payment.provider === 'cash'
+    const rate = (isCash ? (concept.taxRateCash ?? concept.taxRate) : (concept.taxRateCard ?? concept.taxRate)) / 100
+    const taxCents = Math.round(itemTotal * rate)
+    const totalCents = itemTotal + taxCents
+    dto.payment.amountCents = totalCents
+
     const result = await ingestOrder(dto)
-    return reply.status(result.created ? 201 : 200).send(result.order)
+    if (result.created) {
+      await prisma.order.update({ where: { id: result.order.id }, data: { taxCents, totalCents } })
+      // File to SRB (+ FBR) once the sale is paid — same fan-out as the POS.
+      if (dto.payment.status === 'paid') {
+        getFbrQueue()?.add('submit', { orderId: result.order.id }).catch((e: Error) => console.warn('[FBR] manual order enqueue failed:', e.message))
+        getSrbQueue()?.add('submit', { orderId: result.order.id }).catch((e: Error) => console.warn('[SRB] manual order enqueue failed:', e.message))
+      }
+    }
+    return reply.status(result.created ? 201 : 200).send({ ...result.order, taxCents, totalCents })
   })
 
   // GET /orders/curbside — active curbside queue. Cars-here-first, then
@@ -196,12 +220,14 @@ export async function orderRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuthOrPin(...ALL_STAFF) },
     async (req, reply) => {
       const { status } = updateOrderStatusSchema.parse(req.body)
-      const order = await getOrder(req.params.id)
-      await assertConceptAccess(req.staffUser!, order.conceptId)
-      const concept = await prisma.concept.findFirst({
-        where: { id: order.conceptId, tenantId: req.staffUser!.tenantFilter, deletedAt: null },
+      // Tenant-scoped lookup FIRST — never fetch (or reveal the existence of)
+      // an order outside the caller's company before the scope check.
+      const order = await prisma.order.findFirst({
+        where: { id: req.params.id, concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null } },
+        select: { id: true, conceptId: true },
       })
-      if (!concept) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Order not found in your active company' } })
+      if (!order) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Order not found in your active company' } })
+      await assertConceptAccess(req.staffUser!, order.conceptId)
       return updateOrderStatus(req.params.id, status as never)
     },
   )

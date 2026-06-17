@@ -45,6 +45,18 @@ function dateOnly(offsetDays = 0): Date {
 }
 
 async function main() {
+  // Dev fixture only. Refuse production, and refuse to bake in a known
+  // password — every seeded staff login uses SEED_STAFF_PASSWORD.
+  if (process.env['NODE_ENV'] === 'production') {
+    console.error('seed-live-state is a dev fixture — refusing to run with NODE_ENV=production')
+    process.exit(1)
+  }
+  const seedPassword = process.env['SEED_STAFF_PASSWORD']
+  if (!seedPassword || seedPassword.length < 8) {
+    console.error('Set SEED_STAFF_PASSWORD (min 8 chars):  SEED_STAFF_PASSWORD=... npx tsx scripts/seed-live-state.ts')
+    process.exit(1)
+  }
+
   console.log('\n━━━ GS Foods Live-State Seed ━━━\n')
 
   // ── 1. Concepts ───────────────────────────────────────────────────────────
@@ -113,7 +125,7 @@ async function main() {
 
   console.log('2/14  Staff users...')
 
-  const pwHash = await bcrypt.hash('servd123', 10)
+  const pwHash = await bcrypt.hash(seedPassword, 10)
 
   const manager = await prisma.user.upsert({
     where: { email: 'aamir.khan@servd.pk' },
@@ -881,8 +893,8 @@ async function main() {
   console.log('✅  4 upcoming reservations (2 tonight)')
   console.log('✅  7 customer reviews + 1 open complaint')
   console.log('✅  April 2026 payroll draft ready')
-  console.log('\nLogin: admin@servd.pk / servd123')
-  console.log('       aamir.khan@servd.pk / servd123 (manager)\n')
+  console.log('\nLogin: admin@servd.pk / $SEED_STAFF_PASSWORD')
+  console.log('       aamir.khan@servd.pk / $SEED_STAFF_PASSWORD (manager)\n')
 
   await prisma.$disconnect()
 }

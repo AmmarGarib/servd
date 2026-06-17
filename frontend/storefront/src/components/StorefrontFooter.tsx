@@ -6,10 +6,12 @@ import { KineticShape } from './kinetic/KineticShape'
 // promising the customer kitchens they couldn't actually order from. Pulled
 // down to match the live state on the home page. Add back when their
 // concept rows + microsites land.
+// Accents match the canonical per-brand palette (lib/concept BRAND_ACCENT_OVERRIDES).
+// "simmer" is lowercase per its brand rules.
 const BRANDS = [
-  { slug: 'stax',   name: 'Stax',   accent: '#FF6B35' },
-  { slug: 'simmer', name: 'Simmer', accent: 'var(--servd-green)' },
-  { slug: 'flipd',  name: 'Flipd',  accent: '#F5B700' },
+  { slug: 'stax',   name: 'Stax',   accent: '#0A1857' },
+  { slug: 'simmer', name: 'simmer', accent: '#E94E1B' },
+  { slug: 'flipd',  name: 'Flipd',  accent: '#3AA8FF' },
 ]
 
 export function StorefrontFooter() {

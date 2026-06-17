@@ -234,6 +234,65 @@ export async function profitAndLoss(dateFrom: Date, dateTo: Date): Promise<Profi
   }
 }
 
+// ─── Per-brand P&L components (measured from tagged lines) ───────────────────
+// Groups journal lines by their conceptId so each brand's revenue, COGS and
+// discounts are MEASURED from the ledger, not estimated by revenue share. Lines
+// with a null conceptId (shared overhead, manual entries) land in the `null`
+// bucket; the brand report allocates that remainder across brands.
+
+export interface ConceptPnlBucket {
+  conceptId: string | null // null = shared / unallocated
+  revenueCents: number
+  cogsCents: number
+  contraRevenueCents: number
+  opexCents: number
+}
+
+export async function pnlByConcept(dateFrom: Date, dateTo: Date): Promise<ConceptPnlBucket[]> {
+  const grouped = await prisma.journalLine.groupBy({
+    by: ['conceptId', 'accountId', 'type'],
+    _sum: { amountCents: true },
+    where: { journalEntry: { entryDate: { gte: dateFrom, lte: dateTo } } },
+  })
+
+  const accountIds = Array.from(new Set(grouped.map((g) => g.accountId)))
+  const accounts = await prisma.account.findMany({
+    where: { id: { in: accountIds } },
+    select: { id: true, code: true, type: true },
+  })
+  const accMap = new Map(accounts.map((a) => [a.id, a]))
+
+  const buckets = new Map<string, ConceptPnlBucket>()
+  const ensure = (c: string | null): ConceptPnlBucket => {
+    const k = c ?? '__shared__'
+    let b = buckets.get(k)
+    if (!b) {
+      b = { conceptId: c, revenueCents: 0, cogsCents: 0, contraRevenueCents: 0, opexCents: 0 }
+      buckets.set(k, b)
+    }
+    return b
+  }
+
+  for (const row of grouped) {
+    const acc = accMap.get(row.accountId)
+    if (!acc) continue
+    const amt = row._sum.amountCents ?? 0
+    if (amt === 0) continue
+    const b = ensure(row.conceptId)
+    if (acc.type === 'revenue') {
+      b.revenueCents += row.type === 'credit' ? amt : -amt
+    } else if (acc.type === 'expense') {
+      const signed = row.type === 'debit' ? amt : -amt // expense increases on debit
+      if (acc.code.startsWith(COGS_PREFIX)) b.cogsCents += signed
+      else if (acc.code.startsWith(CONTRA_REVENUE_PREFIX)) b.contraRevenueCents += signed
+      else b.opexCents += signed
+    }
+    // asset / liability / equity lines are not part of the P&L
+  }
+
+  return Array.from(buckets.values())
+}
+
 // ─── Cash flow (indirect-method-lite) ───────────────────────────────────────
 // True cash-flow categorisation requires tagging every JE with operating /
 // investing / financing intent. v1 takes a pragmatic shortcut: for each cash

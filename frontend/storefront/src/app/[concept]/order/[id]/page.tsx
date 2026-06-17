@@ -4,6 +4,7 @@ import { useParams, useRouter, usePathname } from 'next/navigation'
 import Link from 'next/link'
 import { fmt, isLight } from '../../../../lib/ui'
 import { useCustomerAuth } from '../../../../store/customerAuth'
+import { LoadingScreen } from '../../../../components/ui/Loader'
 
 // /<concept>/order/[id] — live order tracker.
 // Restyled onto the on-system --servd-* tokens. Status icons are inline
@@ -118,14 +119,7 @@ export default function OrderStatusPage() {
 
   if (!order) return (
     <main className="flex min-h-screen items-center justify-center" style={{ background: 'var(--servd-bg)' }}>
-      <div className="flex flex-col items-center gap-4">
-        <div className="relative h-14 w-14">
-          <div className="absolute inset-0 rounded-full" style={{ border: '2px solid var(--servd-line)' }} />
-          <div className="absolute inset-0 rounded-full animate-spin"
-            style={{ border: '2px solid transparent', borderTopColor: 'var(--servd-green)' }} />
-        </div>
-        <p className="text-sm" style={{ color: 'var(--servd-mute)' }}>Loading your order…</p>
-      </div>
+      <LoadingScreen label="Loading your order…" minHeight="auto" />
     </main>
   )
 

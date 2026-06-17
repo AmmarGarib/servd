@@ -120,6 +120,28 @@ export async function webhookRoutes(fastify: FastifyInstance) {
       const statusMap: Record<string, string> = { SUCCESS: 'paid', FAILED: 'failed', REFUNDED: 'refunded' }
       const mappedStatus = statusMap[payload.status] ?? 'pending'
 
+      // Before flipping an order to PAID, verify the gateway actually collected
+      // (at least) what we billed. Keenu sends `amount` in paisa
+      // (adapters/payment/keenu.ts), matching Payment.amountCents. This closes
+      // the hole where a partial/wrong-amount SUCCESS marked an order fully paid.
+      if (mappedStatus === 'paid') {
+        const payment = await prisma.payment.findFirst({
+          where: { orderId: payload.order_id, gatewayRef: payload.transaction_id },
+          select: { id: true, amountCents: true },
+        })
+        if (!payment) {
+          fastify.log.warn({ orderId: payload.order_id, txn: payload.transaction_id }, 'Keenu SUCCESS for unknown payment — ignoring')
+          return reply.status(200).send({ received: true, unmatched: true })
+        }
+        if (typeof payload.amount === 'number' && payload.amount < payment.amountCents) {
+          fastify.log.error(
+            { orderId: payload.order_id, txn: payload.transaction_id, expectedCents: payment.amountCents, gotCents: payload.amount },
+            'Keenu amount underpayment — NOT marking paid',
+          )
+          return reply.status(200).send({ received: true, amountMismatch: true })
+        }
+      }
+
       await prisma.payment.updateMany({
         where: { orderId: payload.order_id, gatewayRef: payload.transaction_id },
         data: { status: mappedStatus as never },
@@ -157,9 +179,11 @@ export async function webhookRoutes(fastify: FastifyInstance) {
     // Meta dashboard alongside the verify token.
     const appSecret = process.env['WHATSAPP_APP_SECRET']
     if (!appSecret) {
-      // Fail closed in production. In dev the secret may not be configured;
-      // skip verification only when NODE_ENV !== 'production'.
-      if (process.env['NODE_ENV'] === 'production') {
+      // Fail closed in EVERY environment. A staging box with the secret unset
+      // would otherwise accept unsigned webhooks — i.e. anyone could inject
+      // fake WhatsApp messages and place orders as any registered customer.
+      // Local dev can opt out explicitly with ALLOW_UNSIGNED_WEBHOOKS=1.
+      if (process.env['ALLOW_UNSIGNED_WEBHOOKS'] !== '1') {
         fastify.log.error('[WhatsApp] WHATSAPP_APP_SECRET not set — refusing inbound')
         return reply.status(503).send({ error: { code: 'NOT_CONFIGURED', message: 'WhatsApp webhook signature secret missing' } })
       }

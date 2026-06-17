@@ -132,10 +132,18 @@ export async function ingestOrder(dto: OrderDTO) {
   const menuItemStations = menuItemIds.length > 0
     ? await prisma.menuItem.findMany({
         where: { id: { in: menuItemIds } },
-        select: { id: true, stationId: true },
+        select: { id: true, stationId: true, priceCents: true, name: true },
       })
     : []
   const stationMap = new Map(menuItemStations.map((m) => [m.id, m.stationId]))
+
+  // Revenue guard: refuse to take an order for an unpriced (PKR 0) menu item.
+  // Items are staged at 0 before the operator sets prices; they may be visible
+  // ("coming soon") but must never be orderable, or customers get free food.
+  const unpriced = menuItemStations.find((m) => (m.priceCents ?? 0) <= 0)
+  if (unpriced) {
+    throw new AppError('ITEM_NOT_PRICED', `"${unpriced.name}" isn't available to order yet.`, 409)
+  }
 
   // Decide fulfilment type once, up front. Upstream channels may have
   // already told us (storefront, POS), but most won't — infer from the

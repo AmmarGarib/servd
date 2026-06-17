@@ -82,7 +82,8 @@ export async function feedbackRoutes(fastify: FastifyInstance) {
       const entries = await prisma.feedbackEntry.findMany({
         where,
         orderBy: { createdAt: 'desc' },
-        take: limit ? parseInt(limit, 10) : 50,
+        // Cap pagination — an uncapped ?limit= is a free full-table dump + DoS.
+        take: Math.min(Math.max(parseInt(limit ?? '50', 10) || 50, 1), 200),
         include: {
           customer: { select: { id: true, name: true, email: true, phone: true } },
           concept:  { select: { name: true, slug: true } },

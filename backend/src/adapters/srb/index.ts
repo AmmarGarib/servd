@@ -1,273 +1,258 @@
-// SRB (Sindh Revenue Board) Electronic Sales Invoicing.
+// SRB (Sindh Revenue Board) Electronic POS Invoicing — POS API v1.
 //
-// Mirrors the FBR PRAL adapter shape so the worker plumbing can re-use the
-// same patterns. SRB runs a parallel e-invoicing regime for restaurants
-// located in Sindh — payable provincial sales tax (currently 13%) goes
-// to SRB instead of FBR, and SRB requires real-time invoice submission
-// to their API similar to PRAL's.
+// Implements the published "POS Invoice Payload Specification" (v1):
+//   POST https://pos.srb.gos.pk/ePOSGateway/v1/SalesInvoiceService.api
+//   - single flat JSON invoice (no items array)
+//   - credentials (pos_user / pos_pass) travel IN the body — there is no
+//     separate auth/token endpoint
+//   - success is resCode === "00"; the response carries srbInvoiceId and a
+//     QRCodeLink that MUST be embedded as a QR code on the receipt
 //
-// Credentials needed (env vars):
-//   SRB_USERNAME — SRB e-portal username (NTN-based)
-//   SRB_PASSWORD — SRB e-portal password
-//   SRB_ENV      — "production" | "sandbox" (default: sandbox)
+// Credentials (env):
+//   SRB_USERNAME — pos_user issued by SRB
+//   SRB_PASSWORD — pos_pass issued by SRB
+//   SRB_ENV      — "production" → transType "Live"; anything else → "Test"
 //
-// Per-concept:
-//   Concept.srbPosId — POSID assigned by SRB at restaurant registration
+// Per-concept (Concept):
+//   srbPosId         — posId issued by SRB at registration (required)
+//   ntn              — merchant National Tax Number
+//   invoiceLegalName — merchant/outlet legal name (falls back to name)
 //
-// IMPORTANT: SRB's API documentation isn't as publicly available as FBR's
-// — the schema below reflects the published Electronic POS Integration
-// spec but field names may differ slightly in practice. Your registered
-// dev/finance contact at SRB should be your source of truth. The adapter
-// is structured so swapping field names is a 1-line change in
-// `buildPayload`, not a re-architecture.
+// Tax treatment (per spec "Calculation Rules"):
+//   taxAmount = saleValue × rateValue / 100      (tax on the PRE-discount value)
+//   netAmount = saleValue + taxAmount − discountAmount
+// NOTE: servd's POS currently computes tax on the POST-discount subtotal, so on
+// DISCOUNTED orders the spec figure differs from what was charged. This adapter
+// follows the spec; aligning the POS charge is a separate finance decision.
 
-import { redis } from '../../lib/redis.js'
 import { serviceClient as prisma } from '../../lib/prisma.js'
 
-const SRB_BASE = process.env['SRB_ENV'] === 'production'
-  ? 'https://e.srb.gos.pk/api'
-  : 'https://sandbox.e.srb.gos.pk/api'
+const SRB_URL = 'https://pos.srb.gos.pk/ePOSGateway/v1/SalesInvoiceService.api'
 
-const TOKEN_CACHE_KEY = 'srb:auth_token'
-const TOKEN_TTL_S = 3500     // tokens expire ~1h; refresh slightly early
-
-// ─── Auth ─────────────────────────────────────────────────────────────────────
-
-async function getAuthToken(): Promise<string> {
-  const cached = await redis.get(TOKEN_CACHE_KEY)
-  if (cached) return cached
-
-  const username = process.env['SRB_USERNAME']
-  const password = process.env['SRB_PASSWORD']
-  if (!username || !password) throw new Error('SRB credentials not configured (SRB_USERNAME / SRB_PASSWORD)')
-
-  const res = await fetch(`${SRB_BASE}/Login/Authenticate`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ UserName: username, Password: password }),
-  })
-
-  if (!res.ok) throw new Error(`SRB auth failed: ${res.status} ${await res.text()}`)
-
-  const body = (await res.json()) as { StatusCode: number; Token?: string; Message?: string }
-  if (body.StatusCode !== 0 || !body.Token) {
-    throw new Error(`SRB auth error: ${body.Message ?? JSON.stringify(body)}`)
-  }
-
-  await redis.setex(TOKEN_CACHE_KEY, TOKEN_TTL_S, body.Token)
-  return body.Token
-}
-
-// ─── Invoice payload ─────────────────────────────────────────────────────────
-
-interface SrbItem {
-  ItemCode:    string
-  ItemName:    string
-  Quantity:    number
-  HSCode:      string       // 9963.1100 for food service
-  TaxRate:     number       // % e.g. 13 for Sindh
-  SaleValue:   number       // ex-tax
-  Discount:    number
-  TaxCharged:  number
-  TotalAmount: number       // inc-tax
-}
+// ─── Payload / response shapes (verbatim field names from the spec) ────────────
 
 interface SrbInvoicePayload {
-  InvoiceNumber:   string
-  POSID:           number
-  USIN:            string   // our internal order id
-  DateTime:        string   // DDMMYYYYHHmmss
-  BuyerNTN:        string
-  BuyerCNIC:       string
-  BuyerName:       string
-  BuyerPhone:      string
-  TotalBillAmount: number
-  TotalQuantity:   number
-  TotalSaleValue:  number
-  TotalTaxCharged: number
-  Discount:        number
-  PaymentMode:     number   // 1=Card 2=Cash 3=Other
-  InvoiceType:     number   // 1=Normal 3=Credit note
-  Items:           SrbItem[]
+  posId: number
+  name: string
+  ntn: string
+  invoiceDateTime: string // yyyy-MM-dd HH:mm:ss (PKT)
+  invoiceType: number     // 1 = Normal, 2 = Sales Return
+  invoiceId: string       // unique per POS, generated by us
+  rateValue: number       // 8 or 15
+  saleValue: number       // gross, before discount and tax
+  taxAmount: number       // saleValue × rateValue / 100
+  discountAmount: number
+  netAmount: number       // saleValue + taxAmount − discountAmount
+  modeOfPay: string       // "Cash" | "Card"
+  consumerName: string
+  consumerNTN: string
+  consumerMobile: string
+  consumerEmail: string
+  address: string
+  cpcCode: string
+  extraInf: string
+  transType: string       // "Test" | "Live"
+  pos_user: string
+  pos_pass: string
 }
 
-const HS_RESTAURANT = '9963.1100'
-
-function fmtSrbDate(d: Date): string {
-  const pad2 = (n: number) => String(n).padStart(2, '0')
-  return `${pad2(d.getDate())}${pad2(d.getMonth() + 1)}${d.getFullYear()}${pad2(d.getHours())}${pad2(d.getMinutes())}${pad2(d.getSeconds())}`
+interface SrbResponse {
+  srbInvoiceId?: string
+  resCode?: string        // "00" = success
+  QRCodeLink?: string
+  message?: string
+  Message?: string
+  error?: string
 }
 
-function mapPaymentMode(methods: string[]): number {
-  if (methods.includes('cash')) return 2
-  if (methods.includes('keenu_qr')) return 3
-  return 1 // card default
+export interface SrbSubmitResult {
+  srbInvoiceId: string
+  qrCodeLink: string | null
 }
+
+// ─── Input shape (built from an order by buildSrbDataForOrder) ─────────────────
 
 export interface SrbOrderData {
-  orderId:        string
-  invoiceNumber:  string   // our internal invoice ref
-  posId:          number
-  taxRate:        number   // % e.g. 13 for SRB provincial GST on services
-  items: Array<{
-    name:           string
-    quantity:       number
-    unitPriceCents: number
-    taxCents:       number
-    discountCents:  number
-  }>
-  discountCents:  number
-  taxCents:       number
-  totalCents:     number
-  paymentMethods: string[]
-  placedAt:       Date
-  buyerNTN?:      string
-  buyerCNIC?:     string
-  buyerName?:     string
-  buyerPhone?:    string
-}
-
-function buildPayload(data: SrbOrderData): SrbInvoicePayload {
-  const totalQty = data.items.reduce((s, i) => s + i.quantity, 0)
-  const saleValueCents = data.totalCents - data.taxCents
-  const toPkr = (cents: number) => parseFloat((cents / 100).toFixed(2))
-
-  const items: SrbItem[] = data.items.map((item) => {
-    const itemSaleValue = item.unitPriceCents * item.quantity - item.discountCents
-    return {
-      ItemCode:    'POS-ITEM',
-      ItemName:    item.name.slice(0, 100),
-      Quantity:    item.quantity,
-      HSCode:      HS_RESTAURANT,
-      TaxRate:     data.taxRate,
-      SaleValue:   toPkr(itemSaleValue),
-      Discount:    toPkr(item.discountCents),
-      TaxCharged:  toPkr(item.taxCents),
-      TotalAmount: toPkr(itemSaleValue + item.taxCents),
-    }
-  })
-
-  return {
-    InvoiceNumber:   data.invoiceNumber,
-    POSID:           data.posId,
-    USIN:            data.orderId,
-    DateTime:        fmtSrbDate(data.placedAt),
-    BuyerNTN:        data.buyerNTN  ?? '',
-    BuyerCNIC:       data.buyerCNIC ?? '',
-    BuyerName:       data.buyerName ?? '',
-    BuyerPhone:      data.buyerPhone ?? '',
-    TotalBillAmount: toPkr(data.totalCents),
-    TotalQuantity:   totalQty,
-    TotalSaleValue:  toPkr(saleValueCents),
-    TotalTaxCharged: toPkr(data.taxCents),
-    Discount:        toPkr(data.discountCents),
-    PaymentMode:     mapPaymentMode(data.paymentMethods),
-    InvoiceType:     1,
-    Items:           items,
+  invoiceId: string
+  posId: number
+  merchantName: string
+  merchantNtn: string
+  invoiceDateTime: Date
+  invoiceType: number          // 1 normal, 2 return
+  rateValue: number            // statutory rate applied (8 or 15)
+  saleValueCents: number       // gross, pre-discount, ex-tax, ex-service-charge
+  discountCents: number
+  modeOfPay: 'Cash' | 'Card'
+  consumer?: {
+    name?: string | null
+    ntn?: string | null
+    mobile?: string | null
+    email?: string | null
+    address?: string | null
   }
 }
 
-// ─── Submission ───────────────────────────────────────────────────────────────
-
-interface SrbResponse {
-  StatusCode:    number
-  InvoiceNumber?: string   // SRB-assigned ref returned on success
-  Errors?:       string[]
-  Message?:      string
+// SRB wants Pakistan local time (UTC+5, no DST) as 'yyyy-MM-dd HH:mm:ss'.
+function fmtSrbDateTime(d: Date): string {
+  const pkt = new Date(d.getTime() + 5 * 3_600_000)
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${pkt.getUTCFullYear()}-${p(pkt.getUTCMonth() + 1)}-${p(pkt.getUTCDate())} ` +
+         `${p(pkt.getUTCHours())}:${p(pkt.getUTCMinutes())}:${p(pkt.getUTCSeconds())}`
 }
 
-export async function submitSrbInvoice(data: SrbOrderData): Promise<string> {
-  const token = await getAuthToken()
+const toPkr = (cents: number) => parseFloat((cents / 100).toFixed(2))
+const round2 = (n: number) => parseFloat(n.toFixed(2))
+
+function buildPayload(data: SrbOrderData): SrbInvoicePayload {
+  const username = process.env['SRB_USERNAME']
+  const password = process.env['SRB_PASSWORD']
+  if (!username || !password) {
+    throw new Error('SRB credentials not configured (SRB_USERNAME / SRB_PASSWORD)')
+  }
+
+  const saleValue = toPkr(data.saleValueCents)
+  // Spec formula: tax on the pre-discount sale value.
+  const taxAmount = round2(saleValue * (data.rateValue / 100))
+  const discountAmount = toPkr(data.discountCents)
+  const netAmount = round2(saleValue + taxAmount - discountAmount)
+
+  // Optional string fields must be "N/A" (or "") when absent, per spec.
+  const naIfEmpty = (v: string | null | undefined) => {
+    const s = (v ?? '').toString().trim()
+    return s.length > 0 ? s : 'N/A'
+  }
+
+  return {
+    posId: data.posId,
+    name: data.merchantName,
+    ntn: data.merchantNtn,
+    invoiceDateTime: fmtSrbDateTime(data.invoiceDateTime),
+    invoiceType: data.invoiceType,
+    invoiceId: data.invoiceId,
+    rateValue: data.rateValue,
+    saleValue,
+    taxAmount,
+    discountAmount,
+    netAmount,
+    modeOfPay: data.modeOfPay,
+    consumerName:   naIfEmpty(data.consumer?.name),
+    consumerNTN:    naIfEmpty(data.consumer?.ntn),
+    consumerMobile: naIfEmpty(data.consumer?.mobile),
+    consumerEmail:  naIfEmpty(data.consumer?.email),
+    address:        naIfEmpty(data.consumer?.address),
+    cpcCode: 'N/A',
+    extraInf: 'N/A',
+    transType: process.env['SRB_ENV'] === 'production' ? 'Live' : 'Test',
+    pos_user: username,
+    pos_pass: password,
+  }
+}
+
+export async function submitSrbInvoice(data: SrbOrderData): Promise<SrbSubmitResult> {
   const payload = buildPayload(data)
 
-  const res = await fetch(`${SRB_BASE}/Pos/PosInvoice`, {
+  const res = await fetch(SRB_URL, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Token: token },
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
     body: JSON.stringify(payload),
   })
 
-  if (res.status === 401) {
-    // Token expired — clear cache and retry once with a fresh token.
-    await redis.del(TOKEN_CACHE_KEY)
-    const freshToken = await getAuthToken()
-    const retry = await fetch(`${SRB_BASE}/Pos/PosInvoice`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Token: freshToken },
-      body: JSON.stringify(payload),
-    })
-    if (!retry.ok) throw new Error(`SRB submission failed after token refresh: ${retry.status}`)
-    const retryBody = (await retry.json()) as SrbResponse
-    if (retryBody.StatusCode !== 0) throw new Error(`SRB error: ${retryBody.Errors?.join(', ') ?? retryBody.Message}`)
-    return retryBody.InvoiceNumber ?? data.invoiceNumber
+  if (!res.ok) {
+    throw new Error(`SRB submission failed: HTTP ${res.status} ${await res.text()}`)
   }
-
-  if (!res.ok) throw new Error(`SRB submission failed: ${res.status} ${await res.text()}`)
 
   const body = (await res.json()) as SrbResponse
-  if (body.StatusCode !== 0) {
-    throw new Error(`SRB rejected invoice: ${body.Errors?.join(', ') ?? body.Message ?? JSON.stringify(body)}`)
+  if (body.resCode !== '00' || !body.srbInvoiceId) {
+    const msg = body.message ?? body.Message ?? body.error ?? JSON.stringify(body)
+    throw new Error(`SRB rejected invoice (resCode=${body.resCode ?? 'none'}): ${msg}`)
   }
 
-  return body.InvoiceNumber ?? data.invoiceNumber
+  return { srbInvoiceId: body.srbInvoiceId, qrCodeLink: body.QRCodeLink ?? null }
 }
 
-// ─── Order loader (called by worker) ──────────────────────────────────────────
-//
-// Why not just share the FBR loader? Two reasons:
-//   1. SRB applies to provincial tax (currently 13%), FBR applies to federal
-//      GST on goods. Restaurants in Sindh report to both — same order, two
-//      submissions, two POSIDs, two invoice numbers. Per-tax separation in
-//      the adapter keeps these from cross-contaminating.
-//   2. SRB-only deployments (or future jurisdictions like PRA, KPRA, BRA)
-//      will want to swap the adapter without touching FBR plumbing.
+// ─── Order loader (called by the worker) ───────────────────────────────────────
 
 export async function buildSrbDataForOrder(orderId: string): Promise<SrbOrderData | null> {
   const order = await prisma.order.findUnique({
     where: { id: orderId },
     include: {
-      concept: { select: { taxRate: true, srbPosId: true } },
-      items: {
-        where: { status: { not: 'voided' } },
-        include: { modifiers: true },
-      },
+      concept: { select: { name: true, invoiceLegalName: true, ntn: true, srbPosId: true, taxRateCash: true, taxRateCard: true, taxRate: true } },
+      items: { where: { status: { not: 'voided' } }, include: { modifiers: true } },
       payments: { where: { status: 'paid' } },
       customer: { select: { name: true, phone: true, ntn: true, cnic: true } },
     },
   })
 
   if (!order) return null
-  if (!order.concept.srbPosId) return null    // concept not SRB-registered — skip silently
+  if (!order.concept.srbPosId) return null // concept not SRB-registered — skip silently
 
-  const invoiceNumber = `SRB-${order.id.slice(-10).toUpperCase()}`
+  // Mode of pay: SRB recognises Cash vs Card. Any non-cash tender → "Card".
+  const methods = order.payments.map((p) => p.method)
+  const isCash = methods.length > 0 && methods.every((m) => m === 'cash')
+  const modeOfPay: 'Cash' | 'Card' = isCash ? 'Cash' : 'Card'
 
-  const items = order.items.map((item) => {
-    const modTotal = item.modifiers.reduce((s, m) => s + m.priceDeltaCents * item.quantity, 0)
-    const lineCents = item.unitPriceCents * item.quantity + modTotal
-    const taxRate = order.concept.taxRate / 100
-    const taxCents = Math.round(lineCents * taxRate)
-    return {
-      name:           item.name,
-      quantity:       item.quantity,
-      unitPriceCents: item.unitPriceCents,
-      taxCents,
-      discountCents:  0,
-    }
-  })
+  // Statutory rate that was applied at the till (servd splits GST by tender:
+  // cash → taxRateCash, card → taxRateCard). SRB expects 8 or 15.
+  const rateValue = Math.round(isCash
+    ? (order.concept.taxRateCash ?? order.concept.taxRate)
+    : (order.concept.taxRateCard ?? order.concept.taxRate))
+
+  // saleValue = gross taxable sale, PRE-discount, ex-tax. Computed straight from
+  // the line items so it's correct for EVERY order source (POS, storefront,
+  // group) regardless of how delivery fees / tips / service charge / wallet sit
+  // in totalCents. Every order path taxes this same pre-discount base, so
+  // saleValue × rate matches the tax that was charged.
+  const saleValueCents = order.items.reduce((sum, it) => {
+    const mods = it.modifiers.reduce((m, mod) => m + mod.priceDeltaCents * it.quantity, 0)
+    return sum + it.unitPriceCents * it.quantity + mods
+  }, 0)
+
+  // All price reductions on the supply (POS line discount + storefront promo).
+  const discountCents = order.discountCents + order.promoDiscountCents
 
   return {
-    orderId:        order.id,
-    invoiceNumber,
-    posId:          order.concept.srbPosId,
-    taxRate:        order.concept.taxRate,
-    items,
-    discountCents:  order.discountCents,
-    taxCents:       order.taxCents,
-    totalCents:     order.totalCents,
-    paymentMethods: order.payments.map((p) => p.method),
-    placedAt:       order.placedAt,
-    buyerNTN:       (order.customer as { ntn?: string }  | null)?.ntn,
-    buyerCNIC:      (order.customer as { cnic?: string } | null)?.cnic,
-    buyerName:      order.customer?.name  ?? order.customerName ?? undefined,
-    buyerPhone:     order.customer?.phone ?? undefined,
+    invoiceId: `SRB-${order.id.slice(-12).toUpperCase()}`,
+    posId: order.concept.srbPosId,
+    merchantName: order.concept.invoiceLegalName ?? order.concept.name,
+    merchantNtn: order.concept.ntn ?? '',
+    invoiceDateTime: order.completedAt ?? order.placedAt,
+    invoiceType: 1,
+    rateValue,
+    saleValueCents,
+    discountCents,
+    modeOfPay,
+    consumer: {
+      name:   order.customer?.name ?? order.customerName,
+      ntn:    (order.customer as { ntn?: string } | null)?.ntn ?? (order.customer as { cnic?: string } | null)?.cnic,
+      mobile: order.customer?.phone,
+      email:  null,
+      address: null,
+    },
+  }
+}
+
+// ─── Sales-return (refund) ─────────────────────────────────────────────────────
+//
+// SRB models a refund as a separate invoiceType=2 ("Sales Return") submission
+// for the returned value. We derive the return's taxable sale value from the
+// (tax-inclusive) refund amount so the spec formula holds:
+//   saleValue = refundNet / (1 + rate/100);  taxAmount = saleValue × rate
+// The return carries its own unique invoiceId so it never collides with the
+// original sale or with other partial refunds on the same order.
+
+export async function buildSrbReturnForRefund(orderId: string, refundAmountCents: number, refundRef: string): Promise<SrbOrderData | null> {
+  const base = await buildSrbDataForOrder(orderId)
+  if (!base) return null
+
+  const refundNet = Math.max(0, refundAmountCents)
+  const saleValueCents = Math.round(refundNet / (1 + base.rateValue / 100))
+
+  return {
+    ...base,
+    invoiceId: `SRBRET-${orderId.slice(-10).toUpperCase()}-${refundRef.slice(-6).toUpperCase()}`,
+    invoiceType: 2,
+    invoiceDateTime: new Date(),
+    saleValueCents,
+    discountCents: 0,
   }
 }

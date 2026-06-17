@@ -4,7 +4,9 @@ import bcrypt from 'bcryptjs'                  // PIN collision check on staff s
 import { z } from 'zod'
 import { staffLogin, staffPinLogin, refreshStaffToken, customerRegister, customerLogin, verifyMagicLink, requestMagicLink, hashPassword, hashPin } from './service.js'
 import { requestOtp, verifyOtp, normalisePhone } from './otp.js'
-import { requireAuth, ADMIN_ONLY, MANAGERS, ALL_STAFF } from './middleware.js'
+import { requireAuth, requireAuthOrPin, requireCustomerAuth, ADMIN_ONLY, MANAGERS, ALL_STAFF } from './middleware.js'
+import { revokeBearer, revokeAllForSubject } from '../../lib/tokenRevocation.js'
+import { setAuthCookies, setAccessCookie, clearAuthCookies, readCookie, ACCESS_COOKIE, REFRESH_COOKIE } from '../../lib/cookies.js'
 import { serviceClient as prisma } from '../../lib/prisma.js'
 import { resolveTenantScope, tenantWhere } from '../../lib/tenantScope.js'
 import { AppError } from '../../lib/errors.js'
@@ -13,6 +15,7 @@ import {
   recordFailure,
   clearFailures,
   PIN_LIMIT,
+  PIN_USER_LIMIT,
   STAFF_PASSWORD_LIMIT,
   CUSTOMER_PASSWORD_LIMIT,
   MAGIC_LINK_VERIFY_LIMIT,
@@ -101,6 +104,9 @@ export async function authRoutes(fastify: FastifyInstance) {
       await recordFailure(STAFF_PASSWORD_LIMIT, ip)
       throw err
     }
+    // Manager web: also set httpOnly session cookies (the token stays out of
+    // JS). Tablet/mobile ignore these and keep using the body tokens + Bearer.
+    setAuthCookies(reply, result.accessToken, result.refreshToken)
     return reply.status(200).send(result)
   })
 
@@ -108,8 +114,15 @@ export async function authRoutes(fastify: FastifyInstance) {
   fastify.post('/pin', async (req, reply) => {
     const ip = req.ip ?? 'unknown'
     await checkRateLimit(PIN_LIMIT, ip)
+    // Per-person lockout — keyed by the typed name/email. Now possible because
+    // staff identify themselves before the PIN (5 wrong tries → 1h lockout for
+    // THAT person, independent of the per-IP limit above).
+    const idKeyRaw = (req.body as { identifier?: unknown })?.identifier
+    const idKey = typeof idKeyRaw === 'string' ? idKeyRaw.trim().toLowerCase() : ''
+    if (idKey) await checkRateLimit(PIN_USER_LIMIT, idKey)
 
     const body = z.object({
+      identifier: z.string().min(1).max(120).optional(), // staff name or email — entered before the PIN (clients send it; optional during rollout)
       pin: z.string().min(4).max(8),
       lat: z.number().min(-90).max(90).optional(),
       lng: z.number().min(-180).max(180).optional(),
@@ -118,10 +131,12 @@ export async function authRoutes(fastify: FastifyInstance) {
 
     let result: Awaited<ReturnType<typeof staffPinLogin>>
     try {
-      result = await staffPinLogin(body.pin)
+      result = await staffPinLogin(body.identifier, body.pin)
       await clearFailures(PIN_LIMIT, ip)
+      if (idKey) await clearFailures(PIN_USER_LIMIT, idKey)
     } catch (err) {
       await recordFailure(PIN_LIMIT, ip)
+      if (idKey) await recordFailure(PIN_USER_LIMIT, idKey)
       throw err
     }
 
@@ -203,6 +218,7 @@ export async function authRoutes(fastify: FastifyInstance) {
       },
     })
 
+    setAuthCookies(reply, result.accessToken, result.refreshToken)
     return reply.status(200).send(result)
   })
 
@@ -260,9 +276,34 @@ export async function authRoutes(fastify: FastifyInstance) {
 
   // POST /auth/refresh — refresh access token
   fastify.post('/refresh', async (req, reply) => {
-    const body = refreshSchema.parse(req.body)
-    const result = await refreshStaffToken(body.refreshToken)
+    // Refresh token from the body (tablet/mobile) OR the httpOnly cookie
+    // (manager web, which holds no token in JS).
+    const body = refreshSchema.partial().parse(req.body ?? {})
+    const refreshToken = body.refreshToken || readCookie(req, REFRESH_COOKIE)
+    if (!refreshToken) return reply.status(401).send({ error: { code: 'NO_REFRESH', message: 'No refresh token provided' } })
+    const result = await refreshStaffToken(refreshToken)
+    setAccessCookie(reply, result.accessToken)   // rotate the web session cookie
     return reply.status(200).send(result)
+  })
+
+  // POST /auth/logout — revoke the caller's session. JWTs are stateless, so we
+  // add the presented token (and refresh token, if sent) to the Redis deny
+  // list for the remainder of their life. Accepts PIN sessions too (KDS).
+  fastify.post('/logout', { preHandler: requireAuthOrPin(...ALL_STAFF) }, async (req, reply) => {
+    await revokeBearer(req.headers.authorization)
+    // Manager web sends no Bearer — revoke whatever's in the cookies, then clear.
+    const cookieAt = readCookie(req, ACCESS_COOKIE);  if (cookieAt) await revokeBearer(`Bearer ${cookieAt}`)
+    const cookieRt = readCookie(req, REFRESH_COOKIE); if (cookieRt) await revokeBearer(`Bearer ${cookieRt}`)
+    const body = z.object({ refreshToken: z.string().optional() }).parse(req.body ?? {})
+    if (body.refreshToken) await revokeBearer(`Bearer ${body.refreshToken}`)
+    clearAuthCookies(reply)
+    return reply.status(200).send({ ok: true })
+  })
+
+  // POST /auth/customer/logout — revoke the customer's session token.
+  fastify.post('/customer/logout', { preHandler: requireCustomerAuth }, async (req, reply) => {
+    await revokeBearer(req.headers.authorization)
+    return reply.status(200).send({ ok: true })
   })
 
   // GET /auth/location-config — get on-site sign-in config
@@ -321,7 +362,10 @@ export async function authRoutes(fastify: FastifyInstance) {
     const body = z.object({
       name:     z.string().min(1).max(80),
       email:    z.string().email(),
-      password: z.string().min(8, 'Password must be at least 8 characters'),
+      password: z.string()
+        .min(8, 'Password must be at least 8 characters')
+        .regex(/[a-zA-Z]/, 'Password must contain a letter')
+        .regex(/[0-9]/, 'Password must contain a number'),
       // F19: phone + OTP. Both optional today because legacy clients won't
       // send them, but new web/storefront flows always do. Server validates
       // the OTP one more time before stamping phoneVerifiedAt.
@@ -540,6 +584,7 @@ export async function authRoutes(fastify: FastifyInstance) {
         data: { accountStatus: 'suspended', isActive: false },
         select: { id: true, name: true, accountStatus: true },
       })
+      await revokeAllForSubject(req.params.id) // kill the rejected user's sessions now
       return reply.status(200).send(updated)
     },
   )
@@ -921,6 +966,11 @@ export async function authRoutes(fastify: FastifyInstance) {
         })
       })
       if (!user) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'No such staff' } })
+      // Kill outstanding sessions when an access-affecting field changes — a
+      // deactivated / demoted / re-PINned user must not keep a live token.
+      if (body.isActive === false || body.role != null || body.pin != null) {
+        await revokeAllForSubject(req.params.id)
+      }
       return {
         ...user,
         hasPin: !!user.pin,
@@ -943,6 +993,7 @@ export async function authRoutes(fastify: FastifyInstance) {
         where: { id: req.params.id },
         data: { deletedAt: new Date(), isActive: false },
       })
+      await revokeAllForSubject(req.params.id) // kill the deleted user's sessions now
       return reply.status(204).send()
     },
   )

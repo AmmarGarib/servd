@@ -115,6 +115,14 @@ jobs:
         if: ${{ env.DEPLOY_URL != '' }}
         env:
           DEPLOY_URL: ${{ secrets.DEPLOY_WEBHOOK_URL }}
+          DEPLOY_SECRET: ${{ secrets.DEPLOY_WEBHOOK_SECRET }}
         run: |
           echo "Triggering deploy webhook…"
-          curl -sS -X POST "$DEPLOY_URL" -w '\nHTTP %{http_code}\n' || echo "Webhook returned non-zero — check the box."
+          # Prefer the secret in the X-Deploy-Secret header — query-string
+          # secrets end up in proxy/access logs. Set DEPLOY_WEBHOOK_SECRET and
+          # strip ?secret= from DEPLOY_WEBHOOK_URL to complete the rotation;
+          # until then the legacy URL form still works.
+          curl -sS -X POST "$DEPLOY_URL" \
+            ${DEPLOY_SECRET:+-H "X-Deploy-Secret: $DEPLOY_SECRET"} \
+            -o /dev/null -w 'HTTP %{http_code}\n' \
+            || echo "Webhook returned non-zero — check the box."

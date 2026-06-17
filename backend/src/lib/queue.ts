@@ -39,6 +39,11 @@ export function getFbrQueue(): Queue<FbrSubmissionJob> | null {
 
 export interface SrbSubmissionJob {
   orderId: string
+  // 'sale' (default) submits the normal invoice; 'return' files an
+  // invoiceType=2 sales-return for a refund.
+  kind?: 'sale' | 'return'
+  refundAmountCents?: number
+  refundRef?: string
 }
 
 let _srbQueue: Queue<SrbSubmissionJob> | null = null

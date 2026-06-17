@@ -31,6 +31,9 @@ export interface PosOrderInput {
   }>
   discountCents?: number
   discountReason?: string
+  // Stable client key for idempotent order creation (double-tap / offline resend
+  // dedupe). Used as the order's external_id.
+  idempotencyKey?: string
   // CEO policy: GST splits by tender. Cashier picks the intended payment
   // method when ringing up so the bill on the receipt matches what gets
   // collected. 'cash' → taxRateCash (default 15%); anything else →
@@ -39,6 +42,17 @@ export interface PosOrderInput {
 }
 
 export async function createPosOrder(input: PosOrderInput) {
+  // Idempotency: a double-tapped "complete & fire" or an offline-queue resend
+  // carries the SAME idempotencyKey. If we've already created that order, return
+  // it untouched — no second ticket, no re-flagging, no duplicate charge.
+  if (input.idempotencyKey) {
+    const existing = await prisma.order.findUnique({
+      where: { source_externalId: { source: 'pos' as never, externalId: input.idempotencyKey } },
+      include: { items: { include: { modifiers: true } } },
+    })
+    if (existing) return existing
+  }
+
   // Calculate total
   const itemTotal = input.items.reduce((sum, item) => {
     const modTotal = item.modifiers.reduce((ms, m) => ms + m.priceDeltaCents, 0)
@@ -129,16 +143,19 @@ export async function createPosOrder(input: PosOrderInput) {
     ? (concept.taxRateCash ?? concept.taxRate)
     : (concept.taxRateCard ?? concept.taxRate)
   const taxRate = effectiveRate / 100
-  const subtotal = itemTotal - discount
-  const taxCents = Math.round(subtotal * taxRate)
-  // Service charge applies to the post-tax subtotal so customers see the
-  // service line on top of (food + tax).
-  const serviceChargeCents = await computeServiceCharge(subtotal + taxCents, 'pos')
-  const totalCents = subtotal + taxCents + serviceChargeCents
+  // SRB POS rule: GST is charged on the PRE-discount sale value — the discount
+  // does NOT reduce the taxable base. So taxAmount = saleValue × rate, and the
+  // discount then comes off the tax-inclusive total:
+  //   net = saleValue + tax − discount   (matches the SRB invoice payload)
+  const taxCents = Math.round(itemTotal * taxRate)
+  const netAfterDiscount = itemTotal + taxCents - discount
+  // Service charge sits on top of the net (food + tax − discount).
+  const serviceChargeCents = await computeServiceCharge(netAfterDiscount, 'pos')
+  const totalCents = netAfterDiscount + serviceChargeCents
 
   const dto: OrderDTO = {
     source: 'pos',
-    external_id: `pos-${Date.now()}`,
+    external_id: input.idempotencyKey ?? `pos-${Date.now()}`,
     concept_id: input.conceptId,
     placed_at: new Date().toISOString(),
     customer_id: input.customerId ?? null,
@@ -192,6 +209,58 @@ export interface ProcessPaymentInput {
 // Card / wallet payments require gateway confirmation before being marked 'paid'.
 // Cash and comp settle instantly at the till.
 const INSTANT_SETTLE: Set<PaymentMethod> = new Set(['cash', 'comp'])
+
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    p,
+    new Promise<T>((_, reject) => setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms)),
+  ])
+}
+
+// SRB submission for the receipt QR. Tries the live gateway synchronously (so
+// the QR can print on the receipt) but NEVER blocks the sale: on any error or
+// timeout it falls back to the async retry queue and returns null. Returns the
+// SRB invoice id + QR link on success. Silently returns null when the concept
+// isn't SRB-registered.
+async function submitSrbForReceipt(orderId: string): Promise<{ srbInvoiceId: string; qrCodeLink: string | null } | null> {
+  try {
+    const { buildSrbDataForOrder, submitSrbInvoice } = await import('../../adapters/srb/index.js')
+    const data = await buildSrbDataForOrder(orderId)
+    if (!data) return null // not SRB-registered — nothing to do
+    const result = await withTimeout(submitSrbInvoice(data), 8000, 'SRB submit')
+    await prisma.order.update({
+      where: { id: orderId },
+      data: { srbInvoiceNumber: result.srbInvoiceId, srbQrCodeLink: result.qrCodeLink },
+    })
+    return result
+  } catch (err) {
+    console.warn(`[SRB] sync submit failed for ${orderId}; falling back to queue: ${(err as Error).message}`)
+    getSrbQueue()
+      ?.add('submit', { orderId })
+      .catch((e: Error) => console.warn('[SRB] Failed to enqueue fallback submission:', e.message))
+    return null
+  }
+}
+
+// SRB sales-return for a refund (invoiceType 2). Tries synchronously so the
+// return invoice id can be recorded immediately; on timeout/error it enqueues a
+// durable retry (the worker handles kind:'return') so a compliance filing is
+// never lost. Returns the SRB return invoice id on success.
+async function submitSrbReturnForRefund(orderId: string, refundAmountCents: number, refundRef: string): Promise<string | null> {
+  try {
+    const { buildSrbReturnForRefund, submitSrbInvoice } = await import('../../adapters/srb/index.js')
+    const data = await buildSrbReturnForRefund(orderId, refundAmountCents, refundRef)
+    if (!data) return null // concept not SRB-registered
+    const { srbInvoiceId } = await withTimeout(submitSrbInvoice(data), 8000, 'SRB return')
+    return srbInvoiceId
+  } catch (err) {
+    console.warn(`[SRB] sales-return sync failed for order ${orderId} (refund ${refundRef}); enqueuing retry: ${(err as Error).message}`)
+    getSrbQueue()
+      ?.add('submit', { orderId, kind: 'return', refundAmountCents, refundRef })
+      .catch((e: Error) => console.error(`[SRB] COMPLIANCE: failed to enqueue sales-return retry for ${orderId}: ${e.message}`))
+    return null
+  }
+}
 
 export async function processPayment(input: ProcessPaymentInput) {
   if (input.payments.length === 0) {
@@ -300,23 +369,22 @@ export async function processPayment(input: ProcessPaymentInput) {
     return { payments: createdPayments }
   })
 
-  // Tax-invoicing fan-out — fire-and-forget, never blocks payment response.
-  // FBR (federal) and SRB (provincial Sindh) each get a job. Both workers
-  // silent-skip when the order's concept has no POSID for that authority,
-  // so concepts outside Sindh just don't queue SRB work. Only fired for
-  // instant-settle orders; card/wallet orders are queued from the gateway
-  // webhook once the payment confirms.
+  // Tax-invoicing fan-out. FBR (federal) stays fire-and-forget. SRB (Sindh) is
+  // attempted SYNCHRONOUSLY so the invoice-verification QR can print on the
+  // receipt (the SRB spec requires the QR on the invoice) — but it NEVER blocks
+  // or fails the sale: on timeout/error submitSrbForReceipt falls back to the
+  // async retry queue. Only for instant-settle orders; card/wallet orders submit
+  // from the gateway webhook once the payment confirms.
   const allInstantSettle = input.payments.every((p) => INSTANT_SETTLE.has(p.method))
+  let srb: { srbInvoiceId: string; qrCodeLink: string | null } | null = null
   if (allInstantSettle) {
     getFbrQueue()
       ?.add('submit', { orderId: input.orderId })
       .catch((err: Error) => console.warn('[FBR] Failed to enqueue invoice submission:', err.message))
-    getSrbQueue()
-      ?.add('submit', { orderId: input.orderId })
-      .catch((err: Error) => console.warn('[SRB] Failed to enqueue invoice submission:', err.message))
+    srb = await submitSrbForReceipt(input.orderId)
   }
 
-  return result
+  return { ...result, srb }
 }
 
 // ─── Shift management ─────────────────────────────────────────────────────────
@@ -760,15 +828,18 @@ export async function refundOrder(input: CompRefundInput) {
     },
   })
 
+  // File the SRB sales-return (invoiceType 2) for the refunded value.
+  const srbReturnInvoiceNo = await submitSrbReturnForRefund(input.orderId, input.amountCents, refundPayment.id)
+
   await audit({
     action: 'order_refund',
     entity: 'Order',
     entityId: input.orderId,
     userId: input.actorId,
-    metadata: { amountCents: input.amountCents, reason: input.reason, photoUrl: input.photoUrl, approverId, refundPaymentId: refundPayment.id, adjustments },
+    metadata: { amountCents: input.amountCents, reason: input.reason, photoUrl: input.photoUrl, approverId, refundPaymentId: refundPayment.id, adjustments, srbReturnInvoiceNo },
   })
   await notifyOwnerIfThreshold(input.amountCents, policy, 'refund', input.orderId, input.reason, input.actorId)
-  return refundPayment
+  return { ...refundPayment, srbReturnInvoiceNo }
 }
 
 // ─── Discount / price-override helpers ───────────────────────────────────────

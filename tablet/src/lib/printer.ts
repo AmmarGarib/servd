@@ -66,6 +66,26 @@ export interface ReceiptOrder {
   paidCents?:    number
   tenderType?:   string
   placedAt:      string
+  // SRB e-invoicing — when present, printed as a verification QR on the receipt
+  // (mandatory for SRB-registered Sindh outlets per the SRB POS spec).
+  srbInvoiceNo?: string | null
+  srbQrLink?:    string | null
+}
+
+// ESC/POS native QR code (GS ( k). Thermal printers encode the QR in hardware,
+// so no image/JS-QR dependency is needed. Model 2, module size 6, EC level M.
+function qrCode(data: string): number[] {
+  const store = txt(data)
+  const len = store.length + 3
+  const pL = len & 0xff
+  const pH = (len >> 8) & 0xff
+  return [
+    GS, 0x28, 0x6b, 0x04, 0x00, 0x31, 0x41, 0x32, 0x00, // select model 2
+    GS, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x43, 0x06,       // module size 6
+    GS, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x45, 0x31,       // error correction M
+    GS, 0x28, 0x6b, pL, pH, 0x31, 0x50, 0x30, ...store, // store data
+    GS, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x51, 0x30,       // print
+  ]
 }
 
 function rs(cents: number): string {
@@ -121,6 +141,17 @@ export function buildReceipt(order: ReceiptOrder): Uint8Array {
     if (order.paidCents > order.totalCents) {
       bytes.push(...line(`Change: ${rs(order.paidCents - order.totalCents)}`))
     }
+  }
+
+  // SRB verification QR — mandatory on the receipt for SRB-registered outlets.
+  if (order.srbQrLink) {
+    bytes.push(LF, ...alignCtr)
+    if (order.srbInvoiceNo) {
+      bytes.push(...boldOn, ...line(`SRB Invoice No: ${order.srbInvoiceNo}`), ...boldOff)
+    }
+    bytes.push(...qrCode(order.srbQrLink))
+    bytes.push(...line('Scan to verify with SRB'))
+    bytes.push(...alignLft)
   }
 
   // Footer

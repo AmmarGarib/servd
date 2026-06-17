@@ -27,6 +27,9 @@ export default function ContentIndexPage() {
 
   const allEditable = [
     { slug: 'servd:home', label: 'servd home', preview: '/' },
+    // Food imagery for the home 3D scroll band. Add an image/gallery block here;
+    // those photos become the textures the camera flies through on the landing.
+    { slug: 'servd:home-experience', label: 'servd home — food experience', preview: '/' },
     ...(concepts.data ?? []).map((c) => ({
       slug: `brand:${c.slug}`,
       label: `${c.name} — home`,

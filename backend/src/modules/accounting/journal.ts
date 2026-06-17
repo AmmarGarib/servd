@@ -21,6 +21,9 @@ export interface JournalLineInput {
   type: 'debit' | 'credit'
   amountCents: number
   memo?: string
+  // Brand attribution. Set by order/shift posting so per-brand cost is measured.
+  // Omit (null) for shared/overhead lines — the per-brand P&L allocates those.
+  conceptId?: string | null
 }
 
 export interface PostJournalEntryInput {
@@ -199,6 +202,7 @@ export async function postJournalEntry(
             type: l.type,
             amountCents: l.amountCents,
             memo: l.memo ?? null,
+            conceptId: l.conceptId ?? null,
           })),
         },
       },
@@ -248,6 +252,7 @@ export async function reverseJournalEntry(
         type: l.type === 'debit' ? 'credit' : 'debit',
         amountCents: l.amountCents,
         memo: l.memo ?? `Reversal: ${reason}`,
+        conceptId: l.conceptId, // keep brand attribution on the reversal
       })),
     },
     { tx: options.tx },

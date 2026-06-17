@@ -70,10 +70,12 @@ export async function groupOrderRoutes(fastify: FastifyInstance) {
     },
   )
 
-  // GET /group-orders/:code — read-only state for participants
+  // GET /group-orders/:code — read-only state for participants.
+  // Rate-limited: 6-char share codes are the capability token here, so the
+  // lookup endpoints must be too slow to enumerate (32^6 ≈ 1.07B codes).
   fastify.get<{ Params: { code: string } }>(
     '/:code',
-    { preHandler: requireCustomerAuth },
+    { preHandler: requireCustomerAuth, config: { rateLimit: { max: 60, timeWindow: '1 minute' } } },
     async (req) => {
       const code = req.params.code.toUpperCase()
       const go = await prisma.groupOrder.findUnique({
@@ -92,7 +94,7 @@ export async function groupOrderRoutes(fastify: FastifyInstance) {
   // POST /group-orders/:code/join — new member
   fastify.post<{ Params: { code: string } }>(
     '/:code/join',
-    { preHandler: requireCustomerAuth },
+    { preHandler: requireCustomerAuth, config: { rateLimit: { max: 20, timeWindow: '1 minute' } } },
     async (req) => {
       const code = req.params.code.toUpperCase()
       const body = z.object({ displayName: z.string().min(1).max(60) }).parse(req.body)

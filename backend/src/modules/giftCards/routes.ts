@@ -139,7 +139,7 @@ export async function giftCardRoutes(fastify: FastifyInstance) {
   // Redeem
   fastify.post<{ Body: { code: string; amountCents: number; orderId?: string } }>(
     '/redeem',
-    { preHandler: requireAuth(...ALL_STAFF) },
+    { preHandler: requireAuth(...ALL_STAFF), config: { rateLimit: { max: 20, timeWindow: '1 minute' } } },
     async (req, reply) => {
       const body = z.object({
         code:        z.string().min(8),

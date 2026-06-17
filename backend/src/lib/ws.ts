@@ -5,6 +5,8 @@
 import { Server as SocketIOServer } from 'socket.io'
 import { createAdapter } from '@socket.io/redis-adapter'
 import { redisPub, redisSub } from './redis.js'
+import { isAllowedOrigin } from './corsAllowlist.js'
+import { parseCookieHeader, ACCESS_COOKIE } from './cookies.js'
 import type { FastifyInstance } from 'fastify'
 import { verifyStaffToken } from '../modules/auth/service.js'
 import { prisma } from './prisma.js'
@@ -14,10 +16,10 @@ let io: SocketIOServer | null = null
 export function initWebSocket(fastify: FastifyInstance): SocketIOServer {
   io = new SocketIOServer(fastify.server, {
     cors: {
-      origin: [
-        process.env['WEB_URL'] ?? 'http://localhost:3000',
-        process.env['STOREFRONT_URL'] ?? 'http://localhost:3002',
-      ],
+      // Use the SAME allowlist as HTTP CORS so a brand custom-domain added via
+      // BRAND_HOSTS works over websockets too (previously hardcoded to two
+      // localhost origins, silently breaking WS from real brand domains).
+      origin: (origin, cb) => cb(null, isAllowedOrigin(origin)),
       credentials: true,
     },
     transports: ['websocket', 'polling'],
@@ -42,7 +44,10 @@ export function initWebSocket(fastify: FastifyInstance): SocketIOServer {
   io.use(async (socket, next) => {
     const auth = socket.handshake.auth as { token?: string }
     const queryToken = (socket.handshake.query as { token?: string })?.token
-    const token = auth?.token ?? queryToken
+    // Manager web holds no token in JS — it connects withCredentials and the
+    // access token rides in the httpOnly cookie.
+    const cookieToken = parseCookieHeader(socket.handshake.headers.cookie, ACCESS_COOKIE)
+    const token = auth?.token ?? queryToken ?? cookieToken
     if (!token) return next(new Error('UNAUTHORIZED'))
     try {
       // KDS screens use PIN tokens; admin/manager browser sessions use access

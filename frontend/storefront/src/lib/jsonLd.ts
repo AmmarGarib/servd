@@ -80,6 +80,9 @@ function minsToHHMM(m: number): string {
  *  full Knowledge Panel treatment in Google. */
 export function restaurantSchema(r: RestaurantGraphInput): Record<string, unknown> {
   const url = `${SITE_URL}/brand/${r.loc.slug}`
+  // Never emit placeholder NAP to Google — unfilled street/area ("TODO_FILL_…")
+  // and fake +92300123456x phones are omitted until real data is set in admin.
+  const isPlaceholder = (s?: string | null) => !s || /todo|placeholder|^\+?92300123456/i.test(s)
   const node: Record<string, unknown> = {
     '@context':   'https://schema.org',
     '@type':      'Restaurant',
@@ -87,24 +90,24 @@ export function restaurantSchema(r: RestaurantGraphInput): Record<string, unknow
     name:         r.loc.name,
     url,
     description:  r.description,
-    image:        r.imageUrl ?? `${SITE_URL}/og/${r.loc.slug}.jpg`,
-    telephone:    r.loc.phone,
+    image:        r.imageUrl ?? `${SITE_URL}/opengraph-image`,
     servesCuisine: r.loc.cuisine,
     priceRange:    r.loc.priceRange,
     acceptsReservations: r.loc.acceptsReservations,
     menu:         `${SITE_URL}/${r.loc.slug}`,
-    address: {
-      '@type':           'PostalAddress',
-      streetAddress:     r.loc.street,
-      addressLocality:   r.loc.area,
-      addressRegion:     'Sindh',
-      addressCountry:    r.loc.country,
-    },
-    geo: {
-      '@type':    'GeoCoordinates',
-      latitude:   r.loc.geo.lat,
-      longitude:  r.loc.geo.lng,
-    },
+  }
+  if (!isPlaceholder(r.loc.phone)) node['telephone'] = r.loc.phone
+  if (!isPlaceholder(r.loc.street) || !isPlaceholder(r.loc.area)) {
+    node['address'] = {
+      '@type':         'PostalAddress',
+      ...(isPlaceholder(r.loc.street) ? {} : { streetAddress: r.loc.street }),
+      ...(isPlaceholder(r.loc.area) ? {} : { addressLocality: r.loc.area }),
+      addressRegion:   'Sindh',
+      addressCountry:  r.loc.country,
+    }
+  }
+  if (typeof r.loc.geo?.lat === 'number' && typeof r.loc.geo?.lng === 'number') {
+    node['geo'] = { '@type': 'GeoCoordinates', latitude: r.loc.geo.lat, longitude: r.loc.geo.lng }
   }
   if (r.hours && r.hours.length > 0) {
     node['openingHoursSpecification'] = r.hours.map((h) => ({

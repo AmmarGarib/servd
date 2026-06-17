@@ -18,7 +18,7 @@ const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 //
 // Design rules:
 // - Sections collapse independently. State persisted per-user to localStorage.
-// - Heavy / config-tier sections (Marketing, Finance, Setup) start collapsed.
+// - Heavy / config-tier sections (Marketing, Finance) start collapsed.
 // - Items can have `children` — only revealed when the parent's pill is open.
 // - User can pin any item (★) — pinned items render in a sticky strip up top.
 
@@ -59,6 +59,7 @@ const NAV: NavSection[] = [
     title: 'Executive',
     items: [
       { href: '/dashboard/ceo',                 label: 'CEO Overview',        icon: '👑', module: 'ceo_overview' },
+      { href: '/business-info',                 label: 'Business Info',       icon: '🏢', module: 'business_info' },
       { href: '/workforce',                     label: 'Workforce',           icon: '👥', module: 'staff_directory', children: [
         { href: '/workforce?tab=positions',         label: 'Positions (budget)', module: 'staff_directory' },
         { href: '/workforce?category=management',  label: 'Management',     module: 'staff_management' },
@@ -68,26 +69,17 @@ const NAV: NavSection[] = [
         { href: '/workforce?category=marketing',   label: 'Marketing',      module: 'staff_marketing' },
         { href: '/workforce?category=finance',     label: 'Finance',        module: 'staff_finance' },
         { href: '/workforce?category=hr',          label: 'HR',             module: 'staff_hr' },
-        { href: '/scheduling',                     label: 'Scheduling',     module: 'scheduling' },
-        { href: '/payroll',                        label: 'Payroll runs',   module: 'payroll' },
-        { href: '/tip-pools',                      label: 'Tip pools',      module: 'payroll' },
       ]},
       { href: '/configuration/pending-approvals', label: 'Pending Signups',  icon: '⏳', module: 'role_management' },
       { href: '/configuration/roles',           label: 'Roles & Permissions', icon: '🔐', module: 'role_management' },
       { href: '/configuration/role-modules',    label: 'Module Access',       icon: '🗂', module: 'role_modules' },
       { href: '/settings',                      label: 'Tenants & Brands',    icon: '🏷', module: 'tenants' },
-    ],
-  },
-  {
-    // Management — manager-tier dashboards. Each manager sees only their own
-    // (gated by module): the Brand Manager gets Brand, the F&B Manager gets
-    // F&B. The CEO + GM see both. For the managers themselves, Executive is
-    // hidden, so this becomes the first section in their sidebar.
-    title: 'Management',
-    items: [
-      { href: '/dashboard/brand', label: 'Brand Dashboard', icon: '📣', module: 'brand_dashboard' },
-      { href: '/dashboard/spend', label: 'Marketing Spend', icon: '💸', module: 'brand_dashboard' },
-      { href: '/dashboard/fnb',   label: 'F&B Dashboard',   icon: '🍽️', module: 'fnb_dashboard' },
+      // ── Account config (relocated from the retired "Setup" section). These
+      // are one-time-per-account surfaces: connect Meta (FB+IG) / WhatsApp /
+      // FBR PRAL / the Supplier Portal, push to staff devices, read the docs.
+      { href: '/settings/integrations',         label: 'Integrations',        icon: '🔌', module: 'integrations' },
+      { href: '/notifications',                 label: 'Notifications',       icon: '🔔', module: 'notifications' },
+      { href: '/help',                          label: 'Help & Support',      icon: '❓', module: 'help' },
     ],
   },
   {
@@ -109,17 +101,33 @@ const NAV: NavSection[] = [
     ],
   },
   {
-    // ── Management — the "look back / look across" surfaces. Live is what's
-    // happening RIGHT NOW; Management is the post-hoc + analytical layer:
-    // browse past orders, audit anomalies, see prep forecasts. Sits between
-    // Live and Service so the floor team can drop down for a quick lookup
-    // (refund last night's #1042) without leaving the operational area.
+    // ── Management — every manager-facing surface in one tab. The manager-tier
+    // dashboards (each gated by module: the Brand Manager gets Brand, the F&B
+    // Manager gets F&B, the CEO + GM see both) plus the "look back / look
+    // across" layer — past orders, refunds, ops anomalies. Sits right after
+    // Live: Live is what's happening RIGHT NOW, Management is the post-hoc +
+    // analytical layer the floor can drop into for a quick lookup (refund last
+    // night's #1042). For managers whose Executive + Live sections are hidden,
+    // this becomes the first section in their sidebar.
     title: 'Management',
     items: [
+      { href: '/dashboard/brand', label: 'Brand Dashboard', icon: '📣', module: 'brand_dashboard' },
+      { href: '/dashboard/spend', label: 'Marketing Spend', icon: '💸', module: 'brand_dashboard' },
+      { href: '/dashboard/fnb',   label: 'F&B Dashboard',   icon: '🍽️', module: 'fnb_dashboard' },
       { href: '/orders',    label: 'Orders (history)', icon: '📋', module: 'orders', children: [
         { href: '/refunds',         label: 'Refunds',  module: 'refunds' },
       ]},
       { href: '/ops',       label: 'Ops Center',   icon: '⚡', module: 'ops' },
+      // People-ops that aren't CEO-only: Scheduling (F&B Manager, GM, FOH
+      // Management) and Payroll (HR, Finance, GM) live here so the roles that
+      // hold those modules can reach them — the CEO-gated Executive section
+      // would otherwise hide them. Module gating keeps each row scoped to the
+      // right roles. Workforce *admin* — staff allowances, categories,
+      // onboarding — stays CEO-only up in Executive.
+      { href: '/scheduling', label: 'Scheduling',  icon: '📅', module: 'scheduling' },
+      { href: '/payroll',    label: 'Payroll runs', icon: '🧾', module: 'payroll', children: [
+        { href: '/tip-pools', label: 'Tip pools', module: 'payroll' },
+      ]},
     ],
   },
   {
@@ -137,7 +145,6 @@ const NAV: NavSection[] = [
         { href: '/kds/reservations',       label: 'Kitchen tracker',      module: 'kds_all' },
       ]},
       { href: '/orders/curbside', label: 'Curbside',   icon: '🚗', module: 'curbside' },
-      { href: '/scheduling',      label: 'Scheduling', icon: '📅', module: 'scheduling' },
       { href: '/tables',          label: 'Floor Plan', icon: '🪑', module: 'tables' },
       { href: '/dispatch',        label: 'Dispatch',   icon: '🛵', module: 'dispatch', children: [
         { href: '/riders', label: 'Riders', module: 'riders' },
@@ -184,6 +191,7 @@ const NAV: NavSection[] = [
       { href: '/marketing/brands',  label: 'Brands',      icon: '🏷', module: 'brands', children: [
         { href: '/marketing/storefront', label: 'Storefront Designer', module: 'brands' },
         { href: '/storefront',           label: 'Visual Layout',       module: 'brands' },
+        { href: '/storefront-hero',      label: 'Landing Hero',        module: 'brands' },
       ]},
       { href: '/analytics',         label: 'Analytics',   icon: '📊', module: 'analytics' },
     ],
@@ -228,20 +236,9 @@ const NAV: NavSection[] = [
       { href: '/finance/projections', label: 'Projections', icon: '📈', module: 'projections' },
     ],
   },
-  {
-    title: 'Setup',
-    defaultCollapsed: false,
-    items: [
-      { href: '/onboarding',           label: 'Onboarding',        icon: '🚀', module: 'onboarding' },
-      { href: '/setup',                label: 'First-run setup',   icon: '🚀', module: 'onboarding' },
-      // Integrations is where Meta (FB+IG), WhatsApp, FBR PRAL, and the
-      // Supplier Portal are connected. Lives under Setup because it's a
-      // one-time-per-account config surface, not a daily-use one.
-      { href: '/settings/integrations', label: 'Integrations',     icon: '🔌', module: 'integrations' },
-      { href: '/notifications',        label: 'Notifications',     icon: '🔔', module: 'notifications' },
-      { href: '/help',                 label: 'Help & Support',    icon: '❓', module: 'help' },
-    ],
-  },
+  // Note: the standalone "Setup" section was retired — the first-run wizard is
+  // still reachable from the Dashboard onboarding checklist, and the surfaces
+  // worth keeping (Integrations, Notifications, Help) moved up into Executive.
 ]
 
 const FULL_SCREEN_PREFIXES = ['/kds', '/pos', '/login', '/supplier', '/mobile']

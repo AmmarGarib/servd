@@ -1490,6 +1490,10 @@ model Order {
   // (outside Sindh) OR the SRB worker hasn't processed the order yet.
   srbInvoiceNumber String?
 
+  // SRB invoice-verification QR link returned alongside srbInvoiceNumber. Per
+  // the SRB POS spec this link MUST be rendered as a QR code on the receipt.
+  srbQrCodeLink String?
+
   // raw platform payload stored for audit/debug
   rawPayload Json?
 
@@ -2271,6 +2275,11 @@ model JournalLine {
   id             String           @id @default(uuid())
   journalEntryId String
   accountId      String
+  // Brand attribution for per-brand P&L. Set on lines posted from an order /
+  // shift (revenue, COGS, discounts) so per-brand cost is MEASURED, not
+  // estimated. NULL = genuinely shared / overhead / manual entries, which the
+  // per-brand report allocates across brands by revenue share.
+  conceptId      String?
   type           JournalEntryType
   amountCents    Int
   memo           String?
@@ -2278,6 +2287,7 @@ model JournalLine {
   journalEntry JournalEntry @relation(fields: [journalEntryId], references: [id])
   account      Account      @relation(fields: [accountId], references: [id])
 
+  @@index([conceptId])
   @@map("journal_lines")
 }
 
@@ -2601,6 +2611,14 @@ model CampaignSend {
   sentAt     DateTime?
   status     String    @default("queued") // queued|sent|failed|bounced
   errorMsg   String?
+
+  // Engagement tracking — incremented by the public /t/c/:id (click) and
+  // /t/o/:id (open pixel) endpoints. firstClickedAt/firstOpenedAt give unique
+  // click/open rates; the counts give raw totals.
+  clickCount     Int       @default(0)
+  openCount      Int       @default(0)
+  firstClickedAt DateTime?
+  firstOpenedAt  DateTime?
 
   campaign Campaign @relation(fields: [campaignId], references: [id])
   customer Customer @relation(fields: [customerId], references: [id])
