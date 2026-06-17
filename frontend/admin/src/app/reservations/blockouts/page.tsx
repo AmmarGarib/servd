@@ -58,6 +58,7 @@ export default function BlockoutsPage() {
 
       <div className="p-6 max-w-3xl space-y-3">
         <div className="s-card overflow-hidden">
+          <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-s-bg-soft text-xs text-s-muted">
               <tr>
@@ -92,6 +93,7 @@ export default function BlockoutsPage() {
               )}
             </tbody>
           </table>
+          </div>
         </div>
       </div>
 

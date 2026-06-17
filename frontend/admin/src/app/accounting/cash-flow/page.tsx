@@ -46,6 +46,7 @@ export default function CashFlowPage() {
           <>
             <div className="s-card overflow-hidden">
               <div className="px-4 py-2 bg-s-bg-soft border-b border-s-border text-xs font-semibold text-s-text">By Cash Account</div>
+              <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead className="text-xs text-s-muted">
                   <tr><th className="px-4 py-2 text-left">Account</th><th className="px-4 py-2 text-right">Inflow</th><th className="px-4 py-2 text-right">Outflow</th><th className="px-4 py-2 text-right">Net</th></tr>
@@ -61,10 +62,12 @@ export default function CashFlowPage() {
                   ))}
                 </tbody>
               </table>
+              </div>
             </div>
 
             <div className="s-card overflow-hidden">
               <div className="px-4 py-2 bg-s-bg-soft border-b border-s-border text-xs font-semibold text-s-text">By Category</div>
+              <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <tbody>
                   {data.byCategory.map((r) => (
@@ -77,6 +80,7 @@ export default function CashFlowPage() {
                   ))}
                 </tbody>
               </table>
+              </div>
             </div>
 
             <div className="s-card p-4">

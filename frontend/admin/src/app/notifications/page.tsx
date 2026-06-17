@@ -120,6 +120,7 @@ function RegisteredDevices({ tokens }: { tokens: TokenEntry[] }) {
         {totalDevices} device{totalDevices !== 1 ? 's' : ''} registered
       </p>
       <div className="rounded-xl border border-kds-border overflow-hidden">
+        <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="bg-kds-card border-b border-kds-border">
             <tr>
@@ -177,6 +178,7 @@ function RegisteredDevices({ tokens }: { tokens: TokenEntry[] }) {
             })}
           </tbody>
         </table>
+        </div>
       </div>
     </div>
   )

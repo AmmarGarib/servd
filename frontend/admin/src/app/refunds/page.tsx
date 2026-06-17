@@ -80,6 +80,7 @@ export default function RefundsPage() {
             <div className="px-4 py-3 border-b border-s-border bg-s-bg-soft">
               <h2 className="text-sm font-bold text-s-text">Refundable orders</h2>
             </div>
+            <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="text-xs text-s-muted">
                 <tr>
@@ -117,6 +118,7 @@ export default function RefundsPage() {
                 ))}
               </tbody>
             </table>
+            </div>
           </div>
 
           {/* Refund panel */}

@@ -63,6 +63,7 @@ export default function TipPoolsPage() {
       <div className="p-6 max-w-6xl grid grid-cols-1 lg:grid-cols-[1fr_400px] gap-4">
         <div className="s-card overflow-hidden">
           <div className="px-4 py-2 bg-s-bg-soft border-b border-s-border text-xs font-bold">All pools</div>
+          <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="text-xs text-s-muted">
               <tr>
@@ -93,6 +94,7 @@ export default function TipPoolsPage() {
               )}
             </tbody>
           </table>
+          </div>
         </div>
 
         <aside>

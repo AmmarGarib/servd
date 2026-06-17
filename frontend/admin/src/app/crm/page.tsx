@@ -432,6 +432,7 @@ function CampaignsPanel() {
 
       {campaigns.length > 0 && (
         <div className="rounded-xl border border-kds-border overflow-hidden">
+          <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-kds-card border-b border-kds-border">
               <tr>
@@ -465,6 +466,7 @@ function CampaignsPanel() {
               ))}
             </tbody>
           </table>
+          </div>
         </div>
       )}
     </div>
@@ -735,6 +737,7 @@ export default function CRMPage() {
                 <p className="text-sm text-kds-subtext">No customers in this segment</p>
               ) : (
                 <div className="rounded-xl border border-kds-border overflow-hidden">
+                  <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead className="bg-kds-card border-b border-kds-border">
                       <tr>
@@ -758,6 +761,7 @@ export default function CRMPage() {
                       ))}
                     </tbody>
                   </table>
+                  </div>
                 </div>
               )}
             </div>

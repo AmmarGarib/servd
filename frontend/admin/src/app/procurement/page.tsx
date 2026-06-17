@@ -223,6 +223,7 @@ function PoTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
         <EmptyState icon="📋" title="No purchase orders" sub="Create your first PO to get started" />
       ) : (
         <div className="rounded-xl border border-kds-border overflow-hidden">
+          <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-kds-border bg-kds-card/40">
@@ -261,6 +262,7 @@ function PoTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
               ))}
             </tbody>
           </table>
+          </div>
         </div>
       )}
 
@@ -272,6 +274,7 @@ function PoTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
             <button onClick={() => setDetailId(null)} className="text-kds-subtext hover:text-kds-text text-xs">✕ Close</button>
           </div>
           {detail.lines && detail.lines.length > 0 && (
+            <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead>
                 <tr className="border-b border-kds-border/50">
@@ -294,6 +297,7 @@ function PoTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
                 ))}
               </tbody>
             </table>
+            </div>
           )}
           {detail.notes && <p className="text-xs text-kds-subtext">Notes: {detail.notes}</p>}
           {detail.rejectedReason && <p className="text-xs text-kds-red">Rejected: {detail.rejectedReason}</p>}
@@ -622,6 +626,7 @@ function BillsTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
         <EmptyState icon="🧾" title="No bills" sub="Record supplier invoices here" />
       ) : (
         <div className="rounded-xl border border-kds-border overflow-hidden">
+          <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-kds-border bg-kds-card/40">
@@ -664,6 +669,7 @@ function BillsTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
               })}
             </tbody>
           </table>
+          </div>
         </div>
       )}
 
@@ -836,6 +842,7 @@ function PaymentsTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
         <EmptyState icon="💳" title="No payments" sub="Record supplier payments here" />
       ) : (
         <div className="rounded-xl border border-kds-border overflow-hidden">
+          <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-kds-border bg-kds-card/40">
@@ -869,6 +876,7 @@ function PaymentsTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
               ))}
             </tbody>
           </table>
+          </div>
         </div>
       )}
 
@@ -1037,6 +1045,7 @@ function SuppliersTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
         <EmptyState icon="🏭" title="No suppliers" sub="Add your first supplier to start ordering" />
       ) : (
         <div className="rounded-xl border border-kds-border overflow-hidden">
+          <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-kds-border bg-kds-card/40">
@@ -1072,6 +1081,7 @@ function SuppliersTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
               ))}
             </tbody>
           </table>
+          </div>
         </div>
       )}
 
@@ -1280,6 +1290,7 @@ function AgingTab() {
       </div>
 
       <div className="rounded-xl border border-kds-border overflow-hidden">
+        <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-kds-border bg-kds-card/40">
@@ -1312,6 +1323,7 @@ function AgingTab() {
             </tr>
           </tbody>
         </table>
+        </div>
       </div>
     </div>
   )
@@ -1340,6 +1352,7 @@ function ReorderTab() {
       </div>
 
       <div className="rounded-xl border border-kds-border overflow-hidden">
+        <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-kds-border bg-kds-card/40">
@@ -1373,6 +1386,7 @@ function ReorderTab() {
             })}
           </tbody>
         </table>
+        </div>
       </div>
     </div>
   )
@@ -1441,6 +1455,7 @@ function ApprovalsTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
         <>
           <p className="text-sm font-bold text-amber-400">{orders.length} PO{orders.length !== 1 ? 's' : ''} awaiting approval</p>
           <div className="rounded-xl border border-amber-900/40 overflow-hidden">
+            <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-amber-900/30 bg-amber-950/10">
@@ -1471,6 +1486,7 @@ function ApprovalsTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
                 ))}
               </tbody>
             </table>
+            </div>
           </div>
         </>
       )}
@@ -1544,6 +1560,7 @@ function PriceHistoryTab() {
         <EmptyState icon="📈" title="No price history" sub="Receive purchase orders to build price history" />
       ) : (
         <div className="rounded-xl border border-kds-border overflow-hidden">
+          <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-kds-border bg-kds-card/40">
@@ -1582,6 +1599,7 @@ function PriceHistoryTab() {
               })}
             </tbody>
           </table>
+          </div>
         </div>
       )}
     </div>

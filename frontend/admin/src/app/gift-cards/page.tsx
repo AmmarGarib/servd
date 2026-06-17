@@ -76,6 +76,7 @@ export default function GiftCardsPage() {
         {/* List */}
         <div className="s-card overflow-hidden">
           <div className="px-4 py-2 bg-s-bg-soft border-b border-s-border text-xs font-bold text-s-text">All cards</div>
+          <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="text-xs text-s-muted">
               <tr>
@@ -107,6 +108,7 @@ export default function GiftCardsPage() {
               ))}
             </tbody>
           </table>
+          </div>
         </div>
 
         <p className="text-xs text-s-muted">

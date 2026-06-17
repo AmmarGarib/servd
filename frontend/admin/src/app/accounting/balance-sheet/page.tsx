@@ -25,6 +25,7 @@ function Section({ title, rows, total }: { title: string; rows: BalanceSheet['as
       <div className="px-4 py-2 border-b border-s-border bg-s-bg-soft">
         <h3 className="text-sm font-semibold text-s-text">{title}</h3>
       </div>
+      <div className="overflow-x-auto">
       <table className="w-full text-sm">
         <tbody>
           {rows.map((r) => (
@@ -45,6 +46,7 @@ function Section({ title, rows, total }: { title: string; rows: BalanceSheet['as
           </tr>
         </tfoot>
       </table>
+      </div>
     </div>
   )
 }

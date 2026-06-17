@@ -167,6 +167,7 @@ export default function OpsCenterPage() {
                     <p className="text-[10px] font-bold uppercase tracking-wider text-white/40 mb-1">Forecasted items</p>
                     <p className="text-xs text-white/65">{s.forecastedItems.join(', ')}</p>
                   </div>
+                  <div className="overflow-x-auto">
                   <table className="w-full text-xs">
                     <thead>
                       <tr className="text-left text-[10px] font-bold uppercase tracking-wider text-white/40 border-b border-white/[0.04]">
@@ -193,6 +194,7 @@ export default function OpsCenterPage() {
                       })}
                     </tbody>
                   </table>
+                  </div>
                 </div>
               ))}
             </div>

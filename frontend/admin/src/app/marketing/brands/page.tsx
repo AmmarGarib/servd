@@ -72,9 +72,25 @@ export default function BrandEditorPage() {
         </p>
       </header>
 
-      <div className="flex-1 flex overflow-hidden">
+      <div className="flex-1 flex flex-col lg:flex-row overflow-hidden">
+        {/* Brand picker — compact dropdown below lg so the editor stays reachable
+            on phone/tablet where the 288px sidebar would overflow the viewport. */}
+        <div className="lg:hidden shrink-0 border-b border-white/[0.05] p-3">
+          <select
+            value={selectedId ?? ''}
+            onChange={(e) => setSelectedId(e.target.value)}
+            className="s-input w-full">
+            {isLoading && <option value="">Loading…</option>}
+            {concepts.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}{!c.isActive ? ' (paused)' : ''} · {c.slug}
+              </option>
+            ))}
+          </select>
+        </div>
+
         {/* Brand list */}
-        <aside className="w-72 shrink-0 border-r border-white/[0.05] overflow-y-auto p-3 space-y-1">
+        <aside className="hidden lg:block w-72 shrink-0 border-r border-white/[0.05] overflow-y-auto p-3 space-y-1">
           {isLoading && <p className="text-sm text-white/40">Loading…</p>}
           {concepts.map((c) => (
             <button

@@ -127,6 +127,7 @@ export default function CustomersPage() {
 
         {/* Table */}
         <div className="s-card overflow-hidden">
+          <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-s-bg-soft text-xs text-s-muted">
               <tr>
@@ -171,6 +172,7 @@ export default function CustomersPage() {
               ))}
             </tbody>
           </table>
+          </div>
         </div>
       </div>
     </div>

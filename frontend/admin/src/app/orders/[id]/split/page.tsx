@@ -83,6 +83,7 @@ export default function SplitPage() {
         {order.payments.length > 0 && (
           <div className="s-card overflow-hidden">
             <div className="px-4 py-2 bg-s-bg-soft border-b border-s-border text-xs font-bold">Current splits</div>
+            <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <tbody>
                 {order.payments.map((p) => (
@@ -100,6 +101,7 @@ export default function SplitPage() {
                 ))}
               </tbody>
             </table>
+            </div>
           </div>
         )}
 

@@ -179,6 +179,7 @@ export default function SegmentsPage() {
                   <p className="text-sm">No members yet — run a recompute</p>
                 </div>
               ) : (
+                <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead className="sticky top-[57px] bg-neutral-50 text-xs text-neutral-500 uppercase tracking-wide">
                     <tr>
@@ -217,6 +218,7 @@ export default function SegmentsPage() {
                     ))}
                   </tbody>
                 </table>
+                </div>
               )}
             </div>
           )}

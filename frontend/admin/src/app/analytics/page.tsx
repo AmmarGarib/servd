@@ -223,6 +223,7 @@ export default function AnalyticsPage() {
         <div className="bg-white rounded-xl border border-neutral-200 p-5">
           <h2 className="font-semibold text-neutral-900 mb-4">Menu Item Performance</h2>
           {items.length > 0 ? (
+            <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-xs text-neutral-500 uppercase tracking-wide border-b border-neutral-100">
@@ -245,6 +246,7 @@ export default function AnalyticsPage() {
                 ))}
               </tbody>
             </table>
+            </div>
           ) : (
             <p className="text-sm text-neutral-400 text-center py-8">No item view data yet</p>
           )}
@@ -254,6 +256,7 @@ export default function AnalyticsPage() {
         <div className="bg-white rounded-xl border border-neutral-200 p-5">
           <h2 className="font-semibold text-neutral-900 mb-4">Search Queries</h2>
           {searches.length > 0 ? (
+            <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-xs text-neutral-500 uppercase tracking-wide border-b border-neutral-100">
@@ -274,6 +277,7 @@ export default function AnalyticsPage() {
                 ))}
               </tbody>
             </table>
+            </div>
           ) : (
             <p className="text-sm text-neutral-400 text-center py-8">No search data yet</p>
           )}

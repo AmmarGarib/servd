@@ -54,6 +54,7 @@ export default function SalesTaxReturnPage() {
             {/* Output tax */}
             <div className="s-card overflow-hidden">
               <div className="px-4 py-2 bg-s-bg-soft border-b border-s-border text-xs font-semibold text-s-text">Output Tax (collected from customers)</div>
+              <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <tbody>
                   {[data.outputTax.fbr, data.outputTax.pra, data.outputTax.srb, data.outputTax.kpra, data.outputTax.bra].map((r) => (
@@ -68,11 +69,13 @@ export default function SalesTaxReturnPage() {
                   <tr><td colSpan={2} className="px-4 py-2 text-s-text">Total output</td><td className="px-4 py-2 text-right font-mono text-s-text">{fmtPkr(data.outputTax.totalCents)}</td></tr>
                 </tfoot>
               </table>
+              </div>
             </div>
 
             {/* Input tax */}
             <div className="s-card overflow-hidden">
               <div className="px-4 py-2 bg-s-bg-soft border-b border-s-border text-xs font-semibold text-s-text">Input Tax (paid on supplier purchases)</div>
+              <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <tbody>
                   {[data.inputTax.fbr, data.inputTax.pra, data.inputTax.srb, data.inputTax.kpra, data.inputTax.bra].map((r) => (
@@ -87,6 +90,7 @@ export default function SalesTaxReturnPage() {
                   <tr><td colSpan={2} className="px-4 py-2 text-s-text">Total input</td><td className="px-4 py-2 text-right font-mono text-s-text">{fmtPkr(data.inputTax.totalCents)}</td></tr>
                 </tfoot>
               </table>
+              </div>
             </div>
 
             {/* Net + concept breakdown */}
@@ -100,6 +104,7 @@ export default function SalesTaxReturnPage() {
 
             <div className="s-card overflow-hidden">
               <div className="px-4 py-2 bg-s-bg-soft border-b border-s-border text-xs font-semibold text-s-text">Taxable Sales by Concept</div>
+              <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <tbody>
                   {data.taxableValueByConceptCents.map((c) => (
@@ -114,6 +119,7 @@ export default function SalesTaxReturnPage() {
                   )}
                 </tbody>
               </table>
+              </div>
             </div>
 
             {data.notes.length > 0 && (

@@ -219,6 +219,7 @@ export default function PromosPage() {
           </div>
         ) : (
           <div className="rounded-xl border border-kds-border overflow-hidden">
+            <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="bg-kds-card border-b border-kds-border">
                 <tr>
@@ -272,6 +273,7 @@ export default function PromosPage() {
                 ))}
               </tbody>
             </table>
+            </div>
           </div>
         )}
       </div>

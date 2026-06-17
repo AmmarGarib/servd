@@ -501,6 +501,7 @@ export default function InventoryPage() {
                   <p className="font-bold text-kds-red text-sm">⚠ {alerts.length} item{alerts.length !== 1 ? 's' : ''} below par level</p>
                   <p className="text-xs text-kds-subtext">Suggested order quantities to reach par</p>
                 </div>
+                <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead className="bg-kds-card border-b border-kds-red/20">
                     <tr>
@@ -546,6 +547,7 @@ export default function InventoryPage() {
                     })}
                   </tbody>
                 </table>
+                </div>
               </div>
             )
           )}
@@ -579,6 +581,7 @@ export default function InventoryPage() {
                 </div>
               ) : (
                 <div className="rounded-xl border border-kds-border overflow-hidden">
+                  <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b border-kds-border bg-kds-card">
@@ -617,6 +620,7 @@ export default function InventoryPage() {
                       ))}
                     </tbody>
                   </table>
+                  </div>
                 </div>
               )}
             </div>

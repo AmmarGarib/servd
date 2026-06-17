@@ -134,6 +134,7 @@ function ShiftDetailPanel({
               <div className="px-4 py-2 bg-s-bg-soft border-b border-s-border text-xs font-semibold text-s-muted uppercase tracking-wide">
                 Cash breakdown
               </div>
+              <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <tbody>
                   {[
@@ -169,6 +170,7 @@ function ShiftDetailPanel({
                   )}
                 </tbody>
               </table>
+              </div>
             </div>
 
             {/* Other sales */}
@@ -176,6 +178,7 @@ function ShiftDetailPanel({
               <div className="px-4 py-2 bg-s-bg-soft border-b border-s-border text-xs font-semibold text-s-muted uppercase tracking-wide">
                 All sales ({data.breakdown.paymentCount} payments)
               </div>
+              <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <tbody>
                   {[
@@ -193,6 +196,7 @@ function ShiftDetailPanel({
                   ))}
                 </tbody>
               </table>
+              </div>
             </div>
 
             {/* Complete form — only shown for open shifts without a closing float */}
@@ -382,6 +386,7 @@ export default function ReconciliationPage() {
               <div className="py-8 text-center text-s-muted text-sm">Loading shifts…</div>
             )}
             {!summaryLoading && (
+              <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead className="text-xs text-s-muted bg-s-bg-soft">
                   <tr>
@@ -436,6 +441,7 @@ export default function ReconciliationPage() {
                   )}
                 </tbody>
               </table>
+              </div>
             )}
           </div>
         )}
@@ -457,6 +463,7 @@ export default function ReconciliationPage() {
                 }}
               />
             )}
+            <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="text-xs text-s-muted">
                 <tr>
@@ -484,6 +491,7 @@ export default function ReconciliationPage() {
                 )}
               </tbody>
             </table>
+            </div>
           </div>
         )}
 

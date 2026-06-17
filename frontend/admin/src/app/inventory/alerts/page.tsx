@@ -87,6 +87,7 @@ function Section({ title, rows, loading, severity }: { title: string; rows: Inve
       <div className="px-4 py-3 border-b border-s-border bg-s-bg-soft" style={{ borderLeft: `3px solid ${accent}` }}>
         <h2 className="text-sm font-bold text-s-text">{title}</h2>
       </div>
+      <div className="overflow-x-auto">
       <table className="w-full text-sm">
         <thead className="text-xs text-s-muted">
           <tr>
@@ -123,6 +124,7 @@ function Section({ title, rows, loading, severity }: { title: string; rows: Inve
           )}
         </tbody>
       </table>
+      </div>
     </div>
   )
 }

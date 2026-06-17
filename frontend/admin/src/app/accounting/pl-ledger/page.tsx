@@ -22,6 +22,7 @@ function Section({ title, rows, total, neg }: { title: string; rows: PL['revenue
   return (
     <div className="mb-3">
       <div className="px-4 py-1.5 bg-s-bg-soft border border-s-border text-xs font-semibold text-s-text rounded-t">{title}</div>
+      <div className="overflow-x-auto">
       <table className="w-full text-sm border-x border-s-border">
         <tbody>
           {rows.map((r) => (
@@ -38,6 +39,7 @@ function Section({ title, rows, total, neg }: { title: string; rows: PL['revenue
           )}
         </tbody>
       </table>
+      </div>
       <div className="px-4 py-1.5 bg-s-bg-soft border border-s-border border-t-0 text-sm font-semibold text-s-text rounded-b flex justify-between">
         <span>Total {title}</span>
         <span className={`font-mono ${neg ? 'text-s-red' : ''}`}>{neg ? '(' + fmtPkr(total) + ')' : fmtPkr(total)}</span>

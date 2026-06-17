@@ -161,6 +161,7 @@ export default function MenuEngineeringPage() {
 
           {/* Data table */}
           <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.06)' }}>
+            <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr style={{ background: 'rgba(255,255,255,0.03)', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
@@ -195,6 +196,7 @@ export default function MenuEngineeringPage() {
                 })}
               </tbody>
             </table>
+            </div>
             {filtered.length === 0 && (
               <div className="flex items-center justify-center h-32">
                 <p className="text-sm" style={{ color: 'rgba(255,255,255,0.3)' }}>No items in this period</p>

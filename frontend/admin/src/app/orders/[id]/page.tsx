@@ -474,6 +474,7 @@ export default function OrderDetailPage() {
                   Items ({order.items.length})
                 </p>
               </div>
+              <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead className="bg-kds-card/50 border-b border-kds-border">
                   <tr>
@@ -518,6 +519,7 @@ export default function OrderDetailPage() {
                   })}
                 </tbody>
               </table>
+              </div>
             </div>
 
             {/* Financials */}

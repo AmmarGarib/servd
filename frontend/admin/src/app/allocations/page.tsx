@@ -59,6 +59,7 @@ export default function AllocationsPage() {
 
         <div className="s-card overflow-hidden">
           <div className="px-4 py-2 bg-s-bg-soft border-b border-s-border text-xs font-semibold text-s-text">Rules</div>
+          <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="text-xs text-s-muted">
               <tr>
@@ -100,10 +101,12 @@ export default function AllocationsPage() {
               )}
             </tbody>
           </table>
+          </div>
         </div>
 
         <div className="s-card overflow-hidden">
           <div className="px-4 py-2 bg-s-bg-soft border-b border-s-border text-xs font-semibold text-s-text">Recent Runs</div>
+          <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="text-xs text-s-muted">
               <tr>
@@ -127,6 +130,7 @@ export default function AllocationsPage() {
               )}
             </tbody>
           </table>
+          </div>
         </div>
       </div>
     </div>

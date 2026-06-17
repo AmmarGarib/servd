@@ -139,6 +139,7 @@ export default function PayrollRunPage() {
           <div className="px-4 py-2 bg-s-bg-soft border-b border-s-border text-xs font-semibold text-s-text">
             Payroll lines
           </div>
+          <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="text-xs text-s-muted bg-s-bg-soft">
               <tr>
@@ -232,6 +233,7 @@ export default function PayrollRunPage() {
               )}
             </tbody>
           </table>
+          </div>
         </div>
       </div>
     </div>

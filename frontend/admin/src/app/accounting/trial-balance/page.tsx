@@ -61,6 +61,7 @@ export default function TrialBalancePage() {
             </div>
 
             <div className="s-card overflow-hidden">
+              <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead className="bg-s-bg-soft border-b border-s-border">
                   <tr>
@@ -90,6 +91,7 @@ export default function TrialBalancePage() {
                   </tr>
                 </tfoot>
               </table>
+              </div>
             </div>
           </>
         )}

@@ -45,7 +45,7 @@ export default function SettingsPage() {
       </header>
 
       {/* ── Mobile tab strip ── */}
-      <div className="md:hidden flex overflow-x-auto border-b border-kds-border scrollbar-hide">
+      <div className="lg:hidden flex overflow-x-auto border-b border-kds-border scrollbar-hide">
         {SECTIONS.map((s) => (
           <button key={s.id} onClick={() => setSection(s.id)}
             className={`shrink-0 flex items-center gap-2 px-4 py-3 text-sm font-semibold border-b-2 transition-colors ${
@@ -61,7 +61,7 @@ export default function SettingsPage() {
 
       <div className="flex flex-1 overflow-hidden">
         {/* ── Sidebar (desktop only) ── */}
-        <aside className="hidden md:block w-56 shrink-0 border-r border-kds-border overflow-y-auto">
+        <aside className="hidden lg:block w-56 shrink-0 border-r border-kds-border overflow-y-auto">
           <p className="px-4 pt-4 pb-2 text-xs font-bold text-kds-subtext uppercase tracking-widest">Configuration</p>
           {SECTIONS.map((s) => (
             <button key={s.id} onClick={() => setSection(s.id)}

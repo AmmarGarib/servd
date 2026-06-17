@@ -177,7 +177,7 @@ export default function OrdersPage() {
       </header>
 
       {/* ── Mobile concept filter strip ── */}
-      <div className="md:hidden flex gap-2 overflow-x-auto px-4 py-2.5 border-b border-kds-border scrollbar-hide">
+      <div className="lg:hidden flex gap-2 overflow-x-auto px-4 py-2.5 border-b border-kds-border scrollbar-hide">
         {[{ id: 'all', name: 'All', primaryColor: null }, ...concepts].map((c) => (
           <button key={c.id} onClick={() => setConceptFilter(c.id)}
             className={`shrink-0 flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold transition-colors ${
@@ -193,7 +193,7 @@ export default function OrdersPage() {
 
       <div className="flex flex-1 overflow-hidden">
         {/* ── Concept sidebar (desktop only) ── */}
-        <aside className="hidden md:block w-52 shrink-0 border-r border-kds-border overflow-y-auto">
+        <aside className="hidden lg:block w-52 shrink-0 border-r border-kds-border overflow-y-auto">
           <p className="px-4 pt-4 pb-2 text-xs font-bold text-kds-subtext uppercase tracking-widest">Concept</p>
           {[{ id: 'all', name: 'All concepts', primaryColor: null }, ...concepts].map((c) => (
             <button key={c.id} onClick={() => setConceptFilter(c.id)}
@@ -486,7 +486,7 @@ export default function OrdersPage() {
               <div className="space-y-4 max-w-xl">
                 <p className="text-sm text-kds-subtext">Orders and revenue by source over the last 30 days.</p>
                 {channelData?.bySource ? (
-                  <div className="rounded-xl border border-kds-border overflow-hidden">
+                  <div className="rounded-xl border border-kds-border overflow-x-auto">
                     <table className="w-full text-sm">
                       <thead className="bg-kds-card border-b border-kds-border">
                         <tr>
