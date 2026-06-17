@@ -12,6 +12,7 @@ import type { Concept } from '../lib/concept'
 import { fetchBrandLocations } from '../lib/brandLocations'
 import { organizationSchema, websiteSchema, restaurantSchema, jsonLdScript } from '../lib/jsonLd'
 import { brandStory } from '../lib/concept'
+import { parseHeroBlock } from '../lib/heroConfig'
 
 const API_URL = process.env.INTERNAL_API_URL ?? process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -31,23 +32,16 @@ async function getHomeBlocks(): Promise<Block[]> {
   } catch { return [] }
 }
 
-// Admin-editable food imagery for the home FoodScrollExperience band. Operators
-// add an image/gallery block to the SiteLayout slug `servd:home-experience`
-// (existing /content block editor + media picker); empty → component uses
-// placeholders.
-async function getExperienceImages(): Promise<string[]> {
+// Operator-editable landing hero (background image + the expanding photo/video),
+// stored as a `scrollHero` block under the SiteLayout slug `servd:hero` and
+// edited in Admin → Marketing → Landing Hero. Empty → food placeholders.
+async function getHeroConfig() {
   try {
-    const res = await fetch(`${API_URL}/api/v1/site-layouts/servd:home-experience`, { cache: 'no-store' })
-    if (!res.ok) return []
+    const res = await fetch(`${API_URL}/api/v1/site-layouts/servd:hero`, { cache: 'no-store' })
+    if (!res.ok) return parseHeroBlock(null)
     const body = await res.json() as LayoutResponse
-    const blocks = Array.isArray(body.blocks) ? body.blocks : []
-    const urls: string[] = []
-    for (const b of blocks) {
-      if (b.type === 'gallery') for (const im of b.images) { if (im?.url) urls.push(im.url) }
-      else if (b.type === 'image' && b.url) urls.push(b.url)
-    }
-    return urls
-  } catch { return [] }
+    return parseHeroBlock(body.blocks)
+  } catch { return parseHeroBlock(null) }
 }
 
 async function getConcepts(): Promise<Concept[]> {
@@ -59,11 +53,11 @@ async function getConcepts(): Promise<Concept[]> {
 }
 
 export default async function HomePage() {
-  const [blocks, concepts, brandLocations, experienceImages] = await Promise.all([
+  const [blocks, concepts, brandLocations, heroConfig] = await Promise.all([
     getHomeBlocks(),
     getConcepts(),
     fetchBrandLocations(API_URL),
-    getExperienceImages(),
+    getHeroConfig(),
   ])
 
   // JSON-LD: Organization (servd) + WebSite (search-box) + one Restaurant
@@ -88,7 +82,7 @@ export default async function HomePage() {
   return (
     <>
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLdScript(schema) }} />
-      {blocks.length === 0 ? <HomeClient concepts={concepts} experienceImages={experienceImages} /> : <PageRenderer blocks={blocks} />}
+      {blocks.length === 0 ? <HomeClient concepts={concepts} heroConfig={heroConfig} /> : <PageRenderer blocks={blocks} />}
     </>
   )
 }

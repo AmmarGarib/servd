@@ -1,13 +1,9 @@
 'use client'
 import Link from 'next/link'
-import dynamic from 'next/dynamic'
 import { MagneticLink } from './ui/MagneticButton'
+import { LandingScrollHero } from './LandingScrollHero'
+import type { HeroConfig } from '../lib/heroConfig'
 
-// WebGL food-scroll hero. Code-split (three.js is heavy) but SSR'd so the
-// wordmark/tagline/CTAs paint instantly and are SEO-visible — no blank
-// above-the-fold, no CLS. WebGL itself only initialises in the client effect
-// (all window/canvas access is guarded there), so server render is safe.
-const FoodScrollExperience = dynamic(() => import('./ui/FoodScrollExperience'))
 import type { Concept } from '../lib/concept'
 import { brandAccent, brandStory, conceptHeroImage } from '../lib/concept'
 import { useScrollReveal } from './kinetic/motionHooks'
@@ -27,7 +23,7 @@ import { BRAND_LOCATIONS, locationFor, whatsappLink } from '../lib/brandLocation
 
 interface Props {
   concepts: Concept[]
-  experienceImages?: string[]
+  heroConfig: HeroConfig
 }
 
 // Fallback brand cards — used when the live concepts API returns nothing
@@ -38,7 +34,7 @@ const FALLBACK_BRANDS = [
   { id: 'fallback-flipd',  name: 'Flipd',  slug: 'flipd',  primaryColor: null },
 ] as Array<Pick<Concept, 'id' | 'name' | 'slug' | 'primaryColor'>>
 
-export function HomeClient({ concepts, experienceImages }: Props) {
+export function HomeClient({ concepts, heroConfig }: Props) {
   const source = concepts.filter((c) => ['simmer', 'stax', 'flipd'].includes(c.slug))
   // If the live concept list came back empty (api blip), fall through
   // to the hardcoded fallback so the home page never looks blank.
@@ -60,11 +56,11 @@ export function HomeClient({ concepts, experienceImages }: Props) {
   return (
     <div ref={pageRef} style={{ background: 'var(--servd-bg)', color: 'var(--servd-ink)', display: 'flex', flexDirection: 'column' }}>
 
-      {/* ── HERO ─ the immersive WebGL food-scroll experience IS the hero now
-            (the old static hero was removed). Wordmark + tagline + CTAs live in
-            its overlay. Images are admin-editable via the SiteLayout slug
-            `servd:home-experience`; placeholders until the operator sets them. */}
-      <FoodScrollExperience images={experienceImages} />
+      {/* ── HERO ─ the scroll-expansion media hero. Background image + the
+            expanding photo/video are operator-editable via Admin → Marketing
+            → Landing Hero (SiteLayout slug `servd:hero`); food placeholders
+            until the operator sets them. */}
+      <LandingScrollHero config={heroConfig} />
 
       {/* ── BRAND CARDS ─ Each one is a full-bleed food block leading
             into the order flow. */}

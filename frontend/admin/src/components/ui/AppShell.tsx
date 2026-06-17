@@ -191,6 +191,7 @@ const NAV: NavSection[] = [
       { href: '/marketing/brands',  label: 'Brands',      icon: '🏷', module: 'brands', children: [
         { href: '/marketing/storefront', label: 'Storefront Designer', module: 'brands' },
         { href: '/storefront',           label: 'Visual Layout',       module: 'brands' },
+        { href: '/storefront-hero',      label: 'Landing Hero',        module: 'brands' },
       ]},
       { href: '/analytics',         label: 'Analytics',   icon: '📊', module: 'analytics' },
     ],
