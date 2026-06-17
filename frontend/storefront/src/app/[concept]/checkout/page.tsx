@@ -192,7 +192,7 @@ export default function CheckoutPage() {
   }, [])
 
   if (itemCount() === 0) return (
-    <main className={`flex min-h-screen flex-col items-center justify-center gap-5 px-4${brandSkinClass ? ' ' + brandSkinClass : ''}`}
+    <main className={`flex min-h-dvh flex-col items-center justify-center gap-5 px-4${brandSkinClass ? ' ' + brandSkinClass : ''}`}
       style={{ background: 'transparent' }}>
       <svg width="80" height="80" viewBox="0 0 24 24" fill="none" stroke="var(--servd-mute)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
         <circle cx="9" cy="21" r="1"/>
@@ -414,7 +414,7 @@ export default function CheckoutPage() {
 
   return (
     <main
-      className={`min-h-screen pb-32 relative overflow-hidden${brandSkinClass ? ' ' + brandSkinClass : ''}`}
+      className={`min-h-dvh pb-32 relative overflow-hidden${brandSkinClass ? ' ' + brandSkinClass : ''}`}
       style={{ background: 'transparent' }}
     >
 
@@ -990,8 +990,8 @@ export default function CheckoutPage() {
       </div>
 
       {/* ── Fixed CTA ── */}
-      <div className="fixed bottom-0 left-0 right-0 px-4 py-4 z-40"
-        style={{ background: 'rgba(255,255,255,0.96)', backdropFilter: 'blur(24px)', borderTop: '1px solid rgba(0,0,0,0.08)' }}>
+      <div className="fixed bottom-0 left-0 right-0 px-4 pt-4 z-40"
+        style={{ background: 'rgba(255,255,255,0.96)', backdropFilter: 'blur(24px)', borderTop: '1px solid rgba(0,0,0,0.08)', paddingBottom: 'calc(1rem + env(safe-area-inset-bottom))' }}>
         <button
           onClick={() => { void handlePlaceOrder() }} disabled={loading}
           className="flex items-center justify-between w-full max-w-lg mx-auto rounded-2xl py-4 px-6 font-black text-base transition-all duration-200 disabled:opacity-40 hover:scale-[1.01] active:scale-[0.98]"

@@ -135,7 +135,7 @@ export default function OrdersPage() {
   const fmtDate = (iso: string) => new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
 
   return (
-    <div style={{ background: 'var(--servd-bg)', minHeight: '70vh' }}>
+    <div style={{ background: 'var(--servd-bg)', minHeight: '70dvh' }}>
       {error && <ErrorToast message={error} onDismiss={() => setError('')} />}
       <section className="section-tight" style={{ borderBottom: '1px solid var(--servd-line)' }}>
         <div className="container">

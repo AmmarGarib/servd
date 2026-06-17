@@ -163,7 +163,7 @@ export default function GroupOrderRoom() {
         {/* Cart */}
         <aside className="servd-card sticky top-20 self-start" style={{ padding: '1rem 1.25rem' }}>
           <h2 className="font-bold mb-2">Group cart · {go.items.length} item{go.items.length === 1 ? '' : 's'}</h2>
-          <ul className="space-y-1.5 mb-3 max-h-[40vh] overflow-y-auto">
+          <ul className="space-y-1.5 mb-3 max-h-[40dvh] overflow-y-auto">
             {go.members.map((m) => {
               const items = go.items.filter((i) => i.memberId === m.id)
               return (

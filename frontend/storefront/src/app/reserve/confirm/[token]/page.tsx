@@ -34,7 +34,7 @@ export default function ReserveConfirmPage() {
   }
 
   return (
-    <div style={{ minHeight: '60vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2rem' }}>
+    <div style={{ minHeight: '60dvh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2rem' }}>
       <div style={{ textAlign: 'center', maxWidth: '32rem', width: '100%' }}>
         {status === 'idle' && (
           <>

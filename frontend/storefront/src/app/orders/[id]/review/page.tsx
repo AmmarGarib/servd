@@ -164,7 +164,7 @@ export default function ReviewOrderPage() {
   }
 
   return (
-    <div style={{ background: 'var(--servd-bg)', minHeight: '100vh', padding: '2rem 1rem' }}>
+    <div style={{ background: 'var(--servd-bg)', minHeight: '100dvh', padding: '2rem 1rem' }}>
       <div style={{ maxWidth: '32rem', margin: '0 auto' }}>
         <Link href="/orders" style={{ color: 'var(--servd-mute)', fontSize: '0.85rem', textDecoration: 'none' }}>
           ← My orders
@@ -299,7 +299,7 @@ function SubRow({ label, value, onChange }: { label: string; value: number; onCh
 
 function Centered({ children }: { children: React.ReactNode }) {
   return (
-    <div style={{ minHeight: '60vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2rem' }}>
+    <div style={{ minHeight: '60dvh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2rem' }}>
       <div style={{ textAlign: 'center', maxWidth: '32rem' }}>{children}</div>
     </div>
   )

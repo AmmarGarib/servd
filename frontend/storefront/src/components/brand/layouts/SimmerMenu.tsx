@@ -80,7 +80,7 @@ export function SimmerMenu({ slug, conceptName }: { slug: string, conceptName: s
   const fmt = (pkr: number) => `Rs ${pkr.toLocaleString('en-PK')}`
 
   return (
-    <div className="simmer-page" style={{ minHeight: '100vh' }}>
+    <div className="simmer-page" style={{ minHeight: '100dvh' }}>
 
       {/* ── MASTHEAD — printed-menu header ─────────────────────────── */}
       <section style={{

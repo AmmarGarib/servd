@@ -11,7 +11,7 @@ export default function OrderHubError({ error, reset }: { error: Error & { diges
       role="alert"
       aria-live="assertive"
       style={{
-        minHeight: '60vh',
+        minHeight: '60dvh',
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'center',

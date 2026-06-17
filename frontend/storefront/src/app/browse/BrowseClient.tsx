@@ -111,6 +111,9 @@ export function BrowseClient({ concepts }: Props) {
                     onClick={() => { setFilter(f.key); trackFilterApplied('browse_type', f.key) }}
                     aria-pressed={active}
                     style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      minHeight: '44px',
                       padding: '0.5rem 1rem',
                       borderRadius: '999px',
                       border: '1px solid var(--servd-line)',

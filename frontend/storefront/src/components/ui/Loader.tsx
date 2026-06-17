@@ -47,7 +47,7 @@ export function LoadingScreen({
   label,
   size = 34,
   colors,
-  minHeight = '60vh',
+  minHeight = '60dvh',
 }: {
   label?: string
   size?: number

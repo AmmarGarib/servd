@@ -128,13 +128,13 @@ export default function AccountPage() {
   }
 
   if (loading) return (
-    <main className="flex min-h-screen items-center justify-center" style={{ background: 'transparent' }}>
+    <main className="flex min-h-dvh items-center justify-center" style={{ background: 'transparent' }}>
       <LoadingScreen label="Loading account…" minHeight="auto" />
     </main>
   )
 
   if (error || !profile) return (
-    <main className="flex min-h-screen flex-col items-center justify-center gap-5 px-4"
+    <main className="flex min-h-dvh flex-col items-center justify-center gap-5 px-4"
       style={{ background: 'transparent' }}>
       <div className="text-5xl">⚠</div>
       <p className="text-sm" style={{ color: '#dc2626' }}>{error || 'Account not found'}</p>
@@ -162,7 +162,7 @@ export default function AccountPage() {
   const firstName     = profile.name?.split(' ')[0] ?? null
 
   return (
-    <main className="min-h-screen pb-16 relative" style={{ background: 'transparent' }}>
+    <main className="min-h-dvh pb-16 relative" style={{ background: 'transparent' }}>
 
       {/* Subtle tier color accent */}
       <div className="fixed pointer-events-none select-none" style={{

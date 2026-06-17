@@ -41,7 +41,7 @@ export function GenericBrandLayout({ concept, concepts }: Props) {
 
       <section style={{
         position: 'relative',
-        minHeight: 'min(78vh, 680px)',
+        minHeight: 'min(78dvh, 680px)',
         display: 'flex',
         flexDirection: 'column',
         justifyContent: 'flex-end',

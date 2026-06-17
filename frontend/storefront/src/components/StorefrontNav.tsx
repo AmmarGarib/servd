@@ -93,10 +93,13 @@ export function StorefrontNav() {
             color: onDarkHero ? 'rgba(255,255,255,0.75)' : 'var(--servd-mute)',
             fontWeight: 600,
             fontSize: '0.92rem',
-            padding: '0.5rem 0.95rem',
+            padding: '0.7rem 0.95rem',
             textDecoration: 'none',
             borderRadius: '0.6rem',
             transition: 'color 160ms ease',
+            display: 'inline-flex',
+            alignItems: 'center',
+            minHeight: '44px',
           }}
         >
           Browse
@@ -109,7 +112,8 @@ export function StorefrontNav() {
               display: 'inline-flex',
               alignItems: 'center',
               gap: '0.5rem',
-              padding: '0.5rem 1rem',
+              padding: '0.6rem 1rem',
+              minHeight: '44px',
               borderRadius: '999px',
               background: onDarkHero ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.04)',
               border: onDarkHero ? '1px solid rgba(255,255,255,0.18)' : '1px solid var(--servd-line)',
@@ -143,9 +147,12 @@ export function StorefrontNav() {
                 color: onDarkHero ? 'rgba(255,255,255,0.75)' : 'var(--servd-mute)',
                 fontWeight: 600,
                 fontSize: '0.88rem',
-                padding: '0.5rem 0.95rem',
+                padding: '0.7rem 0.95rem',
                 textDecoration: 'none',
                 borderRadius: '0.6rem',
+                display: 'inline-flex',
+                alignItems: 'center',
+                minHeight: '44px',
               }}
             >
               Sign in
@@ -159,8 +166,9 @@ export function StorefrontNav() {
                 ['--brand-accent' as string]: 'var(--servd-green)',
                 // royal-blue accent → text must be white for contrast
                 ['--brand-ink' as string]:    'white',
-                padding: '0.55rem 1.2rem',
+                padding: '0.7rem 1.2rem',
                 fontSize: '0.92rem',
+                minHeight: '44px',
               }}
             >
               Sign up →

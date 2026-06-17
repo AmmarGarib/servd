@@ -179,7 +179,7 @@ export default function ClaimOfferPage() {
 function Centered({ children }: { children: React.ReactNode }) {
   return (
     <div style={{
-      minHeight: '70vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
+      minHeight: '70dvh', display: 'flex', alignItems: 'center', justifyContent: 'center',
       padding: '2rem', background: '#fff',
     }}>
       <div style={{ textAlign: 'center', maxWidth: '32rem' }}>{children}</div>

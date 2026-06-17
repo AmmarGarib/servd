@@ -13,7 +13,7 @@ interface StatusProps {
 }
 
 const baseWrap: React.CSSProperties = {
-  minHeight: '40vh',
+  minHeight: '40dvh',
   display: 'flex',
   flexDirection: 'column',
   alignItems: 'center',

@@ -101,7 +101,7 @@ export default function OrderStatusPage() {
   }, [id, token, router, pathname, slug])
 
   if (notFound) return (
-    <main className="flex min-h-screen flex-col items-center justify-center gap-5 px-4" style={{ background: 'var(--servd-bg)' }}>
+    <main className="flex min-h-dvh flex-col items-center justify-center gap-5 px-4" style={{ background: 'var(--servd-bg)' }}>
       <SearchIcon size={48} stroke="var(--servd-mute)" />
       <div className="text-center space-y-2">
         <p className="font-display font-black text-2xl tracking-tight" style={{ fontFamily: 'var(--font-display)', color: 'var(--servd-ink)' }}>Order not found</p>
@@ -118,7 +118,7 @@ export default function OrderStatusPage() {
   )
 
   if (!order) return (
-    <main className="flex min-h-screen items-center justify-center" style={{ background: 'var(--servd-bg)' }}>
+    <main className="flex min-h-dvh items-center justify-center" style={{ background: 'var(--servd-bg)' }}>
       <LoadingScreen label="Loading your order…" minHeight="auto" />
     </main>
   )
@@ -138,7 +138,7 @@ export default function OrderStatusPage() {
   const heroBorder = isCancelled ? '1px solid rgba(239,68,68,0.22)' : `1px solid color-mix(in srgb, ${color} 25%, transparent)`
 
   return (
-    <main className="min-h-screen pb-16" style={{ background: 'var(--servd-bg)' }}>
+    <main className="min-h-dvh pb-16" style={{ background: 'var(--servd-bg)' }}>
 
       {flash && (
         <div className="fixed inset-0 z-50 pointer-events-none"

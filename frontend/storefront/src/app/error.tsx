@@ -18,7 +18,7 @@ export default function GlobalError({ error, reset }: { error: Error & { digest?
       role="alert"
       aria-live="assertive"
       style={{
-        minHeight: '100vh',
+        minHeight: '100dvh',
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'center',

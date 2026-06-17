@@ -59,7 +59,7 @@ export function KineticBrandLayout({ concept, concepts }: Props) {
             name in the brand's accent; floating shapes in the same accent
             keep the page rooted to the brand. ──────────────────────── */}
       <section className="surface-ink relative overflow-hidden"
-        style={{ minHeight: 'min(92vh, 880px)' }}>
+        style={{ minHeight: 'min(92dvh, 880px)' }}>
 
         <KineticShape variant="blob"  size={460} style={{ top: '-15%', right: '-10%' }} />
         <KineticShape variant="blob"  size={280} style={{ bottom: '0%', left: '-8%' }} />

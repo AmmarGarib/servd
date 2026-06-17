@@ -150,7 +150,7 @@ export default function ReservePage() {
 
   if (done) {
     return (
-      <div style={{ minHeight: '60vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2rem' }}>
+      <div style={{ minHeight: '60dvh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2rem' }}>
         <div style={{ textAlign: 'center', maxWidth: '32rem' }}>
           <div style={{ fontSize: '3rem', marginBottom: '0.5rem' }}>✓</div>
           <h1 style={{ fontSize: 'clamp(1.6rem, 4vw, 2.25rem)', fontWeight: 800, marginBottom: '0.75rem' }}>
@@ -167,7 +167,7 @@ export default function ReservePage() {
 
   if (disabled) {
     return (
-      <div style={{ minHeight: '60vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2rem' }}>
+      <div style={{ minHeight: '60dvh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2rem' }}>
         <div style={{ textAlign: 'center', maxWidth: '32rem' }}>
           <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--servd-mute)"
             strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"
@@ -190,7 +190,7 @@ export default function ReservePage() {
   }
 
   return (
-    <div style={{ background: '#fff', minHeight: '100vh' }}>
+    <div style={{ background: '#fff', minHeight: '100dvh' }}>
       <section className="section-tight" style={{ borderBottom: '1px solid var(--servd-line)' }}>
         <div className="container">
           <Link href={backToBrandHref} style={{ color: 'var(--servd-mute)', fontSize: '0.85rem', textDecoration: 'none' }}>
@@ -262,6 +262,10 @@ export default function ReservePage() {
                         disabled={!s.available}
                         aria-pressed={sel}
                         style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          minHeight: '44px',
                           padding: '0.55rem 0.95rem',
                           borderRadius: '999px',
                           border: `1px solid ${sel ? 'var(--servd-green-dark)' : 'var(--servd-line)'}`,

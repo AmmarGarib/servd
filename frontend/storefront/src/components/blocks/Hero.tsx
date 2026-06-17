@@ -2,11 +2,11 @@ import Link from 'next/link'
 import type { HeroBlock } from '../../lib/blocks'
 
 const HEIGHT: Record<NonNullable<HeroBlock['height']>, string> = {
-  sm:     'min(40vh, 320px)',
-  md:     'min(60vh, 520px)',
-  lg:     'min(75vh, 700px)',
-  xl:     'min(85vh, 800px)',
-  screen: 'min(92vh, 820px)',
+  sm:     'min(40dvh, 320px)',
+  md:     'min(60dvh, 520px)',
+  lg:     'min(75dvh, 700px)',
+  xl:     'min(85dvh, 800px)',
+  screen: 'min(92dvh, 820px)',
 }
 
 export function Hero(block: HeroBlock) {

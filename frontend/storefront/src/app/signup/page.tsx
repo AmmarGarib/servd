@@ -288,14 +288,14 @@ export default function SignupPage() {
                   {loading ? 'Verifying…' : 'Verify & create account'}
                 </MagneticButton>
 
-                <div className="flex items-center justify-between pt-2 text-xs">
+                <div className="flex items-center justify-between text-xs -mx-2">
                   <button type="button" onClick={() => { setStep('details'); setOtp(''); setError('') }}
-                    className="font-bold text-white/55 hover:text-white transition-colors">
+                    className="inline-flex items-center min-h-[44px] px-2 font-bold text-white/55 hover:text-white transition-colors">
                     ← Change number
                   </button>
                   <button type="button" disabled={resendCooldown > 0 || loading}
                     onClick={() => { void requestOtp() }}
-                    className="font-bold text-white hover:text-white/80 disabled:opacity-40 transition-colors">
+                    className="inline-flex items-center min-h-[44px] px-2 font-bold text-white hover:text-white/80 disabled:opacity-40 transition-colors">
                     {resendCooldown > 0 ? `Resend in ${resendCooldown}s` : 'Resend code'}
                   </button>
                 </div>
@@ -391,7 +391,7 @@ function PasswordField(p: PasswordFieldProps) {
         <button type="button" onClick={p.onToggle}
           aria-label={p.show ? 'Hide password' : 'Show password'}
           aria-pressed={p.show}
-          className="absolute right-3 top-1/2 -translate-y-1/2 p-2 rounded-lg text-white/50 hover:text-white/80 transition-colors">
+          className="absolute right-1.5 top-1/2 -translate-y-1/2 flex items-center justify-center min-h-[44px] min-w-[44px] rounded-lg text-white/50 hover:text-white/80 transition-colors">
           {p.show ? <EyeOff size={18} /> : <Eye size={18} />}
         </button>
       </div>

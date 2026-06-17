@@ -177,7 +177,7 @@ export default function ConceptOrderPage() {
 
   if (error) {
     return (
-      <div className="min-h-screen flex items-center justify-center p-6 text-center">
+      <div className="min-h-dvh flex items-center justify-center p-6 text-center">
         <div style={{ maxWidth: '28rem' }}>
           <h1 className="text-2xl font-bold mb-2">Tableside ordering isn&rsquo;t live yet.</h1>
           <p className="text-s-muted text-sm mb-4">
@@ -197,7 +197,7 @@ export default function ConceptOrderPage() {
     // as the real page, just shimmer-tinted. Reserves the layout so the
     // real menu doesn't push content around on hydrate (avoids CLS).
     return (
-      <div role="status" aria-label="Loading menu" style={{ background: '#fff', minHeight: '100vh' }}>
+      <div role="status" aria-label="Loading menu" style={{ background: '#fff', minHeight: '100dvh' }}>
         <div style={{ height: '260px', background: 'linear-gradient(90deg, var(--servd-surface), #f0f0f0, var(--servd-surface))', backgroundSize: '200% 100%', animation: 'skeletonShimmer 1.4s ease-in-out infinite' }} />
         <div style={{ padding: '1rem 1rem 0', display: 'flex', gap: '0.5rem', overflowX: 'hidden' }}>
           {Array.from({ length: 4 }).map((_, i) => (
@@ -242,7 +242,7 @@ export default function ConceptOrderPage() {
 
   return (
     <div className={brandSkinClass}
-      style={{ background: '#fff', minHeight: '100vh', paddingBottom: hasItems ? '7rem' : '0' }}>
+      style={{ background: '#fff', minHeight: '100dvh', paddingBottom: hasItems ? '7rem' : '0' }}>
       {/* Hero */}
       <section
         style={{
@@ -582,7 +582,7 @@ function ItemDetailModal({
         style={{
           background: '#fff', width: '100%', maxWidth: '34rem',
           borderRadius: '1.25rem 1.25rem 0 0',
-          maxHeight: '92vh', overflow: 'hidden',
+          maxHeight: '92dvh', overflow: 'hidden',
           display: 'flex', flexDirection: 'column',
           animation: 'fadeUp 200ms cubic-bezier(0.22,1,0.36,1) both',
         }}
@@ -745,7 +745,7 @@ function CartDrawer({
         onClick={onOpen}
         aria-label={`View cart — ${itemCount} item${itemCount === 1 ? '' : 's'}, ${fmt(subtotal)}`}
         style={{
-          position: 'fixed', bottom: '1.25rem', left: '50%', transform: 'translateX(-50%)', zIndex: 40,
+          position: 'fixed', bottom: 'calc(1.25rem + env(safe-area-inset-bottom))', left: '50%', transform: 'translateX(-50%)', zIndex: 40,
           background: '#0a0a0a', color: 'white', border: 'none',
           borderRadius: '999px', padding: '0.85rem 1.5rem',
           display: 'flex', alignItems: 'center', gap: '0.85rem',
@@ -781,7 +781,7 @@ function CartDrawer({
         style={{
           background: '#fff', width: '100%', maxWidth: '34rem',
           borderRadius: '1.25rem 1.25rem 0 0',
-          maxHeight: '92vh', display: 'flex', flexDirection: 'column',
+          maxHeight: '92dvh', display: 'flex', flexDirection: 'column',
           animation: 'fadeUp 200ms cubic-bezier(0.22,1,0.36,1) both',
         }}
       >
