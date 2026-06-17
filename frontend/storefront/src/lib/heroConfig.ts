@@ -19,14 +19,14 @@ export interface HeroConfig {
   conclusion?: string;
 }
 
-// Food-themed placeholders. The expanding media is a stock video (operators
-// swap it for their own clip via Admin → Marketing → Landing Hero); the poster
-// + background are well-known Unsplash food photos so the hero reads
-// food-forward while the clip loads.
+// Food-themed placeholders. The expanding media is a stock cooking clip (a
+// wooden spoon stirring in a hot wok — operators swap it for their own via
+// Admin → Marketing → Landing Hero); the poster + background are well-known
+// Unsplash food photos so the hero reads food-forward while the clip loads.
 export const FOOD_HERO_DEFAULTS: HeroConfig = {
   mediaType: 'video',
   mediaSrc:
-    'https://videos.pexels.com/video-files/3209828/3209828-hd_1920_1080_25fps.mp4',
+    'https://videos.pexels.com/video-files/854565/854565-hd_1920_1080_25fps.mp4',
   posterSrc:
     'https://images.unsplash.com/photo-1504674900247-0877df9cc836?q=80&w=1280&auto=format&fit=crop',
   bgImageSrc:
