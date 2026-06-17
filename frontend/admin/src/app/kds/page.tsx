@@ -307,7 +307,7 @@ function StationLivePanel({ stationId }: { stationId: string }) {
   return (
     <div className="border-t border-kds-border bg-black/20 p-4 space-y-3">
       {cooking.length > 0 && (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2.5">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5">
           {cooking.map((t) => {
             const isLegacy = '__legacy' in t
             const id = isLegacy ? t.itemId : (t as StepTicket).stepId

@@ -224,12 +224,12 @@ export default function WaiterPage() {
                   </div>
                   <div className="flex items-center gap-2">
                     <button onClick={() => changeQty(idx, -1)}
-                      className="h-7 w-7 rounded-full border border-kds-border text-kds-subtext font-bold text-sm flex items-center justify-center">
+                      className="h-11 w-11 rounded-full border border-kds-border text-kds-subtext font-bold text-base flex items-center justify-center">
                       -
                     </button>
                     <span className="w-4 text-center font-bold text-kds-text text-sm">{entry.qty}</span>
                     <button onClick={() => changeQty(idx, 1)}
-                      className="h-7 w-7 rounded-full border border-kds-border text-kds-subtext font-bold text-sm flex items-center justify-center">
+                      className="h-11 w-11 rounded-full border border-kds-border text-kds-subtext font-bold text-base flex items-center justify-center">
                       +
                     </button>
                   </div>

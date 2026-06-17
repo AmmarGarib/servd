@@ -187,7 +187,7 @@ export default function ExpoPage() {
         </div>
       </header>
 
-      <div className="px-6 py-5 grid grid-cols-1 xl:grid-cols-[1fr_1fr_1fr_280px] gap-4">
+      <div className="px-6 py-5 grid grid-cols-1 lg:grid-cols-3 xl:grid-cols-[1fr_1fr_1fr_280px] gap-4">
 
         {/* ── Awaiting Fire ───────────────────────────────────────────── */}
         <section className="space-y-3">

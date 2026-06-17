@@ -254,7 +254,7 @@ export default function AccountPage() {
                     {current?.label ?? tier}
                   </span>
                 </div>
-                <p className="font-black leading-none" style={{ fontSize: '3.2rem', color: 'var(--servd-ink)' }}>
+                <p className="font-black leading-none tabular-nums" style={{ fontSize: 'clamp(2rem, 9vw, 3.2rem)', color: 'var(--servd-ink)' }}>
                   {pts.toLocaleString()}
                 </p>
                 <p className="text-[0.6rem] mt-1" style={{ color: 'var(--servd-mute)' }}>≈ {fmt(pts * 10)} value</p>

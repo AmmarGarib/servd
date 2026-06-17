@@ -253,7 +253,7 @@ export default function SignupPage() {
                     onChange={e => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
                     style={{ position: 'absolute', width: 1, height: 1, opacity: 0, pointerEvents: 'none' }}
                     tabIndex={-1} aria-hidden="true" />
-                  <div className="flex gap-2 justify-between">
+                  <div className="flex gap-1.5 sm:gap-2">
                     {Array.from({ length: 6 }).map((_, i) => (
                       <input
                         key={i}
@@ -273,7 +273,7 @@ export default function SignupPage() {
                         }}
                         autoFocus={i === 0}
                         aria-label={`Digit ${i + 1} of 6`}
-                        className="w-11 h-14 text-center text-xl font-black rounded-xl focus:outline-none transition-all text-white"
+                        className="flex-1 min-w-0 max-w-[2.75rem] h-14 text-center text-xl font-black rounded-xl focus:outline-none transition-all text-white"
                         style={inpStyle}
                         onFocus={onFocus}
                         onBlur={onBlur}

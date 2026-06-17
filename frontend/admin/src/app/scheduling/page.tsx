@@ -323,14 +323,14 @@ export default function SchedulingPage() {
                                   {shift.role && <div className="text-[10px]" style={{ color: 'rgba(255,255,255,0.4)' }}>{shift.role}</div>}
                                   <button
                                     onClick={e => { e.stopPropagation(); void deleteMutation.mutate(shift.id) }}
-                                    className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity text-[10px] rounded px-1"
+                                    className="absolute top-1 right-1 opacity-70 group-hover:opacity-100 transition-opacity text-xs rounded px-1.5 py-0.5"
                                     style={{ color: '#FF4D4F', background: 'rgba(255,77,79,0.1)' }}>
                                     ×
                                   </button>
                                 </div>
                               ))}
                               <button onClick={() => openCreate(date, member.id)}
-                                className="w-full text-center text-[11px] py-1 rounded-lg opacity-0 hover:opacity-100 transition-opacity"
+                                className="w-full text-center text-[11px] py-1.5 rounded-lg opacity-60 hover:opacity-100 transition-opacity"
                                 style={{ color: 'rgba(255,255,255,0.2)', border: '1px dashed rgba(255,255,255,0.1)' }}>
                                 +
                               </button>
