@@ -148,10 +148,10 @@
   /* ── S-table ─────────────────────────────────────────────────────────── */
   .s-table { @apply w-full text-sm; }
   .s-table thead { border-bottom: 1px solid #222530; }
-  .s-table thead th { @apply px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider; color: #6B7280; }
+  .s-table thead th { @apply px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider; color: #6B7280; white-space: nowrap; }
   .s-table tbody tr { border-bottom: 1px solid rgba(34,37,48,0.5); transition: colors 0.15s; }
   .s-table tbody tr:hover { background-color: rgba(26,29,36,0.5); }
-  .s-table tbody td { @apply px-4 py-3; color: #E8EAF0; }
+  .s-table tbody td { @apply px-4 py-3; color: #E8EAF0; white-space: nowrap; }
 
   /* ── Metric card ─────────────────────────────────────────────────────── */
   .metric-card        { @apply s-card p-5 space-y-1; }

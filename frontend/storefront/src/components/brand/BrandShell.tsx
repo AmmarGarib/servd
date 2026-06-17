@@ -1,4 +1,5 @@
 'use client'
+import { useState } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import type { Concept } from '../../lib/concept'
@@ -54,6 +55,7 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
   const pathname = usePathname() ?? ''
   const base = `/brand/${concept.slug}`
   const servdHome = servdHref('/', onBrandHost)
+  const [open, setOpen] = useState(false)
 
   // "Book" only appears when the brand explicitly accepts reservations.
   const acceptsReservations = concept.reservationsEnabled !== false
@@ -167,7 +169,67 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
         >
           on servd<span style={{ color: accent }}>.</span>
         </Link>
+
+        {/* Hamburger — the link row is hidden < sm, so phones need this. */}
+        <button
+          type="button"
+          aria-label="Menu"
+          aria-expanded={open}
+          onClick={() => setOpen((o) => !o)}
+          className="inline-flex items-center justify-center sm:hidden"
+          style={{ width: '2.75rem', height: '2.75rem', marginLeft: '0.15rem', background: 'transparent', border: 'none', color: 'var(--servd-ink)', cursor: 'pointer' }}
+        >
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            {open
+              ? <><path d="M6 6l12 12" /><path d="M18 6L6 18" /></>
+              : <><path d="M3 6h18" /><path d="M3 12h18" /><path d="M3 18h18" /></>}
+          </svg>
+        </button>
       </div>
+
+      {/* Mobile dropdown — full-width sheet below the bar. */}
+      {open && (
+        <div
+          className="sm:hidden flex flex-col"
+          style={{
+            position: 'absolute', top: '100%', left: 0, right: 0,
+            background: 'rgba(255,255,255,0.97)',
+            backdropFilter: 'blur(16px) saturate(160%)',
+            WebkitBackdropFilter: 'blur(16px) saturate(160%)',
+            borderBottom: '1px solid var(--servd-line)',
+            padding: '0.4rem clamp(1rem, 4vw, 2rem) 0.9rem',
+            boxShadow: '0 14px 26px rgba(0,0,0,0.09)',
+          }}
+        >
+          {links.map((l) => {
+            const active = l.href === base ? pathname === l.href : pathname.startsWith(l.href)
+            return (
+              <Link
+                key={l.href}
+                href={l.href}
+                onClick={() => setOpen(false)}
+                style={{
+                  padding: '0.85rem 0.4rem',
+                  color: active ? 'var(--servd-black)' : 'var(--servd-mute)',
+                  fontWeight: active ? 700 : 500,
+                  fontSize: '1rem',
+                  textDecoration: 'none',
+                  borderBottom: '1px solid var(--servd-line)',
+                }}
+              >
+                {l.label}
+              </Link>
+            )
+          })}
+          <Link
+            href={servdHome}
+            onClick={() => setOpen(false)}
+            style={{ padding: '0.85rem 0.4rem', color: 'var(--servd-dim)', fontSize: '0.85rem', fontWeight: 600, textDecoration: 'none' }}
+          >
+            on servd<span style={{ color: accent }}>.</span>
+          </Link>
+        </div>
+      )}
     </nav>
   )
 }

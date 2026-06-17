@@ -86,12 +86,12 @@ export default function PosPage() {
 
       {/* Mobile cart backdrop */}
       {cartOpen && (
-        <div className="fixed inset-0 z-40 bg-black/60 md:hidden" onClick={() => setCartOpen(false)} />
+        <div className="fixed inset-0 z-40 bg-black/60 lg:hidden" onClick={() => setCartOpen(false)} />
       )}
 
       {/* Mobile cart drawer */}
-      <div className={`fixed inset-x-0 bottom-0 z-50 md:hidden transition-transform duration-300 ${cartOpen ? 'translate-y-0' : 'translate-y-full'}`}
-        style={{ maxHeight: '85vh', display: 'flex', flexDirection: 'column',
+      <div className={`fixed inset-x-0 bottom-0 z-50 lg:hidden transition-transform duration-300 ${cartOpen ? 'translate-y-0' : 'translate-y-full'}`}
+        style={{ maxHeight: '85dvh', display: 'flex', flexDirection: 'column',
           background: 'var(--kds-card, #141720)', borderTop: '1px solid rgba(255,255,255,0.08)',
           borderRadius: '16px 16px 0 0' }}>
         <div className="flex items-center justify-between px-4 py-3 border-b border-kds-border shrink-0">
@@ -107,7 +107,7 @@ export default function PosPage() {
       {cartCount > 0 && !cartOpen && (
         <button
           onClick={() => setCartOpen(true)}
-          className="fixed bottom-5 right-5 z-40 md:hidden flex items-center gap-2 rounded-2xl px-5 py-3 font-bold text-sm text-black shadow-lg active:scale-95 transition-transform"
+          className="fixed bottom-5 right-5 z-40 lg:hidden flex items-center gap-2 rounded-2xl px-5 py-3 font-bold text-sm text-black shadow-lg active:scale-95 transition-transform"
           style={{ background: 'linear-gradient(135deg, #00D4B1, #6366F1)', boxShadow: '0 4px 20px rgba(0,212,177,0.4)' }}>
           <span>🛒</span>
           <span>{cartCount} item{cartCount !== 1 ? 's' : ''}</span>
@@ -178,7 +178,7 @@ export default function PosPage() {
 
         {/* Menu items grid */}
         <div className="flex-1 overflow-y-auto p-3">
-          <div className="grid grid-cols-3 gap-3 sm:grid-cols-4">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-3 xl:grid-cols-4">
             {currentCategory?.items.map((item) => (
               <button
                 key={item.id}
@@ -206,8 +206,8 @@ export default function PosPage() {
         </div>
       </div>
 
-      {/* Right — cart panel (desktop only) */}
-      <div className="hidden md:flex w-80 flex-col border-l border-kds-border bg-kds-card">
+      {/* Right — cart side-rail (landscape tablet / desktop only; portrait uses the drawer) */}
+      <div className="hidden lg:flex w-80 flex-col border-l border-kds-border bg-kds-card">
         <PosCart taxRate={taxRate} onCheckout={() => setShowPayment(true)} />
       </div>
 

@@ -618,6 +618,19 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const router = useRouter()
   const [collapsed, setCollapsed] = useState(false)
   const [mobileOpen, setMobileOpen] = useState(false)
+  // Default to the icon rail on tablet-width screens (the persistent sidebar
+  // otherwise eats ~220px of a tablet's content); <768px uses the drawer.
+  // A saved preference always wins.
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const stored = localStorage.getItem('servd_sidebar_collapsed')
+    if (stored !== null) { setCollapsed(stored === '1'); return }
+    setCollapsed(window.matchMedia('(min-width: 768px) and (max-width: 1023px)').matches)
+  }, [])
+  const setCollapsedPersisted = (next: boolean) => {
+    setCollapsed(next)
+    try { localStorage.setItem('servd_sidebar_collapsed', next ? '1' : '0') } catch { /* ignore */ }
+  }
   const [clockingOut, setClockingOut] = useState(false)
   const { user, token, clearAuth } = useAuthStore()
 
@@ -838,7 +851,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           {!collapsed && (
             <>
               <span className="text-sm font-black tracking-tight ops-shimmer-text flex-1">servd</span>
-              <button onClick={() => setCollapsed(true)}
+              <button onClick={() => setCollapsedPersisted(true)}
                 className="text-white/20 hover:text-white/55 transition-colors p-1 rounded"
                 style={{ marginRight: '-4px' }}>
                 <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
@@ -850,7 +863,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </div>
 
         {collapsed && (
-          <button onClick={() => setCollapsed(false)}
+          <button onClick={() => setCollapsedPersisted(false)}
             className="relative z-10 flex justify-center py-2.5 transition-colors"
             style={{ color: 'rgba(255,255,255,0.2)', borderBottom: '1px solid rgba(255,255,255,0.05)' }}
             onMouseEnter={(e) => (e.currentTarget.style.color = 'rgba(255,255,255,0.55)')}
