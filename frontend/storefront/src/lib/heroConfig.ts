@@ -34,7 +34,9 @@ export const FOOD_HERO_DEFAULTS: HeroConfig = {
   title: 'Seven kitchens one table',
   date: 'GS Foods · Karachi',
   scrollToExpand: 'Scroll to explore',
-  textBlend: true,
+  // mix-blend-difference turns the title muddy over a busy video; solid white +
+  // drop-shadow reads far better. Operators can re-enable blend in the editor.
+  textBlend: false,
   overview:
     'One operator, our own riders, zero aggregator commission. Pick a kitchen and we cook it, plate it, and bring it — hot dish hot, cold dish cold, in a single bag.',
   conclusion:

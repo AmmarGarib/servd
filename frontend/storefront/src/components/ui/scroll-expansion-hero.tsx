@@ -173,8 +173,12 @@ const ScrollExpandMedia = ({
     return () => window.removeEventListener('resize', checkIfMobile);
   }, []);
 
+  // On phones the screen is portrait but the media is landscape (16:9): a tall
+  // box + object-cover zooms hard into the centre. Keep the mobile box wide and
+  // short (≈16:9 at full expand) so the whole frame stays visible instead of
+  // cropping. Desktop is unchanged (its box already lands ~16:9 within 95vw/85vh).
   const mediaWidth = 300 + scrollProgress * (isMobileState ? 650 : 1250);
-  const mediaHeight = 400 + scrollProgress * (isMobileState ? 200 : 400);
+  const mediaHeight = (isMobileState ? 200 : 400) + scrollProgress * (isMobileState ? 20 : 400);
   const textTranslateX = scrollProgress * (isMobileState ? 180 : 150);
 
   const firstWord = title ? (title.split(' ')[0] ?? '') : '';
@@ -296,7 +300,7 @@ const ScrollExpandMedia = ({
                 <div className='flex flex-col items-center text-center relative z-10 mt-4 transition-none'>
                   {date && (
                     <p
-                      className='text-2xl text-white/80'
+                      className='text-base sm:text-2xl text-white/80 drop-shadow'
                       style={{ transform: `translateX(-${textTranslateX}vw)` }}
                     >
                       {date}
@@ -319,13 +323,13 @@ const ScrollExpandMedia = ({
                 }`}
               >
                 <motion.h2
-                  className='text-4xl md:text-5xl lg:text-6xl font-bold text-white drop-shadow-lg transition-none'
+                  className='text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-bold text-white drop-shadow-lg transition-none'
                   style={{ transform: `translateX(-${textTranslateX}vw)` }}
                 >
                   {firstWord}
                 </motion.h2>
                 <motion.h2
-                  className='text-4xl md:text-5xl lg:text-6xl font-bold text-center text-white drop-shadow-lg transition-none'
+                  className='text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-bold text-center text-white drop-shadow-lg transition-none'
                   style={{ transform: `translateX(${textTranslateX}vw)` }}
                 >
                   {restOfTitle}
