@@ -21,8 +21,11 @@ export function StorefrontFooter() {
       style={{
         padding: 'clamp(4rem, 7vw, 6rem) 0 2rem',
         marginTop: '4rem',
-        ['--brand-accent' as string]: 'var(--servd-green)',
-        ['--brand-ink' as string]:    '#0a0a0a',
+        // Brand-purple footer (was a black slab). Accent is a light lavender so
+        // the eyebrow / "Let's go" / dot / pill read against the deep purple.
+        background: 'linear-gradient(165deg, #3A0E69 0%, #1E0640 55%, #150525 100%)',
+        ['--brand-accent' as string]: '#C9A4F2',
+        ['--brand-ink' as string]:    '#1E0640',
       } as React.CSSProperties}
     >
       {/* Floating motifs — quieter than the hero, just enough to keep the
@@ -35,7 +38,7 @@ export function StorefrontFooter() {
         {/* Headline lockup — chunky display, "ready when you are" loop */}
         <div style={{ marginBottom: 'clamp(3rem, 5vw, 4rem)', maxWidth: '900px' }}>
           <p className="eyebrow" style={{ color: 'var(--brand-accent)', marginBottom: '1rem' }}>
-            Three kitchens · one bag
+            One place for every kitchen
           </p>
           <h2 className="display" style={{
             fontSize: 'clamp(2.5rem, 6vw, 4.5rem)',
@@ -77,7 +80,7 @@ export function StorefrontFooter() {
               servd<span style={{ color: 'var(--brand-accent)' }}>.</span>
             </Link>
             <p style={{ fontSize: '0.92rem', maxWidth: '20rem', color: 'rgba(255,255,255,0.55)', lineHeight: 1.55 }}>
-              The kitchen, direct. Three brands. One household name. No middlemen.
+              Every kitchen in one place — order what you are craving, explore the brands, and join Insiders.
             </p>
           </div>
 
@@ -149,7 +152,7 @@ export function StorefrontFooter() {
           color: 'rgba(255,255,255,0.4)',
         }}>
           <span>© {new Date().getFullYear()} GS Foods. All rights reserved.</span>
-          <span>Built in Karachi. Cooked in Karachi. Delivered to Karachi.</span>
+          <span>Made in Karachi. Cooked in Karachi. For Karachi.</span>
         </div>
       </div>
     </footer>

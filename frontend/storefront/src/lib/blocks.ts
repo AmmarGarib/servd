@@ -283,9 +283,9 @@ export function defaultServdHomeLayout(): Block[] {
   return [
     {
       id: 'h-1', type: 'hero',
-      kicker: 'A GS Foods kitchen collective',
-      title: 'Seven kitchens. One operator. No middleman.',
-      subtitle: 'Pick a kitchen. We cook it, we bring it, and every rupee goes straight to the people behind the food — not a middleman.',
+      kicker: 'One place for every kitchen',
+      title: 'Every kitchen, one place.',
+      subtitle: 'Explore the brands, order what you are craving, and join Insiders for rewards on every order.',
       align: 'left', height: 'screen',
       primaryCta: { text: 'Order Now', href: '/browse' },
     },

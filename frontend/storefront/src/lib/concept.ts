@@ -126,8 +126,8 @@ export const BRAND_STORIES: Record<string, BrandStory> = {
 export function brandStory(slug: string): BrandStory {
   return BRAND_STORIES[slug] ?? {
     tagline: 'Direct from the kitchen.',
-    oneLiner: 'A GS Foods brand on servd.',
-    long: 'Order direct, no aggregator, fresh every time.',
+    oneLiner: 'A brand on servd.',
+    long: 'Fresh from the kitchen, every time.',
     highlights: ['Direct ordering', 'Fresh daily'],
     hours: 'Check our page for current hours',
   }

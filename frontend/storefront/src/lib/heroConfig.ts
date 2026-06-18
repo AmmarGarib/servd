@@ -31,16 +31,16 @@ export const FOOD_HERO_DEFAULTS: HeroConfig = {
     'https://images.unsplash.com/photo-1504674900247-0877df9cc836?q=80&w=1280&auto=format&fit=crop',
   bgImageSrc:
     'https://images.unsplash.com/photo-1414235077428-338989a2e8c0?q=80&w=1920&auto=format&fit=crop',
-  title: 'Seven kitchens one table',
-  date: 'GS Foods · Karachi',
+  title: 'Every kitchen, one place',
+  date: 'order · explore · insiders',
   scrollToExpand: 'Scroll to explore',
   // mix-blend-difference turns the title muddy over a busy video; solid white +
   // drop-shadow reads far better. Operators can re-enable blend in the editor.
   textBlend: false,
   overview:
-    'One operator, our own riders, zero aggregator commission. Pick a kitchen and we cook it, plate it, and bring it — hot dish hot, cold dish cold, in a single bag.',
+    'Order from any of our kitchens in one place. Pick what you are craving, add something from another brand if you like, and check out once.',
   conclusion:
-    'Simmer, Stax, Flipd and more — order direct and every rupee reaches the people behind the food.',
+    'Simmer, Stax, Flipd — explore the brands, then join Insiders for rewards on every order.',
 };
 
 interface RawBlock {

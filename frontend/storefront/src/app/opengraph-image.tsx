@@ -28,7 +28,7 @@ export default function OpengraphImage() {
           <span style={{ color: '#E94E1B' }}>.</span>
         </div>
         <div style={{ display: 'flex', fontSize: 46, color: 'rgba(237,230,211,0.85)', marginTop: 12 }}>
-          real kitchens · no middlemen
+          every kitchen, one place
         </div>
       </div>
     ),

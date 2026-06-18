@@ -209,22 +209,21 @@ export function HomeClient({ concepts, heroConfig }: Props) {
         </div>
       </section>
 
-      {/* ── ANTI-AGGREGATOR STRIP ─ One line, hard to miss. The brief
-            anti-aggregator stance is a positioning advantage no one
-            else in Karachi can claim — surface it. */}
-      <section className="reveal-on-scroll" style={{ background: 'var(--servd-ink)', color: 'white', padding: '2.5rem 0', order: 4 }}>
+      {/* ── EXPLORE STRIP ─ Brand-purple band inviting customers to browse
+            every brand in one place. No delivery / aggregator messaging. */}
+      <section className="reveal-on-scroll" style={{ background: 'linear-gradient(135deg, #3A0E69 0%, #1E0640 100%)', color: 'white', padding: '2.5rem 0', order: 4 }}>
         <div className="container" style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '1rem' }}>
           <p style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(1.15rem, 2vw, 1.5rem)', fontWeight: 700, lineHeight: 1.3, margin: 0, maxWidth: '38rem' }}>
-            Order direct. Our rider, our pricing, our tip to him.<br />
-            <span style={{ opacity: 0.7 }}>No third party in the kitchen.</span>
+            Every kitchen, one order.<br />
+            <span style={{ opacity: 0.7 }}>Explore the brands and check out once.</span>
           </p>
           <MagneticLink href="/browse" style={{
-            background: 'white', color: 'var(--servd-ink)',
+            background: 'white', color: 'var(--servd-green)',
             fontWeight: 800, fontSize: '0.92rem',
             padding: '0.85rem 1.5rem', borderRadius: '999px', textDecoration: 'none',
             display: 'inline-flex', alignItems: 'center', gap: '0.5rem',
           }}>
-            See the kitchens <span aria-hidden style={{ opacity: 0.6 }}>→</span>
+            Explore the brands <span aria-hidden style={{ opacity: 0.6 }}>→</span>
           </MagneticLink>
         </div>
       </section>
