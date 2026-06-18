@@ -43,61 +43,64 @@ const STAMP = todayStamp()
 // The orange rail runs down the centre of the parent; a small
 // bone-and-orange dot sits on the rail at this stop's vertical centre.
 function ItineraryStop({ side, label, children }: { side: 'left' | 'right', label: string, children: React.ReactNode }) {
+  // Frame scales with the itinerary column instead of a fixed 184px, so it
+  // doesn't shrink to a tiny chip on desktop. Used for both the frame and the
+  // label below it so they share an edge.
+  const frameWidth = 'clamp(176px, 48%, 340px)'
   return (
     <div style={{
       position: 'relative',
       display: 'flex',
       flexDirection: 'column',
       alignItems: side === 'right' ? 'flex-end' : 'flex-start',
-      marginBottom: '1.8rem',
+      marginBottom: 'clamp(1.8rem, 3vw, 2.6rem)',
     }}>
-      {/* Stop dot — pinned to the rail at the card's vertical centre.
-          Calculated against the walnut card's centre, not the wrapper
-          flex column (which now also holds the museum-label below the
-          card). The dot lives at top: (card-height + own-radius) / 2;
-          184px wide walnut + 12px padding on each side = 184px card,
-          which renders ~150px tall on the 5:4 aspect-ratio image plus
-          24px frame chrome ≈ 174px. Half ≈ 87px. */}
-      <span aria-hidden="true" style={{
-        position: 'absolute',
-        left: '50%', top: '87px',
-        width: '10px', height: '10px', borderRadius: '50%',
-        background: 'var(--simmer-bone)',
-        border: '1.5px solid var(--simmer-orange)',
-        transform: 'translate(-50%, -50%)',
-        zIndex: 3,
-      }}/>
+      {/* Frame zone — full width so the rail dot (left:50%) lands on the
+          centre rail, and its height equals the frame's, so the dot's
+          top:50% centres it vertically on the picture no matter how large
+          the frame scales (replaces the old hardcoded top:87px). */}
+      <div style={{ position: 'relative', width: '100%' }}>
+        <span aria-hidden="true" style={{
+          position: 'absolute',
+          left: '50%', top: '50%',
+          width: '10px', height: '10px', borderRadius: '50%',
+          background: 'var(--simmer-bone)',
+          border: '1.5px solid var(--simmer-orange)',
+          transform: 'translate(-50%, -50%)',
+          zIndex: 3,
+        }}/>
 
-      <div style={{
-        // Walnut frame — layered gradient mimics polished wood grain,
-        // inset shadows give it the depth of a hung picture frame.
-        background: 'linear-gradient(135deg, #6a4828 0%, #4a311c 22%, #1f1209 55%, #4a311c 80%, #6a4828 100%)',
-        padding: '12px',
-        width: '184px', maxWidth: '184px',
-        borderRadius: '2px',
-        boxShadow:
-          '0 18px 36px rgba(20,12,5,0.45),' +
-          ' 0 2px 0 rgba(0,0,0,0.30),' +
-          ' inset 0 0 0 1px rgba(0,0,0,0.45),' +
-          ' inset 0 0 0 2px rgba(196,142,72,0.18)',
-        marginLeft:  side === 'right' ? 'auto' : 0,
-        marginRight: side === 'left'  ? 'auto' : 0,
-        position: 'relative',
-      }}>
-        {/* Inner mat — thin green rebate around the artwork */}
         <div style={{
-          background: 'var(--simmer-green)',
-          padding: '4px',
-          borderRadius: '1px',
-          boxShadow: 'inset 0 0 0 1px rgba(0,0,0,0.55)',
+          // Walnut frame — layered gradient mimics polished wood grain,
+          // inset shadows give it the depth of a hung picture frame.
+          background: 'linear-gradient(135deg, #6a4828 0%, #4a311c 22%, #1f1209 55%, #4a311c 80%, #6a4828 100%)',
+          padding: '12px',
+          width: frameWidth, maxWidth: frameWidth,
+          borderRadius: '2px',
+          boxShadow:
+            '0 18px 36px rgba(20,12,5,0.45),' +
+            ' 0 2px 0 rgba(0,0,0,0.30),' +
+            ' inset 0 0 0 1px rgba(0,0,0,0.45),' +
+            ' inset 0 0 0 2px rgba(196,142,72,0.18)',
+          marginLeft:  side === 'right' ? 'auto' : 0,
+          marginRight: side === 'left'  ? 'auto' : 0,
           position: 'relative',
         }}>
+          {/* Inner mat — thin green rebate around the artwork */}
           <div style={{
-            width: '100%', aspectRatio: '5 / 4',
-            background: '#15231f',
-            overflow: 'hidden', position: 'relative',
+            background: 'var(--simmer-green)',
+            padding: '4px',
+            borderRadius: '1px',
+            boxShadow: 'inset 0 0 0 1px rgba(0,0,0,0.55)',
+            position: 'relative',
           }}>
-            {children}
+            <div style={{
+              width: '100%', aspectRatio: '5 / 4',
+              background: '#15231f',
+              overflow: 'hidden', position: 'relative',
+            }}>
+              {children}
+            </div>
           </div>
         </div>
       </div>
@@ -112,7 +115,7 @@ function ItineraryStop({ side, label, children }: { side: 'left' | 'right', labe
         opacity: 0.85,
         // Match the walnut card's edge so the label tucks under it
         // rather than centring under the dot.
-        width: '184px',
+        width: frameWidth,
         textAlign: side === 'right' ? 'right' : 'left',
       }}>
         {label}
