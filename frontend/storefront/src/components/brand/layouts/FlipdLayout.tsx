@@ -110,7 +110,7 @@ export function FlipdLayout({ concept, concepts }: Props) {
             background: 'var(--flipd-cream)',
             border: '2px solid var(--flipd-ink)',
             borderRadius: '50%',
-            width: 'clamp(15rem, 70vw, 21rem)',
+            width: 'clamp(15rem, 40vw, 27rem)',
             aspectRatio: '1 / 1',
             marginTop: '1.8rem',
             padding: '1.2rem',

@@ -163,7 +163,7 @@ export default async function BrandMenuPage({ params }: { params: Promise<{ slug
               <h2 style={{ fontSize: 'clamp(1.4rem, 3vw, 1.85rem)', marginBottom: '1.5rem' }}>{cat.name}</h2>
               <div style={{
                 display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
                 gap: '1.25rem',
               }}>
                 {cat.items.map((item) => (

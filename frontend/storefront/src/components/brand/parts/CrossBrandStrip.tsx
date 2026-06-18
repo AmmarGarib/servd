@@ -37,7 +37,7 @@ export function CrossBrandStrip({ current, concepts, accent, kicker, heading }: 
           </Link>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: '1.25rem' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '1.25rem' }}>
           {others.map((c) => (
             <Link
               key={c.id}

@@ -124,7 +124,7 @@ export function GenericBrandLayout({ concept, concepts }: Props) {
           <h2 style={{ fontSize: 'clamp(1.75rem, 3.5vw, 2.5rem)', letterSpacing: '-0.02em', marginBottom: '2rem' }}>
             Signature dishes
           </h2>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: '1.25rem' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '1.25rem' }}>
             {GENERIC_SIGNATURES.map((d) => (
               <div key={d.name} className="servd-card" style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
                 <div style={{

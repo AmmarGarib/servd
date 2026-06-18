@@ -167,7 +167,7 @@ export default function OrdersPage() {
               <MagneticLink href="/browse" className="servd-btn-primary">Browse brands</MagneticLink>
             </div>
           ) : (
-            <div style={{ display: 'grid', gap: '0.85rem' }}>
+            <div style={{ display: 'grid', gap: '0.85rem', maxWidth: '820px', margin: '0 auto' }}>
               {profile.orders.map((o) => {
                 const badge = statusFor(o.status)
                 const itemSummary = o.items.slice(0, 2).map((i) => `${i.quantity}× ${i.name}`).join(', ')

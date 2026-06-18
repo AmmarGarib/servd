@@ -169,7 +169,7 @@ export default function OrderStatusPage() {
         )}
       </div>
 
-      <div className="relative z-10 max-w-md mx-auto px-4 py-6 space-y-4">
+      <div className="relative z-10 max-w-md lg:max-w-2xl mx-auto px-4 py-6 space-y-4">
 
         {/* ── Status hero ── */}
         <div className="rounded-3xl p-7 text-center relative overflow-hidden"

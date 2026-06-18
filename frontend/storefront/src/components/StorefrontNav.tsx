@@ -49,9 +49,6 @@ export function StorefrontNav() {
         position: 'sticky',
         top: 0,
         zIndex: 50,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
         padding: '0.95rem clamp(1rem, 4vw, 2rem)',
         // On the dark hero (home page, scroll near top): solid dark nav so the
         // white brand text reads against it — body bg is white by default, so
@@ -65,6 +62,16 @@ export function StorefrontNav() {
         transition: 'background 220ms ease',
       }}
     >
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          maxWidth: 1200,
+          margin: '0 auto',
+          width: '100%',
+        }}
+      >
       {/* Wordmark — chunky display weight. On dark surfaces the dot
           becomes the brand-accent (servd-green by default). */}
       <Link
@@ -175,6 +182,7 @@ export function StorefrontNav() {
             </Link>
           </>
         )}
+      </div>
       </div>
     </nav>
   )

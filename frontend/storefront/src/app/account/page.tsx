@@ -192,7 +192,7 @@ export default function AccountPage() {
         </button>
       </div>
 
-      <div className="relative z-10 max-w-lg mx-auto px-4 pt-6 pb-6" style={{ animation: 'revealUp 0.5s both' }}>
+      <div className="relative z-10 max-w-lg lg:max-w-3xl mx-auto px-4 pt-6 pb-6" style={{ animation: 'revealUp 0.5s both' }}>
 
         {/* ── Greeting ── */}
         <div className="mb-5">

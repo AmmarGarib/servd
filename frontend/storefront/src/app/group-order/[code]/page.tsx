@@ -147,7 +147,7 @@ export default function GroupOrderRoom() {
           {menu.map((cat) => (
             <section key={cat.id}>
               <h2 className="text-lg font-bold mb-2">{cat.name}</h2>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
                 {cat.items.filter((i) => i.isAvailable).map((it) => (
                   <button key={it.id} onClick={() => addItem(it)} disabled={go.status !== 'open'}
                     className="text-left servd-card disabled:opacity-50" style={{ padding: '0.75rem 1rem' }}>
