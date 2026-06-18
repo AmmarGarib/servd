@@ -78,7 +78,7 @@ export default async function BrandVisitPage({ params }: { params: Promise<{ slu
       answer:    `All ${concept.name} kitchens serve halal-only meat. No pork, no alcohol on the cooking line.` },
     { question: `Does ${concept.name} deliver?`,
       answer:    loc?.acceptsReservations === false
-        ? `Yes. Order direct at /${slug} for delivery, pickup, or curbside. We use our own fleet — no third-party aggregator.`
+        ? `Yes — order at /${slug} for delivery, pickup, or curbside.`
         : `${concept.name} is primarily dine-in. For delivery from our sister kitchens, see /browse.` },
     { question: `What's the dress code?`,
       answer:    `Smart casual works everywhere. ${concept.name === 'Simmer' ? 'Simmer is a dimly-lit room; the dressier you are the more it suits the space.' : 'No formal requirement.'}` },

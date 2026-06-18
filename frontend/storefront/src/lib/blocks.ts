@@ -215,9 +215,9 @@ export const BLOCK_CATALOG: BlockSpec[] = [
     default: () => ({
       type: 'stat_strip',
       stats: [
-        { value: '7',  label: 'kitchens' },
-        { value: '1',  label: 'one app' },
-        { value: '0%', label: 'aggregator commission' },
+        { value: '100%', label: 'cooked fresh' },
+        { value: '1',  label: 'one checkout' },
+        { value: '0',  label: 'hidden fees' },
       ],
     }),
   },
@@ -292,9 +292,9 @@ export function defaultServdHomeLayout(): Block[] {
     {
       id: 's-1', type: 'stat_strip',
       stats: [
-        { value: '7',  label: 'kitchens' },
-        { value: '1',  label: 'one app' },
-        { value: '0%', label: 'aggregator commission' },
+        { value: '100%', label: 'cooked fresh' },
+        { value: '1',  label: 'one checkout' },
+        { value: '0',  label: 'hidden fees' },
       ],
     },
     {
@@ -303,9 +303,7 @@ export function defaultServdHomeLayout(): Block[] {
       voices: [
         { brand: 'Simmer',  line: 'Slow nights, plated softly.' },
         { brand: 'Stax',    line: 'Smashed, stacked, sauced.' },
-        { brand: 'Strata',  line: 'Clean, layered, performance-built.' },
         { brand: 'Flipd',   line: 'Buttermilk-brined, hand-breaded, hot.' },
-        { brand: 'Bukhari', line: 'Saffron, lamb, heritage.' },
       ],
     },
     {
@@ -315,10 +313,10 @@ export function defaultServdHomeLayout(): Block[] {
     },
     {
       id: 'q-1', type: 'quote',
-      text: '"Aggregators take 25% off the top. We refused. servd is how every rupee of your order reaches the kitchen."',
-      attribution: '— A. Garib, founder · GS Foods',
+      text: '"Everything I am craving in one place, one checkout. I order, I track it, done."',
+      attribution: '— An Insider · Karachi',
       size: 'xl',
-      background: 'var(--servd-black)', textColor: '#ffffff',
+      background: 'var(--servd-green)', textColor: '#ffffff',
       paddingY: 'xl',
     },
     {

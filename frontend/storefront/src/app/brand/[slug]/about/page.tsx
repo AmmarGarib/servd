@@ -49,16 +49,16 @@ export default async function BrandAboutPage({ params }: { params: Promise<{ slu
           <div style={{ display: 'grid', gap: '2.5rem' }}>
             {[
               {
-                heading: 'Built in-house',
-                body: `${concept.name} is a kitchen GS Foods owns and runs end-to-end — recipe to delivery. Nothing about your meal is outsourced, white-labelled, or aggregator-handled.`,
+                heading: 'Made in our own kitchen',
+                body: `${concept.name} is cooked in-house, start to finish — our recipes, our team, our standards. Nothing about your meal is outsourced or white-labelled.`,
               },
               {
-                heading: 'Direct ordering, no middlemen',
-                body: 'When you order on servd, the kitchen sees your ticket directly. No 25% commission baked into the price. No "your order has been forwarded" status games. The kitchen fires it; we deliver it.',
+                heading: 'Order in seconds',
+                body: 'Browse the menu, build your order, and check out in one place. The kitchen gets your ticket the moment you tap order — and you can track it the whole way.',
               },
               {
-                heading: 'One platform, every brand',
-                body: 'Loyalty points, wallet credit, and saved addresses follow you across every GS Foods kitchen. Order Stax tonight, Strata tomorrow, Bukhari for Sunday lunch — same account, same payment, same tracker.',
+                heading: 'One account, every kitchen',
+                body: 'Loyalty points, wallet credit, and saved addresses follow you across every kitchen on servd — same account, same payment, same tracker, whichever brand you are craving.',
               },
             ].map((p) => (
               <div key={p.heading}>

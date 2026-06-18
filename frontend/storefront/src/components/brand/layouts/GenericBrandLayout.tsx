@@ -25,7 +25,7 @@ const GENERIC_SIGNATURES: Array<{ name: string; price: string; emoji: string; no
 
 const GENERIC_REVIEWS = [
   { text: '"Direct from the kitchen — you can taste it. Hot, fresh, on time, every time."',                       name: 'A regular',     area: 'Karachi' },
-  { text: '"Single-brand site, single checkout, no aggregator runaround. This is how delivery should work."',     name: 'A neighbour',   area: 'Karachi' },
+  { text: '"One menu, one checkout, no fuss. Exactly how ordering should feel."',     name: 'A neighbour',   area: 'Karachi' },
   { text: '"The team behind servd actually cooks the food. It shows."',                                           name: 'A first-timer', area: 'Karachi' },
 ]
 
@@ -159,7 +159,7 @@ export function GenericBrandLayout({ concept, concepts }: Props) {
             dangerouslySetInnerHTML={{ __html: story.long }}
           />
           <p style={{ fontSize: '1rem', lineHeight: 1.6, color: 'var(--servd-mute)', marginTop: '1rem' }}>
-            Cooked in our own kitchens. Delivered by our own riders. No third-party dispatch — just food we&rsquo;d be happy to serve a friend.
+            Cooked fresh in our own kitchen — just food we&rsquo;d be happy to serve a friend.
           </p>
         </div>
       </section>

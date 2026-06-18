@@ -228,11 +228,11 @@ export function KineticBrandLayout({ concept, concepts }: Props) {
           <div className="container" style={{ marginBottom: 'clamp(2rem, 4vw, 3rem)' }}>
             <p className="eyebrow eyebrow-accent">On servd</p>
             <h2 className="display" style={{ fontSize: 'clamp(2.5rem, 6vw, 4.5rem)', maxWidth: '900px' }}>
-              Three kitchens.<br />
-              <span className="display-italic">One bag.</span>
+              Every kitchen.<br />
+              <span className="display-italic">One place.</span>
             </h2>
             <p style={{ marginTop: '1rem', color: 'var(--servd-mute)', fontSize: '1.05rem', maxWidth: '520px' }}>
-              {concept.name} is part of servd — Karachi's multi-kitchen delivery network. Order from any combination of brands; everything arrives in one bag.
+              {concept.name} is one of the kitchens on servd. Explore the brands, order what you are craving, and check out once.
             </p>
           </div>
 

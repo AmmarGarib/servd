@@ -971,7 +971,7 @@ export default function CheckoutPage() {
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--servd-green-dark)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="shrink-0 mt-0.5">
                 <polyline points="20 6 9 17 4 12"/>
               </svg>
-              <span><strong style={{ color: 'var(--servd-ink)' }}>Our rider, our pricing.</strong> No third-party aggregator markup.</span>
+              <span><strong style={{ color: 'var(--servd-ink)' }}>One clear price.</strong> What you see is what you pay — no surprise fees.</span>
             </li>
             <li className="flex items-start gap-2">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--servd-green-dark)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="shrink-0 mt-0.5">

@@ -116,7 +116,7 @@ export default async function LocationPage({ params }: { params: Promise<{ loc: 
                 </Link>
               )}
               <Link href={`/${brand.slug}`} className="brand-pill" style={{ background: 'var(--servd-surface)', color: 'var(--servd-ink)', border: '1px solid var(--servd-line)' }}>
-                Order direct
+                Order now
               </Link>
             </div>
           </div>
