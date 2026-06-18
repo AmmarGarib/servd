@@ -95,7 +95,7 @@ export default function MarketingActivityPage() {
         </div>
       </header>
 
-      <div className="px-7 py-7 max-w-[1200px] space-y-6">
+      <div className="px-7 py-7 max-w-[1200px] mx-auto space-y-6">
         {/* Marketing team snapshot */}
         <section>
           <p className="text-[10px] font-black uppercase tracking-[0.24em] text-white/45 mb-3">Marketing team ({team.length})</p>

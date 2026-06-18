@@ -151,7 +151,7 @@ export default function TablesPage() {
 
           {/* ════ CONFIGURE ════ */}
           {tab === 'configure' && (
-            <div className="max-w-2xl space-y-4">
+            <div className="max-w-2xl mx-auto space-y-4">
               <p className="text-sm text-kds-subtext">Add, rename, and remove tables. Changes take effect on the floor plan immediately.</p>
 
               {/* Add table form */}

@@ -42,7 +42,7 @@ export default function StorefrontDesignerPage() {
         </p>
       </header>
 
-      <div className="px-7 py-7 max-w-5xl space-y-7">
+      <div className="px-7 py-7 max-w-5xl mx-auto space-y-7">
         {/* Quick links */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <Link href="/marketing/brands"

@@ -45,7 +45,7 @@ export default function BrandAssetsPage() {
         </p>
       </header>
 
-      <div className="px-7 py-7 max-w-3xl space-y-6">
+      <div className="px-7 py-7 max-w-3xl mx-auto space-y-6">
         <Section title="Secondary palette" desc="Beyond the primary brand color (set per concept)">
           <div className="space-y-2">
             {colors.map((c, i) => (

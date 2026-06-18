@@ -175,7 +175,7 @@ export default function RolesPermissionsPage() {
         </div>
       </header>
 
-      <div className="px-7 py-6 max-w-[1200px] space-y-5">
+      <div className="px-7 py-6 max-w-[1200px] mx-auto space-y-5">
         {/* Search */}
         <input
           value={search}

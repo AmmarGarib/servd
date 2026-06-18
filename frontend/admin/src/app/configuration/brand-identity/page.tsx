@@ -71,7 +71,7 @@ export default function BrandIdentityPage() {
         </p>
       </header>
 
-      <div className="px-7 py-7 max-w-3xl space-y-6">
+      <div className="px-7 py-7 max-w-3xl mx-auto space-y-6">
         {concepts.length === 0 ? (
           <div className="rounded-2xl p-10 text-center"
             style={{ background: 'rgba(245,158,11,0.05)', border: '1px solid rgba(245,158,11,0.2)' }}>

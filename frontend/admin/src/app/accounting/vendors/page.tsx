@@ -238,7 +238,7 @@ export default function VendorsPage() {
         </div>
       </header>
 
-      <div className="p-6 space-y-4 max-w-6xl">
+      <div className="p-6 space-y-4 max-w-6xl mx-auto">
 
         {/* KPI strip */}
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">

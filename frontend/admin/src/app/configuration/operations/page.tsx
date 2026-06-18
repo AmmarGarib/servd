@@ -49,7 +49,7 @@ export default function OperationsPage() {
         </p>
       </header>
 
-      <div className="px-7 py-7 max-w-3xl space-y-6">
+      <div className="px-7 py-7 max-w-3xl mx-auto space-y-6">
         <Section title="Service charge" desc="Auto-added to subtotal for selected channels">
           <Field label="Rate (0.05 = 5%)">
             <input type="number" step="0.005" min={0} max={1} value={form.serviceChargePct ?? 0} onChange={(e) => patch('serviceChargePct', parseFloat(e.target.value) || 0)} className={fieldCls} />

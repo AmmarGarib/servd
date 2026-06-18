@@ -48,7 +48,7 @@ export default function PayrollHubPage() {
         <h1 className="text-xl font-bold text-s-text">Payroll</h1>
       </header>
 
-      <div className="p-6 max-w-5xl space-y-4">
+      <div className="p-6 max-w-5xl mx-auto space-y-4">
         {/* Labour KPI */}
         <div className="s-card p-4">
           <div className="flex flex-wrap items-start justify-between gap-4 mb-3">

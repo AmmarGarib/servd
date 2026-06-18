@@ -52,7 +52,7 @@ export default function RefundPolicyPage() {
         </p>
       </header>
 
-      <div className="px-7 py-7 max-w-3xl space-y-6">
+      <div className="px-7 py-7 max-w-3xl mx-auto space-y-6">
         <Section title="Cashier limits" desc="What cashiers can do without manager approval">
           <Money label="Void limit (paisa)" value={form.cashierVoidLimitCents ?? 0} onChange={(v) => patch('cashierVoidLimitCents', v)} />
           <Money label="Comp limit (paisa)" value={form.cashierCompLimitCents ?? 0} onChange={(v) => patch('cashierCompLimitCents', v)} />

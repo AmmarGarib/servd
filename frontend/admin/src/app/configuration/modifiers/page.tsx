@@ -55,7 +55,7 @@ export default function ModifiersPage() {
         </div>
       </header>
 
-      <div className="px-7 py-6 max-w-4xl space-y-3">
+      <div className="px-7 py-6 max-w-4xl mx-auto space-y-3">
         {isLoading && <p className="text-sm text-white/40">Loading…</p>}
         {!isLoading && data.length === 0 && (
           <Empty label="No modifier templates yet" hint="Create reusable option groups for your menu." />

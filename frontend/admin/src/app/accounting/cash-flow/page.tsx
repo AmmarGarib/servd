@@ -40,7 +40,7 @@ export default function CashFlowPage() {
         </div>
       </header>
 
-      <div className="p-6 max-w-4xl space-y-4">
+      <div className="p-6 max-w-4xl mx-auto space-y-4">
         {isLoading && <p className="text-s-muted text-sm">Loading…</p>}
         {data && (
           <>

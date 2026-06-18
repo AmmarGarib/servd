@@ -216,7 +216,7 @@ export default function InvestmentDashboardPage() {
         </div>
       </header>
 
-      <div className="px-7 py-6 max-w-6xl space-y-6">
+      <div className="px-7 py-6 max-w-6xl mx-auto space-y-6">
         {/* ── Empty state ───────────────────────────────────────────────── */}
         {!isLoading && projects.length === 0 && (
           <div className="rounded-2xl p-12 text-center"

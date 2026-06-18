@@ -83,7 +83,7 @@ export default function FoodCostPage() {
         </div>
       </header>
 
-      <div className="p-6 space-y-6 max-w-6xl">
+      <div className="p-6 space-y-6 max-w-6xl mx-auto">
 
         {/* ── Filters ───────────────────────────────────────────────────────── */}
         <section className="flex flex-wrap gap-3 items-end">

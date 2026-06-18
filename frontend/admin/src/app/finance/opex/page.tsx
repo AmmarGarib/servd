@@ -180,7 +180,7 @@ export default function OpexTrackerPage() {
         </div>
       </header>
 
-      <div className="px-7 py-6 max-w-[1100px] space-y-6">
+      <div className="px-7 py-6 max-w-[1100px] mx-auto space-y-6">
         {/* JV partner banner — only shown when active tenant is flagged as
             a joint venture. Documents the partner split that's then applied
             to every total + headline number on the page. Click to edit. */}

@@ -60,7 +60,7 @@ export default function MarketingWorkspacePage() {
         </p>
       </header>
 
-      <div className="px-7 py-7 max-w-[1200px] space-y-7">
+      <div className="px-7 py-7 max-w-[1200px] mx-auto space-y-7">
         {/* Last-30-day KPI strip */}
         {perf && (
           <section>

@@ -355,7 +355,7 @@ export default function OrderDetailPage() {
         )}
       </header>
 
-      <div className="p-6 max-w-5xl space-y-5">
+      <div className="p-6 max-w-5xl mx-auto space-y-5">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
 
           {/* ── Left column: Customer + Fulfilment + Timeline ── */}

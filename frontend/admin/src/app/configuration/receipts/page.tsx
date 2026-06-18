@@ -45,7 +45,7 @@ export default function ReceiptsPage() {
         </p>
       </header>
 
-      <div className="px-7 py-7 max-w-3xl space-y-6">
+      <div className="px-7 py-7 max-w-3xl mx-auto space-y-6">
         <Section title="Layout">
           <Field label="Paper width">
             <select value={form.paperWidthMm ?? 80} onChange={(e) => patch('paperWidthMm', parseInt(e.target.value))} className={fieldCls}>

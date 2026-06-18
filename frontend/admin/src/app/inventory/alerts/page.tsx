@@ -41,7 +41,7 @@ export default function InventoryAlertsPage() {
         <button onClick={() => refetch()} className="s-btn-secondary text-xs">Refresh</button>
       </header>
 
-      <div className="p-6 max-w-5xl space-y-4">
+      <div className="p-6 max-w-5xl mx-auto space-y-4">
         {/* KPIs */}
         <div className="grid grid-cols-3 gap-3">
           <div className="s-card p-4 border-l-4 border-s-red">

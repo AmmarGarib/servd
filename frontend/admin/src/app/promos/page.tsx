@@ -125,7 +125,7 @@ export default function PromosPage() {
         </button>
       </header>
 
-      <div className="p-6 max-w-5xl">
+      <div className="p-6 max-w-5xl mx-auto">
         {showForm && (
           <form onSubmit={submit} className="rounded-xl border border-kds-green bg-kds-card p-5 mb-6 space-y-4">
             <p className="font-bold text-kds-text">{editId ? 'Edit promo' : 'New promo code'}</p>

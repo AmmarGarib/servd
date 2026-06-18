@@ -82,7 +82,7 @@ export default function QrCodesPage() {
         </button>
       </header>
 
-      <div className="p-6 max-w-5xl space-y-6">
+      <div className="p-6 max-w-5xl mx-auto space-y-6">
         {/* Summary stats */}
         <div className="grid grid-cols-3 gap-4">
           {[

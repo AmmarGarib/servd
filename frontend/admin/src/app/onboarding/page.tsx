@@ -78,7 +78,7 @@ export default function OnboardingWizardPage() {
         select option:hover, select option:checked { background-color: #1f2230; }
       `}</style>
       <header className="px-7 py-6 border-b border-white/[0.05]">
-        <div className="flex items-center justify-between max-w-3xl">
+        <div className="flex items-center justify-between max-w-3xl mx-auto">
           <div>
             <p className="text-[10px] font-black uppercase tracking-[0.3em] text-white/30">Setup</p>
             <h1 className="text-2xl font-black text-white/90 mt-1">Get servd running.</h1>
@@ -93,7 +93,7 @@ export default function OnboardingWizardPage() {
           </button>
         </div>
 
-        <div className="flex gap-2 mt-6 max-w-3xl">
+        <div className="flex gap-2 mt-6 max-w-3xl mx-auto">
           {STEP_ORDER.map((s, i) => {
             const isActive = i === stepIndex
             const isDone = i < stepIndex
@@ -111,7 +111,7 @@ export default function OnboardingWizardPage() {
         </div>
       </header>
 
-      <div className="px-7 py-8 max-w-3xl">
+      <div className="px-7 py-8 max-w-3xl mx-auto">
         {step === 'company'  && <CompanyStep tenants={tenants} onDone={() => {
           qc.invalidateQueries({ queryKey: ['wizard-tenants'] })
           qc.invalidateQueries({ queryKey: ['wizard-concepts'] })

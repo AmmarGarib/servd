@@ -260,7 +260,7 @@ export default function ConfigurationHubPage() {
     <div className="min-h-screen" style={{ background: '#090a0e' }}>
       {/* Header */}
       <header className="px-7 py-7 border-b border-white/[0.05]">
-        <div className="flex items-start justify-between gap-6 max-w-[1200px]">
+        <div className="flex items-start justify-between gap-6 max-w-[1200px] mx-auto">
           <div>
             <p className="text-[10px] font-black uppercase tracking-[0.3em] text-white/30">Setup</p>
             <h1 className="text-2xl font-black text-white/90 mt-1">Configuration Hub</h1>
@@ -288,7 +288,7 @@ export default function ConfigurationHubPage() {
       </header>
 
       {/* Categories */}
-      <div className="px-7 py-7 space-y-9 max-w-[1200px]">
+      <div className="px-7 py-7 space-y-9 max-w-[1200px] mx-auto">
         {(Object.keys(CATEGORY_META) as Array<keyof typeof CATEGORY_META>).map((cat) => {
           const catTiles = tiles.filter((t) => t.category === cat)
           if (catTiles.length === 0) return null

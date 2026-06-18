@@ -139,7 +139,7 @@ function ConceptsSection() {
   }
 
   return (
-    <div className="max-w-3xl space-y-3">
+    <div className="max-w-3xl mx-auto space-y-3">
       <div className="flex items-start justify-between gap-3 mb-4">
         <p className="text-sm text-kds-subtext flex-1">
           Configure your restaurant concepts — branding, tax rates, and storefront visibility.
@@ -318,7 +318,7 @@ function StationsSection() {
   })
 
   return (
-    <div className="max-w-xl space-y-4">
+    <div className="max-w-xl mx-auto space-y-4">
       <p className="text-sm text-kds-subtext">Kitchen display stations — each station shows its assigned items on the KDS screen.</p>
 
       {showAdd ? (
@@ -407,7 +407,7 @@ function UsersSection() {
   })
 
   return (
-    <div className="max-w-2xl space-y-4">
+    <div className="max-w-2xl mx-auto space-y-4">
       <p className="text-sm text-kds-subtext">
         Staff sign in using their PIN only. Set each person&apos;s PIN here — they&apos;ll use it on the login screen.
       </p>
@@ -763,7 +763,7 @@ function ShiftsSection() {
     new Date(iso).toLocaleTimeString('en-PK', { hour: '2-digit', minute: '2-digit', hour12: true })
 
   return (
-    <div className="max-w-2xl space-y-4">
+    <div className="max-w-2xl mx-auto space-y-4">
       <div className="flex items-center gap-3">
         <p className="text-sm text-kds-subtext flex-1">Staff clock-in and clock-out records.</p>
         <input

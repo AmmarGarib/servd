@@ -371,7 +371,7 @@ export default function RecipesPage() {
         </div>
       </header>
 
-      <div className="p-6 space-y-4 max-w-7xl">
+      <div className="p-6 space-y-4 max-w-7xl mx-auto">
 
         {/* Summary strip */}
         {(recipes?.length ?? 0) > 0 && (

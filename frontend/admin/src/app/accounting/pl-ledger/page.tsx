@@ -77,7 +77,7 @@ export default function PLLedgerPage() {
         </div>
       </header>
 
-      <div className="p-6 max-w-4xl">
+      <div className="p-6 max-w-4xl mx-auto">
         {isLoading && <p className="text-s-muted text-sm">Loading…</p>}
         {data && (
           <>

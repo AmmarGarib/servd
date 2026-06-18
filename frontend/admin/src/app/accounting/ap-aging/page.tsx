@@ -26,7 +26,7 @@ export default function ApAgingPage() {
         <h1 className="text-xl font-bold text-s-text">Accounts Payable Aging</h1>
       </header>
 
-      <div className="p-6 max-w-6xl space-y-4">
+      <div className="p-6 max-w-6xl mx-auto space-y-4">
         {isLoading && <p className="text-s-muted text-sm">Loading…</p>}
         {data && (
           <>

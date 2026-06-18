@@ -138,7 +138,7 @@ export default function ContentEditorPage() {
         </div>
       </header>
 
-      <div className="grid grid-cols-1 lg:grid-cols-[1fr_400px] gap-4 p-6 max-w-7xl">
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_400px] gap-4 p-6 max-w-7xl mx-auto">
         {/* Block list */}
         <div className="space-y-2">
           {isLoading && <p className="text-xs text-s-muted">Loading…</p>}

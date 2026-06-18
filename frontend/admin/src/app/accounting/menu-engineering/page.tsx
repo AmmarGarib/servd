@@ -64,7 +64,7 @@ export default function MenuEngineeringPage() {
   }
 
   return (
-    <div className="p-6 space-y-6 max-w-7xl">
+    <div className="p-6 space-y-6 max-w-7xl mx-auto">
       <div>
         <h1 className="text-xl font-black" style={{ color: 'rgba(255,255,255,0.92)' }}>Menu Engineering</h1>
         <p className="text-sm mt-0.5" style={{ color: 'rgba(255,255,255,0.35)' }}>Stars · Plowhorses · Puzzles · Dogs</p>

@@ -27,7 +27,7 @@ export default function PeriodLocksPage() {
         </div>
       </header>
 
-      <div className="px-7 py-6 max-w-3xl space-y-2">
+      <div className="px-7 py-6 max-w-3xl mx-auto space-y-2">
         {data.length === 0 && (
           <div className="rounded-2xl p-10 text-center" style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)' }}>
             <p className="font-bold text-white/85">No period locks yet</p>

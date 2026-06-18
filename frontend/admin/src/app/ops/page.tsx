@@ -73,7 +73,7 @@ export default function OpsCenterPage() {
         </p>
       </header>
 
-      <div className="px-7 py-7 max-w-[1200px] space-y-7">
+      <div className="px-7 py-7 max-w-[1200px] mx-auto space-y-7">
 
         {/* ── Anomaly alerts ────────────────────────────────────────────── */}
         <section>

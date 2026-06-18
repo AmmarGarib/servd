@@ -256,7 +256,7 @@ export default function CapexTrackerPage() {
         </aside>
 
         {/* Detail */}
-        <main className="p-6 max-w-[1100px]">
+        <main className="p-6 max-w-[1100px] mx-auto">
           {selectedId === 'workforce' ? (
             <PositionsView embedded />
           ) : project ? (

@@ -92,7 +92,7 @@ export default function AccountingHubPage() {
         <h1 className="text-xl font-bold text-s-text">Accounting Hub</h1>
       </header>
 
-      <div className="p-6 space-y-6 max-w-6xl">
+      <div className="p-6 space-y-6 max-w-6xl mx-auto">
 
         {/* ── KPI row ───────────────────────────────────────────────────────── */}
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">

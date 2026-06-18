@@ -80,7 +80,7 @@ export default function ChainRollupPage() {
   return (
     <div className="min-h-screen" style={{ background: '#090a0e' }}>
       <header className="px-7 py-7 border-b border-white/[0.05]">
-        <div className="flex items-start justify-between gap-4 flex-wrap max-w-[1200px]">
+        <div className="flex items-start justify-between gap-4 flex-wrap max-w-[1200px] mx-auto">
           <div>
             <p className="text-[10px] font-black uppercase tracking-[0.3em] text-white/30">Chain</p>
             <h1 className="text-2xl font-black text-white/90 mt-1">Multi-brand rollup</h1>
@@ -106,7 +106,7 @@ export default function ChainRollupPage() {
         </div>
       </header>
 
-      <div className="px-7 py-7 max-w-[1200px] space-y-7">
+      <div className="px-7 py-7 max-w-[1200px] mx-auto space-y-7">
         {/* KPI grid */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           {[

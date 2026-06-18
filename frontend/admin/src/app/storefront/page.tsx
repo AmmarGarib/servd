@@ -275,7 +275,7 @@ export default function StorefrontCMSPage() {
 
         {pageMode === 'promos' ? (
           <div className="flex-1 overflow-y-auto p-6">
-            <div className="max-w-2xl space-y-4">
+            <div className="max-w-2xl mx-auto space-y-4">
               <div className="flex items-center justify-between">
                 <div>
                   <h2 className="font-black text-kds-text">Homepage Deals Strip</h2>
@@ -373,7 +373,7 @@ export default function StorefrontCMSPage() {
 
               {/* ═══════════════════ BRANDING TAB ═══════════════════ */}
               {tab === 'branding' && (
-                <div className="max-w-2xl space-y-6">
+                <div className="max-w-2xl mx-auto space-y-6">
                   <div className="flex items-center justify-between rounded-xl border border-kds-border bg-kds-card px-4 py-3">
                     <div>
                       <p className="text-sm font-semibold text-kds-text">Visible on ordering site</p>
@@ -522,7 +522,7 @@ export default function StorefrontCMSPage() {
 
               {/* ═══════════════════ SCHEDULE / OPENING HOURS TAB ═══════════════════ */}
               {tab === 'schedule' && (
-                <div className="space-y-4 max-w-2xl">
+                <div className="space-y-4 max-w-2xl mx-auto">
                   <p className="text-sm text-kds-subtext">
                     Set time windows per category. Categories only appear on the storefront during their active hours. Leave blank for always-on.
                   </p>
@@ -686,7 +686,7 @@ function LayoutEditor({
   }
 
   return (
-    <div className="max-w-3xl space-y-3">
+    <div className="max-w-3xl mx-auto space-y-3">
       {/* Header row */}
       <div className="flex items-start justify-between gap-4 mb-5">
         <div>

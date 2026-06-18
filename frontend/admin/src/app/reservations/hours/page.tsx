@@ -81,7 +81,7 @@ export default function ServiceHoursPage() {
         </div>
       </header>
 
-      <div className="p-6 max-w-3xl space-y-3">
+      <div className="p-6 max-w-3xl mx-auto space-y-3">
         {feedback && <p className="text-xs text-s-teal">{feedback}</p>}
         {DAYS.map((label, dow) => {
           const dayWindows = draft.filter((w) => w.dayOfWeek === dow)

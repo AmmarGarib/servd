@@ -70,7 +70,7 @@ export default function HelpPage() {
         </div>
       </header>
 
-      <div className="px-7 py-7 max-w-3xl space-y-7">
+      <div className="px-7 py-7 max-w-3xl mx-auto space-y-7">
         {/* Quick-help cards */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <a

@@ -91,7 +91,7 @@ export default function PendingApprovalsPage() {
         </div>
       </header>
 
-      <div className="px-7 py-6 max-w-[1100px] space-y-3">
+      <div className="px-7 py-6 max-w-[1100px] mx-auto space-y-3">
         {isLoading && <p className="text-sm text-white/40">Loading…</p>}
 
         {!isLoading && pending.length === 0 && (

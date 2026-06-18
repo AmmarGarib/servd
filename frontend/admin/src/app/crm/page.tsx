@@ -387,7 +387,7 @@ function CampaignsPanel() {
   }
 
   return (
-    <div className="p-6 space-y-5 max-w-4xl">
+    <div className="p-6 space-y-5 max-w-4xl mx-auto">
       {composerOpen && (
         <CampaignComposer
           segments={segments}
@@ -769,7 +769,7 @@ export default function CRMPage() {
 
           {tab === 'segments' && !activeSegmentKey && smartData && (
             <div className="p-6">
-              <div className="grid grid-cols-2 gap-4 max-w-2xl">
+              <div className="grid grid-cols-2 gap-4 max-w-2xl mx-auto">
                 <div className="col-span-2 rounded-xl border border-kds-border bg-kds-card p-5">
                   <p className="text-xs font-bold text-kds-subtext uppercase tracking-widest mb-4">Summary</p>
                   <div className="grid grid-cols-3 gap-4">
@@ -803,7 +803,7 @@ export default function CRMPage() {
           {/* Customer detail */}
           {tab === 'customers' && selected && customerDetail && (
             <div className="p-6">
-              <div className="max-w-2xl space-y-5">
+              <div className="max-w-2xl mx-auto space-y-5">
                 {/* Profile card */}
                 <div className="rounded-xl border border-kds-border bg-kds-card p-5">
                   <div className="flex items-start gap-4">

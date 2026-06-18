@@ -43,7 +43,7 @@ export default function DepositDropsPage() {
         </div>
       </header>
 
-      <div className="px-7 py-6 max-w-5xl space-y-2">
+      <div className="px-7 py-6 max-w-5xl mx-auto space-y-2">
         {drops.length === 0 && (
           <div className="rounded-2xl p-10 text-center" style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)' }}>
             <p className="font-bold text-white/85">No drops recorded</p>

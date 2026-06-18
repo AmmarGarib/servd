@@ -53,7 +53,7 @@ export default function GiftCardsPage() {
         <button onClick={() => setShowNew(true)} className="s-btn-primary text-xs">+ Issue card</button>
       </header>
 
-      <div className="p-6 max-w-5xl space-y-4">
+      <div className="p-6 max-w-5xl mx-auto space-y-4">
         {/* Quick redeem */}
         <div className="s-card p-4">
           <h2 className="text-sm font-bold mb-3">Quick redeem</h2>

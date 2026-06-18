@@ -142,7 +142,7 @@ export default function ReservationsPage() {
         </div>
       </header>
 
-      <div className="p-6 max-w-7xl grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-4">
+      <div className="p-6 max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-4">
         {/* Day view */}
         <div className="space-y-3">
           {!reservations.data && reservations.isLoading && (

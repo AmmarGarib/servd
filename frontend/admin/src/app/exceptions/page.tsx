@@ -117,7 +117,7 @@ export default function ExceptionInboxPage() {
         </div>
       </header>
 
-      <div className="px-7 py-6 max-w-5xl space-y-2">
+      <div className="px-7 py-6 max-w-5xl mx-auto space-y-2">
         {flags.length === 0 && (
           <div className="rounded-2xl p-10 text-center"
             style={{ background: 'rgba(0,212,177,0.05)', border: '1px solid rgba(0,212,177,0.18)' }}>

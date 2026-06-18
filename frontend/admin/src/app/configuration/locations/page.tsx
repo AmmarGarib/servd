@@ -58,7 +58,7 @@ export default function LocationsPage() {
         </div>
       </header>
 
-      <div className="px-7 py-6 max-w-4xl space-y-3">
+      <div className="px-7 py-6 max-w-4xl mx-auto space-y-3">
         {isLoading && <p className="text-sm text-white/40">Loading…</p>}
 
         {!isLoading && locations.length === 0 && (

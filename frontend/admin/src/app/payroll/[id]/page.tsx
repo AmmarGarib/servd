@@ -111,7 +111,7 @@ export default function PayrollRunPage() {
         </div>
       </header>
 
-      <div className="p-6 max-w-5xl space-y-4">
+      <div className="p-6 max-w-5xl mx-auto space-y-4">
         {/* Summary cards */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <div className="s-card p-4">

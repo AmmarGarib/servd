@@ -60,7 +60,7 @@ export default function TipPoolsPage() {
         <button onClick={() => setShowNew(true)} className="s-btn-primary text-xs">+ New pool</button>
       </header>
 
-      <div className="p-6 max-w-6xl grid grid-cols-1 lg:grid-cols-[1fr_400px] gap-4">
+      <div className="p-6 max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-[1fr_400px] gap-4">
         <div className="s-card overflow-hidden">
           <div className="px-4 py-2 bg-s-bg-soft border-b border-s-border text-xs font-bold">All pools</div>
           <div className="overflow-x-auto">

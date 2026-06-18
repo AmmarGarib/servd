@@ -45,7 +45,7 @@ export default function ReservationAnalyticsPage() {
         </div>
       </header>
 
-      <div className="p-6 max-w-5xl space-y-4">
+      <div className="p-6 max-w-5xl mx-auto space-y-4">
         {a.isLoading && <p className="text-s-muted text-sm">Loading…</p>}
         {a.data && (
           <>

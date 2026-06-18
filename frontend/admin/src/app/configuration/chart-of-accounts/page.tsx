@@ -49,7 +49,7 @@ export default function ChartOfAccountsPage() {
         </div>
       </header>
 
-      <div className="px-7 py-6 max-w-4xl space-y-6">
+      <div className="px-7 py-6 max-w-4xl mx-auto space-y-6">
         {(['asset', 'liability', 'equity', 'revenue', 'expense'] as AccountType[]).map((t) => (
           <section key={t}>
             <h2 className="text-xs font-black uppercase tracking-[0.24em] text-white/55 mb-3">{t}s · {grouped[t].length}</h2>

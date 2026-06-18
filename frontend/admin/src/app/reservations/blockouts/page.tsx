@@ -56,7 +56,7 @@ export default function BlockoutsPage() {
         </div>
       </header>
 
-      <div className="p-6 max-w-3xl space-y-3">
+      <div className="p-6 max-w-3xl mx-auto space-y-3">
         <div className="s-card overflow-hidden">
           <div className="overflow-x-auto">
           <table className="w-full text-sm">

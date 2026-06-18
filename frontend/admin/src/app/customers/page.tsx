@@ -96,7 +96,7 @@ export default function CustomersPage() {
         />
       </header>
 
-      <div className="p-6 max-w-6xl space-y-4">
+      <div className="p-6 max-w-6xl mx-auto space-y-4">
         {/* KPIs */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <div className="s-card p-4"><p className="text-xs text-s-muted">Customers</p><p className="text-xl font-bold text-s-text">{stats.total}</p></div>

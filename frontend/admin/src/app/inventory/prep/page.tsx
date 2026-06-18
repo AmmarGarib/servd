@@ -61,7 +61,7 @@ export default function PrepBatchPage() {
         </p>
       </header>
 
-      <div className="px-7 py-6 max-w-3xl space-y-5">
+      <div className="px-7 py-6 max-w-3xl mx-auto space-y-5">
         {feedback && (
           <div className="rounded-xl px-4 py-3 text-sm font-bold"
             style={{

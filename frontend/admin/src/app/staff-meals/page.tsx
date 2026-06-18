@@ -44,7 +44,7 @@ export default function StaffMealsPage() {
         </div>
       </header>
 
-      <div className="px-7 py-6 max-w-5xl space-y-6">
+      <div className="px-7 py-6 max-w-5xl mx-auto space-y-6">
         {leaderboard.length > 0 && (
           <section>
             <h2 className="text-xs font-black uppercase tracking-[0.24em] text-white/55 mb-3">30-day consumption · top 5</h2>

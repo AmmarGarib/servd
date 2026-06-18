@@ -39,7 +39,7 @@ export default function CoursePage() {
         <p className="text-xs text-s-muted">Fire courses one at a time so the kitchen paces with the table.</p>
       </header>
 
-      <div className="p-6 max-w-3xl space-y-3">
+      <div className="p-6 max-w-3xl mx-auto space-y-3">
         {isLoading && <p className="text-s-muted text-sm">Loading…</p>}
         {data?.map((g) => (
           <section key={g.course} className="s-card overflow-hidden">

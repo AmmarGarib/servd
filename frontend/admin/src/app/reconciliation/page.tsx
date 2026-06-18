@@ -335,7 +335,7 @@ export default function ReconciliationPage() {
         <p className="text-xs text-s-muted mt-0.5">POS shift cash reconciliation, bank statements, and delivery settlements</p>
       </header>
 
-      <div className="p-6 max-w-5xl space-y-4">
+      <div className="p-6 max-w-5xl mx-auto space-y-4">
 
         {/* Summary KPI strip (shifts tab) */}
         {tab === 'shifts' && summary && (

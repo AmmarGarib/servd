@@ -46,7 +46,7 @@ export default function HolidaysPage() {
         </div>
       </header>
 
-      <div className="px-7 py-6 max-w-4xl space-y-2">
+      <div className="px-7 py-6 max-w-4xl mx-auto space-y-2">
         {concepts.length === 0 && (
           <div className="rounded-2xl p-10 text-center"
             style={{ background: 'rgba(245,158,11,0.05)', border: '1px solid rgba(245,158,11,0.2)' }}>

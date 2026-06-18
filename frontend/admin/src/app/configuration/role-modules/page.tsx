@@ -104,7 +104,7 @@ export default function RoleModulesPage() {
         </div>
       </header>
 
-      <div className="px-7 py-6 max-w-[1600px] space-y-4">
+      <div className="px-7 py-6 max-w-[1600px] mx-auto space-y-4">
         <div className="flex items-center gap-3 flex-wrap">
           <input
             value={search}

@@ -44,7 +44,7 @@ export default function ForecastPage() {
   const dates = items[0]?.forecasts.map(f => f.date) ?? []
 
   return (
-    <div className="p-6 space-y-6 max-w-7xl">
+    <div className="p-6 space-y-6 max-w-7xl mx-auto">
       <div>
         <Link href="/analytics" className="text-xs hover:opacity-70 mb-1 inline-block" style={{ color: 'rgba(255,255,255,0.35)' }}>← Analytics</Link>
         <h1 className="text-xl font-black" style={{ color: 'rgba(255,255,255,0.92)' }}>Demand Forecast</h1>

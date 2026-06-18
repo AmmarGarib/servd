@@ -121,7 +121,7 @@ export default function FloorplanPage() {
         </div>
       </header>
 
-      <div className="p-6 max-w-7xl">
+      <div className="p-6 max-w-7xl mx-auto">
         {/* Floor tabs */}
         <div className="flex items-center gap-1.5 mb-4 flex-wrap">
           {floors.data?.map((f) => (

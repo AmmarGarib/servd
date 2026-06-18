@@ -47,7 +47,7 @@ export default function AllocationsPage() {
         <p className="text-xs text-s-muted">Split shared expenses across concepts</p>
       </header>
 
-      <div className="p-6 max-w-5xl space-y-4">
+      <div className="p-6 max-w-5xl mx-auto space-y-4">
         <div className="s-card p-4 flex items-center gap-3">
           <p className="text-xs text-s-muted flex-1">Period to allocate</p>
           <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="bg-s-card border border-s-border rounded px-2 py-1 text-sm text-s-text" />

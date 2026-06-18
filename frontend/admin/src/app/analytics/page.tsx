@@ -105,7 +105,7 @@ export default function AnalyticsPage() {
   const maxFunnelCount = Math.max(...(funnel?.steps.map((s) => s.count) ?? [1]))
 
   return (
-    <div className="p-6 space-y-6 max-w-6xl">
+    <div className="p-6 space-y-6 max-w-6xl mx-auto">
       {/* Header + filters */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>

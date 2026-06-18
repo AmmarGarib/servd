@@ -55,7 +55,7 @@ export default function ReservationPolicyPage() {
         </p>
       </header>
 
-      <div className="px-7 py-7 max-w-3xl space-y-6">
+      <div className="px-7 py-7 max-w-3xl mx-auto space-y-6">
         <Section title="Deposits" desc="Hold a card for large parties">
           <Num label="Require deposit above party of" value={form.depositRequiredAboveParty ?? 0} onChange={(v) => patch('depositRequiredAboveParty', v || null)} suffix="people" />
           <Num label="Deposit amount (paisa)" value={form.depositCents ?? 0} onChange={(v) => patch('depositCents', v)} suffix={`≈ PKR ${((form.depositCents ?? 0) / 100).toFixed(0)}`} />

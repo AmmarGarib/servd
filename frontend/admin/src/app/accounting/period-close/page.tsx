@@ -47,7 +47,7 @@ export default function PeriodClosePage() {
         <h1 className="text-xl font-bold text-s-text">Period Close</h1>
       </header>
 
-      <div className="p-6 max-w-2xl space-y-4">
+      <div className="p-6 max-w-2xl mx-auto space-y-4">
         <div className="s-card p-4">
           <p className="text-xs text-s-muted">Books are currently closed through</p>
           <p className="text-2xl font-bold text-s-text">{lockedThroughDisplay}</p>

@@ -69,7 +69,7 @@ export default function DispatchPage() {
         </div>
       </header>
 
-      <div className="p-6 max-w-6xl space-y-3">
+      <div className="p-6 max-w-6xl mx-auto space-y-3">
         {isLoading && <p className="text-s-muted text-sm">Loading…</p>}
         {data && data.length === 0 && (
           <div className="s-card p-12 text-center">

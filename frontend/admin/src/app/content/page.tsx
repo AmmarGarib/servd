@@ -45,7 +45,7 @@ export default function ContentIndexPage() {
         <p className="text-xs text-s-muted mt-1">Edit any storefront page block-by-block. Save to publish — storefront refetches within 30s.</p>
       </header>
 
-      <div className="p-6 max-w-3xl space-y-3">
+      <div className="p-6 max-w-3xl mx-auto space-y-3">
         {allEditable.map((p) => {
           const saved = layouts.data?.find((l) => l.slug === p.slug)
           return (

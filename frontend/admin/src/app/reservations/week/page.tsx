@@ -87,7 +87,7 @@ export default function ReservationsWeekPage() {
         </div>
       </header>
 
-      <div className="p-4 max-w-7xl">
+      <div className="p-4 max-w-7xl mx-auto">
         <div className="s-card overflow-hidden">
           <div className="grid grid-cols-[60px_repeat(7,minmax(0,1fr))] border-b border-s-border bg-s-bg-soft">
             <div></div>

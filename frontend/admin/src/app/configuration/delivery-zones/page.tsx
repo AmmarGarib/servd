@@ -46,7 +46,7 @@ export default function DeliveryZonesPage() {
         </div>
       </header>
 
-      <div className="px-7 py-6 max-w-4xl space-y-2">
+      <div className="px-7 py-6 max-w-4xl mx-auto space-y-2">
         {zones.length === 0 && (
           <div className="rounded-2xl p-10 text-center" style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)' }}>
             <p className="font-bold text-white/85">No delivery zones yet</p>

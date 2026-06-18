@@ -101,7 +101,7 @@ export default function IntegrationsPage() {
         </div>
       )}
 
-      <div className="space-y-4 max-w-2xl">
+      <div className="space-y-4 max-w-2xl mx-auto">
         {/* Meta / Facebook + Instagram */}
         <div className="rounded-xl border border-kds-border bg-kds-card p-5">
           <div className="flex items-start justify-between">

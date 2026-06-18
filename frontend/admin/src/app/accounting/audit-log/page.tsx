@@ -44,7 +44,7 @@ export default function AuditLogPage() {
         <p className="text-xs text-s-muted mt-1">High-stakes mutations, append-only. Forensic trail of who changed what when.</p>
       </header>
 
-      <div className="p-6 max-w-6xl space-y-3">
+      <div className="p-6 max-w-6xl mx-auto space-y-3">
         <div className="flex gap-2 flex-wrap">
           {ACTION_FILTERS.map((f) => (
             <button

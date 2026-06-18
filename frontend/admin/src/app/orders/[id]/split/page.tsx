@@ -78,7 +78,7 @@ export default function SplitPage() {
         <p className="text-xs text-s-muted">Order total: <strong>{fmtPkr(order.totalCents)}</strong> · {order.concept.name}</p>
       </header>
 
-      <div className="p-6 max-w-2xl space-y-4">
+      <div className="p-6 max-w-2xl mx-auto space-y-4">
         {/* Existing splits */}
         {order.payments.length > 0 && (
           <div className="s-card overflow-hidden">

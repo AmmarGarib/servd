@@ -49,7 +49,7 @@ export default function CustomFieldsPage() {
         </div>
       </header>
 
-      <div className="px-7 py-6 max-w-4xl space-y-6">
+      <div className="px-7 py-6 max-w-4xl mx-auto space-y-6">
         {SCOPES.map((s) => {
           const fields = data.filter((d) => d.scope === s.value)
           return (

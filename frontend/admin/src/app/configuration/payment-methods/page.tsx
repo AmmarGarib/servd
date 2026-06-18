@@ -52,7 +52,7 @@ export default function PaymentMethodsPage() {
         </div>
       </header>
 
-      <div className="px-7 py-6 max-w-3xl space-y-5">
+      <div className="px-7 py-6 max-w-3xl mx-auto space-y-5">
         {/* Setup overview */}
         <div className="rounded-2xl p-5"
           style={{ background: 'linear-gradient(135deg, rgba(0,212,177,0.06), rgba(99,102,241,0.04))', border: '1px solid rgba(0,212,177,0.18)' }}>

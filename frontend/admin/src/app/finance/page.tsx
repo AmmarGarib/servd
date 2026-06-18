@@ -135,7 +135,7 @@ export default function FinancePage() {
         </div>
       </header>
 
-      <div className="p-6 space-y-6 max-w-6xl">
+      <div className="p-6 space-y-6 max-w-6xl mx-auto">
 
         {/* ── P&L Summary ───────────────────────────────────────────────────── */}
         {tab === 'summary' && (

@@ -79,7 +79,7 @@ export default function DomainsPage() {
         </div>
       </header>
 
-      <div className="px-7 py-6 max-w-4xl space-y-4">
+      <div className="px-7 py-6 max-w-4xl mx-auto space-y-4">
 
         {/* Setup flow primer */}
         <div className="rounded-2xl p-5"
