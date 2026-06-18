@@ -203,7 +203,7 @@ export default function StationKdsPage() {
             </div>
           )}
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-3">
             {cooking.map((t) => {
               const isLegacy = '__legacy' in t
               const id = isLegacy ? t.itemId : t.stepId
@@ -302,7 +302,7 @@ export default function StationKdsPage() {
             <p className="text-[10px] uppercase tracking-[0.2em] font-black text-kds-subtext mb-3">
               On deck — waiting on prior steps ({waiting.length})
             </p>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-3">
               {waiting.map((t) => {
                 const fm = FULFILMENT_META[t.order.fulfilmentType] ?? FULFILMENT_META.dine_in
                 return (

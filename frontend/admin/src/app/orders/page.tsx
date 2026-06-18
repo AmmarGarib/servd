@@ -246,7 +246,7 @@ export default function OrdersPage() {
                   <p className="text-sm text-kds-subtext mt-1">New orders appear here automatically every 8 seconds</p>
                 </div>
               ) : (
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-5">
                   {LIVE_STATUSES.map((s) => (
                     <div key={s}>
                       <div className="flex items-center gap-2 mb-3">
