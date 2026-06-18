@@ -326,7 +326,7 @@ export function SimmerLayout({ concept, concepts }: Props) {
         color: 'var(--simmer-green)',
         padding: 'clamp(3rem, 7vh, 5rem) clamp(1.4rem, 5vw, 3rem)',
       }}>
-        <div style={{ maxWidth: '38rem', margin: '0 auto' }}>
+        <div style={{ maxWidth: '42rem', margin: '0 auto' }}>
           {/* Header — tonight's service · DATE */}
           <div style={{
             display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
