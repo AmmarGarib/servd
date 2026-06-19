@@ -59,7 +59,6 @@ const NAV: NavSection[] = [
     title: 'Executive',
     items: [
       { href: '/dashboard/ceo',                 label: 'CEO Overview',        icon: '👑', module: 'ceo_overview' },
-      { href: '/business-info',                 label: 'Business Info',       icon: '🏢', module: 'business_info' },
       { href: '/workforce',                     label: 'Workforce',           icon: '👥', module: 'staff_directory', children: [
         { href: '/workforce?tab=positions',         label: 'Positions (budget)', module: 'staff_directory' },
         { href: '/workforce?category=management',  label: 'Management',     module: 'staff_management' },
@@ -162,6 +161,26 @@ const NAV: NavSection[] = [
     ],
   },
   {
+    // ── Storefront — everything the customer sees, gathered in one place:
+    // the brands (identity + colour), their microsite layout, the landing
+    // hero, the per-brand footers, the menu, business info and locations.
+    // Consolidated here out of Marketing / Executive so all storefront edits
+    // live together. (Menu is also linked under Kitchen for the line team.)
+    title: 'Storefront',
+    defaultCollapsed: true,
+    items: [
+      { href: '/marketing/brands',  label: 'Brands',        icon: '🏷', module: 'brands', children: [
+        { href: '/storefront',           label: 'Visual Layout', module: 'brands' },
+        { href: '/marketing/storefront', label: 'Designer hub',  module: 'brands' },
+      ]},
+      { href: '/storefront-hero',   label: 'Landing Hero',  icon: '🖼', module: 'brands' },
+      { href: '/storefront-footer', label: 'Brand Footers', icon: '🔗', module: 'brands' },
+      { href: '/menu',              label: 'Menu',          icon: '📝', module: 'menu' },
+      { href: '/business-info',     label: 'Business Info', icon: '🏢', module: 'business_info' },
+      { href: '/configuration/locations', label: 'Locations', icon: '📍', module: 'business_info' },
+    ],
+  },
+  {
     // Single Marketing umbrella covers customer ops + outbound — for a
     // single-team operator the host who handles a complaint is the same
     // person sending the win-back. Higher-frequency engagement items
@@ -187,11 +206,6 @@ const NAV: NavSection[] = [
       { href: '/promos',            label: 'Promotions',  icon: '🎟', module: 'promos', children: [
         { href: '/discounts', label: 'Discounts', module: 'promos' },
         { href: '/qrcodes',   label: 'QR Codes',  module: 'promos' },
-      ]},
-      { href: '/marketing/brands',  label: 'Brands',      icon: '🏷', module: 'brands', children: [
-        { href: '/marketing/storefront', label: 'Storefront Designer', module: 'brands' },
-        { href: '/storefront',           label: 'Visual Layout',       module: 'brands' },
-        { href: '/storefront-hero',      label: 'Landing Hero',        module: 'brands' },
       ]},
       { href: '/analytics',         label: 'Analytics',   icon: '📊', module: 'analytics' },
     ],

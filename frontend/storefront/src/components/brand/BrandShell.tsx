@@ -1,5 +1,5 @@
 'use client'
-import { useState } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import type { Concept } from '../../lib/concept'
@@ -7,6 +7,7 @@ import { formatBrandName } from '../../lib/concept'
 import { useBrandSlug, getServdHost } from '../../lib/host'
 import { KineticShape } from '../kinetic/KineticShape'
 import { isLight } from '../../lib/ui'
+import { defaultBrandFooter, parseBrandFooterBlock } from '../../lib/brandFooterConfig'
 
 // Build a link that points to the servd canonical host. On the servd host
 // itself it stays relative (so client-side navigation kicks in). On a brand
@@ -237,6 +238,31 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
 function BrandFooter({ concept, onBrandHost, accent }: { concept: Concept; onBrandHost: boolean; accent: string }) {
   const servdHome   = servdHref('/',       onBrandHost)
   const servdBrowse = servdHref('/browse', onBrandHost)
+
+  // Operator-editable footer copy + socials (Admin → Storefront → Brand
+  // Footers), stored as a SiteLayout `brand:<slug>:footer`. Defaults derive
+  // from the concept so an un-configured brand looks exactly as before.
+  const fallback = useMemo(() => defaultBrandFooter(concept), [concept])
+  const [cfg, setCfg] = useState(fallback)
+  useEffect(() => {
+    let alive = true
+    const base = process.env['NEXT_PUBLIC_API_URL'] ?? ''
+    fetch(`${base}/api/v1/site-layouts/brand:${encodeURIComponent(concept.slug)}:footer`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((body: { blocks?: unknown } | null) => {
+        if (alive && body) setCfg(parseBrandFooterBlock(body.blocks, fallback))
+      })
+      .catch(() => { /* keep defaults */ })
+    return () => { alive = false }
+  }, [concept.slug, fallback])
+
+  const socials = [
+    { key: 'instagram', label: 'Instagram', href: cfg.social.instagram },
+    { key: 'tiktok',    label: 'TikTok',    href: cfg.social.tiktok },
+    { key: 'facebook',  label: 'Facebook',  href: cfg.social.facebook },
+    { key: 'whatsapp',  label: 'WhatsApp',  href: cfg.social.whatsapp },
+  ].filter((s) => s.href)
+
   return (
     <footer className="surface-ink relative overflow-hidden"
       style={{
@@ -251,15 +277,15 @@ function BrandFooter({ concept, onBrandHost, accent }: { concept: Concept; onBra
             eye naturally lands when leaving a page. */}
         <div style={{ marginBottom: 'clamp(3rem, 5vw, 4rem)', maxWidth: '900px' }}>
           <p className="eyebrow" style={{ color: accent, marginBottom: '1rem' }}>
-            {concept.name.toLowerCase()} · ready when you are
+            {cfg.ctaEyebrow}
           </p>
           <h2 className="display" style={{
             fontSize: 'clamp(2.5rem, 6vw, 4.5rem)',
             color: 'white',
             marginBottom: '1.5rem',
           }}>
-            Hungry?
-            <span className="display-italic" style={{ color: accent }}> Let's eat.</span>
+            {cfg.ctaHeadline}
+            <span className="display-italic" style={{ color: accent }}> {cfg.ctaAccent}</span>
           </h2>
           <Link href={`/${concept.slug}`} className="brand-pill">
             Order from {formatBrandName(concept.name)} →
@@ -286,8 +312,18 @@ function BrandFooter({ concept, onBrandHost, accent }: { concept: Concept; onBra
               <span style={{ color: accent }}>.</span>
             </div>
             <p style={{ fontSize: '0.95rem', color: 'rgba(255,255,255,0.55)', maxWidth: '20rem', lineHeight: 1.5 }}>
-              {concept.description}
+              {cfg.tagline}
             </p>
+            {socials.length > 0 && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.9rem', marginTop: '1.1rem' }}>
+                {socials.map((s) => (
+                  <a key={s.key} href={s.href} target="_blank" rel="noreferrer"
+                    style={{ fontSize: '0.72rem', fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.6)', textDecoration: 'none' }}>
+                    {s.label}
+                  </a>
+                ))}
+              </div>
+            )}
           </div>
 
           <div>
