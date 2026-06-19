@@ -320,7 +320,7 @@ function BrandFooter({ concept, onBrandHost, accent }: { concept: Concept; onBra
               servd<span style={{ color: accent }}>.</span>
             </Link>
             <p style={{ fontSize: '0.86rem', color: 'rgba(255,255,255,0.55)', marginTop: '0.4rem' }}>
-              One platform. Every GS Foods kitchen.
+              One platform. Every kitchen.
             </p>
             <Link href={servdBrowse} className="kinetic-caret" style={{
               display: 'inline-block',

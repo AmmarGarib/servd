@@ -1,4 +1,6 @@
+'use client'
 import Link from 'next/link'
+import { usePathname } from 'next/navigation'
 import { KineticShape } from './kinetic/KineticShape'
 
 // Live brands only — the long historical list (Strata, Craveman, Garnish
@@ -15,6 +17,10 @@ const BRANDS = [
 ]
 
 export function StorefrontFooter() {
+  // Brand microsites render their own BrandFooter (via BrandShell); the global
+  // servd footer must hide on /brand/* or those pages show two footers.
+  const pathname = usePathname() ?? '/'
+  if (pathname.startsWith('/brand/')) return null
   return (
     <footer
       className="surface-ink relative overflow-hidden"
