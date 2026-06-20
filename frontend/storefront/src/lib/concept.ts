@@ -55,6 +55,31 @@ export function brandAccent(slug: string, fallback: string | null | undefined): 
   return BRAND_ACCENT_OVERRIDES[slug] ?? fallback ?? '#22c55e'
 }
 
+// Per-brand surface palette for the dark "ink" sections (the microsite footer,
+// and any full-bleed themed band). Each brand gets its OWN background + text
+// colours instead of a generic black slab, so the chrome reads as that brand:
+//   simmer → forest green + bone     stax  → bone/grey + ink
+//   flipd  → ink-blue + light-blue   servd → deep purple + white
+// The brand accent (brandAccent) still layers on top as the signal colour.
+export interface BrandSurface {
+  bg: string      // section background
+  text: string    // primary text on that background
+  muted: string   // secondary / supporting text
+  border: string  // hairline dividers
+}
+
+const BRAND_SURFACE: Record<string, BrandSurface> = {
+  simmer: { bg: '#14241A', text: '#F3ECDE', muted: 'rgba(243,236,222,0.62)', border: 'rgba(243,236,222,0.14)' },
+  stax:   { bg: '#E7E5DF', text: '#16181D', muted: 'rgba(22,24,29,0.60)',    border: 'rgba(22,24,29,0.14)'    },
+  flipd:  { bg: '#0A1733', text: '#FFFFFF', muted: '#86B7FF',                border: 'rgba(134,183,255,0.22)' },
+  servd:  { bg: '#3A0E69', text: '#FFFFFF', muted: 'rgba(255,255,255,0.60)', border: 'rgba(255,255,255,0.10)' },
+}
+
+/** The dark-section surface palette for a brand (falls back to near-black). */
+export function brandSurface(slug: string): BrandSurface {
+  return BRAND_SURFACE[slug] ?? { bg: '#0B0B0E', text: '#FFFFFF', muted: 'rgba(255,255,255,0.60)', border: 'rgba(255,255,255,0.10)' }
+}
+
 /** The Simmer wordmark is ALWAYS lowercase per brand guidelines — capital-S
  *  "Simmer" anywhere user-visible is a bug. Other brands render as stored.
  *  Wrap any user-visible brand/concept name with this. */

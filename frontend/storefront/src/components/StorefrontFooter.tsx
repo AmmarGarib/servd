@@ -1,7 +1,6 @@
 'use client'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { KineticShape } from './kinetic/KineticShape'
 
 // Live brands only — the long historical list (Strata, Craveman, Garnish
 // Station, Stax@Padel) lived in the footer when they had no concept rows,
@@ -34,11 +33,6 @@ export function StorefrontFooter() {
         ['--brand-ink' as string]:    '#1E0640',
       } as React.CSSProperties}
     >
-      {/* Floating motifs — quieter than the hero, just enough to keep the
-          footer feeling alive instead of like a generic dark slab. */}
-      <KineticShape variant="blob" size={360} style={{ top: '-15%', right: '-8%' }} />
-      <KineticShape variant="ring" size={120} style={{ bottom: '20%', left: '6%' }} spin />
-
       <div className="container relative z-10">
 
         {/* Headline lockup — chunky display, "ready when you are" loop */}

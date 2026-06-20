@@ -3,9 +3,8 @@ import { useState, useEffect, useMemo } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import type { Concept } from '../../lib/concept'
-import { formatBrandName } from '../../lib/concept'
+import { formatBrandName, brandSurface } from '../../lib/concept'
 import { useBrandSlug, getServdHost } from '../../lib/host'
-import { KineticShape } from '../kinetic/KineticShape'
 import { isLight } from '../../lib/ui'
 import { defaultBrandFooter, parseBrandFooterBlock } from '../../lib/brandFooterConfig'
 
@@ -263,15 +262,19 @@ function BrandFooter({ concept, onBrandHost, accent }: { concept: Concept; onBra
     { key: 'whatsapp',  label: 'WhatsApp',  href: cfg.social.whatsapp },
   ].filter((s) => s.href)
 
+  const surface = brandSurface(concept.slug)
+  const linkStyle: React.CSSProperties = {
+    color: surface.text, opacity: 0.85, textDecoration: 'none', fontSize: '0.95rem', fontWeight: 500,
+  }
+
   return (
-    <footer className="surface-ink relative overflow-hidden"
+    <footer className="relative overflow-hidden"
       style={{
         padding: 'clamp(4rem, 7vw, 6rem) 0 1.75rem',
         marginTop: '4rem',
+        background: surface.bg,
+        color: surface.text,
       }}>
-      <KineticShape variant="blob" size={320} color={accent} style={{ top: '-15%', right: '-10%' }} />
-      <KineticShape variant="ring" size={140} color={accent} style={{ bottom: '15%', left: '-3%' }} spin />
-
       <div className="container relative z-10">
         {/* Brand-CTA banner at the top — call to action sits where the
             eye naturally lands when leaving a page. */}
@@ -281,7 +284,7 @@ function BrandFooter({ concept, onBrandHost, accent }: { concept: Concept; onBra
           </p>
           <h2 className="display" style={{
             fontSize: 'clamp(2.5rem, 6vw, 4.5rem)',
-            color: 'white',
+            color: surface.text,
             marginBottom: '1.5rem',
           }}>
             {cfg.ctaHeadline}
@@ -297,7 +300,7 @@ function BrandFooter({ concept, onBrandHost, accent }: { concept: Concept; onBra
           gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
           gap: '2.5rem',
           paddingTop: '2.5rem',
-          borderTop: '1px solid rgba(255,255,255,0.08)',
+          borderTop: `1px solid ${surface.border}`,
         }}>
           <div>
             <div style={{
@@ -305,20 +308,20 @@ function BrandFooter({ concept, onBrandHost, accent }: { concept: Concept; onBra
               fontSize: '1.8rem',
               fontWeight: 800,
               letterSpacing: '-0.035em',
-              color: 'white',
+              color: surface.text,
               marginBottom: '0.5rem',
             }}>
               {formatBrandName(concept.name)}
               <span style={{ color: accent }}>.</span>
             </div>
-            <p style={{ fontSize: '0.95rem', color: 'rgba(255,255,255,0.55)', maxWidth: '20rem', lineHeight: 1.5 }}>
+            <p style={{ fontSize: '0.95rem', color: surface.muted, maxWidth: '20rem', lineHeight: 1.5 }}>
               {cfg.tagline}
             </p>
             {socials.length > 0 && (
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.9rem', marginTop: '1.1rem' }}>
                 {socials.map((s) => (
                   <a key={s.key} href={s.href} target="_blank" rel="noreferrer"
-                    style={{ fontSize: '0.72rem', fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.6)', textDecoration: 'none' }}>
+                    style={{ fontSize: '0.72rem', fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase', color: surface.muted, textDecoration: 'none' }}>
                     {s.label}
                   </a>
                 ))}
@@ -327,19 +330,19 @@ function BrandFooter({ concept, onBrandHost, accent }: { concept: Concept; onBra
           </div>
 
           <div>
-            <h3 className="eyebrow" style={{ color: 'rgba(255,255,255,0.45)', marginBottom: '1rem' }}>
+            <h3 className="eyebrow" style={{ color: surface.muted, marginBottom: '1rem' }}>
               {formatBrandName(concept.name)}
             </h3>
             <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'grid', gap: '0.7rem' }}>
-              <li><Link href={onBrandHost ? '/menu'  : `/brand/${concept.slug}/menu`}  style={footerLinkStyle}>Menu</Link></li>
-              <li><Link href={onBrandHost ? '/about' : `/brand/${concept.slug}/about`} style={footerLinkStyle}>Our story</Link></li>
-              <li><Link href={onBrandHost ? '/visit' : `/brand/${concept.slug}/visit`} style={footerLinkStyle}>Find us</Link></li>
-              <li><Link href={`/${concept.slug}`} style={footerLinkStyle}>Order online</Link></li>
+              <li><Link href={onBrandHost ? '/menu'  : `/brand/${concept.slug}/menu`}  style={linkStyle}>Menu</Link></li>
+              <li><Link href={onBrandHost ? '/about' : `/brand/${concept.slug}/about`} style={linkStyle}>Our story</Link></li>
+              <li><Link href={onBrandHost ? '/visit' : `/brand/${concept.slug}/visit`} style={linkStyle}>Find us</Link></li>
+              <li><Link href={`/${concept.slug}`} style={linkStyle}>Order online</Link></li>
             </ul>
           </div>
 
           <div>
-            <h3 className="eyebrow" style={{ color: 'rgba(255,255,255,0.45)', marginBottom: '1rem' }}>
+            <h3 className="eyebrow" style={{ color: surface.muted, marginBottom: '1rem' }}>
               Powered by
             </h3>
             <Link href={servdHome} style={{
@@ -347,7 +350,7 @@ function BrandFooter({ concept, onBrandHost, accent }: { concept: Concept; onBra
               alignItems: 'baseline',
               gap: '0.1rem',
               fontFamily: 'var(--font-display)',
-              color: 'white',
+              color: surface.text,
               fontWeight: 800,
               fontSize: '1.8rem',
               letterSpacing: '-0.045em',
@@ -355,7 +358,7 @@ function BrandFooter({ concept, onBrandHost, accent }: { concept: Concept; onBra
             }}>
               servd<span style={{ color: accent }}>.</span>
             </Link>
-            <p style={{ fontSize: '0.86rem', color: 'rgba(255,255,255,0.55)', marginTop: '0.4rem' }}>
+            <p style={{ fontSize: '0.86rem', color: surface.muted, marginTop: '0.4rem' }}>
               One platform. Every kitchen.
             </p>
             <Link href={servdBrowse} className="kinetic-caret" style={{
@@ -374,27 +377,20 @@ function BrandFooter({ concept, onBrandHost, accent }: { concept: Concept; onBra
         <div style={{
           marginTop: '3rem',
           paddingTop: '1.25rem',
-          borderTop: '1px solid rgba(255,255,255,0.08)',
+          borderTop: `1px solid ${surface.border}`,
           display: 'flex',
           justifyContent: 'space-between',
           flexWrap: 'wrap',
           gap: '0.75rem',
           fontSize: '0.78rem',
-          color: 'rgba(255,255,255,0.4)',
+          color: surface.muted,
         }}>
           <span>© {new Date().getFullYear()} {formatBrandName(concept.name)} · GS Foods Pvt. Ltd.</span>
-          <Link href={servdHome} style={{ color: 'rgba(255,255,255,0.55)', textDecoration: 'none' }}>
+          <Link href={servdHome} style={{ color: surface.muted, textDecoration: 'none' }}>
             back to servd<span style={{ color: accent }}>.</span> →
           </Link>
         </div>
       </div>
     </footer>
   )
-}
-
-const footerLinkStyle: React.CSSProperties = {
-  color: 'rgba(255,255,255,0.8)',
-  textDecoration: 'none',
-  fontSize: '0.95rem',
-  fontWeight: 500,
 }
