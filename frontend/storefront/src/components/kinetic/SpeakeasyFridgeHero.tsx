@@ -51,7 +51,7 @@ interface Props {
 export function SpeakeasyFridgeHero({
   brandName, accent, ink,
   wood   = '#2a1d12',
-  marble = '#22382f',
+  marble = '#06392F',
   cream  = '#f4ede0',
   reserveHref, menuHref,
   coolerImageUrl,

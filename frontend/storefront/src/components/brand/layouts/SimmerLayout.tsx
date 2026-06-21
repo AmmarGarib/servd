@@ -96,7 +96,7 @@ function ItineraryStop({ side, label, children }: { side: 'left' | 'right', labe
           }}>
             <div style={{
               width: '100%', aspectRatio: '5 / 4',
-              background: '#15231f',
+              background: '#06392F',
               overflow: 'hidden', position: 'relative',
             }}>
               {children}
@@ -129,7 +129,7 @@ function PlateSketch() {
   return (
     <svg viewBox="0 0 200 160" preserveAspectRatio="xMidYMid slice"
          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', display: 'block' }}>
-      <rect width="200" height="160" fill="#15231f"/>
+      <rect width="200" height="160" fill="#06392F"/>
       <g stroke="rgba(237,230,211,0.6)" strokeWidth="1.2" fill="none">
         <circle cx="100" cy="80" r="58"/>
         <circle cx="100" cy="80" r="48" strokeWidth="0.5" opacity="0.55"/>
@@ -157,7 +157,7 @@ function CoupeSketch() {
   return (
     <svg viewBox="0 0 200 160" preserveAspectRatio="xMidYMid slice"
          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', display: 'block' }}>
-      <rect width="200" height="160" fill="#15231f"/>
+      <rect width="200" height="160" fill="#06392F"/>
       <g stroke="rgba(237,230,211,0.7)" strokeWidth="1.2" fill="none" strokeLinecap="round">
         <ellipse cx="100" cy="58" rx="50" ry="11"/>
         <path d="M50 58 Q52 94 100 102 Q148 94 150 58"/>
