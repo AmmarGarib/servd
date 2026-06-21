@@ -111,10 +111,13 @@ export function SpeakeasyFridgeHero({
           `,
           backgroundSize: '200px 200px, 200px 200px',
         }} />
-        {/* Vignette so the centre of the drawing feels lit */}
+        {/* Vignette so the centre of the drawing feels lit. Kept off the TOP
+            edge (lit zone centred high, gentle edge darkening) so the chiller
+            surroundings stay #06392F where they meet the header — otherwise the
+            old strong vignette darkened the top and clashed with the flat nav. */}
         <div aria-hidden="true" style={{
           position: 'absolute', inset: 0,
-          background: 'radial-gradient(ellipse 70% 60% at 50% 50%, transparent 0%, rgba(0,0,0,0.55) 100%)',
+          background: 'radial-gradient(ellipse 120% 85% at 50% 24%, transparent 0%, transparent 52%, rgba(0,0,0,0.28) 100%)',
         }} />
 
         {/* TITLE BLOCK — top-left corner. Same convention every real

@@ -82,6 +82,18 @@ export function brandSurface(slug: string): BrandSurface {
   return BRAND_SURFACE[slug] ?? { bg: '#0B0B0E', text: '#FFFFFF', muted: 'rgba(255,255,255,0.60)', border: 'rgba(255,255,255,0.10)' }
 }
 
+/** Per-brand wordmark styling for the nav brand-mark — the brand name renders
+ *  in that brand's own type + colour, pasted straight on the page background
+ *  (no chip behind it). The circular logo card carries the accent separately. */
+export function brandWordmark(slug: string): { font: string; color: string; weight: number } {
+  switch (slug) {
+    case 'simmer': return { font: 'var(--simmer-display)', color: 'var(--simmer-bone)',  weight: 400 }
+    case 'stax':   return { font: 'var(--stax-display)',   color: 'var(--stax-cream)',   weight: 700 }
+    case 'flipd':  return { font: 'var(--flipd-marquee)',  color: 'var(--flipd-sky)',    weight: 400 }
+    default:       return { font: 'var(--font-wordmark)',  color: 'var(--brand-accent)', weight: 800 }
+  }
+}
+
 /** The Simmer wordmark is ALWAYS lowercase per brand guidelines — capital-S
  *  "Simmer" anywhere user-visible is a bug. Other brands render as stored.
  *  Wrap any user-visible brand/concept name with this. */

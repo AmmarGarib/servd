@@ -64,34 +64,12 @@ export function FlipdLayout({ concept, concepts }: Props) {
         }}
       >
         <div style={{ maxWidth: '64rem', margin: '0 auto', position: 'relative', zIndex: 2 }}>
-          {/* Wordmark card — single white box now contains both the
-              Karachi locale stamp (small, top) and the big sky-blue
-              FLIPD wordmark. Pulls the two pieces into one logo unit
-              so the stack is fewer, bolder shapes. */}
-          <div style={{
-            display: 'inline-block',
-            background: 'white',
-            padding: 'clamp(0.7rem, 2vh, 1.4rem) clamp(1rem, 3vw, 1.8rem) clamp(0.9rem, 2.2vh, 1.6rem)',
-            margin: '0 0 0.6rem',
-            border: '2px solid var(--flipd-ink)',
-            borderRadius: '0.6rem',
-            boxShadow: '0 6px 0 var(--flipd-ink), 0 14px 30px rgba(14,26,42,0.22)',
-          }}>
-            <p className="flipd-eyebrow" style={{ margin: '0 0 0.4rem' }}>
-              Karachi · Est. &apos;26
-            </p>
-            <h1 className="flipd-marquee" style={{
-              fontSize: 'clamp(5rem, 17vw, 13rem)',
-              margin: 0,
-              lineHeight: 0.9,
-              color: 'var(--flipd-sky)',
-              // Ink ledge keeps the wordmark grounded the way the
-              // jersey-patch stitching does on the round badge below.
-              textShadow: '0 4px 0 var(--flipd-ink)',
-            }}>
-              FLIPD
-            </h1>
-          </div>
+          {/* Big "FLIPD" wordmark card removed — the brand mark now lives in
+              the nav (circular logo + name). Keep an sr-only H1 for SEO/a11y;
+              the hero leads with the round GAME/SET/SMASH seal below. */}
+          <h1 style={{ position: 'absolute', width: '1px', height: '1px', padding: 0, margin: '-1px', overflow: 'hidden', clip: 'rect(0,0,0,0)', whiteSpace: 'nowrap', border: 0 }}>
+            {concept.name}
+          </h1>
 
           {/* Tagline panel — three Lobster cursive lines in sky-deep
               sitting inside a paper card on the wrapper. Replaces the

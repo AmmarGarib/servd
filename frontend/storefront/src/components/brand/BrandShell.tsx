@@ -3,7 +3,7 @@ import { useState, useEffect, useMemo } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import type { Concept } from '../../lib/concept'
-import { formatBrandName, brandSurface } from '../../lib/concept'
+import { formatBrandName, brandSurface, brandWordmark } from '../../lib/concept'
 import { useBrandSlug, getServdHost } from '../../lib/host'
 import { isLight } from '../../lib/ui'
 import { defaultBrandFooter, parseBrandFooterBlock } from '../../lib/brandFooterConfig'
@@ -60,6 +60,7 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
   const servdHome = servdHref('/', onBrandHost)
   const [open, setOpen] = useState(false)
   const surface = brandSurface(concept.slug)
+  const wordmark = brandWordmark(concept.slug)
 
   // "Book" only appears when the brand explicitly accepts reservations.
   const acceptsReservations = concept.reservationsEnabled !== false
@@ -91,32 +92,43 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
         gap: '1rem',
       }}
     >
-      {/* Wordmark — chunky display weight, accent dot in brand colour. */}
+      {/* Brand-mark — circular logo card + brand name (brand font + colour,
+          pasted on the background, no chip). Logo is a placeholder initial
+          until the operator uploads a real logo. */}
       <Link
         href={base}
+        aria-label={formatBrandName(concept.name)}
         style={{
-          display: 'flex', alignItems: 'baseline', gap: '0.65rem',
-          textDecoration: 'none', color: surface.text,
+          display: 'flex', alignItems: 'center', gap: '0.7rem',
+          textDecoration: 'none',
         }}>
         <span aria-hidden="true" style={{
-          width: '2.1rem', height: '2.1rem',
-          borderRadius: '0.55rem',
+          width: '2.5rem', height: '2.5rem',
+          borderRadius: '50%',
+          overflow: 'hidden',
+          flexShrink: 0,
           background: accent,
           color: '#0a0a0a',
           display: 'inline-flex',
           alignItems: 'center', justifyContent: 'center',
-          fontSize: '1.05rem',
+          fontSize: '1.1rem',
           fontWeight: 900,
           fontFamily: 'var(--font-display)',
           letterSpacing: '-0.02em',
+          boxShadow: '0 2px 10px rgba(0,0,0,0.25)',
         }}>
-          {formatBrandName(concept.name).charAt(0)}
+          {concept.logoUrl
+            // eslint-disable-next-line @next/next/no-img-element
+            ? <img src={concept.logoUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+            : formatBrandName(concept.name).charAt(0).toUpperCase()}
         </span>
         <span style={{
-          fontFamily: 'var(--font-display)',
-          fontSize: '1.25rem',
-          fontWeight: 800,
-          letterSpacing: '-0.035em',
+          fontFamily: wordmark.font,
+          fontSize: '1.6rem',
+          fontWeight: wordmark.weight,
+          letterSpacing: '-0.01em',
+          lineHeight: 1,
+          color: wordmark.color,
         }}>
           {formatBrandName(concept.name)}
         </span>
