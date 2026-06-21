@@ -331,7 +331,7 @@ export function SimmerLayout({ concept, concepts }: Props) {
           <div style={{
             display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
             paddingBottom: '1rem',
-            borderBottom: '1px solid rgba(27,45,42,0.18)',
+            borderBottom: '1px solid rgba(6,57,47,0.18)',
             marginBottom: '2.4rem',
           }}>
             <span className="utility" style={{ fontSize: '0.78rem' }}>tonight&apos;s service</span>

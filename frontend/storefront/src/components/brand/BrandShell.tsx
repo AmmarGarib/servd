@@ -61,6 +61,19 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
   const [open, setOpen] = useState(false)
   const surface = brandSurface(concept.slug)
   const wordmark = brandWordmark(concept.slug)
+  // Simmer extends the chiller's blueprint grid up into the header so the top
+  // reads as one continuous schematic; other brands keep a soft bg scrim.
+  const navBg: React.CSSProperties = concept.slug === 'simmer'
+    ? {
+        backgroundColor: surface.bg,
+        backgroundImage:
+          'linear-gradient(rgba(237,230,211,0.06) 1px, transparent 1px),' +
+          'linear-gradient(90deg, rgba(237,230,211,0.06) 1px, transparent 1px),' +
+          'linear-gradient(rgba(237,230,211,0.10) 1px, transparent 1px),' +
+          'linear-gradient(90deg, rgba(237,230,211,0.10) 1px, transparent 1px)',
+        backgroundSize: '40px 40px, 40px 40px, 200px 200px, 200px 200px',
+      }
+    : { background: `linear-gradient(to bottom, ${surface.bg}F2 0%, ${surface.bg}00 100%)` }
 
   // "Book" only appears when the brand explicitly accepts reservations.
   const acceptsReservations = concept.reservationsEnabled !== false
@@ -81,9 +94,9 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
         position: 'sticky',
         top: 0,
         zIndex: 50,
-        // Transparent scrim in the brand's own background colour, fading down —
-        // the page background appears to flow up through the header (no band).
-        background: `linear-gradient(to bottom, ${surface.bg}F2 0%, ${surface.bg}00 100%)`,
+        // Simmer carries the blueprint grid into the header (connects to the
+        // chiller); other brands use a soft scrim of their own bg (no band).
+        ...navBg,
         borderBottom: 'none',
         padding: '0.95rem clamp(1rem, 4vw, 2rem)',
         display: 'flex',
