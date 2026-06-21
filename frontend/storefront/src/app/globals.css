@@ -433,6 +433,24 @@ summary:focus-visible {
   /* (hero grid hatching removed with the blueprint grid — concrete shows through) */
   background-image: none;
 }
+/* Fixed concrete backdrop. Height is pinned to the LARGE viewport (lvh) so the
+   mobile toolbar showing/hiding does NOT resize the layer — with inset:0 the
+   layer resized on every toolbar toggle and `cover` re-centred the image, which
+   made the concrete panels jump while scrolling. lvh is constant across toggles. */
+.stax-bg-fixed {
+  position: fixed;
+  top: 0; left: 0;
+  width: 100vw;
+  height: 100vh;   /* fallback for older browsers */
+  height: 100lvh;  /* stable across mobile toolbar show/hide */
+  z-index: 0;
+  pointer-events: none;
+  background-color: #18242E;
+  background-image: url(/brand/stax-concrete.webp);
+  background-size: cover;
+  background-position: center top;
+  background-repeat: no-repeat;
+}
 @media (max-width: 700px) { .stax-visit-grid { grid-template-columns: 1fr !important; } }
 
 /* flipd — old-school American diner ───────────────────────────────────

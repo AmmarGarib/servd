@@ -42,15 +42,9 @@ export function StaxLayout({ concept, concepts }: Props) {
     <div className="stax-page">
       {/* Page-wide concrete backdrop — one fixed, full-bleed image behind every
           panel; content sits above. z-index 0 keeps it under the sticky nav
-          (z-50). One static fixed layer = nothing to misalign on scroll; the
-          base colour matches the image as a safety net for mobile fixed hiccups. */}
-      <div aria-hidden style={{
-        position: 'fixed', inset: 0, zIndex: 0, pointerEvents: 'none',
-        backgroundColor: '#18242E',
-        backgroundImage: 'url(/brand/stax-concrete.webp)',
-        backgroundSize: 'cover',
-        backgroundPosition: 'center',
-      }} />
+          (z-50). Sized in CSS (.stax-bg-fixed) to the large viewport (lvh) so a
+          mobile toolbar toggle can't resize it and make the image jump. */}
+      <div aria-hidden className="stax-bg-fixed" />
 
       <div style={{ position: 'relative', zIndex: 1 }}>
       {concept.announcementBanner && (
