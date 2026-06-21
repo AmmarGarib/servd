@@ -11,6 +11,7 @@ import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api } from '../../lib/api'
+import { brandPalette } from '../../lib/brandPalettes'
 
 interface Concept { id: string; name: string; slug: string; primaryColor: string | null }
 
@@ -131,7 +132,7 @@ export default function BrandFooterPage() {
           {concepts.map((c) => (
             <button key={c.id} onClick={() => setSlug(c.slug)}
               className={`rounded-lg px-3 py-2 text-sm font-bold transition-colors ${c.slug === slug ? 'bg-kds-green text-black' : 'bg-white/5 text-white/70 hover:bg-white/10'}`}>
-              <span className="inline-block h-2.5 w-2.5 rounded-full mr-2 align-middle" style={{ background: c.primaryColor ?? '#888' }} />
+              <span className="inline-block h-2.5 w-2.5 rounded-full mr-2 align-middle" style={{ background: brandPalette(c.slug)?.accent ?? c.primaryColor ?? '#888' }} />
               {c.name}
             </button>
           ))}

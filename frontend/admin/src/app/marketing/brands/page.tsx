@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { api } from '../../../lib/api'
 import { useAuthStore } from '../../../store/auth'
 import { TenantChip, useMyTenants } from '../../../components/ui/TenantPicker'
+import { brandPalette } from '../../../lib/brandPalettes'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -107,7 +108,7 @@ export default function BrandEditorPage() {
                   <img src={c.logoUrl} alt={c.name} className="h-8 w-8 rounded-lg object-cover" />
                 ) : (
                   <div className="h-8 w-8 rounded-lg flex items-center justify-center text-xs font-black"
-                    style={{ background: c.primaryColor ?? '#3D4452', color: '#fff' }}>
+                    style={{ background: brandPalette(c.slug)?.accent ?? c.primaryColor ?? '#3D4452', color: '#fff' }}>
                     {c.name[0]?.toUpperCase()}
                   </div>
                 )}
@@ -147,6 +148,7 @@ export default function BrandEditorPage() {
 function BrandForm({ concept }: { concept: Concept }) {
   const qc = useQueryClient()
   const [tab, setTab] = useState<'identity' | 'storefront' | 'delivery' | 'tax'>('identity')
+  const palette = brandPalette(concept.slug)
 
   // Form state
   const [name, setName] = useState(concept.name)
@@ -328,6 +330,12 @@ function BrandForm({ concept }: { concept: Concept }) {
                       <input value={primaryColor} onChange={(e) => setPrimaryColor(e.target.value)}
                         className="s-input flex-1 font-mono text-xs" placeholder="#00D4B1" />
                     </div>
+                    {palette && palette.accent.toLowerCase() !== primaryColor.toLowerCase() && (
+                      <button type="button" onClick={() => setPrimaryColor(palette.accent)}
+                        className="mt-1.5 text-[10px] font-bold text-kds-green hover:underline">
+                        ↳ Match storefront accent ({palette.accent})
+                      </button>
+                    )}
                   </Field>
                   <Field label="Status">
                     <label className="flex items-center gap-2 mt-2 text-xs text-white/65 cursor-pointer">
@@ -373,6 +381,19 @@ function BrandForm({ concept }: { concept: Concept }) {
               </Field>
             </div>
           </Section>
+          {palette && (
+            <Section title="Storefront palette" subtitle="Live brand colours rendered on the microsite. Source of truth is in code; shown here so this tab carries the colour info.">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                {palette.swatches.map((s) => <SwatchChip key={s.hex + s.name} name={s.name} hex={s.hex} />)}
+              </div>
+              <div className="flex flex-wrap gap-x-5 gap-y-2 text-[11px] mt-1">
+                <KV k="Accent" v={palette.accent} />
+                <KV k="Footer background" v={palette.surfaceBg} />
+                <KV k="Footer text" v={palette.surfaceText} />
+              </div>
+              {palette.note && <p className="text-[10px] text-white/35">{palette.note}</p>}
+            </Section>
+          )}
           <div className="rounded-xl p-4 text-xs text-white/55"
             style={{ background: 'rgba(99,102,241,0.05)', border: '1px solid rgba(99,102,241,0.18)' }}>
             💡 For the visual page builder (hero blocks, gallery, menu strip, footer), open <Link href="/storefront" className="text-kds-green underline">Storefront Designer</Link> — that's the layout-level editor.
@@ -479,5 +500,27 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
       {children}
       {hint && <p className="text-[10px] text-white/35 mt-1">{hint}</p>}
     </div>
+  )
+}
+
+function SwatchChip({ name, hex }: { name: string; hex: string }) {
+  return (
+    <div className="rounded-xl overflow-hidden border border-white/10">
+      <div className="h-12 w-full" style={{ background: hex }} />
+      <div className="px-2 py-1.5">
+        <p className="text-[10px] font-bold text-white/80 truncate">{name}</p>
+        <p className="text-[9px] font-mono text-white/40">{hex}</p>
+      </div>
+    </div>
+  )
+}
+
+function KV({ k, v }: { k: string; v: string }) {
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <span className="h-3.5 w-3.5 rounded-full border border-white/15" style={{ background: v }} />
+      <span className="text-white/45">{k}</span>
+      <span className="font-mono text-white/70">{v}</span>
+    </span>
   )
 }
