@@ -69,7 +69,7 @@ export interface BrandSurface {
 }
 
 const BRAND_SURFACE: Record<string, BrandSurface> = {
-  simmer: { bg: '#14241A', text: '#F3ECDE', muted: 'rgba(243,236,222,0.62)', border: 'rgba(243,236,222,0.14)' },
+  simmer: { bg: '#06392F', text: '#F3ECDE', muted: 'rgba(243,236,222,0.62)', border: 'rgba(243,236,222,0.14)' },
   stax:   { bg: '#E7E5DF', text: '#16181D', muted: 'rgba(22,24,29,0.60)',    border: 'rgba(22,24,29,0.14)'    },
   flipd:  { bg: '#0A1733', text: '#FFFFFF', muted: '#86B7FF',                border: 'rgba(134,183,255,0.22)' },
   servd:  { bg: '#3A0E69', text: '#FFFFFF', muted: 'rgba(255,255,255,0.60)', border: 'rgba(255,255,255,0.10)' },
