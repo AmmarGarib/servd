@@ -10,7 +10,6 @@
 // the menu API exposes per-brand items.
 
 import Link from 'next/link'
-import dynamic from 'next/dynamic'
 import type { Concept } from '../../../lib/concept'
 import { CrossBrandStrip } from '../parts/CrossBrandStrip'
 import { OpenStatusBadge, HoursGrid, useHoursData } from '../parts/OpenStatusBadge'
@@ -26,10 +25,10 @@ interface Props {
 // the workshop reference.
 const SPECS = ['00', '01', '02', '03', '04', '05'] as const
 
-// Animated blueprint-grid background (WebGL2), fixed behind the WHOLE page so
-// every panel sits on the moving blueprint. ssr:false — WebGL can't SSR;
-// reduced-motion falls back to the static CSS grid on .stax-page.
-const StaxGridBackground = dynamic(() => import('../../ui/StaxGridBackground'), { ssr: false })
+// Background: one fixed, full-bleed concrete image behind the whole page
+// (/public/brand/stax-concrete.webp). A single static layer means there's
+// nothing to misalign on scroll — the old WebGL blueprint grid + the
+// scrolling CSS grid diverged and showed a seam.
 
 export function StaxLayout({ concept, concepts }: Props) {
   const hoursData = useHoursData(concept.slug)
@@ -41,11 +40,17 @@ export function StaxLayout({ concept, concepts }: Props) {
   // .stax-visit-grid) live in globals.css.
   return (
     <div className="stax-page">
-      {/* Page-wide moving blueprint — fixed behind every panel; content above.
-          z-index 0 keeps it under the sticky nav (z-50). */}
-      <div aria-hidden style={{ position: 'fixed', inset: 0, zIndex: 0, pointerEvents: 'none' }}>
-        <StaxGridBackground />
-      </div>
+      {/* Page-wide concrete backdrop — one fixed, full-bleed image behind every
+          panel; content sits above. z-index 0 keeps it under the sticky nav
+          (z-50). One static fixed layer = nothing to misalign on scroll; the
+          base colour matches the image as a safety net for mobile fixed hiccups. */}
+      <div aria-hidden style={{
+        position: 'fixed', inset: 0, zIndex: 0, pointerEvents: 'none',
+        backgroundColor: '#18242E',
+        backgroundImage: 'url(/brand/stax-concrete.webp)',
+        backgroundSize: 'cover',
+        backgroundPosition: 'center',
+      }} />
 
       <div style={{ position: 'relative', zIndex: 1 }}>
       {concept.announcementBanner && (

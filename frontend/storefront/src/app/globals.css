@@ -393,38 +393,18 @@ summary:focus-visible {
 
 /* stax — industrial blueprint */
 .stax-page {
-  background-color: var(--stax-blueprint);
-  background-image:
-    /* major grid (100px) */
-    linear-gradient(to right, var(--stax-grid) 1px, transparent 1px),
-    linear-gradient(to bottom, var(--stax-grid) 1px, transparent 1px),
-    /* minor grid (20px) */
-    linear-gradient(to right, var(--stax-grid-faint) 1px, transparent 1px),
-    linear-gradient(to bottom, var(--stax-grid-faint) 1px, transparent 1px),
-    /* radial wash so the grid doesn't read flat */
-    radial-gradient(ellipse 80% 60% at 50% 0%, color-mix(in srgb, var(--stax-blueprint) 75%, white 25%) 0%, var(--stax-blueprint) 60%, var(--stax-blueprint-deep) 100%);
-  background-size: 100px 100px, 100px 100px, 20px 20px, 20px 20px, auto;
-  background-position: 0 0, 0 0, 0 0, 0 0, center;
-  /* The blueprint drifts diagonally behind every panel. The radial wash
-     (5th layer) stays pinned to `center` in the keyframe so only the grid
-     moves. */
-  animation: staxBlueprintDrift 32s linear infinite;
+  /* Solid concrete base — the fixed concrete image layer (mounted in
+     StaxLayout) sits on top; this colour is the safety net so a mobile
+     fixed-layer hiccup never flashes white. No more scrolling CSS grid
+     (it diverged from the fixed background and caused the seam on scroll). */
+  background-color: #18242E;
   color: var(--stax-grey-80);
   font-family: var(--stax-display);
 }
-/* Moving blueprint over the solid deep-blue panels (cross-brand + CTA),
-   where the page-level grid is painted over. Same lines, same cadence, so
-   the motion reads continuous from one panel to the next. */
+/* Solid panels (cross-brand + CTA) — float as a translucent darken over the
+   concrete backdrop instead of carrying their own grid. */
 .stax-page .stax-grid-live {
-  background-color: var(--stax-blueprint-deep);
-  background-image:
-    linear-gradient(to right, var(--stax-grid) 1px, transparent 1px),
-    linear-gradient(to bottom, var(--stax-grid) 1px, transparent 1px),
-    linear-gradient(to right, var(--stax-grid-faint) 1px, transparent 1px),
-    linear-gradient(to bottom, var(--stax-grid-faint) 1px, transparent 1px);
-  background-size: 100px 100px, 100px 100px, 20px 20px, 20px 20px;
-  background-position: 0 0, 0 0, 0 0, 0 0;
-  animation: staxBlueprintDrift 32s linear infinite;
+  background-color: rgba(13,27,36,0.55);
 }
 @keyframes staxBlueprintDrift {
   from { background-position: 0 0, 0 0, 0 0, 0 0, center; }
@@ -450,17 +430,8 @@ summary:focus-visible {
 .stax-page .stax-btn-ghost { background: transparent; color: var(--stax-cream); border: 1px solid var(--stax-line); }
 .stax-page .stax-btn-ghost:hover { border-color: var(--stax-cream); background: rgba(242,235,218,0.06); }
 .stax-page .stax-grid-bg {
-  /* On the blueprint page the grid IS the background — this class adds
-     stronger emphasis lines (denser hatching) for the hero section. */
-  background-image:
-    /* corner ticks at 25% intervals */
-    linear-gradient(to right, var(--stax-cream-dim) 0 12px, transparent 12px 0%),
-    linear-gradient(to bottom, var(--stax-cream-dim) 0 12px, transparent 12px 0%),
-    /* additional hatching */
-    repeating-linear-gradient(135deg, rgba(255,255,255,0.04) 0 1px, transparent 1px 8px);
-  background-size: 25% 1px, 1px 25%, auto;
-  background-repeat: repeat-x, repeat-y, repeat;
-  background-position: 0 0, 0 0, 0 0;
+  /* (hero grid hatching removed with the blueprint grid — concrete shows through) */
+  background-image: none;
 }
 @media (max-width: 700px) { .stax-visit-grid { grid-template-columns: 1fr !important; } }
 
