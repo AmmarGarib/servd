@@ -22,8 +22,8 @@ export function QRCard({ slug, brand, url }: Props) {
   // else. Both layouts print well on a black-and-white printer because
   // the QR's foreground stays dark + the surround stays light.
   const surface = isSimmer ? '#EDE6D3' : '#f5f5f5'
-  const ink     = isSimmer ? '#1B2D2A' : '#0e0e0e'
-  const muted   = isSimmer ? 'rgba(27,45,42,0.7)'  : 'rgba(14,14,14,0.6)'
+  const ink     = isSimmer ? '#06392F' : '#0e0e0e'
+  const muted   = isSimmer ? 'rgba(6,57,47,0.7)'  : 'rgba(14,14,14,0.6)'
   const accent  = isSimmer ? '#E94E1B' : '#0e0e0e'
 
   return (

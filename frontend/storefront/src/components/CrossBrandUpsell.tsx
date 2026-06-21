@@ -28,9 +28,9 @@ interface UpsellPick {
 }
 
 const PICKS: UpsellPick[] = [
-  { brandSlug: 'stax',   brandName: 'Stax',   dish: 'The Stax Classic',  price: 'Rs. 1,800', emoji: '🍔', color: '#0A1857', blurb: 'Double smash, aged cheddar, special sauce, brioche.' },
-  { brandSlug: 'simmer', brandName: 'Simmer', dish: 'Burrata',           price: 'Rs. 1,400', emoji: '🫒', color: '#1B2D2A', blurb: 'Blistered tomato, olive oil cracker, basil.' },
-  { brandSlug: 'flipd',  brandName: 'Flipd',  dish: 'The Court Classic',  price: 'Rs. 1,200', emoji: '🍔', color: '#3AA8FF', blurb: 'Dry-aged smash, brioche, sauce. Court-side cast-iron.' },
+  { brandSlug: 'stax',   brandName: 'Stax',   dish: 'The Stax Classic',  price: 'Rs. 1,800', emoji: '🍔', color: '#293B47', blurb: 'Double smash, aged cheddar, special sauce, brioche.' },
+  { brandSlug: 'simmer', brandName: 'Simmer', dish: 'Burrata',           price: 'Rs. 1,400', emoji: '🫒', color: '#06392F', blurb: 'Blistered tomato, olive oil cracker, basil.' },
+  { brandSlug: 'flipd',  brandName: 'Flipd',  dish: 'The Court Classic',  price: 'Rs. 1,200', emoji: '🍔', color: '#2092E9', blurb: 'Dry-aged smash, brioche, sauce. Court-side cast-iron.' },
 ]
 
 interface Props {

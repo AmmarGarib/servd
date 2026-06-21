@@ -12,9 +12,9 @@ rewritten, trust these corrections:
 - **Storefront visual migration is DONE**, not "in progress." The legacy
   "premium" system (`#00D4B1` teal → `#6366F1` indigo, `#18160f` ink,
   `PremiumInput`) is fully removed from `frontend/storefront/src`. The whole
-  storefront is on `--servd-*` tokens. **The servd storefront brand is deep
-  royal PURPLE (`#3A0E69`), not teal/green** — note `--servd-green` holds a
-  purple value (legacy var name). The admin app is still teal→indigo.
+  storefront is on `--servd-*` tokens. **The servd storefront brand is
+  "obsidian plum" (`#4E2A4F` plum / `#2D1E2F` obsidian)** — note `--servd-green`
+  holds this plum value (legacy var name). The admin app is still teal→indigo.
 - **The three "404 routes" are fixed** (`/<concept>/menu`, `/<concept>/order`,
   `/reserve` all exist/redirect).
 - **Deploy reality is unsettled.** A `.github/workflows/build-and-push.yml` and
@@ -23,8 +23,8 @@ rewritten, trust these corrections:
   via Docker Hub image pushes (`ammargarib/servd:{api,admin,storefront}`) +
   the webhook. Treat the deploy mechanism as "verify against the box," not as
   documented below.
-- **Stax** brand palette is blueprint **blue** (`#0A1857`), not "light grey +
-  deep purple" as stated later.
+- **Stax** brand palette is a cool **navy-grey** set (oceanic noir `#142834`
+  base + greys: astroscopus `#B0B2B8`, tulle `#8D8F97`, adept `#293B47`).
 - Open risks flagged by the audit (not yet fixed): client-only role/module
   permissions (no `RoleModuleAccess` model), unscoped tenant data in
   `/reports/*` + `/management/*` + accounting P&L, lockfile drift in the
@@ -119,13 +119,14 @@ visual language without depending on the DB `primaryColor` field.
 Brand-specific layouts in `frontend/storefront/src/components/brand/layouts/`
 are switched on in `BrandFallback.tsx`. Live brands:
 
-- **simmer** — Night-mode editorial (forest green + bone + fiery orange).
+- **simmer** — Night-mode editorial (forest green "tiber" `#06392F` + bone
+  `#EDE6D3` + fiery orange `#E94E1B`).
   Bound to the canonical `simmer-brand` SKILL.md: lowercase wordmark,
   Amarante + Times, no white, no gradients, no exclamation marks,
   no emojis, banned-word list, single orange signal per viewport,
   tagline `simmer down.` always below the wordmark, never above.
-- **stax** — Industrial workshop (light grey + deep purple)
-- **flipd** — Cool diner (sky blue + pale cream)
+- **stax** — Industrial navy-grey (oceanic noir `#142834` + greys, palettepoint set)
+- **flipd** — Cool diner (curious blue `#2092E9` + bone `#EDE6D3` + midnight-oil ink `#090D17`)
 
 CSS tokens for all three are defined in
 `frontend/storefront/src/app/globals.css` under `:root` (search

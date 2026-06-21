@@ -90,7 +90,7 @@ export function SpeakeasyFridgeHero({
             something it isn't. */}
         <div aria-hidden="true" style={{
           position: 'absolute', inset: 0,
-          background: '#1B2D2A',
+          background: '#06392F',
         }} />
         {/* Faint blueprint grid — 40px squares, thin gold-cream stroke */}
         <div aria-hidden="true" style={{
@@ -459,7 +459,7 @@ function BlueprintCoolerDoor({ accent }: { accent: string }) {
         <rect x="336" y="454" width="188" height="28" rx="14" fill="rgba(237,230,211,0.10)" stroke={accent} strokeWidth="1.6" />
         {/* Pivot dot */}
         <circle cx="358" cy="468" r="6" fill={accent} />
-        <circle cx="358" cy="468" r="3" fill="#1B2D2A" />
+        <circle cx="358" cy="468" r="3" fill="#06392F" />
         {/* Lock cylinder underneath */}
         <rect x="436" y="490" width="40" height="14" fill="none" stroke={fine} strokeWidth="1" rx="2" />
         <circle cx="456" cy="497" r="2.5" fill={fine} />

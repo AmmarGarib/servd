@@ -10,9 +10,9 @@ import { usePathname } from 'next/navigation'
 // Accents match the canonical per-brand palette (lib/concept BRAND_ACCENT_OVERRIDES).
 // "simmer" is lowercase per its brand rules.
 const BRANDS = [
-  { slug: 'stax',   name: 'Stax',   accent: '#0A1857' },
+  { slug: 'stax',   name: 'Stax',   accent: '#B0B2B8' },
   { slug: 'simmer', name: 'simmer', accent: '#E94E1B' },
-  { slug: 'flipd',  name: 'Flipd',  accent: '#3AA8FF' },
+  { slug: 'flipd',  name: 'Flipd',  accent: '#2092E9' },
 ]
 
 export function StorefrontFooter() {
@@ -28,9 +28,9 @@ export function StorefrontFooter() {
         marginTop: '4rem',
         // Brand-purple footer (was a black slab). Accent is a light lavender so
         // the eyebrow / "Let's go" / dot / pill read against the deep purple.
-        background: 'linear-gradient(165deg, #3A0E69 0%, #1E0640 55%, #150525 100%)',
+        background: 'linear-gradient(165deg, #4E2A4F 0%, #2D1E2F 55%, #1E1420 100%)',
         ['--brand-accent' as string]: '#C9A4F2',
-        ['--brand-ink' as string]:    '#1E0640',
+        ['--brand-ink' as string]:    '#2D1E2F',
       } as React.CSSProperties}
     >
       <div className="container relative z-10">

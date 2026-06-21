@@ -3,7 +3,7 @@
 //
 // A deep-navy blueprint grid with major/minor lines, an ASCII-glyph overlay on
 // the major intersections, mesh-gradient depth, vignette, noise + ordered
-// dither. Matches the Stax palette (#0A1857 blueprint blue). Self-contained:
+// dither. Matches the Stax palette (#142834 oceanic noir). Self-contained:
 // no external deps, no assets. Renders as an ABSOLUTE background layer that
 // fills its (position:relative) parent — drop it behind hero content.
 //
@@ -75,10 +75,10 @@ float majorGridAA(vec2 uv, float scale, float stepN, float width){
 // mesh-gradient: 4 тёмно-синие/глубокие точки
 vec3 meshGradient(vec2 uv){
   vec2 p0=vec2(-0.70,-0.45), p1=vec2(0.75,-0.35), p2=vec2(-0.65,0.65), p3=vec2(0.80,0.55);
-  vec3 c0=vec3(0.030,0.075,0.27);  // blueprint deep
-  vec3 c1=vec3(0.039,0.094,0.341); // #0A1857 royal blue (Stax base)
-  vec3 c2=vec3(0.025,0.065,0.24);  // deeper
-  vec3 c3=vec3(0.055,0.120,0.40);  // cobalt lift
+  vec3 c0=vec3(0.051,0.106,0.141); // oceanic noir deep
+  vec3 c1=vec3(0.078,0.157,0.204); // #142834 oceanic noir (Stax base)
+  vec3 c2=vec3(0.040,0.090,0.120); // deeper
+  vec3 c3=vec3(0.161,0.231,0.278); // adept lift
   float e=2.0;
   float w0=pow(1.0/(0.2+distance(uv,p0)),e);
   float w1=pow(1.0/(0.2+distance(uv,p1)),e);

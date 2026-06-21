@@ -5,11 +5,11 @@
 
 import React from 'react'
 
-// servd royal-purple gradient (the storefront brand). Simmer = single orange
-// signal (their rules ban gradients); Stax = blueprint blue.
-export const SERVD_CELLS = ['#3A0E69', '#481E7B', '#552D8D', '#633D9F', '#714DB1', '#7E5CC4', '#8C6CD6', '#997BE8', '#A78BFA']
+// servd obsidian-plum gradient (the storefront brand). Simmer = single orange
+// signal (their rules ban gradients); Stax = navy-grey.
+export const SERVD_CELLS = ['#2D1E2F', '#3D2540', '#4E2A4F', '#623A63', '#774B78', '#8C5E8E', '#A375A4', '#BE96BE', '#D9BFD9']
 export const SIMMER_CELLS = Array<string>(9).fill('#E94E1B')
-export const STAX_CELLS = ['#0A1857', '#1B2E6C', '#2C4380', '#3D5995', '#4F6FAA', '#6084BF', '#719AD4', '#82AFE8', '#93C5FD']
+export const STAX_CELLS = ['#142834', '#1E3340', '#293B47', '#384A56', '#45505C', '#5C6470', '#737A85', '#8D8F97', '#B0B2B8']
 
 const DELAYS = [0, 100, 200, 100, 200, 200, 300, 300, 400]
 
@@ -36,7 +36,7 @@ export function Loader({
           key={i}
           className="servd-loader-cell"
           aria-hidden
-          style={{ '--cell-color': colors[i % colors.length] ?? '#3A0E69', animationDelay: `${DELAYS[i] ?? 0}ms` } as CSSVars}
+          style={{ '--cell-color': colors[i % colors.length] ?? '#4E2A4F', animationDelay: `${DELAYS[i] ?? 0}ms` } as CSSVars}
         />
       ))}
     </div>

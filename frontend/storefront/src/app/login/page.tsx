@@ -59,8 +59,8 @@ export default function LoginPage() {
   }
 
   return (
-    <main className="relative flex items-center justify-center px-5" style={{ minHeight: '100dvh', background: '#160726' }}>
-      <SmokeyBackground color="#3A0E69" backdropBlur="sm" />
+    <main className="relative flex items-center justify-center px-5" style={{ minHeight: '100dvh', background: '#1E1420' }}>
+      <SmokeyBackground color="#4E2A4F" backdropBlur="sm" />
 
       <div className="relative z-10 w-full max-w-sm">
         <Link href="/" aria-label="servd home" className="mb-6 block text-center"
@@ -95,7 +95,7 @@ export default function LoginPage() {
             </div>
 
             <MagneticButton type="submit" disabled={loading}
-              className="group w-full rounded-2xl py-3.5 font-black text-[0.95rem] transition-all disabled:opacity-40 active:scale-[0.98] bg-white text-[#3A0E69] hover:bg-white/90"
+              className="group w-full rounded-2xl py-3.5 font-black text-[0.95rem] transition-all disabled:opacity-40 active:scale-[0.98] bg-white text-[#4E2A4F] hover:bg-white/90"
               style={{ boxShadow: '0 8px 24px rgba(0,0,0,0.25)' }}>
               {loading ? 'Signing in…' : 'Sign in'}
               {!loading && <ArrowRight className="h-5 w-5 transition-transform group-hover:translate-x-1" />}

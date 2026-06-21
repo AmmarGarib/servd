@@ -8,16 +8,16 @@
 @tailwind utilities;
 
 :root {
-  /* servd primary — deep royal blue. The variable names are kept as
+  /* servd primary — "obsidian plum". The variable names are kept as
      "--servd-green-*" so we don't have to find/replace every reference
-     across the storefront, but the values are now royal blue. Treat
-     them as "the servd brand color" semantically.
-     Royal blue: deep, confident, premium. Lighter variants for soft
-     surfaces; darker for hover/contrast. */
-  --servd-green:        #3A0E69;  /* deep royal purple — primary CTA, brand dot */
-  --servd-green-dark:   #1E0640;  /* darker purple — hover / pressed */
-  --servd-green-soft:   #EBDEF7;  /* soft purple tint for chips, success cards */
-  --servd-green-ink:    #150525;  /* darkest, used as text on soft */
+     across the storefront, but the values are a deep plum/aubergine.
+     Treat them as "the servd brand color" semantically.
+     Obsidian plum: moody, premium, low-key. Lighter variant for soft
+     surfaces; darker (obsidian) for hover/contrast. */
+  --servd-green:        #4E2A4F;  /* obsidian plum — primary CTA, brand dot */
+  --servd-green-dark:   #2D1E2F;  /* obsidian — hover / pressed */
+  --servd-green-soft:   #ECE2EC;  /* soft plum tint for chips, success cards */
+  --servd-green-ink:    #1E1420;  /* darkest plum, used as text on soft */
   --servd-black:        #0a0a0a;
   --servd-ink:          #171717;
   --servd-mute:         #525252;
@@ -41,9 +41,9 @@
   --font-wordmark:      'Syne', 'Bricolage Grotesque', system-ui, sans-serif;
 
   /* ── Simmer brand tokens (per simmer-brand SKILL.md) ─────────────────────
-     Forest green surface, bone ink, fiery orange signal. Night mode is the
-     web default. Amarante for display, Times for body/utility. */
-  --simmer-green:       #1B2D2A;
+     Forest green surface ("tiber" #06392F), bone ink, fiery orange signal.
+     Night mode is the web default. Amarante for display, Times for body. */
+  --simmer-green:       #06392F;
   --simmer-bone:        #EDE6D3;
   --simmer-walnut:      #3D2817;
   --simmer-black:       #0E0E0E;
@@ -51,23 +51,23 @@
   --simmer-display:     'Amarante', serif;
   --simmer-body:        'Times New Roman', Times, serif;
 
-  /* ── Stax brand tokens (industrial blueprint: deep royal blue + greys)
-        Blueprint background, technical-drawing line work, cream
-        annotations. Multiple greys for text hierarchy. */
-  --stax-blueprint:        #0A1857;            /* deep royal blue surface */
-  --stax-blueprint-deep:   #050F3D;            /* darker — gradient end */
+  /* ── Stax brand tokens (industrial: cool navy-grey palette, palettepoint)
+        Oceanic-noir background, technical-drawing line work, light-grey
+        annotations. Greys for text hierarchy. */
+  --stax-blueprint:        #142834;            /* oceanic noir surface */
+  --stax-blueprint-deep:   #0D1B24;            /* darker — gradient end */
   --stax-line:             rgba(255,255,255,0.16); /* borders / rules */
   --stax-line-faint:       rgba(255,255,255,0.07);
-  /* Moving blueprint grid — bone lines on the blue-grey field. */
-  --stax-grid:             rgba(242,235,218,0.22); /* major grid (bone) */
-  --stax-grid-faint:       rgba(242,235,218,0.09); /* minor grid (bone) */
-  --stax-cream:            #F2EBDA;            /* annotation labels, headlines */
-  --stax-cream-dim:        rgba(242,235,218,0.7);
+  /* Moving grid — light-grey lines on the navy field. */
+  --stax-grid:             rgba(176,178,184,0.22); /* major grid (astroscopus) */
+  --stax-grid-faint:       rgba(176,178,184,0.09); /* minor grid (astroscopus) */
+  --stax-cream:            #C5C7CC;            /* annotation labels (flat aluminium) */
+  --stax-cream-dim:        rgba(197,199,204,0.7);
   --stax-grey-100:         #FFFFFF;            /* brightest text */
-  --stax-grey-80:          #E8E8EC;            /* primary body */
-  --stax-grey-60:          #B5B7C0;            /* secondary text, captions */
-  --stax-grey-40:          #6E7186;            /* tertiary, dividers */
-  --stax-grey-20:          #2A2E40;            /* card backgrounds (dark) */
+  --stax-grey-80:          #C5C7CC;            /* primary body (flat aluminium) */
+  --stax-grey-60:          #B0B2B8;            /* secondary text (astroscopus) */
+  --stax-grey-40:          #8D8F97;            /* tertiary, dividers (tulle) */
+  --stax-grey-20:          #293B47;            /* card backgrounds (adept) */
   --stax-ink:              #FFFFFF;
   --stax-display:          'Space Grotesk', 'Inter', sans-serif;
   --stax-mono:             'JetBrains Mono', 'Courier New', monospace;
@@ -571,11 +571,11 @@ summary:focus-visible {
        tertiary that handles the marquee wordmark, 3D shadows under the
        cards/buttons, and the checkered floor. No red anywhere — the
        brand reads as a takeout chicken-paper print, not Coca-Cola. */
-  --flipd-sky:          #3AA8FF;
-  --flipd-sky-deep:     #1A78D6;
+  --flipd-sky:          #2092E9;  /* curious blue */
+  --flipd-sky-deep:     #1568B0;  /* deeper curious blue */
   --flipd-pale:         #E8F4FF;
-  --flipd-ink:          #0E1A2A;
-  --flipd-cream:        #FBFDFF;
+  --flipd-ink:          #090D17;  /* midnight oil */
+  --flipd-cream:        #EDE6D3;  /* bone */
   --flipd-chrome:       #C8CCD2;            /* booth chrome */
   --flipd-script:       'Lobster', cursive;
   --flipd-marquee:      'Bungee', 'Impact', sans-serif;

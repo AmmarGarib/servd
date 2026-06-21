@@ -59,7 +59,7 @@ function hexToRgb(hex: string): [number, number, number] {
   ]
 }
 
-export function SmokeyBackground({ color = '#3A0E69', className = '', backdropBlur = 'sm' }: SmokeyBackgroundProps) {
+export function SmokeyBackground({ color = '#4E2A4F', className = '', backdropBlur = 'sm' }: SmokeyBackgroundProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const mouse = useRef({ x: 0, y: 0, hovering: false })
 

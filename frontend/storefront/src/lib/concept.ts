@@ -45,8 +45,8 @@ export interface Concept {
 // is the source of truth for /brand/<slug> chrome.
 const BRAND_ACCENT_OVERRIDES: Record<string, string> = {
   simmer: '#E94E1B',  // fiery orange — the simmer brand bible's signal color
-  stax:   '#0A1857',  // deep royal blue — industrial blueprint palette
-  flipd:  '#3AA8FF',  // sky blue — cool diner palette
+  stax:   '#B0B2B8',  // astroscopus grey — industrial navy-grey palette
+  flipd:  '#2092E9',  // curious blue — cool diner palette
 }
 
 /** Returns the brand accent the storefront should use for this concept,
@@ -70,9 +70,9 @@ export interface BrandSurface {
 
 const BRAND_SURFACE: Record<string, BrandSurface> = {
   simmer: { bg: '#06392F', text: '#F3ECDE', muted: 'rgba(243,236,222,0.62)', border: 'rgba(243,236,222,0.14)' },
-  stax:   { bg: '#E7E5DF', text: '#16181D', muted: 'rgba(22,24,29,0.60)',    border: 'rgba(22,24,29,0.14)'    },
-  flipd:  { bg: '#0A1733', text: '#FFFFFF', muted: '#86B7FF',                border: 'rgba(134,183,255,0.22)' },
-  servd:  { bg: '#3A0E69', text: '#FFFFFF', muted: 'rgba(255,255,255,0.60)', border: 'rgba(255,255,255,0.10)' },
+  stax:   { bg: '#142834', text: '#C5C7CC', muted: '#8D8F97',                border: 'rgba(197,199,204,0.14)' },
+  flipd:  { bg: '#090D17', text: '#EDE6D3', muted: 'rgba(237,230,211,0.60)', border: 'rgba(237,230,211,0.14)' },
+  servd:  { bg: '#4E2A4F', text: '#FFFFFF', muted: 'rgba(255,255,255,0.60)', border: 'rgba(255,255,255,0.10)' },
 }
 
 /** The dark-section surface palette for a brand (falls back to near-black). */

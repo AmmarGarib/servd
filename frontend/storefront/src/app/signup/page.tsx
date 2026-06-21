@@ -165,13 +165,13 @@ export default function SignupPage() {
   }
   const primaryBtnStyle = (busy: boolean): React.CSSProperties => ({
     background: busy ? 'rgba(255,255,255,0.12)' : 'white',
-    color: busy ? 'rgba(255,255,255,0.6)' : '#3A0E69',
+    color: busy ? 'rgba(255,255,255,0.6)' : '#4E2A4F',
     boxShadow: busy ? 'none' : '0 8px 24px rgba(0,0,0,0.25)',
   })
 
   return (
-    <main className="relative flex items-center justify-center px-5 py-12" style={{ minHeight: '100dvh', background: '#160726' }}>
-      <SmokeyBackground color="#3A0E69" backdropBlur="sm" />
+    <main className="relative flex items-center justify-center px-5 py-12" style={{ minHeight: '100dvh', background: '#1E1420' }}>
+      <SmokeyBackground color="#4E2A4F" backdropBlur="sm" />
 
       <div className="relative z-10 w-full max-w-sm">
         <Link href="/" aria-label="servd home" className="mb-6 block text-center"

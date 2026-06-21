@@ -211,7 +211,7 @@ export function HomeClient({ concepts, heroConfig }: Props) {
 
       {/* ── EXPLORE STRIP ─ Brand-purple band inviting customers to browse
             every brand in one place. No delivery / aggregator messaging. */}
-      <section className="reveal-on-scroll" style={{ background: 'linear-gradient(135deg, #3A0E69 0%, #1E0640 100%)', color: 'white', padding: '2.5rem 0', order: 4 }}>
+      <section className="reveal-on-scroll" style={{ background: 'linear-gradient(135deg, #4E2A4F 0%, #2D1E2F 100%)', color: 'white', padding: '2.5rem 0', order: 4 }}>
         <div className="container" style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '1rem' }}>
           <p style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(1.15rem, 2vw, 1.5rem)', fontWeight: 700, lineHeight: 1.3, margin: 0, maxWidth: '38rem' }}>
             Every kitchen, one order.<br />
