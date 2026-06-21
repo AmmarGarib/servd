@@ -36,7 +36,10 @@ export function BrandShell({ concept, children }: Props) {
   // Simmer green, servd royal blue) get white. Defaults to white when
   // we can't parse the accent (e.g. it's a CSS var name).
   const accentInk = accent.startsWith('#') && isLight(accent) ? '#0a0a0a' : 'white'
+  const surface = brandSurface(concept.slug)
   const wrapperStyle = {
+    background: surface.bg,
+    minHeight: '100vh',
     ['--brand-accent' as string]:      accent,
     ['--brand-accent-dark' as string]: accent,
     ['--brand-ink' as string]:         accentInk,
@@ -56,6 +59,7 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
   const base = `/brand/${concept.slug}`
   const servdHome = servdHref('/', onBrandHost)
   const [open, setOpen] = useState(false)
+  const surface = brandSurface(concept.slug)
 
   // "Book" only appears when the brand explicitly accepts reservations.
   const acceptsReservations = concept.reservationsEnabled !== false
@@ -76,10 +80,10 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
         position: 'sticky',
         top: 0,
         zIndex: 50,
-        background: 'rgba(255,255,255,0.88)',
-        backdropFilter: 'blur(16px) saturate(160%)',
-        WebkitBackdropFilter: 'blur(16px) saturate(160%)',
-        borderBottom: '1px solid var(--servd-line)',
+        // Transparent scrim in the brand's own background colour, fading down —
+        // the page background appears to flow up through the header (no band).
+        background: `linear-gradient(to bottom, ${surface.bg}F2 0%, ${surface.bg}00 100%)`,
+        borderBottom: 'none',
         padding: '0.95rem clamp(1rem, 4vw, 2rem)',
         display: 'flex',
         alignItems: 'center',
@@ -92,7 +96,7 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
         href={base}
         style={{
           display: 'flex', alignItems: 'baseline', gap: '0.65rem',
-          textDecoration: 'none', color: 'inherit',
+          textDecoration: 'none', color: surface.text,
         }}>
         <span aria-hidden="true" style={{
           width: '2.1rem', height: '2.1rem',
@@ -129,7 +133,7 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
               href={l.href}
               style={{
                 padding: '0.5rem 0.95rem',
-                color: active ? 'var(--servd-black)' : 'var(--servd-mute)',
+                color: active ? surface.text : surface.muted,
                 fontWeight: active ? 700 : 500,
                 fontSize: '0.92rem',
                 textDecoration: 'none',
@@ -158,7 +162,7 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
         <Link
           href={servdHome}
           style={{
-            color: 'var(--servd-dim)',
+            color: surface.muted,
             fontSize: '0.78rem',
             fontWeight: 600,
             letterSpacing: '0.02em',
@@ -177,7 +181,7 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
           aria-expanded={open}
           onClick={() => setOpen((o) => !o)}
           className="inline-flex items-center justify-center sm:hidden"
-          style={{ width: '2.75rem', height: '2.75rem', marginLeft: '0.15rem', background: 'transparent', border: 'none', color: 'var(--servd-ink)', cursor: 'pointer' }}
+          style={{ width: '2.75rem', height: '2.75rem', marginLeft: '0.15rem', background: 'transparent', border: 'none', color: surface.text, cursor: 'pointer' }}
         >
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             {open
@@ -193,12 +197,10 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
           className="sm:hidden flex flex-col"
           style={{
             position: 'absolute', top: '100%', left: 0, right: 0,
-            background: 'rgba(255,255,255,0.97)',
-            backdropFilter: 'blur(16px) saturate(160%)',
-            WebkitBackdropFilter: 'blur(16px) saturate(160%)',
-            borderBottom: '1px solid var(--servd-line)',
+            background: surface.bg,
+            borderBottom: `1px solid ${surface.border}`,
             padding: '0.4rem clamp(1rem, 4vw, 2rem) 0.9rem',
-            boxShadow: '0 14px 26px rgba(0,0,0,0.09)',
+            boxShadow: '0 14px 26px rgba(0,0,0,0.35)',
           }}
         >
           {links.map((l) => {
@@ -210,11 +212,11 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
                 onClick={() => setOpen(false)}
                 style={{
                   padding: '0.85rem 0.4rem',
-                  color: active ? 'var(--servd-black)' : 'var(--servd-mute)',
+                  color: active ? surface.text : surface.muted,
                   fontWeight: active ? 700 : 500,
                   fontSize: '1rem',
                   textDecoration: 'none',
-                  borderBottom: '1px solid var(--servd-line)',
+                  borderBottom: `1px solid ${surface.border}`,
                 }}
               >
                 {l.label}
@@ -224,7 +226,7 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
           <Link
             href={servdHome}
             onClick={() => setOpen(false)}
-            style={{ padding: '0.85rem 0.4rem', color: 'var(--servd-dim)', fontSize: '0.85rem', fontWeight: 600, textDecoration: 'none' }}
+            style={{ padding: '0.85rem 0.4rem', color: surface.muted, fontSize: '0.85rem', fontWeight: 600, textDecoration: 'none' }}
           >
             on servd<span style={{ color: accent }}>.</span>
           </Link>
@@ -272,7 +274,6 @@ function BrandFooter({ concept, onBrandHost, accent }: { concept: Concept; onBra
       style={{
         padding: 'clamp(4rem, 7vw, 6rem) 0 1.75rem',
         marginTop: '4rem',
-        background: surface.bg,
         color: surface.text,
       }}>
       <div className="container relative z-10">

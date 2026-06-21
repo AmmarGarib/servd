@@ -43,7 +43,7 @@ export const BRAND_PALETTES: Record<string, BrandPalette> = {
     note: 'Cool industrial navy-grey set (palettepoint).',
   },
   flipd: {
-    accent: '#2092E9', surfaceBg: '#090D17', surfaceText: '#EDE6D3',
+    accent: '#2092E9', surfaceBg: '#EDE6D3', surfaceText: '#090D17',
     swatches: [
       { name: 'Midnight oil (ink)', hex: '#090D17' },
       { name: 'Curious blue', hex: '#2092E9' },

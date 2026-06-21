@@ -55,7 +55,7 @@ export function StorefrontNav() {
         // a truly transparent nav would render white-on-white. Once scrolled
         // past the hero, flip to the blurred-glass look against the white
         // section underneath.
-        background: transparent ? '#0a0a0a' : 'rgba(255,255,255,0.88)',
+        background: transparent ? 'linear-gradient(to bottom, rgba(30,20,32,0.92) 0%, rgba(30,20,32,0) 100%)' : 'rgba(255,255,255,0.88)',
         backdropFilter: transparent ? undefined : 'blur(16px) saturate(160%)',
         WebkitBackdropFilter: transparent ? undefined : 'blur(16px) saturate(160%)',
         borderBottom: transparent ? 'none' : '1px solid var(--servd-line)',

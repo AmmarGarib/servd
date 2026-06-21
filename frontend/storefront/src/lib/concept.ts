@@ -71,7 +71,9 @@ export interface BrandSurface {
 const BRAND_SURFACE: Record<string, BrandSurface> = {
   simmer: { bg: '#06392F', text: '#F3ECDE', muted: 'rgba(243,236,222,0.62)', border: 'rgba(243,236,222,0.14)' },
   stax:   { bg: '#142834', text: '#C5C7CC', muted: '#8D8F97',                border: 'rgba(197,199,204,0.14)' },
-  flipd:  { bg: '#090D17', text: '#EDE6D3', muted: 'rgba(237,230,211,0.60)', border: 'rgba(237,230,211,0.14)' },
+  // flipd is a LIGHT diner page (bone surface, midnight-oil ink) — its chrome
+  // integrates on bone with ink text, not the dark treatment the others use.
+  flipd:  { bg: '#EDE6D3', text: '#090D17', muted: 'rgba(9,13,23,0.60)',     border: 'rgba(9,13,23,0.12)'     },
   servd:  { bg: '#4E2A4F', text: '#FFFFFF', muted: 'rgba(255,255,255,0.60)', border: 'rgba(255,255,255,0.10)' },
 }
 
