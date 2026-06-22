@@ -46,16 +46,15 @@ export function StorefrontNav() {
     <nav
       aria-label="Primary"
       style={{
-        position: 'sticky',
-        top: 0,
+        // On the home hero the nav is FIXED so the full-bleed video sits behind
+        // it (immersive float); a top-down scrim keeps the white mark legible
+        // over any video frame. Once scrolled past the hero it becomes the
+        // blurred-glass band over the white sections. Other pages: sticky.
+        position: pathname === '/' ? 'fixed' : 'sticky',
+        top: 0, left: 0, right: 0,
         zIndex: 50,
         padding: '0.95rem clamp(1rem, 4vw, 2rem)',
-        // On the dark hero (home page, scroll near top): solid dark nav so the
-        // white brand text reads against it — body bg is white by default, so
-        // a truly transparent nav would render white-on-white. Once scrolled
-        // past the hero, flip to the blurred-glass look against the white
-        // section underneath.
-        background: transparent ? 'linear-gradient(to bottom, rgba(30,20,32,0.92) 0%, rgba(30,20,32,0) 100%)' : 'rgba(255,255,255,0.88)',
+        background: transparent ? 'linear-gradient(to bottom, rgba(0,0,0,0.55) 0%, rgba(0,0,0,0.12) 60%, rgba(0,0,0,0) 100%)' : 'rgba(255,255,255,0.88)',
         backdropFilter: transparent ? undefined : 'blur(16px) saturate(160%)',
         WebkitBackdropFilter: transparent ? undefined : 'blur(16px) saturate(160%)',
         borderBottom: transparent ? 'none' : '1px solid var(--servd-line)',
@@ -72,25 +71,30 @@ export function StorefrontNav() {
           width: '100%',
         }}
       >
-      {/* Wordmark — chunky display weight. On dark surfaces the dot
-          becomes the brand-accent (servd-green by default). */}
+      {/* Brand-mark — circular logo placeholder + name (new system, matches the
+          brand microsites). Name goes white over the dark hero, plum elsewhere. */}
       <Link
         href="/"
         aria-label="servd home"
-        style={{
-          fontFamily: 'var(--font-display)',
-          fontSize: '1.6rem',
-          fontWeight: 800,
-          letterSpacing: '-0.045em',
-          color: onDarkHero ? 'white' : 'var(--servd-black)',
-          textDecoration: 'none',
-          display: 'inline-flex',
-          alignItems: 'baseline',
-          gap: '0.1rem',
-        }}
+        style={{ display: 'inline-flex', alignItems: 'center', gap: '0.6rem', textDecoration: 'none' }}
       >
-        servd
-        <span style={{ color: 'var(--servd-green)' }}>.</span>
+        <span aria-hidden="true" style={{
+          width: '2.3rem', height: '2.3rem', borderRadius: '50%', flexShrink: 0,
+          background: 'var(--servd-green)', color: 'white',
+          display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+          fontFamily: 'var(--font-display)', fontWeight: 900, fontSize: '1.05rem',
+          letterSpacing: '-0.02em', boxShadow: '0 2px 10px rgba(0,0,0,0.25)',
+        }}>s</span>
+        <span style={{
+          fontFamily: 'var(--font-wordmark)',
+          fontSize: '1.5rem',
+          fontWeight: 800,
+          letterSpacing: '-0.03em',
+          lineHeight: 1,
+          color: onDarkHero ? 'white' : 'var(--servd-black)',
+        }}>
+          servd<span style={{ color: 'var(--servd-green)' }}>.</span>
+        </span>
       </Link>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
@@ -147,40 +151,21 @@ export function StorefrontNav() {
             Account
           </Link>
         ) : (
-          <>
-            <Link
-              href="/login"
-              style={{
-                color: onDarkHero ? 'rgba(255,255,255,0.75)' : 'var(--servd-mute)',
-                fontWeight: 600,
-                fontSize: '0.88rem',
-                padding: '0.7rem 0.95rem',
-                textDecoration: 'none',
-                borderRadius: '0.6rem',
-                display: 'inline-flex',
-                alignItems: 'center',
-                minHeight: '44px',
-              }}
-            >
-              Sign in
-            </Link>
-            {/* CTA — uses the kinetic brand-pill so it matches every
-                other "primary action" pill across the site. */}
-            <Link
-              href="/signup"
-              className="brand-pill"
-              style={{
-                ['--brand-accent' as string]: 'var(--servd-green)',
-                // royal-blue accent → text must be white for contrast
-                ['--brand-ink' as string]:    'white',
-                padding: '0.7rem 1.2rem',
-                fontSize: '0.92rem',
-                minHeight: '44px',
-              }}
-            >
-              Sign up →
-            </Link>
-          </>
+          /* Single Sign in button — the login page already has a "create
+             account" path, so a separate Sign up CTA is redundant. */
+          <Link
+            href="/login"
+            className="brand-pill"
+            style={{
+              ['--brand-accent' as string]: 'var(--servd-green)',
+              ['--brand-ink' as string]:    'white',
+              padding: '0.7rem 1.3rem',
+              fontSize: '0.92rem',
+              minHeight: '44px',
+            }}
+          >
+            Sign in
+          </Link>
         )}
       </div>
       </div>
