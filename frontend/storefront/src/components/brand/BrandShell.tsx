@@ -48,7 +48,7 @@ export function BrandShell({ concept, children }: Props) {
     '--flipd-green':      '#2F6B3A',
     '--flipd-green-deep': '#234E2B',
     '--flipd-pale':       '#E5ECE7',
-    '--flipd-ink':        '#0A2C3A',
+    '--flipd-ink':        '#14331D',
   } : {}
   const wrapperStyle = {
     background: surface.bg,

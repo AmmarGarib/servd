@@ -570,7 +570,7 @@ summary:focus-visible {
   --flipd-green:        #3E8E44;  /* padel turf green — action / CTA accent */
   --flipd-green-deep:   #2E6E34;  /* deep turf green (hover) */
   --flipd-pale:         #E7EFEA;  /* pale turf tint — card faces */
-  --flipd-ink:          #0C394C;  /* deep court ink — lines, outlines, 3D shadows, text */
+  --flipd-ink:          #163E22;  /* deep court green — lines, outlines, 3D shadows, text, dark panels */
   --flipd-cream:        #EDE6D3;  /* bone — the one colour kept from the diner palette */
   --flipd-chrome:       #C8CCD2;            /* booth chrome */
   --flipd-script:       'Lobster', cursive;
