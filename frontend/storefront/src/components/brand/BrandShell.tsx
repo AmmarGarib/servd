@@ -43,10 +43,10 @@ export function BrandShell({ concept, children }: Props) {
   const sp = useSearchParams()
   const flipdMuted = concept.slug === 'flipd' && sp.get('turf') === 'muted'
   const turfVars: Record<string, string> = flipdMuted ? {
-    '--flipd-sky':        '#155E86',
-    '--flipd-sky-deep':   '#114A6B',
-    '--flipd-green':      '#2F6B3A',
-    '--flipd-green-deep': '#234E2B',
+    '--flipd-sky':        '#1B3F9E',
+    '--flipd-sky-deep':   '#14306F',
+    '--flipd-green':      '#3E7E2B',
+    '--flipd-green-deep': '#2E6020',
     '--flipd-pale':       '#E5ECE7',
     '--flipd-ink':        '#14331D',
   } : {}
@@ -98,7 +98,7 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
       }
     : diner
     ? {
-        backgroundColor: 'var(--flipd-cream)',
+        backgroundColor: 'var(--flipd-green)',
         backgroundImage:
           'linear-gradient(45deg, var(--flipd-sky) 25%, transparent 25%),' +
           'linear-gradient(-45deg, var(--flipd-sky) 25%, transparent 25%),' +

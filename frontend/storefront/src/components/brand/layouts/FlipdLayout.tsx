@@ -128,19 +128,18 @@ export function FlipdLayout({ concept, concepts }: Props) {
 
       {/* ── TONIGHT'S BOARD ─ a chalkboard-style today's specials list
           rendered as a paper board with typewritten copy ── */}
-      <section style={{
-        background: 'var(--flipd-ink)',
+      <section className="flipd-turf-ink" style={{
         color: 'var(--flipd-cream)',
         padding: 'clamp(3.5rem, 8vh, 5rem) clamp(1.5rem, 5vw, 3rem)',
         position: 'relative',
       }}>
         <div style={{ maxWidth: '44rem', margin: '0 auto', textAlign: 'center' }}>
-          <p className="flipd-eyebrow" style={{ color: 'var(--flipd-sky)', marginBottom: '0.6rem' }}>
+          <p className="flipd-eyebrow" style={{ color: 'var(--flipd-optic)', marginBottom: '0.6rem' }}>
             Court-side board
           </p>
           <h2 className="flipd-display" style={{
             fontSize: 'clamp(2.4rem, 6vw, 3.8rem)',
-            color: 'var(--flipd-sky)',
+            color: 'var(--flipd-cream)',
             margin: 0,
           }}>
             now serving
@@ -168,7 +167,7 @@ export function FlipdLayout({ concept, concepts }: Props) {
                 }}
               >
                 <span style={{ textAlign: 'left' }}>{row.item}</span>
-                <span style={{ color: 'var(--flipd-sky)', whiteSpace: 'nowrap' }}>{row.price}</span>
+                <span style={{ color: 'var(--flipd-optic)', whiteSpace: 'nowrap' }}>{row.price}</span>
               </div>
             ))}
           </div>
@@ -355,18 +354,17 @@ export function FlipdLayout({ concept, concepts }: Props) {
           textAlign: 'center',
         }}
       >
-        <div style={{
+        <div className="flipd-turf-ink" style={{
           position: 'relative',
           maxWidth: '38rem',
           margin: '0 auto',
-          background: 'var(--flipd-ink)',
           color: 'var(--flipd-cream)',
           padding: 'clamp(2.4rem, 6vh, 4rem) clamp(1.8rem, 4vw, 2.8rem)',
           border: '3px solid var(--flipd-ink)',
           borderRadius: '0.8rem',
           boxShadow: '0 6px 0 var(--flipd-sky), 0 16px 40px rgba(14,26,42,0.32)',
         }}>
-          <p className="flipd-eyebrow" style={{ color: 'var(--flipd-sky)', marginBottom: '0.8rem' }}>
+          <p className="flipd-eyebrow" style={{ color: 'var(--flipd-optic)', marginBottom: '0.8rem' }}>
             Hungry now?
           </p>
           {/* Solid cream marquee. The 4px sky-blue ledge under each
@@ -376,14 +374,14 @@ export function FlipdLayout({ concept, concepts }: Props) {
             fontSize: 'clamp(2.8rem, 6.5vw, 4.6rem)',
             margin: '0 0 0.4rem',
             color: 'var(--flipd-cream)',
-            textShadow: '0 4px 0 var(--flipd-sky)',
+            textShadow: '0 4px 0 var(--flipd-optic)',
           }}>
             SMASH IT
           </h2>
           <p className="flipd-display" style={{
             fontSize: 'clamp(1.6rem, 4vw, 2.4rem)',
             margin: '0 0 2.4rem',
-            color: 'var(--flipd-sky)',
+            color: 'var(--flipd-cream)',
           }}>
             between sets.
           </p>

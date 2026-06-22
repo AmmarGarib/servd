@@ -534,13 +534,31 @@ summary:focus-visible {
    reads as a padel court without overwhelming the page. */
 .flipd-tile {
   background-image:
+    var(--flipd-turf-noise),
+    radial-gradient(rgba(237,230,211,0.22) 0.6px, transparent 1.3px),
+    radial-gradient(rgba(237,230,211,0.14) 0.6px, transparent 1.3px),
     linear-gradient(45deg, var(--flipd-sky) 25%, transparent 25%),
     linear-gradient(-45deg, var(--flipd-sky) 25%, transparent 25%),
     linear-gradient(45deg, transparent 75%, var(--flipd-sky) 75%),
     linear-gradient(-45deg, transparent 75%, var(--flipd-sky) 75%);
-  background-size: 36px 36px;
-  background-position: 0 0, 0 18px, 18px -18px, -18px 0;
-  background-color: var(--flipd-cream);
+  background-size: 180px 180px, 6px 6px, 9px 9px, 36px 36px, 36px 36px, 36px 36px, 36px 36px;
+  background-position: 0 0, 0 0, 3px 4px, 0 0, 0 18px, 18px -18px, -18px 0;
+  background-blend-mode: overlay, normal, normal, normal, normal, normal, normal;
+  background-color: var(--flipd-green);
+}
+
+/* Deep-green court turf — the textured fill for the "bland" dark panels.
+   Same sand grain + fibre noise as the floor, over the deep court green. */
+.flipd-turf-ink {
+  color: var(--flipd-cream);
+  background-color: var(--flipd-ink);
+  background-image:
+    var(--flipd-turf-noise),
+    radial-gradient(rgba(237,230,211,0.16) 0.6px, transparent 1.3px),
+    radial-gradient(rgba(237,230,211,0.10) 0.6px, transparent 1.3px);
+  background-size: 180px 180px, 6px 6px, 9px 9px;
+  background-position: 0 0, 0 0, 3px 4px;
+  background-blend-mode: overlay, normal, normal;
 }
 
 /* Chrome rule — horizontal hairline with metallic gradient */
@@ -565,13 +583,16 @@ summary:focus-visible {
        action accent, grounded by a deep court ink. (These are the "vivid"
        defaults; the ?turf=muted toggle swaps the deep set on the brand
        wrapper so both shade sets can be compared live.) */
-  --flipd-sky:          #1577B8;  /* padel turf blue — court / checker / structure */
-  --flipd-sky-deep:     #0F5C90;  /* deep turf blue */
-  --flipd-green:        #3E8E44;  /* padel turf green — action / CTA accent */
-  --flipd-green-deep:   #2E6E34;  /* deep turf green (hover) */
+  --flipd-sky:          #1E4FC4;  /* padel court blue — proper vivid royal/cobalt turf */
+  --flipd-sky-deep:     #163C96;  /* deep court blue — eyebrows / ledges on light */
+  --flipd-green:        #4C9A35;  /* padel court green — grass turf / action accent */
+  --flipd-green-deep:   #3A7A28;  /* deep grass green (hover) */
+  --flipd-optic:        #C9DB2E;  /* optic ball yellow-green — pop accent on dark turf */
   --flipd-pale:         #E7EFEA;  /* pale turf tint — card faces */
   --flipd-ink:          #163E22;  /* deep court green — lines, outlines, 3D shadows, text, dark panels */
-  --flipd-cream:        #EDE6D3;  /* bone — the one colour kept from the diner palette */
+  --flipd-cream:        #EDE6D3;  /* bone — court line / sand-infill light, kept from the diner palette */
+  /* Sand-infill grain + turf-fibre noise, layered over the court colours. */
+  --flipd-turf-noise:   url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='fn'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23fn)' opacity='0.6'/%3E%3C/svg%3E");
   --flipd-chrome:       #C8CCD2;            /* booth chrome */
   --flipd-script:       'Lobster', cursive;
   --flipd-marquee:      'Bungee', 'Impact', sans-serif;
