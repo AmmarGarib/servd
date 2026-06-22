@@ -61,8 +61,11 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
   const [open, setOpen] = useState(false)
   const surface = brandSurface(concept.slug)
   const wordmark = brandWordmark(concept.slug)
-  // Simmer extends the chiller's blueprint grid up into the header so the top
-  // reads as one continuous schematic; other brands keep a soft bg scrim.
+  // Per-brand header background:
+  //  • simmer extends the chiller blueprint grid into the header
+  //  • flipd carries the diner checkerboard so the header is part of the tile
+  //  • others use a soft scrim of their own bg colour (no band)
+  const diner = concept.slug === 'flipd'
   const navBg: React.CSSProperties = concept.slug === 'simmer'
     ? {
         backgroundColor: surface.bg,
@@ -73,7 +76,23 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
           'linear-gradient(90deg, rgba(237,230,211,0.10) 1px, transparent 1px)',
         backgroundSize: '40px 40px, 40px 40px, 200px 200px, 200px 200px',
       }
+    : diner
+    ? {
+        backgroundColor: 'var(--flipd-cream)',
+        backgroundImage:
+          'linear-gradient(45deg, var(--flipd-ink) 25%, transparent 25%),' +
+          'linear-gradient(-45deg, var(--flipd-ink) 25%, transparent 25%),' +
+          'linear-gradient(45deg, transparent 75%, var(--flipd-ink) 75%),' +
+          'linear-gradient(-45deg, transparent 75%, var(--flipd-ink) 75%)',
+        backgroundSize: '36px 36px',
+        backgroundPosition: '0 0, 0 18px, 18px -18px, -18px 0',
+      }
     : { background: `linear-gradient(to bottom, ${surface.bg}F2 0%, ${surface.bg}00 100%)` }
+  // The diner checker is high-contrast — give nav text a cream outline so it
+  // stays legible across the black/bone tiles (no-op for other brands).
+  const dinerInk: React.CSSProperties = diner
+    ? { textShadow: '1px 1px 0 #EDE6D3, -1px -1px 0 #EDE6D3, 1px -1px 0 #EDE6D3, -1px 1px 0 #EDE6D3' }
+    : {}
 
   // "Book" only appears when the brand explicitly accepts reservations.
   const acceptsReservations = concept.reservationsEnabled !== false
@@ -142,6 +161,7 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
           letterSpacing: '-0.01em',
           lineHeight: 1,
           color: wordmark.color,
+          ...dinerInk,
         }}>
           {formatBrandName(concept.name)}
         </span>
@@ -165,6 +185,7 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
                 borderRadius: '0.6rem',
                 borderBottom: active ? `2px solid ${accent}` : '2px solid transparent',
                 transition: 'color 160ms ease, border-color 160ms ease',
+                ...dinerInk,
               }}
               className="hidden sm:inline-block"
             >
@@ -206,7 +227,7 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
           aria-expanded={open}
           onClick={() => setOpen((o) => !o)}
           className="inline-flex items-center justify-center sm:hidden"
-          style={{ width: '2.75rem', height: '2.75rem', marginLeft: '0.15rem', background: 'transparent', border: 'none', color: surface.text, cursor: 'pointer' }}
+          style={{ width: '2.75rem', height: '2.75rem', marginLeft: '0.15rem', background: diner ? 'var(--flipd-cream)' : 'transparent', border: diner ? '2px solid var(--flipd-ink)' : 'none', borderRadius: diner ? '50%' : undefined, color: surface.text, cursor: 'pointer' }}
         >
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             {open
