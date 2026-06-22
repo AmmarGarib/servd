@@ -534,17 +534,13 @@ summary:focus-visible {
    reads as a padel court without overwhelming the page. */
 .flipd-tile {
   background-image:
-    var(--flipd-turf-noise),
-    radial-gradient(rgba(237,230,211,0.22) 0.6px, transparent 1.3px),
-    radial-gradient(rgba(237,230,211,0.14) 0.6px, transparent 1.3px),
-    linear-gradient(45deg, var(--flipd-sky) 25%, transparent 25%),
-    linear-gradient(-45deg, var(--flipd-sky) 25%, transparent 25%),
-    linear-gradient(45deg, transparent 75%, var(--flipd-sky) 75%),
-    linear-gradient(-45deg, transparent 75%, var(--flipd-sky) 75%);
-  background-size: 180px 180px, 6px 6px, 9px 9px, 36px 36px, 36px 36px, 36px 36px, 36px 36px;
-  background-position: 0 0, 0 0, 3px 4px, 0 0, 0 18px, 18px -18px, -18px 0;
-  background-blend-mode: overlay, normal, normal, normal, normal, normal, normal;
-  background-color: var(--flipd-green);
+    linear-gradient(45deg, var(--flipd-ink) 25%, transparent 25%),
+    linear-gradient(-45deg, var(--flipd-ink) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, var(--flipd-ink) 75%),
+    linear-gradient(-45deg, transparent 75%, var(--flipd-ink) 75%);
+  background-size: 36px 36px;
+  background-position: 0 0, 0 18px, 18px -18px, -18px 0;
+  background-color: var(--flipd-cream);
 }
 
 /* Deep-green court turf — the textured fill for the "bland" dark panels.

@@ -98,12 +98,12 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
       }
     : diner
     ? {
-        backgroundColor: 'var(--flipd-green)',
+        backgroundColor: 'var(--flipd-cream)',
         backgroundImage:
-          'linear-gradient(45deg, var(--flipd-sky) 25%, transparent 25%),' +
-          'linear-gradient(-45deg, var(--flipd-sky) 25%, transparent 25%),' +
-          'linear-gradient(45deg, transparent 75%, var(--flipd-sky) 75%),' +
-          'linear-gradient(-45deg, transparent 75%, var(--flipd-sky) 75%)',
+          'linear-gradient(45deg, var(--flipd-ink) 25%, transparent 25%),' +
+          'linear-gradient(-45deg, var(--flipd-ink) 25%, transparent 25%),' +
+          'linear-gradient(45deg, transparent 75%, var(--flipd-ink) 75%),' +
+          'linear-gradient(-45deg, transparent 75%, var(--flipd-ink) 75%)',
         backgroundSize: '36px 36px',
         backgroundPosition: '0 0, 0 18px, 18px -18px, -18px 0',
       }

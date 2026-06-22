@@ -218,7 +218,7 @@ export function FlipdLayout({ concept, concepts }: Props) {
             the two "big checkered backgrounds" — see also the final
             CTA section below. */}
       <section
-        className="flipd-tile"
+        className="flipd-turf-ink"
         style={{ padding: 'clamp(5rem, 12vh, 8rem) clamp(1.5rem, 5vw, 3rem)' }}
       >
         <div style={{ maxWidth: '72rem', margin: '0 auto' }}>
