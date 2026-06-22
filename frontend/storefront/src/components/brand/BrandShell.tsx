@@ -99,13 +99,8 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
     : diner
     ? {
         backgroundColor: 'var(--flipd-cream)',
-        backgroundImage:
-          'linear-gradient(45deg, var(--flipd-ink) 25%, transparent 25%),' +
-          'linear-gradient(-45deg, var(--flipd-ink) 25%, transparent 25%),' +
-          'linear-gradient(45deg, transparent 75%, var(--flipd-ink) 75%),' +
-          'linear-gradient(-45deg, transparent 75%, var(--flipd-ink) 75%)',
+        backgroundImage: 'var(--flipd-checker)',
         backgroundSize: '36px 36px',
-        backgroundPosition: '0 0, 0 18px, 18px -18px, -18px 0',
       }
     : { background: `linear-gradient(to bottom, ${surface.bg}F2 0%, ${surface.bg}00 100%)` }
   // The diner checker is high-contrast and shreds plain text. Instead of a
