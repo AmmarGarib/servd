@@ -148,6 +148,12 @@ export default function StaffLoginPage() {
     if (mode !== 'pin' || signupDone) return
     function onKey(e: KeyboardEvent) {
       if (loading) return
+      // Don't hijack the keyboard while the user is typing in a field (e.g. the
+      // name box) — let Backspace and every other key edit that field normally.
+      // The pad shortcuts only apply when nothing editable is focused; tapping a
+      // pad key blurs the name input, after which the keyboard drives the PIN.
+      const t = e.target as HTMLElement | null
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
       if (e.key.length === 1 && e.key >= '0' && e.key <= '9') { e.preventDefault(); pressDigit(e.key) }
       else if (e.key === 'Backspace') { e.preventDefault(); pressBack() }
       else if (e.key === 'Enter')     { e.preventDefault(); trySubmit() }

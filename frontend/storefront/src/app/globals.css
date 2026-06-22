@@ -536,7 +536,8 @@ summary:focus-visible {
   background-color: var(--flipd-cream);
   background-image: var(--flipd-checker);
   background-size: 36px 36px;
-  background-repeat: round;
+  background-repeat: repeat;       /* exact 36px tiles → crisp, integer 18px cells */
+  background-position: 0 0;
 }
 
 /* Deep-green court turf — the textured fill for the "bland" dark panels.

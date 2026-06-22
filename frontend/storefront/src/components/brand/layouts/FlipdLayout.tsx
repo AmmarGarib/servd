@@ -10,6 +10,7 @@
 // All the visual treatments (awning, neon, tile floor, chrome rule)
 // live as utility classes in globals.css.
 
+import { useEffect } from 'react'
 import Link from 'next/link'
 import type { Concept } from '../../../lib/concept'
 import { CrossBrandStrip } from '../parts/CrossBrandStrip'
@@ -37,6 +38,27 @@ export function FlipdLayout({ concept, concepts }: Props) {
   const hoursData = useHoursData(concept.slug)
   const story = brandStory(concept.slug)
   const reservations = concept.reservationsEnabled !== false
+
+  // Snap each checkered section's height to a whole number of 36px tiles so the
+  // diner pattern never clips a partial row at the bottom. Paired with
+  // background-repeat:repeat (crisp, integer 18px cells), this keeps every row —
+  // top and bottom — exactly the same size on any display.
+  useEffect(() => {
+    const fit = () => {
+      document.querySelectorAll<HTMLElement>('.flipd-tile').forEach((el) => {
+        el.style.paddingBottom = ''
+        const base = parseFloat(getComputedStyle(el).paddingBottom) || 0
+        const h = el.getBoundingClientRect().height
+        const extra = (36 - (h % 36)) % 36
+        if (extra > 0.5) el.style.paddingBottom = `${base + extra}px`
+      })
+    }
+    fit()
+    const raf = requestAnimationFrame(fit)
+    const t = setTimeout(fit, 800)
+    window.addEventListener('resize', fit)
+    return () => { cancelAnimationFrame(raf); clearTimeout(t); window.removeEventListener('resize', fit) }
+  }, [])
 
   return (
     <div className="flipd-page">
