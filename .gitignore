@@ -31,3 +31,7 @@ Thumbs.db
 _legacy/
 .commit-msg.tmp
 /.git-commit-msg.tmp
+
+# build-temp (generated during image build, never commit)
+frontend/storefront/Dockerfile.deploy
+frontend/storefront/proxy-ca.crt
