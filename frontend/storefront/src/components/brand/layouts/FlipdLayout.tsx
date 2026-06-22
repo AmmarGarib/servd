@@ -77,51 +77,39 @@ export function FlipdLayout({ concept, concepts }: Props) {
               OPEN-NOW pill (the operator decided the pill carries no
               real info, and the body copy was redundant with the
               tagline above it). */}
-          {/* Padel/tennis ball — vivid optic-yellow FELT: a radial sheen with
-              fibre-noise fuzz blended over it, the white seam sweeping across
-              like a real ball. The tagline rides the open felt band between
-              the two seams. */}
-          <div style={{
-            position: 'relative',
-            display: 'inline-flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            backgroundColor: '#CFE024',
-            backgroundImage:
-              'var(--flipd-turf-noise),' +
-              'radial-gradient(circle at 36% 30%, #EFF68E 0%, #CFE024 44%, #A6BA1C 100%)',
-            backgroundSize: '90px 90px, 100% 100%',
-            backgroundBlendMode: 'soft-light, normal',
-            borderRadius: '50%',
-            width: 'clamp(15rem, 40vw, 27rem)',
-            aspectRatio: '1 / 1',
-            marginTop: '1.8rem',
-            padding: '1.2rem',
-            textAlign: 'center',
-            boxShadow: 'inset 0 -14px 30px rgba(70,80,10,0.30), inset 0 12px 24px rgba(255,255,255,0.42), 0 16px 34px rgba(40,46,10,0.28)',
-          }}>
-            <svg viewBox="0 0 100 100" aria-hidden="true" focusable="false" style={{
-              position: 'absolute', inset: 0, width: '100%', height: '100%', overflow: 'visible', pointerEvents: 'none',
-            }}>
-              <path d="M3 30 C 27 52, 73 52, 97 28" fill="none" stroke="rgba(70,80,10,0.28)" strokeWidth="5.5" strokeLinecap="round" transform="translate(0 1.8)" />
-              <path d="M3 72 C 27 92, 73 92, 97 70" fill="none" stroke="rgba(70,80,10,0.28)" strokeWidth="5" strokeLinecap="round" transform="translate(0 1.8)" />
-              <path d="M3 30 C 27 52, 73 52, 97 28" fill="none" stroke="#F7F7EC" strokeWidth="3.4" strokeLinecap="round" />
-              <path d="M3 72 C 27 92, 73 92, 97 70" fill="none" stroke="#F7F7EC" strokeWidth="3" strokeLinecap="round" />
-            </svg>
-            <p className="flipd-display" style={{
-              position: 'relative',
-              transform: 'translateY(6%)',
-              fontSize: 'clamp(1.4rem, 4.9vw, 2.2rem)',
-              margin: 0,
+          {/* Tagline sign + a real optic-yellow padel ball. The ball is a
+              rendered felt texture (sphere shading + procedural fuzz + seam,
+              transparent PNG at public/flipd/ball.png) — CSS gradients can't
+              look like felt, so it's an image. */}
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginTop: '1.6rem' }}>
+            <span className="flipd-marquee" style={{
+              display: 'inline-block',
+              background: 'var(--flipd-cream)',
               color: 'var(--flipd-ink)',
-              lineHeight: 1.12,
+              border: '2px solid var(--flipd-ink)',
+              borderRadius: '0.6rem',
+              boxShadow: '0 4px 0 var(--flipd-ink), 0 10px 26px rgba(14,26,42,0.18)',
+              padding: '0.55rem 1.15rem',
+              fontSize: 'clamp(1.4rem, 4.4vw, 2.3rem)',
+              letterSpacing: '0.04em',
+              lineHeight: 1,
               textTransform: 'uppercase',
-              letterSpacing: '0.02em',
             }}>
-              Game<br />
-              Set<br />
-              Smash
-            </p>
+              Game · Set · Smash
+            </span>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="/flipd/ball.png"
+              alt="A flipd tennis ball"
+              width={540}
+              height={540}
+              style={{
+                width: 'clamp(14rem, 38vw, 25rem)',
+                height: 'auto',
+                marginTop: '1.7rem',
+                filter: 'drop-shadow(0 18px 24px rgba(40,46,10,0.28))',
+              }}
+            />
           </div>
 
           <div style={{ marginTop: '2rem', display: 'flex', gap: '0.75rem', flexWrap: 'wrap', justifyContent: 'center' }}>
