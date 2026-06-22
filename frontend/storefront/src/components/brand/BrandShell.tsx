@@ -88,23 +88,40 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
         backgroundPosition: '0 0, 0 18px, 18px -18px, -18px 0',
       }
     : { background: `linear-gradient(to bottom, ${surface.bg}F2 0%, ${surface.bg}00 100%)` }
-  // The diner checker is high-contrast — give nav text a cream outline so it
-  // stays legible across the black/bone tiles (no-op for other brands).
-  const dinerInk: React.CSSProperties = diner
-    ? { textShadow: '1px 1px 0 #EDE6D3, -1px -1px 0 #EDE6D3, 1px -1px 0 #EDE6D3, -1px 1px 0 #EDE6D3' }
+  // The diner checker is high-contrast and shreds plain text. Instead of a
+  // text outline, flipd floats its nav on light-blue "cards" (flipd-pale) with
+  // a midnight-oil outline + hard drop shadow — the established flipd-card look
+  // — so every label reads as flat midnight-oil ink. No-op for other brands.
+  const dinerCard: React.CSSProperties = diner
+    ? {
+        background: 'var(--flipd-pale)',
+        border: '2px solid var(--flipd-ink)',
+        borderRadius: '999px',
+        boxShadow: '0 3px 0 var(--flipd-ink)',
+      }
     : {}
 
   // "Book" only appears when the brand explicitly accepts reservations.
   const acceptsReservations = concept.reservationsEnabled !== false
-  const links = [
-    { href: base,                       label: 'Home' },
-    { href: `${base}/menu`,             label: 'Menu' },
-    { href: `${base}/about`,            label: 'Story' },
-    ...(acceptsReservations
-      ? [{ href: `/reserve/${concept.slug}`, label: 'Book' }]
-      : []),
-    { href: `${base}/visit`,            label: 'Visit' },
-  ]
+  const reserveLink = acceptsReservations
+    ? [{ href: `/reserve/${concept.slug}`, label: 'Book' }]
+    : []
+  // flipd keeps the bar lean — just the useful stuff (Menu, Book, Visit). The
+  // logo already covers "home" and the story lives in the footer; everything
+  // else is killed. Other brands keep the fuller set.
+  const links = diner
+    ? [
+        { href: `${base}/menu`,  label: 'Menu' },
+        ...reserveLink,
+        { href: `${base}/visit`, label: 'Visit' },
+      ]
+    : [
+        { href: base,            label: 'Home' },
+        { href: `${base}/menu`,  label: 'Menu' },
+        { href: `${base}/about`, label: 'Story' },
+        ...reserveLink,
+        { href: `${base}/visit`, label: 'Visit' },
+      ]
 
   return (
     <nav
@@ -134,6 +151,9 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
         style={{
           display: 'flex', alignItems: 'center', gap: '0.7rem',
           textDecoration: 'none',
+          // flipd: sit the mark on a light-blue card so the wordmark reads over
+          // the checker (matches the carded nav on the right).
+          ...(diner ? { ...dinerCard, padding: '0.3rem 0.9rem 0.3rem 0.35rem' } : {}),
         }}>
         <span aria-hidden="true" style={{
           width: '2.5rem', height: '2.5rem',
@@ -161,65 +181,78 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
           fontWeight: wordmark.weight,
           letterSpacing: '-0.01em',
           lineHeight: 1,
-          color: wordmark.color,
-          ...dinerInk,
+          // flipd wordmark is flat midnight-oil ink on its light-blue card.
+          color: diner ? 'var(--flipd-ink)' : wordmark.color,
         }}>
           {formatBrandName(concept.name)}
         </span>
       </Link>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: '0.2rem' }}>
-        {links.map((l) => {
-          const active = l.href === base
-            ? pathname === l.href
-            : pathname.startsWith(l.href)
-          return (
-            <Link
-              key={l.href}
-              href={l.href}
-              style={{
-                padding: '0.5rem 0.95rem',
-                color: active ? surface.text : surface.muted,
-                fontWeight: active ? 700 : 500,
-                fontSize: '0.92rem',
-                textDecoration: 'none',
-                borderRadius: '0.6rem',
-                borderBottom: active ? `2px solid ${accent}` : '2px solid transparent',
-                transition: 'color 160ms ease, border-color 160ms ease',
-                ...dinerInk,
-              }}
-              className="hidden sm:inline-block"
-            >
-              {l.label}
-            </Link>
-          )
-        })}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+        {/* Desktop nav links. flipd floats them on a light-blue card with
+            midnight-oil ink so they read over the checker; other brands keep
+            the plain inline row. Hidden on phones (hamburger takes over). */}
+        <div
+          className="hidden sm:flex"
+          style={{
+            alignItems: 'center',
+            gap: diner ? '0.1rem' : '0.2rem',
+            ...(diner ? { ...dinerCard, padding: '0.25rem 0.35rem' } : {}),
+          }}
+        >
+          {links.map((l) => {
+            const active = l.href === base
+              ? pathname === l.href
+              : pathname.startsWith(l.href)
+            return (
+              <Link
+                key={l.href}
+                href={l.href}
+                style={{
+                  padding: '0.45rem 0.9rem',
+                  color: diner ? 'var(--flipd-ink)' : (active ? surface.text : surface.muted),
+                  fontWeight: active ? 700 : (diner ? 600 : 500),
+                  fontSize: '0.92rem',
+                  textDecoration: 'none',
+                  borderRadius: diner ? '999px' : '0.6rem',
+                  background: diner && active ? 'rgba(9,13,23,0.12)' : 'transparent',
+                  borderBottom: !diner && active ? `2px solid ${accent}` : '2px solid transparent',
+                  transition: 'color 160ms ease, background 160ms ease, border-color 160ms ease',
+                }}
+              >
+                {l.label}
+              </Link>
+            )
+          })}
+        </div>
 
-        {/* Order CTA — uses the kinetic brand-pill so its colour tracks
-            the brand. Sits right after the link group. */}
+        {/* Order CTA — the kinetic brand-pill so its colour tracks the brand. */}
         <Link
           href={`/${concept.slug}`}
           aria-label={`Order from ${formatBrandName(concept.name)}`}
           className="brand-pill"
-          style={{ padding: '0.55rem 1.15rem', fontSize: '0.92rem', marginLeft: '0.5rem' }}
+          style={{ padding: '0.55rem 1.15rem', fontSize: '0.92rem' }}
         >
           Order →
         </Link>
 
-        <Link
-          href={servdHome}
-          style={{
-            color: surface.muted,
-            fontSize: '0.78rem',
-            fontWeight: 600,
-            letterSpacing: '0.02em',
-            padding: '0.45rem 0.5rem',
-            textDecoration: 'none',
-          }}
-          className="hidden md:inline-block"
-        >
-          on servd<span style={{ color: accent }}>.</span>
-        </Link>
+        {/* servd backlink — kept off flipd's lean bar (it's in the footer). */}
+        {!diner && (
+          <Link
+            href={servdHome}
+            style={{
+              color: surface.muted,
+              fontSize: '0.78rem',
+              fontWeight: 600,
+              letterSpacing: '0.02em',
+              padding: '0.45rem 0.5rem',
+              textDecoration: 'none',
+            }}
+            className="hidden md:inline-block"
+          >
+            on servd<span style={{ color: accent }}>.</span>
+          </Link>
+        )}
 
         {/* Hamburger — the link row is hidden < sm, so phones need this. */}
         <button
@@ -228,7 +261,7 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
           aria-expanded={open}
           onClick={() => setOpen((o) => !o)}
           className="inline-flex items-center justify-center sm:hidden"
-          style={{ width: '2.75rem', height: '2.75rem', marginLeft: '0.15rem', background: diner ? 'var(--flipd-cream)' : 'transparent', border: diner ? '2px solid var(--flipd-ink)' : 'none', borderRadius: diner ? '50%' : undefined, color: surface.text, cursor: 'pointer' }}
+          style={{ width: '2.75rem', height: '2.75rem', marginLeft: '0.15rem', background: diner ? 'var(--flipd-pale)' : 'transparent', border: diner ? '2px solid var(--flipd-ink)' : 'none', borderRadius: diner ? '50%' : undefined, boxShadow: diner ? '0 3px 0 var(--flipd-ink)' : undefined, color: diner ? 'var(--flipd-ink)' : surface.text, cursor: 'pointer' }}
         >
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             {open
