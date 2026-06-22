@@ -121,15 +121,30 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
       }
     : {}
 
+  // Carded-nav brands collapse the bar into ONE rounded pill — the lean links
+  // plus Order on a single capsule. This is the flipd treatment ported to
+  // simmer + stax, in each brand's own palette: flipd keeps its high-contrast
+  // pale/ink card, the dark brands get a faint glass capsule (translucent fill
+  // + hairline) so labels read on their deep backgrounds.
+  const pillNav = diner || concept.slug === 'simmer' || concept.slug === 'stax'
+  const pillTint = concept.slug === 'simmer' ? '243,236,222' : '197,199,204' // bone / grey
+  const navPill: React.CSSProperties = diner
+    ? dinerCard
+    : pillNav
+    ? { background: `rgba(${pillTint},0.05)`, border: `1px solid rgba(${pillTint},0.18)`, borderRadius: '999px' }
+    : {}
+  // Fill behind the active link inside the pill.
+  const activeFill = diner ? 'rgba(9,13,23,0.12)' : pillNav ? `rgba(${pillTint},0.14)` : 'transparent'
+
   // "Book" only appears when the brand explicitly accepts reservations.
   const acceptsReservations = concept.reservationsEnabled !== false
   const reserveLink = acceptsReservations
     ? [{ href: `/reserve/${concept.slug}`, label: 'Book' }]
     : []
-  // flipd keeps the bar lean — just the useful stuff (Menu, Book, Visit). The
-  // logo already covers "home" and the story lives in the footer; everything
-  // else is killed. Other brands keep the fuller set.
-  const links = diner
+  // The carded-nav brands keep the bar lean — just the useful stuff (Menu,
+  // Book, Visit). The logo already covers "home" and the story lives in the
+  // footer; everything else is killed. Other brands keep the fuller set.
+  const links = pillNav
     ? [
         { href: `${base}/menu`,  label: 'Menu' },
         ...reserveLink,
@@ -219,8 +234,8 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
           className="hidden sm:flex"
           style={{
             alignItems: 'center',
-            gap: diner ? '0.1rem' : '0.2rem',
-            ...(diner ? { ...dinerCard, padding: '0.25rem 0.35rem' } : {}),
+            gap: pillNav ? '0.1rem' : '0.2rem',
+            ...(pillNav ? { ...navPill, padding: '0.25rem 0.35rem' } : {}),
           }}
         >
           {links.map((l) => {
@@ -234,12 +249,12 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
                 style={{
                   padding: '0.45rem 0.9rem',
                   color: diner ? 'var(--flipd-ink)' : (active ? surface.text : surface.muted),
-                  fontWeight: active ? 700 : (diner ? 600 : 500),
+                  fontWeight: active ? 700 : (pillNav ? 600 : 500),
                   fontSize: '0.92rem',
                   textDecoration: 'none',
-                  borderRadius: diner ? '999px' : '0.6rem',
-                  background: diner && active ? 'rgba(9,13,23,0.12)' : 'transparent',
-                  borderBottom: !diner && active ? `2px solid ${accent}` : '2px solid transparent',
+                  borderRadius: pillNav ? '999px' : '0.6rem',
+                  background: pillNav && active ? activeFill : 'transparent',
+                  borderBottom: !pillNav && active ? `2px solid ${accent}` : '2px solid transparent',
                   transition: 'color 160ms ease, background 160ms ease, border-color 160ms ease',
                 }}
               >
@@ -248,16 +263,16 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
             )
           })}
 
-          {/* flipd: Order joins the SAME light-blue pill as the final,
-              emphasized item — one pill, not a separate CTA. Bold midnight-oil
-              with a curious-blue arrow so it still reads as the action. */}
-          {diner && (
+          {/* Order joins the SAME pill as the final, emphasized item — one
+              pill, not a separate CTA. Bold brand ink with an accent arrow so
+              it still reads as the action (flipd green; simmer/stax accent). */}
+          {pillNav && (
             <Link
               href={`/${concept.slug}`}
               aria-label={`Order from ${formatBrandName(concept.name)}`}
               style={{
                 padding: '0.45rem 0.95rem',
-                color: 'var(--flipd-ink)',
+                color: diner ? 'var(--flipd-ink)' : surface.text,
                 fontWeight: 800,
                 fontSize: '0.92rem',
                 textDecoration: 'none',
@@ -265,13 +280,14 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
                 whiteSpace: 'nowrap',
               }}
             >
-              Order <span style={{ color: 'var(--flipd-green)' }}>→</span>
+              Order <span style={{ color: diner ? 'var(--flipd-green)' : accent }}>→</span>
             </Link>
           )}
         </div>
 
-        {/* Order CTA — non-diner brands keep it as a standalone brand-pill. */}
-        {!diner && (
+        {/* Order CTA — brands without the carded pill nav keep it as a
+            standalone brand-pill. */}
+        {!pillNav && (
           <Link
             href={`/${concept.slug}`}
             aria-label={`Order from ${formatBrandName(concept.name)}`}
@@ -282,8 +298,9 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
           </Link>
         )}
 
-        {/* servd backlink — kept off flipd's lean bar (it's in the footer). */}
-        {!diner && (
+        {/* servd backlink — kept off the lean carded bars (it's in the footer
+            + the mobile sheet). */}
+        {!pillNav && (
           <Link
             href={servdHome}
             style={{
@@ -307,7 +324,7 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
           aria-expanded={open}
           onClick={() => setOpen((o) => !o)}
           className="inline-flex items-center justify-center sm:hidden"
-          style={{ width: '2.75rem', height: '2.75rem', marginLeft: '0.15rem', background: diner ? 'var(--flipd-pale)' : 'transparent', border: diner ? '2px solid var(--flipd-ink)' : 'none', borderRadius: diner ? '50%' : undefined, boxShadow: diner ? '0 3px 0 var(--flipd-ink)' : undefined, color: diner ? 'var(--flipd-ink)' : surface.text, cursor: 'pointer' }}
+          style={{ width: '2.75rem', height: '2.75rem', marginLeft: '0.15rem', background: diner ? 'var(--flipd-pale)' : pillNav ? `rgba(${pillTint},0.05)` : 'transparent', border: diner ? '2px solid var(--flipd-ink)' : pillNav ? `1px solid rgba(${pillTint},0.18)` : 'none', borderRadius: pillNav ? '50%' : undefined, boxShadow: diner ? '0 3px 0 var(--flipd-ink)' : undefined, color: diner ? 'var(--flipd-ink)' : surface.text, cursor: 'pointer' }}
         >
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             {open
