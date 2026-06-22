@@ -480,8 +480,8 @@ summary:focus-visible {
   font-family: var(--flipd-marquee);
   font-size: 0.92rem; letter-spacing: 0.06em;
   padding: 0.95rem 1.7rem;
-  background: var(--flipd-sky);
-  color: var(--flipd-ink);
+  background: var(--flipd-green);
+  color: var(--flipd-cream);
   border: 2px solid var(--flipd-ink);
   border-radius: 999px; text-decoration: none;
   text-transform: uppercase;
@@ -489,7 +489,7 @@ summary:focus-visible {
   transition: transform 140ms ease, box-shadow 140ms ease, background 180ms ease, color 180ms ease;
 }
 .flipd-page .flipd-btn:hover {
-  background: var(--flipd-sky-deep);
+  background: var(--flipd-green-deep);
   color: var(--flipd-cream);
   transform: translateY(-2px);
   box-shadow: 0 5px 0 var(--flipd-ink), 0 10px 24px rgba(14,26,42,0.32);
@@ -530,14 +530,14 @@ summary:focus-visible {
   background-color: var(--flipd-cream);
 }
 
-/* Checkerboard floor — black-and-cream tiles. Apply to a fixed footer
-   strip so it reads as a diner floor without overwhelming the page. */
+/* Checkerboard floor — turf-blue + bone court tiles. Apply to a section so it
+   reads as a padel court without overwhelming the page. */
 .flipd-tile {
   background-image:
-    linear-gradient(45deg, var(--flipd-ink) 25%, transparent 25%),
-    linear-gradient(-45deg, var(--flipd-ink) 25%, transparent 25%),
-    linear-gradient(45deg, transparent 75%, var(--flipd-ink) 75%),
-    linear-gradient(-45deg, transparent 75%, var(--flipd-ink) 75%);
+    linear-gradient(45deg, var(--flipd-sky) 25%, transparent 25%),
+    linear-gradient(-45deg, var(--flipd-sky) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, var(--flipd-sky) 75%),
+    linear-gradient(-45deg, transparent 75%, var(--flipd-sky) 75%);
   background-size: 36px 36px;
   background-position: 0 0, 0 18px, 18px -18px, -18px 0;
   background-color: var(--flipd-cream);
@@ -560,11 +560,18 @@ summary:focus-visible {
        tertiary that handles the marquee wordmark, 3D shadows under the
        cards/buttons, and the checkered floor. No red anywhere — the
        brand reads as a takeout chicken-paper print, not Coca-Cola. */
-  --flipd-sky:          #2092E9;  /* curious blue */
-  --flipd-sky-deep:     #1568B0;  /* deeper curious blue */
-  --flipd-pale:         #E8F4FF;
-  --flipd-ink:          #090D17;  /* midnight oil */
-  --flipd-cream:        #EDE6D3;  /* bone */
+  /* ── Padel-court turf palette. Bone is the ONLY colour kept from the old
+       diner scheme; everything else is court turf — a blue court + green
+       action accent, grounded by a deep court ink. (These are the "vivid"
+       defaults; the ?turf=muted toggle swaps the deep set on the brand
+       wrapper so both shade sets can be compared live.) */
+  --flipd-sky:          #1577B8;  /* padel turf blue — court / checker / structure */
+  --flipd-sky-deep:     #0F5C90;  /* deep turf blue */
+  --flipd-green:        #3E8E44;  /* padel turf green — action / CTA accent */
+  --flipd-green-deep:   #2E6E34;  /* deep turf green (hover) */
+  --flipd-pale:         #E7EFEA;  /* pale turf tint — card faces */
+  --flipd-ink:          #0C394C;  /* deep court ink — lines, outlines, 3D shadows, text */
+  --flipd-cream:        #EDE6D3;  /* bone — the one colour kept from the diner palette */
   --flipd-chrome:       #C8CCD2;            /* booth chrome */
   --flipd-script:       'Lobster', cursive;
   --flipd-marquee:      'Bungee', 'Impact', sans-serif;

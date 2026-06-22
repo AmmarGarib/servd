@@ -1,7 +1,7 @@
 'use client'
 import { useState, useEffect, useMemo } from 'react'
 import Link from 'next/link'
-import { usePathname } from 'next/navigation'
+import { usePathname, useSearchParams } from 'next/navigation'
 import type { Concept } from '../../lib/concept'
 import { formatBrandName, brandSurface, brandWordmark } from '../../lib/concept'
 import { useBrandSlug, getServdHost } from '../../lib/host'
@@ -37,9 +37,23 @@ export function BrandShell({ concept, children }: Props) {
   // we can't parse the accent (e.g. it's a CSS var name).
   const accentInk = accent.startsWith('#') && isLight(accent) ? '#0a0a0a' : 'white'
   const surface = brandSurface(concept.slug)
+  // Padel-turf shade comparison: globals.css holds the "vivid" turf defaults;
+  // ?turf=muted swaps the deeper/muted set on the flipd wrapper so both shade
+  // sets can be A/B'd live on the real page. Bone (--flipd-cream) is constant.
+  const sp = useSearchParams()
+  const flipdMuted = concept.slug === 'flipd' && sp.get('turf') === 'muted'
+  const turfVars: Record<string, string> = flipdMuted ? {
+    '--flipd-sky':        '#155E86',
+    '--flipd-sky-deep':   '#114A6B',
+    '--flipd-green':      '#2F6B3A',
+    '--flipd-green-deep': '#234E2B',
+    '--flipd-pale':       '#E5ECE7',
+    '--flipd-ink':        '#0A2C3A',
+  } : {}
   const wrapperStyle = {
     background: surface.bg,
     minHeight: '100vh',
+    ...turfVars,
     ['--brand-accent' as string]:      accent,
     ['--brand-accent-dark' as string]: accent,
     ['--brand-ink' as string]:         accentInk,
@@ -86,10 +100,10 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
     ? {
         backgroundColor: 'var(--flipd-cream)',
         backgroundImage:
-          'linear-gradient(45deg, var(--flipd-ink) 25%, transparent 25%),' +
-          'linear-gradient(-45deg, var(--flipd-ink) 25%, transparent 25%),' +
-          'linear-gradient(45deg, transparent 75%, var(--flipd-ink) 75%),' +
-          'linear-gradient(-45deg, transparent 75%, var(--flipd-ink) 75%)',
+          'linear-gradient(45deg, var(--flipd-sky) 25%, transparent 25%),' +
+          'linear-gradient(-45deg, var(--flipd-sky) 25%, transparent 25%),' +
+          'linear-gradient(45deg, transparent 75%, var(--flipd-sky) 75%),' +
+          'linear-gradient(-45deg, transparent 75%, var(--flipd-sky) 75%)',
         backgroundSize: '36px 36px',
         backgroundPosition: '0 0, 0 18px, 18px -18px, -18px 0',
       }
@@ -169,8 +183,8 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
           borderRadius: '50%',
           overflow: 'hidden',
           flexShrink: 0,
-          background: accent,
-          color: '#0a0a0a',
+          background: diner ? 'var(--flipd-green)' : accent,
+          color: diner ? 'var(--flipd-cream)' : '#0a0a0a',
           display: 'inline-flex',
           alignItems: 'center', justifyContent: 'center',
           fontSize: '1.1rem',
@@ -251,7 +265,7 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
                 whiteSpace: 'nowrap',
               }}
             >
-              Order <span style={{ color: 'var(--flipd-sky)' }}>→</span>
+              Order <span style={{ color: 'var(--flipd-green)' }}>→</span>
             </Link>
           )}
         </div>
