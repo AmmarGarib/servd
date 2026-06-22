@@ -46,11 +46,11 @@ export function StorefrontNav() {
     <nav
       aria-label="Primary"
       style={{
-        // On the home hero the nav is FIXED so the full-bleed video sits behind
-        // it (immersive float); a top-down scrim keeps the white mark legible
-        // over any video frame. Once scrolled past the hero it becomes the
-        // blurred-glass band over the white sections. Other pages: sticky.
-        position: pathname === '/' ? 'fixed' : 'sticky',
+        // Not sticky — the header lives at the top of the page and scrolls away
+        // with the content. On the home it's ABSOLUTE so the hero's full-bleed
+        // background image sits behind it (the servd mark is immersed in the
+        // image, video expands in front); elsewhere a normal top-of-page header.
+        position: pathname === '/' ? 'absolute' : 'relative',
         top: 0, left: 0, right: 0,
         zIndex: 50,
         padding: '0.95rem clamp(1rem, 4vw, 2rem)',

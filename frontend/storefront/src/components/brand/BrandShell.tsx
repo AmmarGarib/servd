@@ -110,8 +110,9 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
     <nav
       aria-label={`${formatBrandName(concept.name)} navigation`}
       style={{
-        position: 'sticky',
-        top: 0,
+        // Header sits at the TOP of the page and scrolls away with the content
+        // (not sticky) — a top-of-page mark, not a persistent bar.
+        position: 'relative',
         zIndex: 50,
         // Simmer carries the blueprint grid into the header (connects to the
         // chiller); other brands use a soft scrim of their own bg (no band).
