@@ -66,6 +66,12 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
   //  • flipd carries the diner checkerboard so the header is part of the tile
   //  • others use a soft scrim of their own bg colour (no band)
   const diner = concept.slug === 'flipd'
+  // flipd paints its checker as a full header band. As its own box it leaves a
+  // half-tile SEAM where it meets the hero checker just below. When there's no
+  // announcement banner, float the header as a TRANSPARENT overlay on the hero
+  // instead: the hero's checker shows through it, so the floor is one
+  // continuous, seamless checker. (With a banner we keep the in-flow band.)
+  const flipdOverlay = diner && !concept.announcementBanner
   const navBg: React.CSSProperties = concept.slug === 'simmer'
     ? {
         backgroundColor: surface.bg,
@@ -128,12 +134,15 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
       aria-label={`${formatBrandName(concept.name)} navigation`}
       style={{
         // Header sits at the TOP of the page and scrolls away with the content
-        // (not sticky) — a top-of-page mark, not a persistent bar.
-        position: 'relative',
+        // (not sticky) — a top-of-page mark, not a persistent bar. flipd floats
+        // it as a transparent overlay so the hero checker reads through it as
+        // one continuous floor (no seam); other brands paint their own band.
+        position: flipdOverlay ? 'absolute' : 'relative',
+        ...(flipdOverlay ? { top: 0, left: 0, right: 0 } : null),
         zIndex: 50,
         // Simmer carries the blueprint grid into the header (connects to the
         // chiller); other brands use a soft scrim of their own bg (no band).
-        ...navBg,
+        ...(flipdOverlay ? {} : navBg),
         borderBottom: 'none',
         padding: '0.95rem clamp(1rem, 4vw, 2rem)',
         display: 'flex',
