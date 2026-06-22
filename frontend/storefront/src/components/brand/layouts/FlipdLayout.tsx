@@ -77,29 +77,38 @@ export function FlipdLayout({ concept, concepts }: Props) {
               OPEN-NOW pill (the operator decided the pill carries no
               real info, and the body copy was redundant with the
               tagline above it). */}
-          {/* Tagline badge — perfect circle (border-radius 50%) tilted
-              slightly right. Three lines centred. The disc-shaped seal
-              breaks the linear stack the same way you'd see a round
-              court-side patch on a sports jersey. */}
+          {/* Padel ball — optic yellow-green sphere with the white tennis
+              seam wrapping top and bottom. The tagline sits in the open
+              middle band. Replaces the old court-side disc. */}
           <div style={{
+            position: 'relative',
             display: 'inline-flex',
             alignItems: 'center',
             justifyContent: 'center',
-            background: 'var(--flipd-cream)',
-            border: '2px solid var(--flipd-ink)',
+            background: 'radial-gradient(circle at 34% 28%, #ECF477 0%, #C9DB2E 46%, #A6B81E 100%)',
             borderRadius: '50%',
             width: 'clamp(15rem, 40vw, 27rem)',
             aspectRatio: '1 / 1',
             marginTop: '1.8rem',
             padding: '1.2rem',
             textAlign: 'center',
-            transform: 'rotate(3deg)',
-            boxShadow: '0 6px 0 var(--flipd-ink), 0 14px 30px rgba(14,26,42,0.22)',
+            boxShadow: 'inset 0 -12px 28px rgba(22,62,34,0.22), inset 0 10px 22px rgba(255,255,255,0.30), 0 16px 34px rgba(22,62,34,0.30)',
           }}>
+            {/* Tennis/padel seam — two white arcs hugging top and bottom,
+                with a soft deep-green underseam for depth. */}
+            <svg viewBox="0 0 100 100" aria-hidden="true" focusable="false" style={{
+              position: 'absolute', inset: 0, width: '100%', height: '100%', overflow: 'visible', pointerEvents: 'none',
+            }}>
+              <path d="M3 42 Q50 10 97 42" fill="none" stroke="rgba(22,62,34,0.22)" strokeWidth="6" strokeLinecap="round" transform="translate(0 2)" />
+              <path d="M3 58 Q50 90 97 58" fill="none" stroke="rgba(22,62,34,0.22)" strokeWidth="6" strokeLinecap="round" transform="translate(0 2)" />
+              <path d="M3 42 Q50 10 97 42" fill="none" stroke="#FBFBF2" strokeWidth="4" strokeLinecap="round" />
+              <path d="M3 58 Q50 90 97 58" fill="none" stroke="#FBFBF2" strokeWidth="4" strokeLinecap="round" />
+            </svg>
             <p className="flipd-display" style={{
+              position: 'relative',
               fontSize: 'clamp(1.5rem, 5.2vw, 2.3rem)',
               margin: 0,
-              color: 'var(--flipd-sky-deep)',
+              color: 'var(--flipd-ink)',
               lineHeight: 1.15,
               textTransform: 'uppercase',
               letterSpacing: '0.02em',
