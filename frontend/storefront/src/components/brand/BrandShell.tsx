@@ -80,10 +80,10 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
     ? {
         backgroundColor: 'var(--flipd-cream)',
         backgroundImage:
-          'linear-gradient(45deg, var(--flipd-ink) 25%, transparent 25%),' +
-          'linear-gradient(-45deg, var(--flipd-ink) 25%, transparent 25%),' +
-          'linear-gradient(45deg, transparent 75%, var(--flipd-ink) 75%),' +
-          'linear-gradient(-45deg, transparent 75%, var(--flipd-ink) 75%)',
+          'linear-gradient(45deg, var(--flipd-navy) 25%, transparent 25%),' +
+          'linear-gradient(-45deg, var(--flipd-navy) 25%, transparent 25%),' +
+          'linear-gradient(45deg, transparent 75%, var(--flipd-navy) 75%),' +
+          'linear-gradient(-45deg, transparent 75%, var(--flipd-navy) 75%)',
         backgroundSize: '36px 36px',
         backgroundPosition: '0 0, 0 18px, 18px -18px, -18px 0',
       }
@@ -181,8 +181,9 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
           fontWeight: wordmark.weight,
           letterSpacing: '-0.01em',
           lineHeight: 1,
-          // flipd wordmark is flat midnight-oil ink on its light-blue card.
-          color: diner ? 'var(--flipd-ink)' : wordmark.color,
+          // flipd wordmark is flat dark-blue (navy) on its light-blue card —
+          // reads as blue, not black.
+          color: diner ? 'var(--flipd-navy)' : wordmark.color,
         }}>
           {formatBrandName(concept.name)}
         </span>

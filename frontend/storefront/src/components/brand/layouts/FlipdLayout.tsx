@@ -42,7 +42,7 @@ export function FlipdLayout({ concept, concepts }: Props) {
     <div className="flipd-page">
       {concept.announcementBanner && (
         <div role="status" style={{
-          background: 'var(--flipd-ink)', color: 'var(--flipd-cream)',
+          background: 'var(--flipd-navy)', color: 'var(--flipd-cream)',
           padding: '0.7rem 1.5rem', textAlign: 'center',
           fontFamily: 'var(--flipd-type)', fontSize: '0.85rem',
           letterSpacing: '0.18em', textTransform: 'uppercase',
@@ -120,7 +120,7 @@ export function FlipdLayout({ concept, concepts }: Props) {
       {/* ── TONIGHT'S BOARD ─ a chalkboard-style today's specials list
           rendered as a paper board with typewritten copy ── */}
       <section style={{
-        background: 'var(--flipd-ink)',
+        background: 'var(--flipd-navy)',
         color: 'var(--flipd-cream)',
         padding: 'clamp(3.5rem, 8vh, 5rem) clamp(1.5rem, 5vw, 3rem)',
         position: 'relative',
@@ -350,7 +350,7 @@ export function FlipdLayout({ concept, concepts }: Props) {
           position: 'relative',
           maxWidth: '38rem',
           margin: '0 auto',
-          background: 'var(--flipd-ink)',
+          background: 'var(--flipd-navy)',
           color: 'var(--flipd-cream)',
           padding: 'clamp(2.4rem, 6vh, 4rem) clamp(1.8rem, 4vw, 2.8rem)',
           border: '3px solid var(--flipd-ink)',

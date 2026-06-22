@@ -534,10 +534,10 @@ summary:focus-visible {
    strip so it reads as a diner floor without overwhelming the page. */
 .flipd-tile {
   background-image:
-    linear-gradient(45deg, var(--flipd-ink) 25%, transparent 25%),
-    linear-gradient(-45deg, var(--flipd-ink) 25%, transparent 25%),
-    linear-gradient(45deg, transparent 75%, var(--flipd-ink) 75%),
-    linear-gradient(-45deg, transparent 75%, var(--flipd-ink) 75%);
+    linear-gradient(45deg, var(--flipd-navy) 25%, transparent 25%),
+    linear-gradient(-45deg, var(--flipd-navy) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, var(--flipd-navy) 75%),
+    linear-gradient(-45deg, transparent 75%, var(--flipd-navy) 75%);
   background-size: 36px 36px;
   background-position: 0 0, 0 18px, 18px -18px, -18px 0;
   background-color: var(--flipd-cream);
@@ -563,7 +563,8 @@ summary:focus-visible {
   --flipd-sky:          #2092E9;  /* curious blue */
   --flipd-sky-deep:     #1568B0;  /* deeper curious blue */
   --flipd-pale:         #E8F4FF;
-  --flipd-ink:          #090D17;  /* midnight oil */
+  --flipd-ink:          #090D17;  /* midnight oil — near-black for outlines, 3D shadows, fine text */
+  --flipd-navy:         #0F3460;  /* dark blue — large dark FILLS (checker floor, dark panels, wordmark) so they read as blue, not black */
   --flipd-cream:        #EDE6D3;  /* bone */
   --flipd-chrome:       #C8CCD2;            /* booth chrome */
   --flipd-script:       'Lobster', cursive;
