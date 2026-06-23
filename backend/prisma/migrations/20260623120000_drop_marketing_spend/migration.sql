@@ -1,0 +1,11 @@
+-- Drop the marketing_spend model.
+--
+-- GS Foods runs organic-only marketing (no paid-ad / marketing-spend input),
+-- so the operator-entered spend table — and the CAC / CRC / ROAS metrics it was
+-- the sole input for — is removed. Dropping the table also drops its RLS policy
+-- ("marketing_spend_rls") and its indexes automatically.
+--
+-- NOTE: the `brand_manager` / `fnb_manager` UserRole enum values that were added
+-- in the same original migration (20260604120000) are still in use and are
+-- intentionally left in place — Postgres cannot easily drop enum values anyway.
+DROP TABLE IF EXISTS "marketing_spend";

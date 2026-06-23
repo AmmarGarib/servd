@@ -299,8 +299,7 @@ interface TopItemRow { name?: string; quantity?: number; revenue?: number; reven
 interface BrandMetrics {
   revenue?: { grossCents?: number; netCents?: number; orders?: number }
   customers?: { distinct?: number; new?: number; returning?: number }
-  spend?: { acquisitionCents?: number; retentionCents?: number }
-  kpis?: { aovCents?: number; arpuCents?: number; ltvCents?: number; cacCents?: number | null; crcCents?: number | null; roas?: number | null }
+  kpis?: { aovCents?: number; arpuCents?: number; ltvCents?: number }
   reputation?: { avgRating?: number; reviewCount?: number; openComplaints?: number }
 }
 interface ForecastResp { items?: Array<{ totalPredicted?: number }> }
@@ -359,7 +358,6 @@ function CustomersSection({ scope }: { scope: Scope }) {
   const mk = useQuery({ queryKey: ['ceo', 'mk-perf', days], queryFn: () => api.get<MarketingPerf>(`/marketing/performance${qs({ days })}`), refetchInterval: 300_000 })
 
   const k = bm.data?.kpis
-  const roas = k?.roas == null ? '—' : `${k.roas.toFixed(1)}×`
   const segments = arr<{ key?: string; label?: string; count?: number }>(seg.data?.segments)
 
   return (
@@ -370,11 +368,6 @@ function CustomersSection({ scope }: { scope: Scope }) {
         <Scorecard label="Repeat rate"    value={pct(seg.data?.summary?.repeatRate)} accent="#A855F7" sub="3+ orders" tag="co." />
         <Scorecard label="LTV"            value={pkr(k?.ltvCents)} accent="#22C55E" sub="lifetime spend" />
         <Scorecard label="ARPU"           value={pkr(k?.arpuCents)} accent="#A855F7" sub="rev / active user" />
-        <Scorecard label="ROAS"           value={roas} accent="#00D4B1" sub="return on ad spend" />
-        <Scorecard label="CAC"            value={pkr(k?.cacCents)} accent="#4F8EF7" sub="cost to acquire" />
-        <Scorecard label="CRC"            value={pkr(k?.crcCents)} accent="#6366F1" sub="cost to retain" />
-        <Scorecard label="Acq. spend"     value={pkr(bm.data?.spend?.acquisitionCents)} accent="#6E7186" sub="marketing — new" />
-        <Scorecard label="Retention spend" value={pkr(bm.data?.spend?.retentionCents)} accent="#6E7186" sub="marketing — repeat" />
         <Scorecard label="Total customers" value={num(seg.data?.summary?.totalCustomers)} accent="#6366F1" sub="all-time base" tag="co." />
         <Scorecard label="Email CTR"      value={pct(mk.data?.ctr ?? undefined)} accent="#EC4899" sub={`${num(mk.data?.campaignClicks)} clicks`} tag="co." />
         <Scorecard label="Open rate"      value={pct(mk.data?.openRate ?? undefined)} accent="#EC4899" sub={`${num(mk.data?.campaignOpens)} opens`} tag="co." />

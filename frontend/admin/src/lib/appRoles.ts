@@ -53,7 +53,7 @@ export const APP_ROLES: RoleMeta[] = [
   { value: 'cashier',         label: 'Cashier',          emoji: '💳',  description: 'POS + curbside + basic dashboard' },
   { value: 'procurement',     label: 'Procurement',      emoji: '🏭',  description: 'Supplier chat, POs, inventory receipt' },
   { value: 'marketing',       label: 'Marketing',        emoji: '🚀',  description: 'CRM, campaigns, reviews, complaints, content' },
-  { value: 'brand_manager',   label: 'Brand Manager',    emoji: '📣',  description: 'Owns the Brand dashboard — CAC, ROAS, ARPU, LTV, AOV. Marketing + growth.' },
+  { value: 'brand_manager',   label: 'Brand Manager',    emoji: '📣',  description: 'Owns the Brand dashboard — ARPU, LTV, AOV, retention. Marketing + growth.' },
   { value: 'fnb_manager',     label: 'F&B Manager',      emoji: '🍽️',  description: 'Owns the F&B dashboard — kitchen throughput, menu, food cost, quality. BOH + FOH.' },
   { value: 'finance',         label: 'Finance',          emoji: '💰',  description: 'P&L, payroll, accounting, reconciliation' },
   { value: 'hr',              label: 'HR / Workforce',   emoji: '👥',  description: 'Staff records, attendance, payroll, scheduling' },
