@@ -2,18 +2,16 @@
 // Brand Manager dashboard — marketing-finance scorecard.
 //
 // Audience: the Brand Manager (and CEO / GM). Question it answers: "is our
-// marketing working — what does a customer cost, what are they worth, what's
-// the return on spend?" Mirrors the CEO dashboard's look; gated on the
-// `brand_dashboard` module.
+// marketing working — what are our customers worth, and are we keeping them?"
+// Mirrors the CEO dashboard's look; gated on the `brand_dashboard` module.
 //
-// CAC / CRC / ROAS require a spend input that order data can't provide, so the
-// manager enters monthly spend (acquisition vs. retention) right here; the
-// /management/brand-metrics endpoint pro-rates it across the selected period.
+// All KPIs derive from order + CRM data (organic-only); there is no paid-ad
+// spend input, so CAC / CRC / ROAS are intentionally absent.
 
 import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery } from '@tanstack/react-query'
 import { api } from '../../../lib/api'
 import { usePermissions } from '../../../hooks/useCan'
 import { useRoleModules, modulesForRole } from '../../../store/roleModules'
@@ -27,19 +25,13 @@ interface Concept { id: string; name: string; slug: string }
 interface BrandMetrics {
   revenue:   { grossCents: number; netCents: number; orders: number }
   customers: { distinct: number; new: number; returning: number }
-  spend:     { acquisitionCents: number; retentionCents: number }
   kpis: {
     aovCents:  number | null
     arpuCents: number | null
     ltvCents:  number
-    cacCents:  number | null
-    crcCents:  number | null
-    roas:      number | null
   }
   reputation: { avgRating: number | null; reviewCount: number; openComplaints: number }
 }
-
-interface SpendRow { conceptId: string; month: string; acquisitionCents: number; retentionCents: number; note: string | null }
 
 function rangeFor(period: Period): { from: string; to: string; label: string } {
   const now = new Date()
@@ -65,8 +57,6 @@ function pkr(cents: number): string {
   return `PKR ${Math.round(n).toLocaleString()}`
 }
 const dash = (c: number | null | undefined) => (c == null ? '—' : pkr(c))
-const roasFmt = (r: number | null) => (r == null ? '—' : `${r.toFixed(1)}×`)
-const curMonth = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}` }
 
 export default function BrandDashboardPage() {
   const router = useRouter()
@@ -129,7 +119,7 @@ export default function BrandDashboardPage() {
               Brand — {range.label}
             </h1>
             <p style={{ color: '#6E7186', margin: '0.35rem 0 0', fontSize: '0.88rem' }}>
-              {brandName} · acquisition, retention &amp; return on spend.
+              {brandName} · acquisition, retention &amp; customer value.
             </p>
           </div>
           <PeriodSwitcher value={period} onChange={setPeriod} />
@@ -140,14 +130,11 @@ export default function BrandDashboardPage() {
 
         {/* Hero KPIs */}
         <div style={{ marginTop: '1.2rem', display: 'grid', gap: '0.8rem', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}>
-          <Scorecard label="ROAS"  value={roasFmt(k?.roas ?? null)}  accent="#00D4B1" sub="return on ad spend" />
-          <Scorecard label="CAC"   value={dash(k?.cacCents)}          accent="#4F8EF7" sub="cost to acquire" />
           <Scorecard label="ARPU"  value={dash(k?.arpuCents)}         accent="#A855F7" sub="revenue / active user" />
           <Scorecard label="AOV"   value={dash(k?.aovCents)}          accent="#F59E0B" sub="avg order value" />
+          <Scorecard label="LTV"   value={dash(k?.ltvCents)}          accent="#22C55E" sub="avg lifetime spend" />
         </div>
         <div style={{ marginTop: '0.8rem', display: 'grid', gap: '0.8rem', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}>
-          <Scorecard label="LTV"   value={dash(k?.ltvCents)}          accent="#22C55E" sub="avg lifetime spend" />
-          <Scorecard label="CRC"   value={dash(k?.crcCents)}          accent="#6366F1" sub="cost to retain" />
           <Scorecard label="New customers"       value={(m?.customers.new ?? 0).toLocaleString()}       accent="#00D4B1" sub={`${range.label}`} />
           <Scorecard label="Returning customers" value={(m?.customers.returning ?? 0).toLocaleString()} accent="#F59E0B" sub={`${range.label}`} />
         </div>
@@ -158,13 +145,8 @@ export default function BrandDashboardPage() {
             <MiniStat label="Revenue"  value={dash(m?.revenue.grossCents)} />
             <MiniStat label="Orders"   value={(m?.revenue.orders ?? 0).toLocaleString()} />
             <MiniStat label="Active customers" value={(m?.customers.distinct ?? 0).toLocaleString()} />
-            <MiniStat label="Acquisition spend" value={dash(m?.spend.acquisitionCents)} />
-            <MiniStat label="Retention spend"   value={dash(m?.spend.retentionCents)} />
           </div>
         </Section>
-
-        {/* Spend editor — the input that powers CAC / CRC / ROAS */}
-        <SpendEditor conceptId={conceptId} concepts={concepts ?? []} />
 
         {/* Reputation */}
         <Section title="Reputation" hint="reviews + open complaints">
@@ -187,86 +169,6 @@ export default function BrandDashboardPage() {
         </Section>
       </div>
     </main>
-  )
-}
-
-// ── Spend editor ──────────────────────────────────────────────────────────────
-function SpendEditor({ conceptId, concepts }: { conceptId: string | null; concepts: Concept[] }) {
-  const qc = useQueryClient()
-  const month = curMonth()
-  const [acq, setAcq] = useState('')
-  const [ret, setRet] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [msg, setMsg] = useState<string | null>(null)
-
-  const { data: row } = useQuery({
-    queryKey: ['brand-dash', 'spend', conceptId, month],
-    queryFn:  () => api.get<SpendRow>(`/management/marketing-spend?conceptId=${conceptId}&month=${month}`),
-    enabled:  !!conceptId,
-  })
-  useEffect(() => {
-    setAcq(row ? String((row.acquisitionCents ?? 0) / 100) : '')
-    setRet(row ? String((row.retentionCents ?? 0) / 100) : '')
-  }, [row, conceptId])
-
-  if (!conceptId) {
-    return (
-      <Section title="Marketing spend" hint="powers CAC · CRC · ROAS">
-        <div style={{ background: '#11151c', border: '1px solid #1d222b', borderRadius: '0.9rem', padding: '1.1rem 1.2rem', color: '#9aa0b4', fontSize: '0.85rem' }}>
-          Pick a single brand above to enter or edit its monthly spend. Spend is tracked per brand; the all-brands view sums them.
-        </div>
-      </Section>
-    )
-  }
-
-  async function save() {
-    setBusy(true); setMsg(null)
-    try {
-      await api.put('/management/marketing-spend', {
-        conceptId, month,
-        acquisitionCents: Math.round((parseFloat(acq) || 0) * 100),
-        retentionCents:   Math.round((parseFloat(ret) || 0) * 100),
-      })
-      setMsg('Saved')
-      void qc.invalidateQueries({ queryKey: ['brand-dash'] })
-      setTimeout(() => setMsg(null), 2500)
-    } catch (e) { setMsg((e as Error).message) }
-    finally { setBusy(false) }
-  }
-
-  const brandName = concepts.find((c) => c.id === conceptId)?.name ?? 'this brand'
-  const monthLabel = new Date(`${month}-01T00:00:00`).toLocaleDateString('en-PK', { month: 'long', year: 'numeric' })
-
-  return (
-    <Section title="Marketing spend" hint={`${brandName} · ${monthLabel} · powers CAC · CRC · ROAS`}>
-      <div style={{ background: '#11151c', border: '1px solid #1d222b', borderRadius: '0.9rem', padding: '1.1rem 1.2rem' }}>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '0.9rem' }}>
-          <SpendField label="Acquisition spend (PKR)" hint="ads, discovery → new customers (drives CAC)" value={acq} onChange={setAcq} />
-          <SpendField label="Retention spend (PKR)"   hint="CRM, loyalty, win-back → existing (drives CRC)" value={ret} onChange={setRet} />
-        </div>
-        <div style={{ marginTop: '0.9rem', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-          <button onClick={() => void save()} disabled={busy}
-            style={{ padding: '0.55rem 1.2rem', borderRadius: '0.6rem', background: '#00D4B1', color: '#0a0a0a', fontWeight: 700, fontSize: '0.85rem', border: 'none', cursor: 'pointer', opacity: busy ? 0.6 : 1 }}>
-            {busy ? 'Saving…' : `Save spend for ${monthLabel}`}
-          </button>
-          {msg && <span style={{ color: msg === 'Saved' ? '#22C55E' : '#FF4D4F', fontSize: '0.8rem', fontWeight: 600 }}>{msg}</span>}
-        </div>
-        <p style={{ color: '#6E7186', fontSize: '0.72rem', margin: '0.7rem 0 0', lineHeight: 1.45 }}>
-          Spend is entered per calendar month. The KPIs above pro-rate it to the period you&rsquo;ve selected (a 7-day view uses 7/30 of the month).
-        </p>
-      </div>
-    </Section>
-  )
-}
-
-function SpendField({ label, hint, value, onChange }: { label: string; hint: string; value: string; onChange: (v: string) => void }) {
-  return (
-    <label style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
-      <span style={{ fontSize: '0.66rem', fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#9aa0b4' }}>{label}</span>
-      <input value={value} onChange={(e) => onChange(e.target.value)} inputMode="decimal" placeholder="0"
-        style={{ background: '#0a0d12', border: '1px solid rgba(255,255,255,0.10)', borderRadius: '0.45rem', padding: '0.55rem 0.7rem', color: '#E8EAF0', fontSize: '0.95rem', fontVariantNumeric: 'tabular-nums', outline: 'none' }} />
-      <span style={{ fontSize: '0.68rem', color: '#6E7186', lineHeight: 1.35 }}>{hint}</span>
-    </label>
   )
 }
 

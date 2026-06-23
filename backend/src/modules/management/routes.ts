@@ -1,12 +1,9 @@
 // Management dashboards API.
 //
-// Two self-contained metric endpoints (one per manager) plus the
-// marketing-spend CRUD that powers the Brand Manager's CAC / CRC / ROAS.
+// Two self-contained metric endpoints (one per manager).
 //
 //   GET  /management/brand-metrics   — Brand Manager (marketing-finance KPIs)
 //   GET  /management/fnb-metrics     — F&B Manager (kitchen + food KPIs)
-//   GET  /management/marketing-spend — read a brand's spend for a month
-//   PUT  /management/marketing-spend — upsert a brand's spend for a month
 //
 // Each metric endpoint returns EVERYTHING its dashboard needs in one call, so
 // the managers don't need broad API access — they're guarded to exactly the
@@ -14,7 +11,6 @@
 
 import type { FastifyInstance } from 'fastify'
 import type { Prisma } from '@prisma/client'
-import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, FINANCIALS_VIEWERS, MARKETING_TEAM } from '../auth/middleware.js'
 import { profitAndLoss, cashFlow, pnlByConcept } from '../accounting/reports.js'
@@ -127,51 +123,10 @@ function dateRange(dateFrom?: string, dateTo?: string): { from: Date; to: Date }
   return { from, to }
 }
 
-// Marketing spend is entered per calendar month. To value it against an
-// arbitrary period we pro-rate each overlapping month by the share of its days
-// that fall inside [from, to]. e.g. a week-long period in June uses 7/30 of
-// June's spend.
-function monthsInRange(from: Date, to: Date): Array<{ month: string; fraction: number }> {
-  const out: Array<{ month: string; fraction: number }> = []
-  const cur = new Date(from.getFullYear(), from.getMonth(), 1)
-  while (cur <= to) {
-    const y = cur.getFullYear(), m = cur.getMonth()
-    const monthStart = new Date(y, m, 1)
-    const monthEnd   = new Date(y, m + 1, 0, 23, 59, 59, 999)
-    const daysInMonth = monthEnd.getDate()
-    const overlapStart = from > monthStart ? from : monthStart
-    const overlapEnd   = to   < monthEnd   ? to   : monthEnd
-    const overlapDays  = Math.max(0, (overlapEnd.getTime() - overlapStart.getTime()) / 86_400_000)
-    const fraction = Math.min(1, overlapDays / daysInMonth)
-    out.push({ month: `${y}-${String(m + 1).padStart(2, '0')}`, fraction })
-    cur.setMonth(cur.getMonth() + 1)
-  }
-  return out
-}
-
-async function spendForPeriod(conceptId: string | undefined, from: Date, to: Date) {
-  const months = monthsInRange(from, to)
-  const rows = await prisma.marketingSpend.findMany({
-    where: {
-      month: { in: months.map((m) => m.month) },
-      ...(conceptId ? { conceptId } : {}),
-    },
-    select: { month: true, acquisitionCents: true, retentionCents: true },
-  })
-  const fracByMonth = new Map(months.map((m) => [m.month, m.fraction]))
-  let acquisition = 0, retention = 0
-  for (const r of rows) {
-    const f = fracByMonth.get(r.month) ?? 0
-    acquisition += r.acquisitionCents * f
-    retention   += r.retentionCents * f
-  }
-  return { acquisitionCents: Math.round(acquisition), retentionCents: Math.round(retention) }
-}
-
 export async function managementRoutes(fastify: FastifyInstance) {
 
   // ── Brand Manager metrics ─────────────────────────────────────────────────
-  // CAC, CRC, ROAS, ARPU, AOV, LTV + the customer counts they're built from.
+  // ARPU, AOV, LTV + the customer counts they're built from.
   // Guarded to the marketing team (incl. brand_manager) + every manager.
   fastify.get<{ Querystring: { conceptId?: string; dateFrom?: string; dateTo?: string } }>(
     '/brand-metrics',
@@ -234,32 +189,20 @@ export async function managementRoutes(fastify: FastifyInstance) {
         }),
       ])
 
-      const spend = await spendForPeriod(conceptId, from, to)
-      const totalSpend = spend.acquisitionCents + spend.retentionCents
-
-      // Derived KPIs. null when the denominator is missing (e.g. CAC with no
-      // spend entered) so the dashboard shows "—" rather than a fake number.
+      // Derived KPIs. null when the denominator is missing so the dashboard
+      // shows "—" rather than a fake number.
       const aov  = orders > 0 ? Math.round(gross / orders) : null
       const arpu = distinctCustomers > 0 ? Math.round(gross / distinctCustomers) : null
-      const cac  = (spend.acquisitionCents > 0 && newCustomers > 0)
-        ? Math.round(spend.acquisitionCents / newCustomers) : null
-      const crc  = (spend.retentionCents > 0 && returningCustomers > 0)
-        ? Math.round(spend.retentionCents / returningCustomers) : null
-      const roas = totalSpend > 0 ? Math.round((gross / totalSpend) * 100) / 100 : null
 
       return {
         period: { from: from.toISOString(), to: to.toISOString() },
         conceptId: conceptId ?? null,
         revenue: { grossCents: gross, netCents: net, orders },
         customers: { distinct: distinctCustomers, new: newCustomers, returning: returningCustomers },
-        spend,                       // { acquisitionCents, retentionCents }  (period-prorated)
         kpis: {
           aovCents:  aov,            // average order value
           arpuCents: arpu,           // average revenue per (active) user, this period
           ltvCents,                  // average lifetime spend per customer (all-time)
-          cacCents:  cac,            // customer acquisition cost
-          crcCents:  crc,            // customer retention cost
-          roas,                      // return on ad spend (blended), e.g. 4.2 = 4.2x
         },
         reputation: {
           avgRating: ratingAgg._avg.rating ?? null,
@@ -389,71 +332,6 @@ export async function managementRoutes(fastify: FastifyInstance) {
       }
     },
   )
-
-  // ── Marketing spend CRUD ──────────────────────────────────────────────────
-  const monthRx = /^\d{4}-(0[1-9]|1[0-2])$/
-
-  // List the last N months of spend rows (optionally one brand) — powers the
-  // Marketing Spend grid in the Management tab. Returns the month axis so the
-  // frontend can render an editable cell even for months with no row yet.
-  fastify.get<{ Querystring: { conceptId?: string; months?: string } }>(
-    '/marketing-spend/list',
-    { preHandler: requireAuth(...MARKETING_TEAM) },
-    async (req) => {
-      const { conceptId } = req.query
-      const n = Math.min(Math.max(parseInt(req.query.months ?? '12', 10) || 12, 1), 24)
-      const now = new Date()
-      const months: string[] = []
-      for (let i = 0; i < n; i++) {
-        const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
-        months.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`)
-      }
-      const rows = await prisma.marketingSpend.findMany({
-        where: { month: { in: months }, ...(conceptId ? { conceptId } : {}) },
-        select: { conceptId: true, month: true, acquisitionCents: true, retentionCents: true, note: true },
-      })
-      return { months, rows }
-    },
-  )
-
-  fastify.get<{ Querystring: { conceptId?: string; month?: string } }>(
-    '/marketing-spend',
-    { preHandler: requireAuth(...MARKETING_TEAM) },
-    async (req, reply) => {
-      const { conceptId, month } = req.query
-      if (!conceptId || !month || !monthRx.test(month)) {
-        return reply.status(400).send({ error: { code: 'BAD_INPUT', message: 'conceptId and month=YYYY-MM are required' } })
-      }
-      const row = await prisma.marketingSpend.findUnique({ where: { conceptId_month: { conceptId, month } } })
-      return row ?? { conceptId, month, acquisitionCents: 0, retentionCents: 0, note: null }
-    },
-  )
-
-  const upsertSchema = z.object({
-    conceptId:        z.string().min(1),
-    month:            z.string().regex(monthRx, 'month must be YYYY-MM'),
-    acquisitionCents: z.number().int().min(0).max(1_000_000_00),
-    retentionCents:   z.number().int().min(0).max(1_000_000_00),
-    note:             z.string().max(280).nullable().optional(),
-  })
-
-  fastify.put('/marketing-spend', { preHandler: requireAuth(...MARKETING_TEAM) }, async (req, reply) => {
-    const body = upsertSchema.parse(req.body)
-    const tenantId = req.staffUser!.tenantId ?? null
-    const row = await prisma.marketingSpend.upsert({
-      where:  { conceptId_month: { conceptId: body.conceptId, month: body.month } },
-      create: {
-        conceptId: body.conceptId, month: body.month,
-        acquisitionCents: body.acquisitionCents, retentionCents: body.retentionCents,
-        note: body.note ?? null, tenantId, updatedById: req.staffUser!.id,
-      },
-      update: {
-        acquisitionCents: body.acquisitionCents, retentionCents: body.retentionCents,
-        note: body.note ?? null, updatedById: req.staffUser!.id,
-      },
-    })
-    return reply.status(200).send(row)
-  })
 
   // GET /management/brand-pl?conceptId&dateFrom&dateTo — per-brand P&L.
   fastify.get<{ Querystring: { conceptId?: string; dateFrom?: string; dateTo?: string } }>(
