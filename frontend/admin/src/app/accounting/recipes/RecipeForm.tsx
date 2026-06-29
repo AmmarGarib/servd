@@ -125,7 +125,6 @@ export function RecipeForm({ initial, prefillBrandId, prefillCategoryId }: {
   const [brandId, setBrandId]           = useState<string>(initial?.brandId ?? prefillBrandId ?? '')
   // 'new' = create a new menu item inline (default for fresh recipes);
   // 'existing' = retrofit an existing menu item with a recipe.
-  const [menuItemMode, setMenuItemMode] = useState<'new' | 'existing'>(initial?.menuItemId ? 'existing' : 'new')
   const [menuItemId, setMenuItemId]     = useState<string>(initial?.menuItemId ?? '')
   // A testing plate hasn't opened its menu item yet — seed the new-item fields
   // from its pendingMenuItem so editing pre-approval prefills correctly.
@@ -162,10 +161,6 @@ export function RecipeForm({ initial, prefillBrandId, prefillCategoryId }: {
     }
   }, [menuItemId, menuItems, isEdit, kind, brandId])
 
-  const conceptMenu = useMemo(
-    () => brandId ? menuItems.filter((m) => m.conceptId === brandId) : menuItems,
-    [menuItems, brandId],
-  )
   const activeConcept = concepts.find((c) => c.id === brandId)
 
   // Categories under the picked brand (for the "new menu item" mode's
@@ -245,20 +240,18 @@ export function RecipeForm({ initial, prefillBrandId, prefillCategoryId }: {
     mutationFn: () => {
       const payload = {
         ...(isEdit ? {} : { kind }),
-        // Plate recipes either link to an existing menu item OR ship a
-        // `newMenuItem` block that the backend uses to create one. Non-
-        // plate recipes carry their own name + yield instead.
+        // Plate recipes always create their own menu item, deferred until the
+        // recipe is approved to production. Non-plate recipes carry their own
+        // name + yield. On edit we don't touch the menu linkage.
         ...(kind === 'plate'
-          ? (menuItemMode === 'existing'
-              ? { menuItemId }
-              : {
-                  newMenuItem: {
-                    conceptId:   brandId,
-                    categoryId:  newItemCategoryId,
-                    name:        newItemName.trim(),
-                    description: newItemDescription.trim() || null,
-                  },
-                })
+          ? (isEdit ? {} : {
+              newMenuItem: {
+                conceptId:   brandId,
+                categoryId:  newItemCategoryId,
+                name:        newItemName.trim(),
+                description: newItemDescription.trim() || null,
+              },
+            })
           : { name: name.trim(), yieldGrams }),
         servings: portions,
         category,
@@ -301,9 +294,10 @@ export function RecipeForm({ initial, prefillBrandId, prefillCategoryId }: {
   function submit() {
     setErr('')
     if (kind === 'plate' && !brandId) return setErr('Pick a brand for this recipe.')
-    if (kind === 'plate' && menuItemMode === 'existing' && !menuItemId) return setErr('Pick a menu item this plate recipe is for.')
-    if (kind === 'plate' && menuItemMode === 'new' && !newItemName.trim()) return setErr('Name the new menu item.')
-    if (kind === 'plate' && menuItemMode === 'new' && !newItemCategoryId) return setErr('Pick a menu category for the new item.')
+    // Menu-item name/category only required when actually creating one (i.e. a
+    // new plate recipe — an existing plate's item is already set and read-only).
+    if (kind === 'plate' && !isEdit && !newItemName.trim()) return setErr('Name the menu item.')
+    if (kind === 'plate' && !isEdit && !newItemCategoryId) return setErr('Pick a menu category for the item.')
     if (kind !== 'plate' && !name.trim()) return setErr('Give the recipe a name.')
     if (kind !== 'plate' && yieldGrams <= 0) return setErr('Set a positive batch yield (grams) for component recipes.')
     if (computed.rows.every((r) => !r.inventoryItemId || r.quantity <= 0)) return setErr('Add at least one ingredient with quantity > 0.')
@@ -392,43 +386,27 @@ export function RecipeForm({ initial, prefillBrandId, prefillCategoryId }: {
                 </select>
               </Field>
 
-              {/* Plate-only: menu item picker — new (default) or existing */}
+              {/* Plate recipes always create their own menu item (opened on
+                  approval). An already-live plate shows its item read-only. */}
               {kind === 'plate' ? (
-                <div className="md:col-span-1 space-y-2">
-                  {!isEdit && (
-                    <div className="flex gap-1 text-[10px] font-bold uppercase tracking-wider">
-                      <button type="button" onClick={() => setMenuItemMode('new')}
-                        className={`rounded-md px-2 py-1 ${menuItemMode === 'new' ? 'bg-s-teal text-black' : 'border border-s-border text-s-muted'}`}>
-                        New menu item
-                      </button>
-                      <button type="button" onClick={() => setMenuItemMode('existing')}
-                        className={`rounded-md px-2 py-1 ${menuItemMode === 'existing' ? 'bg-s-teal text-black' : 'border border-s-border text-s-muted'}`}>
-                        Existing
-                      </button>
-                    </div>
-                  )}
-                  {menuItemMode === 'existing' ? (
-                    <Field label="Menu item *">
-                      <select value={menuItemId} onChange={(e) => setMenuItemId(e.target.value)} className={inputCls} disabled={isEdit}>
-                        <option value="">— Pick from menu —</option>
-                        {conceptMenu.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
-                      </select>
-                    </Field>
-                  ) : (
-                    <Field label="Menu item name *">
-                      <input value={newItemName} onChange={(e) => setNewItemName(e.target.value)}
-                        placeholder="e.g. Chimi Shimi" className={inputCls}/>
-                    </Field>
-                  )}
-                </div>
+                (isEdit && initial?.menuItemId) ? (
+                  <Field label="Menu item">
+                    <input value={menuItems.find((m) => m.id === menuItemId)?.name ?? '—'} disabled className={inputCls}/>
+                  </Field>
+                ) : (
+                  <Field label="Menu item name *">
+                    <input value={newItemName} onChange={(e) => setNewItemName(e.target.value)}
+                      placeholder="e.g. Chimi Shimi" className={inputCls}/>
+                  </Field>
+                )
               ) : (
                 <Field label="Recipe name *">
                   <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Burger sauce" className={inputCls}/>
                 </Field>
               )}
 
-              {/* Plate + new-mode only: description + category for the menu item */}
-              {kind === 'plate' && menuItemMode === 'new' && !isEdit && (
+              {/* New plate only: description + category for the menu item it'll open */}
+              {kind === 'plate' && !isEdit && (
                 <>
                   <Field label="Menu category *" hint={brandId ? '' : 'Pick a brand first'}>
                     <select value={newItemCategoryId} onChange={(e) => setNewItemCategoryId(e.target.value)}
