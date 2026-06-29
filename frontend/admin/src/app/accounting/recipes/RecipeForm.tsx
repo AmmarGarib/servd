@@ -304,10 +304,10 @@ export function RecipeForm({ initial, prefillBrandId, prefillCategoryId }: {
           {/* Type picker */}
           <section className="rounded-xl border border-s-border bg-s-surface p-4">
             <p className="text-[10px] font-bold uppercase tracking-wider text-s-muted mb-2">Recipe type</p>
-            <div className="flex gap-2 flex-wrap">
+            <div className="grid grid-cols-2 gap-2">
               {([
-                { v: 'plate' as Kind,     label: 'Finished plate', hint: 'Goes on a menu, gets sold' },
-                { v: 'component' as Kind, label: 'Component',      hint: 'Batch sub-recipe used inside plates by the gram (sauces, doughs)' },
+                { v: 'plate' as Kind,     label: 'Finished plate', hint: 'Menu Item' },
+                { v: 'component' as Kind, label: 'Sub recipe',      hint: 'prep recipe or component recipe' },
               ]).map((t) => (
                 <button key={t.v} type="button" disabled={isEdit}
                   onClick={() => setKind(t.v)}
