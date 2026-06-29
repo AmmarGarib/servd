@@ -7,6 +7,16 @@ import { NotFoundError, AppError } from '../../lib/errors.js'
 
 const Q_FACTOR = 0.05 // 5% miscellaneous surcharge (salt, oil, unmeasured items)
 
+// Normalise a raw inventory item's cost to per-gram (paisa/g): items priced
+// per kg/litre divide by 1000; per g/ml (and per-unit pcs) are already per
+// measure. Used wherever a raw line is costed so weighed items priced per kg
+// aren't ~1000x off — including inside component (prep) batch costing.
+function cpgCents(unit: string | null | undefined, unitCostCents: number | null | undefined): number {
+  const u = (unit ?? '').toLowerCase()
+  const c = unitCostCents ?? 0
+  return (u === 'kg' || u === 'litres' || u === 'l') ? c / 1000 : c
+}
+
 const SEASON_KEYS = ['spring', 'summer', 'monsoon', 'autumn', 'winter', 'ramadan', 'year-round'] as const
 const SEASON_DATE_RE = /^(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/
 
@@ -178,7 +188,7 @@ export async function recipeRoutes(fastify: FastifyInstance) {
               // inline so plate recipes get accurate totals in one round-trip.
               prepRecipe: {
                 include: {
-                  ingredients: { include: { inventoryItem: { select: { unitCostCents: true } } } },
+                  ingredients: { include: { inventoryItem: { select: { unit: true, unitCostCents: true } } } },
                 },
               },
             },
@@ -221,7 +231,7 @@ export async function recipeRoutes(fastify: FastifyInstance) {
             // this row shows zero rather than poisoning the parent's total.
             const prep = ing.prepRecipe
             const prepCost = prep.ingredients.reduce(
-              (s, i2) => s + (i2.inventoryItem?.unitCostCents ?? 0) * (i2.quantity / (i2.yieldPct > 0 ? i2.yieldPct : 1)),
+              (s, i2) => s + cpgCents(i2.inventoryItem?.unit, i2.inventoryItem?.unitCostCents) * (i2.quantity / (i2.yieldPct > 0 ? i2.yieldPct : 1)),
               0,
             )
             const prepLabor = (prep.laborMinutes / 60) * 50_00
@@ -295,13 +305,13 @@ export async function recipeRoutes(fastify: FastifyInstance) {
   fastify.get('/prep', { preHandler: requireAuth(...MANAGERS) }, async () => {
     const preps = await prisma.recipe.findMany({
       where: { kind: 'component', isActive: true },
-      include: { ingredients: { include: { inventoryItem: { select: { unitCostCents: true } } } } },
+      include: { ingredients: { include: { inventoryItem: { select: { unit: true, unitCostCents: true } } } } },
       orderBy: { name: 'asc' },
     })
 
     return preps.map((p) => {
       const ingCost = p.ingredients.reduce(
-        (s, i) => s + (i.inventoryItem?.unitCostCents ?? 0) * (i.quantity / (i.yieldPct > 0 ? i.yieldPct : 1)),
+        (s, i) => s + cpgCents(i.inventoryItem?.unit, i.inventoryItem?.unitCostCents) * (i.quantity / (i.yieldPct > 0 ? i.yieldPct : 1)),
         0,
       )
       const labor = (p.laborMinutes / 60) * 50_00
@@ -375,7 +385,7 @@ export async function recipeRoutes(fastify: FastifyInstance) {
               prepRecipe: {
                 select: {
                   id: true, name: true, yieldGrams: true, laborMinutes: true,
-                  ingredients: { select: { quantity: true, yieldPct: true, inventoryItem: { select: { unitCostCents: true } } } },
+                  ingredients: { select: { quantity: true, yieldPct: true, inventoryItem: { select: { unit: true, unitCostCents: true } } } },
                 },
               },
             },
@@ -397,7 +407,7 @@ export async function recipeRoutes(fastify: FastifyInstance) {
           // (the component is already yield-adjusted by its own batch).
           const prep = ri.prepRecipe
           const prepCost = prep.ingredients.reduce(
-            (s, i2) => s + (i2.inventoryItem?.unitCostCents ?? 0) * (i2.quantity / (i2.yieldPct > 0 ? i2.yieldPct : 1)),
+            (s, i2) => s + cpgCents(i2.inventoryItem?.unit, i2.inventoryItem?.unitCostCents) * (i2.quantity / (i2.yieldPct > 0 ? i2.yieldPct : 1)),
             0,
           )
           const prepLabor = (prep.laborMinutes / 60) * 50_00
