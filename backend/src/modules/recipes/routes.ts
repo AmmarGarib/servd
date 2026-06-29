@@ -230,14 +230,23 @@ export async function recipeRoutes(fastify: FastifyInstance) {
             costPerUnit = costPerGram                       // "per unit" of this component = per gram
             ingredientCostCents = Math.round(costPerGram * ing.quantity)
           } else if (ing.inventoryItem) {
-            costPerUnit = ing.inventoryItem.unitCostCents ?? 0
+            // Normalise to a per-gram cost so weighed items priced per kg/litre
+            // aren't ~1000x off (must match the /costing handler). Count units
+            // (pcs/unit/each) cost per unit. purchaseQty already = qty ÷ yield.
+            const u = (ing.inventoryItem.unit ?? '').toLowerCase()
+            const raw = ing.inventoryItem.unitCostCents ?? 0
+            costPerUnit = (u === 'kg' || u === 'litres' || u === 'l') ? raw / 1000
+                        : (u === 'g'  || u === 'ml')                  ? raw
+                        : raw   // pcs / unit / each — priced per unit
             ingredientCostCents = Math.round(costPerUnit * purchaseQty)
           }
           return { ...ing, purchaseQty, costPerUnit, ingredientCostCents }
         })
 
         const ingredientCostCents = ingDetails.reduce((s, i) => s + i.ingredientCostCents, 0)
-        const qFactorCents        = Math.round(ingredientCostCents * Q_FACTOR)
+        // Use the recipe's own Q-factor (default 10%) so the list matches the
+        // detail/costing view; the old hardcoded 5% disagreed with both.
+        const qFactorCents        = Math.round(ingredientCostCents * (r.qFactorPct / 100))
         const laborCostCents      = Math.round((r.laborMinutes / 60) * 50_00) // PKR 50/hr
         const totalCostCents      = ingredientCostCents + qFactorCents + laborCostCents
 
@@ -360,7 +369,15 @@ export async function recipeRoutes(fastify: FastifyInstance) {
           ingredients: {
             include: {
               inventoryItem: { select: { id: true, name: true, unit: true, unitCostCents: true, yieldPct: true, allergens: true } },
-              prepRecipe:    { select: { id: true, name: true, yieldGrams: true } },
+              // Component sub-recipes need their own ingredients to compute a
+              // cost-per-gram here (mirrors the GET / list handler) — otherwise
+              // component lines used to silently cost zero.
+              prepRecipe: {
+                select: {
+                  id: true, name: true, yieldGrams: true, laborMinutes: true,
+                  ingredients: { select: { quantity: true, yieldPct: true, inventoryItem: { select: { unitCostCents: true } } } },
+                },
+              },
             },
           },
         },
@@ -375,7 +392,19 @@ export async function recipeRoutes(fastify: FastifyInstance) {
         // 'pcs', cost per gram doesn't apply; ingredient cost = qty * cost.
         let costPerGramCents = 0
         let ingredientCostCents = 0
-        if (inv) {
+        if (ri.prepRecipe) {
+          // Component: cost flows in at the batch's cost-per-gram × grams used
+          // (the component is already yield-adjusted by its own batch).
+          const prep = ri.prepRecipe
+          const prepCost = prep.ingredients.reduce(
+            (s, i2) => s + (i2.inventoryItem?.unitCostCents ?? 0) * (i2.quantity / (i2.yieldPct > 0 ? i2.yieldPct : 1)),
+            0,
+          )
+          const prepLabor = (prep.laborMinutes / 60) * 50_00
+          const prepTotal = prepCost * (1 + Q_FACTOR) + prepLabor
+          costPerGramCents = (prep.yieldGrams && prep.yieldGrams > 0) ? prepTotal / prep.yieldGrams : 0
+          ingredientCostCents = costPerGramCents * ri.quantity
+        } else if (inv) {
           if (inv.unit === 'kg' || inv.unit === 'litres' || inv.unit === 'l') {
             costPerGramCents = (inv.unitCostCents ?? 0) / 1000
           } else if (inv.unit === 'g' || inv.unit === 'ml') {
@@ -385,8 +414,9 @@ export async function recipeRoutes(fastify: FastifyInstance) {
             ingredientCostCents = (inv.unitCostCents ?? 0) * ri.quantity
           }
           if (costPerGramCents > 0) {
-            // Apply yield% (operator override on the row, fall back to inventory default).
-            const yieldFactor = (ri.yieldPct ?? inv.yieldPct ?? 100) / 100
+            // Yield raises cost. ri.yieldPct is a fraction (0–1); the inventory
+            // default is 0–100 — normalise both to a fraction before dividing.
+            const yieldFactor = ri.yieldPct ?? ((inv.yieldPct ?? 100) / 100)
             ingredientCostCents = (ri.quantity * costPerGramCents) / Math.max(yieldFactor, 0.01)
           }
         }
@@ -395,7 +425,8 @@ export async function recipeRoutes(fastify: FastifyInstance) {
           name:             inv?.name ?? ri.prepRecipe?.name ?? '—',
           unit:             ri.unit,
           quantity:         ri.quantity,
-          yieldPct:         ri.yieldPct ?? inv?.yieldPct ?? 100,
+          // Displayed yield as a percent (ri.yieldPct is stored as a fraction).
+          yieldPct:         ri.yieldPct != null ? Math.round(ri.yieldPct * 100) : (inv?.yieldPct ?? 100),
           costPerGramCents,
           ingredientCostCents: Math.round(ingredientCostCents),
           allergens:        inv?.allergens ?? [],

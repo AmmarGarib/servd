@@ -26,6 +26,7 @@ interface ExistingRecipe {
   ingredients: Array<{
     id: string
     inventoryItemId: string | null
+    prepRecipeId: string | null
     quantity: number
     yieldPct: number | null
   }>

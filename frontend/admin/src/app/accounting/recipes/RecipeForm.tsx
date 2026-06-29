@@ -31,10 +31,16 @@ interface MenuItem { id: string; name: string; conceptId: string; priceCents: nu
 
 interface IngredientRow {
   key: string
+  source: 'raw' | 'component'        // raw inventory item, or a sub-recipe (component) used by the gram
   inventoryItemId: string
+  prepRecipeId: string
   quantity: number
-  yieldPctOverride: number | null
+  yieldPctOverride: number | null    // UI percent 0–100; null = use the inventory default
 }
+
+// Component (sub-recipe) option for the ingredient picker. Cost-per-gram is
+// precomputed by GET /recipes/prep (already batch-yield-adjusted).
+interface PrepOption { id: string; name: string; costPerGramCents: number }
 
 export type RecipeStatus = 'iteration' | 'pending_approval' | 'production'
 
@@ -68,6 +74,7 @@ export interface RecipeFormInitial {
   ingredients: Array<{
     id: string
     inventoryItemId: string | null
+    prepRecipeId: string | null
     quantity: number
     yieldPct: number | null
   }>
@@ -75,7 +82,9 @@ export interface RecipeFormInitial {
 
 const blankRow = (): IngredientRow => ({
   key: Math.random().toString(36).slice(2),
+  source: 'raw',
   inventoryItemId: '',
+  prepRecipeId: '',
   quantity: 0,
   yieldPctOverride: null,
 })
@@ -83,9 +92,15 @@ const blankRow = (): IngredientRow => ({
 function fmtPkr(cents: number): string {
   return `PKR ${Math.round(cents / 100).toLocaleString('en-PK')}`
 }
+// Per-gram cost to 3 decimals (cents → PKR/g). Gram-scale costs are tiny, so
+// whole-rupee rounding would erase them.
+function fmtPkrPerG(cents: number): string { return `PKR ${(cents / 100).toFixed(3)}` }
 function fmtPct(pct: number): string { return `${pct.toFixed(1)}%` }
 
-function costPerGramCents(inv: InventoryItem): number {
+// Raw inventory cost normalised to cost-per-gram (paisa/g). Items priced per
+// kg/litre divide by 1000; per g/ml are already per-gram; count units (pcs)
+// return 0 here and are costed per-unit by the caller instead.
+function invCostPerGramCents(inv: InventoryItem): number {
   const u = inv.unit.toLowerCase()
   if (u === 'kg' || u === 'litres' || u === 'l') return (inv.unitCostCents ?? 0) / 1000
   if (u === 'g'  || u === 'ml')                  return (inv.unitCostCents ?? 0)
@@ -145,9 +160,12 @@ export function RecipeForm({ initial, prefillBrandId, prefillCategoryId }: {
     initial?.ingredients.length
       ? initial.ingredients.map((i) => ({
           key: i.id,
+          source: i.prepRecipeId ? 'component' : 'raw',
           inventoryItemId: i.inventoryItemId ?? '',
+          prepRecipeId: i.prepRecipeId ?? '',
           quantity: i.quantity,
-          yieldPctOverride: i.yieldPct,
+          // stored as a fraction (0–1) → show as a percent (0–100).
+          yieldPctOverride: i.yieldPct != null ? Math.round(i.yieldPct * 100) : null,
         }))
       : [blankRow()],
   )
@@ -174,27 +192,59 @@ export function RecipeForm({ initial, prefillBrandId, prefillCategoryId }: {
     enabled: !!brandId,
   })
 
+  // Components (sub-recipes) available to use as ingredients on a plate. Plate
+  // recipes can pull any active component; components don't nest components.
+  const { data: prepOptions = [] } = useQuery<PrepOption[]>({
+    queryKey: ['recipes', 'prep-options'],
+    queryFn: () => api.get('/recipes/prep'),
+    enabled: kind === 'plate',
+  })
+
   // ── Live cost preview ───────────────────────────────────────────────────
   const computed = useMemo(() => {
     const invById = new Map(inventory.map((i) => [i.id, i]))
+    const prepById = new Map(prepOptions.map((p) => [p.id, p]))
     const rows = ings.map((row) => {
-      const inv = invById.get(row.inventoryItemId)
-      if (!inv) return { ...row, inv: null, costCents: 0, allergens: [] as string[] }
-      let costCents = 0
-      const u = inv.unit.toLowerCase()
-      if (u === 'pcs' || u === 'unit' || u === 'each') {
-        costCents = (inv.unitCostCents ?? 0) * row.quantity
-      } else {
-        const cpg = costPerGramCents(inv)
-        const yieldFactor = ((row.yieldPctOverride ?? inv.yieldPct) || 100) / 100
-        costCents = (row.quantity * cpg) / Math.max(yieldFactor, 0.01)
+      // Component (sub-recipe) row: cost-per-gram is precomputed by the batch
+      // (already yield-adjusted), so cost = cost/g × grams used. No row yield.
+      if (row.source === 'component') {
+        const prep = prepById.get(row.prepRecipeId)
+        const cpgCents  = prep?.costPerGramCents ?? 0
+        const costCents = Math.round(cpgCents * row.quantity)
+        return {
+          ...row, inv: null, name: prep?.name ?? '— component —', isCount: false,
+          cpgCents, yieldPctApplied: 100, rawUsedG: row.quantity,
+          costCents, portionCostCents: Math.round(costCents / Math.max(portions, 1)),
+          allergens: [] as string[],
+        }
       }
-      return { ...row, inv, costCents: Math.round(costCents), allergens: inv.allergens }
+      const inv = invById.get(row.inventoryItemId)
+      if (!inv) {
+        return { ...row, inv: null, name: '—', isCount: false, cpgCents: 0,
+                 yieldPctApplied: 100, rawUsedG: 0, costCents: 0, portionCostCents: 0, allergens: [] as string[] }
+      }
+      const u = inv.unit.toLowerCase()
+      const isCount = (u === 'pcs' || u === 'unit' || u === 'each')
+      // Yield (0–100) raises cost: to get `quantity` usable you buy quantity ÷ yield.
+      const yieldPct    = (row.yieldPctOverride ?? inv.yieldPct) || 100
+      const yieldFactor = Math.max(yieldPct / 100, 0.01)
+      // For count items, "cpg" is really cost-per-unit; for weighed items it's per gram.
+      const cpgCents    = isCount ? (inv.unitCostCents ?? 0) : invCostPerGramCents(inv)
+      const costCents   = Math.round((row.quantity * cpgCents) / yieldFactor)
+      return {
+        ...row, inv, name: inv.name, isCount, cpgCents, yieldPctApplied: yieldPct,
+        rawUsedG: row.quantity / yieldFactor, costCents,
+        portionCostCents: Math.round(costCents / Math.max(portions, 1)),
+        allergens: inv.allergens,
+      }
     })
     const totalIngredient = rows.reduce((s, r) => s + r.costCents, 0)
     const qFactorCents    = Math.round(totalIngredient * (qFactor / 100))
     const totalRecipe     = totalIngredient + qFactorCents
     const plateCost       = Math.round(totalRecipe / Math.max(portions, 1))
+    // Recipe weight = sum of gram-based recipe quantities (count items excluded).
+    const recipeWeightG   = rows.reduce((s, r) => s + (r.isCount ? 0 : r.quantity), 0)
+    const portionSizeG    = recipeWeightG / Math.max(portions, 1)
     const opexPerPortion  = 0   // live-on-save (server computes from OpexLine)
 
     const packagingFactor = packaging / 100
@@ -215,11 +265,12 @@ export function RecipeForm({ initial, prefillBrandId, prefillCategoryId }: {
       contribMargin > 0 ? 'covers_food_loses_opex' : 'loses_every_plate'
 
     return { rows, totalIngredient, qFactorCents, totalRecipe, plateCost,
+             recipeWeightG, portionSizeG,
              opexPerPortion, forecastPortions: activeConcept?.forecastPortionsPerMonth ?? 0,
              foodCostPrice, breakEven, target, actualSp,
              packagingCost, contribMargin, contribMarginPct,
              netProfit, netProfitPct, foodCostPctOfSp, verdict }
-  }, [ings, inventory, qFactor, portions, packaging, targetProfit, actualSpPkr, activeConcept])
+  }, [ings, inventory, prepOptions, qFactor, portions, packaging, targetProfit, actualSpPkr, activeConcept])
 
   const allAllergens = useMemo(() => {
     const set = new Set<string>()
@@ -262,13 +313,22 @@ export function RecipeForm({ initial, prefillBrandId, prefillCategoryId }: {
         packagingPct: packaging,
         actualSellingPriceCents: actualSpPkr.trim() ? Math.round(parseFloat(actualSpPkr) * 100) : null,
         ingredients: ings
-          .filter((r) => r.inventoryItemId && r.quantity > 0)
-          .map((r) => ({
-            inventoryItemId: r.inventoryItemId,
-            quantity:        r.quantity,
-            unit:            inventory.find((i) => i.id === r.inventoryItemId)?.unit ?? 'g',
-            yieldPct:        r.yieldPctOverride ?? null,
-          })),
+          .filter((r) => r.quantity > 0 && (r.source === 'component' ? r.prepRecipeId : r.inventoryItemId))
+          .map((r) => {
+            if (r.source === 'component') {
+              // Components are consumed by the gram and already yield-adjusted.
+              return { prepRecipeId: r.prepRecipeId, quantity: r.quantity, unit: 'g', yieldPct: 1 }
+            }
+            const inv = inventory.find((i) => i.id === r.inventoryItemId)
+            // Persist yield as a fraction (0.01–1.0) per the schema; UI holds a percent.
+            const yieldFraction = Math.min(1, Math.max(0.01, ((r.yieldPctOverride ?? inv?.yieldPct ?? 100)) / 100))
+            return {
+              inventoryItemId: r.inventoryItemId,
+              quantity:        r.quantity,
+              unit:            inv?.unit ?? 'g',
+              yieldPct:        yieldFraction,
+            }
+          }),
       }
       return isEdit
         ? api.put(`/recipes/${initial!.id}`, payload)
@@ -300,7 +360,9 @@ export function RecipeForm({ initial, prefillBrandId, prefillCategoryId }: {
     if (kind === 'plate' && !isEdit && !newItemCategoryId) return setErr('Pick a menu category for the item.')
     if (kind !== 'plate' && !name.trim()) return setErr('Give the recipe a name.')
     if (kind !== 'plate' && yieldGrams <= 0) return setErr('Set a positive batch yield (grams) for component recipes.')
-    if (computed.rows.every((r) => !r.inventoryItemId || r.quantity <= 0)) return setErr('Add at least one ingredient with quantity > 0.')
+    const hasIngredient = computed.rows.some((r) =>
+      r.quantity > 0 && (r.source === 'component' ? !!r.prepRecipeId : !!r.inventoryItemId))
+    if (!hasIngredient) return setErr('Add at least one ingredient with quantity > 0.')
     save.mutate()
   }
 
@@ -449,53 +511,84 @@ export function RecipeForm({ initial, prefillBrandId, prefillCategoryId }: {
             </div>
           </Section>
 
-          {/* Section 2 — Ingredients */}
-          <Section title="2 · Ingredients" subtitle="Pick from inventory; cost auto-pulls from latest PO. Edit yield % only if this prep differs from the inventory default.">
+          {/* Section 2 — Ingredients + costing */}
+          <Section title="2 · Ingredients & costing" subtitle="Raw items pull cost from the latest PO; components (sub-recipes) pull their cost-per-gram. Yield raises cost — to get the recipe qty you buy qty ÷ yield.">
             <div className="overflow-x-auto rounded-lg border border-s-border">
               <table className="w-full text-xs">
                 <thead className="text-s-muted">
                   <tr className="border-b border-s-border">
                     <th className="text-left  px-2 py-2 font-bold">Ingredient</th>
-                    <th className="text-right px-2 py-2 font-bold">Unit</th>
-                    <th className="text-right px-2 py-2 font-bold">Cost / unit</th>
                     <th className="text-right px-2 py-2 font-bold">Yield %</th>
-                    <th className="text-right px-2 py-2 font-bold">Recipe qty</th>
-                    <th className="text-right px-2 py-2 font-bold">Cost</th>
+                    <th className="text-right px-2 py-2 font-bold">Cost / g</th>
+                    <th className="text-right px-2 py-2 font-bold">Recipe qty (g)</th>
+                    <th className="text-right px-2 py-2 font-bold">Raw used (g)</th>
+                    <th className="text-right px-2 py-2 font-bold">Recipe cost</th>
+                    <th className="text-right px-2 py-2 font-bold">Portion cost</th>
                     <th className="w-8"></th>
                   </tr>
                 </thead>
                 <tbody>
                   {ings.map((row, i) => {
-                    const inv = inventory.find((it) => it.id === row.inventoryItemId)
-                    const computedRow = computed.rows[i]!
+                    const cr = computed.rows[i]!
+                    const isComp = row.source === 'component'
                     return (
                       <tr key={row.key} className="border-t border-s-border">
                         <td className="px-2 py-1.5">
-                          <select value={row.inventoryItemId}
-                            onChange={(e) => {
-                              const next = [...ings]
-                              next[i] = { ...next[i]!, inventoryItemId: e.target.value }
-                              setIngs(next)
-                            }}
-                            className={inputCls + ' min-w-[180px]'}>
-                            <option value="">— Pick ingredient —</option>
-                            {inventory.map((it) => <option key={it.id} value={it.id}>{it.name}</option>)}
-                          </select>
-                        </td>
-                        <td className="px-2 py-1.5 text-right text-s-muted">{inv?.unit ?? '—'}</td>
-                        <td className="px-2 py-1.5 text-right font-mono text-s-muted">
-                          {inv?.unitCostCents != null ? fmtPkr(inv.unitCostCents) : '—'}
+                          <div className="flex items-center gap-1">
+                            {/* Raw vs Component source — components only on plates. */}
+                            {kind === 'plate' ? (
+                              <select value={row.source}
+                                onChange={(e) => {
+                                  const src = e.target.value as 'raw' | 'component'
+                                  const next = [...ings]
+                                  next[i] = { ...next[i]!, source: src, inventoryItemId: '', prepRecipeId: '' }
+                                  setIngs(next)
+                                }}
+                                className={inputCls + ' w-[5.5rem]'} title="Raw inventory item, or a component sub-recipe">
+                                <option value="raw">Raw</option>
+                                <option value="component">Component</option>
+                              </select>
+                            ) : <span className="text-[10px] text-s-dim px-1">Raw</span>}
+                            {isComp ? (
+                              <select value={row.prepRecipeId}
+                                onChange={(e) => {
+                                  const next = [...ings]
+                                  next[i] = { ...next[i]!, prepRecipeId: e.target.value }
+                                  setIngs(next)
+                                }}
+                                className={inputCls + ' min-w-[150px]'}>
+                                <option value="">— Pick component —</option>
+                                {prepOptions.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                              </select>
+                            ) : (
+                              <select value={row.inventoryItemId}
+                                onChange={(e) => {
+                                  const next = [...ings]
+                                  next[i] = { ...next[i]!, inventoryItemId: e.target.value }
+                                  setIngs(next)
+                                }}
+                                className={inputCls + ' min-w-[150px]'}>
+                                <option value="">— Pick ingredient —</option>
+                                {inventory.map((it) => <option key={it.id} value={it.id}>{it.name}</option>)}
+                              </select>
+                            )}
+                          </div>
                         </td>
                         <td className="px-2 py-1.5 text-right">
-                          <input type="number" min={0} max={100} step={1}
-                            value={row.yieldPctOverride ?? inv?.yieldPct ?? 100}
-                            onChange={(e) => {
-                              const v = parseFloat(e.target.value)
-                              const next = [...ings]
-                              next[i] = { ...next[i]!, yieldPctOverride: Number.isFinite(v) ? v : null }
-                              setIngs(next)
-                            }}
-                            className={inputCls + ' w-16 text-right'}/>
+                          {isComp ? <span className="text-s-dim">n/a</span> : (
+                            <input type="number" min={1} max={100} step={1}
+                              value={row.yieldPctOverride ?? cr.inv?.yieldPct ?? 100}
+                              onChange={(e) => {
+                                const v = parseFloat(e.target.value)
+                                const next = [...ings]
+                                next[i] = { ...next[i]!, yieldPctOverride: Number.isFinite(v) ? v : null }
+                                setIngs(next)
+                              }}
+                              className={inputCls + ' w-14 text-right'}/>
+                          )}
+                        </td>
+                        <td className="px-2 py-1.5 text-right font-mono text-s-muted">
+                          {cr.isCount ? `${fmtPkr(cr.cpgCents)}/u` : fmtPkrPerG(cr.cpgCents)}
                         </td>
                         <td className="px-2 py-1.5 text-right">
                           <input type="number" min={0} step={1} value={row.quantity}
@@ -506,9 +599,11 @@ export function RecipeForm({ initial, prefillBrandId, prefillCategoryId }: {
                             }}
                             className={inputCls + ' w-20 text-right'}/>
                         </td>
-                        <td className="px-2 py-1.5 text-right font-mono font-bold">
-                          {fmtPkr(computedRow.costCents)}
+                        <td className="px-2 py-1.5 text-right font-mono text-s-dim">
+                          {cr.rawUsedG ? cr.rawUsedG.toLocaleString('en', { maximumFractionDigits: 0 }) : '—'}
                         </td>
+                        <td className="px-2 py-1.5 text-right font-mono font-bold">{fmtPkr(cr.costCents)}</td>
+                        <td className="px-2 py-1.5 text-right font-mono text-s-muted">{fmtPkr(cr.portionCostCents)}</td>
                         <td className="px-2 py-1.5">
                           <button onClick={() => setIngs(ings.filter((_, j) => j !== i))}
                             disabled={ings.length === 1}
@@ -522,20 +617,24 @@ export function RecipeForm({ initial, prefillBrandId, prefillCategoryId }: {
             </div>
             <button onClick={() => setIngs([...ings, blankRow()])}
               className="mt-2 text-xs text-s-teal hover:underline font-bold">+ Add ingredient</button>
-            {allAllergens.length > 0 && (
-              <div className="mt-3 text-[11px] text-s-muted">
-                Allergens (auto): {allAllergens.map((a) => (
-                  <span key={a} className="ml-1 rounded px-1.5 py-0.5 text-[10px]"
-                    style={{ background: 'rgba(245,158,11,0.15)', color: '#FDB022' }}>{a}</span>
-                ))}
-              </div>
-            )}
-          </Section>
 
-          {/* Section 3 — Pricing knobs */}
-          <Section title="3 · Pricing knobs">
-            <div className="grid grid-cols-3 gap-3">
-              <Field label="Q factor %" hint="Waste buffer">
+            {/* Recipe-level rollup + pricing knobs (folded in from the old Section 3) */}
+            <div className="mt-4 grid grid-cols-2 md:grid-cols-3 gap-3 pt-3 border-t border-s-border">
+              <div className="text-[11px]">
+                <p className="text-s-dim">Recipe weight</p>
+                <p className="font-mono font-bold text-s-text">{computed.recipeWeightG.toLocaleString('en', { maximumFractionDigits: 0 })} g</p>
+              </div>
+              <div className="text-[11px]">
+                <p className="text-s-dim">Portion size {kind === 'plate' ? `(÷ ${portions})` : ''}</p>
+                <p className="font-mono font-bold text-s-text">{computed.portionSizeG.toLocaleString('en', { maximumFractionDigits: 1 })} g</p>
+              </div>
+              <div className="text-[11px]">
+                <p className="text-s-dim">Total recipe cost</p>
+                <p className="font-mono font-bold text-s-text">{fmtPkr(computed.totalRecipe)}</p>
+              </div>
+            </div>
+            <div className="mt-3 grid grid-cols-3 gap-3">
+              <Field label="Q factor %" hint="Waste buffer on total">
                 <input type="number" min={0} max={100} step={0.5} value={qFactor}
                   onChange={(e) => setQFactor(parseFloat(e.target.value) || 0)} className={inputCls}/>
               </Field>
@@ -548,6 +647,14 @@ export function RecipeForm({ initial, prefillBrandId, prefillCategoryId }: {
                   onChange={(e) => setPackaging(parseFloat(e.target.value) || 0)} className={inputCls}/>
               </Field>
             </div>
+            {allAllergens.length > 0 && (
+              <div className="mt-3 text-[11px] text-s-muted">
+                Allergens (auto): {allAllergens.map((a) => (
+                  <span key={a} className="ml-1 rounded px-1.5 py-0.5 text-[10px]"
+                    style={{ background: 'rgba(245,158,11,0.15)', color: '#FDB022' }}>{a}</span>
+                ))}
+              </div>
+            )}
           </Section>
 
           {/* Test log — only once the recipe exists (edit mode). */}
@@ -607,6 +714,7 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
 
 interface ComputedShape {
   totalIngredient: number; qFactorCents: number; totalRecipe: number; plateCost: number
+  recipeWeightG: number; portionSizeG: number
   opexPerPortion: number; forecastPortions: number
   foodCostPrice: number; breakEven: number; target: number; actualSp: number
   packagingCost: number; contribMargin: number; contribMarginPct: number
