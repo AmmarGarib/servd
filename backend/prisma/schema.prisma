@@ -1887,8 +1887,15 @@ model Recipe {
   approvedAt      DateTime?
   rejectionReason String?
   // PLATE recipes are 1:1 with a MenuItem. COMPONENT recipes have menuItemId=null
-  // and are named via the `name` field below.
+  // and are named via the `name` field below. A plate created while in
+  // `iteration` has NO MenuItem yet — testing recipes must not appear on the
+  // menu. The intended menu item is stashed in `pendingMenuItem` and created
+  // only when the recipe is approved to production.
   menuItemId   String?     @unique
+  // Deferred new-menu-item payload for testing plates:
+  // { conceptId, categoryId, name, description }. Null once the item is
+  // created (on approval) or when the plate was attached to an existing item.
+  pendingMenuItem Json?
   // Display name for component recipes (plate recipes inherit name from menuItem).
   // Required when kind=component; null when kind=plate (validated at the route layer).
   name         String?
@@ -1949,9 +1956,40 @@ model Recipe {
   // editing/deleting a prep would affect plate recipes.
   usedInPlates RecipeIngredient[] @relation("RecipeAsIngredient")
   recipeSteps RecipeStep[]
+  testAttempts RecipeTestAttempt[]
 
   @@index([isActive])
+  @@index([status])
   @@map("recipes")
+}
+
+// Outcome of a single recipe test cook — optional structured signal alongside
+// the free-text notes on a RecipeTestAttempt.
+enum RecipeTestOutcome {
+  promising
+  needs_work
+  rejected
+}
+
+// One dated test cook of an iteration recipe. Attempts are versioned per
+// recipe (v1, v2, …) so the kitchen can track how a recipe evolved before it
+// was promoted to production. Tester name is denormalised for easy display.
+model RecipeTestAttempt {
+  id           String             @id @default(uuid())
+  recipeId     String
+  version      Int                // sequential within a recipe: 1, 2, 3…
+  notes        String
+  outcome      RecipeTestOutcome?
+  rating       Int?               // optional 1–5 quality score
+  testedById   String             // staff user id who logged the cook
+  testedByName String?            // denormalised name for display
+  createdAt    DateTime           @default(now())
+
+  recipe       Recipe             @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+
+  @@unique([recipeId, version])
+  @@index([recipeId])
+  @@map("recipe_test_attempts")
 }
 
 model RecipeIngredient {

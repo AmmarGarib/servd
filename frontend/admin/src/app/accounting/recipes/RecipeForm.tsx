@@ -12,6 +12,7 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../../lib/api'
+import { RecipeTestLog } from '../../../components/recipe/RecipeTestLog'
 
 type Kind = 'plate' | 'component'
 type Category = 'main' | 'side' | 'sauce' | 'sub_recipe'
@@ -61,6 +62,9 @@ export interface RecipeFormInitial {
   packagingPct: number
   actualSellingPriceCents: number | null
   brandId: string | null
+  // Deferred new-menu-item details for a testing plate that hasn't opened its
+  // menu item yet. Used to prefill the menu-item fields when editing.
+  pendingMenuItem: { conceptId: string; categoryId: string; name: string; description: string | null } | null
   ingredients: Array<{
     id: string
     inventoryItemId: string | null
@@ -123,9 +127,11 @@ export function RecipeForm({ initial, prefillBrandId, prefillCategoryId }: {
   // 'existing' = retrofit an existing menu item with a recipe.
   const [menuItemMode, setMenuItemMode] = useState<'new' | 'existing'>(initial?.menuItemId ? 'existing' : 'new')
   const [menuItemId, setMenuItemId]     = useState<string>(initial?.menuItemId ?? '')
-  const [newItemName, setNewItemName]                 = useState('')
-  const [newItemDescription, setNewItemDescription]   = useState('')
-  const [newItemCategoryId, setNewItemCategoryId]     = useState(prefillCategoryId ?? '')
+  // A testing plate hasn't opened its menu item yet — seed the new-item fields
+  // from its pendingMenuItem so editing pre-approval prefills correctly.
+  const [newItemName, setNewItemName]                 = useState(initial?.pendingMenuItem?.name ?? '')
+  const [newItemDescription, setNewItemDescription]   = useState(initial?.pendingMenuItem?.description ?? '')
+  const [newItemCategoryId, setNewItemCategoryId]     = useState(initial?.pendingMenuItem?.categoryId ?? prefillCategoryId ?? '')
   const [portions, setPortions]         = useState(initial?.servings ?? 1)
   const [yieldGrams, setYieldGrams]     = useState(initial?.yieldGrams ?? 0)
   const [photoUrl, setPhotoUrl]         = useState(initial?.photoUrl ?? '')
@@ -565,6 +571,9 @@ export function RecipeForm({ initial, prefillBrandId, prefillCategoryId }: {
               </Field>
             </div>
           </Section>
+
+          {/* Test log — only once the recipe exists (edit mode). */}
+          {isEdit && initial && <RecipeTestLog recipeId={initial.id} />}
         </div>
 
         {/* Cost panel (right) */}

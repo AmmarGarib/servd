@@ -10,6 +10,7 @@ interface ExistingRecipe {
   kind: 'plate' | 'component'
   status: 'iteration' | 'pending_approval' | 'production'
   rejectionReason: string | null
+  pendingMenuItem: { conceptId: string; categoryId: string; name: string; description: string | null } | null
   name: string | null
   menuItemId: string | null
   servings: number
@@ -67,7 +68,10 @@ export default function EditRecipePage({ params }: { params: Promise<{ id: strin
     targetProfitPct: data.targetProfitPct,
     packagingPct: data.packagingPct,
     actualSellingPriceCents: data.actualSellingPriceCents,
-    brandId: data.menuItem?.conceptId ?? null,
+    // Live plates get their brand from the menu item; a testing plate that
+    // hasn't opened its item yet carries it in pendingMenuItem.
+    brandId: data.menuItem?.conceptId ?? data.pendingMenuItem?.conceptId ?? null,
+    pendingMenuItem: data.pendingMenuItem,
     ingredients: data.ingredients,
   }
 

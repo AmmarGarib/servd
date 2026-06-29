@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
+import { Prisma } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, MANAGERS, ADMIN_ONLY, ALL_STAFF } from '../auth/middleware.js'
 import { NotFoundError, AppError } from '../../lib/errors.js'
@@ -75,8 +76,8 @@ const recipeShape = {
 }
 const recipeBase = z.object(recipeShape)
 const recipeSchema = recipeBase.superRefine((r, ctx) => {
-  if (r.kind === 'plate' && !r.menuItemId) {
-    ctx.addIssue({ code: 'custom', path: ['menuItemId'], message: 'Plate recipes must link to a menu item' })
+  if (r.kind === 'plate' && !r.menuItemId && !r.newMenuItem) {
+    ctx.addIssue({ code: 'custom', path: ['menuItemId'], message: 'Plate recipes must link to an existing menu item or supply a new one' })
   }
   if (r.kind === 'component') {
     if (!r.name || !r.name.trim()) {
@@ -584,33 +585,31 @@ export async function recipeRoutes(fastify: FastifyInstance) {
       if (existing) throw new AppError('RECIPE_EXISTS', 'Recipe for this menu item already exists', 409)
     }
 
-    // Inline menu-item creation. When kind='plate' and the operator didn't
-    // pick an existing menuItemId but supplied newMenuItem (name + category
-    // + brand), provision the MenuItem here so the operator never has to
-    // jump to the Menu Editor first. Menu-item price seeds from the
-    // recipe's actualSellingPriceCents (or 0 if not set yet — operator can
-    // dial it in once the recipe form computes the target).
-    let resolvedMenuItemId = body.menuItemId ?? null
-    if (body.kind === 'plate' && !resolvedMenuItemId && body.newMenuItem) {
-      const nm = body.newMenuItem
-      const createdItem = await prisma.menuItem.create({
-        data: {
-          conceptId:   nm.conceptId,
-          categoryId:  nm.categoryId,
-          name:        nm.name,
-          description: nm.description ?? null,
-          priceCents:  body.actualSellingPriceCents ?? 0,
-          isAvailable: body.isActive,
-        },
-      })
-      resolvedMenuItemId = createdItem.id
-    }
+    // New recipes start in `iteration` (testing). A testing plate must NOT
+    // open a menu item — only an approved (production) recipe does. So when
+    // kind='plate' + newMenuItem (no existing menuItemId), we DEFER creation:
+    // stash the intended item in `pendingMenuItem` and create the real
+    // MenuItem at approval time (see POST /:id/approve). Plates attached to an
+    // EXISTING menuItemId just link to it (no new item opened either way).
+    const resolvedMenuItemId = body.kind === 'plate' ? (body.menuItemId ?? null) : null
+    const pendingMenuItem = (body.kind === 'plate' && !resolvedMenuItemId && body.newMenuItem)
+      ? {
+          conceptId:   body.newMenuItem.conceptId,
+          categoryId:  body.newMenuItem.categoryId,
+          name:        body.newMenuItem.name,
+          description: body.newMenuItem.description ?? null,
+        }
+      : null
 
     const recipe = await prisma.recipe.create({
       data: {
         kind:         body.kind,
-        menuItemId:   body.kind === 'plate' ? resolvedMenuItemId : null,
-        name:         body.kind === 'plate' ? null : body.name,
+        menuItemId:   resolvedMenuItemId,
+        pendingMenuItem: pendingMenuItem ?? Prisma.DbNull,
+        // Plate recipes normally inherit their name from the menu item, but a
+        // testing plate has none yet — carry the pending name so it's readable
+        // in the list/editor until approval creates the item.
+        name:         body.kind === 'plate' ? (pendingMenuItem?.name ?? null) : body.name,
         yieldGrams:   body.kind === 'plate' ? null : body.yieldGrams,
         servings:     body.servings,
         portionSizeG: body.portionSizeG,
@@ -774,15 +773,36 @@ export async function recipeRoutes(fastify: FastifyInstance) {
       if (recipe.status !== 'pending_approval') {
         throw new AppError('BAD_STATUS', `Only recipes pending approval can be promoted (this one is ${recipe.status})`, 409)
       }
-      return prisma.recipe.update({
-        where: { id: req.params.id },
-        data: {
-          status:          'production',
-          approvedById:    req.staffUser!.id,
-          approvedAt:      new Date(),
-          rejectionReason: null,
-        },
-      })
+
+      const data: Prisma.RecipeUpdateInput = {
+        status:          'production',
+        approvedById:    req.staffUser!.id,
+        approvedAt:      new Date(),
+        rejectionReason: null,
+      }
+
+      // Approval is when a testing plate finally opens its menu item. If this
+      // plate deferred creation (has a pendingMenuItem and no menuItem yet),
+      // create the MenuItem now — seeded with the recipe's selling price and
+      // availability — link it, and clear the pending payload + carried name.
+      if (recipe.kind === 'plate' && !recipe.menuItemId && recipe.pendingMenuItem) {
+        const pm = recipe.pendingMenuItem as { conceptId: string; categoryId: string; name: string; description: string | null }
+        const item = await prisma.menuItem.create({
+          data: {
+            conceptId:   pm.conceptId,
+            categoryId:  pm.categoryId,
+            name:        pm.name,
+            description: pm.description ?? null,
+            priceCents:  recipe.actualSellingPriceCents ?? 0,
+            isAvailable: recipe.isActive,
+          },
+        })
+        data.menuItem = { connect: { id: item.id } }
+        data.pendingMenuItem = Prisma.DbNull
+        data.name = null   // plate now inherits its name from the menu item
+      }
+
+      return prisma.recipe.update({ where: { id: req.params.id }, data })
     },
   )
 
@@ -804,6 +824,61 @@ export async function recipeRoutes(fastify: FastifyInstance) {
           rejectionReason: reason?.trim() || null,
         },
       })
+    },
+  )
+
+  // ── Recipe test attempts (versioned test-cook log) ──────────────────────────
+  //
+  // Each attempt is a dated record of a test cook while a recipe is being
+  // iterated, numbered v1, v2, … per recipe so the kitchen can see how it
+  // evolved before promotion.
+
+  // GET /recipes/:id/test-attempts — newest first.
+  fastify.get<{ Params: { id: string } }>(
+    '/:id/test-attempts',
+    { preHandler: requireAuth(...MANAGERS) },
+    async (req) => {
+      return prisma.recipeTestAttempt.findMany({
+        where: { recipeId: req.params.id },
+        orderBy: { version: 'desc' },
+      })
+    },
+  )
+
+  const testAttemptSchema = z.object({
+    notes:   z.string().min(1, 'Add a note describing the test').max(4000),
+    outcome: z.enum(['promising', 'needs_work', 'rejected']).optional(),
+    rating:  z.number().int().min(1).max(5).optional(),
+  })
+
+  // POST /recipes/:id/test-attempts — log a test cook. Auto-numbers the version.
+  fastify.post<{ Params: { id: string } }>(
+    '/:id/test-attempts',
+    { preHandler: requireAuth(...MANAGERS) },
+    async (req, reply) => {
+      const body = testAttemptSchema.parse(req.body)
+      const recipe = await prisma.recipe.findUnique({ where: { id: req.params.id }, select: { id: true } })
+      if (!recipe) throw new NotFoundError('Recipe', req.params.id)
+
+      // Next version = current max + 1. The (recipeId, version) unique index
+      // guards against a duplicate if two cooks log at the same instant.
+      const last = await prisma.recipeTestAttempt.findFirst({
+        where: { recipeId: req.params.id },
+        orderBy: { version: 'desc' },
+        select: { version: true },
+      })
+      const attempt = await prisma.recipeTestAttempt.create({
+        data: {
+          recipeId:     req.params.id,
+          version:      (last?.version ?? 0) + 1,
+          notes:        body.notes.trim(),
+          outcome:      body.outcome ?? null,
+          rating:       body.rating ?? null,
+          testedById:   req.staffUser!.id,
+          testedByName: req.staffUser!.name ?? req.staffUser!.email ?? null,
+        },
+      })
+      return reply.status(201).send(attempt)
     },
   )
 
