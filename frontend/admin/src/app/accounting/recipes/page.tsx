@@ -52,7 +52,7 @@ interface ConceptWithTenant { name: string; tenantId?: string | null; tenant?: {
 
 interface Recipe {
   id: string
-  kind: 'plate' | 'prep'
+  kind: 'plate' | 'component'
   menuItemId: string | null
   name:       string | null
   yieldGrams: number | null
@@ -76,7 +76,7 @@ interface Recipe {
   costPerPortionCents: number | null
   grossMarginPct: number | null
   foodCostPct: number | null
-  // Prep-only:
+  // Component-only:
   costPerGramCents: number | null     // sub-cent precision (e.g. 0.85)
   batchCostCents:   number | null
 }
@@ -123,10 +123,10 @@ export default function RecipesPage() {
   const [activeOnly,   setActiveOnly]   = useState(false)
 
   // form
-  const [kind,         setKind]         = useState<'plate' | 'prep'>('plate')
+  const [kind,         setKind]         = useState<'plate' | 'component'>('plate')
   const [menuItemId,   setMenuItemId]   = useState('')
-  const [prepName,     setPrepName]     = useState('')          // prep recipe display name
-  const [yieldGramsStr, setYieldGramsStr] = useState('')        // batch yield in grams (prep only)
+  const [prepName,     setPrepName]     = useState('')          // component recipe display name
+  const [yieldGramsStr, setYieldGramsStr] = useState('')        // batch yield in grams (component only)
   const [servings,     setServings]     = useState('1')
   const [portionSizeG, setPortionSizeG] = useState('')
   const [laborMins,    setLaborMins]    = useState('0')
@@ -167,9 +167,9 @@ export default function RecipesPage() {
     queryFn:  () => api.get<InventoryItem[]>('/inventory'),
     enabled:  modal !== null,
   })
-  // Prep-recipe options for the ingredient picker. Plate recipes can pull
-  // any active prep as a component; prep recipes don't (no nesting for
-  // now — keeps the costing recursion bounded).
+  // Component-recipe options for the ingredient picker. Plate recipes can pull
+  // any active component; components don't pull other components (no nesting
+  // for now — keeps the costing recursion bounded).
   const { data: prepOptions = [] } = useQuery<PrepOption[]>({
     queryKey: ['prep-recipes'],
     queryFn:  () => api.get<PrepOption[]>('/recipes/prep'),
@@ -231,7 +231,7 @@ export default function RecipesPage() {
     ))
   }
   function pickPrep(idx: number, prepId: string) {
-    // Prep components are always measured in grams (that's how the prep is
+    // Components are always measured in grams (that's how a component is
     // costed) — auto-fill the unit so the operator doesn't have to.
     setIngs((p) => p.map((row, i) =>
       i === idx ? { ...row, prepRecipeId: prepId, unit: row.unit || 'g' } : row
@@ -251,8 +251,8 @@ export default function RecipesPage() {
     if (kind === 'plate' && !menuItemId) {
       setFormErr('Pick a menu item this plate recipe belongs to'); return
     }
-    if (kind === 'prep') {
-      if (!prepName.trim()) { setFormErr('Give this prep recipe a name (e.g. "Garlic mayo")'); return }
+    if (kind === 'component') {
+      if (!prepName.trim()) { setFormErr('Give this component recipe a name (e.g. "Garlic mayo")'); return }
       if (!yieldGramsStr || parseFloat(yieldGramsStr) <= 0) {
         setFormErr('Set the batch yield in grams — drives cost-per-gram'); return
       }
@@ -295,15 +295,15 @@ export default function RecipesPage() {
   }
 
   const filtered = (recipes ?? []).filter((r) => {
-    // Concept filter doesn't apply to prep recipes (they're cross-concept by
-    // design — one tomato sauce serves every brand). If a concept is picked,
-    // hide preps so the operator's plate-only view stays clean.
+    // Concept filter doesn't apply to component recipes (they're cross-concept
+    // by design — one tomato sauce serves every brand). If a concept is picked,
+    // hide components so the operator's plate-only view stays clean.
     if (conceptFilter) {
-      if (r.kind === 'prep') return false
+      if (r.kind === 'component') return false
       if (r.menuItem?.conceptId !== conceptFilter) return false
     }
     if (search) {
-      // Search across menuItem name (plate) AND recipe name (prep) so the
+      // Search across menuItem name (plate) AND recipe name (component) so the
       // operator can find either kind from one box.
       const hay = (r.menuItem?.name ?? r.name ?? '').toLowerCase()
       if (!hay.includes(search.toLowerCase())) return false
@@ -451,11 +451,11 @@ export default function RecipesPage() {
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
                         {/* Kind badge — quick visual differentiation between
-                            plate vs prep recipes in the mixed list. */}
-                        {r.kind === 'prep' ? (
+                            plate vs component recipes in the mixed list. */}
+                        {r.kind === 'component' ? (
                           <span className="text-[9px] font-black uppercase tracking-wider rounded-full px-2 py-0.5"
                             style={{ background: 'rgba(99,102,241,0.15)', color: '#A5B4FC', border: '1px solid rgba(99,102,241,0.3)' }}>
-                            🧪 Prep
+                            🧩 Component
                           </span>
                         ) : (
                           <span className="text-[9px] font-black uppercase tracking-wider rounded-full px-2 py-0.5"
@@ -480,7 +480,7 @@ export default function RecipesPage() {
                           </>
                         ) : (
                           <>
-                            Prep recipe · batch yield {r.yieldGrams ? `${r.yieldGrams}g` : '—'}
+                            Component · batch yield {r.yieldGrams ? `${r.yieldGrams}g` : '—'}
                           </>
                         )}
                       </p>
@@ -491,7 +491,7 @@ export default function RecipesPage() {
                       <Metric label="Q Factor"     value={fmtPKR(r.qFactorCents)}        dim />
                       <Metric label="Total Cost"   value={fmtPKR(r.totalCostCents)}       bold />
                       {/* The headline number — different per kind. Plate: the
-                          per-portion cost (drives margin). Prep: cost per
+                          per-portion cost (drives margin). Component: cost per
                           gram (drives downstream plate costing). */}
                       {r.kind === 'plate' ? (
                         <>
@@ -579,8 +579,8 @@ export default function RecipesPage() {
                           </thead>
                           <tbody>
                             {r.ingredients.map((ing, idx) => {
-                              // Rows can be raw or prep — pick the right
-                              // source object so we can show a meaningful
+                              // Rows can be raw or a component sub-recipe — pick
+                              // the right source object so we can show a meaningful
                               // name and unit-cost in either case.
                               const isPrep       = !!ing.prepRecipe
                               const sourceName   = ing.inventoryItem?.name ?? ing.prepRecipe?.name ?? '—'
@@ -595,7 +595,7 @@ export default function RecipesPage() {
                                 <tr key={ing.id}
                                   style={{ borderTop: idx > 0 ? '1px solid rgba(255,255,255,0.04)' : undefined }}>
                                   <td className="px-4 py-2.5 font-semibold" style={{ color: 'rgba(255,255,255,0.8)' }}>
-                                    {isPrep && <span className="mr-1 text-[9px] text-indigo-300">🧪</span>}
+                                    {isPrep && <span className="mr-1 text-[9px] text-indigo-300">🧩</span>}
                                     {sourceName}
                                   </td>
                                   <td className="px-4 py-2.5 text-s-muted">
@@ -782,19 +782,19 @@ export default function RecipesPage() {
                       <p className="text-sm font-bold text-s-text">🍽 Finished plate</p>
                       <p className="text-[10px] text-s-dim mt-0.5">A menu item — costed as plate cost (margin vs. menu price).</p>
                     </button>
-                    <button type="button" onClick={() => setKind('prep')}
+                    <button type="button" onClick={() => setKind('component')}
                       className="rounded-lg px-3 py-3 text-left transition-colors"
-                      style={kind === 'prep'
+                      style={kind === 'component'
                         ? { background: 'rgba(99,102,241,0.10)', border: '1px solid rgba(99,102,241,0.4)' }
                         : { background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)' }}>
-                      <p className="text-sm font-bold text-s-text">🧪 Prep recipe</p>
-                      <p className="text-[10px] text-s-dim mt-0.5">A batch (sauce, marinade) used inside plates — costed per gram.</p>
+                      <p className="text-sm font-bold text-s-text">🧩 Component</p>
+                      <p className="text-[10px] text-s-dim mt-0.5">A batch sub-recipe (sauce, marinade, dough) used inside plates — costed per gram.</p>
                     </button>
                   </div>
                 </div>
               ) : (
                 <p className="text-[11px] text-s-dim">
-                  {kind === 'plate' ? '🍽 Plate recipe (linked to a menu item)' : '🧪 Prep recipe (cost-per-gram component)'}
+                  {kind === 'plate' ? '🍽 Plate recipe (linked to a menu item)' : '🧩 Component (cost-per-gram sub-recipe)'}
                 </p>
               )}
 
@@ -815,10 +815,10 @@ export default function RecipesPage() {
                   )}
                 </div>
               ) : (
-                /* Prep: name + yield in grams */
+                /* Component: name + yield in grams */
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-1.5">
-                    <label className="text-xs font-black text-s-muted uppercase tracking-wider">Prep recipe name</label>
+                    <label className="text-xs font-black text-s-muted uppercase tracking-wider">Component name</label>
                     <input value={prepName} onChange={(e) => setPrepName(e.target.value)}
                       required placeholder="e.g. Garlic mayo, Tandoori marinade"
                       className="s-input w-full" />
@@ -835,7 +835,7 @@ export default function RecipesPage() {
               )}
 
               {/* Portions / size / labor — only meaningful on plate recipes.
-                  Prep recipes care about batch yield (above), not portions. */}
+                  Component recipes care about batch yield (above), not portions. */}
               {kind === 'plate' && (
                 <div className="grid grid-cols-3 gap-4">
                   <div className="space-y-1.5">
@@ -858,7 +858,7 @@ export default function RecipesPage() {
                   </div>
                 </div>
               )}
-              {kind === 'prep' && (
+              {kind === 'component' && (
                 <div className="space-y-1.5">
                   <label className="text-xs font-black text-s-muted uppercase tracking-wider">Labor (min per batch)</label>
                   <input type="number" min={0} value={laborMins}
@@ -963,10 +963,10 @@ export default function RecipesPage() {
                   <button type="button" onClick={addIng} className="text-xs text-s-teal hover:underline">+ Add Row</button>
                 </div>
 
-                {/* Each row now has a Raw/Prep source toggle on the left.
-                    Raw uses the inventory picker; Prep uses the prep-recipe
-                    picker. Prep components are only relevant on plate
-                    recipes — we hide the toggle for prep-on-prep nesting. */}
+                {/* Each row now has a Raw/Component source toggle on the left.
+                    Raw uses the inventory picker; Component uses the component-
+                    recipe picker. Components are only relevant on plate
+                    recipes — we hide the toggle for component-on-component nesting. */}
                 <div className="grid gap-2 px-0.5" style={{ gridTemplateColumns: '60px 1fr 72px 60px 52px 20px' }}>
                   {['Source', 'Ingredient', 'Recipe Qty', 'Yield %', 'Unit', ''].map((h) => (
                     <p key={h} style={{ fontSize: '8.5px', letterSpacing: '0.12em' }}
@@ -978,16 +978,16 @@ export default function RecipesPage() {
                   {ings.map((ing, idx) => (
                     <div key={idx} className="grid gap-2 items-center"
                       style={{ gridTemplateColumns: '60px 1fr 72px 60px 52px 20px' }}>
-                      {/* Source toggle — Raw ingredient vs Prep recipe. Only
-                          shown on plate recipes (prep recipes can't compose
-                          other preps to keep costing recursion bounded). */}
+                      {/* Source toggle — Raw ingredient vs Component recipe. Only
+                          shown on plate recipes (components can't compose other
+                          components to keep costing recursion bounded). */}
                       {kind === 'plate' ? (
                         <select value={ing.source}
                           onChange={(e) => toggleIngSource(idx, e.target.value as 'raw' | 'prep')}
                           className="s-select text-[10px]"
-                          title="Raw inventory item, or a prep recipe used as a component">
+                          title="Raw inventory item, or a component recipe used as a sub-ingredient">
                           <option value="raw">Raw</option>
-                          <option value="prep">Prep</option>
+                          <option value="prep">Component</option>
                         </select>
                       ) : (
                         <span className="text-[10px] text-s-dim font-semibold px-2 py-1.5">Raw</span>
@@ -996,7 +996,7 @@ export default function RecipesPage() {
                       {ing.source === 'prep' ? (
                         <select value={ing.prepRecipeId} onChange={(e) => pickPrep(idx, e.target.value)}
                           className="s-select text-xs" required={idx === 0}>
-                          <option value="">Select prep recipe…</option>
+                          <option value="">Select component…</option>
                           {prepOptions.map((p) => (
                             <option key={p.id} value={p.id}>
                               {p.name} (PKR {(p.costPerGramCents / 100).toFixed(2)}/g)
@@ -1023,7 +1023,7 @@ export default function RecipesPage() {
                           value={ing.yieldPct}
                           onChange={(e) => updateIng(idx, 'yieldPct', e.target.value)}
                           disabled={ing.source === 'prep'}
-                          title={ing.source === 'prep' ? 'N/A — prep yield already baked into cost-per-gram' : ''}
+                          title={ing.source === 'prep' ? 'N/A — component yield already baked into cost-per-gram' : ''}
                           className="s-input text-xs w-full pr-5 disabled:opacity-40" />
                         <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[9px] text-s-dim pointer-events-none">
                           %
@@ -1055,7 +1055,7 @@ export default function RecipesPage() {
                         if (!ing.quantity) return sum
                         const qty = parseFloat(ing.quantity)
                         if (ing.source === 'prep') {
-                          // Prep component — cost flows in at per-gram × quantity.
+                          // Component sub-recipe — cost flows in at per-gram × quantity.
                           const prep = prepOptions.find((p) => p.id === ing.prepRecipeId)
                           if (!prep) return sum
                           return sum + Math.round(prep.costPerGramCents * qty)
@@ -1069,10 +1069,10 @@ export default function RecipesPage() {
                       const laborCents  = Math.round(((parseInt(laborMins) || 0) / 60) * 50_00)
                       const total       = ingCents + qCents + laborCents
                       // Per-kind headline preview. Plate → per-portion;
-                      // prep → cost-per-gram (sub-cent precision matters).
+                      // component → cost-per-gram (sub-cent precision matters).
                       const portCents     = kind === 'plate' ? Math.round(total / (parseInt(servings) || 1)) : 0
                       const yieldG        = parseFloat(yieldGramsStr) || 0
-                      const costPerGramP  = kind === 'prep' && yieldG > 0 ? (total / yieldG) / 100 : null
+                      const costPerGramP  = kind === 'component' && yieldG > 0 ? (total / yieldG) / 100 : null
                       return (
                         <div className="grid grid-cols-4 gap-4 text-xs">
                           <div>

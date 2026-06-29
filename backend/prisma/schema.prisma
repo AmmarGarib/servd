@@ -1848,32 +1848,31 @@ model Supplier {
 // ─── Recipe costing ───────────────────────────────────────────────────────────
 
 // Recipe kind drives the costing model + which fields are meaningful.
-//   plate — finished menu item. 1:1 with a MenuItem; costed as plate cost
-//           (total of all inputs ÷ servings) for margin analysis.
-//   prep  — sub-recipe / batch prep (sauces, marinades, dough). No MenuItem;
-//           costed as cost-per-gram so it can be consumed as an ingredient
-//           inside a plate recipe (quantity in grams × cost-per-gram).
+//   plate     — finished menu item. 1:1 with a MenuItem; costed as plate cost
+//               (total of all inputs ÷ servings) for margin analysis.
+//   component — sub-recipe / batch prep used inside other recipes (sauces,
+//               marinades, doughs — e.g. "Burger Sauce" shared by Stax Classic
+//               and Stax Spicy). No MenuItem; costed as cost-per-gram so it can
+//               be consumed as an ingredient inside a plate recipe (quantity in
+//               grams × cost-per-gram). Components feed their cost into the
+//               plates that use them and never carry an opex/portion allocation.
 enum RecipeKind {
   plate
-  prep
-  // Sub-recipe used inside other recipes (e.g. "Burger Sauce" used by both
-  // Stax Classic and Stax Spicy). Behaves like a prep but never carries an
-  // opex/portion allocation — components feed into plates that already do.
   component
 }
 
 model Recipe {
   id           String      @id @default(uuid())
   kind         RecipeKind  @default(plate)
-  // PLATE recipes are 1:1 with a MenuItem. PREP recipes have menuItemId=null
+  // PLATE recipes are 1:1 with a MenuItem. COMPONENT recipes have menuItemId=null
   // and are named via the `name` field below.
   menuItemId   String?     @unique
-  // Display name for prep recipes (plate recipes inherit name from menuItem).
-  // Required when kind=prep; null when kind=plate (validated at the route layer).
+  // Display name for component recipes (plate recipes inherit name from menuItem).
+  // Required when kind=component; null when kind=plate (validated at the route layer).
   name         String?
-  // Batch yield in grams — relevant only for prep recipes. Drives the
+  // Batch yield in grams — relevant only for component recipes. Drives the
   // cost-per-gram calculation: batchCost ÷ yieldGrams = costPerGram. Required
-  // when kind=prep; null when kind=plate (which uses portionSizeG instead).
+  // when kind=component; null when kind=plate (which uses portionSizeG instead).
   yieldGrams   Float?
   servings     Int         @default(1) // portions per batch (plate recipes)
   portionSizeG Float? // grams per portion (display reference, plate recipes)
@@ -1896,7 +1895,7 @@ model Recipe {
   actualSellingPriceCents Int?
   // Recipe category for menu organisation. 'main' | 'side' | 'sauce' |
   // 'sub_recipe'. Plate recipes usually inherit category from MenuItem;
-  // prep/component recipes own this field directly since they have no
+  // component recipes own this field directly since they have no
   // MenuItem.
   category          String?
   // Optional hero photo URL. Operator-uploaded via the media upload helper.

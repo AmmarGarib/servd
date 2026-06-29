@@ -10,12 +10,12 @@ const SEASON_KEYS = ['spring', 'summer', 'monsoon', 'autumn', 'winter', 'ramadan
 const SEASON_DATE_RE = /^(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/
 
 // Single schema for both kinds. The kind-specific requirements (plate
-// must have menuItemId, prep must have name + yieldGrams) are enforced
+// must have menuItemId, component must have name + yieldGrams) are enforced
 // via .superRefine below — that lets us produce per-field error messages
 // instead of a generic "invalid payload".
 //
 // Ingredient rows are also disjoint: either inventoryItemId (raw stock)
-// or prepRecipeId (a prep sub-recipe as a component). The mutual exclusion
+// or prepRecipeId (a component sub-recipe). The mutual exclusion
 // is checked client-side via the picker, server-side via the schema, and
 // at the DB layer via the CHECK constraint in the migration.
 const ingredientSchema = z.object({
@@ -36,7 +36,7 @@ const ingredientSchema = z.object({
 // (where every required field is enforced) and skip it on PUT (where partial
 // edits are allowed by design).
 const recipeShape = {
-  kind:         z.enum(['plate', 'prep', 'component']).default('plate'),
+  kind:         z.enum(['plate', 'component']).default('plate'),
   menuItemId:   z.string().uuid().optional(),
   name:         z.string().min(1).optional(),
   yieldGrams:   z.number().positive().optional(),
@@ -78,15 +78,15 @@ const recipeSchema = recipeBase.superRefine((r, ctx) => {
   if (r.kind === 'plate' && !r.menuItemId) {
     ctx.addIssue({ code: 'custom', path: ['menuItemId'], message: 'Plate recipes must link to a menu item' })
   }
-  if (r.kind === 'prep' || r.kind === 'component') {
+  if (r.kind === 'component') {
     if (!r.name || !r.name.trim()) {
-      ctx.addIssue({ code: 'custom', path: ['name'], message: `${r.kind === 'prep' ? 'Prep' : 'Component'} recipes need a name` })
+      ctx.addIssue({ code: 'custom', path: ['name'], message: 'Component recipes need a name' })
     }
     if (!r.yieldGrams || r.yieldGrams <= 0) {
-      ctx.addIssue({ code: 'custom', path: ['yieldGrams'], message: `${r.kind === 'prep' ? 'Prep' : 'Component'} recipes need a batch yield in grams (drives cost-per-gram)` })
+      ctx.addIssue({ code: 'custom', path: ['yieldGrams'], message: 'Component recipes need a batch yield in grams (drives cost-per-gram)' })
     }
     if (r.menuItemId) {
-      ctx.addIssue({ code: 'custom', path: ['menuItemId'], message: `${r.kind === 'prep' ? 'Prep' : 'Component'} recipes do not link to a menu item` })
+      ctx.addIssue({ code: 'custom', path: ['menuItemId'], message: 'Component recipes do not link to a menu item' })
     }
   }
 })
@@ -241,14 +241,14 @@ export async function recipeRoutes(fastify: FastifyInstance) {
         const totalCostCents      = ingredientCostCents + qFactorCents + laborCostCents
 
         // Per-kind headline numbers.
-        //   plate → plate cost (total ÷ servings) + margin vs. menu price.
-        //   prep  → cost per gram (total ÷ yieldGrams) + cost per batch.
+        //   plate     → plate cost (total ÷ servings) + margin vs. menu price.
+        //   component → cost per gram (total ÷ yieldGrams) + cost per batch.
         // We keep both fields populated where they make sense so the frontend
         // can read whichever it needs without conditional branching.
         const costPerPortionCents = r.kind === 'plate' && r.servings > 0
           ? Math.round(totalCostCents / r.servings)
           : null
-        const costPerGramCents = r.kind === 'prep' && r.yieldGrams && r.yieldGrams > 0
+        const costPerGramCents = r.kind === 'component' && r.yieldGrams && r.yieldGrams > 0
           ? totalCostCents / r.yieldGrams                          // sub-cent precision — fractions matter at gram scale
           : null
         const priceCents     = r.menuItem?.priceCents ?? null
@@ -270,20 +270,21 @@ export async function recipeRoutes(fastify: FastifyInstance) {
           costPerPortionCents,
           grossMarginPct,
           foodCostPct,
-          // Prep headline:
+          // Component headline:
           costPerGramCents,
-          batchCostCents: r.kind === 'prep' ? totalCostCents : null,
+          batchCostCents: r.kind === 'component' ? totalCostCents : null,
         }
       })
     },
   )
 
-  // GET /recipes/prep — compact list of prep recipes for the ingredient
+  // GET /recipes/prep — compact list of component recipes for the ingredient
   // picker on plate-recipe forms. Returns precomputed cost-per-gram so the
   // picker can preview "PKR 0.85/g" next to each option without N+1 queries.
+  // (Path kept as /prep for backwards-compatibility; it now lists components.)
   fastify.get('/prep', { preHandler: requireAuth(...MANAGERS) }, async () => {
     const preps = await prisma.recipe.findMany({
-      where: { kind: 'prep', isActive: true },
+      where: { kind: 'component', isActive: true },
       include: { ingredients: { include: { inventoryItem: { select: { unitCostCents: true } } } } },
       orderBy: { name: 'asc' },
     })
@@ -551,14 +552,14 @@ export async function recipeRoutes(fastify: FastifyInstance) {
     },
   )
 
-  // POST /recipes — handles both plate and prep recipes (kind defaults to plate).
+  // POST /recipes — handles both plate and component recipes (kind defaults to plate).
   fastify.post('/', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
     const body = recipeSchema.parse(req.body)
 
     // Plate recipes are 1:1 with a MenuItem — check for an existing recipe on
     // that menu item to surface a clean 409 instead of a Prisma unique-violation.
-    // Prep recipes have no menuItemId, so no uniqueness check needed (multiple
-    // preps with the same name are allowed; operator distinguishes by id).
+    // Component recipes have no menuItemId, so no uniqueness check needed (multiple
+    // components with the same name are allowed; operator distinguishes by id).
     if (body.kind === 'plate' && body.menuItemId) {
       const existing = await prisma.recipe.findUnique({ where: { menuItemId: body.menuItemId } })
       if (existing) throw new AppError('RECIPE_EXISTS', 'Recipe for this menu item already exists', 409)
@@ -629,7 +630,7 @@ export async function recipeRoutes(fastify: FastifyInstance) {
   // .partial().parse() loses the superRefine cross-field validation (zod
   // strips it). That's OK here because we accept partial updates — the
   // operator might only be patching servings or one ingredient. Kind itself
-  // is treated as immutable from this endpoint; a plate can't become a prep
+  // is treated as immutable from this endpoint; a plate can't become a component
   // without re-creation since downstream consumers (MenuItem unique, KDS
   // pathway, FBR posting) assume the original shape.
   fastify.put<{ Params: { id: string } }>(

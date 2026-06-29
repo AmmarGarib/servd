@@ -13,7 +13,7 @@ import Link from 'next/link'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../../lib/api'
 
-type Kind = 'plate' | 'prep' | 'component'
+type Kind = 'plate' | 'component'
 type Category = 'main' | 'side' | 'sauce' | 'sub_recipe'
 
 interface InventoryItem {
@@ -278,7 +278,7 @@ export function RecipeForm({ initial, prefillBrandId, prefillCategoryId }: {
     if (kind === 'plate' && menuItemMode === 'new' && !newItemName.trim()) return setErr('Name the new menu item.')
     if (kind === 'plate' && menuItemMode === 'new' && !newItemCategoryId) return setErr('Pick a menu category for the new item.')
     if (kind !== 'plate' && !name.trim()) return setErr('Give the recipe a name.')
-    if (kind !== 'plate' && yieldGrams <= 0) return setErr('Set a positive batch yield (grams) for prep/component recipes.')
+    if (kind !== 'plate' && yieldGrams <= 0) return setErr('Set a positive batch yield (grams) for component recipes.')
     if (computed.rows.every((r) => !r.inventoryItemId || r.quantity <= 0)) return setErr('Add at least one ingredient with quantity > 0.')
     save.mutate()
   }
@@ -307,8 +307,7 @@ export function RecipeForm({ initial, prefillBrandId, prefillCategoryId }: {
             <div className="flex gap-2 flex-wrap">
               {([
                 { v: 'plate' as Kind,     label: 'Finished plate', hint: 'Goes on a menu, gets sold' },
-                { v: 'prep' as Kind,      label: 'Prep',           hint: 'Batch made ahead, sold by gram into plates' },
-                { v: 'component' as Kind, label: 'Component',      hint: 'Sub-recipe used inside plates (sauces, doughs)' },
+                { v: 'component' as Kind, label: 'Component',      hint: 'Batch sub-recipe used inside plates by the gram (sauces, doughs)' },
               ]).map((t) => (
                 <button key={t.v} type="button" disabled={isEdit}
                   onClick={() => setKind(t.v)}

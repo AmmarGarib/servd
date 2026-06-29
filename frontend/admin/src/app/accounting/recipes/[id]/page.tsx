@@ -7,7 +7,7 @@ import { RecipeForm, type RecipeFormInitial } from '../RecipeForm'
 
 interface ExistingRecipe {
   id: string
-  kind: 'plate' | 'prep' | 'component'
+  kind: 'plate' | 'component'
   name: string | null
   menuItemId: string | null
   servings: number
