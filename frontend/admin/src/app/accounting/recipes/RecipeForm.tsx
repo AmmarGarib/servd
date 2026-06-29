@@ -35,9 +35,20 @@ interface IngredientRow {
   yieldPctOverride: number | null
 }
 
+export type RecipeStatus = 'iteration' | 'pending_approval' | 'production'
+
+// Shared status badge styling — reused by the recipe list + approvals inbox.
+export const recipeStatusMeta: Record<RecipeStatus, { label: string; color: string; bg: string }> = {
+  iteration:        { label: 'Testing',          color: '#FDB022', bg: 'rgba(245,158,11,0.12)' },
+  pending_approval: { label: 'Pending approval',  color: '#A5B4FC', bg: 'rgba(99,102,241,0.15)' },
+  production:       { label: 'Live',              color: '#5EEAD4', bg: 'rgba(0,212,177,0.12)' },
+}
+
 export interface RecipeFormInitial {
   id: string
   kind: Kind
+  status: RecipeStatus
+  rejectionReason: string | null
   name: string | null
   menuItemId: string | null
   servings: number
@@ -271,6 +282,16 @@ export function RecipeForm({ initial, prefillBrandId, prefillCategoryId }: {
     onError: (e: Error) => setErr(e.message),
   })
 
+  // Submit an iteration for the CEO's production sign-off.
+  const submitForProd = useMutation({
+    mutationFn: () => api.post(`/recipes/${initial!.id}/submit`, {}),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['recipes'] })
+      router.push('/accounting/recipes')
+    },
+    onError: (e: Error) => setErr(e.message),
+  })
+
   function submit() {
     setErr('')
     if (kind === 'plate' && !brandId) return setErr('Pick a brand for this recipe.')
@@ -323,6 +344,36 @@ export function RecipeForm({ initial, prefillBrandId, prefillCategoryId }: {
             </div>
             {isEdit && <p className="text-[10px] text-s-dim mt-2">Kind is locked on edit — to change it, delete and re-create.</p>}
           </section>
+
+          {/* Lifecycle status — edit mode only. Iteration recipes can be
+              submitted for production; sign-off is the CEO's (see approvals). */}
+          {isEdit && initial && (
+            <section className="rounded-xl border border-s-border bg-s-surface p-4">
+              <div className="flex items-center justify-between gap-3 flex-wrap">
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-s-muted">Status</span>
+                  <span className="text-[10px] font-black uppercase tracking-wider rounded-full px-2 py-0.5"
+                    style={{ background: recipeStatusMeta[initial.status].bg, color: recipeStatusMeta[initial.status].color }}>
+                    {recipeStatusMeta[initial.status].label}
+                  </span>
+                </div>
+                {initial.status === 'iteration' && (
+                  <button type="button" onClick={() => submitForProd.mutate()} disabled={submitForProd.isPending}
+                    className="rounded-lg bg-s-teal text-black px-3 py-1.5 text-xs font-black hover:opacity-90 disabled:opacity-50">
+                    {submitForProd.isPending ? 'Submitting…' : 'Submit for production'}
+                  </button>
+                )}
+                {initial.status === 'pending_approval' && (
+                  <span className="text-[11px] text-s-muted">Submitted — awaiting CEO approval.</span>
+                )}
+              </div>
+              {initial.status === 'iteration' && initial.rejectionReason && (
+                <p className="mt-2 text-[11px]" style={{ color: '#FDB022' }}>
+                  Previously sent back by the CEO: “{initial.rejectionReason}”
+                </p>
+              )}
+            </section>
+          )}
 
           {/* Section 1 — Header */}
           <Section title="1 · Recipe header">

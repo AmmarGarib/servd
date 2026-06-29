@@ -8,6 +8,8 @@ import { RecipeForm, type RecipeFormInitial } from '../RecipeForm'
 interface ExistingRecipe {
   id: string
   kind: 'plate' | 'component'
+  status: 'iteration' | 'pending_approval' | 'production'
+  rejectionReason: string | null
   name: string | null
   menuItemId: string | null
   servings: number
@@ -52,6 +54,8 @@ export default function EditRecipePage({ params }: { params: Promise<{ id: strin
   const initial: RecipeFormInitial = {
     id: data.id,
     kind: data.kind,
+    status: data.status,
+    rejectionReason: data.rejectionReason,
     name: data.name,
     menuItemId: data.menuItemId,
     servings: data.servings,

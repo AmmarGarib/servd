@@ -1861,9 +1861,31 @@ enum RecipeKind {
   component
 }
 
+// Recipe lifecycle — independent of `kind`. A recipe starts in `iteration`
+// (under testing), is submitted for sign-off (`pending_approval`), and goes
+// live once a CEO/owner approves (`production`). Rejection drops it back to
+// `iteration`. Existing recipes were backfilled to `production` by the
+// migration that introduced this column.
+enum RecipeStatus {
+  iteration
+  pending_approval
+  production
+}
+
 model Recipe {
   id           String      @id @default(uuid())
   kind         RecipeKind  @default(plate)
+  // Lifecycle status (see RecipeStatus). New recipes start as `iteration`.
+  status       RecipeStatus @default(iteration)
+  // Promotion audit. Plain staff-user IDs (no FK relation — mirrors the
+  // `createdBy` convention on PurchaseOrder). `submitted*` is set when a
+  // manager requests promotion; `approved*` when a CEO/owner signs off;
+  // `rejectionReason` is the note left on a rejection back to `iteration`.
+  submittedById   String?
+  submittedAt     DateTime?
+  approvedById    String?
+  approvedAt      DateTime?
+  rejectionReason String?
   // PLATE recipes are 1:1 with a MenuItem. COMPONENT recipes have menuItemId=null
   // and are named via the `name` field below.
   menuItemId   String?     @unique

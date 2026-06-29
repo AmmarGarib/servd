@@ -6,6 +6,8 @@ import { api } from '../../../lib/api'
 import Link from 'next/link'
 import { RecipeStepsEditor } from '../../../components/recipe/RecipeStepsEditor'
 import { TenantChip, useMyTenants } from '../../../components/ui/TenantPicker'
+import { recipeStatusMeta } from './RecipeForm'
+import { usePermissions } from '../../../hooks/useCan'
 
 const Q_FACTOR = 0.05
 
@@ -53,6 +55,7 @@ interface ConceptWithTenant { name: string; tenantId?: string | null; tenant?: {
 interface Recipe {
   id: string
   kind: 'plate' | 'component'
+  status: 'iteration' | 'pending_approval' | 'production'
   menuItemId: string | null
   name:       string | null
   yieldGrams: number | null
@@ -112,6 +115,8 @@ export default function RecipesPage() {
   const qc = useQueryClient()
   const router = useRouter()
   const { data: tenants = [] } = useMyTenants()
+  const { data: me } = usePermissions()
+  const isCeo = me?.role === 'admin'   // 'admin' is shown as "CEO" in this app
   const [conceptFilter, setConceptFilter] = useState('')
   const [search,        setSearch]        = useState('')
   const [expanded,      setExpanded]      = useState<string | null>(null)
@@ -329,6 +334,9 @@ export default function RecipesPage() {
           </div>
           <div className="flex items-center gap-3">
             <Link href="/accounting" className="text-xs text-s-teal hover:underline">← Hub</Link>
+            {isCeo && (
+              <Link href="/accounting/recipes/approvals" className="text-xs text-s-teal hover:underline">Approvals</Link>
+            )}
             <Link href="/accounting/recipes/new" className="s-btn-primary text-xs px-3 py-1.5">+ New Recipe</Link>
           </div>
         </div>
@@ -461,6 +469,14 @@ export default function RecipesPage() {
                           <span className="text-[9px] font-black uppercase tracking-wider rounded-full px-2 py-0.5"
                             style={{ background: 'rgba(0,212,177,0.12)', color: '#5EEAD4', border: '1px solid rgba(0,212,177,0.3)' }}>
                             🍽 Plate
+                          </span>
+                        )}
+                        {/* Lifecycle status — only call out non-live recipes so
+                            the list isn't littered with "Live" on everything. */}
+                        {r.status !== 'production' && (
+                          <span className="text-[9px] font-black uppercase tracking-wider rounded-full px-2 py-0.5"
+                            style={{ background: recipeStatusMeta[r.status].bg, color: recipeStatusMeta[r.status].color }}>
+                            {recipeStatusMeta[r.status].label}
                           </span>
                         )}
                         <p className="font-semibold text-s-text text-sm truncate">

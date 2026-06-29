@@ -307,6 +307,25 @@ export async function recipeRoutes(fastify: FastifyInstance) {
     })
   })
 
+  // GET /recipes/pending-approval — CEO/owner inbox. Recipes a manager has
+  // submitted for promotion and that are waiting on sign-off. Defined before
+  // GET /:id so the static segment isn't swallowed by the param route.
+  fastify.get('/pending-approval', { preHandler: requireAuth(...ADMIN_ONLY) }, async () => {
+    const recipes = await prisma.recipe.findMany({
+      where: { status: 'pending_approval' },
+      include: { menuItem: { select: { name: true, concept: { select: { name: true } } } } },
+      orderBy: { submittedAt: 'asc' },
+    })
+    return recipes.map((r) => ({
+      id:            r.id,
+      kind:          r.kind,
+      name:          r.menuItem?.name ?? r.name ?? '—',
+      brand:         r.menuItem?.concept?.name ?? null,
+      submittedById: r.submittedById,
+      submittedAt:   r.submittedAt,
+    }))
+  })
+
   // GET /recipes/:id
   fastify.get<{ Params: { id: string } }>(
     '/:id',
@@ -712,6 +731,79 @@ export async function recipeRoutes(fastify: FastifyInstance) {
       // Prisma P2025 → 500. deleteMany silently no-ops.
       await prisma.recipe.deleteMany({ where: { id: req.params.id } })
       return reply.status(204).send()
+    },
+  )
+
+  // ── Recipe lifecycle: iteration → pending_approval → production ──────────────
+  //
+  // A recipe under testing (`iteration`) is submitted for promotion by any
+  // manager, then approved or rejected by the CEO/owner (`admin` role, shown
+  // as "CEO" in the admin UI). Approval flips status in place (the same record
+  // goes live, keeping its history). Rejection drops it back to `iteration`
+  // with a note.
+
+  // POST /recipes/:id/submit — iteration → pending_approval (any manager).
+  fastify.post<{ Params: { id: string } }>(
+    '/:id/submit',
+    { preHandler: requireAuth(...MANAGERS) },
+    async (req) => {
+      const recipe = await prisma.recipe.findUnique({ where: { id: req.params.id } })
+      if (!recipe) throw new NotFoundError('Recipe', req.params.id)
+      if (recipe.status !== 'iteration') {
+        throw new AppError('BAD_STATUS', `Only recipes in iteration can be submitted (this one is ${recipe.status})`, 409)
+      }
+      return prisma.recipe.update({
+        where: { id: req.params.id },
+        data: {
+          status:          'pending_approval',
+          submittedById:   req.staffUser!.id,
+          submittedAt:     new Date(),
+          rejectionReason: null,   // clear any prior rejection note on re-submit
+        },
+      })
+    },
+  )
+
+  // POST /recipes/:id/approve — pending_approval → production (CEO/owner only).
+  fastify.post<{ Params: { id: string } }>(
+    '/:id/approve',
+    { preHandler: requireAuth(...ADMIN_ONLY) },
+    async (req) => {
+      const recipe = await prisma.recipe.findUnique({ where: { id: req.params.id } })
+      if (!recipe) throw new NotFoundError('Recipe', req.params.id)
+      if (recipe.status !== 'pending_approval') {
+        throw new AppError('BAD_STATUS', `Only recipes pending approval can be promoted (this one is ${recipe.status})`, 409)
+      }
+      return prisma.recipe.update({
+        where: { id: req.params.id },
+        data: {
+          status:          'production',
+          approvedById:    req.staffUser!.id,
+          approvedAt:      new Date(),
+          rejectionReason: null,
+        },
+      })
+    },
+  )
+
+  // POST /recipes/:id/reject — pending_approval → iteration (CEO/owner only).
+  fastify.post<{ Params: { id: string }; Body: { reason?: string } }>(
+    '/:id/reject',
+    { preHandler: requireAuth(...ADMIN_ONLY) },
+    async (req) => {
+      const { reason } = z.object({ reason: z.string().max(1000).optional() }).parse(req.body ?? {})
+      const recipe = await prisma.recipe.findUnique({ where: { id: req.params.id } })
+      if (!recipe) throw new NotFoundError('Recipe', req.params.id)
+      if (recipe.status !== 'pending_approval') {
+        throw new AppError('BAD_STATUS', `Only recipes pending approval can be rejected (this one is ${recipe.status})`, 409)
+      }
+      return prisma.recipe.update({
+        where: { id: req.params.id },
+        data: {
+          status:          'iteration',
+          rejectionReason: reason?.trim() || null,
+        },
+      })
     },
   )
 
