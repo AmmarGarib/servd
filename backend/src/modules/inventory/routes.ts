@@ -181,7 +181,9 @@ export async function inventoryRoutes(fastify: FastifyInstance) {
       },
       orderBy: { name: 'asc' },
     })
-    return all.filter((item) => item.currentStock <= item.parLevel)
+    // Only items with a par level set can be "below par". Catalog items with
+    // no par (parLevel = 0) aren't tracked stock and shouldn't raise alerts.
+    return all.filter((item) => item.parLevel > 0 && item.currentStock <= item.parLevel)
   })
 
   // GET /inventory/waste-logs — waste history with optional filters

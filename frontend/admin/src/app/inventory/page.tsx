@@ -177,14 +177,22 @@ export default function InventoryPage() {
     setBulkDeltas({})
   }
 
+  // Only items you actually track as stock belong on the Inventory page —
+  // i.e. anything with stock on hand or a par level set. This keeps the shared
+  // Sourcing Master Sheet catalog (loaded at 0 stock / 0 par) off this page;
+  // an item joins Inventory once you give it a par level or log stock.
+  const tracked = items.filter((i) => i.currentStock > 0 || i.parLevel > 0)
+
   const grouped: Record<string, InventoryItem[]> = {}
-  for (const item of items) {
+  for (const item of tracked) {
     const cat = item.notes ?? 'Uncategorised'
     if (!grouped[cat]) grouped[cat] = []
     grouped[cat]!.push(item)
   }
 
-  const alertCount = items.filter((i) => i.currentStock <= i.parLevel).length
+  // Below-par only counts items that actually have a par level.
+  const isBelowPar = (i: InventoryItem) => i.parLevel > 0 && i.currentStock <= i.parLevel
+  const alertCount = tracked.filter(isBelowPar).length
   const totalWasteCost = wasteLogs.reduce((s, w) => s + (w.estimatedCostCents ?? 0), 0)
 
   return (
@@ -200,7 +208,7 @@ export default function InventoryPage() {
         <div>
           <h1 className="text-2xl font-black text-kds-text mt-0.5">Inventory</h1>
           <p className="text-sm text-kds-subtext">
-            {items.length} items tracked{alertCount > 0 ? ` · ` : ''}
+            {tracked.length} items tracked{alertCount > 0 ? ` · ` : ''}
             {alertCount > 0 && <span className="text-kds-red font-semibold">{alertCount} low stock alert{alertCount !== 1 ? 's' : ''}</span>}
           </p>
         </div>
@@ -219,7 +227,7 @@ export default function InventoryPage() {
               {alertCount} item{alertCount !== 1 ? 's' : ''} below par level
             </p>
             <p className="text-xs text-kds-red/70 mt-0.5">
-              {items.filter(i => i.currentStock <= i.parLevel).map(i => i.name).slice(0, 4).join(', ')}
+              {tracked.filter(isBelowPar).map(i => i.name).slice(0, 4).join(', ')}
               {alertCount > 4 ? ` +${alertCount - 4} more` : ''}
             </p>
           </div>
