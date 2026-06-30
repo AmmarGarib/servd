@@ -44,17 +44,33 @@ const createItemSchema = z.object({
   unit: z.string().min(1),
   parLevel: z.number().min(0).default(0),
   currentStock: z.number().min(0).default(0),
+  // Sourcing fields (Sourcing Master Sheet). unitCostCents = price per unit
+  // in paisa; category/yieldPct optional.
+  unitCostCents: z.number().int().min(0).nullable().optional(),
+  category: z.string().nullable().optional(),
+  yieldPct: z.number().min(0).max(100).optional(),
   supplierId: z.string().uuid().nullable().optional(),
-  notes: z.string().optional(),
+  notes: z.string().nullable().optional(),
   // Tenant the item belongs to. Optional — falls back to the operator's
   // active tenant. Mirrors the workforce/procurement pattern: in portfolio
   // view the frontend renders a Company picker and posts the choice.
   tenantId: z.string().min(1).optional(),
+  // Sourcing master-sheet items are shared across all brands (tenantId NULL).
+  shared: z.boolean().optional(),
 })
 
-const updateStockSchema = z.object({
-  currentStock: z.number().min(0),
-  notes: z.string().optional(),
+// General partial edit (Sourcing Master Sheet "edit price" etc.). Any subset of
+// these can be patched; absent keys are left unchanged.
+const updateItemSchema = z.object({
+  name: z.string().min(1).optional(),
+  unit: z.string().min(1).optional(),
+  unitCostCents: z.number().int().min(0).nullable().optional(),
+  category: z.string().nullable().optional(),
+  notes: z.string().nullable().optional(),
+  parLevel: z.number().min(0).optional(),
+  yieldPct: z.number().min(0).max(100).optional(),
+  currentStock: z.number().min(0).optional(),
+  supplierId: z.string().uuid().nullable().optional(),
 })
 
 const adjustStockSchema = z.object({
@@ -86,11 +102,12 @@ export async function inventoryRoutes(fastify: FastifyInstance) {
   fastify.post('/', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
     const body = createItemSchema.parse(req.body)
     const scope = await resolveTenantScope(req)
-    const tenantId = body.tenantId ?? req.staffUser!.tenantId
+    // Shared sourcing items have no tenant (visible to every brand).
+    const tenantId = body.shared ? null : (body.tenantId ?? req.staffUser!.tenantId)
     if (tenantId && scope.tenantIds.length > 0 && !scope.tenantIds.includes(tenantId)) {
       throw new ForbiddenError('You can only create inventory inside a company you belong to.')
     }
-    const { tenantId: _bodyTenantId, ...rest } = body
+    const { tenantId: _bodyTenantId, shared: _shared, ...rest } = body
     const item = await prisma.inventoryItem.create({
       data: { ...rest, ...(tenantId ? { tenantId } : {}) },
       include: { tenant: { select: { id: true, name: true, slug: true } } },
@@ -98,16 +115,18 @@ export async function inventoryRoutes(fastify: FastifyInstance) {
     return reply.status(201).send(item)
   })
 
-  // PATCH /inventory/:id — set stock to absolute value
+  // PATCH /inventory/:id — partial edit. Accepts any subset of editable fields
+  // (Sourcing Master Sheet edits name/unit/price/category/notes; the stock page
+  // can still set currentStock). Absent fields are left unchanged.
   fastify.patch<{ Params: { id: string } }>(
     '/:id',
     { preHandler: requireAuth(...MANAGERS) },
     async (req) => {
       await assertInventoryAccess(req, req.params.id)
-      const { currentStock } = updateStockSchema.parse(req.body)
+      const data = updateItemSchema.parse(req.body)
       const item = await prisma.inventoryItem.findFirst({ where: { id: req.params.id, deletedAt: null } })
       if (!item) throw new NotFoundError('InventoryItem', req.params.id)
-      return prisma.inventoryItem.update({ where: { id: req.params.id }, data: { currentStock } })
+      return prisma.inventoryItem.update({ where: { id: req.params.id }, data })
     },
   )
 

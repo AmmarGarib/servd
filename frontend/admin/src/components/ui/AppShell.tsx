@@ -154,6 +154,7 @@ const NAV: NavSection[] = [
     items: [
       { href: '/menu',                label: 'Menu',         icon: '📝', module: 'menu' },
       { href: '/accounting/recipes',  label: 'Recipes',      icon: '📐', module: 'recipes' },
+      { href: '/sourcing',            label: 'Sourcing Master Sheet', icon: '🧾', module: 'inventory' },
       { href: '/par-sheet',           label: 'Par Sheet',    icon: '📋', module: 'par_sheet' },
       { href: '/inventory',           label: 'Inventory',    icon: '📦', module: 'inventory' },
       { href: '/kds/config',          label: 'KDS Config',   icon: '⚙️', module: 'kds_config' },
