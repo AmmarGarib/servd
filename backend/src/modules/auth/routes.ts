@@ -684,7 +684,11 @@ export async function authRoutes(fastify: FastifyInstance) {
     // Scope to current/visible tenant(s). We also accept rows where tenantId
     // IS NULL so legacy/back-fill users don't vanish; the frontend tags them
     // with a "No company" chip so the CEO can fix them up.
-    if (scope.tenantIds.length > 0) {
+    //
+    // Admins (owners) see EVERY staff member across all companies — otherwise a
+    // pending hire who signed up under a company the CEO isn't a formal member
+    // of would be invisible, so the CEO couldn't approve them or reissue a PIN.
+    if (req.staffUser!.role !== 'admin' && scope.tenantIds.length > 0) {
       where.OR = [
         { tenantId: { in: scope.tenantIds } },
         { tenantId: null },
@@ -772,9 +776,13 @@ export async function authRoutes(fastify: FastifyInstance) {
     // Resolve the target tenant: explicit body.tenantId wins; falls back to
     // the operator's active tenantId. Validate either way — you can only
     // create staff into a company you actually belong to.
+    // ADMIN_ONLY endpoint — the admin owns the portfolio and can create staff
+    // in any company. Scope checks apply only to non-admins (defensive, should
+    // ADMIN_ONLY ever widen).
+    const isAdmin = req.staffUser!.role === 'admin'
     const scope = await resolveTenantScope(req)
     const tenantId = body.tenantId ?? req.staffUser!.tenantId
-    if (tenantId && scope.tenantIds.length > 0 && !scope.tenantIds.includes(tenantId)) {
+    if (!isAdmin && tenantId && scope.tenantIds.length > 0 && !scope.tenantIds.includes(tenantId)) {
       return reply.status(403).send({ error: {
         code: 'CROSS_TENANT',
         message: 'You can only create staff inside a company you belong to.',
@@ -784,7 +792,7 @@ export async function authRoutes(fastify: FastifyInstance) {
     // Validate every extra tenant the body wants this user added to.
     const extraIds = (body.tenantIds ?? []).filter((id) => id !== tenantId)
     for (const id of extraIds) {
-      if (scope.tenantIds.length > 0 && !scope.tenantIds.includes(id)) {
+      if (!isAdmin && scope.tenantIds.length > 0 && !scope.tenantIds.includes(id)) {
         return reply.status(403).send({ error: {
           code: 'CROSS_TENANT',
           message: 'You can only add staff to companies you belong to.',
@@ -878,31 +886,37 @@ export async function authRoutes(fastify: FastifyInstance) {
         stationIds:      z.array(z.string().min(1)).optional(),
       }).parse(req.body)
 
-      // Cross-tenant guard: when the operator is single-tenant (not in
-      // portfolio mode), only allow edits to rows that belong to their
-      // active tenant OR have no tenant (legacy back-fill). Portfolio-mode
-      // operators are already gated by PortfolioWriteGuardModal client-side.
+      // Cross-tenant guard. This endpoint is ADMIN_ONLY and the admin owns the
+      // whole portfolio, so they may edit any staff row and assign staff to ANY
+      // company. The per-tenant scope checks below only apply to non-admins
+      // (should ADMIN_ONLY ever widen). Previously they wrongly scoped admins
+      // to their active tenant, blocking the CEO from giving a staff member
+      // access to a second company (e.g. GS Foods + GSX Viva) from the
+      // all-companies view — the write carries no portfolio header, so scope
+      // collapsed to the single active tenant and rejected the extra company.
+      const isAdmin = req.staffUser!.role === 'admin'
       const scope = await resolveTenantScope(req)
       const existing = await prisma.user.findUnique({
         where: { id: req.params.id },
         select: { tenantId: true },
       })
       if (!existing) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'No such staff' } })
-      if (existing.tenantId && scope.tenantIds.length > 0 && !scope.tenantIds.includes(existing.tenantId)) {
+      if (!isAdmin && existing.tenantId && scope.tenantIds.length > 0 && !scope.tenantIds.includes(existing.tenantId)) {
         return reply.status(403).send({ error: {
           code: 'CROSS_TENANT',
           message: 'This staff member belongs to a company you don\'t have access to.',
         }})
       }
 
-      // Tenant transfer validation: target tenant must be one you belong to.
-      if (body.tenantId && !scope.tenantIds.includes(body.tenantId)) {
+      // Tenant transfer validation: target tenant must be one you belong to
+      // (admins may transfer into any company).
+      if (!isAdmin && body.tenantId && !scope.tenantIds.includes(body.tenantId)) {
         return reply.status(403).send({ error: {
           code: 'CROSS_TENANT',
           message: 'You can only transfer staff into a company you belong to.',
         }})
       }
-      if (body.tenantIds) {
+      if (!isAdmin && body.tenantIds) {
         for (const id of body.tenantIds) {
           if (!scope.tenantIds.includes(id)) {
             return reply.status(403).send({ error: {

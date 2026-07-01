@@ -61,6 +61,18 @@ export async function tenantRoutes(fastify: FastifyInstance) {
       where: { id: req.staffUser!.id },
       select: { tenantId: true },
     })
+    // Admins (owners) manage the whole portfolio — surface EVERY company, not
+    // just ones they hold an explicit TenantMember row for. Otherwise the CEO
+    // can't see (or assign staff to) a company they own but never formally
+    // "joined" — e.g. GS Foods shows but GSX Viva doesn't.
+    if (req.staffUser!.role === 'admin') {
+      const all = await prisma.tenant.findMany({
+        where: { deletedAt: null },
+        include: { _count: { select: { concepts: true, users: true } } },
+        orderBy: { createdAt: 'asc' },
+      })
+      return all.map((t) => ({ ...t, role: 'admin', isActive: t.id === user?.tenantId }))
+    }
     const memberships = await prisma.tenantMember.findMany({
       where: { userId: req.staffUser!.id, tenant: { deletedAt: null } },
       include: {
