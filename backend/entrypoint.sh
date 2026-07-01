@@ -24,5 +24,9 @@ if ! npx prisma migrate deploy 2>&1; then
   exit 1
 fi
 
+echo "[entrypoint] reconciling staff PINs to phone-last-4 (idempotent, non-fatal)…"
+node dist/src/scripts/reconcile-pins.js 2>&1 || \
+  echo "[entrypoint] reconcile-pins returned non-zero — continuing boot"
+
 echo "[entrypoint] starting API…"
 exec node dist/src/index.js

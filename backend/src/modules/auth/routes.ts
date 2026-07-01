@@ -486,29 +486,13 @@ export async function authRoutes(fastify: FastifyInstance) {
       })
     }
 
-    // Generate a unique PIN. PIN login is identified by the PIN itself
-    // (no username), so a collision would make the first bcrypt match win.
-    // Retry up to 5 times against the live active-PIN set before giving up.
-    let pinPlain: string | null = null
-    {
-      const candidates = await prisma.user.findMany({
-        where: { isActive: true, pin: { not: null }, accountStatus: 'active' },
-        select: { pin: true },
-      })
-      for (let attempt = 0; attempt < 5; attempt++) {
-        const tryPin = generateRandomPin()
-        let collides = false
-        for (const c of candidates) {
-          if (c.pin && await bcrypt.compare(tryPin, c.pin)) { collides = true; break }
-        }
-        if (!collides) { pinPlain = tryPin; break }
-      }
-      if (!pinPlain) {
-        return reply.status(503).send({
-          error: { code: 'PIN_GENERATION_FAILED', message: 'Could not allocate a unique PIN. Try again.' },
-        })
-      }
-    }
+    // PIN = the last 4 digits of the phone number (operator preference). The
+    // CEO view surfaces this same phone-derived PIN, so what the CEO sees now
+    // matches the account's real PIN. Login is disambiguated by name/email +
+    // PIN, so a shared last-4 across two people is fine. Falls back to a random
+    // PIN only if the phone somehow has fewer than 4 digits.
+    const phoneDigits = body.phone.replace(/\D/g, '')
+    const pinPlain = phoneDigits.length >= 4 ? phoneDigits.slice(-4) : generateRandomPin()
 
     // Random unusable password hash — we don't use password login at all.
     const password = await hashPassword(randomBytes(16).toString('hex'))
@@ -771,7 +755,13 @@ export async function authRoutes(fastify: FastifyInstance) {
 
     // Password not used for login (PIN-only) — store a random unusable hash
     const password = await hashPassword(Math.random().toString(36) + Date.now())
-    const pin      = body.pin ? await hashPin(body.pin) : null
+    // PIN = explicit body.pin if given, else the last 4 digits of the phone
+    // number (operator preference — the CEO view surfaces this same phone-derived
+    // PIN, so what the CEO sees matches the account's real PIN). Only null if no
+    // PIN was supplied AND the phone has fewer than 4 digits.
+    const phoneDigits = (body.phone ?? '').replace(/\D/g, '')
+    const pinPlain    = body.pin || (phoneDigits.length >= 4 ? phoneDigits.slice(-4) : null)
+    const pin         = pinPlain ? await hashPin(pinPlain) : null
 
     // Resolve the target tenant: explicit body.tenantId wins; falls back to
     // the operator's active tenantId. Validate either way — you can only
@@ -939,6 +929,17 @@ export async function authRoutes(fastify: FastifyInstance) {
       if (body.isActive != null) data.isActive  = body.isActive
       if (body.jobTitle != null) data.jobTitle  = body.jobTitle || null
       if (body.pin      != null) data.pin       = body.pin ? await hashPin(body.pin) : null
+      // Keep the phone-last-4 PIN invariant live: if the phone changes and the
+      // caller didn't set an explicit PIN, re-derive the PIN from the new
+      // phone's last 4 digits (and clear the legacy reset gate). Matches what
+      // the CEO view shows and what signup/create do.
+      if (body.phone != null && (body.pin == null || body.pin === '')) {
+        const digits = (body.phone || '').replace(/\D/g, '')
+        if (digits.length >= 4) {
+          data.pin = await hashPin(digits.slice(-4))
+          data.pinMustReset = false
+        }
+      }
       if (finalPrimary)          data.tenantId  = finalPrimary
       // Override arrays — full-replacement semantics. The frontend computes
       // diffs against role defaults and posts the resulting state; if the
