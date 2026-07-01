@@ -1907,8 +1907,12 @@ model Recipe {
   portionSizeG Float? // grams per portion (display reference, plate recipes)
   laborMinutes Int         @default(0)
   notes        String?
-  steps        String? // cooking/assembly steps for kitchen staff (KDS)
+  steps        String? // cooking/assembly steps for kitchen staff (KDS) — also the free-text MOP for sub-recipes (components)
   stepsUrdu    String? @map("steps_urdu")
+  // Finished-plate method as an ordered, station-tagged step list:
+  //   [{ station: "Grill", instruction: "Sear patty 90s/side" }, …]
+  // Sub-recipes use the free-text `steps` (MOP) instead; plates use this.
+  methodSteps  Json?
   // ── Pricing inputs (per spec — sections 3 & 4) ──────────────────────────
   // Q factor = waste buffer. Default 10% pre-fills on every new recipe;
   // operator can override per-recipe (e.g. tighter for hard-to-waste prep,

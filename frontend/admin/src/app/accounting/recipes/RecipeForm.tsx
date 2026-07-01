@@ -16,6 +16,8 @@ import { RecipeTestLog } from '../../../components/recipe/RecipeTestLog'
 
 type Kind = 'plate' | 'component'
 type Category = 'main' | 'side' | 'sauce' | 'sub_recipe'
+// A finished-plate method step: what happens, and which station does it.
+interface MethodStep { station: string; instruction: string }
 
 interface InventoryItem {
   id: string
@@ -34,7 +36,7 @@ interface IngredientRow {
   source: 'raw' | 'component'        // raw inventory item, or a sub-recipe (component) used by the gram
   inventoryItemId: string
   prepRecipeId: string
-  quantity: number
+  quantity: number | null            // null = empty field (renders blank, not "0")
   yieldPctOverride: number | null    // UI percent 0–100; null = use the inventory default
 }
 
@@ -63,6 +65,7 @@ export interface RecipeFormInitial {
   category: Category | null
   photoUrl: string | null
   steps: string | null
+  methodSteps: MethodStep[] | null
   qFactorPct: number
   targetProfitPct: number
   packagingPct: number
@@ -85,7 +88,7 @@ const blankRow = (): IngredientRow => ({
   source: 'raw',
   inventoryItemId: '',
   prepRecipeId: '',
-  quantity: 0,
+  quantity: null,
   yieldPctOverride: null,
 })
 
@@ -136,7 +139,6 @@ export function RecipeForm({ initial, prefillBrandId, prefillCategoryId }: {
   // ── Form state, seeded from `initial` on edit ───────────────────────────
   const [kind, setKind]                 = useState<Kind>(initial?.kind ?? 'plate')
   const [name, setName]                 = useState(initial?.name ?? '')
-  const [category, setCategory]         = useState<Category>(initial?.category ?? 'main')
   const [brandId, setBrandId]           = useState<string>(initial?.brandId ?? prefillBrandId ?? '')
   // 'new' = create a new menu item inline (default for fresh recipes);
   // 'existing' = retrofit an existing menu item with a recipe.
@@ -146,10 +148,12 @@ export function RecipeForm({ initial, prefillBrandId, prefillCategoryId }: {
   const [newItemName, setNewItemName]                 = useState(initial?.pendingMenuItem?.name ?? '')
   const [newItemDescription, setNewItemDescription]   = useState(initial?.pendingMenuItem?.description ?? '')
   const [newItemCategoryId, setNewItemCategoryId]     = useState(initial?.pendingMenuItem?.categoryId ?? prefillCategoryId ?? '')
-  const [portions, setPortions]         = useState(initial?.servings ?? 1)
-  const [yieldGrams, setYieldGrams]     = useState(initial?.yieldGrams ?? 0)
-  const [photoUrl, setPhotoUrl]         = useState(initial?.photoUrl ?? '')
+  const [portions, setPortions]         = useState<number | null>(initial?.servings ?? 1)
+  const [yieldGrams, setYieldGrams]     = useState<number | null>(initial?.yieldGrams ?? null)
+  // Sub-recipe MOP (free text). Plates use `methodSteps` instead.
   const [method, setMethod]             = useState(initial?.steps ?? '')
+  // Finished-plate station-tagged method steps.
+  const [methodSteps, setMethodSteps]   = useState<MethodStep[]>(initial?.methodSteps ?? [])
   const [qFactor, setQFactor]           = useState(initial?.qFactorPct ?? 10)
   const [targetProfit, setTargetProfit] = useState(initial?.targetProfitPct ?? 25)
   const [packaging, setPackaging]       = useState(initial?.packagingPct ?? 8)
@@ -200,6 +204,15 @@ export function RecipeForm({ initial, prefillBrandId, prefillCategoryId }: {
     enabled: kind === 'plate',
   })
 
+  // Stations for the selected brand — used to autocomplete the "station" field
+  // on finished-plate method steps (grill, assemble, expo, …). Free text still
+  // works if a station isn't formally configured yet.
+  const { data: brandStations = [] } = useQuery<Array<{ id: string; name: string }>>({
+    queryKey: ['recipes', 'stations', brandId],
+    queryFn: () => api.get(`/kds/stations?conceptId=${brandId}`),
+    enabled: kind === 'plate' && !!brandId,
+  })
+
   // ── Live cost preview ───────────────────────────────────────────────────
   const computed = useMemo(() => {
     const invById = new Map(inventory.map((i) => [i.id, i]))
@@ -207,14 +220,15 @@ export function RecipeForm({ initial, prefillBrandId, prefillCategoryId }: {
     const rows = ings.map((row) => {
       // Component (sub-recipe) row: cost-per-gram is precomputed by the batch
       // (already yield-adjusted), so cost = cost/g × grams used. No row yield.
+      const qty = row.quantity ?? 0
       if (row.source === 'component') {
         const prep = prepById.get(row.prepRecipeId)
         const cpgCents  = prep?.costPerGramCents ?? 0
-        const costCents = Math.round(cpgCents * row.quantity)
+        const costCents = Math.round(cpgCents * qty)
         return {
           ...row, inv: null, name: prep?.name ?? '— component —', isCount: false,
-          cpgCents, yieldPctApplied: 100, rawUsedG: row.quantity,
-          costCents, portionCostCents: Math.round(costCents / Math.max(portions, 1)),
+          cpgCents, yieldPctApplied: 100, rawUsedG: qty,
+          costCents, portionCostCents: Math.round(costCents / Math.max(portions ?? 1, 1)),
           allergens: [] as string[],
         }
       }
@@ -230,21 +244,21 @@ export function RecipeForm({ initial, prefillBrandId, prefillCategoryId }: {
       const yieldFactor = Math.max(yieldPct / 100, 0.01)
       // For count items, "cpg" is really cost-per-unit; for weighed items it's per gram.
       const cpgCents    = isCount ? (inv.unitCostCents ?? 0) : invCostPerGramCents(inv)
-      const costCents   = Math.round((row.quantity * cpgCents) / yieldFactor)
+      const costCents   = Math.round((qty * cpgCents) / yieldFactor)
       return {
         ...row, inv, name: inv.name, isCount, cpgCents, yieldPctApplied: yieldPct,
-        rawUsedG: row.quantity / yieldFactor, costCents,
-        portionCostCents: Math.round(costCents / Math.max(portions, 1)),
+        rawUsedG: qty / yieldFactor, costCents,
+        portionCostCents: Math.round(costCents / Math.max(portions ?? 1, 1)),
         allergens: inv.allergens,
       }
     })
     const totalIngredient = rows.reduce((s, r) => s + r.costCents, 0)
     const qFactorCents    = Math.round(totalIngredient * (qFactor / 100))
     const totalRecipe     = totalIngredient + qFactorCents
-    const plateCost       = Math.round(totalRecipe / Math.max(portions, 1))
+    const plateCost       = Math.round(totalRecipe / Math.max(portions ?? 1, 1))
     // Recipe weight = sum of gram-based recipe quantities (count items excluded).
-    const recipeWeightG   = rows.reduce((s, r) => s + (r.isCount ? 0 : r.quantity), 0)
-    const portionSizeG    = recipeWeightG / Math.max(portions, 1)
+    const recipeWeightG   = rows.reduce((s, r) => s + (r.isCount ? 0 : (r.quantity ?? 0)), 0)
+    const portionSizeG    = recipeWeightG / Math.max(portions ?? 1, 1)
     const opexPerPortion  = 0   // live-on-save (server computes from OpexLine)
 
     const packagingFactor = packaging / 100
@@ -303,28 +317,35 @@ export function RecipeForm({ initial, prefillBrandId, prefillCategoryId }: {
                 description: newItemDescription.trim() || null,
               },
             })
-          : { name: name.trim(), yieldGrams }),
-        servings: portions,
-        category,
-        photoUrl: photoUrl.trim() || null,
-        steps: method.trim() || null,
+          : { name: name.trim(), yieldGrams: yieldGrams ?? 0 }),
+        servings: portions ?? 1,
+        // Recipe-type tag is derived from the picker (no duplicate field): a
+        // finished plate is a "main"; a sub-recipe is a "sub_recipe".
+        category: kind === 'plate' ? (initial?.category ?? 'main') : 'sub_recipe',
+        // Sub-recipes carry a free-text MOP in `steps`; finished plates carry an
+        // ordered, station-tagged step list in `methodSteps`.
+        steps: kind === 'component' ? (method.trim() || null) : null,
+        methodSteps: kind === 'plate'
+          ? methodSteps.map((s) => ({ station: s.station.trim(), instruction: s.instruction.trim() }))
+                       .filter((s) => s.instruction)
+          : null,
         qFactorPct: qFactor,
         targetProfitPct: targetProfit,
         packagingPct: packaging,
         actualSellingPriceCents: actualSpPkr.trim() ? Math.round(parseFloat(actualSpPkr) * 100) : null,
         ingredients: ings
-          .filter((r) => r.quantity > 0 && (r.source === 'component' ? r.prepRecipeId : r.inventoryItemId))
+          .filter((r) => (r.quantity ?? 0) > 0 && (r.source === 'component' ? r.prepRecipeId : r.inventoryItemId))
           .map((r) => {
             if (r.source === 'component') {
               // Components are consumed by the gram and already yield-adjusted.
-              return { prepRecipeId: r.prepRecipeId, quantity: r.quantity, unit: 'g', yieldPct: 1 }
+              return { prepRecipeId: r.prepRecipeId, quantity: r.quantity ?? 0, unit: 'g', yieldPct: 1 }
             }
             const inv = inventory.find((i) => i.id === r.inventoryItemId)
             // Persist yield as a fraction (0.01–1.0) per the schema; UI holds a percent.
             const yieldFraction = Math.min(1, Math.max(0.01, ((r.yieldPctOverride ?? inv?.yieldPct ?? 100)) / 100))
             return {
               inventoryItemId: r.inventoryItemId,
-              quantity:        r.quantity,
+              quantity:        r.quantity ?? 0,
               unit:            inv?.unit ?? 'g',
               yieldPct:        yieldFraction,
             }
@@ -359,9 +380,9 @@ export function RecipeForm({ initial, prefillBrandId, prefillCategoryId }: {
     if (kind === 'plate' && !isEdit && !newItemName.trim()) return setErr('Name the menu item.')
     if (kind === 'plate' && !isEdit && !newItemCategoryId) return setErr('Pick a menu category for the item.')
     if (kind !== 'plate' && !name.trim()) return setErr('Give the recipe a name.')
-    if (kind !== 'plate' && yieldGrams <= 0) return setErr('Set a positive batch yield (grams) for component recipes.')
+    if (kind !== 'plate' && (yieldGrams ?? 0) <= 0) return setErr('Set a positive batch yield (grams) for component recipes.')
     const hasIngredient = computed.rows.some((r) =>
-      r.quantity > 0 && (r.source === 'component' ? !!r.prepRecipeId : !!r.inventoryItemId))
+      (r.quantity ?? 0) > 0 && (r.source === 'component' ? !!r.prepRecipeId : !!r.inventoryItemId))
     if (!hasIngredient) return setErr('Add at least one ingredient with quantity > 0.')
     save.mutate()
   }
@@ -485,29 +506,11 @@ export function RecipeForm({ initial, prefillBrandId, prefillCategoryId }: {
                   </div>
                 </>
               )}
-              <Field label="Recipe type tag" hint="For your costing library — separate from the menu category">
-                <select value={category} onChange={(e) => setCategory(e.target.value as Category)} className={inputCls}>
-                  <option value="main">Main</option>
-                  <option value="side">Side</option>
-                  <option value="sauce">Sauce</option>
-                  <option value="sub_recipe">Sub-recipe</option>
-                </select>
-              </Field>
-              <Field label={kind === 'plate' ? 'Portions per recipe *' : 'Batch yield (grams) *'}>
+              <Field label={kind === 'plate' ? 'Portions per recipe' : 'Batch yield (grams)'}>
                 {kind === 'plate'
-                  ? <input type="number" min={1} value={portions} onChange={(e) => setPortions(parseInt(e.target.value) || 1)} className={inputCls}/>
-                  : <input type="number" min={0} value={yieldGrams} onChange={(e) => setYieldGrams(parseFloat(e.target.value) || 0)} className={inputCls}/>}
+                  ? <NumInput value={portions} onChange={setPortions} placeholder="1" className={inputCls}/>
+                  : <NumInput value={yieldGrams} onChange={setYieldGrams} placeholder="e.g. 500" className={inputCls}/>}
               </Field>
-              <Field label="Photo URL (optional)">
-                <input value={photoUrl} onChange={(e) => setPhotoUrl(e.target.value)} placeholder="https://…" className={inputCls}/>
-              </Field>
-              <div className="md:col-span-2">
-                <Field label="Method / instructions (optional)">
-                  <textarea value={method} onChange={(e) => setMethod(e.target.value)} rows={3}
-                    placeholder="Marinate chicken 12 hrs, char-grill at high heat 4 min/side…"
-                    className={inputCls + ' min-h-[80px]'}/>
-                </Field>
-              </div>
             </div>
           </Section>
 
@@ -576,25 +579,24 @@ export function RecipeForm({ initial, prefillBrandId, prefillCategoryId }: {
                         </td>
                         <td className="px-2 py-1.5 text-right">
                           {isComp ? <span className="text-s-dim">n/a</span> : (
-                            <input type="number" min={1} max={100} step={1}
-                              value={row.yieldPctOverride ?? cr.inv?.yieldPct ?? 100}
-                              onChange={(e) => {
-                                const v = parseFloat(e.target.value)
+                            <NumInput value={row.yieldPctOverride}
+                              placeholder={String(cr.inv?.yieldPct ?? 100)}
+                              onChange={(v) => {
                                 const next = [...ings]
-                                next[i] = { ...next[i]!, yieldPctOverride: Number.isFinite(v) ? v : null }
+                                next[i] = { ...next[i]!, yieldPctOverride: v }
                                 setIngs(next)
                               }}
-                              className={inputCls + ' w-14 text-right'}/>
+                              className={inputCls + ' w-16 text-right'}/>
                           )}
                         </td>
                         <td className="px-2 py-1.5 text-right font-mono text-s-muted">
                           {cr.isCount ? `${fmtPkr(cr.cpgCents)}/u` : fmtPkrPerG(cr.cpgCents)}
                         </td>
                         <td className="px-2 py-1.5 text-right">
-                          <input type="number" min={0} step={1} value={row.quantity}
-                            onChange={(e) => {
+                          <NumInput value={row.quantity} placeholder="0"
+                            onChange={(v) => {
                               const next = [...ings]
-                              next[i] = { ...next[i]!, quantity: parseFloat(e.target.value) || 0 }
+                              next[i] = { ...next[i]!, quantity: v }
                               setIngs(next)
                             }}
                             className={inputCls + ' w-20 text-right'}/>
@@ -635,16 +637,13 @@ export function RecipeForm({ initial, prefillBrandId, prefillCategoryId }: {
             </div>
             <div className="mt-3 grid grid-cols-3 gap-3">
               <Field label="Q factor %" hint="Waste buffer on total">
-                <input type="number" min={0} max={100} step={0.5} value={qFactor}
-                  onChange={(e) => setQFactor(parseFloat(e.target.value) || 0)} className={inputCls}/>
+                <NumInput value={qFactor} onChange={(v) => setQFactor(v ?? 0)} placeholder="10" className={inputCls}/>
               </Field>
               <Field label="Target profit %" hint="Pre-opex">
-                <input type="number" min={0} max={100} step={0.5} value={targetProfit}
-                  onChange={(e) => setTargetProfit(parseFloat(e.target.value) || 0)} className={inputCls}/>
+                <NumInput value={targetProfit} onChange={(v) => setTargetProfit(v ?? 0)} placeholder="25" className={inputCls}/>
               </Field>
               <Field label="Packaging %" hint="Of selling price">
-                <input type="number" min={0} max={100} step={0.5} value={packaging}
-                  onChange={(e) => setPackaging(parseFloat(e.target.value) || 0)} className={inputCls}/>
+                <NumInput value={packaging} onChange={(v) => setPackaging(v ?? 0)} placeholder="8" className={inputCls}/>
               </Field>
             </div>
             {allAllergens.length > 0 && (
@@ -653,6 +652,57 @@ export function RecipeForm({ initial, prefillBrandId, prefillCategoryId }: {
                   <span key={a} className="ml-1 rounded px-1.5 py-0.5 text-[10px]"
                     style={{ background: 'rgba(245,158,11,0.15)', color: '#FDB022' }}>{a}</span>
                 ))}
+              </div>
+            )}
+          </Section>
+
+          {/* Section 3 — Method (its own section, below costing) */}
+          <Section title="3 · Method"
+            subtitle={kind === 'plate'
+              ? 'Step-by-step, tagged by station. Read top-to-bottom — e.g. Grill cooks the protein → Assemble builds the bowl → Expo checks it and hands off.'
+              : 'General method of preparation (MOP) for this sub-recipe.'}>
+            {kind === 'component' ? (
+              <textarea value={method} onChange={(e) => setMethod(e.target.value)} rows={5}
+                placeholder="e.g. Blend garlic, lemon and olive oil; season; rest 30 min…"
+                className={inputCls + ' min-h-[120px]'}/>
+            ) : (
+              <div className="space-y-2">
+                <datalist id="station-suggestions">
+                  {brandStations.map((s) => <option key={s.id} value={s.name} />)}
+                </datalist>
+                {methodSteps.length === 0 && (
+                  <p className="text-[11px] text-s-dim">No steps yet — add the first stop on the plate's journey through the kitchen.</p>
+                )}
+                {methodSteps.map((step, i) => (
+                  <div key={i} className="flex items-start gap-2">
+                    <span className="mt-2 text-[11px] font-mono text-s-dim w-5 text-right shrink-0">{i + 1}.</span>
+                    <input list="station-suggestions" value={step.station}
+                      onChange={(e) => {
+                        const next = [...methodSteps]; next[i] = { ...next[i]!, station: e.target.value }; setMethodSteps(next)
+                      }}
+                      placeholder="Station (e.g. Grill)"
+                      className={inputCls + ' w-40 shrink-0'}/>
+                    <textarea value={step.instruction} rows={2}
+                      onChange={(e) => {
+                        const next = [...methodSteps]; next[i] = { ...next[i]!, instruction: e.target.value }; setMethodSteps(next)
+                      }}
+                      placeholder="What happens at this station…"
+                      className={inputCls + ' flex-1 min-h-[42px]'}/>
+                    <div className="flex flex-col gap-0.5 shrink-0">
+                      <button type="button" title="Move up" disabled={i === 0}
+                        onClick={() => { const n = [...methodSteps]; [n[i - 1], n[i]] = [n[i]!, n[i - 1]!]; setMethodSteps(n) }}
+                        className="text-s-muted hover:text-s-text disabled:opacity-20 text-xs px-1">↑</button>
+                      <button type="button" title="Move down" disabled={i === methodSteps.length - 1}
+                        onClick={() => { const n = [...methodSteps]; [n[i + 1], n[i]] = [n[i]!, n[i + 1]!]; setMethodSteps(n) }}
+                        className="text-s-muted hover:text-s-text disabled:opacity-20 text-xs px-1">↓</button>
+                    </div>
+                    <button type="button" title="Remove step"
+                      onClick={() => setMethodSteps(methodSteps.filter((_, j) => j !== i))}
+                      className="mt-1 text-red-400 hover:bg-red-400/10 rounded px-2 shrink-0">×</button>
+                  </div>
+                ))}
+                <button type="button" onClick={() => setMethodSteps([...methodSteps, { station: '', instruction: '' }])}
+                  className="mt-1 text-xs text-s-teal hover:underline font-bold">+ Add step</button>
               </div>
             )}
           </Section>
@@ -763,9 +813,9 @@ function CostPanel({ computed, kind, actualSpPkr, setActualSpPkr }: {
         <div className="pt-3 border-t border-s-border">
           <label className="block">
             <span className="text-[10px] font-bold uppercase tracking-wider text-s-muted block mb-1">Actual selling price (PKR)</span>
-            <input type="number" min={0} step={50} value={actualSpPkr}
+            <input type="text" inputMode="decimal" value={actualSpPkr}
               placeholder={String(Math.round(v.target / 100))}
-              onChange={(e) => setActualSpPkr(e.target.value)}
+              onChange={(e) => { const raw = e.target.value; if (raw === '' || /^\d*\.?\d*$/.test(raw)) setActualSpPkr(raw) }}
               className="w-full rounded-md border border-s-border bg-s-bg px-3 py-2 text-sm font-mono"/>
             <span className="text-[10px] text-s-dim mt-1 block">Blank = use Target ({fmtPkr(v.target)}).</span>
           </label>
@@ -794,6 +844,38 @@ function Line({ label, value, dim, bold, highlight, highlightColor }: {
         {value}
       </span>
     </div>
+  )
+}
+
+// Free-hand numeric input. Renders as a text field (no spinner arrows), accepts
+// decimals, and shows BLANK when empty — no hardcoded "0" to clear first. Commits
+// a parsed number (or null when cleared) to the parent, while keeping an internal
+// buffer so mid-typing states like "1." or "" aren't clobbered by re-render.
+function NumInput({ value, onChange, placeholder, className }: {
+  value: number | null
+  onChange: (v: number | null) => void
+  placeholder?: string
+  className?: string
+}) {
+  const [buf, setBuf] = useState<string | null>(null)
+  const shown = buf ?? (value == null || Number.isNaN(value) ? '' : String(value))
+  return (
+    <input
+      type="text"
+      inputMode="decimal"
+      value={shown}
+      placeholder={placeholder}
+      onChange={(e) => {
+        const raw = e.target.value
+        if (raw !== '' && !/^\d*\.?\d*$/.test(raw)) return  // digits + one dot only
+        setBuf(raw)
+        if (raw.trim() === '') { onChange(null); return }
+        const n = parseFloat(raw)
+        if (Number.isFinite(n)) onChange(n)
+      }}
+      onBlur={() => setBuf(null)}
+      className={className}
+    />
   )
 }
 

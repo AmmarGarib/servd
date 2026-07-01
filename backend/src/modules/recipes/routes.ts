@@ -82,6 +82,13 @@ const recipeShape = {
     description: z.string().max(500).nullable().optional(),
   }).optional(),
   photoUrl:                z.string().url().nullable().optional(),
+  // Finished-plate method: ordered, station-tagged steps. `station` is a free
+  // text label (matched loosely against the brand's stations in the UI, not an
+  // FK) so a method can be authored before stations are formally configured.
+  methodSteps: z.array(z.object({
+    station:     z.string().max(80).default(''),
+    instruction: z.string().min(1).max(1000),
+  })).nullable().optional(),
   ingredients:  z.array(ingredientSchema).min(1),
 }
 const recipeBase = z.object(recipeShape)
@@ -668,6 +675,7 @@ export async function recipeRoutes(fastify: FastifyInstance) {
         actualSellingPriceCents: body.actualSellingPriceCents ?? null,
         category:                body.category ?? null,
         photoUrl:                body.photoUrl ?? null,
+        methodSteps:             body.methodSteps ?? Prisma.DbNull,
         ingredients:  { create: body.ingredients.map((i) => ({
           quantity: i.quantity,
           yieldPct: i.yieldPct,
@@ -722,6 +730,7 @@ export async function recipeRoutes(fastify: FastifyInstance) {
             ...(body.actualSellingPriceCents !== undefined && { actualSellingPriceCents: body.actualSellingPriceCents }),
             ...(body.category                !== undefined && { category:                body.category }),
             ...(body.photoUrl                !== undefined && { photoUrl:                body.photoUrl }),
+            ...(body.methodSteps             !== undefined && { methodSteps:             body.methodSteps ?? Prisma.DbNull }),
             ...(body.ingredients  && {
               ingredients: {
                 create: body.ingredients.map((i) => ({

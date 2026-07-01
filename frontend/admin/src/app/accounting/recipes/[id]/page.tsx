@@ -18,6 +18,7 @@ interface ExistingRecipe {
   category: string | null
   photoUrl: string | null
   steps: string | null
+  methodSteps: Array<{ station: string; instruction: string }> | null
   qFactorPct: number
   targetProfitPct: number
   packagingPct: number
@@ -65,6 +66,7 @@ export default function EditRecipePage({ params }: { params: Promise<{ id: strin
     category: (data.category as RecipeFormInitial['category']) ?? null,
     photoUrl: data.photoUrl,
     steps: data.steps,
+    methodSteps: data.methodSteps,
     qFactorPct: data.qFactorPct,
     targetProfitPct: data.targetProfitPct,
     packagingPct: data.packagingPct,
