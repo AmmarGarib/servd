@@ -317,7 +317,10 @@ export function RecipeForm({ initial, prefillBrandId, prefillCategoryId }: {
                 description: newItemDescription.trim() || null,
               },
             })
-          : { name: name.trim(), yieldGrams: yieldGrams ?? 0 }),
+          : { name: name.trim() }),
+        // Total recipe yield in grams — batch yield for components, total cooked
+        // weight for plates. Optional for plates, required (>0) for components.
+        yieldGrams: yieldGrams ?? (kind === 'component' ? 0 : null),
         servings: portions ?? 1,
         // Recipe-type tag is derived from the picker (no duplicate field): a
         // finished plate is a "main"; a sub-recipe is a "sub_recipe".
@@ -506,11 +509,20 @@ export function RecipeForm({ initial, prefillBrandId, prefillCategoryId }: {
                   </div>
                 </>
               )}
-              <Field label={kind === 'plate' ? 'Portions per recipe' : 'Batch yield (grams)'}>
-                {kind === 'plate'
-                  ? <NumInput value={portions} onChange={setPortions} placeholder="1" className={inputCls}/>
-                  : <NumInput value={yieldGrams} onChange={setYieldGrams} placeholder="e.g. 500" className={inputCls}/>}
-              </Field>
+              {kind === 'plate' ? (
+                <>
+                  <Field label="Portions per recipe">
+                    <NumInput value={portions} onChange={setPortions} placeholder="1" className={inputCls}/>
+                  </Field>
+                  <Field label="Total yield (g)" hint="Total cooked weight this recipe makes">
+                    <NumInput value={yieldGrams} onChange={setYieldGrams} placeholder="e.g. 1200" className={inputCls}/>
+                  </Field>
+                </>
+              ) : (
+                <Field label="Batch yield (grams)">
+                  <NumInput value={yieldGrams} onChange={setYieldGrams} placeholder="e.g. 500" className={inputCls}/>
+                </Field>
+              )}
             </div>
           </Section>
 

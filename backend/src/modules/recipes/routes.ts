@@ -50,7 +50,7 @@ const recipeShape = {
   kind:         z.enum(['plate', 'component']).default('plate'),
   menuItemId:   z.string().uuid().optional(),
   name:         z.string().min(1).optional(),
-  yieldGrams:   z.number().positive().optional(),
+  yieldGrams:   z.number().positive().nullable().optional(),  // component batch yield OR plate total yield (g)
   servings:     z.number().int().min(1).default(1),
   portionSizeG: z.number().positive().optional(),
   laborMinutes: z.number().int().min(0).default(0),
@@ -658,7 +658,7 @@ export async function recipeRoutes(fastify: FastifyInstance) {
         // testing plate has none yet — carry the pending name so it's readable
         // in the list/editor until approval creates the item.
         name:         body.kind === 'plate' ? (pendingMenuItem?.name ?? null) : body.name,
-        yieldGrams:   body.kind === 'plate' ? null : body.yieldGrams,
+        yieldGrams:   body.yieldGrams ?? null,  // total recipe yield (g) — batch yield for components, cooked total for plates
         servings:     body.servings,
         portionSizeG: body.portionSizeG,
         laborMinutes: body.laborMinutes,
