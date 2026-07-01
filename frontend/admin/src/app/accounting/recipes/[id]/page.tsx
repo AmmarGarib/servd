@@ -1,7 +1,6 @@
 'use client'
-import { use } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { useRouter } from 'next/navigation'
+import { useParams, useRouter } from 'next/navigation'
 import { api } from '../../../../lib/api'
 import { RecipeForm, type RecipeFormInitial } from '../RecipeForm'
 
@@ -33,8 +32,8 @@ interface ExistingRecipe {
   }>
 }
 
-export default function EditRecipePage({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = use(params)
+export default function EditRecipePage() {
+  const { id } = useParams<{ id: string }>()
   const router = useRouter()
   const { data, isLoading, isError } = useQuery<ExistingRecipe>({
     queryKey: ['recipe', id],
