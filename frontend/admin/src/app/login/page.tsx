@@ -178,9 +178,9 @@ export default function StaffLoginPage() {
           </p>
           <div className="rounded-2xl p-4 mb-5"
             style={{ background: 'rgba(0,0,0,0.4)', border: '1px solid rgba(255,255,255,0.06)' }}>
-            <p className="text-[10px] uppercase tracking-wider font-bold text-s-dim mb-1">Your PIN</p>
+            <p className="text-[10px] uppercase tracking-wider font-bold text-s-dim mb-1">Your login PIN</p>
             <p className="text-3xl font-black tracking-[0.4em] text-s-text">{signupDone.pin}</p>
-            <p className="text-[10px] text-s-dim mt-2">Last 4 digits of your phone — write it down.</p>
+            <p className="text-[10px] text-s-dim mt-2">Write this down now — you won't see it again. Log in with your email + this PIN.</p>
           </div>
           <button onClick={() => { setMode('pin'); setSignupDone(null); setName(''); setEmail(''); setPhone(''); setReason('') }}
             className="w-full rounded-xl py-3 text-sm font-black transition-all active:scale-[0.98]"
