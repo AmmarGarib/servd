@@ -54,9 +54,9 @@ const recipeShape = {
   servings:     z.number().int().min(1).default(1),
   portionSizeG: z.number().positive().optional(),
   laborMinutes: z.number().int().min(0).default(0),
-  notes:        z.string().optional(),
-  steps:        z.string().optional(),
-  stepsUrdu:    z.string().optional(),
+  notes:        z.string().nullable().optional(),
+  steps:        z.string().nullable().optional(),   // null when a plate has no MOP (plates use methodSteps)
+  stepsUrdu:    z.string().nullable().optional(),
   seasons:      z.array(z.enum(SEASON_KEYS)).default([]),
   seasonStart:  z.string().regex(SEASON_DATE_RE, 'Use MM-DD format').nullable().optional(),
   seasonEnd:    z.string().regex(SEASON_DATE_RE, 'Use MM-DD format').nullable().optional(),
