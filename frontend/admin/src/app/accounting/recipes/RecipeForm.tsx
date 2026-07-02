@@ -693,13 +693,13 @@ export function RecipeForm({ initial, prefillBrandId, prefillCategoryId }: {
                         const next = [...methodSteps]; next[i] = { ...next[i]!, station: e.target.value }; setMethodSteps(next)
                       }}
                       placeholder="Station (e.g. Grill)"
-                      className={inputCls + ' w-40 shrink-0'}/>
+                      className={controlCls + ' w-40 shrink-0'}/>
                     <textarea value={step.instruction} rows={2}
                       onChange={(e) => {
                         const next = [...methodSteps]; next[i] = { ...next[i]!, instruction: e.target.value }; setMethodSteps(next)
                       }}
                       placeholder="What happens at this station…"
-                      className={inputCls + ' flex-1 min-h-[42px]'}/>
+                      className={controlCls + ' flex-1 min-w-0 min-h-[42px]'}/>
                     <div className="flex flex-col gap-0.5 shrink-0">
                       <button type="button" title="Move up" disabled={i === 0}
                         onClick={() => { const n = [...methodSteps]; [n[i - 1], n[i]] = [n[i]!, n[i - 1]!]; setMethodSteps(n) }}
@@ -892,3 +892,7 @@ function NumInput({ value, onChange, placeholder, className }: {
 }
 
 const inputCls = 'w-full rounded-md border border-s-border bg-s-bg px-3 py-2 text-sm focus:border-s-teal focus:outline-none'
+// Same as inputCls but WITHOUT w-full — for controls inside a flex row where
+// width is governed by flex (w-40/flex-1). w-full there fights flex sizing and
+// collapses siblings (the method-step instruction box was being crushed).
+const controlCls = 'rounded-md border border-s-border bg-s-bg px-3 py-2 text-sm focus:border-s-teal focus:outline-none'
