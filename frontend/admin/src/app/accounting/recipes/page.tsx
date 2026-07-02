@@ -207,6 +207,14 @@ export default function RecipesPage() {
     mutationFn: (id: string) => api.delete(`/recipes/${id}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['recipes'] }),
   })
+  // Submit a testing (iteration) recipe for CEO sign-off — moves it to
+  // pending_approval so it appears in /accounting/recipes/approvals. Saves the
+  // operator from opening the editor just to hit "Submit for production".
+  const submitMut = useMutation({
+    mutationFn: (id: string) => api.post(`/recipes/${id}/submit`, {}),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['recipes'] }),
+    onError: (e: Error) => alert(e.message),
+  })
 
   function openCreate() {
     setKind('plate')
@@ -527,6 +535,15 @@ export default function RecipesPage() {
                           teal />
                       )}
                       <div className="flex gap-1 ml-1" onClick={(e) => e.stopPropagation()}>
+                        {/* Testing recipes can be pushed straight to the CEO's
+                            approval inbox from here — no need to open the editor. */}
+                        {r.status === 'iteration' && (
+                          <button onClick={() => submitMut.mutate(r.id)} disabled={submitMut.isPending}
+                            className="text-xs px-2 py-1 rounded font-bold text-black bg-s-teal hover:opacity-90 disabled:opacity-50 transition-opacity"
+                            title="Submit this testing recipe for CEO approval">
+                            Submit
+                          </button>
+                        )}
                         <button onClick={() => openEdit(r)}
                           className="text-xs px-2 py-1 rounded text-s-muted hover:text-s-teal hover:bg-s-teal-dim transition-colors">
                           Edit
