@@ -196,13 +196,20 @@ export function RecipeForm({ initial, prefillBrandId, prefillCategoryId }: {
     enabled: !!brandId,
   })
 
-  // Components (sub-recipes) available to use as ingredients on a plate. Plate
-  // recipes can pull any active component; components don't nest components.
+  // Components (sub-recipes) available to use as ingredients. Both plates AND
+  // components can pull a finished component in — e.g. a "Caramel" component
+  // used while building a "Millionaire's Shortbread" component. A component
+  // can't reference itself (filtered below); deeper cycles are cost-guarded
+  // server-side.
   const { data: prepOptions = [] } = useQuery<PrepOption[]>({
     queryKey: ['recipes', 'prep-options'],
     queryFn: () => api.get('/recipes/prep'),
-    enabled: kind === 'plate',
   })
+  // Exclude the component being edited from its own picker (no self-reference).
+  const availablePreps = useMemo(
+    () => prepOptions.filter((p) => p.id !== initial?.id),
+    [prepOptions, initial?.id],
+  )
 
   // Stations for the selected brand — used to autocomplete the "station" field
   // on finished-plate method steps (grill, assemble, expo, …). Free text still
@@ -550,20 +557,19 @@ export function RecipeForm({ initial, prefillBrandId, prefillCategoryId }: {
                       <tr key={row.key} className="border-t border-s-border">
                         <td className="px-2 py-1.5">
                           <div className="flex items-center gap-1">
-                            {/* Raw vs Component source — components only on plates. */}
-                            {kind === 'plate' ? (
-                              <select value={row.source}
-                                onChange={(e) => {
-                                  const src = e.target.value as 'raw' | 'component'
-                                  const next = [...ings]
-                                  next[i] = { ...next[i]!, source: src, inventoryItemId: '', prepRecipeId: '' }
-                                  setIngs(next)
-                                }}
-                                className={inputCls + ' w-[5.5rem]'} title="Raw inventory item, or a component sub-recipe">
-                                <option value="raw">Raw</option>
-                                <option value="component">Component</option>
-                              </select>
-                            ) : <span className="text-[10px] text-s-dim px-1">Raw</span>}
+                            {/* Raw vs Component source. Both plates and components
+                                can pull in a finished component sub-recipe. */}
+                            <select value={row.source}
+                              onChange={(e) => {
+                                const src = e.target.value as 'raw' | 'component'
+                                const next = [...ings]
+                                next[i] = { ...next[i]!, source: src, inventoryItemId: '', prepRecipeId: '' }
+                                setIngs(next)
+                              }}
+                              className={inputCls + ' w-[5.5rem]'} title="Raw inventory item, or a finished component sub-recipe">
+                              <option value="raw">Raw</option>
+                              <option value="component">Component</option>
+                            </select>
                             {isComp ? (
                               <select value={row.prepRecipeId}
                                 onChange={(e) => {
@@ -573,7 +579,7 @@ export function RecipeForm({ initial, prefillBrandId, prefillCategoryId }: {
                                 }}
                                 className={inputCls + ' min-w-[150px]'}>
                                 <option value="">— Pick component —</option>
-                                {prepOptions.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                                {availablePreps.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                               </select>
                             ) : (
                               <select value={row.inventoryItemId}

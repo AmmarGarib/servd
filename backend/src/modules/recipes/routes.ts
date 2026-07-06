@@ -17,6 +17,57 @@ function cpgCents(unit: string | null | undefined, unitCostCents: number | null 
   return (u === 'kg' || u === 'litres' || u === 'l') ? c / 1000 : c
 }
 
+// Components can be composed of other components (one sub-recipe used as an
+// ingredient inside another). Costing therefore recurses: a component's
+// cost-per-gram includes the cost-per-gram of any sub-components it contains.
+// We resolve EVERY component's cost-per-gram in one pass over the whole
+// component set, memoised, with a cycle guard so a mis-authored loop
+// (A→B→A) can't blow the stack — a cyclic back-edge just contributes 0.
+// For a component with only raw ingredients this yields the exact same number
+// as the old inline calc (ingCost*(1+Q_FACTOR)+labor)/yieldGrams.
+async function buildComponentCpgMap(): Promise<Map<string, number>> {
+  const comps = await prisma.recipe.findMany({
+    where: { kind: 'component' },
+    select: {
+      id: true, yieldGrams: true, laborMinutes: true,
+      ingredients: {
+        select: {
+          quantity: true, yieldPct: true, prepRecipeId: true,
+          inventoryItem: { select: { unit: true, unitCostCents: true } },
+        },
+      },
+    },
+  })
+  const byId = new Map(comps.map((c) => [c.id, c]))
+  const memo = new Map<string, number>()
+  function cpg(id: string, stack: Set<string>): number {
+    const cached = memo.get(id)
+    if (cached !== undefined) return cached
+    if (stack.has(id)) return 0            // cycle — break the back-edge
+    const c = byId.get(id)
+    if (!c || !c.yieldGrams || c.yieldGrams <= 0) { memo.set(id, 0); return 0 }
+    stack.add(id)
+    let ingCost = 0
+    for (const i of c.ingredients) {
+      if (i.prepRecipeId) {
+        // Sub-component consumed by the gram (already yield-adjusted by its batch).
+        ingCost += cpg(i.prepRecipeId, stack) * i.quantity
+      } else {
+        const yp = i.yieldPct > 0 ? i.yieldPct : 1
+        ingCost += cpgCents(i.inventoryItem?.unit, i.inventoryItem?.unitCostCents) * (i.quantity / yp)
+      }
+    }
+    stack.delete(id)
+    const labor = (c.laborMinutes / 60) * 50_00
+    const result = (ingCost * (1 + Q_FACTOR) + labor) / c.yieldGrams
+    memo.set(id, result)
+    return result
+  }
+  const out = new Map<string, number>()
+  for (const c of comps) out.set(c.id, cpg(c.id, new Set()))
+  return out
+}
+
 const SEASON_KEYS = ['spring', 'summer', 'monsoon', 'autumn', 'winter', 'ramadan', 'year-round'] as const
 const SEASON_DATE_RE = /^(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/
 
@@ -225,6 +276,10 @@ export async function recipeRoutes(fastify: FastifyInstance) {
         }
       }
 
+      // Recursive component cost-per-gram map — one query, reused for every
+      // component-ingredient line below.
+      const cpgMap = await buildComponentCpgMap()
+
       return recipes.map((r) => {
         const ingDetails = r.ingredients.map((ing) => {
           let costPerUnit = 0
@@ -232,18 +287,11 @@ export async function recipeRoutes(fastify: FastifyInstance) {
           const yp = ing.yieldPct > 0 ? ing.yieldPct : 1
           const purchaseQty = ing.quantity / yp     // what you actually buy
 
-          if (ing.prepRecipe) {
-            // Prep component — cost = prep recipe's cost-per-gram × quantity.
-            // The prep's yieldGrams may be null on bad data; fall back to 0 so
-            // this row shows zero rather than poisoning the parent's total.
-            const prep = ing.prepRecipe
-            const prepCost = prep.ingredients.reduce(
-              (s, i2) => s + cpgCents(i2.inventoryItem?.unit, i2.inventoryItem?.unitCostCents) * (i2.quantity / (i2.yieldPct > 0 ? i2.yieldPct : 1)),
-              0,
-            )
-            const prepLabor = (prep.laborMinutes / 60) * 50_00
-            const prepTotal = prepCost * (1 + Q_FACTOR) + prepLabor
-            const costPerGram = (prep.yieldGrams && prep.yieldGrams > 0) ? prepTotal / prep.yieldGrams : 0
+          if (ing.prepRecipeId) {
+            // Prep component — cost = the component's (recursive) cost-per-gram ×
+            // quantity. Uses the shared map so components built from other
+            // components cost correctly instead of silently dropping the nested cost.
+            const costPerGram = cpgMap.get(ing.prepRecipeId) ?? 0
             costPerUnit = costPerGram                       // "per unit" of this component = per gram
             ingredientCostCents = Math.round(costPerGram * ing.quantity)
           } else if (ing.inventoryItem) {
@@ -310,20 +358,18 @@ export async function recipeRoutes(fastify: FastifyInstance) {
   // picker can preview "PKR 0.85/g" next to each option without N+1 queries.
   // (Path kept as /prep for backwards-compatibility; it now lists components.)
   fastify.get('/prep', { preHandler: requireAuth(...MANAGERS) }, async () => {
+    // Recursive cost-per-gram for the whole component set — correctly costs
+    // components that are themselves built from other components.
+    const cpgMap = await buildComponentCpgMap()
     const preps = await prisma.recipe.findMany({
       where: { kind: 'component', isActive: true },
-      include: { ingredients: { include: { inventoryItem: { select: { unit: true, unitCostCents: true } } } } },
+      select: { id: true, name: true, yieldGrams: true },
       orderBy: { name: 'asc' },
     })
 
     return preps.map((p) => {
-      const ingCost = p.ingredients.reduce(
-        (s, i) => s + cpgCents(i.inventoryItem?.unit, i.inventoryItem?.unitCostCents) * (i.quantity / (i.yieldPct > 0 ? i.yieldPct : 1)),
-        0,
-      )
-      const labor = (p.laborMinutes / 60) * 50_00
-      const batchCost = ingCost * (1 + Q_FACTOR) + labor
-      const costPerGramCents = (p.yieldGrams && p.yieldGrams > 0) ? batchCost / p.yieldGrams : 0
+      const costPerGramCents = cpgMap.get(p.id) ?? 0
+      const batchCost = (p.yieldGrams && p.yieldGrams > 0) ? costPerGramCents * p.yieldGrams : 0
       return {
         id:               p.id,
         name:             p.name ?? '—',
@@ -401,6 +447,10 @@ export async function recipeRoutes(fastify: FastifyInstance) {
       })
       if (!recipe) throw new NotFoundError('Recipe', req.params.id)
 
+      // Recursive component cost-per-gram map — correctly costs a component that
+      // is itself built from other components.
+      const cpgMap = await buildComponentCpgMap()
+
       // Section 2 — per-ingredient cost
       const ingredients = recipe.ingredients.map((ri) => {
         const inv = ri.inventoryItem
@@ -409,17 +459,10 @@ export async function recipeRoutes(fastify: FastifyInstance) {
         // 'pcs', cost per gram doesn't apply; ingredient cost = qty * cost.
         let costPerGramCents = 0
         let ingredientCostCents = 0
-        if (ri.prepRecipe) {
+        if (ri.prepRecipeId) {
           // Component: cost flows in at the batch's cost-per-gram × grams used
           // (the component is already yield-adjusted by its own batch).
-          const prep = ri.prepRecipe
-          const prepCost = prep.ingredients.reduce(
-            (s, i2) => s + cpgCents(i2.inventoryItem?.unit, i2.inventoryItem?.unitCostCents) * (i2.quantity / (i2.yieldPct > 0 ? i2.yieldPct : 1)),
-            0,
-          )
-          const prepLabor = (prep.laborMinutes / 60) * 50_00
-          const prepTotal = prepCost * (1 + Q_FACTOR) + prepLabor
-          costPerGramCents = (prep.yieldGrams && prep.yieldGrams > 0) ? prepTotal / prep.yieldGrams : 0
+          costPerGramCents = cpgMap.get(ri.prepRecipeId) ?? 0
           ingredientCostCents = costPerGramCents * ri.quantity
         } else if (inv) {
           if (inv.unit === 'kg' || inv.unit === 'litres' || inv.unit === 'l') {
