@@ -23,11 +23,11 @@ export default function OpengraphImage() {
           fontFamily: 'sans-serif',
         }}
       >
-        <div style={{ display: 'flex', fontSize: 200, fontWeight: 800, letterSpacing: '-8px', color: '#EDE6D3' }}>
+        <div style={{ display: 'flex', fontSize: 200, fontWeight: 800, letterSpacing: '-8px', color: '#FFFFFF' }}>
           <span>servd</span>
-          <span style={{ color: '#E94E1B' }}>.</span>
+          <span style={{ color: '#BE96BE' }}>.</span>
         </div>
-        <div style={{ display: 'flex', fontSize: 46, color: 'rgba(237,230,211,0.85)', marginTop: 12 }}>
+        <div style={{ display: 'flex', fontSize: 46, color: 'rgba(255,255,255,0.85)', marginTop: 12 }}>
           every kitchen, one place
         </div>
       </div>

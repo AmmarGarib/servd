@@ -35,7 +35,6 @@ const DEFAULT_BRAND_HOSTS = [
   'eatstrata.com',
   'eatflipd.com',
   'bukharirice.com',
-  'eatsimmer.com',
   'craveman.pk',
   'garnish.pk',
 ]
@@ -53,7 +52,7 @@ const STATIC_ALLOWED = new Set<string>([
 ])
 
 // Catch-alls for dev and brand subdomains.
-//   *.localhost           → dev: stax.localhost:3002, simmer.localhost:3002
+//   *.localhost           → dev: stax.localhost:3002, flipd.localhost:3002
 //   *.servd.app           → prod subdomain pattern: stax.servd.app
 //   *.servd.pk            → same on the .pk apex
 const WILDCARD_PATTERNS: RegExp[] = [

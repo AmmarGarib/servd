@@ -7,16 +7,13 @@
 // Usage:
 //   <Loader />                          default servd teal→indigo, 52px cells
 //   <Loader size={18} />                inline / button-sized
-//   <Loader colors={SIMMER_CELLS} />    brand-themed
+//   <Loader colors={STAX_CELLS} />      brand-themed
 //   <LoadingScreen label="Loading…" />  centred full-area loading state
 
 import React from 'react'
 
 // 9-cell brand palettes. SERVD is the house gradient used everywhere by default.
 export const SERVD_CELLS = ['#00D4B1', '#0CC6B9', '#19B9C1', '#25ABC9', '#329DD1', '#3E8FD9', '#4A82E1', '#5774E9', '#6366F1']
-// Simmer's brand rules ban gradients → a single orange signal that ripples by
-// timing alone (still reads as a wave, stays brand-compliant).
-export const SIMMER_CELLS = Array<string>(9).fill('#E94E1B')
 // Stax — blueprint blue, deep → bright.
 export const STAX_CELLS = ['#0A1857', '#1B2E6C', '#2C4380', '#3D5995', '#4F6FAA', '#6084BF', '#719AD4', '#82AFE8', '#93C5FD']
 

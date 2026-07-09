@@ -15,16 +15,12 @@ interface Props {
   url:   string
 }
 
-export function QRCard({ slug, brand, url }: Props) {
-  const isSimmer = slug === 'simmer'
-
-  // Forest green on bone for Simmer, white-card-on-grey for everyone
-  // else. Both layouts print well on a black-and-white printer because
+export function QRCard({ slug: _slug, brand, url }: Props) {
+  // White-card-on-grey. Prints well on a black-and-white printer because
   // the QR's foreground stays dark + the surround stays light.
-  const surface = isSimmer ? '#EDE6D3' : '#f5f5f5'
-  const ink     = isSimmer ? '#06392F' : '#0e0e0e'
-  const muted   = isSimmer ? 'rgba(6,57,47,0.7)'  : 'rgba(14,14,14,0.6)'
-  const accent  = isSimmer ? '#E94E1B' : '#0e0e0e'
+  const surface = '#f5f5f5'
+  const ink     = '#0e0e0e'
+  const muted   = 'rgba(14,14,14,0.6)'
 
   return (
     <div
@@ -36,7 +32,7 @@ export function QRCard({ slug, brand, url }: Props) {
         alignItems: 'center',
         justifyContent: 'center',
         padding: '2.5rem 1.25rem',
-        fontFamily: isSimmer ? 'Times New Roman, Times, serif' : 'system-ui, -apple-system, sans-serif',
+        fontFamily: 'system-ui, -apple-system, sans-serif',
       }}
     >
       <div style={{
@@ -57,13 +53,13 @@ export function QRCard({ slug, brand, url }: Props) {
         </p>
 
         <p style={{
-          fontFamily: isSimmer ? 'Amarante, serif' : 'system-ui',
-          fontSize: isSimmer ? '2.6rem' : '2.2rem',
+          fontFamily: 'system-ui',
+          fontSize: '2.2rem',
           lineHeight: 1,
           margin: '0.8rem 0 0.4rem',
           color: ink,
         }}>
-          {isSimmer ? <>simmer down<span style={{ color: accent }}>.</span></> : brand}
+          {brand}
         </p>
 
         <p style={{

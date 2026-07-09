@@ -9,6 +9,5 @@ Source files for `frontend/storefront/src/components/brand/layouts`.
 - `FlipdLayout.tsx` — React component
 - `GarnishStationLayout.tsx` — React component
 - `GenericBrandLayout.tsx` — React component
-- `SimmerLayout.tsx` — React component
 - `StaxLayout.tsx` — React component
 - `StrataLayout.tsx` — React component

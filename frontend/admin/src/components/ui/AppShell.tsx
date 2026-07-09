@@ -240,8 +240,8 @@ const NAV: NavSection[] = [
     // Project Tracker — capital projects, run-rate opex, and forward
     // projections in one section. Capex tracks each kitchen build/refurb
     // with quotes + payments; OpEx is the recurring monthly run-rate; and
-    // Projections rolls both into a 12-month P&L per brand (Stax/Flip'd/
-    // Simmer) with launch phasing and ramp curves.
+    // Projections rolls both into a 12-month P&L per brand with launch
+    // phasing and ramp curves.
     title: 'Project Tracker',
     defaultCollapsed: false,
     items: [

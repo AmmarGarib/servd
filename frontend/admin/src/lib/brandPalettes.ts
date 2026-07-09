@@ -19,16 +19,6 @@ export interface BrandPalette {
 }
 
 export const BRAND_PALETTES: Record<string, BrandPalette> = {
-  simmer: {
-    accent: '#E94E1B', surfaceBg: '#06392F', surfaceText: '#F3ECDE',
-    swatches: [
-      { name: 'Tiber green', hex: '#06392F' },
-      { name: 'Bone', hex: '#EDE6D3' },
-      { name: 'Fiery orange (signal)', hex: '#E94E1B' },
-      { name: 'Walnut', hex: '#3D2817' },
-    ],
-    note: 'Night-mode editorial — forest green + bone, single orange signal per viewport.',
-  },
   stax: {
     accent: '#B0B2B8', surfaceBg: '#142834', surfaceText: '#C5C7CC',
     swatches: [

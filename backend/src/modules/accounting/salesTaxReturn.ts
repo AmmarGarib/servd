@@ -168,7 +168,7 @@ export async function salesTaxReturn(from: Date, to: Date): Promise<SalesTaxRetu
 
 // Mirror of revenueCodeForConcept (kept private here to avoid circular import).
 const SLUG_TO_REVENUE_CODE: Record<string, string> = {
-  'simmer':          '4001',
+  'simmer':          '4001',  // legacy — brand retired; kept so historical orders keep their revenue mapping
   'stax':            '4002',
   'strata':          '4003',
   'flipd':           '4004',

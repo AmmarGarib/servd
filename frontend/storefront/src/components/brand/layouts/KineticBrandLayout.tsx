@@ -12,7 +12,7 @@ import { DragRail } from '../../kinetic/DragRail'
 //   - concept.name / description / hero image
 //   - the per-brand voice line + emoji motif below (BRAND_VOICE)
 //
-// This replaces the old per-brand bespoke layouts (Stax/Simmer/Flipd) as the
+// This replaces the old per-brand bespoke layouts as the
 // default. Bespoke layouts still exist as files for future fine-tuning, but
 // every brand currently inherits this kinetic structure so the customer
 // experience is consistent across the three brands.
@@ -30,11 +30,6 @@ const BRAND_VOICE: Record<string, { voice: string; emoji: string; menuTeaser: st
     voice: 'Smashed. Stacked. Sauced.',
     emoji: '🍔',
     menuTeaser: ['The Stax Classic', 'Double Smash', 'Smoke Stack', 'Spicy Honey Crunch'],
-  },
-  simmer: {
-    voice: 'Slow nights. Plated softly.',
-    emoji: '🍲',
-    menuTeaser: ['Slow-Roast Lamb', 'Khichdi Bowl', 'Daal Tadka', 'Saffron Pulao'],
   },
   flipd: {
     voice: 'Buttermilk-brined. Hand-breaded. Hot.',
@@ -141,7 +136,7 @@ export function KineticBrandLayout({ concept, concepts }: Props) {
               <span className="eyebrow eyebrow-accent" style={{ display: 'block', marginBottom: '0.5rem' }}>
                 What we do
               </span>
-              {formatBrandName(concept.name)} is one of three kitchens on the servd network. We focus on what we cook best — and let the other kitchens do the rest. Order from {formatBrandName(concept.name)} alone, or mix in dishes from simmer and Flipd. Same bag, same delivery.
+              {formatBrandName(concept.name)} is one of the kitchens on the servd network. We focus on what we cook best — and let the other kitchens do the rest. Order from {formatBrandName(concept.name)} alone, or mix in dishes from the other brands. Same bag, same delivery.
             </p>
             <h2 className="display" style={{ fontSize: 'clamp(2.5rem, 6vw, 4.5rem)' }}>
               One kitchen.<br />

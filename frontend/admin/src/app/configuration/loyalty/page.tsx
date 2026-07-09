@@ -460,7 +460,7 @@ function TierEditor({ initial, onCancel, onSaved, onDeleted }: {
       <div className="rounded-lg bg-s-elevated border border-s-border/60 p-4 space-y-3">
         <div>
           <p className="text-xs font-black uppercase tracking-wider text-s-muted">Custom perks</p>
-          <p className="text-[10px] text-s-dim mt-0.5">Freeform bullets shown to customers. e.g. "Off-menu Stax", "Invite-only omakase nights at Simmer".</p>
+          <p className="text-[10px] text-s-dim mt-0.5">Freeform bullets shown to customers. e.g. "Off-menu Stax", "Free weekday lunch delivery at Flipd".</p>
         </div>
         <div className="space-y-1.5">
           {form.customPerks.map((p, i) => (

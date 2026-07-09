@@ -34,21 +34,6 @@ export interface BrandLocation {
 }
 
 const DEFAULT_BRAND_LOCATIONS: Record<string, BrandLocation> = {
-  simmer: {
-    slug:                'simmer',
-    name:                'Simmer',
-    street:              'TODO_FILL_STREET',
-    area:                'Bukhari Commercial, DHA Phase 6',
-    city:                'Karachi',
-    country:             'Pakistan',
-    phone:               '+923001234567',
-    whatsapp:            '923001234567',
-    geo:                 { lat: 24.8054, lng: 67.0517 },
-    cuisine:             'Small plates',
-    priceRange:          '$$$',
-    acceptsReservations: true,
-    locationSlug:        'bukhari-commercial',
-  },
   stax: {
     slug:                'stax',
     name:                'Stax',

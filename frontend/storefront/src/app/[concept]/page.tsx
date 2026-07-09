@@ -67,14 +67,11 @@ interface Concept    {
   latitude?: number | null; longitude?: number | null
 }
 
-// Currency rendering — brand-aware per the marketing bundle.
-// Simmer's brand bible specifies `1200`, no prefix, tax-exclusive
-// (premium positioning; the PKR prefix reads transactional). Casual
-// brands (Stax, Flipd) keep the press-format `PKR 1,200`.
-function fmtFor(slug: string | null | undefined) {
+// Currency rendering — press-format `PKR 1,200` across brands.
+function fmtFor(_slug: string | null | undefined) {
   return (cents: number): string => {
     const n = (cents / 100).toLocaleString('en-PK', { maximumFractionDigits: 0 })
-    return slug === 'simmer' ? n : `PKR ${n}`
+    return `PKR ${n}`
   }
 }
 
@@ -235,7 +232,6 @@ export default function ConceptOrderPage() {
   // drawer feel like the brand the customer just walked into, not the
   // generic servd treatment.
   const brandSkinClass =
-    slug === 'simmer' ? 'simmer-ordering' :
     slug === 'stax'   ? 'stax-ordering'   :
     slug === 'flipd'  ? 'flipd-ordering'  :
     ''
@@ -265,8 +261,7 @@ export default function ConceptOrderPage() {
             </Link>
           </div>
           <h1 style={{ fontSize: 'clamp(2rem, 5vw, 3.25rem)', fontWeight: 900, letterSpacing: '-0.04em', marginBottom: '0.5rem' }}>
-            {/* simmer brand rule: the wordmark is always lowercase. */}
-            {slug === 'simmer' ? concept.name.toLowerCase() : concept.name}
+            {concept.name}
           </h1>
           {concept.description && (
             <p style={{ color: 'rgba(255,255,255,0.85)', maxWidth: '36rem', fontSize: '1rem' }}>

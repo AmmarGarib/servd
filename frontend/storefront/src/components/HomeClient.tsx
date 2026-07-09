@@ -30,18 +30,17 @@ interface Props {
 // (api warmup, network blip, etc.). Order matches the live brand grid.
 const FALLBACK_BRANDS = [
   { id: 'fallback-stax',   name: 'Stax',   slug: 'stax',   primaryColor: null },
-  { id: 'fallback-simmer', name: 'Simmer', slug: 'simmer', primaryColor: null },
   { id: 'fallback-flipd',  name: 'Flipd',  slug: 'flipd',  primaryColor: null },
 ] as Array<Pick<Concept, 'id' | 'name' | 'slug' | 'primaryColor'>>
 
 export function HomeClient({ concepts, heroConfig }: Props) {
-  const source = concepts.filter((c) => ['simmer', 'stax', 'flipd'].includes(c.slug))
+  const source = concepts.filter((c) => ['stax', 'flipd'].includes(c.slug))
   // If the live concept list came back empty (api blip), fall through
   // to the hardcoded fallback so the home page never looks blank.
   const usable = source.length > 0 ? source : FALLBACK_BRANDS
 
   const brands = usable
-    .sort((a, b) => ['stax', 'simmer', 'flipd'].indexOf(a.slug) - ['stax', 'simmer', 'flipd'].indexOf(b.slug))
+    .sort((a, b) => ['stax', 'flipd'].indexOf(a.slug) - ['stax', 'flipd'].indexOf(b.slug))
     .map((c) => ({
       id: c.id,
       name: c.name,
@@ -80,8 +79,8 @@ export function HomeClient({ concepts, heroConfig }: Props) {
           <div style={{ display: 'grid', gap: '1.25rem' }}>
             {brands.map((b) => (
               // Card wrapper — used to be a single Link to /${slug} (the
-              // order page), which meant tapping anywhere on a Stax /
-              // Simmer / Flipd card dropped customers straight onto the
+              // order page), which meant tapping anywhere on a brand
+              // card dropped customers straight onto the
               // ordering surface and skipped the brand's own landing
               // page entirely. CEO wants the card body to go to the
               // brand microsite at /brand/${slug}; the "Order from X"
@@ -271,10 +270,8 @@ export function HomeClient({ concepts, heroConfig }: Props) {
             </p>
           </div>
 
-          {/* Per-brand Insiders perks. Per the loyalty-program skill:
-              simmer (premium) gets exclusive recognition framing — no
-              points, no "buy N get 1," no coupony language; stax + flipd
-              (casual, higher-frequency) get a clean generous points
+          {/* Per-brand Insiders perks. stax + flipd (casual,
+              higher-frequency) get a clean generous points
               mechanic. Same brand-keyed card pattern as the brand grid
               above so the section reads as "Insiders at each kitchen,
               tuned to the kitchen." */}
@@ -285,14 +282,6 @@ export function HomeClient({ concepts, heroConfig }: Props) {
             alignItems: 'stretch',
           }}>
             {[
-              {
-                slug: 'simmer',
-                accent: 'rgba(233,78,27,0.95)',
-                badge: '◇', tag: 'simmer · regulars',
-                head: 'The regulars’ list',
-                body: 'Quiet recognition. First word on the next menu drop. A held table when the room is full. Now and then the chef sends out a plate. No card, no points — you’re known here.',
-                featured: false,
-              },
               {
                 slug: 'stax',
                 accent: 'rgba(255,255,255,0.18)',
@@ -366,7 +355,7 @@ export function HomeClient({ concepts, heroConfig }: Props) {
             alignItems: 'center', gap: '1rem',
           }}>
             <a
-              href={whatsappLink(BRAND_LOCATIONS['simmer']!, 'add me to servd insiders')}
+              href={whatsappLink(BRAND_LOCATIONS['stax']!, 'add me to servd insiders')}
               target="_blank" rel="noopener noreferrer"
               style={{
                 background: '#25D366',

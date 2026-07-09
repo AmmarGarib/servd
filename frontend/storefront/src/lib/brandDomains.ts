@@ -7,7 +7,6 @@
 // May 2026 — those brands are not real operations.
 export const BRAND_DOMAIN_MAP: Record<string, string> = {
   'eatstax.com':     'stax',
-  'eatsimmer.com':   'simmer',
   'eatflipd.com':    'flipd',
 }
 

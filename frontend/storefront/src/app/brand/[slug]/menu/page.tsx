@@ -1,7 +1,6 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import type { Concept } from '../../../../lib/concept'
-import { SimmerMenu } from '../../../../components/brand/layouts/SimmerMenu'
 
 const API_URL = process.env.INTERNAL_API_URL ?? process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -15,11 +14,6 @@ export const dynamic = 'force-dynamic'
 // fire notFound() and the customer scanning the QR in the dining room
 // would see the storefront 404 instead of the placeholder menu.
 const FALLBACK_CONCEPTS: Record<string, Concept> = {
-  simmer: {
-    id: 'fallback-simmer', name: 'Simmer', slug: 'simmer', type: 'restaurant',
-    description: 'Small plates and mocktails. A dark room on Bukhari, served softly.',
-    logoUrl: null, primaryColor: null, reservationsEnabled: true,
-  },
   stax: {
     id: 'fallback-stax', name: 'Stax', slug: 'stax', type: 'restaurant',
     description: 'Smash burgers, loaded fries, delivery-first ghost kitchen.',
@@ -80,15 +74,6 @@ export default async function BrandMenuPage({ params }: { params: Promise<{ slug
   // category list with all empty `items[]` is still a draft as far as
   // the customer is concerned.
   const hasAnyItems = categories.some((c) => (c.items?.length ?? 0) > 0)
-
-  // Simmer-branded surface: when the slug is `simmer` AND there's no
-  // published menu yet, render the placeholder in the brand's own
-  // typography + palette. Once the operator publishes a menu, the
-  // page drops through to the generic table-style layout below so
-  // pricing and availability stay accurate.
-  if (slug === 'simmer' && !hasAnyItems) {
-    return <SimmerMenu slug={concept.slug} conceptName={concept.name} />
-  }
 
   return (
     <div style={{ background: 'white' }}>

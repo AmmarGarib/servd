@@ -33,8 +33,12 @@ rewritten, trust these corrections:
 ## What this is
 
 `servd` is the in-house restaurant management system for **GS Foods** — a
-Karachi-based multi-brand F&B operator running three live consumer brands
-(Simmer, Stax, Flipd). The repo is a monorepo with:
+Karachi-based multi-brand F&B operator running two live consumer brands
+(Stax, Flipd). The Simmer brand was retired on 2026-07-09: all Simmer-specific
+code was removed and the concept is hidden (isActive/storefrontVisible=false);
+its historical data (orders, menu, revenue account 4001) is preserved in the
+DB for reporting. Do NOT reintroduce Simmer-specific code. The repo is a
+monorepo with:
 
 - `backend/` — Fastify + Prisma API
 - `frontend/storefront/` — Next.js consumer ordering site (`servd-app.garibsons.app`)
@@ -119,18 +123,12 @@ visual language without depending on the DB `primaryColor` field.
 Brand-specific layouts in `frontend/storefront/src/components/brand/layouts/`
 are switched on in `BrandFallback.tsx`. Live brands:
 
-- **simmer** — Night-mode editorial (forest green "tiber" `#06392F` + bone
-  `#EDE6D3` + fiery orange `#E94E1B`).
-  Bound to the canonical `simmer-brand` SKILL.md: lowercase wordmark,
-  Amarante + Times, no white, no gradients, no exclamation marks,
-  no emojis, banned-word list, single orange signal per viewport,
-  tagline `simmer down.` always below the wordmark, never above.
 - **stax** — Industrial navy-grey (oceanic noir `#142834` + greys, palettepoint set)
 - **flipd** — Cool diner (curious blue `#2092E9` + bone `#EDE6D3` + midnight-oil ink `#090D17`)
 
-CSS tokens for all three are defined in
+CSS tokens for the brands are defined in
 `frontend/storefront/src/app/globals.css` under `:root` (search
-`--simmer-*`, `--stax-*`, `--flipd-*`).
+`--stax-*`, `--flipd-*`).
 
 ### Two visual systems exist in the storefront
 
@@ -189,9 +187,5 @@ riders but no app is wired to call it. Future work in this order:
 - **Never commit credentials to this repo.** Use GitHub Actions Secrets.
 - **Never `git push --force` to main.** Squash-merge PRs only.
 - **Never add a third-party delivery aggregator integration.**
-- **Never bypass the simmer-brand SKILL.md rules** on the Simmer
-  microsite — see `frontend/storefront/src/components/brand/layouts/SimmerLayout.tsx`
-  for the enforced version. Capital `S` in "Simmer" anywhere user-visible
-  is a bug.
 - **Never use emoji as structural icons** in storefront UI. SVG or text
   labels only.

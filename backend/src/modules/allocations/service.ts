@@ -1,7 +1,7 @@
 // Cost allocation engine.
 //
-// Operator defines rules: "rent (6010) splits 40/30/20/10 across Stax / Strata
-// / Simmer / GS" or "electricity (6020) splits by revenue share". At period
+// Operator defines rules: "rent (6010) splits 40/30/30 across Stax / Strata
+// / GS" or "electricity (6020) splits by revenue share". At period
 // end, runRule() reads the source account's net debit balance for the period
 // and posts a JE that derecognises it back to source and debits per-concept
 // destination accounts (or the same source code with concept memos).

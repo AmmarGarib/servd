@@ -71,7 +71,6 @@ export default async function HomePage() {
       name:    'servd',
       url:     'https://servd-app.garibsons.app',
       logoUrl: 'https://servd-app.garibsons.app/icon.png',
-      sameAs:  ['https://instagram.com/simmer_down'],
     }),
     websiteSchema(),
     ...Object.values(brandLocations).map((loc) =>

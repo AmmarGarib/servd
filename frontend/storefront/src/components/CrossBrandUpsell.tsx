@@ -5,7 +5,7 @@ import Link from 'next/link'
 // brands — discovery + a second-order tap that bounces the customer back
 // into another brand's menu.
 //
-// GS Foods runs three live brands: Stax, Simmer, Flipd. Keep this list in
+// Keep this list in
 // sync with BrandFallback.tsx + lib/concept.ts whenever a brand is added or
 // retired. Phantom/wishlist brands (Strata, Craveman, Bukhari, Garnish
 // Station, Stax @ Padel) were removed in May 2026 — none of them are real
@@ -29,7 +29,6 @@ interface UpsellPick {
 
 const PICKS: UpsellPick[] = [
   { brandSlug: 'stax',   brandName: 'Stax',   dish: 'The Stax Classic',  price: 'Rs. 1,800', emoji: '🍔', color: '#293B47', blurb: 'Double smash, aged cheddar, special sauce, brioche.' },
-  { brandSlug: 'simmer', brandName: 'Simmer', dish: 'Burrata',           price: 'Rs. 1,400', emoji: '🫒', color: '#06392F', blurb: 'Blistered tomato, olive oil cracker, basil.' },
   { brandSlug: 'flipd',  brandName: 'Flipd',  dish: 'The Court Classic',  price: 'Rs. 1,200', emoji: '🍔', color: '#2092E9', blurb: 'Dry-aged smash, brioche, sauce. Court-side cast-iron.' },
 ]
 
