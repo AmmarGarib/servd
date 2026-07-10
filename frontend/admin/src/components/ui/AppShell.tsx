@@ -6,7 +6,7 @@ import { usePathname, useRouter } from 'next/navigation'
 import { useAuthStore } from '../../store/auth'
 import { api } from '../../lib/api'
 import { useViewAsRole, type ViewAsRole } from '../../store/viewAsRole'
-import { useRoleModules, modulesForRole } from '../../store/roleModules'
+import { useRoleModules, modulesForRole, useSyncRoleModules } from '../../store/roleModules'
 import { usePermissions } from '../../hooks/useCan'
 import { APP_ROLES, roleLabel, type AppRole, type ModuleId } from '../../lib/appRoles'
 import { TenantSwitcher, useViewAllTenants } from './TenantSwitcher'
@@ -296,6 +296,9 @@ function NavLinks({
   // overridden by the view-as switcher when admin/CEO is impersonating.
   const { data: me } = usePermissions()
   const viewAsRole = useViewAsRole((s) => s.role)
+  // Keep the local role→modules cache in step with the server's rows so every
+  // admin browser renders the same matrix (and the API enforces the same one).
+  useSyncRoleModules()
   const overrides = useRoleModules((s) => s.overrides)
   const isSuper = me?.role === 'admin'
   const effectiveRole: AppRole = (

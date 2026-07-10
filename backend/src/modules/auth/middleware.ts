@@ -9,6 +9,7 @@ import { serviceClient as prisma } from '../../lib/prisma.js'
 import { setRlsContext } from '../../lib/rlsContext.js'
 import { isRevoked } from '../../lib/tokenRevocation.js'
 import { readCookie, ACCESS_COOKIE } from '../../lib/cookies.js'
+import { enforceModuleAccess } from '../../lib/moduleAccess.js'
 
 // Staff access token comes from EITHER a Bearer header (tablet / mobile) OR the
 // httpOnly session cookie (manager web). The web app no longer holds the token
@@ -67,7 +68,7 @@ async function attachStaffPrincipal(req: FastifyRequest, payload: { sub: string;
   }
   const u = await prisma.user.findUnique({
     where: { id: payload.sub },
-    select: { tenantId: true, name: true, isActive: true, accountStatus: true, deletedAt: true },
+    select: { tenantId: true, name: true, isActive: true, accountStatus: true, deletedAt: true, moduleAllow: true, moduleDeny: true },
   })
 
   // Revocation-on-deactivation: a JWT outlives its user's employment unless we
@@ -125,6 +126,16 @@ async function attachStaffPrincipal(req: FastifyRequest, payload: { sub: string;
     tenantFilter,
     memberTenantIds: Array.from(memberTenantIds),
   }
+
+  // Module-access gate — narrows access on the sensitive financial/reporting
+  // surfaces according to the CEO's Module Access matrix + this user's own
+  // moduleAllow/moduleDeny. Runs AFTER the role gate above; no-ops for admin
+  // and for ungated paths. See lib/moduleAccess.ts.
+  await enforceModuleAccess(req.url, {
+    role: payload.role as UserRole,
+    moduleAllow: u.moduleAllow,
+    moduleDeny: u.moduleDeny,
+  })
   // RLS scope: in single-tenant view, just the active tenant. In portfolio
   // view (or non-GET writes), expand to every tenant the operator belongs
   // to — matches how tenantFilter is computed above. Policies use the same

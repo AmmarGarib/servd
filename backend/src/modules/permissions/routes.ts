@@ -9,6 +9,7 @@ import {
   permissionsForRole,
   effectivePermissionsForUser,
 } from '../../lib/permissions.js'
+import { DEFAULT_MODULE_ACCESS, isKnownModuleId, invalidateModuleAccessCache } from '../../lib/moduleAccess.js'
 
 // Keep aligned with the UserRole enum in backend/prisma/schema.prisma and the
 // AppRole list in frontend/admin/src/lib/appRoles.ts. The matrix editor renders
@@ -93,6 +94,49 @@ export async function permissionRoutes(fastify: FastifyInstance) {
 
     invalidatePermissionCache()
     return { ok: true, applied: body.changes.length }
+  })
+
+  // GET /permissions/role-modules — role → module allow-list. `defaults` are
+  // the in-code baselines; `overrides` are the CEO's saved rows (full
+  // allow-list per role). Open to all staff so every admin browser renders the
+  // same sidebar rules instead of whatever its localStorage last saw.
+  fastify.get('/role-modules', { preHandler: requireAuth(...ALL_STAFF) }, async () => {
+    const rows = await prisma.roleModuleAccess.findMany({ select: { role: true, modules: true } })
+    return {
+      defaults:  DEFAULT_MODULE_ACCESS,
+      overrides: Object.fromEntries(rows.map((r) => [r.role, r.modules])),
+    }
+  })
+
+  // PUT /permissions/role-modules — CEO saves one role's full allow-list.
+  // `modules: null` resets the role back to defaults (deletes the row).
+  fastify.put('/role-modules', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req, reply) => {
+    const body = z.object({
+      role:    z.string().refine((v) => ROLE_VALUES.includes(v), 'Unknown role'),
+      modules: z.array(z.string()).nullable(),
+    }).parse(req.body)
+
+    if (body.role === 'admin') {
+      return reply.status(400).send({ error: { code: 'ADMIN_IMMUTABLE', message: 'The CEO role always has every module — it cannot be edited.' } })
+    }
+    if (body.modules) {
+      const unknown = body.modules.filter((m) => !isKnownModuleId(m))
+      if (unknown.length) {
+        return reply.status(400).send({ error: { code: 'UNKNOWN_MODULE', message: `Unknown module id(s): ${unknown.join(', ')}` } })
+      }
+    }
+
+    if (body.modules === null) {
+      await prisma.roleModuleAccess.deleteMany({ where: { role: body.role as UserRole } })
+    } else {
+      await prisma.roleModuleAccess.upsert({
+        where:  { role: body.role as UserRole },
+        create: { role: body.role as UserRole, modules: body.modules },
+        update: { modules: body.modules },
+      })
+    }
+    invalidateModuleAccessCache()
+    return { ok: true, role: body.role, modules: body.modules }
   })
 
   // POST /permissions/reset — reset all permissions back to catalogue defaults.

@@ -4370,6 +4370,20 @@ model RolePermission {
   @@map("role_permissions")
 }
 
+// Role → sidebar-module allow-list. A row here is the CEO's FULL override for
+// that role (from /configuration/role-modules); roles without a row fall back
+// to the in-code defaults (lib/moduleAccess.ts). Enforced server-side by the
+// auth middleware on the finance/reports/management surfaces — previously this
+// config lived only in the admin browser's localStorage and gated nothing.
+model RoleModuleAccess {
+  id        String   @id @default(cuid())
+  role      UserRole @unique
+  modules   String[] @default([])
+  updatedAt DateTime @updatedAt
+
+  @@map("role_module_access")
+}
+
 // ─── API access tokens ───────────────────────────────────────────────────────
 // Long-lived bearer tokens for partner integrations + the customer mobile app.
 // Tokens are hashed with sha256 before storage; the plaintext is shown only

@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, MANAGERS, FINANCIALS_VIEWERS } from '../auth/middleware.js'
+import { NotFoundError } from '../../lib/errors.js'
 import { getMenuEngineering } from './menu-engineering.js'
 import { getDemandForecast } from './demand-forecast.js'
 
@@ -189,12 +190,28 @@ export async function reportRoutes(fastify: FastifyInstance) {
     },
   )
 
+  // Both quadrant analysis + demand forecast take a REQUIRED conceptId and hand
+  // it to a helper that doesn't re-check tenancy — so the id must be validated
+  // against the caller's tenant scope here, or any staff member could pull
+  // another company's sales analytics by guessing a conceptId.
+  async function assertConceptInScope(
+    req: { staffUser?: { tenantFilter: string | { in: string[] } | null } | null },
+    conceptId: string,
+  ) {
+    const concept = await prisma.concept.findFirst({
+      where: { id: conceptId, deletedAt: null, tenantId: req.staffUser!.tenantFilter },
+      select: { id: true },
+    })
+    if (!concept) throw new NotFoundError('Concept', conceptId)
+  }
+
   // GET /reports/menu-engineering — Stars/Plowhorses/Puzzles/Dogs quadrant analysis
   fastify.get<{ Querystring: { conceptId: string; dateFrom?: string; dateTo?: string } }>(
     '/menu-engineering',
     { preHandler: requireAuth(...MANAGERS) },
     async (req) => {
       const { conceptId, dateFrom, dateTo } = req.query
+      await assertConceptInScope(req, conceptId)
       const { from, to } = dateRange(dateFrom, dateTo, 30)
       return getMenuEngineering({ conceptId, dateFrom: from, dateTo: to })
     },
@@ -206,6 +223,7 @@ export async function reportRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuth(...MANAGERS) },
     async (req) => {
       const { conceptId, days: dStr } = req.query
+      await assertConceptInScope(req, conceptId)
       const days = dStr ? Math.min(parseInt(dStr, 10), 30) : 7
       const items = await getDemandForecast({ conceptId, days })
       return { items, conceptId, generatedAt: new Date().toISOString() }

@@ -25,10 +25,20 @@ rewritten, trust these corrections:
   documented below.
 - **Stax** brand palette is a cool **navy-grey** set (oceanic noir `#142834`
   base + greys: astroscopus `#B0B2B8`, tulle `#8D8F97`, adept `#293B47`).
-- Open risks flagged by the audit (not yet fixed): client-only role/module
-  permissions (no `RoleModuleAccess` model), unscoped tenant data in
-  `/reports/*` + `/management/*` + accounting P&L, lockfile drift in the
-  storefront (`three`/`framer-motion` not in `package-lock.json`).
+- **All audit risks are now closed (2026-07-06 sweep):**
+  - Role/module permissions are server-enforced: `RoleModuleAccess` model +
+    `GET/PUT /permissions/role-modules`, enforced in the auth middleware
+    (`backend/src/lib/moduleAccess.ts`) on the finance/reports/management/
+    payroll/procurement/reconciliation/gift-cards prefixes. Role→module
+    defaults are duplicated in `moduleAccess.ts` and
+    `frontend/admin/src/lib/appRoles.ts` — keep them in sync.
+  - Tenant scoping in `/reports/*`, `/management/*`, and accounting P&L is
+    done (all queries filter via `req.staffUser.tenantFilter`;
+    menu-engineering + demand-forecast validate `conceptId` ownership).
+  - Storefront lockfile drift resolved (`three`/`framer-motion` are in
+    `package-lock.json`).
+  - Aggregator code (Foodpanda/Careem adapters, `FoodpandaSettlement`) is
+    fully removed; only historical comments remain.
 
 ## What this is
 
