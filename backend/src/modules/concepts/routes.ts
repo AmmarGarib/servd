@@ -76,10 +76,16 @@ export async function conceptRoutes(fastify: FastifyInstance) {
   // `x-servd-portfolio` header. Writes (POST/PATCH/DELETE below) stay
   // scoped to the single active tenant â€” portfolio writes are gated at
   // the client layer.
-  fastify.get('/', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
+  fastify.get<{ Querystring: { includeInactive?: string } }>('/', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
     const scope = await resolveTenantScope(req)
+    // Retired brands (isActive=false, e.g. Simmer) are EXCLUDED by default so
+    // they vanish from every admin picker, dashboard card, and filter in one
+    // place. The Tenants & Brands settings page opts in via ?includeInactive=1
+    // so the CEO can still see and reactivate them. Historical data (orders,
+    // financial entries) is untouched — this only affects concept listings.
+    const includeInactive = req.query.includeInactive === '1'
     const concepts = await prisma.concept.findMany({
-      where: { deletedAt: null, ...tenantWhere(scope) },
+      where: { deletedAt: null, ...(includeInactive ? {} : { isActive: true }), ...tenantWhere(scope) },
       orderBy: { name: 'asc' },
       // Include tenant context in portfolio mode so the CEO can see which
       // company each brand belongs to without an extra round-trip. Cheap

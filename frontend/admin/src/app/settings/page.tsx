@@ -103,7 +103,10 @@ function ConceptsSection() {
   // just that company's brands, "All companies" returns the full set. Each
   // row still wears its tenant chip when portfolio mode is on so the CEO
   // sees which company they're editing.
-  const { data = [] } = useQuery({ queryKey: ['concepts'], queryFn: () => api.get<Concept[]>('/concepts') })
+  // includeInactive: this is the ONE page that still shows retired brands
+  // (e.g. Simmer) so the CEO can see or reactivate them — everywhere else
+  // in the admin they're hidden.
+  const { data = [] } = useQuery({ queryKey: ['concepts', 'all'], queryFn: () => api.get<Concept[]>('/concepts?includeInactive=1') })
 
   const updateMutation = useMutation({
     mutationFn: ({ id, body }: { id: string; body: Partial<Concept> }) => api.patch(`/concepts/${id}`, body),
