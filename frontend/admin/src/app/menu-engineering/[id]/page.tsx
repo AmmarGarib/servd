@@ -219,6 +219,51 @@ export default function PlatePricingPage() {
               </p>
             )}
           </section>
+
+          {/* Break-even volume — where labor/rent stops costing and plates
+              become pure margin. Overheads are fixed per month; each plate
+              contributes (price − plate cost − packaging); the crossover is
+              overheads ÷ contribution. */}
+          <section className="rounded-xl border border-s-border bg-s-surface p-5">
+            <h2 className="text-base font-black mb-1">Break-even volume</h2>
+            <p className="text-[11px] text-s-muted mb-2">
+              The plate count where this month&apos;s overheads are fully paid — beyond it,
+              every plate&apos;s contribution is pure profit.
+            </p>
+            {priceCents <= 0 || cm <= 0 ? (
+              <p className="text-xs" style={{ color: '#FDB022' }}>
+                {priceCents <= 0
+                  ? 'Set a selling price to see the break-even volume.'
+                  : 'Contribution per plate is zero or negative at this price — no volume breaks even. Raise the price or cut plate cost.'}
+              </p>
+            ) : (() => {
+              const overheadMonthly = cost.opexLinesMonthlyCents + cost.payrollShareMonthlyCents
+              const beMonthly = Math.ceil(overheadMonthly / cm)
+              const beDaily   = beMonthly / 30
+              const forecast  = cost.brandForecastPortions
+              const coverage  = forecast > 0 ? forecast / beMonthly : null
+              return (
+                <>
+                  <Line label="Contribution / plate (at this price)" value={fmtPKR(cm)} />
+                  <Line op="÷" label="into brand overheads / month" value={fmtPKR(overheadMonthly)} dim />
+                  <Line op="=" label="Plates to break even" bold color="#5EEAD4"
+                    value={`${beMonthly.toLocaleString('en')} / month · ~${beDaily < 10 ? beDaily.toFixed(1) : Math.ceil(beDaily)} / day`} />
+                  <Line label="After that, each plate earns" value={`${fmtPKR(cm)} pure margin`} dim />
+                  {coverage !== null && (
+                    <p className="text-[10px] mt-2" style={{ color: coverage >= 1 ? '#00D4B1' : '#FF6B6B' }}>
+                      {coverage >= 1
+                        ? `Your forecast (${forecast.toLocaleString('en')}/month) covers break-even ${coverage.toFixed(1)}× — if this plate alone carried all overheads.`
+                        : `Your forecast (${forecast.toLocaleString('en')}/month) is below break-even — this plate alone couldn't carry the overheads.`}
+                    </p>
+                  )}
+                  <p className="text-[10px] text-s-dim mt-1">
+                    In reality the whole menu shares the overheads — this shows the pace at which
+                    <strong className="text-s-muted"> this plate</strong> pays them down.
+                  </p>
+                </>
+              )
+            })()}
+          </section>
         </div>
 
         {/* ── Right: the pricing controls ─────────────────────────────────── */}
