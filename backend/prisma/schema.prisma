@@ -1921,6 +1921,9 @@ model Recipe {
   // Target net profit % the recipe should generate after opex + packaging.
   // Default 25%. Drives the suggested Target Price calculation.
   targetProfitPct   Float   @default(25)
+  // The food-cost % the operator wants this item to run at (Menu Engineering
+  // "price to hit target" suggestion = plateCost ÷ target%). Default 30.
+  targetFoodCostPct Float   @default(30)
   // Packaging as % of selling price (takeaway boxes, lids, bags). Default 8%.
   packagingPct      Float   @default(8)
   // What the operator actually charges on the menu. Null = defaults to

@@ -117,6 +117,7 @@ const recipeShape = {
   // and inherit the operator-level defaults (10/25/8) — see spec.
   qFactorPct:              z.number().min(0).max(100).default(10),
   targetProfitPct:         z.number().min(0).max(100).default(25),
+  targetFoodCostPct:       z.number().min(1).max(100).default(30),
   packagingPct:            z.number().min(0).max(100).default(8),
   actualSellingPriceCents: z.number().int().min(0).nullable().optional(),
   category:                z.enum(['main', 'side', 'sauce', 'sub_recipe']).nullable().optional(),
@@ -429,7 +430,7 @@ export async function recipeRoutes(fastify: FastifyInstance) {
       const recipe = await prisma.recipe.findUnique({
         where: { id: req.params.id },
         include: {
-          menuItem: { select: { id: true, conceptId: true, priceCents: true, concept: { select: { id: true, name: true, forecastPortionsPerMonth: true } } } },
+          menuItem: { select: { id: true, name: true, conceptId: true, priceCents: true, concept: { select: { id: true, name: true, tenantId: true, forecastPortionsPerMonth: true } } } },
           ingredients: {
             include: {
               inventoryItem: { select: { id: true, name: true, unit: true, unitCostCents: true, yieldPct: true, allergens: true } },
@@ -501,18 +502,28 @@ export async function recipeRoutes(fastify: FastifyInstance) {
       const plateCostCents       = Math.round(totalRecipeCents / Math.max(recipe.servings, 1))
 
       // Opex/Portion — only applies to plate recipes (sub-recipes never carry
-      // opex; their cost rolls into the plate that uses them). Sum monthly-
-      // equivalent OpexLine.amountCents for the brand, divide by the brand's
-      // forecast monthly portions.
+      // opex; their cost rolls into the plate that uses them). Monthly opex =
+      //   • OpexLine entries for the brand (rent, utilities, …), monthly-ized —
+      //     excluding any line already sourced from payroll, and
+      //   • REAL workforce cost: posted/paid payroll runs over the last 90 days
+      //     for the brand's company, monthly-ized (÷3) and allocated to this
+      //     brand by its share of forecast portions (even split if no forecasts).
+      // Divided by the brand's forecast monthly portions.
       let opexPerPortionCents = 0
       let brandMonthlyOpexCents = 0
       let brandForecastPortions = 0
+      let opexLinesMonthlyCents = 0
+      let payrollShareMonthlyCents = 0
+      let payrollTenantMonthlyCents = 0
       if (recipe.kind === 'plate' && recipe.menuItem?.conceptId) {
+        const conceptId = recipe.menuItem.conceptId
+        const tenantId  = recipe.menuItem.concept?.tenantId ?? null
         const opexLines = await prisma.opexLine.findMany({
-          where: { conceptId: recipe.menuItem.conceptId, isActive: true },
+          // source='payroll' lines are excluded — real payroll is added below.
+          where: { conceptId, isActive: true, source: { not: 'payroll' } },
           select: { amountCents: true, cadence: true },
         })
-        brandMonthlyOpexCents = opexLines.reduce((s, l) => {
+        opexLinesMonthlyCents = opexLines.reduce((s, l) => {
           const monthly =
             l.cadence === 'monthly'   ? l.amountCents :
             l.cadence === 'quarterly' ? Math.round(l.amountCents / 3) :
@@ -520,6 +531,29 @@ export async function recipeRoutes(fastify: FastifyInstance) {
             l.amountCents
           return s + monthly
         }, 0)
+
+        if (tenantId) {
+          const since = new Date(Date.now() - 90 * 24 * 3600 * 1000)
+          const payrollLines = await prisma.payrollRunLine.findMany({
+            where: {
+              payrollRun: { status: { in: ['posted', 'paid'] }, periodEnd: { gte: since } },
+              user: { tenantId },
+            },
+            select: { grossCents: true },
+          })
+          payrollTenantMonthlyCents = Math.round(payrollLines.reduce((s, l) => s + l.grossCents, 0) / 3)
+          // Allocate company payroll to this brand by forecast-portion share.
+          const siblings = await prisma.concept.findMany({
+            where: { tenantId, deletedAt: null, isActive: true },
+            select: { id: true, forecastPortionsPerMonth: true },
+          })
+          const totalForecast = siblings.reduce((s, c) => s + (c.forecastPortionsPerMonth ?? 0), 0)
+          const mine = siblings.find((c) => c.id === conceptId)?.forecastPortionsPerMonth ?? 0
+          const share = totalForecast > 0 ? mine / totalForecast : (siblings.length > 0 ? 1 / siblings.length : 1)
+          payrollShareMonthlyCents = Math.round(payrollTenantMonthlyCents * share)
+        }
+
+        brandMonthlyOpexCents = opexLinesMonthlyCents + payrollShareMonthlyCents
         brandForecastPortions = recipe.menuItem.concept?.forecastPortionsPerMonth ?? 0
         opexPerPortionCents = brandForecastPortions > 0
           ? Math.round(brandMonthlyOpexCents / brandForecastPortions)
@@ -531,6 +565,10 @@ export async function recipeRoutes(fastify: FastifyInstance) {
       const targetProfitFactor = recipe.targetProfitPct / 100
       // Legacy: 30% food cost rule of thumb, opex not included
       const foodCostPriceCents = Math.round(plateCostCents / 0.30)
+      // Price that hits the operator's chosen target food-cost %:
+      // price = plate cost ÷ (target% / 100).
+      const targetFoodCostPct  = recipe.targetFoodCostPct ?? 30
+      const fcTargetPriceCents = Math.round(plateCostCents / Math.max(targetFoodCostPct / 100, 0.01))
       // Break-even: (Plate + Opex) / (1 - Packaging%)
       const breakEvenDenominator = Math.max(0.01, 1 - packagingFactor)
       const breakEvenPriceCents = Math.round((plateCostCents + opexPerPortionCents) / breakEvenDenominator)
@@ -567,9 +605,12 @@ export async function recipeRoutes(fastify: FastifyInstance) {
           yieldGrams:               recipe.yieldGrams,
           qFactorPct:               recipe.qFactorPct,
           targetProfitPct:          recipe.targetProfitPct,
+          targetFoodCostPct,
           packagingPct:             recipe.packagingPct,
           actualSellingPriceCents:  recipe.actualSellingPriceCents,
           photoUrl:                 recipe.photoUrl,
+          menuItemName:             recipe.menuItem?.name ?? recipe.name ?? null,
+          status:                   recipe.status,
         },
         brand: recipe.menuItem?.concept ?? null,
         ingredients,
@@ -581,9 +622,14 @@ export async function recipeRoutes(fastify: FastifyInstance) {
           opexPerPortionCents,
           brandMonthlyOpexCents,
           brandForecastPortions,
+          // Opex provenance — so the UI can show where the number comes from.
+          opexLinesMonthlyCents,
+          payrollShareMonthlyCents,
+          payrollTenantMonthlyCents,
         },
         pricing: {
           foodCostPriceCents,
+          fcTargetPriceCents,
           breakEvenPriceCents,
           targetPriceCents,
           actualSellingPriceCents,
@@ -715,6 +761,7 @@ export async function recipeRoutes(fastify: FastifyInstance) {
         isActive:     body.isActive,
         qFactorPct:              body.qFactorPct,
         targetProfitPct:         body.targetProfitPct,
+        targetFoodCostPct:       body.targetFoodCostPct,
         packagingPct:            body.packagingPct,
         actualSellingPriceCents: body.actualSellingPriceCents ?? null,
         category:                body.category ?? null,
@@ -770,6 +817,7 @@ export async function recipeRoutes(fastify: FastifyInstance) {
             ...(body.isActive     != null && { isActive: body.isActive }),
             ...(body.qFactorPct              != null      && { qFactorPct:              body.qFactorPct }),
             ...(body.targetProfitPct         != null      && { targetProfitPct:         body.targetProfitPct }),
+            ...(body.targetFoodCostPct       != null      && { targetFoodCostPct:       body.targetFoodCostPct }),
             ...(body.packagingPct            != null      && { packagingPct:            body.packagingPct }),
             ...(body.actualSellingPriceCents !== undefined && { actualSellingPriceCents: body.actualSellingPriceCents }),
             ...(body.category                !== undefined && { category:                body.category }),
