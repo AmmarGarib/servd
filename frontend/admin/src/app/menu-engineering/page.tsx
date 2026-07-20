@@ -6,9 +6,13 @@
 // selling price (editable inline, syncs to the menu), contribution margin,
 // profit margin, food-cost %. One direction of data flow:
 //   recipe → plate cost → [this page] → selling price → menu item.
+//
+// Clicking a row expands the full price STRUCTURE in place (backed by
+// GET /recipes/:id/costing): plate-cost build-up on the left, and the
+// price waterfall (selling price − plate cost − packaging = contribution
+// margin; − opex = net profit) on the right.
 import { useState } from 'react'
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../lib/api'
 import { recipeStatusMeta } from '../accounting/recipes/RecipeForm'
@@ -24,6 +28,39 @@ interface EngRecipe {
   menuItem: { id: string; name: string; priceCents: number; conceptId: string; concept: { name: string } } | null
 }
 
+// GET /recipes/:id/costing — the full pricing-spec readout.
+interface CostingReadout {
+  recipe: { servings: number; qFactorPct: number; packagingPct: number; targetProfitPct: number }
+  cost: {
+    totalIngredientCents: number
+    qFactorCents: number
+    totalRecipeCents: number
+    plateCostCents: number
+    opexPerPortionCents: number
+    brandForecastPortions: number
+  }
+  pricing: {
+    breakEvenPriceCents: number
+    targetPriceCents: number
+    actualSellingPriceCents: number
+  }
+  profitability: {
+    packagingCostCents: number
+    contributionMarginCents: number
+    contributionMarginPct: number
+    netProfitCents: number
+    netProfitPct: number
+    foodCostPctOfSp: number
+    verdict: 'profitable' | 'covers_food_loses_opex' | 'loses_every_plate'
+  }
+}
+
+const VERDICT_META = {
+  profitable:             { label: '✓ Profitable',              color: '#00D4B1', bg: 'rgba(0,212,177,0.10)' },
+  covers_food_loses_opex: { label: '⚠ Covers food, loses opex', color: '#F59E0B', bg: 'rgba(245,158,11,0.10)' },
+  loses_every_plate:      { label: '✗ Loses every plate',       color: '#FF4D4F', bg: 'rgba(255,77,79,0.10)' },
+}
+
 function fmtPKR(cents: number) {
   return `PKR ${Math.round(cents / 100).toLocaleString('en-PK')}`
 }
@@ -37,11 +74,84 @@ function fcColor(pct: number | null) {
   return '#FF4D4F'
 }
 
+// One line of the expanded structure. `op` renders the −/=/÷ operator gutter.
+function StructLine({ label, value, op, bold, dim, color }: {
+  label: string; value: string; op?: string; bold?: boolean; dim?: boolean; color?: string
+}) {
+  return (
+    <div className="flex items-baseline gap-2 text-xs font-mono py-1">
+      <span className="w-3 text-right shrink-0 text-s-dim">{op ?? ''}</span>
+      <span className={dim ? 'text-s-dim' : 'text-s-muted'}>{label}</span>
+      <span className={`ml-auto ${bold ? 'font-black' : ''}`} style={{ color }}>{value}</span>
+    </div>
+  )
+}
+
+// Expanded pricing structure for one plate.
+function PriceStructure({ recipeId }: { recipeId: string }) {
+  const { data, isLoading } = useQuery<CostingReadout>({
+    queryKey: ['recipe', recipeId, 'costing'],
+    queryFn: () => api.get(`/recipes/${recipeId}/costing`),
+  })
+
+  if (isLoading || !data) {
+    return <div className="px-6 py-6 text-xs text-s-muted">Loading price structure…</div>
+  }
+
+  const { cost, pricing, profitability: pf, recipe } = data
+  const verdict = VERDICT_META[pf.verdict]
+
+  return (
+    <div className="border-t border-s-border px-5 py-4" style={{ background: 'rgba(255,255,255,0.015)' }}>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        {/* Left — how the plate cost is built (from the recipe) */}
+        <div>
+          <p className="text-[10px] font-black uppercase tracking-wider text-s-muted mb-2">Plate cost build-up</p>
+          <StructLine label="Ingredient subtotal" value={fmtPKR(cost.totalIngredientCents)} />
+          <StructLine op="+" label={`Q factor (${recipe.qFactorPct}%)`} value={fmtPKR(cost.qFactorCents)} dim />
+          <StructLine op="=" label="Total recipe cost" value={fmtPKR(cost.totalRecipeCents)} bold />
+          <StructLine op="÷" label={`Portions (${recipe.servings})`} value="" dim />
+          <StructLine op="=" label="Plate cost" value={fmtPKR(cost.plateCostCents)} bold color="#5EEAD4" />
+          <StructLine op="" label="Opex / portion" value={cost.brandForecastPortions > 0 ? fmtPKR(cost.opexPerPortionCents) : 'set brand forecast'} dim />
+          <p className="text-[10px] text-s-dim mt-2">
+            Cost comes from the recipe —{' '}
+            <Link href={`/accounting/recipes/${recipeId}`} className="text-s-teal hover:underline">open recipe →</Link>
+          </p>
+        </div>
+
+        {/* Right — the price waterfall */}
+        <div>
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-[10px] font-black uppercase tracking-wider text-s-muted">Price structure</p>
+            <span className="text-[10px] font-black rounded-full px-2 py-0.5"
+              style={{ background: verdict.bg, color: verdict.color }}>{verdict.label}</span>
+          </div>
+          <StructLine label="Selling price" value={fmtPKR(pricing.actualSellingPriceCents)} bold />
+          <StructLine op="−" label="Plate cost" value={fmtPKR(cost.plateCostCents)} />
+          <StructLine op="−" label={`Packaging (${recipe.packagingPct}% of price)`} value={fmtPKR(pf.packagingCostCents)} dim />
+          <StructLine op="=" label="Contribution margin" bold
+            value={`${fmtPKR(pf.contributionMarginCents)} · ${fmtPct(pf.contributionMarginPct)}`}
+            color={pf.contributionMarginCents >= 0 ? '#00D4B1' : '#FF4D4F'} />
+          <StructLine op="−" label="Opex / portion" value={fmtPKR(cost.opexPerPortionCents)} dim />
+          <StructLine op="=" label="Net profit / portion" bold
+            value={`${fmtPKR(pf.netProfitCents)} · ${fmtPct(pf.netProfitPct)}`}
+            color={pf.netProfitCents >= 0 ? '#00D4B1' : '#FF4D4F'} />
+          <div className="mt-3 pt-2 border-t border-s-border/60">
+            <StructLine label="Food cost % of price" value={fmtPct(pf.foodCostPctOfSp)} color={fcColor(pf.foodCostPctOfSp)} />
+            <StructLine label="Break-even price" value={fmtPKR(pricing.breakEvenPriceCents)} dim />
+            <StructLine label={`Target price (${recipe.targetProfitPct}% profit)`} value={fmtPKR(pricing.targetPriceCents)} dim />
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function MenuEngineeringPage() {
   const qc = useQueryClient()
-  const router = useRouter()
   const [conceptFilter, setConceptFilter] = useState('')
   const [search, setSearch] = useState('')
+  const [expanded, setExpanded] = useState<string | null>(null)
   // Local edit buffer: recipeId → price string being typed. Committed on blur/Enter.
   const [draftPrice, setDraftPrice] = useState<Record<string, string>>({})
 
@@ -57,7 +167,11 @@ export default function MenuEngineeringPage() {
   const savePrice = useMutation({
     mutationFn: ({ id, priceCents }: { id: string; priceCents: number }) =>
       api.put(`/recipes/${id}`, { actualSellingPriceCents: priceCents }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['recipes'] }),
+    onSuccess: (_d, vars) => {
+      void qc.invalidateQueries({ queryKey: ['recipes'] })
+      // Refresh the expanded structure so the waterfall reflects the new price.
+      void qc.invalidateQueries({ queryKey: ['recipe', vars.id, 'costing'] })
+    },
     onError: (e: Error) => alert(e.message),
   })
 
@@ -98,8 +212,8 @@ export default function MenuEngineeringPage() {
             <p className="text-xs text-s-muted">Kitchen</p>
             <h1 className="text-xl font-bold text-s-text">Menu Engineering</h1>
             <p className="text-xs text-s-dim mt-0.5">
-              Plate cost comes from <Link href="/accounting/recipes" className="text-s-teal hover:underline">Recipes</Link> —
-              set the selling price here and margins update live. Price changes sync to the menu.
+              Click a plate to open its price structure — cost build-up + margin waterfall.
+              Set the selling price in the row; it syncs to the menu.
             </p>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
@@ -144,92 +258,93 @@ export default function MenuEngineeringPage() {
             </p>
           </div>
         ) : (
-          <div className="s-card overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr style={{ background: 'rgba(255,255,255,0.03)', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
-                    {['PLATE', 'PLATE COST', 'SELLING PRICE (PKR)', 'CONTRIBUTION MARGIN', 'PROFIT MARGIN %', 'FOOD COST %'].map((h, i) => (
-                      <th key={h}
-                        className={`px-4 py-3 text-[10px] font-black uppercase tracking-wider text-s-muted ${i === 0 ? 'text-left' : 'text-right'}`}>
-                        {h}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {plates.map((r, idx) => {
-                    const plateCost = r.costPerPortionCents
-                    const price = r.menuItem?.priceCents ?? 0
-                    const cm = plateCost !== null && price > 0 ? price - plateCost : null
-                    const cmPct = cm !== null && price > 0 ? (cm / price) * 100 : null
-                    const fc = plateCost !== null && price > 0 ? (plateCost / price) * 100 : null
-                    const draft = draftPrice[r.id]
-                    return (
-                      // Whole row opens the recipe — no need to aim for the name.
-                      // The price cell stops propagation so typing a price doesn't navigate.
-                      <tr key={r.id}
-                        onClick={() => router.push(`/accounting/recipes/${r.id}`)}
-                        className="cursor-pointer"
-                        onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,0.02)')}
-                        onMouseLeave={(e) => (e.currentTarget.style.background = '')}
-                        style={{ borderBottom: idx < plates.length - 1 ? '1px solid rgba(255,255,255,0.04)' : 'none', transition: 'background 0.12s' }}>
-                        <td className="px-4 py-3">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="font-semibold text-s-text">
-                              {r.menuItem?.name ?? r.name ?? '—'}
-                            </span>
-                            {r.status !== 'production' && (
-                              <span className="text-[9px] font-black uppercase tracking-wider rounded-full px-2 py-0.5"
-                                style={{ background: recipeStatusMeta[r.status].bg, color: recipeStatusMeta[r.status].color }}>
-                                {recipeStatusMeta[r.status].label}
-                              </span>
-                            )}
-                          </div>
-                          <p className="text-[10px] text-s-dim mt-0.5">{r.menuItem?.concept.name ?? 'No menu item yet (testing)'}</p>
-                        </td>
-                        <td className="px-4 py-3 text-right font-mono font-bold text-s-text">
-                          {plateCost !== null ? fmtPKR(plateCost) : '—'}
-                        </td>
-                        <td className="px-4 py-3 text-right" onClick={(e) => e.stopPropagation()}>
-                          {r.menuItem ? (
-                            <input
-                              type="text" inputMode="decimal"
-                              value={draft ?? (price > 0 ? String(Math.round(price / 100)) : '')}
-                              placeholder="set price"
-                              onChange={(e) => {
-                                const raw = e.target.value
-                                if (raw === '' || /^\d*\.?\d*$/.test(raw)) setDraftPrice((d) => ({ ...d, [r.id]: raw }))
-                              }}
-                              onBlur={() => commitPrice(r)}
-                              onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
-                              className="w-28 text-right font-mono rounded-md border border-s-border bg-s-bg px-2 py-1.5 text-sm focus:border-s-teal focus:outline-none"/>
-                          ) : (
-                            <span className="text-[10px] text-s-dim">opens with approval</span>
-                          )}
-                        </td>
-                        <td className="px-4 py-3 text-right font-mono"
+          <div className="space-y-2">
+            {plates.map((r) => {
+              const isOpen = expanded === r.id
+              const plateCost = r.costPerPortionCents
+              const price = r.menuItem?.priceCents ?? 0
+              const cm = plateCost !== null && price > 0 ? price - plateCost : null
+              const cmPct = cm !== null && price > 0 ? (cm / price) * 100 : null
+              const fc = plateCost !== null && price > 0 ? (plateCost / price) * 100 : null
+              const draft = draftPrice[r.id]
+              return (
+                <div key={r.id} className="s-card overflow-hidden">
+                  {/* Summary row — click to expand the price structure. */}
+                  <div
+                    className="flex items-center gap-4 px-4 py-3 cursor-pointer select-none"
+                    onClick={() => setExpanded(isOpen ? null : r.id)}
+                    onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,0.02)')}
+                    onMouseLeave={(e) => (e.currentTarget.style.background = '')}
+                    style={{ transition: 'background 0.12s' }}
+                  >
+                    <span className="text-[10px] text-s-dim shrink-0"
+                      style={{ display: 'inline-block', transition: 'transform 0.2s', transform: isOpen ? 'rotate(90deg)' : 'none' }}>
+                      ▶
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-semibold text-s-text text-sm truncate">
+                          {r.menuItem?.name ?? r.name ?? '—'}
+                        </span>
+                        {r.status !== 'production' && (
+                          <span className="text-[9px] font-black uppercase tracking-wider rounded-full px-2 py-0.5"
+                            style={{ background: recipeStatusMeta[r.status].bg, color: recipeStatusMeta[r.status].color }}>
+                            {recipeStatusMeta[r.status].label}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[10px] text-s-dim">{r.menuItem?.concept.name ?? 'No menu item yet (testing)'}</p>
+                    </div>
+
+                    <div className="flex items-center gap-5 shrink-0">
+                      <div className="text-right">
+                        <p style={{ fontSize: '9px', letterSpacing: '0.12em' }} className="text-s-muted uppercase">Plate Cost</p>
+                        <p className="text-xs font-bold text-s-text">{plateCost !== null ? fmtPKR(plateCost) : '—'}</p>
+                      </div>
+                      <div className="text-right" onClick={(e) => e.stopPropagation()}>
+                        <p style={{ fontSize: '9px', letterSpacing: '0.12em' }} className="text-s-muted uppercase">Selling Price</p>
+                        {r.menuItem ? (
+                          <input
+                            type="text" inputMode="decimal"
+                            value={draft ?? (price > 0 ? String(Math.round(price / 100)) : '')}
+                            placeholder="set price"
+                            onChange={(e) => {
+                              const raw = e.target.value
+                              if (raw === '' || /^\d*\.?\d*$/.test(raw)) setDraftPrice((d) => ({ ...d, [r.id]: raw }))
+                            }}
+                            onBlur={() => commitPrice(r)}
+                            onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+                            className="w-24 text-right font-mono rounded-md border border-s-border bg-s-bg px-2 py-1 text-xs focus:border-s-teal focus:outline-none"/>
+                        ) : (
+                          <p className="text-[10px] text-s-dim">opens with approval</p>
+                        )}
+                      </div>
+                      <div className="text-right" style={{ minWidth: 110 }}>
+                        <p style={{ fontSize: '9px', letterSpacing: '0.12em' }} className="text-s-muted uppercase">Contribution</p>
+                        <p className="text-xs font-bold font-mono"
                           style={{ color: cm === null ? 'rgba(255,255,255,0.3)' : cm >= 0 ? '#00D4B1' : '#FF4D4F' }}>
                           {cm !== null ? `${fmtPKR(cm)}${cmPct !== null ? ` · ${fmtPct(cmPct)}` : ''}` : '—'}
-                        </td>
-                        <td className="px-4 py-3 text-right font-mono font-bold"
-                          style={{ color: cmPct === null ? 'rgba(255,255,255,0.3)' : cmPct >= 65 ? '#00D4B1' : cmPct >= 50 ? '#F59E0B' : '#FF4D4F' }}>
-                          {cmPct !== null ? fmtPct(cmPct) : '—'}
-                        </td>
-                        <td className="px-4 py-3 text-right font-mono font-bold" style={{ color: fcColor(fc) }}>
+                        </p>
+                      </div>
+                      <div className="text-right" style={{ minWidth: 60 }}>
+                        <p style={{ fontSize: '9px', letterSpacing: '0.12em' }} className="text-s-muted uppercase">Food Cost</p>
+                        <p className="text-xs font-black font-mono" style={{ color: fcColor(fc) }}>
                           {fc !== null ? fmtPct(fc) : '—'}
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Expanded — the full structure this page exists for. */}
+                  {isOpen && <PriceStructure recipeId={r.id} />}
+                </div>
+              )
+            })}
           </div>
         )}
 
         <p className="text-[11px] text-s-dim">
-          Contribution margin = selling price − plate cost. Profit margin % = contribution ÷ price.
+          Contribution margin = selling price − plate cost − packaging. Net profit also subtracts opex/portion.
           Sales-mix quadrant analysis (Stars / Dogs) lives under{' '}
           <Link href="/accounting/menu-engineering" className="text-s-teal hover:underline">Finance → Sales Quadrants</Link>.
         </p>
