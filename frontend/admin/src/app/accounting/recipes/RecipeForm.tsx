@@ -12,7 +12,7 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../../lib/api'
-import { RecipeTestLog } from '../../../components/recipe/RecipeTestLog'
+import { RecipeTestLog, type DraftAttempt } from '../../../components/recipe/RecipeTestLog'
 
 type Kind = 'plate' | 'component'
 type Category = 'main' | 'side' | 'sauce' | 'sub_recipe'
@@ -174,6 +174,9 @@ export function RecipeForm({ initial, prefillBrandId, prefillCategoryId }: {
       : [blankRow()],
   )
   const [err, setErr] = useState('')
+  // New-recipe test log: attempts logged before the recipe exists. Persisted
+  // right after the create POST returns an id.
+  const [draftAttempts, setDraftAttempts] = useState<DraftAttempt[]>([])
 
   // If creating + menu item is picked, infer the brand from it
   useEffect(() => {
@@ -361,9 +364,20 @@ export function RecipeForm({ initial, prefillBrandId, prefillCategoryId }: {
             }
           }),
       }
-      return isEdit
-        ? api.put(`/recipes/${initial!.id}`, payload)
-        : api.post('/recipes', payload)
+      if (isEdit) return api.put(`/recipes/${initial!.id}`, payload)
+      // Create, then persist any test attempts logged before the recipe had an
+      // id (the New-recipe test log buffers them). Sequential so the backend's
+      // auto version numbers follow the order they were logged.
+      return api.post<{ id: string }>('/recipes', payload).then(async (created) => {
+        for (const d of draftAttempts) {
+          await api.post(`/recipes/${created.id}/test-attempts`, {
+            notes: d.notes,
+            ...(d.outcome ? { outcome: d.outcome } : {}),
+            ...(d.rating !== '' ? { rating: Number(d.rating) } : {}),
+          })
+        }
+        return created
+      })
     },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['recipes'] })
@@ -721,8 +735,11 @@ export function RecipeForm({ initial, prefillBrandId, prefillCategoryId }: {
             )}
           </Section>
 
-          {/* Test log — only once the recipe exists (edit mode). */}
-          {isEdit && initial && <RecipeTestLog recipeId={initial.id} />}
+          {/* Test log — live-backed on edit; on create it buffers attempts
+              locally and they save with the recipe. */}
+          {isEdit && initial
+            ? <RecipeTestLog recipeId={initial.id} />
+            : <RecipeTestLog drafts={draftAttempts} onDraftsChange={setDraftAttempts} />}
         </div>
 
         {/* Cost panel (right) */}

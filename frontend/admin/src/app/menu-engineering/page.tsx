@@ -8,6 +8,7 @@
 //   recipe → plate cost → [this page] → selling price → menu item.
 import { useState } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../lib/api'
 import { recipeStatusMeta } from '../accounting/recipes/RecipeForm'
@@ -38,6 +39,7 @@ function fcColor(pct: number | null) {
 
 export default function MenuEngineeringPage() {
   const qc = useQueryClient()
+  const router = useRouter()
   const [conceptFilter, setConceptFilter] = useState('')
   const [search, setSearch] = useState('')
   // Local edit buffer: recipeId → price string being typed. Committed on blur/Enter.
@@ -164,12 +166,19 @@ export default function MenuEngineeringPage() {
                     const fc = plateCost !== null && price > 0 ? (plateCost / price) * 100 : null
                     const draft = draftPrice[r.id]
                     return (
-                      <tr key={r.id} style={{ borderBottom: idx < plates.length - 1 ? '1px solid rgba(255,255,255,0.04)' : 'none' }}>
+                      // Whole row opens the recipe — no need to aim for the name.
+                      // The price cell stops propagation so typing a price doesn't navigate.
+                      <tr key={r.id}
+                        onClick={() => router.push(`/accounting/recipes/${r.id}`)}
+                        className="cursor-pointer"
+                        onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,0.02)')}
+                        onMouseLeave={(e) => (e.currentTarget.style.background = '')}
+                        style={{ borderBottom: idx < plates.length - 1 ? '1px solid rgba(255,255,255,0.04)' : 'none', transition: 'background 0.12s' }}>
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-2 flex-wrap">
-                            <Link href={`/accounting/recipes/${r.id}`} className="font-semibold text-s-text hover:text-s-teal">
+                            <span className="font-semibold text-s-text">
                               {r.menuItem?.name ?? r.name ?? '—'}
-                            </Link>
+                            </span>
                             {r.status !== 'production' && (
                               <span className="text-[9px] font-black uppercase tracking-wider rounded-full px-2 py-0.5"
                                 style={{ background: recipeStatusMeta[r.status].bg, color: recipeStatusMeta[r.status].color }}>
@@ -182,7 +191,7 @@ export default function MenuEngineeringPage() {
                         <td className="px-4 py-3 text-right font-mono font-bold text-s-text">
                           {plateCost !== null ? fmtPKR(plateCost) : '—'}
                         </td>
-                        <td className="px-4 py-3 text-right">
+                        <td className="px-4 py-3 text-right" onClick={(e) => e.stopPropagation()}>
                           {r.menuItem ? (
                             <input
                               type="text" inputMode="decimal"

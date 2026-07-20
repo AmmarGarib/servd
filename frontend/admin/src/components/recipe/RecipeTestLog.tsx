@@ -1,12 +1,22 @@
 'use client'
-// Versioned test-cook log for a recipe under iteration. Lists past attempts
-// (newest first) and lets a manager log a new one. Backed by
-// GET/POST /recipes/:id/test-attempts.
+// Versioned test-cook log for a recipe under iteration. Two modes:
+//
+//   • Saved recipe (recipeId set) — lists past attempts (newest first) and
+//     posts new ones straight to GET/POST /recipes/:id/test-attempts.
+//   • New recipe (no recipeId; drafts + onDraftsChange set) — the recipe has
+//     no id yet, so attempts are buffered locally and the form persists them
+//     immediately after the recipe itself is created.
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../lib/api'
 
 type Outcome = 'promising' | 'needs_work' | 'rejected'
+
+export interface DraftAttempt {
+  notes: string
+  outcome: Outcome | ''
+  rating: number | ''
+}
 
 interface TestAttempt {
   id: string
@@ -24,16 +34,22 @@ const OUTCOME_META: Record<Outcome, { label: string; color: string; bg: string }
   rejected:   { label: 'Rejected',   color: '#FF6B6B', bg: 'rgba(255,77,79,0.12)' },
 }
 
-export function RecipeTestLog({ recipeId }: { recipeId: string }) {
+export function RecipeTestLog({ recipeId, drafts, onDraftsChange }: {
+  recipeId?: string
+  drafts?: DraftAttempt[]
+  onDraftsChange?: (d: DraftAttempt[]) => void
+}) {
   const qc = useQueryClient()
   const [notes, setNotes]     = useState('')
   const [outcome, setOutcome] = useState<'' | Outcome>('')
   const [rating, setRating]   = useState<'' | number>('')
   const [err, setErr]         = useState('')
+  const isDraftMode = !recipeId
 
   const { data: attempts = [], isLoading } = useQuery<TestAttempt[]>({
     queryKey: ['recipe', recipeId, 'test-attempts'],
     queryFn: () => api.get(`/recipes/${recipeId}/test-attempts`),
+    enabled: !!recipeId,
   })
 
   const add = useMutation({
@@ -51,6 +67,11 @@ export function RecipeTestLog({ recipeId }: { recipeId: string }) {
 
   function submit() {
     if (!notes.trim()) { setErr('Add a note describing the test.'); return }
+    if (isDraftMode) {
+      onDraftsChange?.([...(drafts ?? []), { notes: notes.trim(), outcome, rating }])
+      setNotes(''); setOutcome(''); setRating(''); setErr('')
+      return
+    }
     add.mutate()
   }
 
@@ -58,7 +79,9 @@ export function RecipeTestLog({ recipeId }: { recipeId: string }) {
     <section className="rounded-xl border border-s-border bg-s-surface p-5">
       <h2 className="text-base font-black">Test log</h2>
       <p className="text-[11px] text-s-muted mt-0.5 mb-3">
-        Record each test cook as you iterate. Versions are numbered automatically.
+        {isDraftMode
+          ? 'Log your first test cook(s) now — they save with the recipe. Versions are numbered automatically.'
+          : 'Record each test cook as you iterate. Versions are numbered automatically.'}
       </p>
 
       {/* Add a new attempt */}
@@ -87,7 +110,31 @@ export function RecipeTestLog({ recipeId }: { recipeId: string }) {
 
       {/* History */}
       <div className="mt-3 space-y-2">
-        {isLoading ? (
+        {isDraftMode ? (
+          (drafts ?? []).length === 0 ? (
+            <p className="text-xs text-s-dim">No test attempts logged yet.</p>
+          ) : (
+            (drafts ?? []).map((d, i) => (
+              <div key={i} className="rounded-lg border border-s-border p-3">
+                <div className="flex items-center gap-2 flex-wrap text-[11px]">
+                  <span className="font-black text-s-text">v{i + 1}</span>
+                  {d.outcome && (
+                    <span className="font-black uppercase tracking-wider rounded-full px-2 py-0.5"
+                      style={{ background: OUTCOME_META[d.outcome].bg, color: OUTCOME_META[d.outcome].color }}>
+                      {OUTCOME_META[d.outcome].label}
+                    </span>
+                  )}
+                  {d.rating !== '' && <span style={{ color: '#FDB022' }}>{'★'.repeat(Number(d.rating))}</span>}
+                  <span className="text-s-dim ml-auto">saves with recipe</span>
+                  <button type="button" title="Remove"
+                    onClick={() => onDraftsChange?.((drafts ?? []).filter((_, j) => j !== i))}
+                    className="text-red-400 hover:bg-red-400/10 rounded px-1.5">×</button>
+                </div>
+                <p className="mt-1 text-xs text-s-muted whitespace-pre-wrap">{d.notes}</p>
+              </div>
+            ))
+          )
+        ) : isLoading ? (
           <p className="text-xs text-s-muted">Loading…</p>
         ) : attempts.length === 0 ? (
           <p className="text-xs text-s-dim">No test attempts logged yet.</p>
