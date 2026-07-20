@@ -69,6 +69,7 @@ interface Recipe {
   seasonStart: string | null
   seasonEnd: string | null
   isActive: boolean
+  qFactorPct: number
   menuItem: { id: string; name: string; priceCents: number; conceptId: string; concept: ConceptWithTenant } | null
   ingredients: RecipeIngredient[]
   ingredientCostCents: number
@@ -400,7 +401,7 @@ export default function RecipesPage() {
                 color: avgFc == null ? 'text-s-muted' : avgFc <= 28 ? 'text-s-teal' : avgFc <= 35 ? 'text-s-amber' : 'text-s-red',
               },
               { label: 'Over 35% FC',   value: String(overBudget), color: overBudget ? 'text-s-red' : 'text-s-muted' },
-              { label: 'Q Factor Rate', value: '5%',               color: 'text-s-muted' },
+              { label: 'Q Factor Rate', value: 'per recipe',       color: 'text-s-muted' },
             ].map(({ label, value, color }) => (
               <div key={label} className="s-card px-4 py-3">
                 <p className="text-[10px] text-s-muted uppercase tracking-wider">{label}</p>
@@ -582,7 +583,7 @@ export default function RecipesPage() {
                             : [
                                 { label: 'BATCH YIELD',  value: r.yieldGrams ? `${r.yieldGrams}g` : '—' },
                               ]),
-                          { label: 'Q FACTOR (5%)',     value: fmtPKR(r.qFactorCents)                                },
+                          { label: `Q FACTOR (${r.qFactorPct ?? 10}%)`, value: fmtPKR(r.qFactorCents)                },
                           { label: 'TOTAL RECIPE COST', value: fmtPKR(r.totalCostCents)                              },
                           ...(r.kind === 'plate'
                             ? [{ label: 'PLATE COST',     value: fmtPKR(r.costPerPortionCents ?? 0) }]
@@ -674,7 +675,7 @@ export default function RecipesPage() {
                             </tr>
                             <tr style={{ borderTop: '1px solid rgba(255,255,255,0.04)', background: 'rgba(255,255,255,0.01)' }}>
                               <td colSpan={7} className="px-4 py-1.5 text-right text-s-muted" style={{ fontSize: '10px' }}>
-                                Q Factor — 5% misc. (salt, oil, unmeasured items)
+                                Q Factor — {r.qFactorPct ?? 10}% misc. (salt, oil, unmeasured items)
                               </td>
                               <td className="px-4 py-1.5 text-s-muted text-xs">{fmtPKR(r.qFactorCents)}</td>
                             </tr>

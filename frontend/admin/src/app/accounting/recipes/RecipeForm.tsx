@@ -342,7 +342,8 @@ export function RecipeForm({ initial, prefillBrandId, prefillCategoryId }: {
         qFactorPct: qFactor,
         targetProfitPct: targetProfit,
         packagingPct: packaging,
-        actualSellingPriceCents: actualSpPkr.trim() ? Math.round(parseFloat(actualSpPkr) * 100) : null,
+        // Sub-recipes aren't sold — never carry a selling price.
+        actualSellingPriceCents: kind === 'plate' && actualSpPkr.trim() ? Math.round(parseFloat(actualSpPkr) * 100) : null,
         ingredients: ings
           .filter((r) => (r.quantity ?? 0) > 0 && (r.source === 'component' ? r.prepRecipeId : r.inventoryItemId))
           .map((r) => {
@@ -731,7 +732,7 @@ export function RecipeForm({ initial, prefillBrandId, prefillCategoryId }: {
 
         {/* Cost panel (right) */}
         <aside className="space-y-4 lg:sticky lg:top-4 lg:self-start">
-          <CostPanel computed={computed} kind={kind} actualSpPkr={actualSpPkr} setActualSpPkr={setActualSpPkr} />
+          <CostPanel computed={computed} kind={kind} yieldGrams={yieldGrams} actualSpPkr={actualSpPkr} setActualSpPkr={setActualSpPkr} />
           <div className="rounded-xl border border-s-border bg-s-surface p-4 text-[11px] text-s-muted">
             <strong className="text-s-text">Heads-up:</strong> Live Opex/Portion isn't shown until save.
             The backend reads current OpexLine entries for {activeConcept?.name ?? 'your brand'} and divides by{' '}
@@ -789,9 +790,10 @@ interface ComputedShape {
   netProfit: number; netProfitPct: number; foodCostPctOfSp: number
   verdict: 'profitable' | 'covers_food_loses_opex' | 'loses_every_plate'
 }
-function CostPanel({ computed, kind, actualSpPkr, setActualSpPkr }: {
+function CostPanel({ computed, kind, yieldGrams, actualSpPkr, setActualSpPkr }: {
   computed: ComputedShape
   kind: Kind
+  yieldGrams: number | null
   actualSpPkr: string
   setActualSpPkr: (v: string) => void
 }) {
@@ -801,6 +803,33 @@ function CostPanel({ computed, kind, actualSpPkr, setActualSpPkr }: {
     covers_food_loses_opex:  { label: '⚠ Covers food, loses opex', color: '#F59E0B', bg: 'rgba(245,158,11,0.10)' },
     loses_every_plate:       { label: '✗ Loses every plate',       color: '#FF4D4F', bg: 'rgba(255,77,79,0.10)' },
   }[v.verdict]
+
+  // Sub-recipes aren't sold — no selling price, no pricing, no profitability.
+  // Their headline is batch cost + cost-per-gram (what flows into parents).
+  if (kind === 'component') {
+    const cpg = yieldGrams && yieldGrams > 0 ? v.totalRecipe / yieldGrams : null
+    return (
+      <div className="rounded-xl border border-s-border bg-s-surface overflow-hidden">
+        <header className="px-4 py-3 border-b border-s-border" style={{ background: 'rgba(99,102,241,0.10)' }}>
+          <p className="text-[10px] uppercase tracking-wider text-s-muted">Sub recipe</p>
+          <p className="text-base font-black mt-0.5" style={{ color: '#A5B4FC' }}>Costed per gram — not sold directly</p>
+        </header>
+        <div className="p-4 space-y-3">
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-wider text-s-muted mb-1">Batch cost build-up</p>
+            <Line label="Total ingredient" value={fmtPkr(v.totalIngredient)} />
+            <Line label="Q factor" value={fmtPkr(v.qFactorCents)} dim />
+            <Line label="Batch cost" value={fmtPkr(v.totalRecipe)} bold />
+            <Line label="Batch yield" value={yieldGrams && yieldGrams > 0 ? `${yieldGrams.toLocaleString('en')} g` : 'set batch yield'} dim />
+            <Line label="Cost per gram" value={cpg != null ? fmtPkrPerG(cpg) : '—'} bold highlight />
+          </div>
+          <p className="text-[10px] text-s-dim">
+            This cost-per-gram flows automatically into any plate or sub recipe that uses this component.
+          </p>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="rounded-xl border border-s-border bg-s-surface overflow-hidden">
@@ -816,9 +845,7 @@ function CostPanel({ computed, kind, actualSpPkr, setActualSpPkr }: {
           <Line label="Q factor" value={fmtPkr(v.qFactorCents)} dim />
           <Line label="Total recipe" value={fmtPkr(v.totalRecipe)} bold />
           <Line label="Plate cost" value={fmtPkr(v.plateCost)} highlight />
-          {kind === 'plate' && (
-            <Line label="Opex / portion (live on save)" value={v.forecastPortions > 0 ? '—' : 'forecast=0'} dim />
-          )}
+          <Line label="Opex / portion (live on save)" value={v.forecastPortions > 0 ? '—' : 'forecast=0'} dim />
         </div>
 
         <div className="pt-3 border-t border-s-border">

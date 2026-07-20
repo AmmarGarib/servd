@@ -23,13 +23,14 @@ function cpgCents(unit: string | null | undefined, unitCostCents: number | null 
 // We resolve EVERY component's cost-per-gram in one pass over the whole
 // component set, memoised, with a cycle guard so a mis-authored loop
 // (A→B→A) can't blow the stack — a cyclic back-edge just contributes 0.
-// For a component with only raw ingredients this yields the exact same number
-// as the old inline calc (ingCost*(1+Q_FACTOR)+labor)/yieldGrams.
+// Each component's batch cost uses ITS OWN qFactorPct (the recipe's waste
+// buffer, default 10) — not the legacy hardcoded 5% — so the cost-per-gram
+// that flows into parent recipes matches the component's own detail view.
 async function buildComponentCpgMap(): Promise<Map<string, number>> {
   const comps = await prisma.recipe.findMany({
     where: { kind: 'component' },
     select: {
-      id: true, yieldGrams: true, laborMinutes: true,
+      id: true, yieldGrams: true, laborMinutes: true, qFactorPct: true,
       ingredients: {
         select: {
           quantity: true, yieldPct: true, prepRecipeId: true,
@@ -59,7 +60,7 @@ async function buildComponentCpgMap(): Promise<Map<string, number>> {
     }
     stack.delete(id)
     const labor = (c.laborMinutes / 60) * 50_00
-    const result = (ingCost * (1 + Q_FACTOR) + labor) / c.yieldGrams
+    const result = (ingCost * (1 + (c.qFactorPct ?? 10) / 100) + labor) / c.yieldGrams
     memo.set(id, result)
     return result
   }
