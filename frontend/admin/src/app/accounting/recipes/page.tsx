@@ -15,20 +15,7 @@ function fmtPKR(cents: number) {
   return `PKR ${(cents / 100).toLocaleString('en-PK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
-function fmtPct(n: number) { return `${n.toFixed(1)}%` }
-
-function fcColor(pct: number | null) {
-  if (pct === null) return 'text-s-muted'
-  if (pct <= 28)    return 'text-s-teal'
-  if (pct <= 35)    return 'text-s-amber'
-  return 'text-s-red'
-}
-function fcLabel(pct: number | null) {
-  if (pct === null) return null
-  if (pct <= 28)    return { label: 'On Target',   dot: '🟢' }
-  if (pct <= 35)    return { label: 'Acceptable',  dot: '🟡' }
-  return              { label: 'Over Budget',  dot: '🔴' }
-}
+// (Food-cost % helpers removed — pricing and margin health moved to /menu-engineering.)
 
 interface Concept       { id: string; name: string }
 interface MenuItem      { id: string; name: string; priceCents: number; concept: { name: string } }
@@ -326,10 +313,9 @@ export default function RecipesPage() {
   })
   const isEditing = typeof modal === 'object' && modal !== null && 'id' in modal
 
-  // summary stats
-  const withFc     = (recipes ?? []).filter((r) => r.foodCostPct !== null)
-  const avgFc      = withFc.length ? withFc.reduce((s, r) => s + (r.foodCostPct ?? 0), 0) / withFc.length : null
-  const overBudget = (recipes ?? []).filter((r) => (r.foodCostPct ?? 0) > 35).length
+  // summary stats — pure cost (pricing/margins live in Menu Engineering)
+  const plateCount     = (recipes ?? []).filter((r) => r.kind === 'plate').length
+  const componentCount = (recipes ?? []).filter((r) => r.kind === 'component').length
 
   return (
     <div className="min-h-screen bg-s-bg">
@@ -394,14 +380,10 @@ export default function RecipesPage() {
         {(recipes?.length ?? 0) > 0 && (
           <div className="grid grid-cols-4 gap-3">
             {[
-              { label: 'Total Recipes', value: String(recipes!.length), color: 'text-s-text' },
-              {
-                label: 'Avg Food Cost',
-                value: avgFc != null ? fmtPct(avgFc) : '—',
-                color: avgFc == null ? 'text-s-muted' : avgFc <= 28 ? 'text-s-teal' : avgFc <= 35 ? 'text-s-amber' : 'text-s-red',
-              },
-              { label: 'Over 35% FC',   value: String(overBudget), color: overBudget ? 'text-s-red' : 'text-s-muted' },
-              { label: 'Q Factor Rate', value: 'per recipe',       color: 'text-s-muted' },
+              { label: 'Total Recipes', value: String(recipes!.length),  color: 'text-s-text' },
+              { label: 'Plates',        value: String(plateCount),       color: 'text-s-teal' },
+              { label: 'Components',    value: String(componentCount),   color: 'text-s-text' },
+              { label: 'Q Factor Rate', value: 'per recipe',             color: 'text-s-muted' },
             ].map(({ label, value, color }) => (
               <div key={label} className="s-card px-4 py-3">
                 <p className="text-[10px] text-s-muted uppercase tracking-wider">{label}</p>
@@ -445,8 +427,6 @@ export default function RecipesPage() {
           <div className="space-y-2">
             {filtered.map((r) => {
               const isOpen       = expanded === r.id
-              const fc           = r.foodCostPct
-              const fcMeta       = fcLabel(fc)
               const recipeWeightG = r.portionSizeG && r.servings ? r.portionSizeG * r.servings : null
 
               return (
@@ -516,19 +496,10 @@ export default function RecipesPage() {
                       <Metric label="Q Factor"     value={fmtPKR(r.qFactorCents)}        dim />
                       <Metric label="Total Cost"   value={fmtPKR(r.totalCostCents)}       bold />
                       {/* The headline number — different per kind. Plate: the
-                          per-portion cost (drives margin). Component: cost per
-                          gram (drives downstream plate costing). */}
+                          per-portion cost. Component: cost per gram (drives
+                          downstream plate costing). Margins live in Menu Engineering. */}
                       {r.kind === 'plate' ? (
-                        <>
-                          <Metric label="Plate Cost"   value={fmtPKR(r.costPerPortionCents ?? 0)} teal />
-                          <Metric label="Food Cost %"  value={fc !== null ? fmtPct(fc) : '—'} className={fcColor(fc)} bold />
-                          {fcMeta && (
-                            <div className="flex items-center gap-1 text-[10px] font-semibold" style={{ minWidth: 80 }}>
-                              <span>{fcMeta.dot}</span>
-                              <span className={fcColor(fc)}>{fcMeta.label}</span>
-                            </div>
-                          )}
-                        </>
+                        <Metric label="Plate Cost"   value={fmtPKR(r.costPerPortionCents ?? 0)} teal />
                       ) : (
                         <Metric
                           label="Cost / Gram"
@@ -698,9 +669,8 @@ export default function RecipesPage() {
                         </table>
                       </div>
 
-                      {/* Bottom metrics bar — plate recipes show portion +
-                          margin metrics against the linked menu item; prep
-                          recipes show cost-per-gram + batch context. */}
+                      {/* Bottom metrics bar — pure cost. Pricing + margins for
+                          plates moved to the Menu Engineering page. */}
                       <div className="px-5 py-3 flex flex-wrap items-center gap-6 border-t border-s-border/40"
                         style={{ background: 'rgba(255,255,255,0.01)' }}>
                         {r.kind === 'plate' ? (
@@ -709,45 +679,12 @@ export default function RecipesPage() {
                               <span className="text-s-muted">Plate cost: </span>
                               <span className="font-bold text-s-text">{fmtPKR(r.costPerPortionCents ?? 0)}</span>
                             </span>
-                            {r.menuItem && r.menuItem.priceCents > 0 ? (
-                              <>
-                                <span className="text-xs">
-                                  <span className="text-s-muted">Sale price: </span>
-                                  <span className="font-bold text-s-text">{fmtPKR(r.menuItem.priceCents)}</span>
-                                </span>
-                                <span className="text-xs">
-                                  <span className="text-s-muted">Gross profit: </span>
-                                  <span className="font-bold text-s-teal">
-                                    {fmtPKR(r.menuItem.priceCents - (r.costPerPortionCents ?? 0))}
-                                  </span>
-                                </span>
-                                <span className="text-xs">
-                                  <span className="text-s-muted">Food cost %: </span>
-                                  <span className={`font-black ${fcColor(fc)}`}>
-                                    {fc !== null ? fmtPct(fc) : '—'}
-                                  </span>
-                                </span>
-                                <span className="text-xs">
-                                  <span className="text-s-muted">Gross margin: </span>
-                                  <span className={`font-bold ${(r.grossMarginPct ?? 0) >= 65 ? 'text-s-teal' : (r.grossMarginPct ?? 0) >= 50 ? 'text-s-amber' : 'text-s-red'}`}>
-                                    {r.grossMarginPct !== null ? fmtPct(r.grossMarginPct) : '—'}
-                                  </span>
-                                </span>
-                                {fcMeta && (
-                                  <div className="ml-auto flex items-center gap-1.5 text-xs font-bold">
-                                    <span>{fcMeta.dot}</span>
-                                    <span className={fcColor(fc)}>{fcMeta.label}</span>
-                                    {fc !== null && fc > 28 && (
-                                      <span className="text-s-dim font-normal text-[10px]">
-                                        ({(fc - 28).toFixed(1)}pp over target)
-                                      </span>
-                                    )}
-                                  </div>
-                                )}
-                              </>
-                            ) : (
-                              <p className="text-xs text-s-dim">Set a menu price for this item to see food cost %</p>
-                            )}
+                            <span className="text-xs ml-auto text-s-dim italic">
+                              Selling price &amp; margins live in{' '}
+                              <Link href="/menu-engineering" className="text-s-teal hover:underline not-italic" onClick={(e) => e.stopPropagation()}>
+                                Menu Engineering
+                              </Link>.
+                            </span>
                           </>
                         ) : (
                           <>

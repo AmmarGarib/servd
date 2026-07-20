@@ -154,6 +154,9 @@ const NAV: NavSection[] = [
     items: [
       { href: '/menu',                label: 'Menu',         icon: '📝', module: 'menu' },
       { href: '/accounting/recipes',  label: 'Recipes',      icon: '📐', module: 'recipes' },
+      // Pricing lives here, not on recipes: recipes are pure cost; this page
+      // takes each plate's cost and owns selling price + margins.
+      { href: '/menu-engineering',    label: 'Menu Engineering', icon: '💹', module: 'recipes' },
       { href: '/sourcing',            label: 'Sourcing Master Sheet', icon: '🧾', module: 'inventory' },
       { href: '/par-sheet',           label: 'Par Sheet',    icon: '📋', module: 'par_sheet' },
       { href: '/inventory',           label: 'Inventory',    icon: '📦', module: 'inventory' },
@@ -217,7 +220,9 @@ const NAV: NavSection[] = [
       { href: '/finance',                label: 'P&L',             icon: '💰', module: 'finance_pl' },
       { href: '/accounting',             label: 'Accounting',      icon: '📊', module: 'accounting', children: [
         { href: '/accounting/food-cost',        label: 'Food Cost',        module: 'accounting' },
-        { href: '/accounting/menu-engineering', label: 'Menu Engineering', module: 'accounting' },
+        // Sales-mix quadrant report (orders × margin). Renamed so the ONE
+        // "Menu Engineering" is the Kitchen pricing page at /menu-engineering.
+        { href: '/accounting/menu-engineering', label: 'Sales Quadrants', module: 'accounting' },
         { href: '/allocations',                 label: 'Allocations',      module: 'accounting' },
       ]},
       { href: '/gift-cards',             label: 'Gift Cards',      icon: '🎁', module: 'gift_cards' },

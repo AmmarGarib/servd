@@ -340,10 +340,9 @@ export function RecipeForm({ initial, prefillBrandId, prefillCategoryId }: {
                        .filter((s) => s.instruction)
           : null,
         qFactorPct: qFactor,
-        targetProfitPct: targetProfit,
-        packagingPct: packaging,
-        // Sub-recipes aren't sold — never carry a selling price.
-        actualSellingPriceCents: kind === 'plate' && actualSpPkr.trim() ? Math.round(parseFloat(actualSpPkr) * 100) : null,
+        // Pricing (selling price, target profit, packaging) is intentionally NOT
+        // sent from the recipe form — recipes are pure cost. The Menu Engineering
+        // page owns the selling price and writes it via its own PUT.
         ingredients: ings
           .filter((r) => (r.quantity ?? 0) > 0 && (r.source === 'component' ? r.prepRecipeId : r.inventoryItemId))
           .map((r) => {
@@ -407,8 +406,8 @@ export function RecipeForm({ initial, prefillBrandId, prefillCategoryId }: {
           </div>
           <h1 className="text-2xl font-black">{isEdit ? 'Edit recipe' : 'New recipe'}</h1>
           <p className="text-sm text-s-muted mt-1 max-w-2xl">
-            One page in, plate cost + suggested price + profitability out. Numbers update live as you edit;
-            on save the backend recomputes with current OpEx + ingredient prices.
+            Pure cost: ingredients in, plate cost (or cost-per-gram) out — numbers update live as you edit.
+            Selling price &amp; margins are set in <Link href="/menu-engineering" className="text-s-teal hover:underline">Menu Engineering</Link>.
           </p>
         </div>
       </header>
@@ -654,15 +653,11 @@ export function RecipeForm({ initial, prefillBrandId, prefillCategoryId }: {
                 <p className="font-mono font-bold text-s-text">{fmtPkr(computed.totalRecipe)}</p>
               </div>
             </div>
+            {/* Q factor is a COST input (waste buffer) so it stays on the recipe.
+                Pricing inputs (target profit, packaging) live in Menu Engineering. */}
             <div className="mt-3 grid grid-cols-3 gap-3">
               <Field label="Q factor %" hint="Waste buffer on total">
                 <NumInput value={qFactor} onChange={(v) => setQFactor(v ?? 0)} placeholder="10" className={inputCls}/>
-              </Field>
-              <Field label="Target profit %" hint="Pre-opex">
-                <NumInput value={targetProfit} onChange={(v) => setTargetProfit(v ?? 0)} placeholder="25" className={inputCls}/>
-              </Field>
-              <Field label="Packaging %" hint="Of selling price">
-                <NumInput value={packaging} onChange={(v) => setPackaging(v ?? 0)} placeholder="8" className={inputCls}/>
               </Field>
             </div>
             {allAllergens.length > 0 && (
@@ -732,7 +727,7 @@ export function RecipeForm({ initial, prefillBrandId, prefillCategoryId }: {
 
         {/* Cost panel (right) */}
         <aside className="space-y-4 lg:sticky lg:top-4 lg:self-start">
-          <CostPanel computed={computed} kind={kind} yieldGrams={yieldGrams} actualSpPkr={actualSpPkr} setActualSpPkr={setActualSpPkr} />
+          <CostPanel computed={computed} kind={kind} yieldGrams={yieldGrams} />
           <div className="rounded-xl border border-s-border bg-s-surface p-4 text-[11px] text-s-muted">
             <strong className="text-s-text">Heads-up:</strong> Live Opex/Portion isn't shown until save.
             The backend reads current OpexLine entries for {activeConcept?.name ?? 'your brand'} and divides by{' '}
@@ -790,22 +785,16 @@ interface ComputedShape {
   netProfit: number; netProfitPct: number; foodCostPctOfSp: number
   verdict: 'profitable' | 'covers_food_loses_opex' | 'loses_every_plate'
 }
-function CostPanel({ computed, kind, yieldGrams, actualSpPkr, setActualSpPkr }: {
+// Pure cost — no pricing here. Recipes carry cost only; selling price,
+// contribution margin and profitability live on the Menu Engineering page.
+function CostPanel({ computed, kind, yieldGrams }: {
   computed: ComputedShape
   kind: Kind
   yieldGrams: number | null
-  actualSpPkr: string
-  setActualSpPkr: (v: string) => void
 }) {
   const v = computed
-  const verdictMeta = {
-    profitable:              { label: '✓ Profitable',              color: '#00D4B1', bg: 'rgba(0,212,177,0.10)' },
-    covers_food_loses_opex:  { label: '⚠ Covers food, loses opex', color: '#F59E0B', bg: 'rgba(245,158,11,0.10)' },
-    loses_every_plate:       { label: '✗ Loses every plate',       color: '#FF4D4F', bg: 'rgba(255,77,79,0.10)' },
-  }[v.verdict]
 
-  // Sub-recipes aren't sold — no selling price, no pricing, no profitability.
-  // Their headline is batch cost + cost-per-gram (what flows into parents).
+  // Sub-recipes: batch cost + cost-per-gram (what flows into parents).
   if (kind === 'component') {
     const cpg = yieldGrams && yieldGrams > 0 ? v.totalRecipe / yieldGrams : null
     return (
@@ -833,9 +822,9 @@ function CostPanel({ computed, kind, yieldGrams, actualSpPkr, setActualSpPkr }: 
 
   return (
     <div className="rounded-xl border border-s-border bg-s-surface overflow-hidden">
-      <header className="px-4 py-3 border-b border-s-border" style={{ background: verdictMeta.bg }}>
-        <p className="text-[10px] uppercase tracking-wider text-s-muted">Verdict</p>
-        <p className="text-base font-black mt-0.5" style={{ color: verdictMeta.color }}>{verdictMeta.label}</p>
+      <header className="px-4 py-3 border-b border-s-border" style={{ background: 'rgba(0,212,177,0.08)' }}>
+        <p className="text-[10px] uppercase tracking-wider text-s-muted">Recipe cost</p>
+        <p className="text-base font-black mt-0.5" style={{ color: '#5EEAD4' }}>{fmtPkr(v.plateCost)} / plate</p>
       </header>
 
       <div className="p-4 space-y-3">
@@ -845,35 +834,11 @@ function CostPanel({ computed, kind, yieldGrams, actualSpPkr, setActualSpPkr }: 
           <Line label="Q factor" value={fmtPkr(v.qFactorCents)} dim />
           <Line label="Total recipe" value={fmtPkr(v.totalRecipe)} bold />
           <Line label="Plate cost" value={fmtPkr(v.plateCost)} highlight />
-          <Line label="Opex / portion (live on save)" value={v.forecastPortions > 0 ? '—' : 'forecast=0'} dim />
         </div>
-
-        <div className="pt-3 border-t border-s-border">
-          <p className="text-[10px] font-bold uppercase tracking-wider text-s-muted mb-1">Suggested pricing</p>
-          <Line label="Food-cost price (legacy)" value={fmtPkr(v.foodCostPrice)} dim />
-          <Line label="Break-even" value={fmtPkr(v.breakEven)} />
-          <Line label="Target" value={fmtPkr(v.target)} bold highlight />
-        </div>
-
-        <div className="pt-3 border-t border-s-border">
-          <label className="block">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-s-muted block mb-1">Actual selling price (PKR)</span>
-            <input type="text" inputMode="decimal" value={actualSpPkr}
-              placeholder={String(Math.round(v.target / 100))}
-              onChange={(e) => { const raw = e.target.value; if (raw === '' || /^\d*\.?\d*$/.test(raw)) setActualSpPkr(raw) }}
-              className="w-full rounded-md border border-s-border bg-s-bg px-3 py-2 text-sm font-mono"/>
-            <span className="text-[10px] text-s-dim mt-1 block">Blank = use Target ({fmtPkr(v.target)}).</span>
-          </label>
-        </div>
-
-        <div className="pt-3 border-t border-s-border">
-          <p className="text-[10px] font-bold uppercase tracking-wider text-s-muted mb-1">Profitability</p>
-          <Line label="Packaging cost" value={fmtPkr(v.packagingCost)} dim />
-          <Line label="Contribution margin" value={`${fmtPkr(v.contribMargin)} · ${fmtPct(v.contribMarginPct)}`} />
-          <Line label="Net profit / portion" value={`${fmtPkr(v.netProfit)} · ${fmtPct(v.netProfitPct)}`} bold
-            highlightColor={v.netProfit >= 0 ? '#00D4B1' : '#FF4D4F'} />
-          <Line label="Food cost % of SP" value={fmtPct(v.foodCostPctOfSp)} dim />
-        </div>
+        <p className="text-[10px] text-s-dim">
+          Selling price, contribution margin and profitability live in{' '}
+          <Link href="/menu-engineering" className="text-s-teal hover:underline">Menu Engineering</Link>.
+        </p>
       </div>
     </div>
   )
