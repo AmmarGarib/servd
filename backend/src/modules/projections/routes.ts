@@ -15,6 +15,7 @@ import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, MANAGERS } from '../auth/middleware.js'
+import { resolveTenantScope } from '../../lib/tenantScope.js'
 
 const brandInputSchema = z.object({
   conceptId:           z.string(),
@@ -81,13 +82,25 @@ export async function projectionsRoutes(fastify: FastifyInstance) {
         where: { id: req.params.id },
         include: {
           brands: {
-            include: { concept: { select: { id: true, name: true, slug: true, primaryColor: true } } },
+            include: { concept: { select: { id: true, name: true, slug: true, primaryColor: true, tenantId: true, deletedAt: true } } },
           },
         },
       })
       if (!projection) return reply.status(404).send({ error: { code: 'NOT_FOUND' } })
 
-      const conceptIds = projection.brands.map((b) => b.conceptId)
+      // Scope the view to the active company (or the full portfolio in
+      // "All companies" mode) — same mechanism as /concepts, so the brands
+      // shown here always match the brands shown everywhere else. The
+      // scenario itself stores every brand ever added; we just filter the
+      // response. "Combined" then sums only the visible brands.
+      const scope = await resolveTenantScope(req)
+      const visibleBrandInputs = projection.brands.filter((b) =>
+        !b.concept.deletedAt
+        && b.concept.tenantId != null
+        && scope.tenantIds.includes(b.concept.tenantId),
+      )
+
+      const conceptIds = visibleBrandInputs.map((b) => b.conceptId)
 
       // Aggregate staff cost per concept (active positions only)
       const positions = await prisma.position.findMany({
@@ -135,7 +148,7 @@ export async function projectionsRoutes(fastify: FastifyInstance) {
       const rampLen = rampCurve.length
 
       // Per-brand 12-month rows
-      const brands = projection.brands.map((b) => {
+      const brands = visibleBrandInputs.map((b) => {
         const staffMonthlyCents = staffByBrand.get(b.conceptId) ?? 0
         const opexMonthlyCents  = opexByBrand.get(b.conceptId)  ?? 0
         const capexTotalCents   = capexByBrand.get(b.conceptId) ?? 0
