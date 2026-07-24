@@ -173,11 +173,20 @@ export async function opsReportRoutes(fastify: FastifyInstance) {
           where: { shiftId: shift.id, status: 'paid' },
           _sum: { amountCents: true }, _count: true,
         }),
+        // Scope both to the shift's tenant — a bare time window would count
+        // every company's complaints/voids into this shift's digest.
         prisma.orderComplaint.count({
-          where: { createdAt: { gte: from, lte: to } },
+          where: {
+            createdAt: { gte: from, lte: to },
+            concept: { tenantId: req.staffUser!.tenantId },
+          },
         }).catch(() => 0),
         prisma.orderItem.count({
-          where: { status: 'voided', updatedAt: { gte: from, lte: to } },
+          where: {
+            status: 'voided',
+            updatedAt: { gte: from, lte: to },
+            order: { concept: { tenantId: req.staffUser!.tenantId } },
+          },
         }),
       ])
 
@@ -251,6 +260,20 @@ export async function opsReportRoutes(fastify: FastifyInstance) {
       const baselineSince = new Date(Date.now() - (hours + 24 * 7) * 3600_000)
       const baselineUntil = since
 
+      // Company scoping — every probe below is restricted to the concepts
+      // visible to this request (and honours ?conceptId, which was previously
+      // accepted but silently ignored).
+      const tenantFilter = req.staffUser!.tenantFilter
+      const scopedConcepts = await prisma.concept.findMany({
+        where: { tenantId: tenantFilter, deletedAt: null },
+        select: { id: true },
+      })
+      let conceptIds = scopedConcepts.map((c) => c.id)
+      if (req.query.conceptId) {
+        conceptIds = conceptIds.filter((id) => id === req.query.conceptId)
+      }
+      const orderScope = { order: { conceptId: { in: conceptIds } } }
+
       const flags: Array<{
         severity: 'low' | 'medium' | 'high'
         category: 'kitchen' | 'cash' | 'customer' | 'inventory'
@@ -262,6 +285,7 @@ export async function opsReportRoutes(fastify: FastifyInstance) {
       // 1. Ticket-time spikes — average bumped→completed time vs baseline
       const recentItems = await prisma.orderItem.findMany({
         where: {
+          ...orderScope,
           firedAt:    { not: null, gte: since },
           completedAt:{ not: null },
           status:     'bumped',
@@ -271,6 +295,7 @@ export async function opsReportRoutes(fastify: FastifyInstance) {
       })
       const baselineItems = await prisma.orderItem.findMany({
         where: {
+          ...orderScope,
           firedAt:    { not: null, gte: baselineSince, lt: baselineUntil },
           completedAt:{ not: null },
           status:     'bumped',
@@ -295,8 +320,8 @@ export async function opsReportRoutes(fastify: FastifyInstance) {
       }
 
       // 2. Void / comp rate spike
-      const recentVoids = await prisma.orderItem.count({ where: { status: 'voided', updatedAt: { gte: since } } })
-      const recentItemsTotal = await prisma.orderItem.count({ where: { createdAt: { gte: since } } })
+      const recentVoids = await prisma.orderItem.count({ where: { ...orderScope, status: 'voided', updatedAt: { gte: since } } })
+      const recentItemsTotal = await prisma.orderItem.count({ where: { ...orderScope, createdAt: { gte: since } } })
       const voidRate = recentItemsTotal > 0 ? recentVoids / recentItemsTotal : 0
       if (voidRate > 0.05) {
         flags.push({
@@ -310,7 +335,7 @@ export async function opsReportRoutes(fastify: FastifyInstance) {
 
       // 3. Complaint cluster — same category 3+ times in window
       const complaints = await prisma.orderComplaint.findMany({
-        where: { createdAt: { gte: since } },
+        where: { conceptId: { in: conceptIds }, createdAt: { gte: since } },
         select: { category: true },
       })
       const byCategory: Record<string, number> = {}
@@ -327,9 +352,13 @@ export async function opsReportRoutes(fastify: FastifyInstance) {
         }
       }
 
-      // 4. Inventory items at or below par level
+      // 4. Inventory items at or below par level (company's own + shared items)
       const lowStock = await prisma.inventoryItem.findMany({
-        where: { deletedAt: null, currentStock: { lte: prisma.inventoryItem.fields.parLevel } },
+        where: {
+          deletedAt: null,
+          currentStock: { lte: prisma.inventoryItem.fields.parLevel },
+          OR: [{ tenantId: tenantFilter }, { tenantId: null }],
+        },
         select: { id: true, name: true, currentStock: true, parLevel: true, unit: true },
         take: 20,
       })

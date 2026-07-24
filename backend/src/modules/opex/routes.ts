@@ -344,12 +344,18 @@ export async function opexRoutes(fastify: FastifyInstance) {
 
   // â”€â”€â”€ Cash-flow forecast (next 90 days) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-  fastify.get('/cashflow', { preHandler: requireAuth(...MANAGERS) }, async () => {
+  fastify.get('/cashflow', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
     const now = new Date()
     const horizon = new Date(now); horizon.setDate(horizon.getDate() + 90)
 
     const lines = await prisma.opexLine.findMany({
-      where: { isActive: true, nextDueDate: { gte: now, lte: horizon } },
+      where: {
+        isActive: true,
+        nextDueDate: { gte: now, lte: horizon },
+        // Company scoping via the line's category tenant — matches every other
+        // opex read in this module.
+        category: { tenantId: req.staffUser!.tenantFilter },
+      },
       include: { category: { select: { name: true, emoji: true } } },
       orderBy: { nextDueDate: 'asc' },
     })

@@ -62,15 +62,22 @@ function calcDailyCovers(b: { seats: number; tableTurnHours: number; seatUtiliza
 
 export async function projectionsRoutes(fastify: FastifyInstance) {
   // ── List all scenarios ────────────────────────────────────────────────
-  fastify.get('/', { preHandler: requireAuth(...MANAGERS) }, async () => {
-    return prisma.projection.findMany({
+  fastify.get('/', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
+    const scenarios = await prisma.projection.findMany({
       include: {
         brands: {
-          include: { concept: { select: { id: true, name: true, slug: true, primaryColor: true } } },
+          include: { concept: { select: { id: true, name: true, slug: true, primaryColor: true, tenantId: true } } },
         },
       },
       orderBy: { createdAt: 'desc' },
     })
+    // Trim each scenario's brand list to the caller's tenant scope so the
+    // payload doesn't expose other companies' concept names/colors.
+    const scope = await resolveTenantScope(req)
+    return scenarios.map((s) => ({
+      ...s,
+      brands: s.brands.filter((b) => b.concept.tenantId != null && scope.tenantIds.includes(b.concept.tenantId)),
+    }))
   })
 
   // ── Get one scenario with full computed 12-month matrix ───────────────

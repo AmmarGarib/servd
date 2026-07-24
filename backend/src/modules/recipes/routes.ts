@@ -190,6 +190,28 @@ const poSchema = z.object({
   })).min(1),
 })
 
+// ── Tenant scoping ──────────────────────────────────────────────────────────
+// Recipes have no tenant column: plates scope through their menu item's
+// concept — or, pre-approval, through pendingMenuItem.conceptId (a Json
+// payload, so it can't be filtered in SQL; we post-filter). Components are
+// shared across every brand by design and always pass.
+async function scopedConceptIdSet(req: { staffUser?: { tenantFilter: unknown } | null }): Promise<Set<string>> {
+  const concepts = await prisma.concept.findMany({
+    where: { tenantId: (req.staffUser!.tenantFilter ?? undefined) as string, deletedAt: null },
+    select: { id: true },
+  })
+  return new Set(concepts.map((c) => c.id))
+}
+function recipeInScope(
+  r: { kind: string; menuItem?: { conceptId: string } | null; pendingMenuItem?: unknown },
+  conceptIds: Set<string>,
+): boolean {
+  if (r.kind === 'component') return true
+  const pending = r.pendingMenuItem as { conceptId?: string } | null
+  const cid = r.menuItem?.conceptId ?? pending?.conceptId ?? null
+  return cid != null && conceptIds.has(cid)
+}
+
 export async function recipeRoutes(fastify: FastifyInstance) {
 
   // ── Recipes ────────────────────────────────────────────────────────────────
@@ -209,7 +231,13 @@ export async function recipeRoutes(fastify: FastifyInstance) {
       let { season } = req.query
       if (season === 'current') season = currentSeasonsForDate(new Date())[0]
 
-      const recipes = await prisma.recipe.findMany({
+      // Company scoping: resolve the concepts visible to this request up
+      // front. An explicitly requested conceptId outside the scope returns
+      // nothing rather than leaking another company's recipes.
+      const visibleConceptIds = await scopedConceptIdSet(req)
+      if (conceptId && !visibleConceptIds.has(conceptId)) return []
+
+      const fetched = await prisma.recipe.findMany({
         where: {
           ...(conceptId && { menuItem: { conceptId } }),
           ...(activeOnly === 'true' && { isActive: true }),
@@ -258,6 +286,10 @@ export async function recipeRoutes(fastify: FastifyInstance) {
         // sorts NULLs last by default so plate recipes group naturally.
         orderBy: [{ menuItem: { name: 'asc' } }, { name: 'asc' }],
       })
+
+      // Post-filter to the visible companies (components always pass — they're
+      // shared across brands; testing plates match via pendingMenuItem).
+      const recipes = fetched.filter((r) => recipeInScope(r, visibleConceptIds))
 
       // Recipe library is the operator's IP. Bulk reads above the threshold
       // signal exfiltration and fire a flag.
@@ -409,13 +441,15 @@ export async function recipeRoutes(fastify: FastifyInstance) {
       const recipe = await prisma.recipe.findUnique({
         where: { id: req.params.id },
         include: {
-          menuItem: { select: { id: true, name: true, priceCents: true, concept: { select: { name: true } } } },
+          menuItem: { select: { id: true, name: true, priceCents: true, conceptId: true, concept: { select: { name: true } } } },
           ingredients: {
             include: { inventoryItem: { select: { id: true, name: true, unit: true, unitCostCents: true, currentStock: true } } },
           },
         },
       })
       if (!recipe) throw new NotFoundError('Recipe', req.params.id)
+      // Cross-company guard — 404 (not 403) so ids don't leak existence.
+      if (!recipeInScope(recipe, await scopedConceptIdSet(req))) throw new NotFoundError('Recipe', req.params.id)
       return recipe
     },
   )
@@ -448,6 +482,8 @@ export async function recipeRoutes(fastify: FastifyInstance) {
         },
       })
       if (!recipe) throw new NotFoundError('Recipe', req.params.id)
+      // Cross-company guard — 404 so ids don't leak existence.
+      if (!recipeInScope(recipe, await scopedConceptIdSet(req))) throw new NotFoundError('Recipe', req.params.id)
 
       // Recursive component cost-per-gram map — correctly costs a component that
       // is itself built from other components.
@@ -656,6 +692,13 @@ export async function recipeRoutes(fastify: FastifyInstance) {
     '/by-item/:menuItemId',
     { preHandler: requireAuth(...ALL_STAFF) },
     async (req) => {
+      // Cross-company guard: the menu item must belong to a concept in the
+      // caller's tenant scope (null result mirrors "no recipe" — no leak).
+      const inScope = await prisma.menuItem.findFirst({
+        where: { id: req.params.menuItemId, concept: { tenantId: req.staffUser!.tenantFilter } },
+        select: { id: true },
+      })
+      if (!inScope) return null
       const recipe = await prisma.recipe.findUnique({
         where: { menuItemId: req.params.menuItemId },
         include: {
@@ -980,6 +1023,14 @@ export async function recipeRoutes(fastify: FastifyInstance) {
     '/:id/test-attempts',
     { preHandler: requireAuth(...MANAGERS) },
     async (req) => {
+      // Cross-company guard on the parent recipe.
+      const parent = await prisma.recipe.findUnique({
+        where: { id: req.params.id },
+        select: { kind: true, pendingMenuItem: true, menuItem: { select: { conceptId: true } } },
+      })
+      if (!parent || !recipeInScope(parent, await scopedConceptIdSet(req))) {
+        throw new NotFoundError('Recipe', req.params.id)
+      }
       return prisma.recipeTestAttempt.findMany({
         where: { recipeId: req.params.id },
         orderBy: { version: 'desc' },
@@ -1035,10 +1086,23 @@ export async function recipeRoutes(fastify: FastifyInstance) {
       const from = dateFrom ? new Date(dateFrom) : new Date(Date.now() - 30 * 86_400_000)
       const to   = dateTo   ? new Date(dateTo)   : new Date()
 
+      // Company scoping: restrict everything to the concepts visible to this
+      // request. An out-of-scope conceptId behaves like an unknown one.
+      const visibleConceptIds = await scopedConceptIdSet(req)
+      if (conceptId && !visibleConceptIds.has(conceptId)) {
+        return {
+          period: { from: from.toISOString(), to: to.toISOString() },
+          revenue: { grossCents: 0, netCents: 0 },
+          cost: { theoreticalCents: 0, actualPurchasesCents: 0, theoreticalFoodCostPct: 0, targetFoodCostPct: 30, variance: -30, status: 'good' },
+          byItem: [], itemsWithoutRecipe: [],
+        }
+      }
+      const conceptScope = conceptId ? [conceptId] : Array.from(visibleConceptIds)
+
       // Sales in period
       const salesData = await prisma.financialEntry.aggregate({
         where: {
-          ...(conceptId && { conceptId }),
+          conceptId: { in: conceptScope },
           entryDate: { gte: from, lte: to },
         },
         _sum: { grossCents: true, netCents: true },
@@ -1052,7 +1116,7 @@ export async function recipeRoutes(fastify: FastifyInstance) {
         by: ['menuItemId', 'name'],
         where: {
           order: {
-            ...(conceptId && { conceptId }),
+            conceptId: { in: conceptScope },
             status: 'completed',
             placedAt: { gte: from, lte: to },
           },
@@ -1063,7 +1127,7 @@ export async function recipeRoutes(fastify: FastifyInstance) {
 
       // Recipes with costs
       const recipes = await prisma.recipe.findMany({
-        where: { menuItem: { ...(conceptId && { conceptId }) } },
+        where: { menuItem: { conceptId: { in: conceptScope } } },
         include: {
           menuItem: { select: { id: true, name: true, priceCents: true } },
           ingredients: { include: { inventoryItem: { select: { unitCostCents: true } } } },
@@ -1116,12 +1180,14 @@ export async function recipeRoutes(fastify: FastifyInstance) {
 
       byItem.sort((a, b) => b.totalCost - a.totalCost)
 
-      // Actual food cost from purchases in period
+      // Actual food cost from purchases in period. POs scope through their
+      // supplier's tenant (legacy suppliers with no tenant count for everyone).
       const purchases = await prisma.purchaseOrderLine.aggregate({
         where: {
           purchaseOrder: {
             status: 'received',
             receivedDate: { gte: from, lte: to },
+            supplier: { OR: [{ tenantId: req.staffUser!.tenantFilter }, { tenantId: null }] },
           },
         },
         _sum: { unitCostCents: true },
@@ -1155,10 +1221,14 @@ export async function recipeRoutes(fastify: FastifyInstance) {
 
   // ── Vendors / Purchase Orders ──────────────────────────────────────────────
 
-  // GET /recipes/vendors
-  fastify.get('/vendors', { preHandler: requireAuth(...MANAGERS) }, async () => {
+  // GET /recipes/vendors — scoped to the active company's suppliers (legacy
+  // rows with no tenant stay visible everywhere until assigned).
+  fastify.get('/vendors', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
     return prisma.supplier.findMany({
-      where: { deletedAt: null },
+      where: {
+        deletedAt: null,
+        OR: [{ tenantId: req.staffUser!.tenantFilter }, { tenantId: null }],
+      },
       include: { _count: { select: { purchaseOrders: true, inventoryItems: true } } },
       orderBy: { name: 'asc' },
     })
@@ -1205,6 +1275,8 @@ export async function recipeRoutes(fastify: FastifyInstance) {
         where: {
           ...(req.query.supplierId && { supplierId: req.query.supplierId }),
           ...(req.query.status    && { status: req.query.status }),
+          // POs scope through their supplier's tenant (null = legacy/shared).
+          supplier: { OR: [{ tenantId: req.staffUser!.tenantFilter }, { tenantId: null }] },
         },
         include: {
           supplier: { select: { name: true } },
@@ -1328,6 +1400,12 @@ export async function recipeRoutes(fastify: FastifyInstance) {
     '/:recipeId/steps',
     { preHandler: requireAuth(...ALL_STAFF) },
     async (req) => {
+      // Cross-company guard on the parent recipe (empty list, no leak).
+      const parent = await prisma.recipe.findUnique({
+        where: { id: req.params.recipeId },
+        select: { kind: true, pendingMenuItem: true, menuItem: { select: { conceptId: true } } },
+      })
+      if (!parent || !recipeInScope(parent, await scopedConceptIdSet(req))) return []
       return prisma.recipeStep.findMany({
         where: { recipeId: req.params.recipeId },
         orderBy: [{ phase: 'asc' }, { ordinal: 'asc' }],

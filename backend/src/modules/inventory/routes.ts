@@ -198,6 +198,8 @@ export async function inventoryRoutes(fastify: FastifyInstance) {
         where: {
           ...(req.query.inventoryItemId && { inventoryItemId: req.query.inventoryItemId }),
           ...(from || to ? { recordedAt: { ...(from && { gte: from }), ...(to && { lte: to }) } } : {}),
+          // Company scoping via the wasted item's tenant (null = shared item).
+          inventoryItem: { OR: [{ tenantId: req.staffUser!.tenantFilter }, { tenantId: null }] },
         },
         include: {
           inventoryItem: { select: { name: true, unit: true, unitCostCents: true } },
@@ -224,7 +226,11 @@ export async function inventoryRoutes(fastify: FastifyInstance) {
       const from = req.query.from ? new Date(req.query.from) : new Date(to.getTime() - 30 * 86_400_000)
 
       const logs = await prisma.wasteLog.findMany({
-        where: { recordedAt: { gte: from, lte: to } },
+        where: {
+          recordedAt: { gte: from, lte: to },
+          // Company scoping via the wasted item's tenant (null = shared item).
+          inventoryItem: { OR: [{ tenantId: req.staffUser!.tenantFilter }, { tenantId: null }] },
+        },
         select: {
           quantity: true, reason: true, estimatedCostCents: true, recordedAt: true,
           inventoryItem: { select: { id: true, name: true, unit: true, unitCostCents: true } },
