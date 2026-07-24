@@ -108,6 +108,7 @@ export default function RecipesPage() {
   const { data: me } = usePermissions()
   const isCeo = me?.role === 'admin'   // 'admin' is shown as "CEO" in this app
   const [conceptFilter, setConceptFilter] = useState('')
+  const [kindFilter,    setKindFilter]    = useState<'' | 'plate' | 'component'>('')
   const [search,        setSearch]        = useState('')
   const [expanded,      setExpanded]      = useState<string | null>(null)
   const [modal,         setModal]         = useState<'create' | Recipe | null>(null)
@@ -298,6 +299,7 @@ export default function RecipesPage() {
   }
 
   const filtered = (recipes ?? []).filter((r) => {
+    if (kindFilter && r.kind !== kindFilter) return false
     if (conceptFilter) {
       // Components are cross-concept by design (one caramel serves every
       // brand) — keep them visible under a brand filter rather than blanking
@@ -409,6 +411,22 @@ export default function RecipesPage() {
             <option value="">All Concepts</option>
             {concepts?.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
+          {/* Kind filter — plates vs components, next to the brand filter. */}
+          <div className="flex rounded-lg overflow-hidden text-xs font-bold border border-s-border">
+            {([
+              { key: '',          label: 'All' },
+              { key: 'plate',     label: '🍽 Plates' },
+              { key: 'component', label: '🧩 Components' },
+            ] as const).map((k) => (
+              <button key={k.key || 'all'} type="button"
+                onClick={() => setKindFilter(k.key)}
+                className={`px-2.5 py-1.5 transition-colors border-r border-s-border last:border-r-0 ${
+                  kindFilter === k.key ? 'bg-s-teal text-black' : 'text-s-muted hover:text-s-text'
+                }`}>
+                {k.label}
+              </button>
+            ))}
+          </div>
           <span className="ml-auto text-xs text-s-muted">
             {filtered.length} recipe{filtered.length !== 1 ? 's' : ''}
           </span>
