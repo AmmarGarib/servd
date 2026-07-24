@@ -59,16 +59,9 @@ const NAV: NavSection[] = [
     title: 'Executive',
     items: [
       { href: '/dashboard/ceo',                 label: 'CEO Overview',        icon: '👑', module: 'ceo_overview' },
-      { href: '/workforce',                     label: 'Workforce',           icon: '👥', module: 'staff_directory', children: [
-        { href: '/workforce?tab=positions',         label: 'Positions (budget)', module: 'staff_directory' },
-        { href: '/workforce?category=management',  label: 'Management',     module: 'staff_management' },
-        { href: '/workforce?category=foh',         label: 'Front of House', module: 'staff_foh' },
-        { href: '/workforce?category=boh',         label: 'Back of House',  module: 'staff_boh' },
-        { href: '/workforce?category=procurement', label: 'Procurement',    module: 'staff_procurement' },
-        { href: '/workforce?category=marketing',   label: 'Marketing',      module: 'staff_marketing' },
-        { href: '/workforce?category=finance',     label: 'Finance',        module: 'staff_finance' },
-        { href: '/workforce?category=hr',          label: 'HR',             module: 'staff_hr' },
-      ]},
+      // Single link — the category/tab shortcuts that used to nest here were
+      // noise at this team size; filtering lives inside the page itself.
+      { href: '/workforce',                     label: 'Workforce',           icon: '👥', module: 'staff_directory' },
       // Project Tracker — capital projects, run-rate opex, and forward
       // projections. Moved up from its own standalone section (CEO surface).
       { href: '/finance/capex', label: 'Project Tracker', icon: '🏗', module: 'capital', children: [
