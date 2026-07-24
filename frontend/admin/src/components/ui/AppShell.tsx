@@ -69,6 +69,13 @@ const NAV: NavSection[] = [
         { href: '/workforce?category=finance',     label: 'Finance',        module: 'staff_finance' },
         { href: '/workforce?category=hr',          label: 'HR',             module: 'staff_hr' },
       ]},
+      // Project Tracker — capital projects, run-rate opex, and forward
+      // projections. Moved up from its own standalone section (CEO surface).
+      { href: '/finance/capex', label: 'Project Tracker', icon: '🏗', module: 'capital', children: [
+        { href: '/finance/capex',       label: 'Capex',       module: 'capital' },
+        { href: '/finance/opex',        label: 'OpEx',        module: 'capital' },
+        { href: '/finance/projections', label: 'Projections', module: 'projections' },
+      ]},
       { href: '/configuration/pending-approvals', label: 'Pending Signups',  icon: '⏳', module: 'role_management' },
       { href: '/configuration/roles',           label: 'Roles & Permissions', icon: '🔐', module: 'role_management' },
       { href: '/configuration/role-modules',    label: 'Module Access',       icon: '🗂', module: 'role_modules' },
@@ -241,20 +248,8 @@ const NAV: NavSection[] = [
       ]},
     ],
   },
-  {
-    // Project Tracker — capital projects, run-rate opex, and forward
-    // projections in one section. Capex tracks each kitchen build/refurb
-    // with quotes + payments; OpEx is the recurring monthly run-rate; and
-    // Projections rolls both into a 12-month P&L per brand with launch
-    // phasing and ramp curves.
-    title: 'Project Tracker',
-    defaultCollapsed: false,
-    items: [
-      { href: '/finance/capex',       label: 'Capex',       icon: '🏗', module: 'capital' },
-      { href: '/finance/opex',        label: 'OpEx',        icon: '💸', module: 'capital' },
-      { href: '/finance/projections', label: 'Projections', icon: '📈', module: 'projections' },
-    ],
-  },
+  // Note: the standalone "Project Tracker" section moved into Executive above
+  // (Capex / OpEx / Projections as children of one Project Tracker entry).
   // Note: the standalone "Setup" section was retired — the first-run wizard is
   // still reachable from the Dashboard onboarding checklist, and the surfaces
   // worth keeping (Integrations, Notifications, Help) moved up into Executive.

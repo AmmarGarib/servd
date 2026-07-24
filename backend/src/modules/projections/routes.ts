@@ -24,6 +24,13 @@ const brandInputSchema = z.object({
   foodCostPct:         z.number().min(0).max(100).default(32),
   packagingCostPct:    z.number().min(0).max(100).default(8),
   dailyCoversAtSS:     z.number().int().min(0).default(0),
+  seats:               z.number().int().min(0).default(0),
+  tableTurnHours:      z.number().min(0).max(24).default(1.5),
+  seatUtilizationPct:  z.number().min(0).max(100).default(70),
+  breakfastHours:      z.number().min(0).max(24).default(4),
+  lunchHours:          z.number().min(0).max(24).default(4),
+  dinnerHours:         z.number().min(0).max(24).default(10),
+  taxRatePct:          z.number().min(0).max(100).default(0),
 })
 
 const brandInputUpdateSchema = z.object({
@@ -33,7 +40,24 @@ const brandInputUpdateSchema = z.object({
   foodCostPct:         z.number().min(0).max(100).optional(),
   packagingCostPct:    z.number().min(0).max(100).optional(),
   dailyCoversAtSS:     z.number().int().min(0).optional(),
+  seats:               z.number().int().min(0).optional(),
+  tableTurnHours:      z.number().min(0).max(24).optional(),
+  seatUtilizationPct:  z.number().min(0).max(100).optional(),
+  breakfastHours:      z.number().min(0).max(24).optional(),
+  lunchHours:          z.number().min(0).max(24).optional(),
+  dinnerHours:         z.number().min(0).max(24).optional(),
+  taxRatePct:          z.number().min(0).max(100).optional(),
 })
+
+// Daily covers from the timing & capacity block:
+//   covers = seats × utilization% × (total operating hours ÷ table turn hours)
+// Returns null when the block isn't filled in (seats or turn time missing) —
+// callers then fall back to the manually entered dailyCoversAtSS.
+function calcDailyCovers(b: { seats: number; tableTurnHours: number; seatUtilizationPct: number; breakfastHours: number; lunchHours: number; dinnerHours: number }): number | null {
+  const totalHours = b.breakfastHours + b.lunchHours + b.dinnerHours
+  if (b.seats <= 0 || b.tableTurnHours <= 0 || totalHours <= 0) return null
+  return Math.round(b.seats * (b.seatUtilizationPct / 100) * (totalHours / b.tableTurnHours))
+}
 
 export async function projectionsRoutes(fastify: FastifyInstance) {
   // ── List all scenarios ────────────────────────────────────────────────
@@ -115,11 +139,16 @@ export async function projectionsRoutes(fastify: FastifyInstance) {
         const staffMonthlyCents = staffByBrand.get(b.conceptId) ?? 0
         const opexMonthlyCents  = opexByBrand.get(b.conceptId)  ?? 0
         const capexTotalCents   = capexByBrand.get(b.conceptId) ?? 0
+        // Daily covers: calculated from the timing block when it's filled in,
+        // otherwise the manually entered steady-state figure.
+        const dailyCoversCalculated = calcDailyCovers(b)
+        const effectiveDailyCovers  = dailyCoversCalculated ?? b.dailyCoversAtSS
+
         const months: Array<{
           month: number; live: boolean; rampFactor: number; orders: number
           revenueCents: number; variableCents: number; staffCents: number
           opexCents: number; totalCostCents: number; profitCents: number
-          cumulativeCents: number
+          profitAfterTaxCents: number; cumulativeCents: number
         }> = []
         let cumulative = 0
         for (let i = 0; i < 12; i++) {
@@ -127,18 +156,23 @@ export async function projectionsRoutes(fastify: FastifyInstance) {
           const live = monthNumber >= b.launchMonth
           const rampIdx = live ? Math.min(monthNumber - b.launchMonth, rampLen - 1) : -1
           const rampFactor = live ? (rampCurve[rampIdx] ?? 0) : 0
-          const orders = Math.round(b.tradingDaysPerMonth * b.dailyCoversAtSS * rampFactor)
+          const orders = Math.round(b.tradingDaysPerMonth * effectiveDailyCovers * rampFactor)
           const revenueCents  = orders * b.checkAverageCents
           const variableCents = Math.round(revenueCents * (b.foodCostPct + b.packagingCostPct) / 100)
           const staffCents    = live ? staffMonthlyCents : 0
           const opexCents     = live ? opexMonthlyCents  : 0
           const totalCostCents = variableCents + staffCents + opexCents
           const profitCents = revenueCents - totalCostCents
-          cumulative += profitCents
+          // Tax applies to profitable months only; losses pass through untaxed.
+          const profitAfterTaxCents = profitCents > 0
+            ? Math.round(profitCents * (1 - b.taxRatePct / 100))
+            : profitCents
+          // Cumulative cashflow runs on AFTER-tax profit (the sheet's bottom line).
+          cumulative += profitAfterTaxCents
           months.push({
             month: monthNumber, live, rampFactor, orders,
             revenueCents, variableCents, staffCents, opexCents,
-            totalCostCents, profitCents, cumulativeCents: cumulative,
+            totalCostCents, profitCents, profitAfterTaxCents, cumulativeCents: cumulative,
           })
         }
         const steadyState = months[11]!
@@ -152,12 +186,23 @@ export async function projectionsRoutes(fastify: FastifyInstance) {
           foodCostPct: b.foodCostPct,
           packagingCostPct: b.packagingCostPct,
           dailyCoversAtSS: b.dailyCoversAtSS,
+          seats: b.seats,
+          tableTurnHours: b.tableTurnHours,
+          seatUtilizationPct: b.seatUtilizationPct,
+          breakfastHours: b.breakfastHours,
+          lunchHours: b.lunchHours,
+          dinnerHours: b.dinnerHours,
+          taxRatePct: b.taxRatePct,
+          totalOperatingHours: b.breakfastHours + b.lunchHours + b.dinnerHours,
+          dailyCoversCalculated,
+          effectiveDailyCovers,
           staffMonthlyCents,
           opexMonthlyCents,
           capexTotalCents,
           months,
           year1RevenueCents: months.reduce((s, m) => s + m.revenueCents, 0),
           year1ProfitCents:  months.reduce((s, m) => s + m.profitCents,  0),
+          year1ProfitAfterTaxCents: months.reduce((s, m) => s + m.profitAfterTaxCents, 0),
           steadyStateMonthlyProfitCents: steadyState.profitCents,
           steadyStateMonthlyCostCents:   steadyState.totalCostCents,
         }
@@ -167,11 +212,11 @@ export async function projectionsRoutes(fastify: FastifyInstance) {
       const combined: Array<{
         month: number; revenueCents: number; variableCents: number
         staffCents: number; opexCents: number; totalCostCents: number
-        profitCents: number; cumulativeCents: number
+        profitCents: number; profitAfterTaxCents: number; cumulativeCents: number
       }> = []
       let combinedCum = 0
       for (let i = 0; i < 12; i++) {
-        let revenueCents = 0, variableCents = 0, staffCents = 0, opexCents = 0, profitCents = 0
+        let revenueCents = 0, variableCents = 0, staffCents = 0, opexCents = 0, profitCents = 0, profitAfterTaxCents = 0
         for (const b of brands) {
           const m = b.months[i]!
           revenueCents  += m.revenueCents
@@ -179,10 +224,11 @@ export async function projectionsRoutes(fastify: FastifyInstance) {
           staffCents    += m.staffCents
           opexCents     += m.opexCents
           profitCents   += m.profitCents
+          profitAfterTaxCents += m.profitAfterTaxCents
         }
         const totalCostCents = variableCents + staffCents + opexCents
-        combinedCum += profitCents
-        combined.push({ month: i + 1, revenueCents, variableCents, staffCents, opexCents, totalCostCents, profitCents, cumulativeCents: combinedCum })
+        combinedCum += profitAfterTaxCents
+        combined.push({ month: i + 1, revenueCents, variableCents, staffCents, opexCents, totalCostCents, profitCents, profitAfterTaxCents, cumulativeCents: combinedCum })
       }
 
       // Capital ask summary (PDF: totalCapex + 3 × steady-state monthly cost)

@@ -4100,7 +4100,20 @@ model ProjectionBrandInput {
   tradingDaysPerMonth Int        @default(26)
   foodCostPct         Float      @default(32)
   packagingCostPct    Float      @default(8)
+  // Manual fallback for daily covers. When the timing block below is filled
+  // (seats > 0 and turn time > 0), daily covers are CALCULATED from it instead:
+  //   covers = seats × utilization% × (total operating hours ÷ turn hours)
   dailyCoversAtSS     Int        @default(0)
+  // ── Timing & capacity block (per the ops model sheet) ──────────────────
+  seats               Int        @default(0)   // max seated capacity
+  tableTurnHours      Float      @default(1.5) // avg table turn time (hrs)
+  seatUtilizationPct  Float      @default(70)  // % of seats filled per turn
+  breakfastHours      Float      @default(4)   // 8–12
+  lunchHours          Float      @default(4)   // 12–4
+  dinnerHours         Float      @default(10)  // 4–2 (next day)
+  // Per-brand tax rate on profit (Flip'd vs Stax sole-prop differ). Applied to
+  // profitable months only — losses carry through untaxed.
+  taxRatePct          Float      @default(0)
 
   projection Projection @relation(fields: [projectionId], references: [id], onDelete: Cascade)
   concept    Concept    @relation(fields: [conceptId], references: [id], onDelete: Cascade)

@@ -1,13 +1,17 @@
 'use client'
-// Per-brand 12-month P&L projections (replaces the legacy ProForma UI).
+// Per-brand 12-month P&L projections, laid out to match the ops model sheet:
 //
-// Inputs per brand (launch month, check avg, food%, pkg%, daily covers,
-// trading days) come from the operator; staff cost + opex + capex are
-// pulled live from /positions, /opex, /capex so the projection always
-// reflects current org state.
+//   TIMING & CAPACITY INPUTS  (per brand: seats, turn time, utilization,
+//     daypart hours → total operating hours → Daily Covers CALCULATED, tax rate)
+//   Per-brand block:
+//     Inputs (editable) — check avg, trading days, food %, daily covers at SS
+//       (pulled from the timing block), packaging %
+//     12-Month Projection — Ramp Factor, Monthly Orders, Revenue, MC (Variable
+//       Cost), Fixed Costs, Total Opex, Profit, Profit After Tax, Cumulative
+//       Cashflow
 //
-// Editing any input PUTs to /projections/:id/brands/:conceptId and
-// re-fetches the computed matrix.
+// Staff cost + opex + capex pull live from /positions, /opex, /capex.
+// Editing any input PUTs to /projections/:id/brands/:conceptId and re-fetches.
 
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
@@ -25,12 +29,23 @@ interface BrandInput {
   foodCostPct: number
   packagingCostPct: number
   dailyCoversAtSS: number
+  seats: number
+  tableTurnHours: number
+  seatUtilizationPct: number
+  breakfastHours: number
+  lunchHours: number
+  dinnerHours: number
+  taxRatePct: number
+  totalOperatingHours: number
+  dailyCoversCalculated: number | null
+  effectiveDailyCovers: number
   staffMonthlyCents: number
   opexMonthlyCents: number
   capexTotalCents: number
   months: BrandMonth[]
   year1RevenueCents: number
   year1ProfitCents: number
+  year1ProfitAfterTaxCents: number
   steadyStateMonthlyProfitCents: number
   steadyStateMonthlyCostCents: number
 }
@@ -45,6 +60,7 @@ interface BrandMonth {
   opexCents: number
   totalCostCents: number
   profitCents: number
+  profitAfterTaxCents: number
   cumulativeCents: number
 }
 interface CombinedMonth {
@@ -55,6 +71,7 @@ interface CombinedMonth {
   opexCents: number
   totalCostCents: number
   profitCents: number
+  profitAfterTaxCents: number
   cumulativeCents: number
 }
 interface ComputedScenario {
@@ -86,25 +103,21 @@ function fmtPkrFull(cents: number): string {
 export default function ProjectionsPage() {
   const qc = useQueryClient()
 
-  // List concepts (for auto-seeding brand rows on first scenario)
   const { data: concepts = [] } = useQuery<Concept[]>({
     queryKey: ['concepts-projections'],
     queryFn: () => api.get('/concepts'),
   })
 
-  // List scenarios
   const { data: scenarios = [], isLoading: scenariosLoading } = useQuery<Array<{ id: string; name: string }>>({
     queryKey: ['projections'],
     queryFn: () => api.get('/projections'),
   })
 
-  // Active scenario selector — defaults to the most recently created one
   const [activeId, setActiveId] = useState<string | null>(null)
   useEffect(() => {
     if (!activeId && scenarios.length > 0) setActiveId(scenarios[0]!.id)
   }, [activeId, scenarios])
 
-  // Auto-create default scenario if none exists
   const createScenario = useMutation({
     mutationFn: (body: { name: string; brands: Array<{ conceptId: string }> }) =>
       api.post<{ id: string }>('/projections', body),
@@ -123,14 +136,12 @@ export default function ProjectionsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scenariosLoading, scenarios.length, concepts.length])
 
-  // Fetch computed projection
   const { data: computed, isLoading: computedLoading, refetch } = useQuery<ComputedScenario>({
     queryKey: ['projection-computed', activeId],
     queryFn: () => api.get(`/projections/${activeId}/computed`),
     enabled: !!activeId,
   })
 
-  // Add any missing concepts as brand rows (lets you add a 4th brand later)
   const missingConcepts = useMemo(() => {
     if (!computed) return []
     const have = new Set(computed.brands.map((b) => b.conceptId))
@@ -138,12 +149,12 @@ export default function ProjectionsPage() {
   }, [computed, concepts])
 
   const upsertBrand = useMutation({
-    mutationFn: ({ conceptId, body }: { conceptId: string; body: Partial<BrandInput> }) =>
+    mutationFn: ({ conceptId, body }: { conceptId: string; body: Record<string, number> }) =>
       api.put(`/projections/${activeId}/brands/${conceptId}`, body),
     onSuccess: () => void refetch(),
   })
 
-  function patchBrand(conceptId: string, patch: Partial<BrandInput>) {
+  function patchBrand(conceptId: string, patch: Record<string, number>) {
     upsertBrand.mutate({ conceptId, body: patch })
   }
 
@@ -171,7 +182,7 @@ export default function ProjectionsPage() {
             <div>
               <h1 className="text-2xl font-black">12-month P&L projections</h1>
               <p className="text-sm text-s-muted mt-1 max-w-2xl">
-                Per-brand revenue + cost forecast with launch phasing and a 6-month ramp curve.
+                Timing &amp; capacity drive daily covers; covers × check avg drive revenue.
                 Staff cost pulls from <Link href="/workforce" className="text-s-teal hover:underline">Positions</Link>,
                 fixed opex from <Link href="/finance/opex" className="text-s-teal hover:underline">OpEx</Link>,
                 capex from <Link href="/finance/capex" className="text-s-teal hover:underline">Capex</Link>.
@@ -203,7 +214,7 @@ export default function ProjectionsPage() {
           <SummaryCard
             label="Year-1 combined P&L"
             value={fmtPkrFull(summary.year1CombinedProfitCents)}
-            hint={summary.year1CombinedProfitCents >= 0 ? 'profit' : 'loss'}
+            hint={summary.year1CombinedProfitCents >= 0 ? 'profit (pre-tax)' : 'loss'}
             color={summary.year1CombinedProfitCents >= 0 ? '#00D4B1' : '#FF4D4F'}
           />
           <SummaryCard
@@ -220,77 +231,75 @@ export default function ProjectionsPage() {
           />
         </section>
 
-        {/* ── Brand inputs ────────────────────────────────────────────── */}
+        {/* ── Timing & capacity inputs (per the ops sheet) ─────────────── */}
         <section>
-          <h2 className="text-lg font-black mb-3">Brand inputs</h2>
+          <h2 className="text-lg font-black mb-1">Timing &amp; capacity inputs</h2>
+          <p className="text-[11px] text-s-muted mb-3">
+            Daily covers are <strong>calculated</strong>: seats × seat utilization × (total operating hours ÷ table turn time).
+            Fill this block in and every brand&apos;s covers flow into its projection automatically. Leave seats at 0 to fall
+            back to a manually entered covers number below.
+          </p>
           <div className="overflow-x-auto rounded-xl border border-s-border bg-s-surface">
             <table className="w-full text-xs">
               <thead className="text-s-muted">
                 <tr className="border-b border-s-border">
-                  <th className="text-left  px-3 py-2 font-bold">Brand</th>
-                  <th className="text-right px-3 py-2 font-bold">Launch month</th>
-                  <th className="text-right px-3 py-2 font-bold">Check avg (PKR)</th>
-                  <th className="text-right px-3 py-2 font-bold">Days/mo</th>
-                  <th className="text-right px-3 py-2 font-bold">Food %</th>
-                  <th className="text-right px-3 py-2 font-bold">Pkg %</th>
-                  <th className="text-right px-3 py-2 font-bold">Daily covers @ SS</th>
-                  <th className="text-right px-3 py-2 font-bold" title="Sum of Position cost-share × headcount where Position.conceptId = this brand">Staff (live)</th>
-                  <th className="text-right px-3 py-2 font-bold" title="Sum of OpexLine.amountCents where conceptId = this brand, normalised to monthly">OpEx (live)</th>
+                  <th className="text-left px-3 py-2 font-bold min-w-[220px]">Input</th>
+                  {brands.map((b) => (
+                    <th key={b.conceptId} className="text-right px-3 py-2 font-bold">
+                      <span className="inline-block w-2 h-2 rounded-full mr-1.5" style={{ background: b.concept.primaryColor ?? '#888' }}/>
+                      {b.concept.name}
+                    </th>
+                  ))}
                 </tr>
               </thead>
               <tbody>
-                {brands.map((b) => (
-                  <tr key={b.conceptId} className="border-t border-s-border">
-                    <td className="px-3 py-2">
-                      <span className="inline-block w-2 h-2 rounded-full mr-2" style={{ background: b.concept.primaryColor ?? '#888' }}/>
-                      <span className="font-bold">{b.concept.name}</span>
+                <TimingRow label="Seats (max capacity)" brands={brands}
+                  get={(b) => b.seats} commit={(b, v) => patchBrand(b.conceptId, { seats: Math.round(v) })} />
+                <TimingRow label="Avg table turn time (hrs)" brands={brands} step={0.25}
+                  get={(b) => b.tableTurnHours} commit={(b, v) => patchBrand(b.conceptId, { tableTurnHours: v })} />
+                <TimingRow label="Seat utilization %" brands={brands} step={1}
+                  get={(b) => b.seatUtilizationPct} commit={(b, v) => patchBrand(b.conceptId, { seatUtilizationPct: v })} suffix="%" />
+                <TimingRow label="Breakfast (8–12) hrs" brands={brands} step={0.5}
+                  get={(b) => b.breakfastHours} commit={(b, v) => patchBrand(b.conceptId, { breakfastHours: v })} />
+                <TimingRow label="Lunch (12–4) hrs" brands={brands} step={0.5}
+                  get={(b) => b.lunchHours} commit={(b, v) => patchBrand(b.conceptId, { lunchHours: v })} />
+                <TimingRow label="Dinner (4–2) hrs" brands={brands} step={0.5}
+                  get={(b) => b.dinnerHours} commit={(b, v) => patchBrand(b.conceptId, { dinnerHours: v })} />
+                {/* Calculated rows — read-only */}
+                <tr className="border-t border-s-border bg-s-bg/40">
+                  <td className="px-3 py-2 font-bold">Total operating hours / day</td>
+                  {brands.map((b) => (
+                    <td key={b.conceptId} className="text-right px-3 py-2 font-mono font-bold">{b.totalOperatingHours}</td>
+                  ))}
+                </tr>
+                <tr className="border-t border-s-border bg-s-bg/40">
+                  <td className="px-3 py-2 font-bold">Daily covers (calculated)</td>
+                  {brands.map((b) => (
+                    <td key={b.conceptId} className="text-right px-3 py-2 font-mono font-black" style={{ color: '#00D4B1' }}>
+                      {b.dailyCoversCalculated ?? <span className="text-s-dim font-normal">— (manual: {b.dailyCoversAtSS})</span>}
                     </td>
-                    <CellNum value={b.launchMonth} min={1} max={12}
-                      onCommit={(v) => patchBrand(b.conceptId, { launchMonth: v })} />
-                    <CellNum value={Math.round(b.checkAverageCents / 100)}
-                      onCommit={(v) => patchBrand(b.conceptId, { checkAverageCents: v * 100 })} step={50} />
-                    <CellNum value={b.tradingDaysPerMonth} min={1} max={31}
-                      onCommit={(v) => patchBrand(b.conceptId, { tradingDaysPerMonth: v })} />
-                    <CellNum value={b.foodCostPct} step={0.5}
-                      onCommit={(v) => patchBrand(b.conceptId, { foodCostPct: v })} suffix="%" />
-                    <CellNum value={b.packagingCostPct} step={0.5}
-                      onCommit={(v) => patchBrand(b.conceptId, { packagingCostPct: v })} suffix="%" />
-                    <CellNum value={b.dailyCoversAtSS} min={0}
-                      onCommit={(v) => patchBrand(b.conceptId, { dailyCoversAtSS: v })} />
-                    <td className="text-right px-3 py-2 font-mono text-s-muted" title={fmtPkrFull(b.staffMonthlyCents)}>
-                      {fmtPkr(b.staffMonthlyCents)}
-                    </td>
-                    <td className="text-right px-3 py-2 font-mono text-s-muted" title={fmtPkrFull(b.opexMonthlyCents)}>
-                      {fmtPkr(b.opexMonthlyCents)}
-                    </td>
-                  </tr>
-                ))}
-                {missingConcepts.map((c) => (
-                  <tr key={c.id} className="border-t border-s-border opacity-60">
-                    <td className="px-3 py-2">
-                      <span className="inline-block w-2 h-2 rounded-full mr-2" style={{ background: c.primaryColor ?? '#888' }}/>
-                      <span className="font-bold">{c.name}</span>
-                    </td>
-                    <td colSpan={8} className="px-3 py-2 text-right">
-                      <button onClick={() => patchBrand(c.id, {})}
-                        className="text-xs text-s-teal hover:underline">+ Add to projection</button>
-                    </td>
-                  </tr>
-                ))}
+                  ))}
+                </tr>
+                <TimingRow label="Tax rate % (on profit)" brands={brands} step={0.5}
+                  get={(b) => b.taxRatePct} commit={(b, v) => patchBrand(b.conceptId, { taxRatePct: v })} suffix="%" />
               </tbody>
             </table>
           </div>
-          <p className="text-[10px] text-s-dim mt-2">
-            Staff and OpEx are pulled live — edit them in{' '}
-            <Link href="/workforce" className="text-s-teal hover:underline">Positions</Link> and{' '}
-            <Link href="/finance/opex" className="text-s-teal hover:underline">OpEx</Link> respectively. They feed every brand's
-            monthly P&L from its launch month forward.
-          </p>
         </section>
 
-        {/* ── Per-brand 12-month matrix ───────────────────────────────── */}
+        {/* ── Per-brand blocks: inputs + 12-month projection ───────────── */}
         {brands.map((b) => (
-          <BrandMatrix key={b.conceptId} brand={b} months={MONTHS} />
+          <BrandBlock key={b.conceptId} brand={b} months={MONTHS} patchBrand={patchBrand} />
+        ))}
+        {missingConcepts.map((c) => (
+          <div key={c.id} className="rounded-xl border border-s-border bg-s-surface px-4 py-3 flex items-center justify-between">
+            <span className="text-sm">
+              <span className="inline-block w-2 h-2 rounded-full mr-2" style={{ background: c.primaryColor ?? '#888' }}/>
+              <span className="font-bold">{c.name}</span>
+              <span className="text-s-dim ml-2 text-xs">not in this projection</span>
+            </span>
+            <button onClick={() => patchBrand(c.id, {})} className="text-xs text-s-teal hover:underline">+ Add to projection</button>
+          </div>
         ))}
 
         {/* ── Combined view ────────────────────────────────────────────── */}
@@ -307,12 +316,12 @@ export default function ProjectionsPage() {
               </thead>
               <tbody>
                 <CombinedRow label="Revenue" months={combined} pick={(m) => m.revenueCents} />
-                <CombinedRow label="Variable cost" months={combined} pick={(m) => m.variableCents} negative />
-                <CombinedRow label="Staff" months={combined} pick={(m) => m.staffCents} negative />
-                <CombinedRow label="OpEx" months={combined} pick={(m) => m.opexCents} negative />
-                <CombinedRow label="Total cost" months={combined} pick={(m) => m.totalCostCents} negative bold />
-                <CombinedRow label="Profit / Loss" months={combined} pick={(m) => m.profitCents} bold highlightSign />
-                <CombinedRow label="Cumulative cash" months={combined} pick={(m) => m.cumulativeCents} cumulative highlightSign />
+                <CombinedRow label="MC (variable cost)" months={combined} pick={(m) => m.variableCents} negative />
+                <CombinedRow label="Fixed costs" months={combined} pick={(m) => m.staffCents + m.opexCents} negative />
+                <CombinedRow label="Total opex" months={combined} pick={(m) => m.totalCostCents} negative bold />
+                <CombinedRow label="Profit" months={combined} pick={(m) => m.profitCents} bold highlightSign />
+                <CombinedRow label="Profit after tax" months={combined} pick={(m) => m.profitAfterTaxCents} bold highlightSign />
+                <CombinedRow label="Cumulative cashflow" months={combined} pick={(m) => m.cumulativeCents} cumulative highlightSign />
               </tbody>
             </table>
           </div>
@@ -322,7 +331,7 @@ export default function ProjectionsPage() {
         <section className="rounded-xl border border-s-border bg-s-surface p-4">
           <h3 className="text-sm font-bold mb-2">Ramp curve</h3>
           <p className="text-[11px] text-s-muted mb-3">
-            Multiplier on steady-state daily covers, applied from each brand's launch month onward.
+            Multiplier on steady-state daily covers, applied from each brand&apos;s launch month onward.
           </p>
           <div className="grid grid-cols-6 md:grid-cols-12 gap-2">
             {projection.rampCurve.map((r, i) => (
@@ -350,65 +359,151 @@ function SummaryCard({ label, value, hint, color }: { label: string; value: stri
   )
 }
 
-function CellNum({ value, onCommit, min, max, step, suffix }: {
-  value: number; onCommit: (v: number) => void
-  min?: number; max?: number; step?: number; suffix?: string
+// One editable row in the timing & capacity table (label + a cell per brand).
+function TimingRow({ label, brands, get, commit, step, suffix }: {
+  label: string
+  brands: BrandInput[]
+  get: (b: BrandInput) => number
+  commit: (b: BrandInput, v: number) => void
+  step?: number
+  suffix?: string
+}) {
+  return (
+    <tr className="border-t border-s-border">
+      <td className="px-3 py-1.5 text-s-muted">{label}</td>
+      {brands.map((b) => (
+        <EditCell key={b.conceptId} value={get(b)} onCommit={(v) => commit(b, v)} step={step} suffix={suffix} />
+      ))}
+    </tr>
+  )
+}
+
+function EditCell({ value, onCommit, step, suffix }: {
+  value: number; onCommit: (v: number) => void; step?: number; suffix?: string
 }) {
   const [local, setLocal] = useState(String(value))
   useEffect(() => { setLocal(String(value)) }, [value])
   return (
     <td className="text-right px-2 py-1">
       <input
-        type="number" value={local} step={step ?? 1} min={min} max={max}
-        onChange={(e) => setLocal(e.target.value)}
+        type="text" inputMode="decimal" value={local}
+        onChange={(e) => { const raw = e.target.value; if (raw === '' || /^\d*\.?\d*$/.test(raw)) setLocal(raw) }}
         onBlur={() => {
           const n = parseFloat(local)
           if (Number.isFinite(n) && n !== value) onCommit(n)
+          else setLocal(String(value))
         }}
         className="w-20 rounded bg-s-bg border border-s-border px-2 py-1 text-right text-xs font-mono"
+        style={{ color: '#7DB8F0' }}   /* editable = blue, like the sheet */
       />
       {suffix && <span className="ml-1 text-s-dim text-[10px]">{suffix}</span>}
     </td>
   )
 }
 
-function BrandMatrix({ brand, months }: { brand: BrandInput; months: number[] }) {
+// Per-brand block: editable inputs strip + the 12-month projection matrix.
+function BrandBlock({ brand: b, months, patchBrand }: {
+  brand: BrandInput
+  months: number[]
+  patchBrand: (conceptId: string, patch: Record<string, number>) => void
+}) {
   return (
     <section>
       <div className="flex items-baseline gap-3 mb-3">
-        <span className="inline-block w-3 h-3 rounded-full" style={{ background: brand.concept.primaryColor ?? '#888' }}/>
-        <h2 className="text-lg font-black">{brand.concept.name}</h2>
+        <span className="inline-block w-3 h-3 rounded-full" style={{ background: b.concept.primaryColor ?? '#888' }}/>
+        <h2 className="text-lg font-black uppercase tracking-wide">{b.concept.name}</h2>
         <span className="text-xs text-s-muted">
-          Launches M{brand.launchMonth} · Steady state M12: profit {fmtPkr(brand.steadyStateMonthlyProfitCents)}/mo
+          Launches M{b.launchMonth} · Steady state M12: profit {fmtPkr(b.steadyStateMonthlyProfitCents)}/mo
         </span>
       </div>
+
+      {/* Inputs (editable — blue) */}
+      <div className="rounded-xl border border-s-border bg-s-surface px-4 py-3 mb-3">
+        <p className="text-[10px] uppercase tracking-wider text-s-muted font-bold mb-2">
+          {b.concept.name} inputs <span className="normal-case font-normal">(editable — blue)</span>
+        </p>
+        <div className="flex flex-wrap gap-x-6 gap-y-2">
+          <InputPair label="Check avg (PKR)" value={Math.round(b.checkAverageCents / 100)}
+            onCommit={(v) => patchBrand(b.conceptId, { checkAverageCents: Math.round(v * 100) })} />
+          <InputPair label="Trading days / month" value={b.tradingDaysPerMonth}
+            onCommit={(v) => patchBrand(b.conceptId, { tradingDaysPerMonth: Math.round(v) })} />
+          <InputPair label="Food cost %" value={b.foodCostPct}
+            onCommit={(v) => patchBrand(b.conceptId, { foodCostPct: v })} />
+          <InputPair label="Packaging cost %" value={b.packagingCostPct}
+            onCommit={(v) => patchBrand(b.conceptId, { packagingCostPct: v })} />
+          <InputPair label="Launch month" value={b.launchMonth}
+            onCommit={(v) => patchBrand(b.conceptId, { launchMonth: Math.round(v) })} />
+          {/* Daily covers: derived from the timing block when filled; manual otherwise */}
+          {b.dailyCoversCalculated != null ? (
+            <div className="flex items-baseline gap-2">
+              <span className="text-[11px] text-s-muted">Daily covers at SS</span>
+              <span className="font-mono text-sm font-black" style={{ color: '#00D4B1' }}>{b.dailyCoversCalculated}</span>
+              <span className="text-[10px] text-s-dim">(from timing block)</span>
+            </div>
+          ) : (
+            <InputPair label="Daily covers at SS (manual)" value={b.dailyCoversAtSS}
+              onCommit={(v) => patchBrand(b.conceptId, { dailyCoversAtSS: Math.round(v) })} />
+          )}
+          <div className="flex items-baseline gap-2">
+            <span className="text-[11px] text-s-muted">Staff (live)</span>
+            <span className="font-mono text-sm text-s-muted" title={fmtPkrFull(b.staffMonthlyCents)}>{fmtPkr(b.staffMonthlyCents)}/mo</span>
+          </div>
+          <div className="flex items-baseline gap-2">
+            <span className="text-[11px] text-s-muted">OpEx (live)</span>
+            <span className="font-mono text-sm text-s-muted" title={fmtPkrFull(b.opexMonthlyCents)}>{fmtPkr(b.opexMonthlyCents)}/mo</span>
+          </div>
+        </div>
+      </div>
+
+      {/* 12-Month Projection */}
       <div className="overflow-x-auto rounded-xl border border-s-border bg-s-surface">
         <table className="w-full text-xs font-mono">
           <thead className="text-s-muted">
             <tr className="border-b border-s-border">
-              <th className="text-left px-3 py-2 font-bold sticky left-0 bg-s-surface">Line</th>
+              <th className="text-left px-3 py-2 font-bold sticky left-0 bg-s-surface">12-month projection</th>
               {months.map((m) => (
                 <th key={m} className="text-right px-3 py-2 font-bold">
-                  M{m}{!brand.months[m - 1]!.live && <span className="ml-1 text-[8px] text-s-dim">pre-launch</span>}
+                  M{m}{!b.months[m - 1]!.live && <span className="ml-1 text-[8px] text-s-dim">pre-launch</span>}
                 </th>
               ))}
               <th className="text-right px-3 py-2 font-bold">Year 1</th>
             </tr>
           </thead>
           <tbody>
-            <BrandRow label="Ramp factor" brand={brand} pick={(m) => m.rampFactor * 100} suffix="%" raw />
-            <BrandRow label="Orders" brand={brand} pick={(m) => m.orders} raw />
-            <BrandRow label="Revenue" brand={brand} pick={(m) => m.revenueCents} />
-            <BrandRow label="Variable cost" brand={brand} pick={(m) => m.variableCents} negative />
-            <BrandRow label="Staff" brand={brand} pick={(m) => m.staffCents} negative />
-            <BrandRow label="OpEx" brand={brand} pick={(m) => m.opexCents} negative />
-            <BrandRow label="Total cost" brand={brand} pick={(m) => m.totalCostCents} negative bold />
-            <BrandRow label="Profit / Loss" brand={brand} pick={(m) => m.profitCents} bold highlightSign />
-            <BrandRow label="Cumulative" brand={brand} pick={(m) => m.cumulativeCents} cumulative highlightSign />
+            <BrandRow label="Ramp factor" brand={b} pick={(m) => m.rampFactor * 100} suffix="%" raw />
+            <BrandRow label="Monthly orders" brand={b} pick={(m) => m.orders} raw />
+            <BrandRow label="Revenue" brand={b} pick={(m) => m.revenueCents} />
+            <BrandRow label="MC (variable cost)" brand={b} pick={(m) => m.variableCents} negative />
+            <BrandRow label="Fixed costs" brand={b} pick={(m) => m.staffCents + m.opexCents} negative />
+            <BrandRow label="Total opex" brand={b} pick={(m) => m.totalCostCents} negative bold />
+            <BrandRow label="Profit" brand={b} pick={(m) => m.profitCents} bold highlightSign />
+            <BrandRow label="Profit after tax" brand={b} pick={(m) => m.profitAfterTaxCents} bold highlightSign />
+            <BrandRow label="Cumulative cashflow" brand={b} pick={(m) => m.cumulativeCents} cumulative highlightSign />
           </tbody>
         </table>
       </div>
     </section>
+  )
+}
+
+function InputPair({ label, value, onCommit }: { label: string; value: number; onCommit: (v: number) => void }) {
+  const [local, setLocal] = useState(String(value))
+  useEffect(() => { setLocal(String(value)) }, [value])
+  return (
+    <label className="flex items-baseline gap-2">
+      <span className="text-[11px] text-s-muted">{label}</span>
+      <input
+        type="text" inputMode="decimal" value={local}
+        onChange={(e) => { const raw = e.target.value; if (raw === '' || /^\d*\.?\d*$/.test(raw)) setLocal(raw) }}
+        onBlur={() => {
+          const n = parseFloat(local)
+          if (Number.isFinite(n) && n !== value) onCommit(n)
+          else setLocal(String(value))
+        }}
+        className="w-20 rounded bg-s-bg border border-s-border px-2 py-1 text-right text-xs font-mono"
+        style={{ color: '#7DB8F0' }}
+      />
+    </label>
   )
 }
 
