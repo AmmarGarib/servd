@@ -26,6 +26,8 @@ interface EngRecipe {
   servings: number
   costPerPortionCents: number | null
   menuItem: { id: string; name: string; priceCents: number; conceptId: string; concept: { name: string } } | null
+  // Testing plates haven't opened their menu item yet — their brand lives here.
+  pendingMenuItem: { conceptId: string; name: string } | null
 }
 
 function fmtPKR(cents: number) {
@@ -70,15 +72,21 @@ export default function MenuEngineeringPage() {
   })
 
   // Plates only — components are cost inputs, not sellable items.
+  // Brand: a live plate carries it on its menu item; a testing plate hasn't
+  // opened its item yet, so its brand lives in pendingMenuItem.
   const plates = recipes.filter((r) => {
     if (r.kind !== 'plate') return false
-    if (conceptFilter && r.menuItem?.conceptId !== conceptFilter) return false
+    const brandId = r.menuItem?.conceptId ?? r.pendingMenuItem?.conceptId ?? null
+    if (conceptFilter && brandId !== conceptFilter) return false
     if (search) {
       const hay = (r.menuItem?.name ?? r.name ?? '').toLowerCase()
       if (!hay.includes(search.toLowerCase())) return false
     }
     return true
   })
+
+  const conceptName = (id: string | null | undefined) =>
+    concepts.find((c) => c.id === id)?.name ?? null
 
   function commitPrice(r: EngRecipe) {
     const raw = draftPrice[r.id]
@@ -183,7 +191,12 @@ export default function MenuEngineeringPage() {
                           </span>
                         )}
                       </div>
-                      <p className="text-[10px] text-s-dim">{r.menuItem?.concept.name ?? 'No menu item yet (testing)'}</p>
+                      <p className="text-[10px] text-s-dim">
+                        {r.menuItem?.concept.name
+                          ?? (conceptName(r.pendingMenuItem?.conceptId)
+                            ? `${conceptName(r.pendingMenuItem?.conceptId)} · menu item opens on approval`
+                            : 'No menu item yet (testing)')}
+                      </p>
                     </div>
 
                     <div className="flex items-center gap-5 shrink-0">

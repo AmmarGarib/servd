@@ -58,6 +58,8 @@ interface Recipe {
   isActive: boolean
   qFactorPct: number
   menuItem: { id: string; name: string; priceCents: number; conceptId: string; concept: ConceptWithTenant } | null
+  // Testing plates haven't opened their menu item yet — brand lives here.
+  pendingMenuItem: { conceptId: string; name: string } | null
   ingredients: RecipeIngredient[]
   ingredientCostCents: number
   qFactorCents: number
@@ -296,12 +298,16 @@ export default function RecipesPage() {
   }
 
   const filtered = (recipes ?? []).filter((r) => {
-    // Concept filter doesn't apply to component recipes (they're cross-concept
-    // by design — one tomato sauce serves every brand). If a concept is picked,
-    // hide components so the operator's plate-only view stays clean.
     if (conceptFilter) {
-      if (r.kind === 'component') return false
-      if (r.menuItem?.conceptId !== conceptFilter) return false
+      // Components are cross-concept by design (one caramel serves every
+      // brand) — keep them visible under a brand filter rather than blanking
+      // the list. Plates match on their brand: a live plate carries it on the
+      // menu item; a TESTING plate hasn't opened its item yet, so its brand
+      // lives in pendingMenuItem.
+      if (r.kind === 'plate') {
+        const brandId = r.menuItem?.conceptId ?? r.pendingMenuItem?.conceptId ?? null
+        if (brandId !== conceptFilter) return false
+      }
     }
     if (search) {
       // Search across menuItem name (plate) AND recipe name (component) so the
