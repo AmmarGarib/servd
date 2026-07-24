@@ -243,6 +243,18 @@ function WorkforcePageInner() {
     sp.get('tab') === 'positions' ? 'positions' : 'people',
   )
 
+  // The sidebar's Workforce children navigate to /workforce?tab=… and
+  // /workforce?category=… . When the page is ALREADY mounted, only the query
+  // string changes — useState initialisers don't re-run — so without this
+  // sync those links look dead. React to query changes live.
+  useEffect(() => {
+    setActiveTab(sp.get('tab') === 'positions' ? 'positions' : 'people')
+  }, [sp])
+  useEffect(() => {
+    setActiveCategory(initialCategory)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialCategory])
+
   const { data: users = [], isLoading } = useQuery<StaffUser[]>({
     queryKey: ['workforce', 'users'],
     queryFn:  () => api.get('/auth/users'),
