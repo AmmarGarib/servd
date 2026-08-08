@@ -197,7 +197,11 @@ riders but no app is wired to call it. Future work in this order:
 ## What NOT to do
 
 - **Never commit credentials to this repo.** Use GitHub Actions Secrets.
-- **Never `git push --force` to main.** Squash-merge PRs only.
+- **Never `git push --force` to main.**
+- **Work directly on `main` — no feature branches, no PRs.** Per the product
+  owner: commit and push straight to `main`. Do not create a branch "to be
+  safe" and do not open a pull request unless explicitly asked. (Ordinary
+  non-force pushes to `main` are the expected workflow here.)
 - **Never add a third-party delivery aggregator integration.**
 - **Never bypass the simmer-brand SKILL.md rules** on the Simmer
   microsite — see `frontend/storefront/src/components/brand/layouts/SimmerLayout.tsx`
