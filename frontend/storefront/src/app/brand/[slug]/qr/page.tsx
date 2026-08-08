@@ -10,8 +10,9 @@ import { QRCard } from './QRCard'
 const PUBLIC_HOST = process.env.NEXT_PUBLIC_PUBLIC_HOST ?? 'https://servd-app.garibsons.app'
 
 const BRAND_NAMES: Record<string, string> = {
-  stax:  'Stax',
-  flipd: 'Flipd',
+  simmer: 'Simmer',
+  stax:   'Stax',
+  flipd:  'Flipd',
 }
 
 export default async function BrandQRPage({

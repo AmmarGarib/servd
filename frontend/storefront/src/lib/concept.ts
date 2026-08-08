@@ -44,6 +44,7 @@ export interface Concept {
 // in the DB. Until the operator UI grows a real palette field, this map
 // is the source of truth for /brand/<slug> chrome.
 const BRAND_ACCENT_OVERRIDES: Record<string, string> = {
+  simmer: '#E94E1B',  // fiery orange — the simmer brand bible's signal color
   stax:   '#B0B2B8',  // astroscopus grey — industrial navy-grey palette
   flipd:  '#2092E9',  // curious blue — cool diner palette
 }
@@ -57,7 +58,8 @@ export function brandAccent(slug: string, fallback: string | null | undefined): 
 // Per-brand surface palette for the dark "ink" sections (the microsite footer,
 // and any full-bleed themed band). Each brand gets its OWN background + text
 // colours instead of a generic black slab, so the chrome reads as that brand:
-//   stax → bone/grey + ink   flipd → ink-blue + light-blue   servd → deep purple + white
+//   simmer → forest green + bone     stax  → bone/grey + ink
+//   flipd  → ink-blue + light-blue   servd → deep purple + white
 // The brand accent (brandAccent) still layers on top as the signal colour.
 export interface BrandSurface {
   bg: string      // section background
@@ -67,6 +69,7 @@ export interface BrandSurface {
 }
 
 const BRAND_SURFACE: Record<string, BrandSurface> = {
+  simmer: { bg: '#06392F', text: '#F3ECDE', muted: 'rgba(243,236,222,0.62)', border: 'rgba(243,236,222,0.14)' },
   stax:   { bg: '#142834', text: '#C5C7CC', muted: '#8D8F97',                border: 'rgba(197,199,204,0.14)' },
   // flipd is a LIGHT diner page (bone surface, midnight-oil ink) — its chrome
   // integrates on bone with ink text, not the dark treatment the others use.
@@ -84,16 +87,19 @@ export function brandSurface(slug: string): BrandSurface {
  *  (no chip behind it). The circular logo card carries the accent separately. */
 export function brandWordmark(slug: string): { font: string; color: string; weight: number } {
   switch (slug) {
+    case 'simmer': return { font: 'var(--simmer-display)', color: 'var(--simmer-bone)',  weight: 400 }
     case 'stax':   return { font: 'var(--stax-display)',   color: 'var(--stax-cream)',   weight: 700 }
     case 'flipd':  return { font: 'var(--flipd-marquee)',  color: 'var(--flipd-sky)',    weight: 400 }
     default:       return { font: 'var(--font-wordmark)',  color: 'var(--brand-accent)', weight: 800 }
   }
 }
 
-/** Brand names render as stored. Kept as a hook for any future per-brand
- *  wordmark casing rules; wrap user-visible brand/concept names with this. */
+/** The Simmer wordmark is ALWAYS lowercase per brand guidelines — capital-S
+ *  "Simmer" anywhere user-visible is a bug. Other brands render as stored.
+ *  Wrap any user-visible brand/concept name with this. */
 export function formatBrandName(name: string | null | undefined): string {
-  return (name ?? '').trim()
+  const n = (name ?? '').trim()
+  return n.toLowerCase() === 'simmer' ? 'simmer' : n
 }
 
 export function typeLabel(t: string): string {
@@ -107,9 +113,10 @@ export function typeLabel(t: string): string {
 // Replace with real photography when art direction is delivered.
 // HERO_BY_SLUG — fallback hero image per concept slug. Operator can
 // override per-brand via the admin once art direction is delivered.
-// Only the live brands are listed here; unknown slugs fall back
+// Only the three live brands are listed here; unknown slugs fall back
 // to the generic image below.
 const HERO_BY_SLUG: Record<string, string> = {
+  'simmer':          'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?w=1200&q=85',
   // Stax — rustic toasted focaccia/rye sandwich on a wood board. Matches
   // the upscale dine-in / Italian-leaning brand direction.
   'stax':            'https://images.unsplash.com/photo-1559054663-e8d23213f55c?w=1200&q=85',
@@ -132,6 +139,13 @@ interface BrandStory {
 }
 
 export const BRAND_STORIES: Record<string, BrandStory> = {
+  'simmer': {
+    tagline: 'Slow nights, plated softly.',
+    oneLiner: 'Fine-casual mocktail bar and small-plates kitchen — intimate room, seasonal menu.',
+    long: 'simmer is GS Foods’ flagship plated-service concept. The menu rotates with the season — small plates built to share, hand-crafted mocktails, and a room that knows when to fade and when to glow. We cook because we care about the table. Every dish is plated as if it’s going to someone we know.',
+    highlights: ['Plated table service', 'Hand-built mocktails', 'Seasonal small plates', 'Mains & desserts', 'Reservations welcome'],
+    hours: 'Dinner 7:00 PM – 10:30 PM · Late Night 10:30 PM – 2:30 AM',
+  },
   'stax': {
     tagline: 'Smashed, stacked, sauced.',
     oneLiner: 'Upscale smash-burger room — dry-aged patties, house-baked brioche, table service.',

@@ -54,7 +54,7 @@ export const BLOCK_CATALOG: BlockSpec[] = [
   { type: 'stat_strip',   label: 'Stats',          description: 'A row of numbers with labels',          icon: '📊',
     default: () => ({ type: 'stat_strip', stats: [{ value: '7', label: 'kitchens' }, { value: '1', label: 'one app' }, { value: '0%', label: 'aggregator commission' }] }) },
   { type: 'voices',       label: 'Brand voices',   description: 'Two-column tagline list',               icon: '🗣️',
-    default: () => ({ type: 'voices', kicker: 'The line-up', voices: [{ brand: 'Stax', line: 'Smashed, stacked, sauced.' }, { brand: 'Flipd', line: 'Buttermilk-brined, hand-breaded, hot.' }] }) },
+    default: () => ({ type: 'voices', kicker: 'The line-up', voices: [{ brand: 'Simmer', line: 'Slow nights, plated softly.' }, { brand: 'Stax', line: 'Smashed, stacked, sauced.' }] }) },
   { type: 'kitchens',     label: 'Kitchens grid',  description: 'Live grid of brand cards',              icon: '🍽️',
     default: () => ({ type: 'kitchens', kicker: 'Tonight on servd', title: 'Pick your kitchen', showAllLink: true, max: 6 }) },
   { type: 'featured_menu',label: 'Featured menu',  description: 'Live menu items from a brand',          icon: '🍔',

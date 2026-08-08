@@ -33,7 +33,7 @@ export default async function LocationPage({ params }: { params: Promise<{ loc: 
   const brands = await fetchBrandLocations(API_URL)
   // Match by locationSlug first (operator-friendly URL like
   // /locations/bukhari-commercial), fall back to concept slug
-  // (/locations/stax) so freshly-added concepts work without a custom
+  // (/locations/simmer) so freshly-added concepts work without a custom
   // locationSlug field in the DB.
   const brand = Object.values(brands).find((b) => b.locationSlug === locSlug || b.slug === locSlug)
   if (!brand) notFound()

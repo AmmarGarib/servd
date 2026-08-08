@@ -47,7 +47,7 @@ export interface PostJournalEntryResult {
 // concept's sales hit. Adding a concept means adding its slug here AND seeding
 // the matching Account row.
 export const CONCEPT_REVENUE_CODE: Record<string, string> = {
-  'simmer':          '4001',  // legacy — brand retired; kept so historical orders keep their revenue mapping
+  'simmer':          '4001',
   'stax':            '4002',
   'strata':          '4003',
   'flipd':           '4004',

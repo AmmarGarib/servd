@@ -18,6 +18,12 @@ export const dynamic = 'force-dynamic'
 // live in production. Used when /storefront/concepts can't be reached
 // (api 5xx, network blip, etc.) so the brand microsites keep working.
 const FALLBACK_CONCEPTS: Record<string, Concept> = {
+  simmer: {
+    id: 'fallback-simmer', name: 'Simmer', slug: 'simmer', type: 'restaurant',
+    description: 'Small plates and mocktails. A dark room on Bukhari, served softly.',
+    logoUrl: null, primaryColor: null,
+    reservationsEnabled: true,
+  },
   stax: {
     id: 'fallback-stax', name: 'Stax', slug: 'stax', type: 'restaurant',
     description: 'Smash burgers, loaded fries, delivery-first ghost kitchen.',

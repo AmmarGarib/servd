@@ -2,6 +2,7 @@
 //
 // Storefront pages are stored as `Block[]` JSON keyed by slug.
 //   "servd:home"     → the marketing homepage
+//   "brand:simmer"   → Simmer microsite home
 //   "brand:stax"     → Stax microsite home
 //   etc.
 //

@@ -11,7 +11,7 @@ import type { Concept } from '../../../lib/concept'
 //     legacy fallback when a brand should stay quiet by default.
 //   • Returns null when nothing should render.
 //
-// The per-brand Stax / Flipd layouts render their own
+// The per-brand Simmer / Stax / Flipd layouts render their own
 // announcement strip inline (styled to match their visual language) so
 // they pass `concept` directly and skip this fallback path entirely.
 

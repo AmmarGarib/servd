@@ -1,7 +1,7 @@
 /* Inter for body text, Bricolage Grotesque for the kinetic display headlines
    that drive the new asymmetric / chunky look. Falls back to Inter Black if
    the display family fails to load — keeps the bold weight intact. */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Lobster&family=Bungee&family=Special+Elite&family=Syne:wght@400;600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&family=Amarante&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Lobster&family=Bungee&family=Special+Elite&family=Syne:wght@400;600;700;800&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -39,6 +39,17 @@
      labels, marquee text, anywhere we want the "agency-modern" feel. */
   --font-display:       'Bricolage Grotesque', 'Inter', system-ui, sans-serif;
   --font-wordmark:      'Syne', 'Bricolage Grotesque', system-ui, sans-serif;
+
+  /* ── Simmer brand tokens (per simmer-brand SKILL.md) ─────────────────────
+     Forest green surface ("tiber" #06392F), bone ink, fiery orange signal.
+     Night mode is the web default. Amarante for display, Times for body. */
+  --simmer-green:       #06392F;
+  --simmer-bone:        #EDE6D3;
+  --simmer-walnut:      #3D2817;
+  --simmer-black:       #0E0E0E;
+  --simmer-orange:      #E94E1B;
+  --simmer-display:     'Amarante', serif;
+  --simmer-body:        'Times New Roman', Times, serif;
 
   /* ── Stax brand tokens (industrial: cool navy-grey palette, palettepoint)
         Oceanic-noir background, technical-drawing line work, light-grey
@@ -96,6 +107,25 @@ summary:focus-visible {
   }
 }
 
+/* simmer */
+.simmer-page { background: var(--simmer-green); color: var(--simmer-bone); font-family: var(--simmer-body); letter-spacing: 0.04em; }
+.simmer-page .amarante  { font-family: var(--simmer-display); letter-spacing: 0.02em; }
+.simmer-page .utility   { font-family: var(--simmer-body); letter-spacing: 0.28em; text-transform: lowercase; }
+.simmer-page .signal    { color: var(--simmer-orange); }
+.simmer-page .rule      { height: 1px; background: rgba(237,230,211,0.2); border: 0; margin: 0; }
+.simmer-page .wordmark  { font-family: var(--simmer-display); font-weight: 400; line-height: 1; }
+.simmer-page .action {
+  display: inline-block; font-family: var(--simmer-body);
+  letter-spacing: 0.28em; text-transform: lowercase;
+  padding: 0.95rem 1.6rem; border: 1px solid var(--simmer-bone);
+  color: var(--simmer-bone); background: transparent;
+  text-decoration: none; font-size: 0.78rem;
+  transition: background 180ms ease, color 180ms ease;
+}
+.simmer-page .action:hover { background: var(--simmer-bone); color: var(--simmer-green); }
+.simmer-page .action--signal { border-color: var(--simmer-orange); color: var(--simmer-orange); }
+.simmer-page .action--signal:hover { background: var(--simmer-orange); color: var(--simmer-green); }
+@media (max-width: 700px) { .simmer-visit-grid { grid-template-columns: 1fr !important; } }
 
 /* ═══════════════════════════════════════════════════════════════════════════
    Brand-skinned ordering surfaces.
@@ -116,8 +146,86 @@ summary:focus-visible {
         the sticky cart drawer, the bottom CTA bar, item modal — places where
         the JSX hardcodes a colour we need to repaint.
    ═══════════════════════════════════════════════════════════════════════════ */
+/* simmer — night-mode editorial. Bone surface, forest ink, orange signal,
+   Amarante display + Times body. Per the simmer-brand SKILL.md: single
+   orange signal per viewport, no white, no gradients, no emojis. */
+.simmer-ordering {
+  /* token remap — touches everything the checkout already styles
+     through CSS vars (text, accents, borders, surfaces, CTAs) */
+  --servd-ink:        var(--simmer-green);
+  --servd-mute:       rgba(27,45,42,0.62);
+  --servd-line:       rgba(27,45,42,0.18);
+  --servd-surface:    #f5eed8;
+  --servd-green:      var(--simmer-orange);
+  --servd-green-dark: var(--simmer-orange);
+
+  background: var(--simmer-bone);
+  color: var(--simmer-green);
+  font-family: var(--simmer-body);
+  letter-spacing: 0.02em;
+}
+/* Display type — Simmer uses Amarante for headings, not the servd
+   Bricolage. We don't override every <p>/<span> though; the body
+   stays Times via the font-family above. */
+.simmer-ordering h1,
+.simmer-ordering h2,
+.simmer-ordering h3 {
+  font-family: var(--simmer-display);
+  letter-spacing: 0.02em;
+  font-weight: 400;
+}
+/* Panel cards — the JSX hardcodes `background: white`. Tint them to a
+   light bone so they read as paper-on-table, not white-on-bone. */
+.simmer-ordering .rounded-2xl[style*="background: white"],
+.simmer-ordering .rounded-2xl[style*="background:#fff"],
+.simmer-ordering .rounded-2xl[style*="background: #fff"] {
+  background: #f9f3df !important;
+  border-color: rgba(27,45,42,0.14) !important;
+  box-shadow: 0 1px 3px rgba(27,45,42,0.06) !important;
+}
+/* The fixed bottom CTA bar uses rgba white — bump it to a bone wash
+   so it doesn't read as a foreign chrome strip. */
+.simmer-ordering .fixed.bottom-0 {
+  background: rgba(237,230,211,0.96) !important;
+  border-top-color: rgba(27,45,42,0.18) !important;
+}
+/* "Tip the rider" / fulfilment chooser tints use a blue-ish wash on
+   the servd default; remap to a faint orange wash so they tie to the
+   single accent colour. */
+.simmer-ordering div[style*="rgba(58,14,105,0.06)"],
+.simmer-ordering div[style*="rgba(58,14,105,0.08)"],
+.simmer-ordering div[style*="rgba(58,14,105,0.25)"],
+.simmer-ordering div[style*="rgba(58,14,105,0.2)"] {
+  background: rgba(233,78,27,0.06) !important;
+  border-color: rgba(233,78,27,0.20) !important;
+}
+/* Menu page — the outer wrapper, the sticky category nav, the item
+   modal + cart drawer all hardcode a white-ish surface inline. Repaint
+   them in bone so the brand wraps the whole ordering journey. */
+.simmer-ordering[style*="background: #fff"],
+.simmer-ordering[style*="background: white"],
+.simmer-ordering [style*="background: '#fff"],
+.simmer-ordering [style*="background:'#fff"] {
+  background: var(--simmer-bone) !important;
+}
+.simmer-ordering [style*="rgba(255,255,255,0.95)"] {
+  background: rgba(249,243,223,0.96) !important;
+  border-color: rgba(27,45,42,0.14) !important;
+}
+.simmer-ordering [style*="rgba(255,255,255,0.9)"] {
+  background: rgba(249,243,223,0.92) !important;
+}
+/* Buttons + accents are bricolage/black by default; simmer wants
+   Times-set type with a slim orange edge. The primary CTAs in cart
+   drawer + place-order pill keep their shape but adopt the signal. */
+.simmer-ordering button[style*="background: var(--servd-green)"],
+.simmer-ordering button[style*="background:var(--servd-green)"] {
+  letter-spacing: 0.14em !important;
+  text-transform: lowercase !important;
+}
+
 /* stax-checkout — blueprint industrial. Dark surface, dark cards,
-   cream signal accent. Pattern: remap the
+   cream signal accent. Same pattern as .simmer-ordering: remap the
    --servd-* tokens the JSX already references + a few targeted
    !important overrides for the inline `background: white` cards
    and the focus-glow on inputs. */
@@ -716,7 +824,7 @@ a { color: inherit; }
    Shared visual language inspired by agency sites (Buzz Interactive et al):
    big asymmetric headlines, atmospheric floating shapes, marquee strips,
    drag carousels. Per-brand colour comes through --brand-accent so the
-   same components work for every brand. */
+   same components work for Stax (orange), Simmer (green), Flipd (yellow). */
 
 /* Display type — used for hero headlines and section openers. The
    Bricolage Grotesque optical-size axis gives us bigger sizes a slightly

@@ -8,7 +8,7 @@
 // (BrandShell already themes the footer with the concept accent).
 
 export interface BrandFooterConfig {
-  ctaEyebrow: string   // small line above the CTA, e.g. "stax · ready when you are"
+  ctaEyebrow: string   // small line above the CTA, e.g. "simmer · ready when you are"
   ctaHeadline: string  // big line, e.g. "Hungry?"
   ctaAccent: string    // accented continuation, e.g. "Let's eat."
   tagline: string      // the short blurb under the wordmark

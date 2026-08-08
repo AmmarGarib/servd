@@ -283,7 +283,7 @@ function FeaturedMenuFields({ block, set }: any) {
   return (
     <>
       <Field label="Brand slug (leave blank to inherit on a brand page)">
-        <input value={block.conceptSlug ?? ''} onChange={(e) => set({ conceptSlug: e.target.value || undefined })} placeholder="stax" className="input" />
+        <input value={block.conceptSlug ?? ''} onChange={(e) => set({ conceptSlug: e.target.value || undefined })} placeholder="simmer" className="input" />
       </Field>
       <Field label="Kicker"><input value={block.kicker ?? ''} onChange={(e) => set({ kicker: e.target.value })} className="input" /></Field>
       <Field label="Title"><input value={block.title ?? ''} onChange={(e) => set({ title: e.target.value })} className="input" /></Field>

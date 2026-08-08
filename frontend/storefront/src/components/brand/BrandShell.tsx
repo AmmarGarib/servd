@@ -33,7 +33,7 @@ export function BrandShell({ concept, children }: Props) {
   const accent = concept.primaryColor || 'var(--servd-green)'
   // Pick the text/ink colour based on luminance of the accent. Light
   // accents (Flipd sky blue) get black ink, dark accents (Stax purple,
-  // servd royal blue) get white. Defaults to white when
+  // Simmer green, servd royal blue) get white. Defaults to white when
   // we can't parse the accent (e.g. it's a CSS var name).
   const accentInk = accent.startsWith('#') && isLight(accent) ? '#0a0a0a' : 'white'
   const surface = brandSurface(concept.slug)
@@ -76,6 +76,7 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
   const surface = brandSurface(concept.slug)
   const wordmark = brandWordmark(concept.slug)
   // Per-brand header background:
+  //  • simmer extends the chiller blueprint grid into the header
   //  • flipd carries the diner checkerboard so the header is part of the tile
   //  • others use a soft scrim of their own bg colour (no band)
   const diner = concept.slug === 'flipd'
@@ -85,7 +86,17 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
   // instead: the hero's checker shows through it, so the floor is one
   // continuous, seamless checker. (With a banner we keep the in-flow band.)
   const flipdOverlay = diner && !concept.announcementBanner
-  const navBg: React.CSSProperties = diner
+  const navBg: React.CSSProperties = concept.slug === 'simmer'
+    ? {
+        backgroundColor: surface.bg,
+        backgroundImage:
+          'linear-gradient(rgba(237,230,211,0.06) 1px, transparent 1px),' +
+          'linear-gradient(90deg, rgba(237,230,211,0.06) 1px, transparent 1px),' +
+          'linear-gradient(rgba(237,230,211,0.10) 1px, transparent 1px),' +
+          'linear-gradient(90deg, rgba(237,230,211,0.10) 1px, transparent 1px)',
+        backgroundSize: '40px 40px, 40px 40px, 200px 200px, 200px 200px',
+      }
+    : diner
     ? {
         backgroundColor: 'var(--flipd-cream)',
         backgroundImage: 'var(--flipd-checker)',
@@ -108,11 +119,11 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
 
   // Carded-nav brands collapse the bar into ONE rounded pill — the lean links
   // plus Order on a single capsule. This is the flipd treatment ported to
-  // stax in its own palette: flipd keeps its high-contrast pale/ink card, the
-  // dark brands get a faint glass capsule (translucent fill + hairline) so
-  // labels read on their deep backgrounds.
-  const pillNav = diner || concept.slug === 'stax'
-  const pillTint = '197,199,204' // grey
+  // simmer + stax, in each brand's own palette: flipd keeps its high-contrast
+  // pale/ink card, the dark brands get a faint glass capsule (translucent fill
+  // + hairline) so labels read on their deep backgrounds.
+  const pillNav = diner || concept.slug === 'simmer' || concept.slug === 'stax'
+  const pillTint = concept.slug === 'simmer' ? '243,236,222' : '197,199,204' // bone / grey
   const navPill: React.CSSProperties = diner
     ? dinerCard
     : pillNav
@@ -154,8 +165,8 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
         position: flipdOverlay ? 'absolute' : 'relative',
         ...(flipdOverlay ? { top: 0, left: 0, right: 0 } : null),
         zIndex: 50,
-        // flipd floats a transparent overlay on its hero checker;
-        // other brands use a soft scrim of their own bg (no band).
+        // Simmer carries the blueprint grid into the header (connects to the
+        // chiller); other brands use a soft scrim of their own bg (no band).
         ...(flipdOverlay ? {} : navBg),
         borderBottom: 'none',
         padding: '0.95rem clamp(1rem, 4vw, 2rem)',
@@ -250,7 +261,7 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
 
           {/* Order joins the SAME pill as the final, emphasized item — one
               pill, not a separate CTA. Bold brand ink with an accent arrow so
-              it still reads as the action (flipd green; stax accent). */}
+              it still reads as the action (flipd green; simmer/stax accent). */}
           {pillNav && (
             <Link
               href={`/${concept.slug}`}

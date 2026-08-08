@@ -62,7 +62,7 @@ export default async function BrandVisitPage({ params }: { params: Promise<{ slu
 
   // FAQ schema — LLMs (Perplexity, ChatGPT, Google AI Overviews) lift
   // these verbatim when answering "best small plates Karachi parking" or
-  // "is the food halal" / "what's the dress code". This is the
+  // "is simmer halal" / "what's the dress code at simmer". This is the
   // AI-citation move from the ai-seo skill. Per concept, tuned to the
   // brand's actual posture; falls back to generic restaurant FAQ if
   // brandLocations isn't filled in.
@@ -81,7 +81,7 @@ export default async function BrandVisitPage({ params }: { params: Promise<{ slu
         ? `Yes — order at /${slug} for delivery, pickup, or curbside.`
         : `${concept.name} is primarily dine-in. For delivery from our sister kitchens, see /browse.` },
     { question: `What's the dress code?`,
-      answer:    `Smart casual works everywhere. No formal requirement.` },
+      answer:    `Smart casual works everywhere. ${concept.name === 'Simmer' ? 'Simmer is a dimly-lit room; the dressier you are the more it suits the space.' : 'No formal requirement.'}` },
     { question: `Is there parking?`,
       answer:    `Street parking is available around the venue. We recommend arriving 10 minutes early on weekends.` },
   ]

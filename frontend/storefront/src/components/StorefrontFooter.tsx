@@ -8,8 +8,10 @@ import { usePathname } from 'next/navigation'
 // down to match the live state on the home page. Add back when their
 // concept rows + microsites land.
 // Accents match the canonical per-brand palette (lib/concept BRAND_ACCENT_OVERRIDES).
+// "simmer" is lowercase per its brand rules.
 const BRANDS = [
   { slug: 'stax',   name: 'Stax',   accent: '#B0B2B8' },
+  { slug: 'simmer', name: 'simmer', accent: '#E94E1B' },
   { slug: 'flipd',  name: 'Flipd',  accent: '#2092E9' },
 ]
 

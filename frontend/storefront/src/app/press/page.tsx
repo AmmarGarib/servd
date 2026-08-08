@@ -30,10 +30,11 @@ export default async function PressPage() {
     { name: 'Press', url: `${SITE}/press` },
   ])
 
-  // Pick the brand to surface as the primary press WhatsApp.
+  // Pick the brand to surface as the primary press WhatsApp — Simmer is the
+  // press-friendliest of the three (premium, room-led, reservation-based).
   // Live-edited values win; fallback const used if API is unreachable.
   const brands = await fetchBrandLocations(API_URL)
-  const pressContact = brands['stax'] ?? locationFor('stax')!
+  const pressContact = brands['simmer'] ?? locationFor('simmer')!
 
   return (
     <main style={{ background: 'var(--servd-bg)', color: 'var(--servd-ink)', minHeight: '100dvh' }}>
@@ -47,7 +48,7 @@ export default async function PressPage() {
             <span className="display-italic">in Karachi?</span>
           </h1>
           <p style={{ color: 'var(--servd-mute)', fontSize: '1.05rem', maxWidth: '36rem', lineHeight: 1.55 }}>
-            Our kitchens, one operator. Below is what&rsquo;s on offer, who to reach, and what we don&rsquo;t do.
+            Three kitchens, one operator. Below is what&rsquo;s on offer, who to reach, and what we don&rsquo;t do.
           </p>
         </div>
       </section>
@@ -58,7 +59,7 @@ export default async function PressPage() {
             <p className="eyebrow" style={{ marginBottom: '0.5rem' }}>What&rsquo;s on offer</p>
             <ul style={{ margin: 0, paddingLeft: '1.1rem', color: 'var(--servd-mute)', fontSize: '0.95rem', lineHeight: 1.65 }}>
               <li>Comp visits for verified creators with relevant audience</li>
-              <li>Chef&rsquo;s-table previews of new menu drops</li>
+              <li>Chef&rsquo;s-table previews of new menu drops at simmer</li>
               <li>First access to seasonal items and collab nights</li>
               <li>High-res food + room photography on request</li>
               <li>Background interviews with the chefs / operator</li>

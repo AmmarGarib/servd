@@ -138,7 +138,7 @@ interface MenuItemInput {
 
 /** Menu schema scoped to a brand. Each section becomes a MenuSection, each
  *  item a MenuItem with offers. Lights up Google's menu carousel + helps
- *  LLMs answer "what's on the brand's menu". */
+ *  LLMs answer "what's on simmer's menu". */
 export function menuSchema(input: {
   loc:        BrandLocation
   sections:   Array<{ name: string; items: MenuItemInput[] }>

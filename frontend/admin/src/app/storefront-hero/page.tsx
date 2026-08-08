@@ -237,7 +237,7 @@ export default function StorefrontHeroPage() {
               </Field>
               <Field label="Sub-intro (optional)">
                 <textarea className="s-input w-full resize-none" rows={2} value={form.conclusion} onChange={(e) => up({ conclusion: e.target.value })}
-                  placeholder="Stax, Flipd and more — order direct…" />
+                  placeholder="Simmer, Stax, Flipd and more — order direct…" />
               </Field>
               <Field label="Text blend">
                 <label className="flex items-center gap-2 mt-1 text-xs text-white/65 cursor-pointer">
