@@ -8,7 +8,7 @@
 
 import { notFound } from 'next/navigation'
 import { BrandShell } from '../../../components/brand/BrandShell'
-import { brandAccent, type Concept } from '../../../lib/concept'
+import { brandAccent, formatBrandName, type Concept } from '../../../lib/concept'
 
 const API_URL = process.env.INTERNAL_API_URL ?? process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -75,8 +75,12 @@ export async function generateMetadata({
   const { slug } = await Promise.resolve(params as Promise<{ slug: string }>)
   const concept = await getConcept(slug)
   if (!concept) return { title: 'Not found' }
+  // Route the name through formatBrandName — the browser tab, search results,
+  // and link previews are user-visible surfaces, and a capital-S "Simmer"
+  // there is a brand-rule bug even though the DB stores it capitalised.
+  const displayName = formatBrandName(concept.name)
   return {
-    title: concept.name,
-    description: concept.description ?? `Order from ${concept.name} on servd.`,
+    title: displayName,
+    description: concept.description ?? `Order from ${displayName} on servd.`,
   }
 }
