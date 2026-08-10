@@ -607,8 +607,14 @@ body {
   color: var(--servd-ink);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  /* Prevent horizontal scroll from off-canvas decorative blobs etc. */
+  /* Prevent horizontal scroll from off-canvas decorative blobs etc.
+     `clip` rather than `hidden`: `overflow-x: hidden` forces the computed
+     `overflow-y` to `auto`, which turns <body> into a scroll container and
+     stops the document from being the root scroller — that breaks mobile
+     pull-to-refresh. `clip` does the same visual clipping without creating a
+     scroll container. `hidden` stays first as the fallback for Safari < 16. */
   overflow-x: hidden;
+  overflow-x: clip;
 }
 
 * { box-sizing: border-box; }

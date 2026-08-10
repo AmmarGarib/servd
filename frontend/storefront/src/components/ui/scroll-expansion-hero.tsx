@@ -93,6 +93,17 @@ const ScrollExpandMedia = ({
       const touchY = t.clientY;
       const deltaY = touchStartY - touchY;
 
+      // Pull-to-refresh escape hatch. deltaY < 0 means the finger is moving
+      // DOWN — the browser's refresh gesture. When the hero is collapsed at
+      // progress 0 and the document is at the top, there is no animation left
+      // to reverse (newProgress is clamped at 0 below), so calling
+      // preventDefault() here would swallow the gesture for no benefit and the
+      // page could never be pull-to-refreshed on mobile. Bail out and let the
+      // browser have it.
+      if (deltaY < 0 && !mediaFullyExpanded && scrollProgress <= 0 && window.scrollY <= 0) {
+        return;
+      }
+
       if (mediaFullyExpanded && deltaY < -20 && window.scrollY <= 5) {
         setMediaFullyExpanded(false);
         e.preventDefault();
