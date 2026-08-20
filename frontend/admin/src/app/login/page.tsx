@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuthStore } from '../../store/auth'
+import { isExecutive } from '../../lib/appRoles'
 
 const API_URL         = process.env['NEXT_PUBLIC_API_URL']         ?? 'http://localhost:3001'
 const STOREFRONT_URL  = process.env['NEXT_PUBLIC_STOREFRONT_URL']  ?? 'http://localhost:3002'
@@ -82,7 +83,7 @@ export default function StaffLoginPage() {
       // Non-CEO staff land on the Time Clock kiosk first — clocking in is the
       // first thing they do every shift. CEO (admin role) bypasses straight
       // to the dashboard.
-      router.replace(data.user.role === 'admin' ? '/dashboard' : '/time-clock')
+      router.replace(isExecutive(data.user.role) ? '/dashboard' : '/time-clock')
     } catch (e) {
       setError(e instanceof Error ? e.message : 'PIN not recognised')
       setPin('')

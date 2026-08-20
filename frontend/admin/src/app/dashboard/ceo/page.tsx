@@ -23,6 +23,7 @@ import { useRoleModules, modulesForRole } from '../../../store/roleModules'
 import { useViewAsRole } from '../../../store/viewAsRole'
 import type { AppRole } from '../../../lib/appRoles'
 import { LoadingScreen } from '../../../components/ui/Loader'
+import { isExecutive } from '../../../lib/appRoles'
 
 type Period = 'today' | 'week' | 'month'
 type Scope = { conceptId: string | null; fromISO: string; toISO: string; fromDate: string; toDate: string; days: number; brandName: string }
@@ -97,7 +98,7 @@ export default function CeoDashboardPage() {
   const overrides  = useRoleModules((s) => s.overrides)
   const canViewCeo = useMemo(() => {
     if (!me) return null
-    const isSuper = me.role === 'admin'
+    const isSuper = isExecutive(me.role)
     if (isSuper && !viewAsRole) return true
     const effectiveRole = (isSuper && viewAsRole ? viewAsRole : me.role) as AppRole
     return new Set(modulesForRole(effectiveRole, overrides)).has('ceo_overview')

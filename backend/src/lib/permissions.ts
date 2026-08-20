@@ -27,42 +27,45 @@ export interface Permission {
 // brand_manager = marketing-tier manager (Brand dashboard owner).
 // fnb_manager   = ops manager over BOH + FOH (F&B dashboard owner).
 const ON: Record<UserRole, boolean> = {
-  admin: true,  manager: true,  management: true,  foh_management: true, boh_management: true,
+  admin: true,  owner: true,  manager: true,  management: true,  foh_management: true, boh_management: true,
   foh: true,    boh: true,      kitchen: true,     expediter: true,      cashier: true,
   procurement: true, marketing: true, brand_manager: true, fnb_manager: true, finance: true, hr: true,
 }
 const MGR: Record<UserRole, boolean> = {
-  admin: true,  manager: true,  management: true,  foh_management: true, boh_management: true,
+  admin: true,  owner: true,  manager: true,  management: true,  foh_management: true, boh_management: true,
   foh: false,   boh: false,     kitchen: false,    expediter: false,     cashier: false,
   procurement: false, marketing: false, brand_manager: true, fnb_manager: true, finance: false, hr: false,
 }
 const ADMIN: Record<UserRole, boolean> = {
-  admin: true,  manager: false, management: false, foh_management: false, boh_management: false,
+  // owner deliberately EXCLUDED — this bundle gates staff:edit,
+  // permissions:edit and tokens:manage, each of which would let a co-owner
+  // escalate to admin. Widen per-permission at /configuration/roles if wanted.
+  admin: true,  owner: false,  manager: false, management: false, foh_management: false, boh_management: false,
   foh: false,   boh: false,     kitchen: false,    expediter: false,      cashier: false,
   procurement: false, marketing: false, brand_manager: false, fnb_manager: false, finance: false, hr: false,
 }
 const KITCHEN: Record<UserRole, boolean> = {
-  admin: true,  manager: true,  management: true,  foh_management: false, boh_management: true,
+  admin: true,  owner: true,  manager: true,  management: true,  foh_management: false, boh_management: true,
   foh: false,   boh: true,      kitchen: true,     expediter: true,       cashier: false,
   procurement: false, marketing: false, brand_manager: false, fnb_manager: true, finance: false, hr: false,
 }
 const POS: Record<UserRole, boolean> = {
-  admin: true,  manager: true,  management: true,  foh_management: true, boh_management: false,
+  admin: true,  owner: true,  manager: true,  management: true,  foh_management: true, boh_management: false,
   foh: true,    boh: false,     kitchen: false,    expediter: false,     cashier: true,
   procurement: false, marketing: false, brand_manager: false, fnb_manager: true, finance: false, hr: false,
 }
 const MARKETING: Record<UserRole, boolean> = {
-  admin: true,  manager: true,  management: true,  foh_management: false, boh_management: false,
+  admin: true,  owner: true,  manager: true,  management: true,  foh_management: false, boh_management: false,
   foh: false,   boh: false,     kitchen: false,    expediter: false,      cashier: false,
   procurement: false, marketing: true,  brand_manager: true, fnb_manager: false, finance: false, hr: false,
 }
 const FINANCE: Record<UserRole, boolean> = {
-  admin: true,  manager: true,  management: true,  foh_management: false, boh_management: false,
+  admin: true,  owner: true,  manager: true,  management: true,  foh_management: false, boh_management: false,
   foh: false,   boh: false,     kitchen: false,    expediter: false,      cashier: false,
   procurement: false, marketing: false, brand_manager: false, fnb_manager: false, finance: true, hr: false,
 }
 const NONE: Record<UserRole, boolean> = {
-  admin: true,  manager: false, management: false, foh_management: false, boh_management: false,
+  admin: true,  owner: false,  manager: false, management: false, foh_management: false, boh_management: false,
   foh: false,   boh: false,     kitchen: false,    expediter: false,      cashier: false,
   procurement: false, marketing: false, brand_manager: false, fnb_manager: false, finance: false, hr: false,
 }

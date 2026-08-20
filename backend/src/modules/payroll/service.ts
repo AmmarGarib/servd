@@ -22,6 +22,7 @@ import { ACCT, postJournalEntry, type JournalLineInput } from '../accounting/jou
 //   procurement/finance/hr/marketing → WAGES_MANAGEMENT (office salaries)
 const ROLE_TO_WAGE_ACCOUNT: Record<UserRole, string> = {
   admin:          ACCT.WAGES_MANAGEMENT,
+  owner:          ACCT.WAGES_MANAGEMENT,
   manager:        ACCT.WAGES_MANAGEMENT,
   management:     ACCT.WAGES_MANAGEMENT,
   foh_management: ACCT.WAGES_MANAGEMENT,

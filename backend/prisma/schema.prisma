@@ -61,7 +61,14 @@ enum ItemStatus {
 // + the CEO's role-modules editor stay in sync. Adding values is safe and
 // additive (Postgres ALTER TYPE ADD VALUE); removing requires a backfill.
 enum UserRole {
-  admin // CEO / founder — superuser, always full access
+  admin // CEO / founder — superuser, always full access, FINAL approver
+  // owner — co-owner. Sees everything the CEO sees (P&L, payroll, projections)
+  // and can approve STAFF submissions, but is deliberately NOT the final
+  // authority: anything an owner submits escalates to `admin`, an owner can
+  // never approve their own work, and owners cannot touch roles / module
+  // access / staff accounts (otherwise they could self-promote to admin and
+  // the escalation rule would be cosmetic).
+  owner
   manager // legacy "manager" — kept for back-compat; new staff use management
   management // GM / day-to-day operator
   foh_management // floor manager
@@ -752,6 +759,10 @@ model User {
   // re-issues a CSPRNG PIN via POST /auth/staff/:id/issue-pin. New signups
   // ship with this false because their PIN is already CSPRNG-generated.
   pinMustReset    Boolean       @default(false)
+  // Set when a staff member taps "forgot PIN" on the login screen. Surfaces
+  // the request to the CEO/owner in the staff directory; cleared when a new
+  // PIN is issued. Never reveals anything about the old PIN.
+  pinResetRequestedAt DateTime?
   role            UserRole      @default(kitchen)
   // Free-text job title shown next to the role chip in /workforce. The role
   // enum is the *category* (FOH / BOH / Procurement / etc); jobTitle is what

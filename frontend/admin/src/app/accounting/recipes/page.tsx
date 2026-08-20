@@ -8,6 +8,7 @@ import { RecipeStepsEditor } from '../../../components/recipe/RecipeStepsEditor'
 import { TenantChip, useMyTenants } from '../../../components/ui/TenantPicker'
 import { recipeStatusMeta } from './RecipeForm'
 import { usePermissions } from '../../../hooks/useCan'
+import { isExecutive } from '../../../lib/appRoles'
 
 const Q_FACTOR = 0.05
 
@@ -106,7 +107,9 @@ export default function RecipesPage() {
   const router = useRouter()
   const { data: tenants = [] } = useMyTenants()
   const { data: me } = usePermissions()
-  const isCeo = me?.role === 'admin'   // 'admin' is shown as "CEO" in this app
+  // Executive tier: the CEO and co-owners can both act on approvals. The
+  // backend still blocks an owner from approving their OWN submission.
+  const isCeo = isExecutive(me?.role)
   const [conceptFilter, setConceptFilter] = useState('')
   const [kindFilter,    setKindFilter]    = useState<'' | 'plate' | 'component'>('')
   const [search,        setSearch]        = useState('')

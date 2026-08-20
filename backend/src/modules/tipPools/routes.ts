@@ -8,7 +8,7 @@
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
-import { requireAuth, ADMIN_ONLY, MANAGERS } from '../auth/middleware.js'
+import { requireAuth, APPROVERS, MANAGERS } from '../auth/middleware.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { audit } from '../../lib/audit.js'
 import { postJournalEntry, ACCT } from '../accounting/journal.js'
@@ -151,7 +151,7 @@ export async function tipPoolRoutes(fastify: FastifyInstance) {
   // is already on the books from each order's tip).
   fastify.post<{ Params: { id: string } }>(
     '/:id/post',
-    { preHandler: requireAuth(...ADMIN_ONLY) },
+    { preHandler: requireAuth(...APPROVERS) },
     async (req) => {
       const pool = await prisma.tipPool.findUnique({ where: { id: req.params.id }, include: { members: true } })
       if (!pool) throw new NotFoundError('TipPool', req.params.id)
@@ -223,7 +223,7 @@ export async function tipPoolRoutes(fastify: FastifyInstance) {
   // Pay — disburses funds. Posts: Dr 2095 / Cr Bank.
   fastify.post<{ Params: { id: string }; Body: { paidFromAccountCode?: string } }>(
     '/:id/pay',
-    { preHandler: requireAuth(...ADMIN_ONLY) },
+    { preHandler: requireAuth(...APPROVERS) },
     async (req) => {
       const body = z.object({ paidFromAccountCode: z.string().optional() }).parse(req.body)
       const pool = await prisma.tipPool.findUnique({ where: { id: req.params.id } })

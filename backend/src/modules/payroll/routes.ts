@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
-import { requireAuth, MANAGERS, ADMIN_ONLY } from '../auth/middleware.js'
+import { requireAuth, MANAGERS, APPROVERS } from '../auth/middleware.js'
 import { resolveDateRange } from '../accounting/dates.js'
 import { audit } from '../../lib/audit.js'
 import {
@@ -38,7 +38,7 @@ export async function payrollRoutes(fastify: FastifyInstance) {
 
   fastify.put<{ Params: { userId: string } }>(
     '/users/:userId/wage',
-    { preHandler: requireAuth(...ADMIN_ONLY) },
+    { preHandler: requireAuth(...APPROVERS) },
     async (req, reply) => {
       const body = wageRateSchema.parse(req.body)
       // Verify the target user belongs to the active tenant.
@@ -144,7 +144,7 @@ export async function payrollRoutes(fastify: FastifyInstance) {
 
   fastify.post<{ Params: { id: string } }>(
     '/runs/:id/post',
-    { preHandler: requireAuth(...ADMIN_ONLY) },
+    { preHandler: requireAuth(...APPROVERS) },
     async (req) => {
       return postPayrollRun(req.params.id, req.staffUser!.id)
     },
@@ -152,7 +152,7 @@ export async function payrollRoutes(fastify: FastifyInstance) {
 
   fastify.post<{ Params: { id: string } }>(
     '/runs/:id/pay',
-    { preHandler: requireAuth(...ADMIN_ONLY) },
+    { preHandler: requireAuth(...APPROVERS) },
     async (req) => {
       const body = paySchema.parse(req.body ?? {})
       return payPayrollRun(req.params.id, req.staffUser!.id, body.paidFromAccountCode)

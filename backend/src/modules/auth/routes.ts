@@ -72,6 +72,21 @@ const STAFF_ROLE_WITH_ADMIN = z.enum(['admin', ...STAFF_ROLE_VALUES])
 // 6-digit PIN, 10^6 = 1M keyspace. Combined with per-IP lockout on /auth/pin,
 // this is brute-force-resistant in practice. Used by both staff signup and
 // the admin-driven re-issue flow for legacy PIN rotation.
+/**
+ * Reject PINs that a shoulder-surfer or a casual guesser would land quickly:
+ * all-same digits (0000), ascending/descending runs (1234, 4321), and
+ * plausible birth years. Not a substitute for lockout, but it removes the
+ * handful of PINs that a meaningful share of people actually pick.
+ */
+export function isWeakPin(pin: string): boolean {
+  if (/^(\d)\1+$/.test(pin)) return true                      // 1111, 000000
+  const asc  = '01234567890'
+  const desc = '09876543210'
+  if (asc.includes(pin) || desc.includes(pin)) return true      // 1234, 4321
+  if (/^(19|20)\d{2}$/.test(pin)) return true                   // 1998, 2024
+  return false
+}
+
 function generateRandomPin(): string {
   const buf = randomBytes(4)
   const n = buf.readUInt32BE(0) % 1_000_000
@@ -475,7 +490,17 @@ export async function authRoutes(fastify: FastifyInstance) {
       phone:   z.string().min(7).max(20),
       role:    STAFF_ROLE,
       reason:  z.string().max(280).optional(),    // free-text "why I'm joining"
+      // The new hire chooses their own PIN. Never derived from the phone
+      // number any more — a phone's last 4 digits are effectively public, and
+      // anyone who knew them could log in as that person.
+      pin:     z.string().regex(/^\d{4,8}$/, 'PIN must be 4–8 digits'),
     }).parse(req.body)
+
+    if (isWeakPin(body.pin)) {
+      return reply.status(400).send({
+        error: { code: 'WEAK_PIN', message: 'That PIN is too easy to guess — avoid repeated digits (1111), runs (1234), and your birth year.' },
+      })
+    }
 
     const email = body.email.toLowerCase()
     // Duplicate email = nicer error than a 500 from the unique constraint.
@@ -486,13 +511,10 @@ export async function authRoutes(fastify: FastifyInstance) {
       })
     }
 
-    // PIN = the last 4 digits of the phone number (operator preference). The
-    // CEO view surfaces this same phone-derived PIN, so what the CEO sees now
-    // matches the account's real PIN. Login is disambiguated by name/email +
-    // PIN, so a shared last-4 across two people is fine. Falls back to a random
-    // PIN only if the phone somehow has fewer than 4 digits.
-    const phoneDigits = body.phone.replace(/\D/g, '')
-    const pinPlain = phoneDigits.length >= 4 ? phoneDigits.slice(-4) : generateRandomPin()
+    // The staff member's own PIN. The CEO never sees it — approval gates the
+    // ACCOUNT, not the credential, and the account stays `pending` (unable to
+    // log in) until the CEO activates it.
+    const pinPlain = body.pin
 
     // Random unusable password hash — we don't use password login at all.
     const password = await hashPassword(randomBytes(16).toString('hex'))
@@ -513,13 +535,11 @@ export async function authRoutes(fastify: FastifyInstance) {
       select: { id: true, name: true, email: true, role: true, phone: true, accountStatus: true },
     })
 
-    // PIN is returned ONCE in this response. The new hire must save it now —
-    // the hashed value lives in the DB and we can't recover the plaintext later.
-    // The CEO approval flow does NOT re-display it.
+    // No PIN echoed back — they chose it, they already know it. Only the
+    // bcrypt hash is stored, so nobody (CEO included) can read it later.
     return reply.status(201).send({
       ...user,
-      pin: pinPlain,
-      message: 'Account created. Save your PIN now — you will not see it again. The CEO will review and activate it shortly.',
+      message: 'Account created with the PIN you chose. The CEO will review and activate your account — you can log in once it is approved.',
     })
   })
 
@@ -631,20 +651,96 @@ export async function authRoutes(fastify: FastifyInstance) {
       const pin = await hashPin(pinPlain)
       await prisma.user.update({
         where: { id: user.id },
-        data: { pin, pinMustReset: false },
+        data: {
+          pin,
+          // Temporary by design: the staff member must pick their own PIN on
+          // next login, so the CEO never ends up knowing a live credential.
+          pinMustReset: true,
+          // Their "forgot PIN" escalation is now handled.
+          pinResetRequestedAt: null,
+        },
       })
 
       return reply.status(200).send({
         id: user.id,
         name: user.name,
-        // Echo the PIN regardless of whether the admin supplied it (their
-        // copy may be on a different device, and the response is the
-        // canonical confirmation of what landed in the DB).
         pin: pinPlain,
-        message: 'PIN reissued. Share it with the staff member now — it will not be shown again.',
+        temporary: true,
+        message: 'Temporary PIN issued. Share it with the staff member now — they will be asked to choose their own PIN when they log in.',
       })
     },
   )
+
+  // POST /auth/pin/forgot — staff raises a "forgot my PIN" escalation.
+  //
+  // Unauthenticated by necessity (they can't log in). Deliberately
+  // enumeration-safe: always returns the same 200 whether or not the
+  // identifier matches, so this can't be used to discover who works here.
+  // It never touches the existing PIN — it only raises a flag the CEO sees in
+  // the staff directory, and the CEO issues a temporary PIN from there.
+  fastify.post('/pin/forgot', async (req, reply) => {
+    const ip = req.ip ?? 'unknown'
+    await checkRateLimit(STAFF_PASSWORD_LIMIT, ip)
+
+    const body = z.object({
+      identifier: z.string().min(1).max(120),   // name or email
+    }).parse(req.body)
+
+    const id = body.identifier.trim().toLowerCase()
+    const user = await prisma.user.findFirst({
+      where: {
+        deletedAt: null,
+        OR: [{ email: id }, { name: { equals: body.identifier.trim(), mode: 'insensitive' } }],
+      },
+      select: { id: true },
+    })
+    if (user) {
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { pinResetRequestedAt: new Date() },
+      })
+    }
+
+    return reply.status(200).send({
+      message: 'If that account exists, your manager has been notified. They will give you a temporary PIN.',
+    })
+  })
+
+  // POST /auth/pin/change — staff sets their OWN PIN.
+  //
+  // Used both for the forced change after a temporary PIN is issued
+  // (pinMustReset) and for a voluntary change. Requires the CURRENT PIN, so a
+  // borrowed unlocked tablet can't be used to silently take over an account.
+  fastify.post('/pin/change', { preHandler: requireAuth(...ALL_STAFF) }, async (req, reply) => {
+    const body = z.object({
+      currentPin: z.string().regex(/^\d{4,8}$/),
+      newPin:     z.string().regex(/^\d{4,8}$/, 'PIN must be 4–8 digits'),
+    }).parse(req.body)
+
+    if (isWeakPin(body.newPin)) {
+      return reply.status(400).send({
+        error: { code: 'WEAK_PIN', message: 'That PIN is too easy to guess — avoid repeated digits (1111), runs (1234), and years.' },
+      })
+    }
+
+    const me = await prisma.user.findUnique({
+      where: { id: req.staffUser!.id },
+      select: { id: true, pin: true },
+    })
+    if (!me?.pin || !(await bcrypt.compare(body.currentPin, me.pin))) {
+      return reply.status(401).send({ error: { code: 'BAD_PIN', message: 'Current PIN is incorrect.' } })
+    }
+
+    await prisma.user.update({
+      where: { id: me.id },
+      data: {
+        pin: await hashPin(body.newPin),
+        pinMustReset: false,
+        pinResetRequestedAt: null,
+      },
+    })
+    return reply.status(200).send({ message: 'PIN updated.' })
+  })
 
   // GET /auth/users — list staff (admin/manager only).
   // Powers the /workforce hub. `?role=foh,boh,kitchen` filters by enum value
@@ -689,7 +785,13 @@ export async function authRoutes(fastify: FastifyInstance) {
       where,
       select: {
         id: true, name: true, email: true, phone: true, role: true, jobTitle: true,
-        isActive: true, accountStatus: true, createdAt: true, pin: true,
+        isActive: true, accountStatus: true, createdAt: true,
+        // `pin` is selected only so the mapper below can derive `hasPin`; it is
+        // stripped (pin: undefined) before the response leaves the server and
+        // must stay that way — it is a bcrypt hash of a 4–8 digit number and
+        // would be trivially crackable offline if it ever shipped to a client.
+        pin: true,
+        pinMustReset: true, pinResetRequestedAt: true,
         tenantId: true,
         // Per-user overrides — used by the inline editor's tri-state chips
         // to show which actions/modules diverge from the role default.
@@ -755,13 +857,13 @@ export async function authRoutes(fastify: FastifyInstance) {
 
     // Password not used for login (PIN-only) — store a random unusable hash
     const password = await hashPassword(Math.random().toString(36) + Date.now())
-    // PIN = explicit body.pin if given, else the last 4 digits of the phone
-    // number (operator preference — the CEO view surfaces this same phone-derived
-    // PIN, so what the CEO sees matches the account's real PIN). Only null if no
-    // PIN was supplied AND the phone has fewer than 4 digits.
-    const phoneDigits = (body.phone ?? '').replace(/\D/g, '')
-    const pinPlain    = body.pin || (phoneDigits.length >= 4 ? phoneDigits.slice(-4) : null)
-    const pin         = pinPlain ? await hashPin(pinPlain) : null
+    // PIN = the explicit body.pin if the CEO typed one, otherwise a CSPRNG
+    // temporary PIN that the staff member MUST change on first login. Never
+    // derived from the phone number — a phone's last 4 digits are effectively
+    // public and made every account guessable.
+    const pinPlain    = body.pin || generateRandomPin()
+    const pin         = await hashPin(pinPlain)
+    const pinIsTemporary = !body.pin
 
     // Resolve the target tenant: explicit body.tenantId wins; falls back to
     // the operator's active tenantId. Validate either way — you can only
@@ -797,7 +899,10 @@ export async function authRoutes(fastify: FastifyInstance) {
         ...(body.phone ? { phone: body.phone.trim() } : {}),
         ...(body.jobTitle ? { jobTitle: body.jobTitle.trim() } : {}),
         password,
-        ...(pin ? { pin } : {}),
+        pin,
+        // A CEO-generated temporary PIN must be changed by the staff member
+        // on first login; an explicitly-typed one is treated as final.
+        pinMustReset: pinIsTemporary,
         ...(tenantId ? { tenantId } : {}),
         role: body.role as never,
         // Mirror the primary tenant as a membership row too — keeps "is this
@@ -929,16 +1034,18 @@ export async function authRoutes(fastify: FastifyInstance) {
       if (body.isActive != null) data.isActive  = body.isActive
       if (body.jobTitle != null) data.jobTitle  = body.jobTitle || null
       if (body.pin      != null) data.pin       = body.pin ? await hashPin(body.pin) : null
-      // Keep the phone-last-4 PIN invariant live: if the phone changes and the
-      // caller didn't set an explicit PIN, re-derive the PIN from the new
-      // phone's last 4 digits (and clear the legacy reset gate). Matches what
-      // the CEO view shows and what signup/create do.
-      if (body.phone != null && (body.pin == null || body.pin === '')) {
-        const digits = (body.phone || '').replace(/\D/g, '')
-        if (digits.length >= 4) {
-          data.pin = await hashPin(digits.slice(-4))
-          data.pinMustReset = false
+      // NOTE: changing the phone number deliberately does NOT touch the PIN.
+      // PINs used to be re-derived from the phone's last 4 digits here, which
+      // meant editing someone's number silently reset their credential to a
+      // publicly-guessable value. Staff own their own PIN now.
+      if (body.pin != null && body.pin !== '') {
+        if (isWeakPin(body.pin)) {
+          return reply.status(400).send({
+            error: { code: 'WEAK_PIN', message: 'That PIN is too easy to guess.' },
+          })
         }
+        data.pinMustReset       = false
+        data.pinResetRequestedAt = null
       }
       if (finalPrimary)          data.tenantId  = finalPrimary
       // Override arrays — full-replacement semantics. The frontend computes

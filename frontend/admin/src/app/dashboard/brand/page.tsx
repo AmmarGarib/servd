@@ -17,6 +17,7 @@ import { usePermissions } from '../../../hooks/useCan'
 import { useRoleModules, modulesForRole } from '../../../store/roleModules'
 import { useViewAsRole } from '../../../store/viewAsRole'
 import type { AppRole } from '../../../lib/appRoles'
+import { isExecutive } from '../../../lib/appRoles'
 
 type Period = 'today' | 'week' | 'month'
 
@@ -70,7 +71,7 @@ export default function BrandDashboardPage() {
   const overrides  = useRoleModules((s) => s.overrides)
   const canView = useMemo(() => {
     if (!me) return null
-    const isSuper = me.role === 'admin'
+    const isSuper = isExecutive(me.role)
     if (isSuper && !viewAsRole) return true
     const role = (isSuper && viewAsRole ? viewAsRole : me.role) as AppRole
     return new Set(modulesForRole(role, overrides)).has('brand_dashboard')

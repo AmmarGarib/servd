@@ -17,6 +17,7 @@
 // changes here so the UI reads as "CEO" everywhere.
 export type AppRole =
   | 'admin'             // backend value — displayed as "CEO"
+  | 'owner'             // co-owner — CEO-level visibility, not final authority
   | 'management'
   | 'foh_management'
   | 'boh_management'
@@ -42,7 +43,8 @@ export interface RoleMeta {
 }
 
 export const APP_ROLES: RoleMeta[] = [
-  { value: 'admin',           label: 'CEO',              emoji: '👑',  description: 'Founder / owner — always has every permission', isSuperuser: true },
+  { value: 'admin',           label: 'CEO',              emoji: '👑',  description: 'Founder — final approver, the only role that can edit roles & module access', isSuperuser: true },
+  { value: 'owner',           label: 'Owner',            emoji: '🔑',  description: 'Co-owner — sees everything the CEO sees and approves staff work, but their own submissions escalate to the CEO and they cannot edit roles' },
   { value: 'management',      label: 'Management',       emoji: '🧑‍💼', description: 'GM / day-to-day operator — full ops + finance, no platform' },
   { value: 'foh_management',  label: 'FOH Management',   emoji: '🎩',  description: 'Floor manager — service, dispatch, reservations, complaints' },
   { value: 'boh_management',  label: 'BOH Management',   emoji: '👨‍🍳', description: 'Head chef — kitchen, inventory, recipes, brigade' },
@@ -195,6 +197,10 @@ const ALL_MODULE_IDS = MODULES.map((m) => m.id)
  */
 export const DEFAULT_MODULE_ACCESS: Record<AppRole, ModuleId[]> = {
   admin: ALL_MODULE_IDS,
+  // Co-owner: full CEO-level visibility MINUS the governance surfaces. Kept in
+  // sync with OWNER_MODULES in backend/src/lib/moduleAccess.ts — an owner who
+  // could edit roles could promote themselves to admin.
+  owner: ALL_MODULE_IDS.filter((m) => !['role_management', 'role_modules'].includes(m)),
   management: ALL_MODULE_IDS.filter((m) => !['chain'].includes(m)),
 
   foh_management: [
@@ -269,4 +275,18 @@ export const DEFAULT_MODULE_ACCESS: Record<AppRole, ModuleId[]> = {
     'staff_procurement', 'staff_marketing', 'staff_finance', 'staff_hr',
     'kitchen_staff', 'payroll', 'scheduling',
   ],
+}
+
+/**
+ * Executive tier — the CEO and any co-owner. Use for VISIBILITY decisions
+ * ("should this person see the Executive section / the CEO dashboard / the
+ * approvals inbox?").
+ *
+ * Do NOT use this for AUTHORITY decisions. Granting or revoking access,
+ * editing roles and module maps, and being the final approver are `admin`
+ * only — an owner who could edit roles could promote themselves to admin.
+ * For those, keep comparing against 'admin' explicitly.
+ */
+export function isExecutive(role: string | undefined | null): boolean {
+  return role === 'admin' || role === 'owner'
 }

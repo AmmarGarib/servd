@@ -8,6 +8,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api } from '../../../../lib/api'
 import { usePermissions } from '../../../../hooks/useCan'
+import { isExecutive } from '../../../../lib/appRoles'
 
 interface PendingRecipe {
   id: string
@@ -21,7 +22,7 @@ interface PendingRecipe {
 export default function RecipeApprovalsPage() {
   const qc = useQueryClient()
   const { data: me } = usePermissions()
-  const isCeo = me?.role === 'admin'
+  const isCeo = isExecutive(me?.role)
 
   const { data: pending = [], isLoading, isError } = useQuery<PendingRecipe[]>({
     queryKey: ['recipes', 'pending-approval'],

@@ -240,10 +240,19 @@ export async function requireCustomerAuth(req: FastifyRequest, _reply: FastifyRe
 // UserRole type only refreshes when `prisma generate` succeeds (which can fail
 // transiently on Windows if a dev process holds the DLL). The migration adds
 // the values; the cast keeps TS happy until the next clean generate.
+// ADMIN_ONLY stays literally the CEO. This guards the powers that define
+// "final boss": roles & module access, staff accounts, and location config.
+// `owner` is deliberately EXCLUDED — an owner who could edit roles could
+// promote itself to admin and escape the escalation rule below.
 export const ADMIN_ONLY = ['admin'] as UserRole[]
+// APPROVERS — who may sign off on a submission (recipes, payroll runs,
+// reconciliation, tip-pool posting, capex). The CEO plus co-owners. Owners
+// approve STAFF work; anything an owner submitted escalates to the CEO, which
+// is enforced per-request by assertNotSelfApproval() below.
+export const APPROVERS = ['admin', 'owner'] as UserRole[]
 // fnb_manager is a full ops manager (BOH + FOH) — folded into MANAGERS so it
 // passes every manager-tier endpoint (reports, kds, inventory, reservations…).
-export const MANAGERS = ['admin', 'manager', 'management', 'foh_management', 'boh_management', 'fnb_manager'] as UserRole[]
+export const MANAGERS = ['admin', 'owner', 'manager', 'management', 'foh_management', 'boh_management', 'fnb_manager'] as UserRole[]
 export const CASHIERS = [...MANAGERS, 'cashier', 'foh'] as UserRole[]
 export const KITCHEN_STAFF = [...MANAGERS, 'kitchen', 'expediter', 'boh', 'boh_management'] as UserRole[]
 // brand_manager is marketing-tier (NOT a full ops manager) — added to the
@@ -258,10 +267,33 @@ export const FINANCE_TEAM = [...MANAGERS, 'finance'] as UserRole[]
 // are deliberately excluded. 'management' is the CEO/exec role; 'admin' is the
 // owner superuser. Keep this DISTINCT from FINANCE_TEAM (which is intentionally
 // broad: MANAGERS + finance, for non-confidential finance-adjacent endpoints).
-export const FINANCIALS_VIEWERS = ['admin', 'management', 'finance', 'fnb_manager'] as UserRole[]
+export const FINANCIALS_VIEWERS = ['admin', 'owner', 'management', 'finance', 'fnb_manager'] as UserRole[]
 export const HR_TEAM = [...MANAGERS, 'hr'] as UserRole[]
 export const ALL_STAFF = [
-  'admin', 'manager', 'management', 'foh_management', 'boh_management',
+  'admin', 'owner', 'manager', 'management', 'foh_management', 'boh_management',
   'foh', 'boh', 'kitchen', 'expediter', 'cashier',
   'procurement', 'marketing', 'brand_manager', 'fnb_manager', 'finance', 'hr',
 ] as UserRole[]
+
+/**
+ * Enforce the owner-escalation rule: a co-owner may approve STAFF submissions
+ * but never their own — those must escalate to the CEO (`admin`), who is the
+ * final authority and may approve anything.
+ *
+ * Call this at the top of every approval handler, passing whoever submitted
+ * the thing being approved (Recipe.submittedById, PayrollRun.createdBy, …).
+ * A null submitter means the record predates submitter tracking; treat it as
+ * not-self so legacy items stay approvable.
+ */
+export function assertNotSelfApproval(
+  req: FastifyRequest,
+  submittedById: string | null | undefined,
+): void {
+  const user = req.staffUser!
+  if (user.role === 'admin') return              // CEO is the final boss
+  if (submittedById && submittedById === user.id) {
+    throw new ForbiddenError(
+      'You submitted this — it needs the CEO to approve. Owners cannot approve their own work.',
+    )
+  }
+}

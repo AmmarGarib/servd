@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
-import { requireAuth, MANAGERS, ADMIN_ONLY } from '../auth/middleware.js'
+import { requireAuth, MANAGERS, APPROVERS } from '../auth/middleware.js'
 import {
   importBankStatement,
   adjustStatementLine,
@@ -66,7 +66,7 @@ export async function reconciliationRoutes(fastify: FastifyInstance) {
 
   fastify.post<{ Params: { id: string } }>(
     '/bank/lines/:id/adjust',
-    { preHandler: requireAuth(...ADMIN_ONLY) },
+    { preHandler: requireAuth(...APPROVERS) },
     async (req) => {
       const body = adjustLineSchema.parse(req.body)
       return adjustStatementLine({

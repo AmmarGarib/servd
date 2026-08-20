@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { Prisma } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
-import { requireAuth, MANAGERS, ADMIN_ONLY, ALL_STAFF } from '../auth/middleware.js'
+import { requireAuth, MANAGERS, APPROVERS, ALL_STAFF, assertNotSelfApproval } from '../auth/middleware.js'
 import { NotFoundError, AppError } from '../../lib/errors.js'
 
 const Q_FACTOR = 0.05 // 5% miscellaneous surcharge (salt, oil, unmeasured items)
@@ -417,7 +417,7 @@ export async function recipeRoutes(fastify: FastifyInstance) {
   // GET /recipes/pending-approval — CEO/owner inbox. Recipes a manager has
   // submitted for promotion and that are waiting on sign-off. Defined before
   // GET /:id so the static segment isn't swallowed by the param route.
-  fastify.get('/pending-approval', { preHandler: requireAuth(...ADMIN_ONLY) }, async () => {
+  fastify.get('/pending-approval', { preHandler: requireAuth(...APPROVERS) }, async () => {
     const recipes = await prisma.recipe.findMany({
       where: { status: 'pending_approval' },
       include: { menuItem: { select: { name: true, concept: { select: { name: true } } } } },
@@ -951,13 +951,15 @@ export async function recipeRoutes(fastify: FastifyInstance) {
   // POST /recipes/:id/approve — pending_approval → production (CEO/owner only).
   fastify.post<{ Params: { id: string } }>(
     '/:id/approve',
-    { preHandler: requireAuth(...ADMIN_ONLY) },
+    { preHandler: requireAuth(...APPROVERS) },
     async (req) => {
       const recipe = await prisma.recipe.findUnique({ where: { id: req.params.id } })
       if (!recipe) throw new NotFoundError('Recipe', req.params.id)
       if (recipe.status !== 'pending_approval') {
         throw new AppError('BAD_STATUS', `Only recipes pending approval can be promoted (this one is ${recipe.status})`, 409)
       }
+      // A co-owner cannot sign off their own submission — escalates to the CEO.
+      assertNotSelfApproval(req, recipe.submittedById)
 
       const data: Prisma.RecipeUpdateInput = {
         status:          'production',
@@ -994,7 +996,7 @@ export async function recipeRoutes(fastify: FastifyInstance) {
   // POST /recipes/:id/reject — pending_approval → iteration (CEO/owner only).
   fastify.post<{ Params: { id: string }; Body: { reason?: string } }>(
     '/:id/reject',
-    { preHandler: requireAuth(...ADMIN_ONLY) },
+    { preHandler: requireAuth(...APPROVERS) },
     async (req) => {
       const { reason } = z.object({ reason: z.string().max(1000).optional() }).parse(req.body ?? {})
       const recipe = await prisma.recipe.findUnique({ where: { id: req.params.id } })
@@ -1002,6 +1004,8 @@ export async function recipeRoutes(fastify: FastifyInstance) {
       if (recipe.status !== 'pending_approval') {
         throw new AppError('BAD_STATUS', `Only recipes pending approval can be rejected (this one is ${recipe.status})`, 409)
       }
+      // Same escalation rule as approve — an owner can't rule on their own work.
+      assertNotSelfApproval(req, recipe.submittedById)
       return prisma.recipe.update({
         where: { id: req.params.id },
         data: {
@@ -1379,7 +1383,7 @@ export async function recipeRoutes(fastify: FastifyInstance) {
   // PATCH /recipes/purchase-orders/:id/cancel
   fastify.patch<{ Params: { id: string } }>(
     '/purchase-orders/:id/cancel',
-    { preHandler: requireAuth(...ADMIN_ONLY) },
+    { preHandler: requireAuth(...APPROVERS) },
     async (req) => {
       return prisma.purchaseOrder.update({
         where: { id: req.params.id },

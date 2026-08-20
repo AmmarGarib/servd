@@ -37,8 +37,18 @@ const ALL_MODULES = [...MODULE_IDS] as string[]
 // Role defaults — ported from frontend appRoles.ts DEFAULT_MODULE_ACCESS.
 // The legacy 'manager' role mirrors 'management'.
 const MANAGEMENT_MODULES = ALL_MODULES.filter((m) => m !== 'chain')
+// Co-owner: everything the CEO sees — P&L, payroll, projections, investment —
+// EXCEPT the governance surfaces. Withholding role_management/role_modules is
+// what makes the escalation rule real: an owner who could edit roles could
+// grant themselves `admin`. Staff-account admin stays with the CEO for the
+// same reason (creating an admin user is equivalent to self-promotion).
+const OWNER_MODULES = ALL_MODULES.filter(
+  (m) => !['role_management', 'role_modules'].includes(m),
+)
+
 export const DEFAULT_MODULE_ACCESS: Record<UserRole, string[]> = {
   admin:      ALL_MODULES,
+  owner:      OWNER_MODULES,
   management: MANAGEMENT_MODULES,
   manager:    MANAGEMENT_MODULES,
   foh_management: [

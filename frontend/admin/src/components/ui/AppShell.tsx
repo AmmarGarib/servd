@@ -8,7 +8,7 @@ import { api } from '../../lib/api'
 import { useViewAsRole, type ViewAsRole } from '../../store/viewAsRole'
 import { useRoleModules, modulesForRole, useSyncRoleModules } from '../../store/roleModules'
 import { usePermissions } from '../../hooks/useCan'
-import { APP_ROLES, roleLabel, type AppRole, type ModuleId } from '../../lib/appRoles'
+import { APP_ROLES, roleLabel, isExecutive, type AppRole, type ModuleId } from '../../lib/appRoles'
 import { TenantSwitcher, useViewAllTenants } from './TenantSwitcher'
 import { PortfolioWriteGuardModal } from './PortfolioWriteGuardModal'
 
@@ -448,7 +448,10 @@ function NavLinks({
         // Executive section: only ever shown to a real (not impersonating)
         // admin/CEO so the role-management surface can't be tweaked by anyone
         // pretending to be the admin via the view-as switcher.
-        if (section.title === 'Executive' && !(isSuper && !viewAsRole)) return null
+        // Owners see the Executive section too. Individual rows inside stay
+        // module-gated, so role_management / role_modules remain hidden from
+        // an owner even though the section itself renders.
+        if (section.title === 'Executive' && !(isExecutive(me?.role) && !viewAsRole)) return null
         const sectionItems = section.items.filter((i) => visibleByModule(i.module))
         if (sectionItems.length === 0) return null
         const isCollapsed = collapsedSections.has(section.title)
