@@ -83,7 +83,10 @@ export default function StaffLoginPage() {
       // Non-CEO staff land on the Time Clock kiosk first — clocking in is the
       // first thing they do every shift. CEO (admin role) bypasses straight
       // to the dashboard.
-      router.replace(isExecutive(data.user.role) ? '/dashboard' : '/time-clock')
+      // Everyone lands on the module hub — it is the map of the whole system.
+      // Floor staff who only hold the time-clock atom still see the hub; their
+      // modules simply render as locked.
+      router.replace('/modules')
     } catch (e) {
       setError(e instanceof Error ? e.message : 'PIN not recognised')
       setPin('')

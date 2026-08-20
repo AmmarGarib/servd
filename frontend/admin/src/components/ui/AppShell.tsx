@@ -10,6 +10,7 @@ import { useRoleModules, modulesForRole, useSyncRoleModules } from '../../store/
 import { usePermissions } from '../../hooks/useCan'
 import { APP_ROLES, roleLabel, isExecutive, type AppRole, type ModuleId } from '../../lib/appRoles'
 import { TenantSwitcher, useViewAllTenants } from './TenantSwitcher'
+import { moduleForPath } from '../../lib/moduleCatalog'
 import { PortfolioWriteGuardModal } from './PortfolioWriteGuardModal'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
@@ -326,9 +327,34 @@ function NavLinks({
     enabled:  !allowedModules || allowedModules.has('kds_all'),
   })
 
-  // Build the rendered NAV — clone the static definition and inject station
-  // children into the Live section just after "Expo Station".
-  const renderedNav: NavSection[] = useMemo(() => {
+  // ── Module-scoped navigation ────────────────────────────────────────────
+  //
+  // The sidebar used to be the whole app: one long dropdown tree of every
+  // section. Navigation now starts at the /modules hub, and the sidebar shows
+  // ONLY the module you are currently inside. Items stay module-gated exactly
+  // as before, so a partial-access role sees a partial list.
+  const currentModule = useMemo(() => moduleForPath(pathname), [pathname])
+
+  const moduleNav: NavSection[] = useMemo(() => {
+    if (!currentModule) return []
+    const items: NavItem[] = currentModule.sections.map((sec) => ({
+      href: sec.href,
+      label: sec.label,
+      icon: '·',
+      ...(sec.module ? { module: sec.module } : {}),
+    }))
+    // Live per-station KDS entries still belong under the Kitchen module.
+    if (currentModule.id === 'kitchen' && stations.length > 0) {
+      for (const st of stations.filter((s) => s.isActive)) {
+        items.push({ href: `/kds/${st.id}`, label: st.name, icon: '·', module: 'kds_all' })
+      }
+    }
+    return [{ title: currentModule.name, items }]
+  }, [currentModule, stations])
+
+  // Legacy full tree — retained only so the station-injection logic below keeps
+  // compiling; it is no longer rendered.
+  const legacyNav: NavSection[] = useMemo(() => {
     if (stations.length === 0) return NAV
     const activeStations = stations.filter((s) => s.isActive)
     return NAV.map((section) => {
@@ -390,7 +416,7 @@ function NavLinks({
   // Auto-expand parent if we're on a child route
   useEffect(() => {
     if (collapsed) return
-    for (const section of renderedNav) {
+    for (const section of moduleNav) {
       for (const item of section.items) {
         if (item.children?.some((c) => isActive(pathname, c.href))) {
           if (!expandedParents.has(item.href)) {
@@ -409,7 +435,7 @@ function NavLinks({
   // when the operator pins one (otherwise they'd appear as orphans).
   const allItems = useMemo(() => {
     const map = new Map<string, NavItem>()
-    for (const s of renderedNav) {
+    for (const s of legacyNav) {
       for (const i of s.items) {
         map.set(i.href, i)
         for (const c of i.children ?? []) {
@@ -418,7 +444,7 @@ function NavLinks({
       }
     }
     return map
-  }, [renderedNav])
+  }, [legacyNav])
 
   const pinnedItems = useMemo(() =>
     Array.from(pinned).map((h) => allItems.get(h)).filter((x): x is NavItem => !!x),
@@ -443,15 +469,26 @@ function NavLinks({
         </div>
       )}
 
-      {/* ── Sections ───────────────────────────────────────────────────── */}
-      {renderedNav.map((section) => {
-        // Executive section: only ever shown to a real (not impersonating)
-        // admin/CEO so the role-management surface can't be tweaked by anyone
-        // pretending to be the admin via the view-as switcher.
-        // Owners see the Executive section too. Individual rows inside stay
-        // module-gated, so role_management / role_modules remain hidden from
-        // an owner even though the section itself renders.
-        if (section.title === 'Executive' && !(isExecutive(me?.role) && !viewAsRole)) return null
+      {/* ── Back to the hub ────────────────────────────────────────────
+          Navigation starts at /modules; every screen keeps a way back to it. */}
+      <div className="px-1.5 pb-2">
+        <Link
+          href="/modules"
+          onClick={onNavigate}
+          className="flex items-center gap-2 rounded-lg px-2.5 py-2 text-xs font-bold transition-colors"
+          style={{ color: 'rgba(255,255,255,0.55)', background: 'rgba(255,255,255,0.03)' }}
+          title="All modules"
+        >
+          <span aria-hidden>⊞</span>
+          {!collapsed && <span>All modules</span>}
+        </Link>
+      </div>
+
+      {/* ── Current module ─────────────────────────────────────────────── */}
+      {moduleNav.map((section) => {
+        // Governance rows (Roles & Permissions, Module Access) stay hidden by
+        // their module atoms — an owner simply doesn't hold them — so no
+        // section-level special case is needed any more.
         const sectionItems = section.items.filter((i) => visibleByModule(i.module))
         if (sectionItems.length === 0) return null
         const isCollapsed = collapsedSections.has(section.title)
