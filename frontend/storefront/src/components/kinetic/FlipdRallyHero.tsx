@@ -68,6 +68,11 @@ export function FlipdRallyHero({ img, orderHref, menuHref }: Props) {
   const ctaY        = useTransform(p, [FINALE + 0.08, FINALE + 0.16], [26, 0])
   const cueOpacity  = useTransform(p, [0, 0.06], [1, 0])
 
+  // Motion streaks — visible mid-flight, gone at contacts and at rest.
+  const streakOpacity = useTransform(p,
+    [0.02, 0.1, CONTACTS[0], 0.31, CONTACTS[1], 0.52, CONTACTS[2], FINALE],
+    [0, 0.55, 0, 0.5, 0, 0.45, 0, 0])
+
   if (reduce) {
     return (
       <section className="flipd-page" style={{
@@ -141,6 +146,26 @@ export function FlipdRallyHero({ img, orderHref, menuHref }: Props) {
           ))}
         </div>
 
+        {/* ── SCOREBOARD — ticks with the rally ──────────────────────── */}
+        <div aria-hidden style={{
+          position: 'absolute', top: 'clamp(1rem, 3vh, 2rem)', right: 'clamp(1rem, 3vw, 2.2rem)',
+          background: 'var(--flipd-ink)', color: 'var(--flipd-cream)',
+          border: '2px solid var(--flipd-ink)',
+          borderRadius: '0.55rem',
+          boxShadow: '0 4px 0 var(--flipd-green-deep), 0 10px 26px rgba(9,13,23,0.25)',
+          padding: '0.55rem 0.9rem',
+          display: 'flex', alignItems: 'baseline', gap: '0.7rem',
+        }}>
+          <span className="flipd-type" style={{ fontSize: '0.62rem', letterSpacing: '0.26em', textTransform: 'uppercase', opacity: 0.65 }}>
+            flipd · serving
+          </span>
+          <span style={{ position: 'relative', display: 'inline-block', minWidth: '6ch', textAlign: 'right' }}>
+            {(['LOVE', '15', '30', 'SMASH'] as const).map((v, i) => (
+              <ScoreValue key={v} p={p} value={v} index={i} />
+            ))}
+          </span>
+        </div>
+
         {/* ── BALL + SHADOW ──────────────────────────────────────────── */}
         <motion.div aria-hidden style={{
           x: ballX, scaleX: shadowScale, opacity: shadowOpacity,
@@ -156,6 +181,17 @@ export function FlipdRallyHero({ img, orderHref, menuHref }: Props) {
           width: 'clamp(8rem, 13vw, 12rem)',
           marginLeft: 'clamp(-4rem, -6.5vw, -6rem)',
         }}>
+          {/* speed streaks trailing the flight */}
+          <motion.div style={{
+            opacity: streakOpacity,
+            position: 'absolute', top: '38%', right: '92%',
+            display: 'flex', flexDirection: 'column', gap: '0.5rem',
+            transform: 'rotate(-14deg)',
+          }}>
+            <span style={{ display: 'block', width: '4.2rem', height: 4, borderRadius: 999, background: 'var(--flipd-optic)' }} />
+            <span style={{ display: 'block', width: '2.8rem', height: 4, borderRadius: 999, background: 'var(--flipd-optic)', opacity: 0.65, marginLeft: '1rem' }} />
+            <span style={{ display: 'block', width: '1.8rem', height: 4, borderRadius: 999, background: 'var(--flipd-optic)', opacity: 0.4, marginLeft: '0.4rem' }} />
+          </motion.div>
           <motion.div style={{ scaleY: ballSquash, rotate: ballRotate, transformOrigin: '50% 100%' }}>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src="/flipd/ball.png" alt="" style={{ width: '100%', height: 'auto', display: 'block' }} />
@@ -169,6 +205,12 @@ export function FlipdRallyHero({ img, orderHref, menuHref }: Props) {
           display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1.1rem',
           pointerEvents: 'none',
         }}>
+          {/* confetti burst radiating from the landing */}
+          <div aria-hidden style={{ position: 'absolute', top: '38%', left: '50%', width: 0, height: 0 }}>
+            {CONFETTI.map((c, i) => (
+              <ConfettiPiece key={i} p={p} {...c} />
+            ))}
+          </div>
           <div style={{
             width: 'min(34vh, 64vw)', height: 'min(34vh, 64vw)',
             borderRadius: '50%', overflow: 'hidden',
@@ -201,6 +243,70 @@ export function FlipdRallyHero({ img, orderHref, menuHref }: Props) {
         </motion.div>
       </section>
     </div>
+  )
+}
+
+// One scoreboard value — visible only during its stretch of the rally.
+function ScoreValue({ p, value, index }: {
+  p: MotionValue<number>; value: string; index: number
+}) {
+  const edges = [0, ...CONTACTS, 1.01]
+  const a = edges[index]!
+  const b = edges[index + 1]!
+  const opacity = useTransform(p, [a, a + 0.008, b, b + 0.008], [index === 0 ? 1 : 0, 1, 1, 0])
+  const y = useTransform(p, [a, a + 0.02], [index === 0 ? 0 : 8, 0])
+  return (
+    <motion.span className="flipd-marquee" style={{
+      opacity, y,
+      position: index === 0 ? 'relative' : 'absolute',
+      right: 0, top: 0,
+      fontSize: '1.05rem', lineHeight: 1,
+      color: value === 'SMASH' ? 'var(--flipd-optic)' : 'var(--flipd-cream)',
+      whiteSpace: 'nowrap',
+    }}>
+      {value}
+    </motion.span>
+  )
+}
+
+// Confetti geometry — angle (deg), distance (px), size, color, spin.
+const CONFETTI = [
+  { angle: -80, dist: 300, w: 14, h: 22, color: 'var(--flipd-optic)', spin: 260 },
+  { angle: -55, dist: 360, w: 12, h: 12, color: 'var(--flipd-sky)', spin: -200 },
+  { angle: -30, dist: 320, w: 16, h: 10, color: 'var(--flipd-cream)', spin: 320 },
+  { angle: -10, dist: 380, w: 10, h: 18, color: 'var(--flipd-green)', spin: -280 },
+  { angle: -100, dist: 340, w: 10, h: 16, color: 'var(--flipd-sky)', spin: 240 },
+  { angle: -125, dist: 330, w: 14, h: 10, color: 'var(--flipd-green)', spin: -300 },
+  { angle: -150, dist: 360, w: 12, h: 20, color: 'var(--flipd-optic)', spin: 210 },
+  { angle: -170, dist: 300, w: 12, h: 12, color: 'var(--flipd-cream)', spin: -240 },
+  { angle: -65, dist: 210, w: 8, h: 14, color: 'var(--flipd-green)', spin: 180 },
+  { angle: -115, dist: 220, w: 9, h: 9, color: 'var(--flipd-optic)', spin: -160 },
+  { angle: -20, dist: 220, w: 8, h: 12, color: 'var(--flipd-sky)', spin: 200 },
+  { angle: -160, dist: 215, w: 9, h: 13, color: 'var(--flipd-sky)', spin: -190 },
+] as const
+
+function ConfettiPiece({ p, angle, dist, w, h, color, spin }: {
+  p: MotionValue<number>
+  angle: number; dist: number; w: number; h: number; color: string; spin: number
+}) {
+  const rad = (angle * Math.PI) / 180
+  const window: [number, number] = [FINALE + 0.02, FINALE + 0.16]
+  const x = useTransform(p, window, [0, Math.cos(rad) * dist])
+  // Rise on the burst, then gravity pulls the tail of the flight down.
+  const y = useTransform(p, [window[0], (window[0] + window[1]) / 2, window[1]],
+    [0, Math.sin(rad) * dist, Math.sin(rad) * dist + 90])
+  const opacity = useTransform(p, [window[0], window[0] + 0.02, window[1] - 0.02, window[1]], [0, 1, 1, 0])
+  const rotate = useTransform(p, window, [0, spin])
+  return (
+    <motion.span style={{
+      x, y, opacity, rotate,
+      position: 'absolute',
+      width: w, height: h,
+      borderRadius: 2,
+      background: color,
+      border: '1.5px solid var(--flipd-ink)',
+      display: 'block',
+    }} />
   )
 }
 

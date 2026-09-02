@@ -1549,6 +1549,13 @@ html { scroll-behavior: smooth; }
   100% { opacity: 0;    transform: translateY(-70%) scaleY(1.25) rotate(6deg); }
 }
 
+/* Stax stack-builder spec callouts — side annotations on wide screens,
+   compact index chips on narrow ones. */
+.stax-callout { display: none; }
+@media (min-width: 920px) { .stax-callout { display: flex; } }
+.stax-callout-mini { display: inline-block; }
+@media (min-width: 920px) { .stax-callout-mini { display: none; } }
+
 /* Scroll chevron — a soft double-arrow pulsing downward. */
 .kp-chevron {
   width: 22px;

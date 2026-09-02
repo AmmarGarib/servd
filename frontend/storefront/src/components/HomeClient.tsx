@@ -6,7 +6,7 @@ import type { HeroConfig } from '../lib/heroConfig'
 
 import type { Concept } from '../lib/concept'
 import { brandAccent, brandStory, conceptHeroImage, formatBrandName } from '../lib/concept'
-import { Reveal, Parallax } from './motion/Motion'
+import { Reveal, Parallax, TiltCard } from './motion/Motion'
 import { OpenNowPill } from './brand/parts/OpenNowPill'
 import { BRAND_LOCATIONS, locationFor, whatsappLink } from '../lib/brandLocations'
 
@@ -165,6 +165,25 @@ export function HomeClient({ concepts, heroConfig }: Props) {
             ))}
           </div>
         </div>
+
+        {/* Kinetic marquee — a rolling band of the three kitchens. */}
+        <div className="marquee" aria-hidden style={{ padding: '1.5rem 0 3rem', ['--marquee-speed' as string]: '26s' }}>
+          {[0, 1].map((k) => (
+            <div key={k} className="marquee-track" style={{
+              alignItems: 'baseline',
+              fontFamily: 'var(--font-display)', fontWeight: 800,
+              fontSize: 'clamp(1.5rem, 3.2vw, 2.4rem)', letterSpacing: '-0.02em',
+              color: 'var(--servd-ink)', whiteSpace: 'nowrap',
+            }}>
+              {['Stax', 'smashed & stacked', 'simmer', 'slow nights', 'Flipd', 'court-side', 'one bag', 'one checkout'].map((t, i) => (
+                <span key={i} style={{ display: 'inline-flex', alignItems: 'baseline', gap: '3rem', opacity: i % 2 ? 0.35 : 1, fontStyle: i % 2 ? 'italic' : 'normal' }}>
+                  {t}
+                  <span style={{ color: 'var(--servd-green)', opacity: 0.55 }}>·</span>
+                </span>
+              ))}
+            </div>
+          ))}
+        </div>
       </section>
 
       {/* ── OPEN NOW STRIP ─ Live status + address per brand as glass
@@ -319,6 +338,7 @@ export function HomeClient({ concepts, heroConfig }: Props) {
               },
             ].map((p, i) => (
               <Reveal key={p.head} delay={i * 0.12} y={36} style={{ height: '100%' }}>
+                <TiltCard max={5} style={{ height: '100%' }}>
                 <div className="glass-deep glass-lift glass-sheen" style={{
                   background: p.featured ? 'rgba(255,255,255,0.16)' : undefined,
                   borderColor: p.featured ? 'rgba(255,255,255,0.4)' : undefined,
@@ -360,6 +380,7 @@ export function HomeClient({ concepts, heroConfig }: Props) {
                     {p.body}
                   </p>
                 </div>
+                </TiltCard>
               </Reveal>
             ))}
           </div>

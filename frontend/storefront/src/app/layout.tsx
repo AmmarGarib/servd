@@ -3,6 +3,7 @@ import './globals.css'
 import { StorefrontNav } from '../components/StorefrontNav'
 import { StorefrontFooter } from '../components/StorefrontFooter'
 import { FeedbackWidget } from '../components/feedback/FeedbackWidget'
+import { CursorFX } from '../components/ui/CursorFX'
 
 export const metadata: Metadata = {
   // Absolute base for og:image / canonical resolution. Single source for the
@@ -48,6 +49,7 @@ export default function StorefrontLayout({ children }: { children: React.ReactNo
         <main id="main">{children}</main>
         <StorefrontFooter />
         <FeedbackWidget />
+        <CursorFX />
       </body>
     </html>
   )

@@ -21,11 +21,14 @@ import { useScrollProgress } from './motionHooks'
  * The "wow" comes from the choreography, not decoration.
  */
 
-// Each layer in the stack is either:
-//   - a regular content layer (gradient bar with a label + sub)
-//   - the top bun (domed SVG, sesame seeds, glossy gradient)
-//   - the bottom bun (flat-domed SVG, deeper crust)
-type LayerVariant = 'top-bun' | 'bottom-bun' | 'fill'
+// Each layer in the stack is a drawn ingredient. Buns bookend the stack;
+// the fills are organic SVG shapes (greens, patties, cheese, crust,
+// tomato + pickles) so the stack reads as an actual burger. Category
+// labels move OUT of the food into spec-sheet callouts beside it.
+type LayerVariant =
+  | 'top-bun' | 'bottom-bun'
+  | 'lettuce' | 'smash-patty' | 'thick-patty' | 'cheese' | 'golden' | 'tomato'
+type FillVariant = Exclude<LayerVariant, 'top-bun' | 'bottom-bun'>
 
 interface Layer {
   /** What kind of shape this layer is rendered as. */
@@ -68,23 +71,17 @@ interface Props {
 }
 
 const DEFAULT_LAYERS: Layer[] = [
-  // Bottom-up: bottom bun lands first, top bun lands last. Buns use the
-  // dedicated SVG variants so they read as actual bread — flat-domed
-  // base, glossy sesame top — not flat coloured bars.
-  { variant: 'bottom-bun', label: 'House Brioche', sub: 'baked in-house, never frozen',          height: 10,   fireAt: 0.06 },
-  { label: 'Stacked Bowls',           sub: 'grain · greens · house dressing',
-    height: 6, bg: 'linear-gradient(180deg, #b8d870 0%, #4d7a25 100%)',     fireAt: 0.18, shadow: '#356015', textColor: '#0a0a0a' },
-  { label: 'Smash Stax',              sub: 'double smash patty, MCD / Smash / build-your-own',
-    height: 7, bg: 'linear-gradient(180deg, #5b2f12 0%, #2a1108 100%)',     fireAt: 0.30 },
-  { label: 'Pub Stax',                sub: 'thick patty, C-stack, CC-stack',
-    height: 6.5, bg: 'linear-gradient(180deg, #6e3a18 0%, #321408 100%)',   fireAt: 0.42 },
-  { label: 'Flaky Stax',              sub: 'sandwiches in house-made croissants',
-    height: 5.5, bg: 'linear-gradient(180deg, #f4c97a 0%, #b6781f 100%)',   fireAt: 0.54, textColor: '#3a1f08' },
-  { label: 'Golden Stax',             sub: 'sandwiches in house-made foccacia',
-    height: 5, bg: 'linear-gradient(180deg, #e5b25d 0%, #9c6a16 100%)',     fireAt: 0.64, textColor: '#3a1f08' },
-  { label: 'Side Stax · Desserts',    sub: 'pommes stax · roasties · stacked desserts',
-    height: 4.5, bg: 'linear-gradient(180deg, #c97d4a 0%, #7a3d18 100%)',   fireAt: 0.74 },
-  { variant: 'top-bun',   label: 'House Brioche', sub: 'sesame · brushed butter · pressed on the flat-top', height: 13, fireAt: 0.86 },
+  // Bottom-up: bottom bun lands first, top bun lands last. Every layer
+  // is a drawn ingredient; the menu-category labels annotate from the
+  // side like a parts diagram.
+  { variant: 'bottom-bun',  label: 'House Brioche',        sub: 'baked in-house, never frozen',                      height: 10,  fireAt: 0.06 },
+  { variant: 'lettuce',     label: 'Stacked Bowls',        sub: 'grain · greens · house dressing',                   height: 5.5, fireAt: 0.18 },
+  { variant: 'smash-patty', label: 'Smash Stax',           sub: 'double smash patty · MCD / Smash / build-your-own', height: 6.5, fireAt: 0.30 },
+  { variant: 'thick-patty', label: 'Pub Stax',             sub: 'thick patty · C-stack · CC-stack',                  height: 8,   fireAt: 0.42 },
+  { variant: 'cheese',      label: 'Flaky Stax',           sub: 'sandwiches in house-made croissants',               height: 5,   fireAt: 0.54 },
+  { variant: 'golden',      label: 'Golden Stax',          sub: 'sandwiches in house-made foccacia',                 height: 5.5, fireAt: 0.64 },
+  { variant: 'tomato',      label: 'Side Stax · Desserts', sub: 'pommes stax · roasties · stacked desserts',         height: 5,   fireAt: 0.74 },
+  { variant: 'top-bun',     label: 'House Brioche',        sub: 'sesame · brushed butter · pressed on the flat-top', height: 13,  fireAt: 0.86 },
 ]
 
 export function StaxStackBuilderHero({
@@ -198,7 +195,9 @@ export function StaxStackBuilderHero({
             display: 'flex',
             flexDirection: 'column-reverse',   // bottom layer at the bottom of the flex
             alignItems: 'center',
-            width: 'min(85vw, 720px)',
+            // Narrow enough that the layers read as a thick-cut burger,
+            // not stretched pancakes; callouts annotate from the sides.
+            width: 'min(66vw, 520px)',
             paddingBottom: '12vh',             // sits just above the table lip
           }}
         >
@@ -208,7 +207,7 @@ export function StaxStackBuilderHero({
             const wrapperStyle: CSSProperties = {
               width: '100%',
               height: `${layer.height}vh`,
-              marginTop: '-0.7vh',
+              marginTop: '-1.5vh',   // layers press into each other like a real build
               position: 'relative',
               transform: `
                 translateY(calc(-100vh * ${invExpr}))
@@ -219,75 +218,14 @@ export function StaxStackBuilderHero({
               transition: 'transform 80ms linear, opacity 80ms linear',
               zIndex: layers.length - i,
             }
-            // Buns get their own SVG-rendered shape; the label sits
-            // overlaid on top of the bun.
-            if (layer.variant === 'top-bun') {
-              return (
-                <div key={layer.label} style={wrapperStyle}>
-                  <TopBun />
-                  <BunLabel idx={i + 1} layer={layer} accent={accent} />
-                </div>
-              )
-            }
-            if (layer.variant === 'bottom-bun') {
-              return (
-                <div key={layer.label} style={wrapperStyle}>
-                  <BottomBun />
-                  <BunLabel idx={i + 1} layer={layer} accent={accent} bottom />
-                </div>
-              )
-            }
-            // Regular fill layer — gradient bar with index + label inside.
+            const inner =
+              layer.variant === 'top-bun'    ? <TopBun /> :
+              layer.variant === 'bottom-bun' ? <BottomBun /> :
+              <IngredientSvg variant={layer.variant as FillVariant} />
             return (
-              <div
-                key={layer.label}
-                style={{
-                  ...wrapperStyle,
-                  borderRadius: '14px',
-                  background: layer.bg,
-                  boxShadow: layer.shadow
-                    ? `0 -6px 0 -2px ${layer.shadow}, 0 18px 36px -8px rgba(0,0,0,0.55)`
-                    : '0 18px 36px -8px rgba(0,0,0,0.55)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  padding: '0 1.5rem',
-                  gap: '0.85rem',
-                }}
-              >
-                <span style={{
-                  background: 'rgba(0,0,0,0.45)',
-                  color: accent,
-                  fontFamily: 'var(--font-display)',
-                  fontWeight: 800,
-                  fontSize: '0.72rem',
-                  letterSpacing: '0.18em',
-                  padding: '0.3rem 0.6rem',
-                  borderRadius: '4px',
-                  textTransform: 'uppercase',
-                  flexShrink: 0,
-                }}>
-                  {String(i + 1).padStart(2, '0')}
-                </span>
-                <div style={{ minWidth: 0 }}>
-                  <p style={{
-                    fontFamily: 'var(--font-display)',
-                    fontWeight: 800,
-                    fontSize: 'clamp(0.95rem, 1.6vw, 1.25rem)',
-                    color: layer.textColor ?? 'white',
-                    letterSpacing: '-0.015em',
-                    lineHeight: 1.05,
-                    textShadow: '0 1px 2px rgba(0,0,0,0.3)',
-                  }}>
-                    {layer.label}
-                  </p>
-                  <p style={{
-                    fontSize: 'clamp(0.7rem, 1.1vw, 0.82rem)',
-                    color: layer.textColor ? `${layer.textColor}cc` : 'rgba(255,255,255,0.78)',
-                    marginTop: '0.15rem',
-                  }}>
-                    {layer.sub}
-                  </p>
-                </div>
+              <div key={layer.label} style={wrapperStyle}>
+                {inner}
+                <Callout idx={i + 1} layer={layer} side={i % 2 ? 'left' : 'right'} cream={cream} />
               </div>
             )
           })}
@@ -435,60 +373,230 @@ function BottomBun() {
   )
 }
 
-// Tiny label that overlays the bun shapes — sits inside the dome on top,
-// or on the visible part of the flat-bottom. Positioned with vertical
-// offset depending on which bun it's for.
-function BunLabel({
-  idx, layer, accent, bottom,
-}: { idx: number; layer: Layer; accent: string; bottom?: boolean }) {
+// ─── Spec callout — the category label, annotating from beside the
+// burger like a parts diagram. Hairline leader + mono tag. Hidden on
+// narrow screens (a compact chip takes over via .stax-callout-mini).
+function Callout({ idx, layer, side, cream }: {
+  idx: number; layer: Layer; side: 'left' | 'right'; cream: string
+}) {
   return (
-    <div style={{
-      position: 'absolute',
-      inset: 0,
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'flex-start',
-      paddingLeft: 'clamp(2rem, 6vw, 4rem)',
-      // Bottom bun is short + flat, so the label sits centered vertically.
-      // Top bun is taller + domed, so we nudge the label up into the dome.
-      paddingTop: bottom ? 0 : 'clamp(1rem, 3vh, 2rem)',
-      gap: '0.85rem',
-      pointerEvents: 'none',
-    }}>
-      <span style={{
-        background: 'rgba(60,30,8,0.55)',
-        color: '#FFE3A8',
-        fontFamily: 'var(--font-display)',
-        fontWeight: 800,
-        fontSize: '0.7rem',
-        letterSpacing: '0.18em',
-        padding: '0.28rem 0.55rem',
-        borderRadius: '4px',
-        textTransform: 'uppercase',
-        textShadow: '0 1px 1px rgba(0,0,0,0.4)',
+    <>
+      <div className="stax-callout" style={{
+        position: 'absolute', top: '50%',
+        ...(side === 'right' ? { left: 'calc(100% + 0.4rem)' } : { right: 'calc(100% + 0.4rem)' }),
+        transform: 'translateY(-50%)',
+        alignItems: 'center', gap: '0.7rem',
+        flexDirection: side === 'right' ? 'row' : 'row-reverse',
+        width: 'max-content', maxWidth: '24vw',
+        pointerEvents: 'none',
+      }}>
+        <span aria-hidden style={{ width: '2.6rem', height: 1, background: 'rgba(234,236,239,0.35)', flexShrink: 0 }} />
+        <div style={{ textAlign: side === 'right' ? 'left' : 'right' }}>
+          <p style={{
+            fontFamily: 'var(--stax-mono, monospace)', fontSize: '0.72rem',
+            letterSpacing: '0.16em', textTransform: 'uppercase',
+            color: cream, margin: 0, whiteSpace: 'nowrap',
+          }}>
+            {String(idx).padStart(2, '0')} / {layer.label}
+          </p>
+          <p style={{
+            fontFamily: 'var(--stax-mono, monospace)', fontSize: '0.64rem',
+            letterSpacing: '0.04em', color: 'rgba(234,236,239,0.55)',
+            margin: '0.25rem 0 0', maxWidth: '24ch',
+          }}>
+            {layer.sub}
+          </p>
+        </div>
+      </div>
+      {/* Narrow screens — tiny index chip in the layer's corner. */}
+      <span className="stax-callout-mini" aria-hidden style={{
+        position: 'absolute', top: '50%', left: '0.6rem',
+        transform: 'translateY(-50%)',
+        fontFamily: 'var(--stax-mono, monospace)', fontSize: '0.6rem',
+        letterSpacing: '0.14em',
+        color: 'rgba(234,236,239,0.9)',
+        background: 'rgba(13,27,36,0.6)',
+        padding: '0.2rem 0.45rem', borderRadius: 3,
+        pointerEvents: 'none',
       }}>
         {String(idx).padStart(2, '0')}
       </span>
-      <div style={{ minWidth: 0 }}>
-        <p style={{
-          fontFamily: 'var(--font-display)',
-          fontWeight: 800,
-          fontSize: 'clamp(0.95rem, 1.6vw, 1.25rem)',
-          color: '#3a1f08',
-          letterSpacing: '-0.015em',
-          lineHeight: 1.05,
-        }}>
-          {bottom ? 'Bottom · ' : 'Top · '}{layer.label}
-          <span style={{ color: accent }}>.</span>
-        </p>
-        <p style={{
-          fontSize: 'clamp(0.7rem, 1.1vw, 0.82rem)',
-          color: 'rgba(58,31,8,0.78)',
-          marginTop: '0.15rem',
-        }}>
-          {layer.sub}
-        </p>
-      </div>
-    </div>
+    </>
+  )
+}
+
+// ─── Drawn ingredients ───────────────────────────────────────────────
+// Organic SVG shapes — ruffled greens, char-textured patties, drooping
+// cheese, dimpled focaccia crust, tomato + pickles — so the stack reads
+// as food, not UI bars. Stretch to the layer box (preserveAspectRatio
+// "none"); textures come from turbulence filters, depth from gradients.
+
+function IngredientSvg({ variant }: { variant: FillVariant }) {
+  switch (variant) {
+    case 'lettuce':     return <Lettuce />
+    case 'smash-patty': return <Patty thick={false} />
+    case 'thick-patty': return <Patty thick />
+    case 'cheese':      return <Cheese />
+    case 'golden':      return <GoldenCrust />
+    case 'tomato':      return <TomatoPickles />
+  }
+}
+
+const ING_SVG_STYLE: CSSProperties = {
+  display: 'block', width: '100%', height: '100%', overflow: 'visible',
+  filter: 'drop-shadow(0 12px 22px rgba(0,0,0,0.45))',
+}
+
+function Lettuce() {
+  return (
+    <svg viewBox="0 0 800 100" preserveAspectRatio="none" style={ING_SVG_STYLE} aria-hidden>
+      <defs>
+        <linearGradient id="stxLet" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#C4E47C" />
+          <stop offset="55%" stopColor="#7BAA3C" />
+          <stop offset="100%" stopColor="#48711E" />
+        </linearGradient>
+      </defs>
+      {/* back ruffle — darker, offset for depth */}
+      <path d="M18 46 Q70 22 140 40 Q210 18 290 38 Q370 16 450 36 Q530 16 610 38 Q690 20 782 44 L782 66 Q720 92 660 70 Q590 96 520 72 Q450 98 380 72 Q310 96 240 70 Q170 94 100 68 Q50 88 18 62 Z"
+        fill="#3E6218" opacity="0.9" transform="translate(0 6)" />
+      <path d="M12 42 Q64 16 134 34 Q204 12 284 32 Q364 10 444 30 Q524 10 604 32 Q684 14 788 40 L788 62 Q724 90 662 66 Q594 94 522 68 Q452 96 380 68 Q308 94 236 66 Q168 92 98 64 Q46 86 12 58 Z"
+        fill="url(#stxLet)" />
+      {/* rib highlights */}
+      <g stroke="#E4F4B2" strokeWidth="2.5" strokeLinecap="round" opacity="0.55" fill="none">
+        <path d="M120 40 Q150 52 178 44" />
+        <path d="M330 34 Q362 48 396 38" />
+        <path d="M560 36 Q596 50 630 40" />
+      </g>
+    </svg>
+  )
+}
+
+function Patty({ thick }: { thick: boolean }) {
+  const id = thick ? 'stxPatT' : 'stxPatS'
+  return (
+    <svg viewBox="0 0 800 100" preserveAspectRatio="none" style={ING_SVG_STYLE} aria-hidden>
+      <defs>
+        <radialGradient id={id} cx="50%" cy="34%" r="90%">
+          <stop offset="0%" stopColor={thick ? '#8A4A24' : '#95542B'} />
+          <stop offset="55%" stopColor={thick ? '#5C2C12' : '#633115'} />
+          <stop offset="100%" stopColor="#2E1408" />
+        </radialGradient>
+        <filter id={`${id}Char`} x="-5%" y="-20%" width="110%" height="140%">
+          <feTurbulence type="fractalNoise" baseFrequency="0.55" numOctaves="2" stitchTiles="stitch" result="n" />
+          <feColorMatrix in="n" type="matrix" values="0 0 0 0 0.05  0 0 0 0 0.02  0 0 0 0 0  0 0 0 0.55 0" />
+          <feComposite operator="in" in2="SourceGraphic" />
+        </filter>
+      </defs>
+      {/* irregular char-edged slab */}
+      <path id={`${id}Shape`}
+        d="M16 34 Q44 14 96 22 Q170 8 250 20 Q336 6 424 18 Q512 8 592 20 Q672 10 744 24 Q788 32 786 54 Q766 86 700 78 Q636 94 556 82 Q468 96 380 84 Q292 96 204 82 Q124 92 62 78 Q16 68 16 46 Z"
+        fill={`url(#${id})`} />
+      {/* char texture clipped to the slab */}
+      <path d="M16 34 Q44 14 96 22 Q170 8 250 20 Q336 6 424 18 Q512 8 592 20 Q672 10 744 24 Q788 32 786 54 Q766 86 700 78 Q636 94 556 82 Q468 96 380 84 Q292 96 204 82 Q124 92 62 78 Q16 68 16 46 Z"
+        fill={`url(#${id})`} filter={`url(#${id}Char)`} opacity="0.8" />
+      {/* sear glisten */}
+      <g fill="white" opacity="0.16">
+        <ellipse cx="220" cy="30" rx="46" ry="7" />
+        <ellipse cx="520" cy="26" rx="60" ry="8" />
+        <ellipse cx="680" cy="36" rx="30" ry="5" />
+      </g>
+      {/* crumbly edge bits */}
+      <g fill="#3A1A0A">
+        <circle cx="30" cy="60" r="6" />
+        <circle cx="774" cy="52" r="5" />
+        <circle cx="120" cy="86" r="4" />
+        <circle cx="656" cy="88" r="5" />
+      </g>
+      {thick && (
+        // juice drips off a thick pub patty
+        <g fill="#241006">
+          <path d="M180 92 q6 26 14 0 z" />
+          <path d="M470 94 q7 30 16 0 z" />
+        </g>
+      )}
+    </svg>
+  )
+}
+
+function Cheese() {
+  return (
+    <svg viewBox="0 0 800 100" preserveAspectRatio="none" style={ING_SVG_STYLE} aria-hidden>
+      <defs>
+        <linearGradient id="stxChz" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#FFDE85" />
+          <stop offset="60%" stopColor="#F2B93E" />
+          <stop offset="100%" stopColor="#D08F1E" />
+        </linearGradient>
+      </defs>
+      {/* melted slice — two tips droop over the layer below */}
+      <path d="M22 24 L778 24 Q790 24 788 40 L784 56 L566 56 L544 108 Q530 126 516 106 L498 56 L268 56 L250 96 Q236 114 222 94 L208 56 L16 56 L12 40 Q10 24 22 24 Z"
+        fill="url(#stxChz)" />
+      {/* sheen */}
+      <path d="M40 32 Q400 20 760 32 L756 40 Q400 30 44 40 Z" fill="white" opacity="0.35" />
+    </svg>
+  )
+}
+
+function GoldenCrust() {
+  return (
+    <svg viewBox="0 0 800 100" preserveAspectRatio="none" style={ING_SVG_STYLE} aria-hidden>
+      <defs>
+        <linearGradient id="stxGold" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#F2CC74" />
+          <stop offset="55%" stopColor="#D3A040" />
+          <stop offset="100%" stopColor="#9A671C" />
+        </linearGradient>
+      </defs>
+      <path d="M28 52 Q28 16 110 16 L690 16 Q772 16 772 52 Q772 86 690 86 L110 86 Q28 86 28 52 Z"
+        fill="url(#stxGold)" />
+      {/* focaccia dimples */}
+      <g fill="#7E5214" opacity="0.5">
+        <ellipse cx="150" cy="44" rx="14" ry="9" />
+        <ellipse cx="310" cy="56" rx="13" ry="8" />
+        <ellipse cx="470" cy="42" rx="15" ry="9" />
+        <ellipse cx="630" cy="54" rx="13" ry="8" />
+      </g>
+      <g fill="#FBE7AE" opacity="0.7">
+        <ellipse cx="146" cy="40" rx="7" ry="4" />
+        <ellipse cx="306" cy="52" rx="6" ry="4" />
+        <ellipse cx="466" cy="38" rx="7" ry="4" />
+        <ellipse cx="626" cy="50" rx="6" ry="4" />
+      </g>
+      {/* rosemary flecks */}
+      <g stroke="#5E7A2E" strokeWidth="3" strokeLinecap="round">
+        <line x1="230" y1="30" x2="244" y2="24" />
+        <line x1="540" y1="66" x2="554" y2="60" />
+        <line x1="700" y1="34" x2="712" y2="28" />
+      </g>
+    </svg>
+  )
+}
+
+function TomatoPickles() {
+  return (
+    <svg viewBox="0 0 800 100" preserveAspectRatio="none" style={ING_SVG_STYLE} aria-hidden>
+      <defs>
+        <radialGradient id="stxTom" cx="50%" cy="40%" r="75%">
+          <stop offset="0%" stopColor="#F0705A" />
+          <stop offset="60%" stopColor="#D8402C" />
+          <stop offset="100%" stopColor="#A32414" />
+        </radialGradient>
+      </defs>
+      {/* pickles peeking behind */}
+      <g>
+        <circle cx="140" cy="34" r="30" fill="#6B8A32" stroke="#465F1A" strokeWidth="6" strokeDasharray="7 5" />
+        <circle cx="410" cy="28" r="26" fill="#6B8A32" stroke="#465F1A" strokeWidth="6" strokeDasharray="7 5" />
+        <circle cx="668" cy="34" r="28" fill="#6B8A32" stroke="#465F1A" strokeWidth="6" strokeDasharray="7 5" />
+      </g>
+      {/* tomato slices */}
+      <ellipse cx="270" cy="56" rx="240" ry="38" fill="url(#stxTom)" />
+      <ellipse cx="270" cy="56" rx="196" ry="28" fill="#F09A86" opacity="0.55" />
+      <ellipse cx="560" cy="58" rx="220" ry="36" fill="url(#stxTom)" />
+      <ellipse cx="560" cy="58" rx="178" ry="26" fill="#F09A86" opacity="0.5" />
+      {/* glisten */}
+      <ellipse cx="200" cy="44" rx="50" ry="8" fill="white" opacity="0.25" />
+      <ellipse cx="520" cy="46" rx="44" ry="7" fill="white" opacity="0.22" />
+    </svg>
   )
 }

@@ -468,9 +468,10 @@ function SimmerEvening({ concept }: { concept: Concept }) {
   const ref = useRef<HTMLDivElement>(null)
   const { scrollYProgress: p } = useScroll({ target: ref, offset: ['start start', 'end end'] })
 
-  const stops: Array<{ label: string; visual: React.ReactNode }> = [
+  const stops: Array<{ label: string; caption: string; visual: React.ReactNode }> = [
     {
       label: 'the space',
+      caption: 'a low-lit room below stax — twelve tables, no rush.',
       visual: (
         <img
           src={conceptHeroImage(concept)}
@@ -479,8 +480,16 @@ function SimmerEvening({ concept }: { concept: Concept }) {
         />
       ),
     },
-    { label: 'the plate', visual: <PlateSketch /> },
-    { label: 'the pour',  visual: <CoupeSketch /> },
+    {
+      label: 'the plate',
+      caption: 'small plates built to share. the menu turns with the season.',
+      visual: <PlateSketch />,
+    },
+    {
+      label: 'the pour',
+      caption: 'hand-built mocktails from the bar — bitter, bright, cold.',
+      visual: <CoupeSketch />,
+    },
   ]
 
   if (reduce) {
@@ -537,6 +546,7 @@ function SimmerEvening({ concept }: { concept: Concept }) {
               total={stops.length}
               numeral={EVENING_NUMERALS[i] ?? ''}
               label={s.label}
+              caption={s.caption}
             >
               {s.visual}
             </EveningStop>
@@ -555,9 +565,9 @@ function SimmerEvening({ concept }: { concept: Concept }) {
   )
 }
 
-function EveningStop({ p, index, total, numeral, label, children }: {
+function EveningStop({ p, index, total, numeral, label, caption, children }: {
   p: MotionValue<number>; index: number; total: number
-  numeral: string; label: string; children: React.ReactNode
+  numeral: string; label: string; caption: string; children: React.ReactNode
 }) {
   const a = index / total
   const b = (index + 1) / total
@@ -569,26 +579,32 @@ function EveningStop({ p, index, total, numeral, label, children }: {
     first ? [1, 1, 0]        : last ? [0, 1, 1]        : [0, 1, 1, 0],
   )
   const y = useTransform(p, [a, b], first ? [0, -26] : [30, last ? 0 : -26])
+  const scale = useTransform(p, [a, a + 0.1], first ? [1, 1] : [0.965, 1])
 
   return (
     <motion.div style={{
-      opacity, y,
+      opacity, y, scale,
       position: 'absolute', inset: 0,
       display: 'flex', flexDirection: 'column',
       alignItems: 'center', justifyContent: 'center',
       gap: '1.1rem',
     }}>
-      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 'clamp(1rem, 3vw, 2rem)' }}>
-        {/* Numeral — Amarante, the section's one orange signal. */}
+      <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+        {/* Numeral — oversized Amarante behind the frame's edge; the
+            section's one orange signal. */}
         <span className="amarante signal" aria-hidden style={{
-          fontSize: 'clamp(2.2rem, 5vw, 3.6rem)', lineHeight: 1,
-          marginTop: '0.4rem', minWidth: '1.4em', textAlign: 'right',
+          position: 'absolute',
+          left: 'clamp(-4.5rem, -8vw, -7.5rem)',
+          top: '50%', transform: 'translateY(-50%)',
+          fontSize: 'clamp(4rem, 10vw, 7.5rem)', lineHeight: 1,
+          zIndex: 0, opacity: 0.9,
         }}>
           {numeral}
         </span>
 
         {/* Walnut frame — same construction as the hung pictures. */}
         <div style={{
+          position: 'relative', zIndex: 1,
           background: 'linear-gradient(135deg, #6a4828 0%, #4a311c 22%, #1f1209 55%, #4a311c 80%, #6a4828 100%)',
           padding: '12px', borderRadius: '2px',
           boxShadow:
@@ -611,10 +627,23 @@ function EveningStop({ p, index, total, numeral, label, children }: {
         </div>
       </div>
 
-      {/* Museum label */}
-      <p className="utility" style={{ fontSize: '0.8rem', margin: 0, opacity: 0.85 }}>
-        {label}
-      </p>
+      {/* Museum label + caption */}
+      <div style={{ textAlign: 'center', maxWidth: '30rem', padding: '0 1.25rem' }}>
+        <p className="utility" style={{ fontSize: '0.8rem', margin: 0, opacity: 0.85 }}>
+          {label}
+        </p>
+        <p style={{
+          fontFamily: 'var(--simmer-body)',
+          fontSize: 'clamp(0.95rem, 1.3vw, 1.05rem)',
+          fontStyle: 'italic',
+          letterSpacing: '0.03em',
+          lineHeight: 1.6,
+          margin: '0.55rem 0 0',
+          opacity: 0.75,
+        }}>
+          {caption}
+        </p>
+      </div>
     </motion.div>
   )
 }
