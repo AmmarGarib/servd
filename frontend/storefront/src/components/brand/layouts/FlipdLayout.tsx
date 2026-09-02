@@ -15,8 +15,9 @@ import Link from 'next/link'
 import type { Concept } from '../../../lib/concept'
 import { CrossBrandStrip } from '../parts/CrossBrandStrip'
 import { OpenStatusBadge, HoursGrid, useHoursData } from '../parts/OpenStatusBadge'
-import { brandStory } from '../../../lib/concept'
-import { Reveal, FloatY } from '../../motion/Motion'
+import { brandStory, conceptHeroImage } from '../../../lib/concept'
+import { Reveal } from '../../motion/Motion'
+import { FlipdRallyHero } from '../../kinetic/FlipdRallyHero'
 
 interface Props {
   concept: Concept
@@ -74,81 +75,17 @@ export function FlipdLayout({ concept, concepts }: Props) {
         </div>
       )}
 
-      {/* ── HERO ─ checkered wrapper background; FLIPD wordmark rides
-          on a plain white sign panel so it pops off the busy print
-          (no sky drop-shadow). Everything else floats directly on the
-          tile pattern. */}
-      <section
-        className="flipd-tile"
-        style={{
-          padding: 'clamp(4rem, 10vh, 7rem) clamp(1.5rem, 5vw, 3rem) clamp(3rem, 7vh, 5rem)',
-          position: 'relative', overflow: 'hidden',
-          textAlign: 'center',
-        }}
-      >
-        <div style={{ maxWidth: '64rem', margin: '0 auto', position: 'relative', zIndex: 2 }}>
-          {/* Big "FLIPD" wordmark card removed — the brand mark now lives in
-              the nav (circular logo + name). Keep an sr-only H1 for SEO/a11y;
-              the hero leads with the round GAME/SET/SMASH seal below. */}
-          <h1 style={{ position: 'absolute', width: '1px', height: '1px', padding: 0, margin: '-1px', overflow: 'hidden', clip: 'rect(0,0,0,0)', whiteSpace: 'nowrap', border: 0 }}>
-            {concept.name}
-          </h1>
-
-          {/* Tagline panel — three Lobster cursive lines in sky-deep
-              sitting inside a paper card on the wrapper. Replaces the
-              previous concept-note copy + duplicate inline tagline +
-              OPEN-NOW pill (the operator decided the pill carries no
-              real info, and the body copy was redundant with the
-              tagline above it). */}
-          {/* Tagline sign + a real optic-yellow padel ball. The ball is a
-              rendered felt texture (sphere shading + procedural fuzz + seam,
-              transparent PNG at public/flipd/ball.png) — CSS gradients can't
-              look like felt, so it's an image. */}
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginTop: '1.6rem' }}>
-            <Reveal y={-24} duration={0.6}>
-              <span className="flipd-marquee" style={{
-                display: 'inline-block',
-                background: 'var(--flipd-cream)',
-                color: 'var(--flipd-ink)',
-                border: '2px solid var(--flipd-ink)',
-                borderRadius: '0.6rem',
-                boxShadow: '0 4px 0 var(--flipd-ink), 0 10px 26px rgba(14,26,42,0.18)',
-                padding: '0.55rem 1.15rem',
-                fontSize: 'clamp(1.4rem, 4.4vw, 2.3rem)',
-                letterSpacing: '0.04em',
-                lineHeight: 1,
-                textTransform: 'uppercase',
-              }}>
-                Game · Set · Smash
-              </span>
-            </Reveal>
-            {/* The ball bobs like it's mid-rally — endless gentle float
-                with a slow rock; reduced-motion users get it parked. */}
-            <FloatY distance={16} duration={2.6} rotate={4}>
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src="/flipd/ball.png"
-                alt="A flipd tennis ball"
-                width={540}
-                height={540}
-                style={{
-                  width: 'clamp(14rem, 38vw, 25rem)',
-                  height: 'auto',
-                  marginTop: '1.7rem',
-                  filter: 'drop-shadow(0 18px 24px rgba(40,46,10,0.28))',
-                }}
-              />
-            </FloatY>
-          </div>
-
-          <Reveal y={22} delay={0.15}>
-            <div style={{ marginTop: '2rem', display: 'flex', gap: '0.75rem', flexWrap: 'wrap', justifyContent: 'center' }}>
-              <Link href={`/${concept.slug}`} className="flipd-btn">Order now</Link>
-              <Link href={`/brand/${concept.slug}/menu`} className="flipd-btn flipd-btn-ghost">See the menu</Link>
-            </div>
-          </Reveal>
-        </div>
-      </section>
+      {/* ── HERO ─ the rally: perspective court, scroll-driven bouncing
+          ball, GAME → SET → SMASH stamps, burger finale. sr-only H1 for
+          SEO/a11y; the brand mark lives in the nav. */}
+      <h1 style={{ position: 'absolute', width: '1px', height: '1px', padding: 0, margin: '-1px', overflow: 'hidden', clip: 'rect(0,0,0,0)', whiteSpace: 'nowrap', border: 0 }}>
+        {concept.name}
+      </h1>
+      <FlipdRallyHero
+        img={conceptHeroImage(concept)}
+        orderHref={`/${concept.slug}`}
+        menuHref={`/brand/${concept.slug}/menu`}
+      />
 
       {/* ── TONIGHT'S BOARD ─ a chalkboard-style today's specials list
           rendered as a paper board with typewritten copy ── */}

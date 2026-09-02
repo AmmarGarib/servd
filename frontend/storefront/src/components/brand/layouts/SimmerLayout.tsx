@@ -19,9 +19,12 @@ import { conceptHeroImage } from '../../../lib/concept'
 import { CrossBrandStrip } from '../parts/CrossBrandStrip'
 import { SpeakeasyFridgeHero } from '../../kinetic/SpeakeasyFridgeHero'
 import { locationFor, whatsappLink } from '../../../lib/brandLocations'
-// Motion: reveals + parallax only — opacity and translate, no colour, no
-// gradient, so nothing here can violate the simmer brand bible.
-import { Reveal, Parallax } from '../../motion/Motion'
+// Motion: reveals + scroll-scrubbed crossfades only — opacity and
+// translate, no colour, no gradient, so nothing here can violate the
+// simmer brand bible.
+import { Reveal } from '../../motion/Motion'
+import { useRef } from 'react'
+import { motion, useReducedMotion, useScroll, useTransform, type MotionValue } from 'framer-motion'
 
 interface Props {
   concept: Concept
@@ -316,72 +319,13 @@ export function SimmerLayout({ concept, concepts }: Props) {
       />
 
       {/* ── TONIGHT'S TABLE ──────────────────────────────────────────
-          Bone-backed editorial section. Three walnut-framed pictures
-          hang off a single thin orange rail like an evening itinerary
-          (I → II → III): the room (interior photo placeholder), the
-          kitchen (plated-dish sketch), the bar (coupe sketch). Header
-          carries the live service date — recomputed at render so the
-          stamp ticks daily without operator action. Replaces the
-          previous three-column "the room / the kitchen / the bar"
-          caption block. */}
-      <section style={{
-        background: 'var(--simmer-bone)',
-        color: 'var(--simmer-green)',
-        padding: 'clamp(3rem, 7vh, 5rem) clamp(1.4rem, 5vw, 3rem)',
-      }}>
-        <div style={{ maxWidth: 'clamp(42rem, 72vw, 60rem)', margin: '0 auto' }}>
-          {/* Header — tonight's service · DATE */}
-          <Reveal y={18} duration={0.9}>
-            <div style={{
-              display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
-              paddingBottom: '1rem',
-              borderBottom: '1px solid rgba(6,57,47,0.18)',
-              marginBottom: '2.4rem',
-            }}>
-              <span className="utility" style={{ fontSize: '0.78rem' }}>tonight&apos;s service</span>
-              <span className="utility signal" style={{ fontSize: '0.78rem', whiteSpace: 'nowrap' }}>{STAMP}</span>
-            </div>
-          </Reveal>
-
-          {/* Itinerary — orange rail + three walnut-framed pictures */}
-          <div style={{ position: 'relative', padding: '0.5rem 0 0.5rem' }}>
-            {/* The rail */}
-            <div aria-hidden="true" style={{
-              position: 'absolute', top: '1rem', bottom: '1rem',
-              left: '50%', transform: 'translateX(-50%)',
-              width: '1px', background: 'var(--simmer-orange)', opacity: 0.55,
-            }}/>
-
-            <Reveal y={30} duration={0.9}>
-              <Parallax speed={0.05}>
-                <ItineraryStop side="left" label="the space">
-                  <img
-                    src={conceptHeroImage(concept)}
-                    alt=""
-                    style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
-                  />
-                </ItineraryStop>
-              </Parallax>
-            </Reveal>
-
-            <Reveal y={30} duration={0.9} delay={0.08}>
-              <Parallax speed={-0.04}>
-                <ItineraryStop side="right" label="the plate">
-                  <PlateSketch />
-                </ItineraryStop>
-              </Parallax>
-            </Reveal>
-
-            <Reveal y={30} duration={0.9} delay={0.08}>
-              <Parallax speed={0.05}>
-                <ItineraryStop side="left" label="the pour">
-                  <CoupeSketch />
-                </ItineraryStop>
-              </Parallax>
-            </Reveal>
-          </div>
-        </div>
-      </section>
+          The evening, in three stops — a pinned, scroll-scrubbed
+          sequence on the bone surface. One walnut frame at centre
+          stage; as the guest scrolls, the room gives way to the plate,
+          the plate to the pour, each stop announced by its numeral.
+          Motion is opacity + translate only; the numeral carries the
+          section's single orange signal. */}
+      <SimmerEvening concept={concept} />
 
       {/* ── WHAT'S NEXT ───────────────────────────────────────────────────
           Replaces the old "the menu — read it / order from simmer" CTA
@@ -508,5 +452,169 @@ export function SimmerLayout({ concept, concepts }: Props) {
         </Reveal>
       </section>
     </div>
+  )
+}
+
+// ─── The evening, in three stops — pinned scroll sequence ───────────
+// One walnut frame holds centre stage on the bone surface; scroll
+// crossfades the room → the plate → the pour, each stop announced by a
+// roman numeral (the viewport's single orange signal). Reduced-motion
+// guests get the three stops stacked statically.
+
+const EVENING_NUMERALS = ['i', 'ii', 'iii'] as const
+
+function SimmerEvening({ concept }: { concept: Concept }) {
+  const reduce = useReducedMotion()
+  const ref = useRef<HTMLDivElement>(null)
+  const { scrollYProgress: p } = useScroll({ target: ref, offset: ['start start', 'end end'] })
+
+  const stops: Array<{ label: string; visual: React.ReactNode }> = [
+    {
+      label: 'the space',
+      visual: (
+        <img
+          src={conceptHeroImage(concept)}
+          alt=""
+          style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+        />
+      ),
+    },
+    { label: 'the plate', visual: <PlateSketch /> },
+    { label: 'the pour',  visual: <CoupeSketch /> },
+  ]
+
+  if (reduce) {
+    return (
+      <section style={{
+        background: 'var(--simmer-bone)', color: 'var(--simmer-green)',
+        padding: 'clamp(3rem, 7vh, 5rem) clamp(1.4rem, 5vw, 3rem)',
+      }}>
+        <div style={{ maxWidth: 'clamp(42rem, 72vw, 60rem)', margin: '0 auto' }}>
+          <div style={{
+            display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
+            paddingBottom: '1rem', borderBottom: '1px solid rgba(6,57,47,0.18)', marginBottom: '2.4rem',
+          }}>
+            <span className="utility" style={{ fontSize: '0.78rem' }}>tonight&apos;s service</span>
+            <span className="utility" style={{ fontSize: '0.78rem', whiteSpace: 'nowrap' }}>{STAMP}</span>
+          </div>
+          {stops.map((s, i) => (
+            <ItineraryStop key={s.label} side={i % 2 ? 'right' : 'left'} label={s.label}>
+              {s.visual}
+            </ItineraryStop>
+          ))}
+        </div>
+      </section>
+    )
+  }
+
+  return (
+    <div ref={ref} style={{ height: '300vh', position: 'relative' }}>
+      <section style={{
+        position: 'sticky', top: 0, height: '100vh', overflow: 'hidden',
+        background: 'var(--simmer-bone)', color: 'var(--simmer-green)',
+        display: 'flex', flexDirection: 'column',
+        padding: 'clamp(1.5rem, 4vh, 3rem) clamp(1.4rem, 5vw, 3rem)',
+      }}>
+        {/* Header — tonight's service · DATE. Bone-on-green rules only;
+            the orange lives in the numeral. */}
+        <div style={{
+          maxWidth: 'clamp(42rem, 72vw, 60rem)', margin: '0 auto', width: '100%',
+          display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
+          paddingBottom: '0.9rem', borderBottom: '1px solid rgba(6,57,47,0.18)',
+          flexShrink: 0,
+        }}>
+          <span className="utility" style={{ fontSize: '0.78rem' }}>tonight&apos;s service</span>
+          <span className="utility" style={{ fontSize: '0.78rem', whiteSpace: 'nowrap' }}>{STAMP}</span>
+        </div>
+
+        {/* Stage — stops crossfade in place. */}
+        <div style={{ position: 'relative', flex: 1, minHeight: 0 }}>
+          {stops.map((s, i) => (
+            <EveningStop
+              key={s.label}
+              p={p}
+              index={i}
+              total={stops.length}
+              numeral={EVENING_NUMERALS[i] ?? ''}
+              label={s.label}
+            >
+              {s.visual}
+            </EveningStop>
+          ))}
+        </div>
+
+        {/* Footline — quiet direction for the guest. */}
+        <p className="utility" style={{
+          fontSize: '0.72rem', textAlign: 'center', margin: 0,
+          opacity: 0.55, flexShrink: 0,
+        }}>
+          scroll — the evening, in three stops
+        </p>
+      </section>
+    </div>
+  )
+}
+
+function EveningStop({ p, index, total, numeral, label, children }: {
+  p: MotionValue<number>; index: number; total: number
+  numeral: string; label: string; children: React.ReactNode
+}) {
+  const a = index / total
+  const b = (index + 1) / total
+  const first = index === 0
+  const last  = index === total - 1
+  const opacity = useTransform(
+    p,
+    first ? [0, b - 0.07, b] : last ? [a, a + 0.07, 1] : [a, a + 0.07, b - 0.07, b],
+    first ? [1, 1, 0]        : last ? [0, 1, 1]        : [0, 1, 1, 0],
+  )
+  const y = useTransform(p, [a, b], first ? [0, -26] : [30, last ? 0 : -26])
+
+  return (
+    <motion.div style={{
+      opacity, y,
+      position: 'absolute', inset: 0,
+      display: 'flex', flexDirection: 'column',
+      alignItems: 'center', justifyContent: 'center',
+      gap: '1.1rem',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 'clamp(1rem, 3vw, 2rem)' }}>
+        {/* Numeral — Amarante, the section's one orange signal. */}
+        <span className="amarante signal" aria-hidden style={{
+          fontSize: 'clamp(2.2rem, 5vw, 3.6rem)', lineHeight: 1,
+          marginTop: '0.4rem', minWidth: '1.4em', textAlign: 'right',
+        }}>
+          {numeral}
+        </span>
+
+        {/* Walnut frame — same construction as the hung pictures. */}
+        <div style={{
+          background: 'linear-gradient(135deg, #6a4828 0%, #4a311c 22%, #1f1209 55%, #4a311c 80%, #6a4828 100%)',
+          padding: '12px', borderRadius: '2px',
+          boxShadow:
+            '0 18px 36px rgba(20,12,5,0.45),' +
+            ' 0 2px 0 rgba(0,0,0,0.30),' +
+            ' inset 0 0 0 1px rgba(0,0,0,0.45),' +
+            ' inset 0 0 0 2px rgba(196,142,72,0.18)',
+        }}>
+          <div style={{
+            background: 'var(--simmer-green)', padding: '4px', borderRadius: '1px',
+            boxShadow: 'inset 0 0 0 1px rgba(0,0,0,0.55)',
+          }}>
+            <div style={{
+              width: 'clamp(240px, 52vh, 460px)', aspectRatio: '5 / 4',
+              background: '#06392F', overflow: 'hidden', position: 'relative',
+            }}>
+              {children}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Museum label */}
+      <p className="utility" style={{ fontSize: '0.8rem', margin: 0, opacity: 0.85 }}>
+        {label}
+      </p>
+    </motion.div>
   )
 }

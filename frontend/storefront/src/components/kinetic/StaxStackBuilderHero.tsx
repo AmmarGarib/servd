@@ -59,6 +59,10 @@ interface Props {
   cream?:     string
   orderHref:  string
   menuHref?:  string
+  /** Wall texture tint (the faint brick/panel grid behind the stack).
+   *  Defaults to the original warm brick; pass a cool grey for the
+   *  navy-industrial direction. */
+  wallTint?:  string
   /** Each layer = one menu category. Default below matches the screenshot. */
   layers?:    Layer[]
 }
@@ -89,6 +93,7 @@ export function StaxStackBuilderHero({
   ink   = '#0d0a09',
   cream = '#f6f1e8',
   orderHref, menuHref,
+  wallTint = '180,90,50',
   layers = DEFAULT_LAYERS,
 }: Props) {
   const { ref } = useScrollProgress<HTMLDivElement>()
@@ -115,21 +120,22 @@ export function StaxStackBuilderHero({
           alignItems: 'center',
         }}
       >
-        {/* Exposed brick wall background — top half */}
+        {/* Wall background — top half. Tinted by the brand: warm brick by
+            default, cool panel grid when wallTint is a grey. */}
         <div aria-hidden="true" style={{
           position: 'absolute', inset: 0,
           background: `
             radial-gradient(ellipse 80% 60% at 50% 30%, ${accent}22 0%, transparent 60%),
-            linear-gradient(180deg, #1a1410 0%, #0a0807 100%)
+            linear-gradient(180deg, color-mix(in srgb, ${ink} 86%, white) 0%, ${ink} 100%)
           `,
         }} />
-        {/* Brick pattern overlay — faint */}
+        {/* Wall pattern overlay — faint panel/brick grid */}
         <div aria-hidden="true" style={{
           position: 'absolute', inset: 0,
           opacity: 0.18,
           background: `
-            repeating-linear-gradient(90deg, rgba(180,90,50,0.15) 0 80px, transparent 80px 82px),
-            repeating-linear-gradient(0deg,  rgba(180,90,50,0.10) 0 38px, transparent 38px 40px)
+            repeating-linear-gradient(90deg, rgba(${wallTint},0.15) 0 80px, transparent 80px 82px),
+            repeating-linear-gradient(0deg,  rgba(${wallTint},0.10) 0 38px, transparent 38px 40px)
           `,
         }} />
 

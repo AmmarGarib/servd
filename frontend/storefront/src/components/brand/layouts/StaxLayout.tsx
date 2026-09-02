@@ -15,6 +15,7 @@ import { CrossBrandStrip } from '../parts/CrossBrandStrip'
 import { OpenStatusBadge, HoursGrid, useHoursData } from '../parts/OpenStatusBadge'
 import { brandStory } from '../../../lib/concept'
 import { Reveal, Parallax } from '../../motion/Motion'
+import { StaxStackBuilderHero } from '../../kinetic/StaxStackBuilderHero'
 
 interface Props {
   concept: Concept
@@ -54,8 +55,9 @@ export function StaxLayout({ concept, concepts }: Props) {
         </div>
       )}
 
-      {/* ── HERO ─ Industrial header: spec tag, wordmark, spec line, sub. ── */}
-      <section style={{ padding: 'clamp(4rem, 12vh, 8rem) clamp(1.5rem, 5vw, 3rem) clamp(3rem, 6vh, 4rem)' }}>
+      {/* ── HERO ─ Industrial header strip: spec tags + the STAX. wordmark
+            leading straight into the scroll-driven stack builder. ── */}
+      <section style={{ padding: 'clamp(3.5rem, 9vh, 6rem) clamp(1.5rem, 5vw, 3rem) clamp(2rem, 4vh, 3rem)' }}>
         <div style={{ maxWidth: '76rem', margin: '0 auto' }}>
           <Reveal y={16} duration={0.6}>
             <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '2rem', flexWrap: 'wrap', marginBottom: '2rem' }}>
@@ -78,20 +80,26 @@ export function StaxLayout({ concept, concepts }: Props) {
             <p className="stax-display" style={{ fontSize: 'clamp(1.4rem, 2.4vw, 2rem)', maxWidth: '36ch', margin: '2rem 0 0', fontWeight: 500, lineHeight: 1.2 }}>
               {story.tagline}
             </p>
-
-            <p style={{ fontFamily: 'var(--stax-mono)', fontSize: '0.95rem', letterSpacing: '0.02em', maxWidth: '52ch', margin: '1.25rem 0 0', color: 'var(--stax-grey-80)' }}>
-              {story.oneLiner}
+            <p className="stax-mono" style={{ fontSize: '0.85rem', letterSpacing: '0.14em', textTransform: 'uppercase', margin: '1.5rem 0 0', color: 'var(--stax-grey-60)' }}>
+              ↓ scroll · assembly drawing 01 — the stack
             </p>
-          </Reveal>
-
-          <Reveal delay={0.28} y={18}>
-            <div style={{ marginTop: '3rem', display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
-              <Link href={`/${concept.slug}`} className="stax-btn">Order Stax →</Link>
-              <Link href={`/brand/${concept.slug}/menu`} className="stax-btn stax-btn-ghost">View menu</Link>
-            </div>
           </Reveal>
         </div>
       </section>
+
+      {/* ── STACK BUILDER ─ scroll-driven assembly line: every menu
+            category drops onto the steel pass, bottom bun to sesame top,
+            until the whole menu is stacked. Navy-industrial palette. ── */}
+      <StaxStackBuilderHero
+        brandName="STAX"
+        accent="#C5C7CC"
+        steel="#293B47"
+        ink="#0D1B24"
+        cream="#EAECEF"
+        wallTint="176,178,184"
+        orderHref={`/${concept.slug}`}
+        menuHref={`/brand/${concept.slug}/menu`}
+      />
 
       <hr className="stax-rule" />
 
