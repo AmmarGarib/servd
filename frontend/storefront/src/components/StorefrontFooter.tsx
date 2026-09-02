@@ -22,7 +22,7 @@ export function StorefrontFooter() {
   if (pathname.startsWith('/brand/')) return null
   return (
     <footer
-      className="surface-ink relative overflow-hidden"
+      className="surface-ink aurora-field relative overflow-hidden"
       style={{
         padding: 'clamp(4rem, 7vw, 6rem) 0 2rem',
         marginTop: '4rem',

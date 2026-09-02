@@ -1202,3 +1202,294 @@ button:hover > .kinetic-caret::after { transform: translateX(6px); }
 @media (prefers-reduced-motion: reduce) {
   .servd-loader-cell { animation: none; background-color: var(--cell-color); opacity: 0.35; }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   LIQUID GLASS DESIGN LAYER — Apple-style translucent surfaces, aurora
+   ambient fields, and scroll-driven motion primitives. This layer sits on
+   top of the kinetic system: same tokens, same brand accents, but every
+   chrome surface (nav, cards, CTAs, strips) becomes frosted glass with a
+   specular top edge, and every section enters with physical motion.
+
+   Rules of engagement:
+   • The Simmer microsite never receives gradients or white — its glass
+     variants (.glass-simmer) are flat translucent bone/green, blur only.
+   • Reduced-motion users get the global animation kill-switch above.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+html { scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+
+:root {
+  /* Frosted-glass recipe tokens */
+  --glass-blur:        24px;
+  --glass-bg:          rgba(255, 255, 255, 0.58);
+  --glass-bg-strong:   rgba(255, 255, 255, 0.78);
+  --glass-border:      rgba(255, 255, 255, 0.65);
+  --glass-edge:        rgba(255, 255, 255, 0.95);
+  --glass-shadow:      0 8px 32px rgba(30, 20, 32, 0.12), 0 1.5px 4px rgba(30, 20, 32, 0.05);
+  --glass-dark-bg:     rgba(30, 20, 32, 0.42);
+  --glass-dark-border: rgba(255, 255, 255, 0.16);
+  --glass-dark-edge:   rgba(255, 255, 255, 0.28);
+  /* Aurora ambient palette — plum core with lilac + burnt-peach drift.
+     Food-warm, premium, unmistakably servd. */
+  --aurora-a: #4E2A4F;
+  --aurora-b: #9A6AB8;
+  --aurora-c: #D98156;
+  --aurora-d: #2D1E2F;
+}
+
+/* ── Glass surfaces ─────────────────────────────────────────────────────── */
+
+.glass,
+.glass-deep,
+.glass-strong {
+  position: relative;
+  border-radius: 1.25rem;
+  backdrop-filter: blur(var(--glass-blur)) saturate(180%);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(180%);
+  transition: transform 400ms cubic-bezier(0.22, 1, 0.36, 1),
+              box-shadow 400ms cubic-bezier(0.22, 1, 0.36, 1),
+              background 300ms ease;
+}
+.glass {
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow),
+              inset 0 1px 0 var(--glass-edge);
+}
+.glass-strong {
+  background: var(--glass-bg-strong);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow),
+              inset 0 1px 0 var(--glass-edge);
+}
+.glass-deep {
+  background: var(--glass-dark-bg);
+  border: 1px solid var(--glass-dark-border);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.28),
+              inset 0 1px 0 var(--glass-dark-edge);
+  color: white;
+}
+
+/* Interactive glass — lifts, tightens shadow, brightens on hover. */
+.glass-lift { cursor: pointer; }
+.glass-lift:hover {
+  transform: translateY(-4px) scale(1.012);
+  box-shadow: 0 20px 48px rgba(30, 20, 32, 0.18),
+              inset 0 1px 0 var(--glass-edge);
+}
+.glass-deep.glass-lift:hover {
+  box-shadow: 0 24px 56px rgba(0, 0, 0, 0.4),
+              inset 0 1px 0 var(--glass-dark-edge);
+}
+
+/* Specular sheen — a light band sweeps across on hover. Pure ornament;
+   pointer-events none, sits above the background but below content. */
+.glass-sheen { overflow: hidden; }
+.glass-sheen::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(105deg,
+    transparent 38%,
+    rgba(255, 255, 255, 0.28) 48%,
+    rgba(255, 255, 255, 0.05) 57%,
+    transparent 65%);
+  transform: translateX(-120%);
+  transition: transform 900ms cubic-bezier(0.22, 1, 0.36, 1);
+  pointer-events: none;
+}
+.glass-sheen:hover::before { transform: translateX(120%); }
+
+/* Simmer-safe glass — flat translucent bone, blur, NO gradient sheen,
+   NO white. Border is bone at low alpha. */
+.glass-simmer {
+  background: rgba(237, 230, 211, 0.07);
+  border: 1px solid rgba(237, 230, 211, 0.16);
+  border-radius: 2px;
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+
+/* Stax-safe glass — oceanic noir at ~55%, blurred over the concrete. */
+.stax-glass {
+  background: rgba(13, 27, 36, 0.55);
+  border: 1px solid var(--stax-line);
+  backdrop-filter: blur(14px) saturate(140%);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
+}
+
+/* ── Aurora ambient field ───────────────────────────────────────────────
+   Two blurred, slowly-drifting radial blobs behind a section. Mount on a
+   position:relative section; content needs position:relative z-index:1. */
+.aurora-field { position: relative; overflow: hidden; }
+.aurora-field::before,
+.aurora-field::after {
+  content: '';
+  position: absolute;
+  width: 60vw; height: 60vw;
+  min-width: 480px; min-height: 480px;
+  border-radius: 50%;
+  filter: blur(90px);
+  pointer-events: none;
+  z-index: 0;
+}
+.aurora-field::before {
+  background: radial-gradient(circle, var(--aurora-b) 0%, transparent 65%);
+  top: -30%; left: -15%;
+  opacity: 0.5;
+  animation: auroraDriftA 26s ease-in-out infinite alternate;
+}
+.aurora-field::after {
+  background: radial-gradient(circle, var(--aurora-c) 0%, transparent 65%);
+  bottom: -35%; right: -18%;
+  opacity: 0.38;
+  animation: auroraDriftB 32s ease-in-out infinite alternate;
+}
+@keyframes auroraDriftA {
+  from { transform: translate(0, 0) scale(1); }
+  to   { transform: translate(12%, 14%) scale(1.18); }
+}
+@keyframes auroraDriftB {
+  from { transform: translate(0, 0) scale(1.1); }
+  to   { transform: translate(-14%, -10%) scale(0.94); }
+}
+
+/* ── Floating glass nav ─────────────────────────────────────────────────── */
+
+.nav-shell {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  z-index: 50;
+  padding: 0.75rem clamp(0.75rem, 3vw, 1.5rem) 0;
+  pointer-events: none;
+}
+.nav-pill {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0.55rem 0.9rem 0.55rem 1.1rem;
+  border-radius: 999px;
+  transition: background 320ms ease, box-shadow 320ms ease,
+              border-color 320ms ease, backdrop-filter 320ms ease;
+  border: 1px solid transparent;
+}
+.nav-pill.is-glass {
+  background: var(--glass-bg);
+  border-color: var(--glass-border);
+  backdrop-filter: blur(var(--glass-blur)) saturate(180%);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(180%);
+  box-shadow: var(--glass-shadow), inset 0 1px 0 var(--glass-edge);
+}
+.nav-pill.is-clear {
+  background: transparent;
+  box-shadow: none;
+}
+
+/* ── Home brand cards — media zoom + glass caption ──────────────────────── */
+
+.brand-card {
+  position: relative;
+  overflow: hidden;
+  border-radius: 1.75rem;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  transform: translateZ(0);
+  transition: transform 500ms cubic-bezier(0.22, 1, 0.36, 1),
+              box-shadow 500ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.brand-card:hover {
+  transform: translateY(-6px);
+  box-shadow: 0 28px 64px rgba(0, 0, 0, 0.24);
+}
+.brand-card .brand-card-media {
+  position: absolute;
+  inset: -6% 0;
+  background-position: center;
+  background-size: cover;
+  transition: transform 1200ms cubic-bezier(0.22, 1, 0.36, 1),
+              filter 600ms ease;
+  will-change: transform;
+}
+.brand-card:hover .brand-card-media {
+  transform: scale(1.06);
+  filter: saturate(1.12) contrast(1.04);
+}
+.brand-card .brand-card-arrow {
+  position: absolute;
+  top: 1.25rem; right: 1.25rem;
+  width: 2.75rem; height: 2.75rem;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 900;
+  font-size: 1.15rem;
+  background: rgba(255, 255, 255, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  color: white;
+  opacity: 0;
+  transform: translate(10px, -10px) rotate(-45deg);
+  transition: opacity 350ms ease,
+              transform 500ms cubic-bezier(0.22, 1, 0.36, 1);
+  pointer-events: none;
+  z-index: 3;
+}
+.brand-card:hover .brand-card-arrow {
+  opacity: 1;
+  transform: translate(0, 0) rotate(-45deg);
+}
+
+/* ── Filter chips (browse) — glass idle, ink active ─────────────────────── */
+
+.chip-glass {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0.5rem 1.15rem;
+  border-radius: 999px;
+  border: 1px solid var(--servd-line);
+  background: var(--glass-bg);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  color: var(--servd-ink);
+  font-weight: 600;
+  font-size: 0.875rem;
+  cursor: pointer;
+  transition: transform 200ms cubic-bezier(0.22, 1, 0.36, 1),
+              background 200ms ease, color 200ms ease, border-color 200ms ease;
+}
+.chip-glass:hover { transform: translateY(-1px); border-color: rgba(78, 42, 79, 0.35); }
+.chip-glass.is-active {
+  background: var(--servd-green);
+  border-color: var(--servd-green);
+  color: white;
+}
+
+/* ── Reveal variants (CSS-only fallbacks; framer handles the rich ones) ── */
+
+.reveal-blur {
+  opacity: 0;
+  transform: translateY(26px);
+  filter: blur(10px);
+  transition: opacity 800ms cubic-bezier(0.22, 1, 0.36, 1),
+              transform 800ms cubic-bezier(0.22, 1, 0.36, 1),
+              filter 800ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.reveal-blur.is-revealed { opacity: 1; transform: translateY(0); filter: blur(0); }
+
+.reveal-stagger > .reveal-on-scroll:nth-child(7) { transition-delay: 540ms; }
+.reveal-stagger > .reveal-on-scroll:nth-child(8) { transition-delay: 630ms; }
+.reveal-stagger > .reveal-on-scroll:nth-child(9) { transition-delay: 720ms; }
+
+/* Stax industrial reveal — sections wipe in from a hairline, like a
+   technical drawing being plotted. */
+.stax-wipe {
+  clip-path: inset(0 100% 0 0);
+  transition: clip-path 900ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.stax-wipe.is-revealed { clip-path: inset(0 0 0 0); }

@@ -19,6 +19,9 @@ import { conceptHeroImage } from '../../../lib/concept'
 import { CrossBrandStrip } from '../parts/CrossBrandStrip'
 import { SpeakeasyFridgeHero } from '../../kinetic/SpeakeasyFridgeHero'
 import { locationFor, whatsappLink } from '../../../lib/brandLocations'
+// Motion: reveals + parallax only — opacity and translate, no colour, no
+// gradient, so nothing here can violate the simmer brand bible.
+import { Reveal, Parallax } from '../../motion/Motion'
 
 interface Props {
   concept: Concept
@@ -328,15 +331,17 @@ export function SimmerLayout({ concept, concepts }: Props) {
       }}>
         <div style={{ maxWidth: 'clamp(42rem, 72vw, 60rem)', margin: '0 auto' }}>
           {/* Header — tonight's service · DATE */}
-          <div style={{
-            display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
-            paddingBottom: '1rem',
-            borderBottom: '1px solid rgba(6,57,47,0.18)',
-            marginBottom: '2.4rem',
-          }}>
-            <span className="utility" style={{ fontSize: '0.78rem' }}>tonight&apos;s service</span>
-            <span className="utility signal" style={{ fontSize: '0.78rem', whiteSpace: 'nowrap' }}>{STAMP}</span>
-          </div>
+          <Reveal y={18} duration={0.9}>
+            <div style={{
+              display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
+              paddingBottom: '1rem',
+              borderBottom: '1px solid rgba(6,57,47,0.18)',
+              marginBottom: '2.4rem',
+            }}>
+              <span className="utility" style={{ fontSize: '0.78rem' }}>tonight&apos;s service</span>
+              <span className="utility signal" style={{ fontSize: '0.78rem', whiteSpace: 'nowrap' }}>{STAMP}</span>
+            </div>
+          </Reveal>
 
           {/* Itinerary — orange rail + three walnut-framed pictures */}
           <div style={{ position: 'relative', padding: '0.5rem 0 0.5rem' }}>
@@ -347,21 +352,33 @@ export function SimmerLayout({ concept, concepts }: Props) {
               width: '1px', background: 'var(--simmer-orange)', opacity: 0.55,
             }}/>
 
-            <ItineraryStop side="left" label="the space">
-              <img
-                src={conceptHeroImage(concept)}
-                alt=""
-                style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
-              />
-            </ItineraryStop>
+            <Reveal y={30} duration={0.9}>
+              <Parallax speed={0.05}>
+                <ItineraryStop side="left" label="the space">
+                  <img
+                    src={conceptHeroImage(concept)}
+                    alt=""
+                    style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                  />
+                </ItineraryStop>
+              </Parallax>
+            </Reveal>
 
-            <ItineraryStop side="right" label="the plate">
-              <PlateSketch />
-            </ItineraryStop>
+            <Reveal y={30} duration={0.9} delay={0.08}>
+              <Parallax speed={-0.04}>
+                <ItineraryStop side="right" label="the plate">
+                  <PlateSketch />
+                </ItineraryStop>
+              </Parallax>
+            </Reveal>
 
-            <ItineraryStop side="left" label="the pour">
-              <CoupeSketch />
-            </ItineraryStop>
+            <Reveal y={30} duration={0.9} delay={0.08}>
+              <Parallax speed={0.05}>
+                <ItineraryStop side="left" label="the pour">
+                  <CoupeSketch />
+                </ItineraryStop>
+              </Parallax>
+            </Reveal>
           </div>
         </div>
       </section>
@@ -377,36 +394,38 @@ export function SimmerLayout({ concept, concepts }: Props) {
           the date and the body copy. */}
       <section style={{ padding: 'clamp(5rem, 12vh, 8rem) clamp(1.5rem, 5vw, 3rem)' }}>
         <div style={{ maxWidth: '38rem', margin: '0 auto' }}>
-          <div style={{
-            display: 'flex',
-            alignItems: 'baseline',
-            justifyContent: 'space-between',
-            paddingBottom: '0.9rem',
-            marginBottom: '2rem',
-            borderBottom: '1px solid rgba(237,230,211,0.18)',
-          }}>
-            <span className="utility" style={{ fontSize: '0.78rem' }}>what&apos;s next</span>
-            <span className="utility signal" style={{ fontSize: '0.78rem', whiteSpace: 'nowrap' }}>{STAMP}</span>
-          </div>
-          <p style={{
-            fontFamily: 'var(--simmer-body)',
-            fontSize: 'clamp(1.05rem, 1.5vw, 1.2rem)',
-            lineHeight: 1.75,
-            letterSpacing: '0.02em',
-            margin: 0,
-            color: 'var(--simmer-bone)',
-          }}>
-            We&apos;re testing a stone-fruit dessert for late June. Apricots came in two weeks early this year. The pastry team has been pulling late nights. If you sit again in three weeks, it might be on the table.
-          </p>
-          <p className="amarante" style={{
-            fontSize: '1.05rem',
-            fontStyle: 'italic',
-            marginTop: '2rem',
-            opacity: 0.7,
-            letterSpacing: '0.02em',
-          }}>
-            — the simmer team
-          </p>
+          <Reveal y={24} duration={0.95}>
+            <div style={{
+              display: 'flex',
+              alignItems: 'baseline',
+              justifyContent: 'space-between',
+              paddingBottom: '0.9rem',
+              marginBottom: '2rem',
+              borderBottom: '1px solid rgba(237,230,211,0.18)',
+            }}>
+              <span className="utility" style={{ fontSize: '0.78rem' }}>what&apos;s next</span>
+              <span className="utility signal" style={{ fontSize: '0.78rem', whiteSpace: 'nowrap' }}>{STAMP}</span>
+            </div>
+            <p style={{
+              fontFamily: 'var(--simmer-body)',
+              fontSize: 'clamp(1.05rem, 1.5vw, 1.2rem)',
+              lineHeight: 1.75,
+              letterSpacing: '0.02em',
+              margin: 0,
+              color: 'var(--simmer-bone)',
+            }}>
+              We&apos;re testing a stone-fruit dessert for late June. Apricots came in two weeks early this year. The pastry team has been pulling late nights. If you sit again in three weeks, it might be on the table.
+            </p>
+            <p className="amarante" style={{
+              fontSize: '1.05rem',
+              fontStyle: 'italic',
+              marginTop: '2rem',
+              opacity: 0.7,
+              letterSpacing: '0.02em',
+            }}>
+              — the simmer team
+            </p>
+          </Reveal>
         </div>
       </section>
 
@@ -482,9 +501,11 @@ export function SimmerLayout({ concept, concepts }: Props) {
 
       {/* ── SIGN-OFF — the brand's closing line ───────────────────────── */}
       <section style={{ padding: 'clamp(5rem, 12vh, 8rem) clamp(1.5rem, 5vw, 3rem)', textAlign: 'center' }}>
-        <p className="wordmark" style={{ fontSize: 'clamp(3.5rem, 10vw, 6rem)', margin: 0 }}>
-          simmer down<span className="signal">.</span>
-        </p>
+        <Reveal y={26} duration={1.1} amount={0.5}>
+          <p className="wordmark" style={{ fontSize: 'clamp(3.5rem, 10vw, 6rem)', margin: 0 }}>
+            simmer down<span className="signal">.</span>
+          </p>
+        </Reveal>
       </section>
     </div>
   )

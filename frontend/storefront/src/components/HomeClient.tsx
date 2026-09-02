@@ -6,15 +6,16 @@ import type { HeroConfig } from '../lib/heroConfig'
 
 import type { Concept } from '../lib/concept'
 import { brandAccent, brandStory, conceptHeroImage } from '../lib/concept'
-import { useScrollReveal } from './kinetic/motionHooks'
+import { Reveal, Parallax } from './motion/Motion'
 import { OpenNowPill } from './brand/parts/OpenNowPill'
 import { BRAND_LOCATIONS, locationFor, whatsappLink } from '../lib/brandLocations'
 
-// servd home — the FOOD hub.
+// servd home — the FOOD hub, liquid-glass edition.
 //
-// The visual hierarchy here is FOOD FIRST. Royal blue is the chrome —
-// the wordmark, the CTAs, the marquee — but the hero, the brand cards,
-// the section dividers all lead with full-bleed food photography.
+// The visual hierarchy stays FOOD FIRST: full-bleed photography leads,
+// but every chrome surface is now frosted glass with a specular edge,
+// sections enter with blur-up reveals, and the brand-card photography
+// drifts on scroll (parallax) and swells on hover.
 //
 // Graceful degradation: if the api hiccups and concepts comes back
 // empty, we render the three live brands from hardcoded data so the
@@ -51,10 +52,8 @@ export function HomeClient({ concepts, heroConfig }: Props) {
       img:    conceptHeroImage({ ...c, type: 'restaurant', description: null, logoUrl: null } as Concept),
     }))
 
-  const pageRef = useScrollReveal<HTMLDivElement>()
-
   return (
-    <div ref={pageRef} style={{ background: 'var(--servd-bg)', color: 'var(--servd-ink)', display: 'flex', flexDirection: 'column' }}>
+    <div style={{ background: 'var(--servd-bg)', color: 'var(--servd-ink)', display: 'flex', flexDirection: 'column' }}>
 
       {/* ── HERO ─ the scroll-expansion media hero. Background image + the
             expanding photo/video are operator-editable via Admin → Marketing
@@ -63,181 +62,185 @@ export function HomeClient({ concepts, heroConfig }: Props) {
       <LandingScrollHero config={heroConfig} />
 
       {/* ── BRAND CARDS ─ Each one is a full-bleed food block leading
-            into the order flow. */}
-      <section id="brands" className="reveal-on-scroll" style={{ background: 'var(--servd-bg)', order: 2 }}>
+            into the order flow. Media drifts on scroll and swells on
+            hover; the caption rides on a dark glass panel. */}
+      <section id="brands" style={{ background: 'var(--servd-bg)', order: 2 }}>
         <div className="container" style={{ paddingTop: 'clamp(4rem, 8vw, 6rem)', paddingBottom: '2rem' }}>
-          <p className="eyebrow eyebrow-accent">The kitchens</p>
-          <h2 className="display" style={{ fontSize: 'clamp(2.5rem, 6vw, 4.5rem)', maxWidth: '900px', margin: '0.5rem 0 1rem', letterSpacing: '-0.04em' }}>
-            Pick one. Pick two.<br />
-            <span className="display-italic">Pick all of them.</span>
-          </h2>
-          <p style={{ color: 'var(--servd-mute)', fontSize: '1.05rem', maxWidth: '36rem', lineHeight: 1.55 }}>
-            One bag, one delivery. We hold the slowest dish so the salad stays cold and the burger stays hot.
-          </p>
+          <Reveal blur>
+            <p className="eyebrow eyebrow-accent">The kitchens</p>
+            <h2 className="display" style={{ fontSize: 'clamp(2.5rem, 6vw, 4.5rem)', maxWidth: '900px', margin: '0.5rem 0 1rem', letterSpacing: '-0.04em' }}>
+              Pick one. Pick two.<br />
+              <span className="display-italic">Pick all of them.</span>
+            </h2>
+            <p style={{ color: 'var(--servd-mute)', fontSize: '1.05rem', maxWidth: '36rem', lineHeight: 1.55 }}>
+              One bag, one delivery. We hold the slowest dish so the salad stays cold and the burger stays hot.
+            </p>
+          </Reveal>
         </div>
 
         <div className="container" style={{ paddingBottom: 'clamp(4rem, 8vw, 6rem)' }}>
-          <div style={{ display: 'grid', gap: '1.25rem' }}>
-            {brands.map((b) => (
-              // Card wrapper — used to be a single Link to /${slug} (the
-              // order page), which meant tapping anywhere on a Stax /
-              // Simmer / Flipd card dropped customers straight onto the
-              // ordering surface and skipped the brand's own landing
-              // page entirely. CEO wants the card body to go to the
-              // brand microsite at /brand/${slug}; the "Order from X"
-              // pill stays as its own click target into the ordering
-              // flow. Two stacked Links so each surface has its own
-              // navigation intent.
-              <div key={b.id}
-                style={{
-                  display: 'block',
-                  position: 'relative', overflow: 'hidden',
-                  borderRadius: '1.5rem',
-                  minHeight: 'clamp(320px, 42vw, 460px)',
-                  background: `${b.accent} url(${b.img}) center/cover`,
-                  boxShadow: '0 8px 24px rgba(0,0,0,0.12)',
-                }}>
-                {/* Full-card hit-area Link to the brand landing page */}
-                <Link href={`/brand/${b.slug}`}
-                  aria-label={`Visit ${b.name}'s landing page`}
-                  style={{
-                    position: 'absolute', inset: 0, zIndex: 1,
-                    borderRadius: 'inherit',
-                  }}
-                />
-                <div aria-hidden style={{
-                  position: 'absolute', inset: 0,
-                  background: 'linear-gradient(135deg, rgba(0,0,0,0.62) 0%, rgba(0,0,0,0.15) 55%, rgba(0,0,0,0.65) 100%)',
-                  pointerEvents: 'none',
-                }} />
-                <div aria-hidden style={{
-                  position: 'absolute', top: 0, left: 0, right: 0, height: '6px',
-                  background: b.accent,
-                  pointerEvents: 'none',
-                }} />
-                <div style={{
-                  position: 'relative', zIndex: 2, height: '100%',
-                  display: 'flex', flexDirection: 'column', justifyContent: 'space-between',
-                  padding: 'clamp(1.5rem, 4vw, 2.5rem)', color: 'white',
-                  minHeight: 'clamp(320px, 42vw, 460px)',
-                  pointerEvents: 'none',
-                }}>
-                  <p className="eyebrow" style={{ color: 'rgba(255,255,255,0.8)' }}>
-                    /{b.slug}
-                  </p>
-                  <div>
-                    <h3 className="display" style={{ fontSize: 'clamp(2.5rem, 6vw, 4.5rem)', color: 'white', lineHeight: 0.98, letterSpacing: '-0.04em', textShadow: '0 2px 10px rgba(0,0,0,0.4)' }}>
-                      {b.name}
-                    </h3>
-                    <p style={{ marginTop: '0.75rem', fontSize: 'clamp(1rem, 1.4vw, 1.2rem)', color: 'rgba(255,255,255,0.92)', maxWidth: '28rem', lineHeight: 1.4, textShadow: '0 1px 6px rgba(0,0,0,0.45)' }}>
-                      {b.story.tagline}
+          <div style={{ display: 'grid', gap: '1.5rem' }}>
+            {brands.map((b, i) => (
+              // Card wrapper — the card body links to the brand microsite
+              // at /brand/${slug} (CEO direction); the "Order from X" pill
+              // is its own click target into the ordering flow. Two
+              // stacked Links so each surface keeps its navigation intent.
+              <Reveal key={b.id} delay={i * 0.1} y={44}>
+                <div className="brand-card" style={{ minHeight: 'clamp(340px, 44vw, 480px)', background: b.accent }}>
+                  {/* Media — parallax drift on scroll + zoom on hover. */}
+                  <Parallax speed={0.12} style={{ position: 'absolute', inset: 0 }}>
+                    <div
+                      className="brand-card-media"
+                      style={{ backgroundImage: `url(${b.img})` }}
+                      aria-hidden
+                    />
+                  </Parallax>
+                  <div aria-hidden style={{
+                    position: 'absolute', inset: 0,
+                    background: 'linear-gradient(160deg, rgba(0,0,0,0.5) 0%, rgba(0,0,0,0.08) 45%, rgba(0,0,0,0.55) 100%)',
+                    pointerEvents: 'none', zIndex: 1,
+                  }} />
+
+                  {/* Full-card hit-area Link to the brand landing page */}
+                  <Link href={`/brand/${b.slug}`}
+                    aria-label={`Visit ${b.name}'s landing page`}
+                    style={{ position: 'absolute', inset: 0, zIndex: 2, borderRadius: 'inherit' }}
+                  />
+                  <span className="brand-card-arrow" aria-hidden>→</span>
+
+                  <div style={{
+                    position: 'relative', zIndex: 3, height: '100%',
+                    display: 'flex', flexDirection: 'column', justifyContent: 'space-between',
+                    padding: 'clamp(1.25rem, 3vw, 2rem)', color: 'white',
+                    minHeight: 'clamp(340px, 44vw, 480px)',
+                    pointerEvents: 'none',
+                  }}>
+                    <p className="eyebrow" style={{ color: 'rgba(255,255,255,0.85)', textShadow: '0 1px 8px rgba(0,0,0,0.4)' }}>
+                      /{b.slug}
                     </p>
-                    {/* "Order from X" pill — independent Link to the
-                        ordering surface. pointer-events: auto so it
-                        beats the inherited none on the wrapper, and a
-                        higher z-index so it sits above the full-card
-                        cover Link. */}
-                    <Link href={`/${b.slug}`}
-                      aria-label={`Order from ${b.name}`}
-                      style={{
-                        marginTop: '1.5rem',
-                        display: 'inline-flex', alignItems: 'center', gap: '0.5rem',
-                        background: 'white', color: 'var(--servd-ink)',
-                        fontFamily: 'var(--font-display)', fontWeight: 800,
-                        fontSize: '0.95rem',
-                        padding: '0.7rem 1.3rem', borderRadius: '999px',
-                        textDecoration: 'none',
-                        position: 'relative', zIndex: 3,
-                        pointerEvents: 'auto',
-                      }}
-                    >
-                      Order from {b.name} <span aria-hidden style={{ opacity: 0.6 }}>→</span>
-                    </Link>
+
+                    {/* Glass caption panel — name, tagline, order pill. */}
+                    <div className="glass-deep glass-sheen" style={{
+                      padding: 'clamp(1.25rem, 2.5vw, 1.75rem)',
+                      borderRadius: '1.35rem',
+                      maxWidth: '38rem',
+                    }}>
+                      <h3 className="display" style={{ fontSize: 'clamp(2.2rem, 5.5vw, 4rem)', color: 'white', lineHeight: 0.98, letterSpacing: '-0.04em' }}>
+                        {b.name}
+                      </h3>
+                      <p style={{ marginTop: '0.65rem', fontSize: 'clamp(0.98rem, 1.3vw, 1.15rem)', color: 'rgba(255,255,255,0.9)', maxWidth: '28rem', lineHeight: 1.45 }}>
+                        {b.story.tagline}
+                      </p>
+                      {/* "Order from X" pill — independent Link to the
+                          ordering surface; pointer-events restored + higher
+                          z-index so it beats the full-card cover Link. */}
+                      <Link href={`/${b.slug}`}
+                        aria-label={`Order from ${b.name}`}
+                        style={{
+                          marginTop: '1.15rem',
+                          display: 'inline-flex', alignItems: 'center', gap: '0.5rem',
+                          background: 'rgba(255,255,255,0.92)', color: 'var(--servd-ink)',
+                          fontFamily: 'var(--font-display)', fontWeight: 800,
+                          fontSize: '0.95rem',
+                          padding: '0.7rem 1.3rem', borderRadius: '999px',
+                          textDecoration: 'none',
+                          position: 'relative', zIndex: 4,
+                          pointerEvents: 'auto',
+                          boxShadow: '0 6px 20px rgba(0,0,0,0.25)',
+                          transition: 'transform 220ms cubic-bezier(0.22,1,0.36,1)',
+                        }}
+                      >
+                        Order from {b.name} <span aria-hidden style={{ opacity: 0.6 }}>→</span>
+                      </Link>
+                    </div>
                   </div>
                 </div>
-              </div>
+              </Reveal>
             ))}
           </div>
         </div>
       </section>
 
-      {/* ── OPEN NOW STRIP ─ Live status + address per brand. Hours wrong
-            on Google is the #1 Karachi mistake; surface them on the
-            home so the customer never has to wonder which one's open. */}
-      <section className="reveal-on-scroll" style={{ background: 'var(--servd-surface)', borderBlock: '1px solid var(--servd-line)', order: 3 }}>
-        <div className="container" style={{ paddingTop: '2rem', paddingBottom: '2rem' }}>
-          <p className="eyebrow eyebrow-accent" style={{ marginBottom: '1rem' }}>Right now</p>
+      {/* ── OPEN NOW STRIP ─ Live status + address per brand as glass
+            chips. Hours wrong on Google is the #1 Karachi mistake;
+            surface them on the home so the customer never has to wonder
+            which one's open. */}
+      <section style={{ background: 'var(--servd-surface)', borderBlock: '1px solid var(--servd-line)', order: 3 }}>
+        <div className="container" style={{ paddingTop: '2.25rem', paddingBottom: '2.25rem' }}>
+          <Reveal>
+            <p className="eyebrow eyebrow-accent" style={{ marginBottom: '1rem' }}>Right now</p>
+          </Reveal>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1rem' }}>
-            {brands.map((b) => {
+            {brands.map((b, i) => {
               const loc = locationFor(b.slug)
               return (
-                <div key={b.id} style={{
-                  background: 'white', padding: '1rem 1.1rem',
-                  borderRadius: '0.85rem', border: '1px solid var(--servd-line)',
-                  display: 'flex', flexDirection: 'column', gap: '0.45rem',
-                }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                    <span style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: '1.05rem', color: 'var(--servd-ink)' }}>
-                      {b.name}
-                    </span>
-                    <span style={{ marginLeft: 'auto' }}>
-                      <OpenNowPill slug={b.slug} fallback="Today" />
-                    </span>
-                  </div>
-                  {loc && !loc.area.startsWith('TODO') && (
-                    <p style={{ color: 'var(--servd-mute)', fontSize: '0.82rem', lineHeight: 1.4, margin: 0 }}>
-                      {loc.area}
-                    </p>
-                  )}
-                  {loc && (
-                    <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', marginTop: '0.4rem' }}>
-                      <Link href={`/${b.slug}`} style={{ color: b.accent, fontSize: '0.78rem', fontWeight: 700, textDecoration: 'none' }}>
-                        Order →
-                      </Link>
-                      <span style={{ color: 'var(--servd-dim)', fontSize: '0.78rem' }}>·</span>
-                      <a href={whatsappLink(loc, `hi ${b.name.toLowerCase()}`)}
-                        target="_blank" rel="noopener noreferrer"
-                        style={{ color: 'var(--servd-mute)', fontSize: '0.78rem', fontWeight: 700, textDecoration: 'none' }}>
-                        WhatsApp
-                      </a>
+                <Reveal key={b.id} delay={i * 0.08} y={20}>
+                  <div className="glass glass-lift glass-sheen" style={{
+                    padding: '1.1rem 1.2rem',
+                    display: 'flex', flexDirection: 'column', gap: '0.45rem',
+                    height: '100%',
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <span style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: '1.05rem', color: 'var(--servd-ink)' }}>
+                        {b.name}
+                      </span>
+                      <span style={{ marginLeft: 'auto' }}>
+                        <OpenNowPill slug={b.slug} fallback="Today" />
+                      </span>
                     </div>
-                  )}
-                </div>
+                    {loc && !loc.area.startsWith('TODO') && (
+                      <p style={{ color: 'var(--servd-mute)', fontSize: '0.82rem', lineHeight: 1.4, margin: 0 }}>
+                        {loc.area}
+                      </p>
+                    )}
+                    {loc && (
+                      <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', marginTop: '0.4rem' }}>
+                        <Link href={`/${b.slug}`} style={{ color: b.accent, fontSize: '0.78rem', fontWeight: 700, textDecoration: 'none' }}>
+                          Order →
+                        </Link>
+                        <span style={{ color: 'var(--servd-dim)', fontSize: '0.78rem' }}>·</span>
+                        <a href={whatsappLink(loc, `hi ${b.name.toLowerCase()}`)}
+                          target="_blank" rel="noopener noreferrer"
+                          style={{ color: 'var(--servd-mute)', fontSize: '0.78rem', fontWeight: 700, textDecoration: 'none' }}>
+                          WhatsApp
+                        </a>
+                      </div>
+                    )}
+                  </div>
+                </Reveal>
               )
             })}
           </div>
         </div>
       </section>
 
-      {/* ── EXPLORE STRIP ─ Brand-purple band inviting customers to browse
+      {/* ── EXPLORE STRIP ─ Aurora band inviting customers to browse
             every brand in one place. No delivery / aggregator messaging. */}
-      <section className="reveal-on-scroll" style={{ background: 'linear-gradient(135deg, #4E2A4F 0%, #2D1E2F 100%)', color: 'white', padding: '2.5rem 0', order: 4 }}>
-        <div className="container" style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '1rem' }}>
-          <p style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(1.15rem, 2vw, 1.5rem)', fontWeight: 700, lineHeight: 1.3, margin: 0, maxWidth: '38rem' }}>
-            Every kitchen, one order.<br />
-            <span style={{ opacity: 0.7 }}>Explore the brands and check out once.</span>
-          </p>
-          <MagneticLink href="/browse" style={{
-            background: 'white', color: 'var(--servd-green)',
-            fontWeight: 800, fontSize: '0.92rem',
-            padding: '0.85rem 1.5rem', borderRadius: '999px', textDecoration: 'none',
-            display: 'inline-flex', alignItems: 'center', gap: '0.5rem',
-          }}>
-            Explore the brands <span aria-hidden style={{ opacity: 0.6 }}>→</span>
-          </MagneticLink>
+      <section className="aurora-field" style={{ background: 'linear-gradient(135deg, #4E2A4F 0%, #2D1E2F 100%)', color: 'white', padding: '3rem 0', order: 4 }}>
+        <div className="container" style={{ position: 'relative', zIndex: 1, display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '1.25rem' }}>
+          <Reveal>
+            <p style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(1.15rem, 2vw, 1.5rem)', fontWeight: 700, lineHeight: 1.3, margin: 0, maxWidth: '38rem' }}>
+              Every kitchen, one order.<br />
+              <span style={{ opacity: 0.7 }}>Explore the brands and check out once.</span>
+            </p>
+          </Reveal>
+          <Reveal delay={0.12}>
+            <MagneticLink href="/browse" className="glass-sheen" style={{
+              background: 'rgba(255,255,255,0.92)', color: 'var(--servd-green)',
+              fontWeight: 800, fontSize: '0.92rem',
+              padding: '0.85rem 1.5rem', borderRadius: '999px', textDecoration: 'none',
+              display: 'inline-flex', alignItems: 'center', gap: '0.5rem',
+              boxShadow: '0 10px 32px rgba(0,0,0,0.3)',
+            }}>
+              Explore the brands <span aria-hidden style={{ opacity: 0.6 }}>→</span>
+            </MagneticLink>
+          </Reveal>
         </div>
       </section>
 
-      {/* ── INSIDERS — servd loyalty membership pitch. Replaces the
-            promise-numbers strip. Single CTA: become a member. ──── */}
-      <section className="reveal-on-scroll" style={{ background: 'var(--servd-green)', color: 'white', padding: 'clamp(4rem, 8vh, 7rem) 0', position: 'relative', overflow: 'hidden', order: 1 }}>
-        {/* Soft ambient glow so the section reads as 'premium tier' */}
-        <div aria-hidden style={{
-          position: 'absolute', inset: 0,
-          background: 'radial-gradient(ellipse 60% 50% at 50% 0%, rgba(255,255,255,0.08) 0%, transparent 60%)',
-          pointerEvents: 'none',
-        }} />
-
+      {/* ── INSIDERS — servd loyalty membership pitch. Aurora field +
+            true glass tier cards. Single CTA: become a member. ──── */}
+      <section className="aurora-field" style={{ background: 'var(--servd-green)', color: 'white', padding: 'clamp(4rem, 8vh, 7rem) 0', order: 1 }}>
         <div className="container" style={{ position: 'relative', zIndex: 1 }}>
           {/* Header — eyebrow + bricolage display + sub */}
           <div style={{
@@ -246,7 +249,7 @@ export function HomeClient({ concepts, heroConfig }: Props) {
             marginBottom: 'clamp(2.5rem, 5vw, 3.5rem)',
             alignItems: 'baseline',
           }}>
-            <div>
+            <Reveal blur>
               <p className="eyebrow" style={{ color: 'rgba(255,255,255,0.7)', marginBottom: '1rem' }}>
                 Insiders · free to join
               </p>
@@ -260,15 +263,17 @@ export function HomeClient({ concepts, heroConfig }: Props) {
                 The best stuff<br />
                 <span className="display-italic" style={{ color: 'rgba(255,255,255,0.7)' }}>doesn&rsquo;t get listed.</span>
               </h2>
-            </div>
-            <p style={{
-              color: 'rgba(255,255,255,0.82)',
-              fontSize: '1.05rem',
-              lineHeight: 1.55,
-              maxWidth: '32rem',
-            }}>
-              Limited drops. Off-menu plates. Weekday lunch perks. Points on every order. Insiders get first.
-            </p>
+            </Reveal>
+            <Reveal delay={0.15}>
+              <p style={{
+                color: 'rgba(255,255,255,0.82)',
+                fontSize: '1.05rem',
+                lineHeight: 1.55,
+                maxWidth: '32rem',
+              }}>
+                Limited drops. Off-menu plates. Weekday lunch perks. Points on every order. Insiders get first.
+              </p>
+            </Reveal>
           </div>
 
           {/* Per-brand Insiders perks. Per the loyalty-program skill:
@@ -287,7 +292,6 @@ export function HomeClient({ concepts, heroConfig }: Props) {
             {[
               {
                 slug: 'simmer',
-                accent: 'rgba(233,78,27,0.95)',
                 badge: '◇', tag: 'simmer · regulars',
                 head: 'The regulars’ list',
                 body: 'Quiet recognition. First word on the next menu drop. A held table when the room is full. Now and then the chef sends out a plate. No card, no points — you’re known here.',
@@ -295,7 +299,6 @@ export function HomeClient({ concepts, heroConfig }: Props) {
               },
               {
                 slug: 'stax',
-                accent: 'rgba(255,255,255,0.18)',
                 badge: '★', tag: 'Stax · stack club',
                 head: 'Stack five, the sixth’s on us',
                 body: 'Order five from Stax, the sixth burger’s on the house. Insiders also get first dibs on Friday-only stacks before they go public.',
@@ -303,55 +306,55 @@ export function HomeClient({ concepts, heroConfig }: Props) {
               },
               {
                 slug: 'flipd',
-                accent: 'rgba(58,168,255,0.95)',
                 badge: '+', tag: 'Flipd · points',
                 head: 'Points on every box',
                 body: 'Earn 1 point per Rs. 10 spent at Flipd. Free weekday lunch delivery for members. Redeem points for a meal at 2,000.',
                 featured: false,
               },
-            ].map((p) => (
-              <div key={p.head} style={{
-                background: p.featured ? 'rgba(255,255,255,0.14)' : 'rgba(255,255,255,0.07)',
-                border: p.featured ? '1px solid rgba(255,255,255,0.35)' : '1px solid rgba(255,255,255,0.18)',
-                borderRadius: '1.25rem',
-                padding: '1.5rem 1.4rem',
-                color: 'white',
-                transform: p.featured ? 'translateY(-12px)' : 'none',
-                transition: 'transform 220ms cubic-bezier(0.22, 1, 0.36, 1)',
-                backdropFilter: 'blur(8px)',
-              }}>
-                <div style={{
-                  display: 'inline-flex',
-                  alignItems: 'center', justifyContent: 'center',
-                  width: '2.4rem', height: '2.4rem',
-                  background: p.featured ? 'white' : 'rgba(255,255,255,0.12)',
-                  color: p.featured ? 'var(--servd-green)' : 'white',
-                  borderRadius: '999px',
-                  fontFamily: 'var(--font-display)', fontWeight: 800,
-                  fontSize: '0.95rem',
-                  marginBottom: '1rem',
-                }}>{p.badge}</div>
-                <p className="eyebrow" style={{ color: 'rgba(255,255,255,0.7)', marginBottom: '0.5rem' }}>
-                  {p.tag}
-                </p>
-                <h3 className="display" style={{
-                  fontSize: 'clamp(1.35rem, 2.3vw, 1.65rem)',
+            ].map((p, i) => (
+              <Reveal key={p.head} delay={i * 0.12} y={36} style={{ height: '100%' }}>
+                <div className="glass-deep glass-lift glass-sheen" style={{
+                  background: p.featured ? 'rgba(255,255,255,0.16)' : undefined,
+                  borderColor: p.featured ? 'rgba(255,255,255,0.4)' : undefined,
+                  borderRadius: '1.25rem',
+                  padding: '1.5rem 1.4rem',
                   color: 'white',
-                  margin: '0 0 0.6rem',
-                  lineHeight: 1.05,
-                  letterSpacing: '-0.02em',
+                  transform: p.featured ? 'translateY(-12px)' : undefined,
+                  height: '100%',
                 }}>
-                  {p.head}
-                </h3>
-                <p style={{
-                  color: 'rgba(255,255,255,0.78)',
-                  fontSize: '0.92rem',
-                  lineHeight: 1.55,
-                  margin: 0,
-                }}>
-                  {p.body}
-                </p>
-              </div>
+                  <div style={{
+                    display: 'inline-flex',
+                    alignItems: 'center', justifyContent: 'center',
+                    width: '2.4rem', height: '2.4rem',
+                    background: p.featured ? 'white' : 'rgba(255,255,255,0.12)',
+                    color: p.featured ? 'var(--servd-green)' : 'white',
+                    borderRadius: '999px',
+                    fontFamily: 'var(--font-display)', fontWeight: 800,
+                    fontSize: '0.95rem',
+                    marginBottom: '1rem',
+                  }}>{p.badge}</div>
+                  <p className="eyebrow" style={{ color: 'rgba(255,255,255,0.7)', marginBottom: '0.5rem' }}>
+                    {p.tag}
+                  </p>
+                  <h3 className="display" style={{
+                    fontSize: 'clamp(1.35rem, 2.3vw, 1.65rem)',
+                    color: 'white',
+                    margin: '0 0 0.6rem',
+                    lineHeight: 1.05,
+                    letterSpacing: '-0.02em',
+                  }}>
+                    {p.head}
+                  </h3>
+                  <p style={{
+                    color: 'rgba(255,255,255,0.78)',
+                    fontSize: '0.92rem',
+                    lineHeight: 1.55,
+                    margin: 0,
+                  }}>
+                    {p.body}
+                  </p>
+                </div>
+              </Reveal>
             ))}
           </div>
 
@@ -360,54 +363,57 @@ export function HomeClient({ concepts, heroConfig }: Props) {
               channel in PK; broadcasts beat email open rates 4-5x). The
               web signup stays as the backup route so guests who don't
               want WhatsApp aren't shut out. */}
-          <div style={{
-            marginTop: 'clamp(2.5rem, 5vw, 3.5rem)',
-            display: 'flex', flexWrap: 'wrap',
-            alignItems: 'center', gap: '1rem',
-          }}>
-            <a
-              href={whatsappLink(BRAND_LOCATIONS['simmer']!, 'add me to servd insiders')}
-              target="_blank" rel="noopener noreferrer"
-              style={{
-                background: '#25D366',
-                color: 'white',
+          <Reveal delay={0.2}>
+            <div style={{
+              marginTop: 'clamp(2.5rem, 5vw, 3.5rem)',
+              display: 'flex', flexWrap: 'wrap',
+              alignItems: 'center', gap: '1rem',
+            }}>
+              <a
+                href={whatsappLink(BRAND_LOCATIONS['simmer']!, 'add me to servd insiders')}
+                target="_blank" rel="noopener noreferrer"
+                className="glass-sheen"
+                style={{
+                  background: '#25D366',
+                  color: 'white',
+                  fontFamily: 'var(--font-display)', fontWeight: 800,
+                  fontSize: '1.05rem',
+                  padding: '1rem 1.85rem',
+                  borderRadius: '999px',
+                  textDecoration: 'none',
+                  display: 'inline-flex', alignItems: 'center', gap: '0.6rem',
+                  boxShadow: '0 12px 32px rgba(0,0,0,0.22)',
+                }}>
+                Join on WhatsApp <span aria-hidden style={{ opacity: 0.7 }}>→</span>
+              </a>
+              <MagneticLink href="/signup?insider=1" style={{
+                background: 'rgba(255,255,255,0.92)',
+                color: 'var(--servd-green)',
                 fontFamily: 'var(--font-display)', fontWeight: 800,
                 fontSize: '1.05rem',
                 padding: '1rem 1.85rem',
                 borderRadius: '999px',
                 textDecoration: 'none',
                 display: 'inline-flex', alignItems: 'center', gap: '0.6rem',
-                boxShadow: '0 12px 32px rgba(0,0,0,0.22)',
               }}>
-              Join on WhatsApp <span aria-hidden style={{ opacity: 0.7 }}>→</span>
-            </a>
-            <MagneticLink href="/signup?insider=1" style={{
-              background: 'white',
-              color: 'var(--servd-green)',
-              fontFamily: 'var(--font-display)', fontWeight: 800,
-              fontSize: '1.05rem',
-              padding: '1rem 1.85rem',
-              borderRadius: '999px',
-              textDecoration: 'none',
-              display: 'inline-flex', alignItems: 'center', gap: '0.6rem',
-            }}>
-              Or sign up with email
-            </MagneticLink>
-            <Link href="/login" style={{
-              color: 'rgba(255,255,255,0.85)',
-              fontWeight: 700, fontSize: '0.95rem',
-              textDecoration: 'underline',
-              textUnderlineOffset: '4px',
-              textDecorationColor: 'rgba(255,255,255,0.4)',
-              padding: '0.6rem 0.4rem',  // 44pt min touch height
-              display: 'inline-block', lineHeight: 1,
-            }}>
-              Already a member? Sign in
-            </Link>
-            <span style={{ color: 'rgba(255,255,255,0.55)', fontSize: '0.85rem' }}>
-              · free forever · cancel anytime
-            </span>
-          </div>
+                Or sign up with email
+              </MagneticLink>
+              <Link href="/login" style={{
+                color: 'rgba(255,255,255,0.85)',
+                fontWeight: 700, fontSize: '0.95rem',
+                textDecoration: 'underline',
+                textUnderlineOffset: '4px',
+                textDecorationColor: 'rgba(255,255,255,0.4)',
+                padding: '0.6rem 0.4rem',  // 44pt min touch height
+                display: 'inline-block', lineHeight: 1,
+              }}>
+                Already a member? Sign in
+              </Link>
+              <span style={{ color: 'rgba(255,255,255,0.55)', fontSize: '0.85rem' }}>
+                · free forever · cancel anytime
+              </span>
+            </div>
+          </Reveal>
         </div>
       </section>
 

@@ -16,6 +16,7 @@ import type { Concept } from '../../../lib/concept'
 import { CrossBrandStrip } from '../parts/CrossBrandStrip'
 import { OpenStatusBadge, HoursGrid, useHoursData } from '../parts/OpenStatusBadge'
 import { brandStory } from '../../../lib/concept'
+import { Reveal, FloatY } from '../../motion/Motion'
 
 interface Props {
   concept: Concept
@@ -104,40 +105,48 @@ export function FlipdLayout({ concept, concepts }: Props) {
               transparent PNG at public/flipd/ball.png) — CSS gradients can't
               look like felt, so it's an image. */}
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginTop: '1.6rem' }}>
-            <span className="flipd-marquee" style={{
-              display: 'inline-block',
-              background: 'var(--flipd-cream)',
-              color: 'var(--flipd-ink)',
-              border: '2px solid var(--flipd-ink)',
-              borderRadius: '0.6rem',
-              boxShadow: '0 4px 0 var(--flipd-ink), 0 10px 26px rgba(14,26,42,0.18)',
-              padding: '0.55rem 1.15rem',
-              fontSize: 'clamp(1.4rem, 4.4vw, 2.3rem)',
-              letterSpacing: '0.04em',
-              lineHeight: 1,
-              textTransform: 'uppercase',
-            }}>
-              Game · Set · Smash
-            </span>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src="/flipd/ball.png"
-              alt="A flipd tennis ball"
-              width={540}
-              height={540}
-              style={{
-                width: 'clamp(14rem, 38vw, 25rem)',
-                height: 'auto',
-                marginTop: '1.7rem',
-                filter: 'drop-shadow(0 18px 24px rgba(40,46,10,0.28))',
-              }}
-            />
+            <Reveal y={-24} duration={0.6}>
+              <span className="flipd-marquee" style={{
+                display: 'inline-block',
+                background: 'var(--flipd-cream)',
+                color: 'var(--flipd-ink)',
+                border: '2px solid var(--flipd-ink)',
+                borderRadius: '0.6rem',
+                boxShadow: '0 4px 0 var(--flipd-ink), 0 10px 26px rgba(14,26,42,0.18)',
+                padding: '0.55rem 1.15rem',
+                fontSize: 'clamp(1.4rem, 4.4vw, 2.3rem)',
+                letterSpacing: '0.04em',
+                lineHeight: 1,
+                textTransform: 'uppercase',
+              }}>
+                Game · Set · Smash
+              </span>
+            </Reveal>
+            {/* The ball bobs like it's mid-rally — endless gentle float
+                with a slow rock; reduced-motion users get it parked. */}
+            <FloatY distance={16} duration={2.6} rotate={4}>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src="/flipd/ball.png"
+                alt="A flipd tennis ball"
+                width={540}
+                height={540}
+                style={{
+                  width: 'clamp(14rem, 38vw, 25rem)',
+                  height: 'auto',
+                  marginTop: '1.7rem',
+                  filter: 'drop-shadow(0 18px 24px rgba(40,46,10,0.28))',
+                }}
+              />
+            </FloatY>
           </div>
 
-          <div style={{ marginTop: '2rem', display: 'flex', gap: '0.75rem', flexWrap: 'wrap', justifyContent: 'center' }}>
-            <Link href={`/${concept.slug}`} className="flipd-btn">Order now</Link>
-            <Link href={`/brand/${concept.slug}/menu`} className="flipd-btn flipd-btn-ghost">See the menu</Link>
-          </div>
+          <Reveal y={22} delay={0.15}>
+            <div style={{ marginTop: '2rem', display: 'flex', gap: '0.75rem', flexWrap: 'wrap', justifyContent: 'center' }}>
+              <Link href={`/${concept.slug}`} className="flipd-btn">Order now</Link>
+              <Link href={`/brand/${concept.slug}/menu`} className="flipd-btn flipd-btn-ghost">See the menu</Link>
+            </div>
+          </Reveal>
         </div>
       </section>
 
@@ -149,17 +158,20 @@ export function FlipdLayout({ concept, concepts }: Props) {
         position: 'relative',
       }}>
         <div style={{ maxWidth: '44rem', margin: '0 auto', textAlign: 'center' }}>
-          <p className="flipd-eyebrow" style={{ color: 'var(--flipd-optic)', marginBottom: '0.6rem' }}>
-            Court-side board
-          </p>
-          <h2 className="flipd-display" style={{
-            fontSize: 'clamp(2.4rem, 6vw, 3.8rem)',
-            color: 'var(--flipd-cream)',
-            margin: 0,
-          }}>
-            now serving
-          </h2>
+          <Reveal y={24}>
+            <p className="flipd-eyebrow" style={{ color: 'var(--flipd-optic)', marginBottom: '0.6rem' }}>
+              Court-side board
+            </p>
+            <h2 className="flipd-display" style={{
+              fontSize: 'clamp(2.4rem, 6vw, 3.8rem)',
+              color: 'var(--flipd-cream)',
+              margin: 0,
+            }}>
+              now serving
+            </h2>
+          </Reveal>
 
+          <Reveal y={30} delay={0.1}>
           <div style={{
             marginTop: '2rem',
             padding: '1.8rem 1.4rem',
@@ -187,6 +199,8 @@ export function FlipdLayout({ concept, concepts }: Props) {
             ))}
           </div>
 
+          </Reveal>
+
           <p className="flipd-type" style={{
             fontSize: '0.78rem', marginTop: '1.4rem',
             color: 'rgba(251,253,255,0.55)',
@@ -203,24 +217,32 @@ export function FlipdLayout({ concept, concepts }: Props) {
         padding: 'clamp(4rem, 9vh, 6rem) clamp(1.5rem, 5vw, 3rem)',
       }}>
         <div style={{ maxWidth: '72rem', margin: '0 auto' }}>
-          <p className="flipd-eyebrow" style={{ marginBottom: '0.8rem' }}>How we cook</p>
-          <h2 className="flipd-display" style={{
-            fontSize: 'clamp(2.4rem, 5vw, 3.8rem)', margin: '0 0 2.6rem',
-            color: 'var(--flipd-ink)',
-            maxWidth: '24ch',
-          }}>
-            cast-iron, court-side.
-          </h2>
+          <Reveal y={24}>
+            <p className="flipd-eyebrow" style={{ marginBottom: '0.8rem' }}>How we cook</p>
+            <h2 className="flipd-display" style={{
+              fontSize: 'clamp(2.4rem, 5vw, 3.8rem)', margin: '0 0 2.6rem',
+              color: 'var(--flipd-ink)',
+              maxWidth: '24ch',
+            }}>
+              cast-iron, court-side.
+            </h2>
+          </Reveal>
 
           <div style={{
             display: 'grid',
             gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))',
             gap: '1.1rem',
           }}>
-            <Spec value="2x" label="Smash patties, dry-aged beef." />
-            <Spec value="260°C" label="Cast-iron flat-top, every smash." />
-            <Spec value="0" label="Reheats. Smashed to order only." />
-            <Spec value="100%" label="Brioche toasted court-side." />
+            {[
+              { value: '2x',    label: 'Smash patties, dry-aged beef.' },
+              { value: '260°C', label: 'Cast-iron flat-top, every smash.' },
+              { value: '0',     label: 'Reheats. Smashed to order only.' },
+              { value: '100%',  label: 'Brioche toasted court-side.' },
+            ].map((s, i) => (
+              <Reveal key={s.value} delay={i * 0.09} y={34}>
+                <Spec value={s.value} label={s.label} />
+              </Reveal>
+            ))}
           </div>
         </div>
       </section>
@@ -261,8 +283,9 @@ export function FlipdLayout({ concept, concepts }: Props) {
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '1.1rem' }}>
-            {story.highlights.map((h) => (
-              <div key={h} className="flipd-card">
+            {story.highlights.map((h, i) => (
+              <Reveal key={h} delay={i * 0.1} y={36}>
+              <div className="flipd-card">
                 <p className="flipd-type" style={{
                   fontSize: '0.7rem', letterSpacing: '0.32em', textTransform: 'uppercase',
                   color: 'var(--flipd-sky-deep)', margin: '0 0 0.6rem',
@@ -280,6 +303,7 @@ export function FlipdLayout({ concept, concepts }: Props) {
                   {h}
                 </p>
               </div>
+              </Reveal>
             ))}
           </div>
         </div>
@@ -369,6 +393,7 @@ export function FlipdLayout({ concept, concepts }: Props) {
           textAlign: 'center',
         }}
       >
+        <Reveal y={44} blur amount={0.35}>
         <div className="flipd-turf-ink" style={{
           position: 'relative',
           maxWidth: '38rem',
@@ -402,6 +427,7 @@ export function FlipdLayout({ concept, concepts }: Props) {
           </p>
           <Link href={`/${concept.slug}`} className="flipd-btn">Order from Flipd →</Link>
         </div>
+        </Reveal>
       </section>
 
     </div>

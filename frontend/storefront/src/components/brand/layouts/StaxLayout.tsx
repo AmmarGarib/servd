@@ -14,6 +14,7 @@ import type { Concept } from '../../../lib/concept'
 import { CrossBrandStrip } from '../parts/CrossBrandStrip'
 import { OpenStatusBadge, HoursGrid, useHoursData } from '../parts/OpenStatusBadge'
 import { brandStory } from '../../../lib/concept'
+import { Reveal, Parallax } from '../../motion/Motion'
 
 interface Props {
   concept: Concept
@@ -56,29 +57,39 @@ export function StaxLayout({ concept, concepts }: Props) {
       {/* ── HERO ─ Industrial header: spec tag, wordmark, spec line, sub. ── */}
       <section style={{ padding: 'clamp(4rem, 12vh, 8rem) clamp(1.5rem, 5vw, 3rem) clamp(3rem, 6vh, 4rem)' }}>
         <div style={{ maxWidth: '76rem', margin: '0 auto' }}>
-          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '2rem', flexWrap: 'wrap', marginBottom: '2rem' }}>
-            <span className="stax-spec">{SPECS[0]} / KITCHEN — KARACHI</span>
-            <span className="stax-spec" style={{ color: 'var(--stax-grey-60)' }}>SPEC SHEET · v.2026</span>
-          </div>
+          <Reveal y={16} duration={0.6}>
+            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '2rem', flexWrap: 'wrap', marginBottom: '2rem' }}>
+              <span className="stax-spec">{SPECS[0]} / KITCHEN — KARACHI</span>
+              <span className="stax-spec" style={{ color: 'var(--stax-grey-60)' }}>SPEC SHEET · v.2026</span>
+            </div>
+          </Reveal>
 
-          <h1 className="stax-display" style={{ fontSize: 'clamp(4.5rem, 14vw, 11rem)', margin: '0 0 1rem', color: 'var(--stax-grey-100)' }}>
-            STAX<span style={{ color: 'var(--stax-cream)' }}>.</span>
-          </h1>
+          <Parallax speed={-0.06}>
+            <Reveal blur y={40} delay={0.08}>
+              <h1 className="stax-display" style={{ fontSize: 'clamp(4.5rem, 14vw, 11rem)', margin: '0 0 1rem', color: 'var(--stax-grey-100)' }}>
+                STAX<span style={{ color: 'var(--stax-cream)' }}>.</span>
+              </h1>
+            </Reveal>
+          </Parallax>
 
           <hr className="stax-line" />
 
-          <p className="stax-display" style={{ fontSize: 'clamp(1.4rem, 2.4vw, 2rem)', maxWidth: '36ch', margin: '2rem 0 0', fontWeight: 500, lineHeight: 1.2 }}>
-            {story.tagline}
-          </p>
+          <Reveal delay={0.18} y={24}>
+            <p className="stax-display" style={{ fontSize: 'clamp(1.4rem, 2.4vw, 2rem)', maxWidth: '36ch', margin: '2rem 0 0', fontWeight: 500, lineHeight: 1.2 }}>
+              {story.tagline}
+            </p>
 
-          <p style={{ fontFamily: 'var(--stax-mono)', fontSize: '0.95rem', letterSpacing: '0.02em', maxWidth: '52ch', margin: '1.25rem 0 0', color: 'var(--stax-grey-80)' }}>
-            {story.oneLiner}
-          </p>
+            <p style={{ fontFamily: 'var(--stax-mono)', fontSize: '0.95rem', letterSpacing: '0.02em', maxWidth: '52ch', margin: '1.25rem 0 0', color: 'var(--stax-grey-80)' }}>
+              {story.oneLiner}
+            </p>
+          </Reveal>
 
-          <div style={{ marginTop: '3rem', display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
-            <Link href={`/${concept.slug}`} className="stax-btn">Order Stax →</Link>
-            <Link href={`/brand/${concept.slug}/menu`} className="stax-btn stax-btn-ghost">View menu</Link>
-          </div>
+          <Reveal delay={0.28} y={18}>
+            <div style={{ marginTop: '3rem', display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+              <Link href={`/${concept.slug}`} className="stax-btn">Order Stax →</Link>
+              <Link href={`/brand/${concept.slug}/menu`} className="stax-btn stax-btn-ghost">View menu</Link>
+            </div>
+          </Reveal>
         </div>
       </section>
 
@@ -91,11 +102,13 @@ export function StaxLayout({ concept, concepts }: Props) {
             looking for. */}
       <section style={{ padding: 'clamp(2.5rem, 6vh, 4rem) clamp(1.5rem, 5vw, 3rem)' }}>
         <div style={{ maxWidth: '76rem', margin: '0 auto' }}>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: '2rem', marginBottom: '1.25rem' }}>
-            <span className="stax-spec">07 / STATUS · LIVE</span>
-            <span className="stax-spec" style={{ color: 'var(--stax-grey-60)' }}>updated daily</span>
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', border: '1px solid var(--stax-line)' }}>
+          <Reveal y={14}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: '2rem', marginBottom: '1.25rem' }}>
+              <span className="stax-spec">07 / STATUS · LIVE</span>
+              <span className="stax-spec" style={{ color: 'var(--stax-grey-60)' }}>updated daily</span>
+            </div>
+          </Reveal>
+          <div className="stax-glass" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', border: '1px solid var(--stax-line)' }}>
             <div style={{ padding: '1.5rem 1.4rem', borderRight: '1px solid var(--stax-line)' }}>
               <p className="stax-spec" style={{ marginBottom: '0.5rem' }}>GRILL</p>
               <p className="stax-mono" style={{ fontSize: '0.95rem', margin: 0, color: 'var(--stax-grey-80)' }}>HOT · 240°C</p>
@@ -121,19 +134,23 @@ export function StaxLayout({ concept, concepts }: Props) {
       {/* ── SPEC SHEET — story.highlights as numbered specs, monospace ── */}
       <section style={{ padding: 'clamp(4rem, 9vh, 6rem) clamp(1.5rem, 5vw, 3rem)' }}>
         <div style={{ maxWidth: '76rem', margin: '0 auto' }}>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: '2rem', marginBottom: '3rem' }}>
-            <span className="stax-spec">{SPECS[1]}</span>
-            <h2 className="stax-display" style={{ fontSize: 'clamp(2rem, 4vw, 3rem)', margin: 0 }}>The brief.</h2>
-          </div>
+          <Reveal y={14}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: '2rem', marginBottom: '3rem' }}>
+              <span className="stax-spec">{SPECS[1]}</span>
+              <h2 className="stax-display" style={{ fontSize: 'clamp(2rem, 4vw, 3rem)', margin: 0 }}>The brief.</h2>
+            </div>
+          </Reveal>
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '0', border: '1px solid var(--stax-line)' }}>
+          <div className="stax-glass" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '0', border: '1px solid var(--stax-line)' }}>
             {story.highlights.map((h, i) => (
-              <div key={h} style={{ padding: '1.75rem 1.5rem', borderRight: '1px solid var(--stax-line)', borderBottom: i < story.highlights.length - 1 ? '0' : '0', minHeight: '8rem', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
-                <span className="stax-spec">{String(i + 1).padStart(2, '0')}</span>
-                <p className="stax-mono" style={{ fontSize: '0.95rem', lineHeight: 1.5, margin: '1rem 0 0', fontWeight: 500 }}>
-                  {h}
-                </p>
-              </div>
+              <Reveal key={h} delay={i * 0.09} y={22} style={{ display: 'flex' }}>
+                <div style={{ padding: '1.75rem 1.5rem', borderRight: '1px solid var(--stax-line)', minHeight: '8rem', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', width: '100%' }}>
+                  <span className="stax-spec">{String(i + 1).padStart(2, '0')}</span>
+                  <p className="stax-mono" style={{ fontSize: '0.95rem', lineHeight: 1.5, margin: '1rem 0 0', fontWeight: 500 }}>
+                    {h}
+                  </p>
+                </div>
+              </Reveal>
             ))}
           </div>
         </div>
@@ -144,13 +161,15 @@ export function StaxLayout({ concept, concepts }: Props) {
       {/* ── LONG STORY — single column, sober ── */}
       <section style={{ padding: 'clamp(4rem, 9vh, 6rem) clamp(1.5rem, 5vw, 3rem)' }}>
         <div style={{ maxWidth: '46rem', margin: '0 auto' }}>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: '2rem', marginBottom: '2rem' }}>
-            <span className="stax-spec">{SPECS[2]}</span>
-            <h2 className="stax-display" style={{ fontSize: 'clamp(2rem, 4vw, 3rem)', margin: 0 }}>The kitchen.</h2>
-          </div>
-          <p className="stax-mono" style={{ fontSize: '1.1rem', lineHeight: 1.65, color: 'var(--stax-grey-80)' }}>
-            {story.long}
-          </p>
+          <Reveal y={20}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: '2rem', marginBottom: '2rem' }}>
+              <span className="stax-spec">{SPECS[2]}</span>
+              <h2 className="stax-display" style={{ fontSize: 'clamp(2rem, 4vw, 3rem)', margin: 0 }}>The kitchen.</h2>
+            </div>
+            <p className="stax-mono" style={{ fontSize: '1.1rem', lineHeight: 1.65, color: 'var(--stax-grey-80)' }}>
+              {story.long}
+            </p>
+          </Reveal>
         </div>
       </section>
 
@@ -159,7 +178,7 @@ export function StaxLayout({ concept, concepts }: Props) {
       {/* ── HOURS + LOCATION ── */}
       <section style={{ padding: 'clamp(4rem, 9vh, 6rem) clamp(1.5rem, 5vw, 3rem)' }}>
         <div style={{ maxWidth: '76rem', margin: '0 auto', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'clamp(2rem, 5vw, 4rem)' }} className="stax-visit-grid">
-          <div>
+          <Reveal y={26}>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: '2rem', marginBottom: '2rem' }}>
               <span className="stax-spec">{SPECS[3]}</span>
               <h2 className="stax-display" style={{ fontSize: 'clamp(1.6rem, 3vw, 2.2rem)', margin: 0 }}>Hours.</h2>
@@ -172,9 +191,9 @@ export function StaxLayout({ concept, concepts }: Props) {
                 <p style={{ opacity: 0.6 }}>Hours not published yet.</p>
               )}
             </div>
-          </div>
+          </Reveal>
 
-          <div>
+          <Reveal y={26} delay={0.1}>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: '2rem', marginBottom: '2rem' }}>
               <span className="stax-spec">{SPECS[4]}</span>
               <h2 className="stax-display" style={{ fontSize: 'clamp(1.6rem, 3vw, 2.2rem)', margin: 0 }}>Where.</h2>
@@ -194,7 +213,7 @@ export function StaxLayout({ concept, concepts }: Props) {
                 <Link href={`/reserve/${concept.slug}`} className="stax-btn stax-btn-ghost">Reserve a table</Link>
               </div>
             )}
-          </div>
+          </Reveal>
         </div>
       </section>
 
@@ -214,13 +233,15 @@ export function StaxLayout({ concept, concepts }: Props) {
       {/* ── CTA STRIP — transparent over the blueprint ── */}
       <section style={{ color: 'var(--stax-cream)', padding: 'clamp(4rem, 10vh, 7rem) clamp(1.5rem, 5vw, 3rem)' }}>
         <div style={{ maxWidth: '64rem', margin: '0 auto', textAlign: 'center' }}>
-          <span className="stax-spec" style={{ color: 'rgba(236,234,230,0.5)' }}>{SPECS[5]} · ORDER</span>
-          <h2 className="stax-display" style={{ fontSize: 'clamp(2.2rem, 5vw, 4rem)', margin: '1rem 0 2rem' }}>
-            Get it built<span style={{ color: 'var(--stax-cream)' }}>.</span>
-          </h2>
-          <Link href={`/${concept.slug}`} className="stax-btn" style={{ background: 'var(--stax-cream)', color: 'var(--stax-blueprint)' }}>
-            Order from Stax →
-          </Link>
+          <Reveal blur y={36}>
+            <span className="stax-spec" style={{ color: 'rgba(236,234,230,0.5)' }}>{SPECS[5]} · ORDER</span>
+            <h2 className="stax-display" style={{ fontSize: 'clamp(2.2rem, 5vw, 4rem)', margin: '1rem 0 2rem' }}>
+              Get it built<span style={{ color: 'var(--stax-cream)' }}>.</span>
+            </h2>
+            <Link href={`/${concept.slug}`} className="stax-btn" style={{ background: 'var(--stax-cream)', color: 'var(--stax-blueprint)' }}>
+              Order from Stax →
+            </Link>
+          </Reveal>
         </div>
       </section>
       </div>

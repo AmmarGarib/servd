@@ -5,6 +5,7 @@ import type { Concept } from '../../lib/concept'
 import { typeLabel, conceptHeroImage, brandStory } from '../../lib/concept'
 import { isOpenNow, fmtHourWindow } from '../../lib/hours'
 import { trackSearch, trackFilterApplied, track } from '../../lib/analytics'
+import { Reveal } from '../../components/motion/Motion'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -66,14 +67,16 @@ export function BrowseClient({ concepts }: Props) {
       {/* Header — editorial, asymmetric, matches /home + brand microsites */}
       <section className="section-tight" style={{ paddingBottom: '1.5rem', borderBottom: '1px solid var(--servd-line)' }}>
         <div className="container">
-          <p className="eyebrow eyebrow-accent">Every kitchen</p>
-          <h1 className="display" style={{ fontSize: 'clamp(2.5rem, 7vw, 5rem)', margin: '0.5rem 0 0.75rem', maxWidth: '900px' }}>
-            Pick your craving.<br />
-            <span className="display-italic">{concepts.length} kitchens.</span>
-          </h1>
-          <p style={{ color: 'var(--servd-mute)', fontSize: '1.05rem', maxWidth: '36rem', lineHeight: 1.55 }}>
-            One app, one delivery bag. Mix and match — pick from one, two, or all of them, and we figure out the timing.
-          </p>
+          <Reveal blur>
+            <p className="eyebrow eyebrow-accent">Every kitchen</p>
+            <h1 className="display" style={{ fontSize: 'clamp(2.5rem, 7vw, 5rem)', margin: '0.5rem 0 0.75rem', maxWidth: '900px' }}>
+              Pick your craving.<br />
+              <span className="display-italic">{concepts.length} kitchens.</span>
+            </h1>
+            <p style={{ color: 'var(--servd-mute)', fontSize: '1.05rem', maxWidth: '36rem', lineHeight: 1.55 }}>
+              One app, one delivery bag. Mix and match — pick from one, two, or all of them, and we figure out the timing.
+            </p>
+          </Reveal>
 
           {/* Search + filters */}
           <div style={{ marginTop: '2rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
@@ -110,20 +113,7 @@ export function BrowseClient({ concepts }: Props) {
                     key={f.key}
                     onClick={() => { setFilter(f.key); trackFilterApplied('browse_type', f.key) }}
                     aria-pressed={active}
-                    style={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      minHeight: '44px',
-                      padding: '0.5rem 1rem',
-                      borderRadius: '999px',
-                      border: '1px solid var(--servd-line)',
-                      background: active ? 'var(--servd-black)' : 'white',
-                      color: active ? 'white' : 'var(--servd-ink)',
-                      fontWeight: 600,
-                      fontSize: '0.875rem',
-                      cursor: 'pointer',
-                      transition: 'background 120ms ease, color 120ms ease',
-                    }}
+                    className={`chip-glass${active ? ' is-active' : ''}`}
                   >
                     {f.label}
                   </button>
@@ -203,7 +193,11 @@ export function BrowseClient({ concepts }: Props) {
               gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 280px), 1fr))',
               gap: '1.25rem',
             }}>
-              {filtered.map((c) => <BrowseCard key={c.id} concept={c} />)}
+              {filtered.map((c, i) => (
+                <Reveal key={c.id} delay={(i % 3) * 0.09} y={32} style={{ display: 'flex' }}>
+                  <BrowseCard concept={c} />
+                </Reveal>
+              ))}
             </div>
           )}
         </div>
@@ -219,8 +213,8 @@ function BrowseCard({ concept }: { concept: Concept }) {
     <Link
       href={`/brand/${concept.slug}`}
       aria-label={`Visit ${concept.name}${status.open ? ' — open now' : ' — closed'}`}
-      className="servd-card"
-      style={{ textDecoration: 'none', color: 'inherit', display: 'flex', flexDirection: 'column', position: 'relative' }}
+      className="servd-card glass-sheen"
+      style={{ textDecoration: 'none', color: 'inherit', display: 'flex', flexDirection: 'column', position: 'relative', width: '100%' }}
       onClick={() => track('concept_switched', { slug: concept.slug })}
     >
       <div style={{
