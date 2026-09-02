@@ -1,11 +1,11 @@
 'use client'
 import Link from 'next/link'
 import { MagneticLink } from './ui/MagneticButton'
-import { LandingScrollHero } from './LandingScrollHero'
+import { KitchenPassHero } from './KitchenPassHero'
 import type { HeroConfig } from '../lib/heroConfig'
 
 import type { Concept } from '../lib/concept'
-import { brandAccent, brandStory, conceptHeroImage } from '../lib/concept'
+import { brandAccent, brandStory, conceptHeroImage, formatBrandName } from '../lib/concept'
 import { Reveal, Parallax } from './motion/Motion'
 import { OpenNowPill } from './brand/parts/OpenNowPill'
 import { BRAND_LOCATIONS, locationFor, whatsappLink } from '../lib/brandLocations'
@@ -31,7 +31,7 @@ interface Props {
 // (api warmup, network blip, etc.). Order matches the live brand grid.
 const FALLBACK_BRANDS = [
   { id: 'fallback-stax',   name: 'Stax',   slug: 'stax',   primaryColor: null },
-  { id: 'fallback-simmer', name: 'Simmer', slug: 'simmer', primaryColor: null },
+  { id: 'fallback-simmer', name: 'simmer', slug: 'simmer', primaryColor: null },
   { id: 'fallback-flipd',  name: 'Flipd',  slug: 'flipd',  primaryColor: null },
 ] as Array<Pick<Concept, 'id' | 'name' | 'slug' | 'primaryColor'>>
 
@@ -45,7 +45,7 @@ export function HomeClient({ concepts, heroConfig }: Props) {
     .sort((a, b) => ['stax', 'simmer', 'flipd'].indexOf(a.slug) - ['stax', 'simmer', 'flipd'].indexOf(b.slug))
     .map((c) => ({
       id: c.id,
-      name: c.name,
+      name: formatBrandName(c.name),
       slug: c.slug,
       accent: brandAccent(c.slug, c.primaryColor),
       story:  brandStory(c.slug),
@@ -55,11 +55,20 @@ export function HomeClient({ concepts, heroConfig }: Props) {
   return (
     <div style={{ background: 'var(--servd-bg)', color: 'var(--servd-ink)', display: 'flex', flexDirection: 'column' }}>
 
-      {/* ── HERO ─ the scroll-expansion media hero. Background image + the
-            expanding photo/video are operator-editable via Admin → Marketing
-            → Landing Hero (SiteLayout slug `servd:hero`); food placeholders
-            until the operator sets them. */}
-      <LandingScrollHero config={heroConfig} />
+      {/* ── HERO ─ the Kitchen Pass: a pinned scroll-driven tasting menu.
+            Each brand's dish is plated in sequence as the user scrolls —
+            photo irises onto a shared ceramic plate, ingredient close-ups
+            drift in, the room's light grades to the brand hue. Headline +
+            subcopy stay operator-editable via Admin → Marketing → Landing
+            Hero (SiteLayout slug `servd:hero`). */}
+      <KitchenPassHero
+        title={heroConfig.title}
+        sub={heroConfig.overview}
+        courses={brands.map((b) => ({
+          slug: b.slug, name: b.name, accent: b.accent,
+          img: b.img, tagline: b.story.tagline,
+        }))}
+      />
 
       {/* ── BRAND CARDS ─ Each one is a full-bleed food block leading
             into the order flow. Media drifts on scroll and swells on
@@ -97,7 +106,7 @@ export function HomeClient({ concepts, heroConfig }: Props) {
                   </Parallax>
                   <div aria-hidden style={{
                     position: 'absolute', inset: 0,
-                    background: 'linear-gradient(160deg, rgba(0,0,0,0.5) 0%, rgba(0,0,0,0.08) 45%, rgba(0,0,0,0.55) 100%)',
+                    background: 'linear-gradient(180deg, rgba(0,0,0,0.42) 0%, rgba(0,0,0,0.02) 38%, rgba(0,0,0,0.28) 62%, rgba(0,0,0,0.78) 100%)',
                     pointerEvents: 'none', zIndex: 1,
                   }} />
 
@@ -119,16 +128,13 @@ export function HomeClient({ concepts, heroConfig }: Props) {
                       /{b.slug}
                     </p>
 
-                    {/* Glass caption panel — name, tagline, order pill. */}
-                    <div className="glass-deep glass-sheen" style={{
-                      padding: 'clamp(1.25rem, 2.5vw, 1.75rem)',
-                      borderRadius: '1.35rem',
-                      maxWidth: '38rem',
-                    }}>
-                      <h3 className="display" style={{ fontSize: 'clamp(2.2rem, 5.5vw, 4rem)', color: 'white', lineHeight: 0.98, letterSpacing: '-0.04em' }}>
+                    {/* Caption — type straight on the scrim (a blurred glass
+                        panel here smears the photography into mud). */}
+                    <div style={{ maxWidth: '38rem' }}>
+                      <h3 className="display" style={{ fontSize: 'clamp(2.5rem, 6vw, 4.5rem)', color: 'white', lineHeight: 0.98, letterSpacing: '-0.04em', textShadow: '0 2px 18px rgba(0,0,0,0.55)' }}>
                         {b.name}
                       </h3>
-                      <p style={{ marginTop: '0.65rem', fontSize: 'clamp(0.98rem, 1.3vw, 1.15rem)', color: 'rgba(255,255,255,0.9)', maxWidth: '28rem', lineHeight: 1.45 }}>
+                      <p style={{ marginTop: '0.65rem', fontSize: 'clamp(0.98rem, 1.3vw, 1.15rem)', color: 'rgba(255,255,255,0.92)', maxWidth: '28rem', lineHeight: 1.45, textShadow: '0 1px 10px rgba(0,0,0,0.6)' }}>
                         {b.story.tagline}
                       </p>
                       {/* "Order from X" pill — independent Link to the
@@ -261,7 +267,7 @@ export function HomeClient({ concepts, heroConfig }: Props) {
                 letterSpacing: '-0.04em',
               }}>
                 The best stuff<br />
-                <span className="display-italic" style={{ color: 'rgba(255,255,255,0.7)' }}>doesn&rsquo;t get listed.</span>
+                <span className="display-italic" style={{ color: '#C9A4F2' }}>doesn&rsquo;t get listed.</span>
               </h2>
             </Reveal>
             <Reveal delay={0.15}>

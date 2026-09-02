@@ -17,14 +17,22 @@ export function StorefrontNav() {
   const pathname = usePathname() ?? '/'
   const token = useCustomerAuth((s) => s.token)
 
-  // Over the home hero the capsule is clear with white text; after the
-  // first stretch of scroll it condenses into the frosted-glass pill.
-  // Non-hero pages are glass from the first paint.
+  // Over the home hero the capsule is clear with white text; while the
+  // dark Kitchen Pass runway is on screen it frosts into DARK glass; once
+  // the page content (light) takes over it flips to light glass. Non-hero
+  // pages are light glass from the first paint.
   const [scrolled, setScrolled] = useState(false)
+  const [inDarkHero, setInDarkHero] = useState(false)
   useEffect(() => {
     const heroPage = TRANSPARENT_PATHS.has(pathname)
-    const threshold = heroPage ? window.innerHeight * 0.55 : 8
-    const onScroll = () => setScrolled(window.scrollY > threshold)
+    const threshold = heroPage ? window.innerHeight * 0.45 : 8
+    // The pass runway is ~450vh tall and sticky-releases ~350vh in; keep
+    // dark glass until just before the light sections arrive.
+    const darkEnd = window.innerHeight * 3.35
+    const onScroll = () => {
+      setScrolled(window.scrollY > threshold)
+      setInDarkHero(heroPage && window.scrollY <= darkEnd)
+    }
     onScroll()
     window.addEventListener('scroll', onScroll, { passive: true })
     return () => window.removeEventListener('scroll', onScroll)
@@ -40,19 +48,16 @@ export function StorefrontNav() {
   }
 
   const clear      = TRANSPARENT_PATHS.has(pathname) && !scrolled
-  const onDarkHero = clear   // home hero is dark; nav text goes white over it
+  const onDarkHero = clear || inDarkHero   // white text over the dark runway
+
+  const pillClass = clear
+    ? 'is-clear'
+    : inDarkHero ? 'is-glass-dark' : 'is-glass'
 
   return (
     <>
       <nav aria-label="Primary" className="nav-shell">
-        <div
-          className={`nav-pill ${clear ? 'is-clear' : 'is-glass'}`}
-          style={clear ? {
-            // Legibility scrim over the hero image — a soft top gradient on
-            // the shell itself, not the pill, would spill wide; a subtle
-            // text-shadow via filter keeps it clean instead.
-          } : undefined}
-        >
+        <div className={`nav-pill ${pillClass}`}>
           {/* Brand-mark — circular logo + wordmark. White over the dark
               hero, ink on glass. */}
           <Link
