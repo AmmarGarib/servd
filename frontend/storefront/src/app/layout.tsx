@@ -4,6 +4,7 @@ import { StorefrontNav } from '../components/StorefrontNav'
 import { StorefrontFooter } from '../components/StorefrontFooter'
 import { FeedbackWidget } from '../components/feedback/FeedbackWidget'
 import { CursorFX } from '../components/ui/CursorFX'
+import { ScrollDock } from '../components/ui/ScrollDock'
 
 export const metadata: Metadata = {
   // Absolute base for og:image / canonical resolution. Single source for the
@@ -49,6 +50,10 @@ export default function StorefrontLayout({ children }: { children: React.ReactNo
         <main id="main">{children}</main>
         <StorefrontFooter />
         <FeedbackWidget />
+        {/* Ambient layers — film grain over every surface, the food
+            scroll-dock in place of the native scrollbar, cursor FX. */}
+        <div aria-hidden className="grain-overlay" />
+        <ScrollDock />
         <CursorFX />
       </body>
     </html>

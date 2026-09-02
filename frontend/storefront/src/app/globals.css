@@ -1219,6 +1219,38 @@ button:hover > .kinetic-caret::after { transform: translateX(6px); }
 html { scroll-behavior: smooth; }
 @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
 
+/* Native scrollbar hidden on fine pointers — the ScrollDock (a food
+   glyph riding a rail on the right edge) takes over as the indicator.
+   Touch devices keep their native overlay indicator. */
+@media (pointer: fine) {
+  html { scrollbar-width: none; }
+  html::-webkit-scrollbar { width: 0; height: 0; display: none; }
+}
+
+/* ── Film grain — a barely-there animated noise wash over everything,
+   so flat fills and gradients read as lit surfaces instead of vector
+   fields. steps() makes the grain crackle like film. */
+.grain-overlay {
+  position: fixed;
+  inset: -120px;
+  z-index: 2;
+  pointer-events: none;
+  opacity: 0.05;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23g)'/%3E%3C/svg%3E");
+  background-size: 240px 240px;
+  animation: grainShift 1.2s steps(3) infinite;
+}
+@keyframes grainShift {
+  0%   { transform: translate(0, 0); }
+  33%  { transform: translate(-46px, 28px); }
+  66%  { transform: translate(34px, -40px); }
+  100% { transform: translate(0, 0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .grain-overlay { animation: none; }
+}
+
 :root {
   /* Frosted-glass recipe tokens */
   --glass-blur:        24px;

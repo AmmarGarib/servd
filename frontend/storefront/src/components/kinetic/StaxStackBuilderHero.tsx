@@ -185,6 +185,18 @@ export function StaxStackBuilderHero({
           </h1>
         </div>
 
+        {/* Steam rising off the pass — the kitchen is live. */}
+        <div aria-hidden style={{
+          position: 'absolute', bottom: '36%', left: '50%',
+          width: 'min(40vw, 420px)', height: '24vh',
+          transform: 'translateX(-50%)',
+          pointerEvents: 'none', zIndex: 9,
+        }}>
+          <span className="kp-steam" style={{ left: '28%', animationDelay: '0.4s' }} />
+          <span className="kp-steam" style={{ left: '52%', animationDelay: '1.9s' }} />
+          <span className="kp-steam" style={{ left: '72%', animationDelay: '3.1s' }} />
+        </div>
+
         {/* THE STACK — layers stacked bottom-up on the table edge.
             Each layer translates from above (negative Y) into its
             resting position as scroll progress crosses fireAt. */}
@@ -278,42 +290,66 @@ function TopBun() {
       }}
     >
       <defs>
-        <radialGradient id="staxTopBun" cx="50%" cy="22%" r="80%">
-          <stop offset="0%"   stopColor="#FFE3A8" />
-          <stop offset="32%"  stopColor="#E0A95C" />
-          <stop offset="72%"  stopColor="#B46F2A" />
-          <stop offset="100%" stopColor="#7A4318" />
+        <radialGradient id="staxTopBun" cx="42%" cy="18%" r="92%">
+          <stop offset="0%"   stopColor="#FFEDBE" />
+          <stop offset="22%"  stopColor="#F3C377" />
+          <stop offset="46%"  stopColor="#D99B44" />
+          <stop offset="70%"  stopColor="#B06A26" />
+          <stop offset="88%"  stopColor="#8A4C1B" />
+          <stop offset="100%" stopColor="#6B3A13" />
         </radialGradient>
-        <radialGradient id="staxTopBunHi" cx="50%" cy="14%" r="40%">
-          <stop offset="0%"   stopColor="white" stopOpacity="0.9" />
+        <radialGradient id="staxTopBunHi" cx="44%" cy="12%" r="38%">
+          <stop offset="0%"   stopColor="white" stopOpacity="0.85" />
           <stop offset="100%" stopColor="white" stopOpacity="0" />
         </radialGradient>
+        {/* organic edge — turbulence-displaced outline so the crust
+            isn't a perfect bezier */}
+        <filter id="staxTopRough" x="-8%" y="-15%" width="116%" height="130%">
+          <feTurbulence type="fractalNoise" baseFrequency="0.013 0.045" numOctaves="3" seed="7" result="n" />
+          <feDisplacementMap in="SourceGraphic" in2="n" scale="9" />
+        </filter>
+        <filter id="staxBunSpeck" x="-5%" y="-5%" width="110%" height="110%">
+          <feTurbulence type="fractalNoise" baseFrequency="0.6" numOctaves="2" stitchTiles="stitch" result="n" />
+          <feColorMatrix in="n" type="matrix" values="0 0 0 0 0.35  0 0 0 0 0.2  0 0 0 0 0.05  0 0 0 0.28 0" />
+          <feComposite operator="in" in2="SourceGraphic" />
+        </filter>
       </defs>
-      <path
-        d="M40 198
-           Q 40 70, 210 40
-           Q 400 8, 590 40
-           Q 760 70, 760 198
-           Z"
-        fill="url(#staxTopBun)"
-      />
-      <path
-        d="M40 198
-           Q 40 70, 210 40
-           Q 400 8, 590 40
-           Q 760 70, 760 198
-           Z"
-        fill="url(#staxTopBunHi)"
-      />
-      {/* Sesame seeds — scattered across the dome with subtle rotation */}
-      {SESAME.map((s, i) => (
-        <ellipse
-          key={i}
-          cx={s.x} cy={s.y} rx="7" ry="10"
-          fill="#F8E5B0"
-          transform={`rotate(${s.r} ${s.x} ${s.y})`}
-          opacity="0.92"
+      {/* contact shadow under the dome */}
+      <ellipse cx="400" cy="204" rx="330" ry="12" fill="#000" opacity="0.32" />
+      <g filter="url(#staxTopRough)">
+        <path
+          d="M40 198
+             Q 40 70, 210 40
+             Q 400 8, 590 40
+             Q 760 70, 760 198
+             Z"
+          fill="url(#staxTopBun)"
         />
+        {/* baked speckle clipped to the dome */}
+        <path
+          d="M40 198
+             Q 40 70, 210 40
+             Q 400 8, 590 40
+             Q 760 70, 760 198
+             Z"
+          fill="url(#staxTopBun)" filter="url(#staxBunSpeck)"
+        />
+        <path
+          d="M40 198
+             Q 40 70, 210 40
+             Q 400 8, 590 40
+             Q 760 70, 760 198
+             Z"
+          fill="url(#staxTopBunHi)"
+        />
+      </g>
+      {/* Sesame seeds — each with a tiny cast shadow so they sit ON the dome */}
+      {SESAME.map((s, i) => (
+        <g key={i} transform={`rotate(${s.r} ${s.x} ${s.y})`}>
+          <ellipse cx={s.x + 1.5} cy={s.y + 2} rx="7" ry="10" fill="#8A5A20" opacity="0.45" />
+          <ellipse cx={s.x} cy={s.y} rx="7" ry="10" fill="#F8E5B0" opacity="0.95" />
+          <ellipse cx={s.x - 1.5} cy={s.y - 2.5} rx="3" ry="4.5" fill="#FFF6DC" opacity="0.9" />
+        </g>
       ))}
     </svg>
   )
@@ -340,35 +376,57 @@ function BottomBun() {
       }}
     >
       <defs>
-        <radialGradient id="staxBottomBun" cx="50%" cy="78%" r="80%">
-          <stop offset="0%"   stopColor="#E5B976" />
-          <stop offset="38%"  stopColor="#C28A3A" />
-          <stop offset="78%"  stopColor="#8a541a" />
-          <stop offset="100%" stopColor="#4d2810" />
+        <radialGradient id="staxBottomBun" cx="46%" cy="72%" r="88%">
+          <stop offset="0%"   stopColor="#F0C67F" />
+          <stop offset="30%"  stopColor="#D29B48" />
+          <stop offset="58%"  stopColor="#A96E28" />
+          <stop offset="82%"  stopColor="#7A4517" />
+          <stop offset="100%" stopColor="#48250C" />
         </radialGradient>
         <linearGradient id="staxBottomBunHi" x1="50%" y1="0%" x2="50%" y2="100%">
-          <stop offset="0%"   stopColor="white" stopOpacity="0.55" />
-          <stop offset="35%"  stopColor="white" stopOpacity="0" />
+          <stop offset="0%"   stopColor="white" stopOpacity="0.6" />
+          <stop offset="38%"  stopColor="white" stopOpacity="0" />
         </linearGradient>
+        <filter id="staxBotRough" x="-8%" y="-15%" width="116%" height="130%">
+          <feTurbulence type="fractalNoise" baseFrequency="0.014 0.05" numOctaves="3" seed="3" result="n" />
+          <feDisplacementMap in="SourceGraphic" in2="n" scale="8" />
+        </filter>
+        <filter id="staxBotCrumb" x="-5%" y="-5%" width="110%" height="110%">
+          <feTurbulence type="fractalNoise" baseFrequency="0.5" numOctaves="2" stitchTiles="stitch" result="n" />
+          <feColorMatrix in="n" type="matrix" values="0 0 0 0 0.42  0 0 0 0 0.26  0 0 0 0 0.1  0 0 0 0.3 0" />
+          <feComposite operator="in" in2="SourceGraphic" />
+        </filter>
       </defs>
-      <path
-        d="M40 14
-           L 760 14
-           Q 760 100, 600 118
-           Q 400 132, 200 118
-           Q 40 100, 40 14
-           Z"
-        fill="url(#staxBottomBun)"
-      />
-      <path
-        d="M40 14
-           L 760 14
-           Q 760 100, 600 118
-           Q 400 132, 200 118
-           Q 40 100, 40 14
-           Z"
-        fill="url(#staxBottomBunHi)"
-      />
+      <g filter="url(#staxBotRough)">
+        <path
+          d="M40 14
+             L 760 14
+             Q 760 100, 600 118
+             Q 400 132, 200 118
+             Q 40 100, 40 14
+             Z"
+          fill="url(#staxBottomBun)"
+        />
+        {/* crumb texture — the cut face of the bun */}
+        <path
+          d="M40 14
+             L 760 14
+             Q 760 100, 600 118
+             Q 400 132, 200 118
+             Q 40 100, 40 14
+             Z"
+          fill="url(#staxBottomBun)" filter="url(#staxBotCrumb)"
+        />
+        <path
+          d="M40 14
+             L 760 14
+             Q 760 100, 600 118
+             Q 400 132, 200 118
+             Q 40 100, 40 14
+             Z"
+          fill="url(#staxBottomBunHi)"
+        />
+      </g>
     </svg>
   )
 }
@@ -452,21 +510,30 @@ function Lettuce() {
     <svg viewBox="0 0 800 100" preserveAspectRatio="none" style={ING_SVG_STYLE} aria-hidden>
       <defs>
         <linearGradient id="stxLet" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="#C4E47C" />
-          <stop offset="55%" stopColor="#7BAA3C" />
-          <stop offset="100%" stopColor="#48711E" />
+          <stop offset="0%" stopColor="#D4EE94" />
+          <stop offset="35%" stopColor="#9CC450" />
+          <stop offset="70%" stopColor="#6B9A30" />
+          <stop offset="100%" stopColor="#42691A" />
         </linearGradient>
+        <filter id="stxLetRough" x="-8%" y="-30%" width="116%" height="160%">
+          <feTurbulence type="fractalNoise" baseFrequency="0.025 0.09" numOctaves="3" seed="5" result="n" />
+          <feDisplacementMap in="SourceGraphic" in2="n" scale="12" />
+        </filter>
       </defs>
-      {/* back ruffle — darker, offset for depth */}
-      <path d="M18 46 Q70 22 140 40 Q210 18 290 38 Q370 16 450 36 Q530 16 610 38 Q690 20 782 44 L782 66 Q720 92 660 70 Q590 96 520 72 Q450 98 380 72 Q310 96 240 70 Q170 94 100 68 Q50 88 18 62 Z"
-        fill="#3E6218" opacity="0.9" transform="translate(0 6)" />
-      <path d="M12 42 Q64 16 134 34 Q204 12 284 32 Q364 10 444 30 Q524 10 604 32 Q684 14 788 40 L788 62 Q724 90 662 66 Q594 94 522 68 Q452 96 380 68 Q308 94 236 66 Q168 92 98 64 Q46 86 12 58 Z"
-        fill="url(#stxLet)" />
-      {/* rib highlights */}
-      <g stroke="#E4F4B2" strokeWidth="2.5" strokeLinecap="round" opacity="0.55" fill="none">
-        <path d="M120 40 Q150 52 178 44" />
-        <path d="M330 34 Q362 48 396 38" />
-        <path d="M560 36 Q596 50 630 40" />
+      <g filter="url(#stxLetRough)">
+        {/* back ruffle — darker, offset for depth */}
+        <path d="M18 46 Q70 22 140 40 Q210 18 290 38 Q370 16 450 36 Q530 16 610 38 Q690 20 782 44 L782 66 Q720 92 660 70 Q590 96 520 72 Q450 98 380 72 Q310 96 240 70 Q170 94 100 68 Q50 88 18 62 Z"
+          fill="#3E6218" opacity="0.9" transform="translate(0 6)" />
+        <path d="M12 42 Q64 16 134 34 Q204 12 284 32 Q364 10 444 30 Q524 10 604 32 Q684 14 788 40 L788 62 Q724 90 662 66 Q594 94 522 68 Q452 96 380 68 Q308 94 236 66 Q168 92 98 64 Q46 86 12 58 Z"
+          fill="url(#stxLet)" />
+        {/* water-crisp rib highlights */}
+        <g stroke="#EAF8C0" strokeWidth="2.5" strokeLinecap="round" opacity="0.6" fill="none">
+          <path d="M120 40 Q150 52 178 44" />
+          <path d="M330 34 Q362 48 396 38" />
+          <path d="M560 36 Q596 50 630 40" />
+          <path d="M220 52 Q244 60 268 54" />
+          <path d="M460 50 Q484 60 508 52" />
+        </g>
       </g>
     </svg>
   )
@@ -477,36 +544,46 @@ function Patty({ thick }: { thick: boolean }) {
   return (
     <svg viewBox="0 0 800 100" preserveAspectRatio="none" style={ING_SVG_STYLE} aria-hidden>
       <defs>
-        <radialGradient id={id} cx="50%" cy="34%" r="90%">
-          <stop offset="0%" stopColor={thick ? '#8A4A24' : '#95542B'} />
-          <stop offset="55%" stopColor={thick ? '#5C2C12' : '#633115'} />
-          <stop offset="100%" stopColor="#2E1408" />
+        <radialGradient id={id} cx="44%" cy="30%" r="98%">
+          <stop offset="0%" stopColor={thick ? '#A0603A' : '#AB6A3E'} />
+          <stop offset="28%" stopColor={thick ? '#7A4222' : '#874A26'} />
+          <stop offset="55%" stopColor={thick ? '#57290F' : '#5E2E12'} />
+          <stop offset="80%" stopColor="#3A1A0A" />
+          <stop offset="100%" stopColor="#241005" />
         </radialGradient>
         <filter id={`${id}Char`} x="-5%" y="-20%" width="110%" height="140%">
-          <feTurbulence type="fractalNoise" baseFrequency="0.55" numOctaves="2" stitchTiles="stitch" result="n" />
-          <feColorMatrix in="n" type="matrix" values="0 0 0 0 0.05  0 0 0 0 0.02  0 0 0 0 0  0 0 0 0.55 0" />
+          <feTurbulence type="fractalNoise" baseFrequency="0.55" numOctaves="3" stitchTiles="stitch" result="n" />
+          <feColorMatrix in="n" type="matrix" values="0 0 0 0 0.05  0 0 0 0 0.02  0 0 0 0 0  0 0 0 0.6 0" />
+          <feComposite operator="in" in2="SourceGraphic" />
+        </filter>
+        <filter id={`${id}Rough`} x="-8%" y="-30%" width="116%" height="160%">
+          <feTurbulence type="fractalNoise" baseFrequency="0.02 0.09" numOctaves="3" seed={thick ? 11 : 4} result="n" />
+          <feDisplacementMap in="SourceGraphic" in2="n" scale="16" />
+        </filter>
+        <filter id={`${id}Fat`} x="-5%" y="-20%" width="110%" height="140%">
+          <feTurbulence type="turbulence" baseFrequency="0.14" numOctaves="2" seed="9" result="n" />
+          <feColorMatrix in="n" type="matrix" values="0 0 0 0 0.78  0 0 0 0 0.58  0 0 0 0 0.4  0 0 0 0.22 0" />
           <feComposite operator="in" in2="SourceGraphic" />
         </filter>
       </defs>
-      {/* irregular char-edged slab */}
-      <path id={`${id}Shape`}
-        d="M16 34 Q44 14 96 22 Q170 8 250 20 Q336 6 424 18 Q512 8 592 20 Q672 10 744 24 Q788 32 786 54 Q766 86 700 78 Q636 94 556 82 Q468 96 380 84 Q292 96 204 82 Q124 92 62 78 Q16 68 16 46 Z"
-        fill={`url(#${id})`} />
-      {/* char texture clipped to the slab */}
-      <path d="M16 34 Q44 14 96 22 Q170 8 250 20 Q336 6 424 18 Q512 8 592 20 Q672 10 744 24 Q788 32 786 54 Q766 86 700 78 Q636 94 556 82 Q468 96 380 84 Q292 96 204 82 Q124 92 62 78 Q16 68 16 46 Z"
-        fill={`url(#${id})`} filter={`url(#${id}Char)`} opacity="0.8" />
-      {/* sear glisten */}
-      <g fill="white" opacity="0.16">
-        <ellipse cx="220" cy="30" rx="46" ry="7" />
-        <ellipse cx="520" cy="26" rx="60" ry="8" />
-        <ellipse cx="680" cy="36" rx="30" ry="5" />
+      {/* contact shadow pressed into the layer below */}
+      <ellipse cx="400" cy="92" rx="360" ry="8" fill="#000" opacity="0.35" />
+      <g filter={`url(#${id}Rough)`}>
+        {/* irregular char-edged slab */}
+        <path
+          d="M16 34 Q44 14 96 22 Q170 8 250 20 Q336 6 424 18 Q512 8 592 20 Q672 10 744 24 Q788 32 786 54 Q766 86 700 78 Q636 94 556 82 Q468 96 380 84 Q292 96 204 82 Q124 92 62 78 Q16 68 16 46 Z"
+          fill={`url(#${id})`} />
+        {/* char + rendered-fat texture clipped to the slab */}
+        <path d="M16 34 Q44 14 96 22 Q170 8 250 20 Q336 6 424 18 Q512 8 592 20 Q672 10 744 24 Q788 32 786 54 Q766 86 700 78 Q636 94 556 82 Q468 96 380 84 Q292 96 204 82 Q124 92 62 78 Q16 68 16 46 Z"
+          fill={`url(#${id})`} filter={`url(#${id}Char)`} opacity="0.85" />
+        <path d="M16 34 Q44 14 96 22 Q170 8 250 20 Q336 6 424 18 Q512 8 592 20 Q672 10 744 24 Q788 32 786 54 Q766 86 700 78 Q636 94 556 82 Q468 96 380 84 Q292 96 204 82 Q124 92 62 78 Q16 68 16 46 Z"
+          fill={`url(#${id})`} filter={`url(#${id}Fat)`} opacity="0.7" />
       </g>
-      {/* crumbly edge bits */}
-      <g fill="#3A1A0A">
-        <circle cx="30" cy="60" r="6" />
-        <circle cx="774" cy="52" r="5" />
-        <circle cx="120" cy="86" r="4" />
-        <circle cx="656" cy="88" r="5" />
+      {/* sear glisten */}
+      <g fill="white" opacity="0.14">
+        <ellipse cx="220" cy="30" rx="46" ry="6" />
+        <ellipse cx="520" cy="26" rx="60" ry="7" />
+        <ellipse cx="680" cy="36" rx="30" ry="4" />
       </g>
       {thick && (
         // juice drips off a thick pub patty
@@ -524,16 +601,29 @@ function Cheese() {
     <svg viewBox="0 0 800 100" preserveAspectRatio="none" style={ING_SVG_STYLE} aria-hidden>
       <defs>
         <linearGradient id="stxChz" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="#FFDE85" />
-          <stop offset="60%" stopColor="#F2B93E" />
-          <stop offset="100%" stopColor="#D08F1E" />
+          <stop offset="0%" stopColor="#FFE79A" />
+          <stop offset="35%" stopColor="#F7C453" />
+          <stop offset="72%" stopColor="#E5A32C" />
+          <stop offset="100%" stopColor="#C4841A" />
         </linearGradient>
+        <filter id="stxChzRough" x="-8%" y="-30%" width="116%" height="170%">
+          <feTurbulence type="fractalNoise" baseFrequency="0.02 0.06" numOctaves="2" seed="2" result="n" />
+          <feDisplacementMap in="SourceGraphic" in2="n" scale="6" />
+        </filter>
       </defs>
-      {/* melted slice — two tips droop over the layer below */}
-      <path d="M22 24 L778 24 Q790 24 788 40 L784 56 L566 56 L544 108 Q530 126 516 106 L498 56 L268 56 L250 96 Q236 114 222 94 L208 56 L16 56 L12 40 Q10 24 22 24 Z"
-        fill="url(#stxChz)" />
-      {/* sheen */}
-      <path d="M40 32 Q400 20 760 32 L756 40 Q400 30 44 40 Z" fill="white" opacity="0.35" />
+      <g filter="url(#stxChzRough)">
+        {/* melted slice — two tips droop over the layer below */}
+        <path d="M22 24 L778 24 Q790 24 788 40 L784 56 L566 56 L544 108 Q530 126 516 106 L498 56 L268 56 L250 96 Q236 114 222 94 L208 56 L16 56 L12 40 Q10 24 22 24 Z"
+          fill="url(#stxChz)" />
+        {/* melt bubbles */}
+        <g fill="#FFF0B8" opacity="0.5">
+          <ellipse cx="180" cy="40" rx="12" ry="4" />
+          <ellipse cx="430" cy="44" rx="16" ry="5" />
+          <ellipse cx="660" cy="38" rx="10" ry="4" />
+        </g>
+        {/* sheen */}
+        <path d="M40 32 Q400 20 760 32 L756 40 Q400 30 44 40 Z" fill="white" opacity="0.4" />
+      </g>
     </svg>
   )
 }
@@ -543,13 +633,26 @@ function GoldenCrust() {
     <svg viewBox="0 0 800 100" preserveAspectRatio="none" style={ING_SVG_STYLE} aria-hidden>
       <defs>
         <linearGradient id="stxGold" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="#F2CC74" />
-          <stop offset="55%" stopColor="#D3A040" />
-          <stop offset="100%" stopColor="#9A671C" />
+          <stop offset="0%" stopColor="#F8DA8C" />
+          <stop offset="30%" stopColor="#E3B455" />
+          <stop offset="65%" stopColor="#C29032" />
+          <stop offset="100%" stopColor="#8F5E18" />
         </linearGradient>
+        <filter id="stxGoldRough" x="-8%" y="-25%" width="116%" height="150%">
+          <feTurbulence type="fractalNoise" baseFrequency="0.02 0.07" numOctaves="3" seed="6" result="n" />
+          <feDisplacementMap in="SourceGraphic" in2="n" scale="8" />
+        </filter>
+        <filter id="stxGoldCrumb" x="-5%" y="-5%" width="110%" height="110%">
+          <feTurbulence type="fractalNoise" baseFrequency="0.45" numOctaves="2" stitchTiles="stitch" result="n" />
+          <feColorMatrix in="n" type="matrix" values="0 0 0 0 0.55  0 0 0 0 0.38  0 0 0 0 0.12  0 0 0 0.25 0" />
+          <feComposite operator="in" in2="SourceGraphic" />
+        </filter>
       </defs>
+      <g filter="url(#stxGoldRough)">
       <path d="M28 52 Q28 16 110 16 L690 16 Q772 16 772 52 Q772 86 690 86 L110 86 Q28 86 28 52 Z"
         fill="url(#stxGold)" />
+      <path d="M28 52 Q28 16 110 16 L690 16 Q772 16 772 52 Q772 86 690 86 L110 86 Q28 86 28 52 Z"
+        fill="url(#stxGold)" filter="url(#stxGoldCrumb)" />
       {/* focaccia dimples */}
       <g fill="#7E5214" opacity="0.5">
         <ellipse cx="150" cy="44" rx="14" ry="9" />
@@ -569,6 +672,7 @@ function GoldenCrust() {
         <line x1="540" y1="66" x2="554" y2="60" />
         <line x1="700" y1="34" x2="712" y2="28" />
       </g>
+      </g>
     </svg>
   )
 }
@@ -577,26 +681,41 @@ function TomatoPickles() {
   return (
     <svg viewBox="0 0 800 100" preserveAspectRatio="none" style={ING_SVG_STYLE} aria-hidden>
       <defs>
-        <radialGradient id="stxTom" cx="50%" cy="40%" r="75%">
-          <stop offset="0%" stopColor="#F0705A" />
-          <stop offset="60%" stopColor="#D8402C" />
-          <stop offset="100%" stopColor="#A32414" />
+        <radialGradient id="stxTom" cx="46%" cy="36%" r="82%">
+          <stop offset="0%" stopColor="#F58468" />
+          <stop offset="40%" stopColor="#E1503A" />
+          <stop offset="75%" stopColor="#C03220" />
+          <stop offset="100%" stopColor="#8E1E10" />
         </radialGradient>
+        <filter id="stxTomRough" x="-8%" y="-30%" width="116%" height="160%">
+          <feTurbulence type="fractalNoise" baseFrequency="0.03 0.08" numOctaves="2" seed="8" result="n" />
+          <feDisplacementMap in="SourceGraphic" in2="n" scale="6" />
+        </filter>
       </defs>
-      {/* pickles peeking behind */}
-      <g>
-        <circle cx="140" cy="34" r="30" fill="#6B8A32" stroke="#465F1A" strokeWidth="6" strokeDasharray="7 5" />
-        <circle cx="410" cy="28" r="26" fill="#6B8A32" stroke="#465F1A" strokeWidth="6" strokeDasharray="7 5" />
-        <circle cx="668" cy="34" r="28" fill="#6B8A32" stroke="#465F1A" strokeWidth="6" strokeDasharray="7 5" />
+      <g filter="url(#stxTomRough)">
+        {/* pickles peeking behind */}
+        <g>
+          <circle cx="140" cy="34" r="30" fill="#6B8A32" stroke="#465F1A" strokeWidth="6" strokeDasharray="7 5" />
+          <circle cx="410" cy="28" r="26" fill="#6B8A32" stroke="#465F1A" strokeWidth="6" strokeDasharray="7 5" />
+          <circle cx="668" cy="34" r="28" fill="#6B8A32" stroke="#465F1A" strokeWidth="6" strokeDasharray="7 5" />
+        </g>
+        {/* tomato slices — flesh ring + seed pockets */}
+        <ellipse cx="270" cy="56" rx="240" ry="38" fill="url(#stxTom)" />
+        <ellipse cx="270" cy="56" rx="196" ry="28" fill="#F5A794" opacity="0.6" />
+        <g fill="#FBD3C4" opacity="0.75">
+          <ellipse cx="180" cy="52" rx="26" ry="9" transform="rotate(-18 180 52)" />
+          <ellipse cx="300" cy="64" rx="24" ry="8" transform="rotate(14 300 64)" />
+        </g>
+        <ellipse cx="560" cy="58" rx="220" ry="36" fill="url(#stxTom)" />
+        <ellipse cx="560" cy="58" rx="178" ry="26" fill="#F5A794" opacity="0.55" />
+        <g fill="#FBD3C4" opacity="0.7">
+          <ellipse cx="500" cy="54" rx="24" ry="8" transform="rotate(-12 500 54)" />
+          <ellipse cx="620" cy="66" rx="22" ry="7" transform="rotate(16 620 66)" />
+        </g>
+        {/* wet glisten */}
+        <ellipse cx="200" cy="44" rx="50" ry="8" fill="white" opacity="0.3" />
+        <ellipse cx="520" cy="46" rx="44" ry="7" fill="white" opacity="0.26" />
       </g>
-      {/* tomato slices */}
-      <ellipse cx="270" cy="56" rx="240" ry="38" fill="url(#stxTom)" />
-      <ellipse cx="270" cy="56" rx="196" ry="28" fill="#F09A86" opacity="0.55" />
-      <ellipse cx="560" cy="58" rx="220" ry="36" fill="url(#stxTom)" />
-      <ellipse cx="560" cy="58" rx="178" ry="26" fill="#F09A86" opacity="0.5" />
-      {/* glisten */}
-      <ellipse cx="200" cy="44" rx="50" ry="8" fill="white" opacity="0.25" />
-      <ellipse cx="520" cy="46" rx="44" ry="7" fill="white" opacity="0.22" />
     </svg>
   )
 }
