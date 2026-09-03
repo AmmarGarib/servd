@@ -21,6 +21,7 @@ import {
 } from 'framer-motion'
 import { useRef } from 'react'
 import { formatBrandName } from '../lib/concept'
+import { CursorStage } from './kinetic/CursorStage'
 
 export interface PassCourse {
   slug: string
@@ -128,6 +129,11 @@ export function KitchenPassHero({ courses, title, sub }: Props) {
           display: 'flex', alignItems: 'center', justifyContent: 'center',
         }}
       >
+        {/* The crowd — food characters on the pass, scrubbing with the
+            cursor so they look wherever the mouse goes. Intro beat only;
+            fades out as the first course plates. */}
+        <CursorStage src="/hero/food-crowd.mp4" opacity={introOpacity} />
+
         {/* Ambient grain + vignette so the scene reads as a lit room, not a flat fill */}
         <div aria-hidden style={{
           position: 'absolute', inset: 0,
