@@ -48,12 +48,43 @@ export default function ModuleDetailPage() {
           {access.state === 'locked' ? '🔒' : mod.icon}
         </span>
         <div>
-          <h1 className="text-2xl font-black text-s-text">{mod.name}</h1>
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] font-black tracking-wider text-s-dim">{mod.ref}</span>
+            {mod.platform && (
+              <span className="text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded"
+                style={{ background: 'rgba(99,102,241,0.14)', color: '#818CF8' }}>
+                Platform infrastructure
+              </span>
+            )}
+          </div>
+          <h1 className="text-2xl font-black text-s-text mt-0.5">{mod.name}</h1>
           <p className="text-sm text-s-muted mt-0.5">{mod.blurb}</p>
         </div>
       </div>
 
-      {access.state === 'locked' ? (
+      {mod.gaps && (
+        <div className="mt-5 rounded-xl px-4 py-3"
+          style={{ background: 'rgba(245,158,11,0.06)', border: '1px solid rgba(245,158,11,0.22)' }}>
+          <p className="text-[10px] font-black uppercase tracking-wider" style={{ color: '#F59E0B' }}>
+            Known gaps
+          </p>
+          <p className="text-xs text-s-muted mt-1 leading-relaxed">{mod.gaps}</p>
+        </div>
+      )}
+
+      {access.state === 'not-built' ? (
+        <div className="mt-6 rounded-2xl p-6"
+          style={{ background: 'rgba(139,92,246,0.06)', border: '1px solid rgba(139,92,246,0.25)' }}>
+          <h2 className="text-sm font-bold text-s-text">Not built yet</h2>
+          <p className="text-sm text-s-muted mt-1.5 max-w-xl leading-relaxed">
+            Nothing in servd covers {mod.name} today. It is listed here because the
+            reference model expects it — so the gap is visible rather than forgotten.
+          </p>
+          <Link href="/modules" className="inline-block mt-4 text-xs font-bold text-s-teal hover:underline">
+            ← Back to modules
+          </Link>
+        </div>
+      ) : access.state === 'locked' ? (
         <div
           className="mt-6 rounded-2xl p-6"
           style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.07)' }}

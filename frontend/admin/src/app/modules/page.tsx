@@ -16,9 +16,10 @@ import { isExecutive, type AppRole, type ModuleId } from '../../lib/appRoles'
 import { MODULE_CATALOG, moduleAccessFor, type ModuleAccessState } from '../../lib/moduleCatalog'
 
 const STATE_META: Record<ModuleAccessState, { label: string; color: string; bg: string; border: string }> = {
-  full:    { label: 'Open',    color: '#00D4B1', bg: 'rgba(0,212,177,0.08)',  border: 'rgba(0,212,177,0.22)' },
-  partial: { label: 'Partial', color: '#F59E0B', bg: 'rgba(245,158,11,0.08)', border: 'rgba(245,158,11,0.22)' },
-  locked:  { label: 'Locked',  color: 'rgba(255,255,255,0.35)', bg: 'rgba(255,255,255,0.02)', border: 'rgba(255,255,255,0.07)' },
+  full:        { label: 'Open',      color: '#00D4B1', bg: 'rgba(0,212,177,0.08)',  border: 'rgba(0,212,177,0.22)' },
+  partial:     { label: 'Partial',   color: '#F59E0B', bg: 'rgba(245,158,11,0.08)', border: 'rgba(245,158,11,0.22)' },
+  locked:      { label: 'Locked',    color: 'rgba(255,255,255,0.35)', bg: 'rgba(255,255,255,0.02)', border: 'rgba(255,255,255,0.07)' },
+  'not-built': { label: 'Not built', color: '#A78BFA', bg: 'rgba(139,92,246,0.10)', border: 'rgba(139,92,246,0.28)' },
 }
 
 export default function ModuleHubPage() {
@@ -37,11 +38,13 @@ export default function ModuleHubPage() {
     const withAccess = MODULE_CATALOG.map((m) => ({ mod: m, access: moduleAccessFor(m, allowed) }))
     return {
       core: withAccess.filter((x) => x.mod.category === 'core'),
-      ours: withAccess.filter((x) => x.mod.category === 'ours'),
+      ours: withAccess.filter((x) => x.mod.category === 'restaurant'),
     }
   }, [allowed])
 
-  const openCount = [...groups.core, ...groups.ours].filter((x) => x.access.state !== 'locked').length
+  const all = [...groups.core, ...groups.ours]
+  const notBuilt = all.filter((x) => x.access.state === 'not-built').length
+  const withGaps = all.filter((x) => x.mod.gaps).length
 
   return (
     <div className="min-h-screen bg-s-bg">
@@ -51,22 +54,22 @@ export default function ModuleHubPage() {
         </p>
         <h1 className="text-3xl font-black text-s-text mt-1">Modules</h1>
         <p className="text-sm text-s-muted mt-1.5 max-w-2xl">
-          Everything servd does, grouped into workspaces.{' '}
+          {MODULE_CATALOG.length} modules against the reference model.{' '}
           {isExecutive(me?.role)
-            ? 'You have access to everything.'
-            : `${openCount} of ${MODULE_CATALOG.length} are open to you — locked ones show what they cover.`}
+            ? `${notBuilt} not built yet · ${withGaps} carry known gaps or duplication.`
+            : 'Locked modules still show what they cover.'}
         </p>
       </header>
 
       <main className="px-6 pb-16 max-w-6xl mx-auto space-y-10">
         <ModuleGroup
-          title="Core"
-          subtitle="Every business runs on these"
+          title="A · Universal core"
+          subtitle="Any business model needs these"
           items={groups.core}
         />
         <ModuleGroup
-          title="Ours"
-          subtitle="Specific to how we operate"
+          title="B · Restaurant layer"
+          subtitle="Specific to running food service"
           items={groups.ours}
         />
       </main>
@@ -90,15 +93,16 @@ function ModuleGroup({ title, subtitle, items }: {
         {items.map(({ mod, access }) => {
           const meta = STATE_META[access.state]
           const locked = access.state === 'locked'
+          const dim = locked || access.state === 'not-built'
           return (
             <Link
               key={mod.id}
               href={`/modules/${mod.id}`}
               className="group rounded-2xl p-4 transition-all block"
               style={{
-                background: locked ? 'rgba(255,255,255,0.015)' : 'rgba(255,255,255,0.03)',
+                background: dim ? 'rgba(255,255,255,0.015)' : 'rgba(255,255,255,0.03)',
                 border: `1px solid ${meta.border}`,
-                opacity: locked ? 0.62 : 1,
+                opacity: dim ? 0.66 : 1,
               }}
             >
               <div className="flex items-start justify-between gap-3">
@@ -110,13 +114,28 @@ function ModuleGroup({ title, subtitle, items }: {
                   {meta.label}
                 </span>
               </div>
-              <h3 className="text-sm font-bold text-s-text mt-2.5">{mod.name}</h3>
+              <div className="flex items-center gap-1.5 mt-2.5">
+                <span className="text-[9px] font-black tracking-wider text-s-dim">{mod.ref}</span>
+                {mod.platform && (
+                  <span className="text-[8px] font-black uppercase tracking-wider px-1.5 py-px rounded"
+                    style={{ background: 'rgba(99,102,241,0.14)', color: '#818CF8' }}
+                    title="Platform infrastructure — build once, properly">PLATFORM</span>
+                )}
+              </div>
+              <h3 className="text-sm font-bold text-s-text mt-0.5">{mod.name}</h3>
               <p className="text-[11px] text-s-muted mt-1 leading-snug">{mod.blurb}</p>
               <p className="text-[10px] text-s-dim mt-2">
-                {locked
-                  ? `${access.total} section${access.total === 1 ? '' : 's'} — no access`
-                  : `${access.visible.length} of ${access.total} sections`}
+                {access.state === 'not-built'
+                  ? 'Nothing built yet'
+                  : locked
+                    ? `${access.total} section${access.total === 1 ? '' : 's'} — no access`
+                    : `${access.visible.length} of ${access.total} sections`}
               </p>
+              {mod.gaps && (
+                <p className="text-[10px] mt-1.5 leading-snug" style={{ color: 'rgba(245,158,11,0.85)' }}>
+                  ⚠ {mod.gaps.length > 120 ? mod.gaps.slice(0, 120).trimEnd() + '…' : mod.gaps}
+                </p>
+              )}
             </Link>
           )
         })}
