@@ -42,32 +42,35 @@ const DEFAULT_BRAND_LOCATIONS: Record<string, BrandLocation> = {
     slug:                'simmer',
     name:                'Simmer',
     street:              'TODO_FILL_STREET',
-    area:                'Bukhari Commercial, DHA Phase 6',
+    area:                'Ittehad Commercial, DHA Phase 6',
     city:                'Karachi',
     country:             'Pakistan',
     phone:               '+923001234567',
     whatsapp:            '923001234567',
-    geo:                 { lat: 24.8054, lng: 67.0517 },
+    // Pinned from the operator's Google Maps link (maps.app.goo.gl/gJQMwRKsZdEEfoKV6).
+    geo:                 { lat: 24.8014954, lng: 67.0735636 },
     cuisine:             'Small plates',
     priceRange:          '$$$',
     acceptsReservations: true,
-    locationSlug:        'bukhari-commercial',
+    locationSlug:        'ittehad-commercial',
     mapsUrl:             'https://maps.app.goo.gl/gJQMwRKsZdEEfoKV6',
   },
   stax: {
     slug:                'stax',
     name:                'Stax',
     street:              'TODO_FILL_STREET',
-    area:                'TODO_FILL_AREA',
+    area:                'Ittehad Commercial, DHA Phase 6',
     city:                'Karachi',
     country:             'Pakistan',
     phone:               '+923001234568',
     whatsapp:            '923001234568',
-    geo:                 { lat: 24.8054, lng: 67.0517 },
+    // Pinned from the operator's Google Maps link (maps.app.goo.gl/wa3fEKMevo1CZhkS8).
+    geo:                 { lat: 24.8015505, lng: 67.0735747 },
     cuisine:             'Smash burger',
     priceRange:          '$$',
     acceptsReservations: false,
     locationSlug:        'stax-kitchen',
+    mapsUrl:             'https://maps.app.goo.gl/wa3fEKMevo1CZhkS8',
   },
   flipd: {
     slug:                'flipd',
@@ -156,6 +159,12 @@ export async function fetchBrandLocations(apiBase: string): Promise<Record<strin
   }
 }
 
+/** Location-page slugs that used to be live. Kept resolving so an indexed
+ *  or printed URL doesn't 404 after a move — maps to the brand slug. */
+export const LEGACY_LOCATION_SLUGS: Record<string, string> = {
+  'bukhari-commercial': 'simmer',
+}
+
 /** Synchronous lookup of the fallback default for a given slug. Use for
  *  client components that don't have access to the live concept list. */
 export function locationFor(slug: string): BrandLocation | undefined {
@@ -166,7 +175,7 @@ export function locationFor(slug: string): BrandLocation | undefined {
  *  code should prefer fetchBrandLocations() to get live admin-edited data. */
 export const BRAND_LOCATIONS = DEFAULT_BRAND_LOCATIONS
 
-/** "Bukhari Commercial, DHA Phase 6 · Karachi" — skips TODO_FILL parts. */
+/** "Ittehad Commercial, DHA Phase 6 · Karachi" — skips TODO_FILL parts. */
 export function addressLine(loc: BrandLocation): string {
   const parts = [loc.area, loc.city].filter((p) => !p.startsWith('TODO_FILL'))
   return parts.join(' · ')

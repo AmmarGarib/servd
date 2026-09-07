@@ -489,7 +489,18 @@ function BrandFooter({ concept, onBrandHost, accent }: { concept: Concept; onBra
             <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'grid', gap: '0.7rem' }}>
               <li><Link href={onBrandHost ? '/menu'  : `/brand/${concept.slug}/menu`}  style={linkStyle}>Menu</Link></li>
               <li><Link href={onBrandHost ? '/about' : `/brand/${concept.slug}/about`} style={linkStyle}>Our story</Link></li>
-              <li><Link href={onBrandHost ? '/visit' : `/brand/${concept.slug}/visit`} style={linkStyle}>Find us</Link></li>
+              {/* "Find us" → the operator's Google Maps link when configured
+                  (same source as the nav's Visit), else the internal page. */}
+              <li>
+                {(() => {
+                  // Own lookup: this footer is a separate component from the
+                  // nav, so the nav's mapsUrl isn't in scope here.
+                  const m = locationFor(concept.slug)?.mapsUrl
+                  return m
+                    ? <a href={m} target="_blank" rel="noopener noreferrer" style={linkStyle}>Find us</a>
+                    : <Link href={onBrandHost ? '/visit' : `/brand/${concept.slug}/visit`} style={linkStyle}>Find us</Link>
+                })()}
+              </li>
               <li><Link href={`/${concept.slug}`} style={linkStyle}>Order online</Link></li>
             </ul>
           </div>

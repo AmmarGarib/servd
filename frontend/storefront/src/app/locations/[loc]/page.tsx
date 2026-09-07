@@ -7,7 +7,7 @@
 
 import { notFound } from 'next/navigation'
 import Link from 'next/link'
-import { addressLine, whatsappLink, fetchBrandLocations } from '../../../lib/brandLocations'
+import { addressLine, whatsappLink, fetchBrandLocations, LEGACY_LOCATION_SLUGS } from '../../../lib/brandLocations'
 import { restaurantSchema, breadcrumbSchema, jsonLdScript } from '../../../lib/jsonLd'
 import { brandStory } from '../../../lib/concept'
 
@@ -19,7 +19,8 @@ export const dynamic = 'force-dynamic'
 export async function generateMetadata({ params }: { params: Promise<{ loc: string }> }) {
   const { loc } = await params
   const brands = await fetchBrandLocations(API_URL)
-  const brand = Object.values(brands).find((b) => b.locationSlug === loc || b.slug === loc)
+  const want = LEGACY_LOCATION_SLUGS[loc] ?? loc
+  const brand = Object.values(brands).find((b) => b.locationSlug === want || b.slug === want)
   if (!brand) return { title: 'Location not found' }
   return {
     title:       `${brand.name} · ${brand.area} · ${brand.city}`,
@@ -32,10 +33,13 @@ export default async function LocationPage({ params }: { params: Promise<{ loc: 
   const { loc: locSlug } = await params
   const brands = await fetchBrandLocations(API_URL)
   // Match by locationSlug first (operator-friendly URL like
-  // /locations/bukhari-commercial), fall back to concept slug
+  // /locations/ittehad-commercial), fall back to concept slug
   // (/locations/simmer) so freshly-added concepts work without a custom
   // locationSlug field in the DB.
-  const brand = Object.values(brands).find((b) => b.locationSlug === locSlug || b.slug === locSlug)
+  // A retired slug (e.g. bukhari-commercial, still on old links/GBP) resolves
+  // to its brand rather than 404ing.
+  const wantSlug = LEGACY_LOCATION_SLUGS[locSlug] ?? locSlug
+  const brand = Object.values(brands).find((b) => b.locationSlug === wantSlug || b.slug === wantSlug)
   if (!brand) notFound()
   const story = brandStory(brand.slug)
   const mapsQuery = encodeURIComponent(`${brand.name} ${brand.area} ${brand.city}`)

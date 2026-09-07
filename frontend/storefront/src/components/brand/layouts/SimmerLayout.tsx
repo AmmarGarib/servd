@@ -444,12 +444,15 @@ export function SimmerLayout({ concept, concepts }: Props) {
             {(() => {
               // Pull canonical NAP from lib/brandLocations so the WhatsApp + Maps
               // links are byte-identical with the Restaurant schema on this page,
-              // the /locations/bukhari-commercial geo page, and the GBP listing
+              // the /locations/ittehad-commercial geo page, and the GBP listing
               // (per the local-seo skill — inconsistent NAP dilutes Maps prominence).
               const loc = locationFor('simmer')
-              const mapsHref = loc
-                ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${loc.name} ${loc.area} ${loc.city}`)}`
-                : 'https://www.google.com/maps/search/?api=1&query=Simmer+Karachi'
+              // Prefer the operator's own Maps share link — it opens the exact
+              // listing rather than a text search that might land elsewhere.
+              const mapsHref = loc?.mapsUrl
+                ?? (loc
+                  ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${loc.name} ${loc.area} ${loc.city}`)}`
+                  : 'https://www.google.com/maps/search/?api=1&query=Simmer+Karachi')
               const waHref = loc ? whatsappLink(loc, 'hi simmer') : 'https://wa.me/'
               return (
                 <>

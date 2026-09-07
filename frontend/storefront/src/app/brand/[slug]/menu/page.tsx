@@ -17,7 +17,7 @@ export const dynamic = 'force-dynamic'
 const FALLBACK_CONCEPTS: Record<string, Concept> = {
   simmer: {
     id: 'fallback-simmer', name: 'Simmer', slug: 'simmer', type: 'restaurant',
-    description: 'Small plates and mocktails. A dark room on Bukhari, served softly.',
+    description: 'Small plates and mocktails. A dark room on Ittehad, served softly.',
     logoUrl: null, primaryColor: null, reservationsEnabled: true,
   },
   stax: {
