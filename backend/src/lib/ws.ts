@@ -1,5 +1,7 @@
 // WebSocket server — Socket.io with Redis adapter for multi-process fanout
-// Rooms: station:{id}, concept:{id}, all-orders
+// Rooms: station:{id}, concept:{id} (both ownership-checked at join),
+// tenant:{id}, tenant:{id}:orders, tenant:{id}:reservations (company-wide
+// fan-out), all-orders (brand-less id+status events only)
 // Events match spec §6.3
 
 import { Server as SocketIOServer } from 'socket.io'
@@ -12,6 +14,52 @@ import { verifyStaffToken } from '../modules/auth/service.js'
 import { prisma } from './prisma.js'
 
 let io: SocketIOServer | null = null
+
+interface SocketPrincipal {
+  id: string
+  role: string
+  tenantId: string | null
+  /** Every company the user belongs to (primary + memberships). */
+  tenantIds: string[]
+}
+
+// concept → tenant lookups are hot (every order/reservation event) and
+// brands never move between companies in practice, so cache for 5 minutes.
+const conceptTenantCache = new Map<string, { tenantId: string | null; expiresAt: number }>()
+export async function tenantOfConcept(conceptId: string): Promise<string | null> {
+  const hit = conceptTenantCache.get(conceptId)
+  if (hit && hit.expiresAt > Date.now()) return hit.tenantId
+  const row = await prisma.concept.findUnique({ where: { id: conceptId }, select: { tenantId: true } }).catch(() => null)
+  const tenantId = row?.tenantId ?? null
+  conceptTenantCache.set(conceptId, { tenantId, expiresAt: Date.now() + 5 * 60_000 })
+  return tenantId
+}
+
+/**
+ * Join `${kind}:${id}` only if the station/concept belongs to one of the
+ * socket's companies. Silently ignores foreign or unknown ids — a client
+ * with a bad id simply gets no events, and learns nothing.
+ */
+async function joinIfOwned(
+  socket: { join: (room: string) => void | Promise<void> },
+  tenantIds: string[],
+  kind: 'station' | 'concept',
+  id: string,
+): Promise<void> {
+  if (tenantIds.length === 0) return
+  try {
+    let owner: string | null = null
+    if (kind === 'concept') {
+      owner = await tenantOfConcept(id)
+    } else {
+      const st = await prisma.station.findUnique({ where: { id }, select: { conceptId: true } })
+      owner = st ? await tenantOfConcept(st.conceptId) : null
+    }
+    if (owner && tenantIds.includes(owner)) await socket.join(`${kind}:${id}`)
+  } catch {
+    /* no join on lookup failure */
+  }
+}
 
 export function initWebSocket(fastify: FastifyInstance): SocketIOServer {
   io = new SocketIOServer(fastify.server, {
@@ -60,12 +108,17 @@ export function initWebSocket(fastify: FastifyInstance): SocketIOServer {
         payload = verifyStaffToken(token, 'pin')
       }
       // Re-resolve tenant so we know which company the socket can subscribe to.
-      const u = await prisma.user.findUnique({
-        where: { id: payload.sub },
-        select: { tenantId: true },
-      })
+      // A multi-company operator (CEO in "All companies") belongs to several —
+      // collect them all so tenant rooms cover every company they may view.
+      const [u, memberships] = await Promise.all([
+        prisma.user.findUnique({ where: { id: payload.sub }, select: { tenantId: true } }),
+        prisma.tenantMember.findMany({ where: { userId: payload.sub }, select: { tenantId: true } }),
+      ])
+      const tenantIds = new Set<string>(memberships.map((m) => m.tenantId))
+      if (u?.tenantId) tenantIds.add(u.tenantId)
       ;(socket.data as Record<string, unknown>).user = {
         id: payload.sub, role: payload.role, tenantId: u?.tenantId ?? null,
+        tenantIds: Array.from(tenantIds),
       }
       return next()
     } catch {
@@ -87,14 +140,15 @@ export function initWebSocket(fastify: FastifyInstance): SocketIOServer {
     }
 
     // `io.use` populated this.
-    const principal = (socket.data as { user?: { id: string; role: string; tenantId: string | null } }).user
+    const principal = (socket.data as { user?: SocketPrincipal }).user
     const role = principal?.role
     const tenantId = principal?.tenantId
+    const tenantIds = principal?.tenantIds ?? []
 
     // B15: only kitchen-side roles may auto-register a KDS device. A cashier
     // socket should not appear in the device registry.
     let heartbeatHandle: NodeJS.Timeout | null = null
-    const kdsAllowed = role === 'kitchen' || role === 'expediter' || role === 'manager' || role === 'admin'
+    const kdsAllowed = role === 'kitchen' || role === 'expediter' || role === 'manager' || role === 'admin' || role === 'owner'
 
     if (deviceFingerprint && kdsAllowed) {
       const throttleKey = `${principal!.id}:${deviceFingerprint}`
@@ -140,24 +194,30 @@ export function initWebSocket(fastify: FastifyInstance): SocketIOServer {
       }
     }
 
-    // Join appropriate rooms. `concept:{id}` is the canonical fan-out key
-    // and is also tenant-scoped (concepts belong to tenants).
-    if (stationId) void socket.join(`station:${stationId}`)
-    if (conceptId) void socket.join(`concept:${conceptId}`)
-    if (tenantId) void socket.join(`tenant:${tenantId}`)
-    if (role === 'expediter' || role === 'admin' || role === 'manager') {
+    // Join appropriate rooms. Every room a client can name (station, concept)
+    // is checked against the companies the socket belongs to before joining —
+    // a guessed id must never subscribe a GSX Viva screen to GS Foods'
+    // kitchen. Tenant rooms are the fan-out key for company-wide events
+    // (`tenant:{id}:orders`, `tenant:{id}:reservations`); the legacy global
+    // rooms are kept only for events that carry no brand (order:updated,
+    // item:updated — id + status, nothing else).
+    if (stationId) void joinIfOwned(socket, tenantIds, 'station', stationId)
+    if (conceptId) void joinIfOwned(socket, tenantIds, 'concept', conceptId)
+    for (const t of tenantIds) void socket.join(`tenant:${t}`)
+    if (role === 'expediter' || role === 'admin' || role === 'owner' || role === 'manager') {
       void socket.join('all-orders')
+      for (const t of tenantIds) void socket.join(`tenant:${t}:orders`)
     }
     // Reservation events go to managers, admins, cashiers (the host stand)
     // and kitchen/expediter (so the kitchen tracker page updates in real time).
-    if (role === 'admin' || role === 'manager' || role === 'cashier' || role === 'expediter' || role === 'kitchen') {
-      void socket.join('reservations:all')
+    if (role === 'admin' || role === 'owner' || role === 'manager' || role === 'cashier' || role === 'expediter' || role === 'kitchen') {
+      for (const t of tenantIds) void socket.join(`tenant:${t}:reservations`)
     }
 
     // Allow clients to opt-into a specific reservation room from the page
     // they're on (e.g. the admin reservation editor wants `concept:{id}`).
     socket.on('reservations:join', (data: { conceptId?: string }) => {
-      if (data?.conceptId) void socket.join(`concept:${data.conceptId}`)
+      if (data?.conceptId) void joinIfOwned(socket, tenantIds, 'concept', data.conceptId)
     })
 
     // Client → Server events (KDS interactions)
@@ -224,12 +284,14 @@ export function emitOrderNew(order: {
   stationIds: string[]
   placedAt: string
 }) {
-  safeEmit('emitOrderNew', (ws) => {
-    ws.to('all-orders').emit('order:new', order)
-    for (const stationId of order.stationIds) {
-      ws.to(`station:${stationId}`).emit('order:new', order)
-    }
-    ws.to(`concept:${order.conceptId}`).emit('order:new', order)
+  void tenantOfConcept(order.conceptId).then((tenantId) => {
+    safeEmit('emitOrderNew', (ws) => {
+      if (tenantId) ws.to(`tenant:${tenantId}:orders`).emit('order:new', order)
+      for (const stationId of order.stationIds) {
+        ws.to(`station:${stationId}`).emit('order:new', order)
+      }
+      ws.to(`concept:${order.conceptId}`).emit('order:new', order)
+    })
   })
 }
 
@@ -247,9 +309,11 @@ export function emitItemUpdated(itemId: string, status: string, stationId: strin
 }
 
 export function emitItem86d(menuItemId: string, conceptId: string, isAvailable: boolean) {
-  safeEmit('emitItem86d', (ws) => {
-    ws.to(`concept:${conceptId}`).emit('item:86d', { menuItemId, conceptId, isAvailable })
-    ws.to('all-orders').emit('item:86d', { menuItemId, conceptId, isAvailable })
+  void tenantOfConcept(conceptId).then((tenantId) => {
+    safeEmit('emitItem86d', (ws) => {
+      ws.to(`concept:${conceptId}`).emit('item:86d', { menuItemId, conceptId, isAvailable })
+      if (tenantId) ws.to(`tenant:${tenantId}:orders`).emit('item:86d', { menuItemId, conceptId, isAvailable })
+    })
   })
 }
 
@@ -280,10 +344,12 @@ export async function emitAvailabilityChange(menuItemId: string, available: numb
   }
   if (conceptId) {
     io.to(`concept:${conceptId}`).emit('item:availability', { menuItemId, available })
+    // Fallback for clients that haven't joined a concept room yet (e.g. brand
+    // homepages that show the live availability strip across multiple brands)
+    // — but only within the brand's own company.
+    const tenantId = await tenantOfConcept(conceptId)
+    if (tenantId) io.to(`tenant:${tenantId}:orders`).emit('item:availability', { menuItemId, conceptId, available })
   }
-  // Fallback for clients that haven't joined a concept room yet (e.g. brand
-  // homepages that show the live availability strip across multiple brands).
-  io.to('all-orders').emit('item:availability', { menuItemId, conceptId, available })
 }
 
 // ─── Reservation events ───────────────────────────────────────────────────────
@@ -309,8 +375,10 @@ export function emitReservationEvent(
   event: ReservationEvent,
   payload: { reservationId: string; conceptId: string; startTime?: string; status?: string },
 ) {
-  safeEmit(event, (ws) => {
-    ws.to('reservations:all').emit(event, payload)
-    ws.to(`concept:${payload.conceptId}`).emit(event, payload)
+  void tenantOfConcept(payload.conceptId).then((tenantId) => {
+    safeEmit(event, (ws) => {
+      if (tenantId) ws.to(`tenant:${tenantId}:reservations`).emit(event, payload)
+      ws.to(`concept:${payload.conceptId}`).emit(event, payload)
+    })
   })
 }

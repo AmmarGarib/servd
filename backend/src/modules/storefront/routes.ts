@@ -752,10 +752,12 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
       })
 
       // Light up the kitchen / front-of-house immediately.
-      const { getIO } = await import('../../lib/ws.js')
+      const { getIO, tenantOfConcept } = await import('../../lib/ws.js')
       try {
         const io = getIO()
-        io.to('all-orders').emit('order:curbsideArrived', {
+        // Company-scoped fan-out: only the brand's own company hears about it.
+        const ownerTenant = await tenantOfConcept(order.conceptId)
+        if (ownerTenant) io.to(`tenant:${ownerTenant}:orders`).emit('order:curbsideArrived', {
           orderId: updated.id,
           conceptId: order.conceptId,
           vehicle: updated.curbsideVehicle,

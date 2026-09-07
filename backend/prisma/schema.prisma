@@ -3286,6 +3286,8 @@ model SupplierPortalToken {
 // per menu item, operators define once and reference from many items.
 model ModifierTemplate {
   id          String    @id @default(cuid())
+  // Owning company — this is company master data, never shared across companies.
+  tenantId  String?
   name        String // 'Sauces', 'Sizes', 'Sides', 'Spice Level'
   description String?
   isRequired  Boolean   @default(false)
@@ -3299,6 +3301,9 @@ model ModifierTemplate {
 
   options ModifierTemplateOption[]
 
+  tenant Tenant? @relation("TenantModifierTemplates", fields: [tenantId], references: [id])
+
+  @@index([tenantId])
   @@map("modifier_templates")
 }
 
@@ -3363,6 +3368,8 @@ model NotificationTemplate {
 // Bank accounts — used in reconciliation against Foodpanda/Careem settlements + card payouts
 model BankAccount {
   id                  String    @id @default(cuid())
+  // Owning company — this is company master data, never shared across companies.
+  tenantId  String?
   name                String // "HBL Operations Account"
   bankName            String? // "HBL", "Meezan"
   accountTitle        String?
@@ -3378,6 +3385,9 @@ model BankAccount {
   updatedAt           DateTime  @updatedAt
   deletedAt           DateTime?
 
+  tenant Tenant? @relation("TenantBankAccounts", fields: [tenantId], references: [id])
+
+  @@index([tenantId])
   @@map("bank_accounts")
 }
 
@@ -3406,6 +3416,8 @@ model KdsDevice {
 // Outbound webhooks — let third-party software subscribe to servd events
 model WebhookSubscription {
   id           String    @id @default(cuid())
+  // Owning company — this is company master data, never shared across companies.
+  tenantId  String?
   url          String // https://accountant.example.com/webhooks/servd
   events       String[]  @default([]) // ['order.completed', 'order.refunded', 'shift.closed']
   secret       String // HMAC SHA-256 signing secret
@@ -3421,6 +3433,9 @@ model WebhookSubscription {
 
   deliveries WebhookDelivery[]
 
+  tenant Tenant? @relation("TenantWebhookSubscriptions", fields: [tenantId], references: [id])
+
+  @@index([tenantId])
   @@map("webhook_subscriptions")
 }
 
@@ -3511,6 +3526,8 @@ model RefundPolicy {
   id      String  @id @default(cuid())
   scope   String  @default("global") // 'global' | 'concept'
   scopeId String? // concept id when scope='concept'
+  // Owning company — this is company master data, never shared across companies.
+  tenantId  String?
 
   // Per-role caps (cents). 0 = role can't perform without manager override.
   cashierVoidLimitCents   Int @default(0)
@@ -3529,7 +3546,10 @@ model RefundPolicy {
   updatedAt             DateTime @updatedAt
   updatedById           String?
 
-  @@unique([scope, scopeId])
+  @@unique([tenantId, scope, scopeId])
+  tenant Tenant? @relation("TenantRefundPolicies", fields: [tenantId], references: [id])
+
+  @@index([tenantId])
   @@map("refund_policies")
 }
 
@@ -3538,6 +3558,8 @@ model ReservationPolicy {
   id      String  @id @default(cuid())
   scope   String  @default("global")
   scopeId String?
+  // Owning company — this is company master data, never shared across companies.
+  tenantId  String?
 
   depositRequiredAboveParty Int? // require deposit for parties larger than this
   depositCents              Int     @default(0)
@@ -3568,7 +3590,10 @@ model ReservationPolicy {
   updatedAt   DateTime @updatedAt
   updatedById String?
 
-  @@unique([scope, scopeId])
+  @@unique([tenantId, scope, scopeId])
+  tenant Tenant? @relation("TenantReservationPolicies", fields: [tenantId], references: [id])
+
+  @@index([tenantId])
   @@map("reservation_policies")
 }
 
@@ -3577,6 +3602,8 @@ model ReceiptConfig {
   id                     String   @id @default(cuid())
   scope                  String   @default("global")
   scopeId                String?
+  // Owning company — this is company master data, never shared across companies.
+  tenantId  String?
   paperWidthMm           Int      @default(80) // 80 or 58
   showLogo               Boolean  @default(true)
   logoUrl                String?
@@ -3594,7 +3621,10 @@ model ReceiptConfig {
   updatedAt              DateTime @updatedAt
   updatedById            String?
 
-  @@unique([scope, scopeId])
+  @@unique([tenantId, scope, scopeId])
+  tenant Tenant? @relation("TenantReceiptConfigs", fields: [tenantId], references: [id])
+
+  @@index([tenantId])
   @@map("receipt_configs")
 }
 
@@ -3605,6 +3635,8 @@ model OperationsConfig {
   id      String  @id @default(cuid())
   scope   String  @default("global")
   scopeId String?
+  // Owning company — this is company master data, never shared across companies.
+  tenantId  String?
 
   // Service charge
   serviceChargePct               Float    @default(0) // 0–1, e.g. 0.05 = 5%
@@ -3647,7 +3679,10 @@ model OperationsConfig {
   updatedAt   DateTime @updatedAt
   updatedById String?
 
-  @@unique([scope, scopeId])
+  @@unique([tenantId, scope, scopeId])
+  tenant Tenant? @relation("TenantOperationsConfigs", fields: [tenantId], references: [id])
+
+  @@index([tenantId])
   @@map("operations_configs")
 }
 
@@ -4228,6 +4263,13 @@ model Tenant {
   suppliers      Supplier[]      @relation("TenantSuppliers")
   inventoryItems InventoryItem[] @relation("TenantInventoryItems")
   locations      Location[]      @relation("TenantLocations")
+  bankAccounts         BankAccount[]         @relation("TenantBankAccounts")
+  modifierTemplates    ModifierTemplate[]    @relation("TenantModifierTemplates")
+  webhookSubscriptions WebhookSubscription[] @relation("TenantWebhookSubscriptions")
+  refundPolicies       RefundPolicy[]        @relation("TenantRefundPolicies")
+  reservationPolicies  ReservationPolicy[]   @relation("TenantReservationPolicies")
+  receiptConfigs       ReceiptConfig[]       @relation("TenantReceiptConfigs")
+  operationsConfigs    OperationsConfig[]    @relation("TenantOperationsConfigs")
   departments    Department[]
   shiftBands     ShiftBand[]
   positions      Position[]

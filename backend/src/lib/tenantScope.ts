@@ -11,6 +11,7 @@
 
 import type { FastifyRequest } from 'fastify'
 import { prisma } from './prisma.js'
+import { NotFoundError } from './errors.js'
 
 export interface TenantScope {
   /** True when the operator has portfolio mode engaged. */
@@ -73,4 +74,82 @@ export async function resolveTenantScope(req: FastifyRequest): Promise<TenantSco
 export function tenantWhere(scope: TenantScope): { tenantId: string } | { tenantId: { in: string[] } } {
   if (scope.tenantIds.length === 1) return { tenantId: scope.tenantIds[0]! }
   return { tenantId: { in: scope.tenantIds } }
+}
+
+// ─── Ownership helpers for company-anchored rows ─────────────────────────────
+//
+// Three scope modes, matching how the auth middleware already treats
+// tenantFilter:
+//   • 'read'   — view-aware: the active company, or every company the
+//                operator belongs to when "All companies" is on.
+//   • 'write'  — editing/deleting an EXISTING row: every company the operator
+//                belongs to (a head-office manager can edit either kitchen).
+//   • 'create' — binding a NEW row / attaching a brand to a new row: the
+//                active company only (x-servd-active-tenant aware). Never let
+//                a create span companies — that is exactly how GS Foods'
+//                kitchen ended up carrying a GSX Viva brand.
+
+export type ScopeMode = 'read' | 'write' | 'create'
+
+export type TenantIdWhere = { tenantId: string } | { tenantId: { in: string[] } }
+
+/** Prisma `where` fragment on a `tenantId` column for the given mode. */
+export async function scopeTenantWhere(req: FastifyRequest, mode: ScopeMode = 'read'): Promise<TenantIdWhere> {
+  const su = req.staffUser
+  if (!su) return { tenantId: { in: [] } }
+  if (mode === 'create') return su.tenantId ? { tenantId: su.tenantId } : { tenantId: { in: [] } }
+  if (mode === 'write') {
+    const ids = su.memberTenantIds
+    return ids.length === 1 ? { tenantId: ids[0]! } : { tenantId: { in: ids } }
+  }
+  return tenantWhere(await resolveTenantScope(req))
+}
+
+/**
+ * Resolve a concept the operator may act on in `mode`, or 404. Use this on
+ * every endpoint that takes a conceptId from the client (query, params or
+ * body) before touching anything under that brand. 404 rather than 403 so a
+ * foreign id doesn't confirm the brand exists.
+ */
+export async function assertConceptOwned(
+  req: FastifyRequest,
+  conceptId: string,
+  mode: ScopeMode = 'write',
+): Promise<{ id: string; tenantId: string | null }> {
+  const concept = await prisma.concept.findFirst({
+    where: { id: conceptId, deletedAt: null, ...(await scopeTenantWhere(req, mode)) },
+    select: { id: true, tenantId: true },
+  })
+  if (!concept) throw new NotFoundError('Concept', conceptId)
+  return concept
+}
+
+/**
+ * Every concept id in scope for `mode`. Drop into `where: { conceptId: { in } }`
+ * on list endpoints for brand-anchored tables (tables, floors, QR codes,
+ * reservations, delivery zones, …) instead of trusting a client conceptId.
+ */
+export async function conceptIdsInScope(req: FastifyRequest, mode: ScopeMode = 'read'): Promise<string[]> {
+  const rows = await prisma.concept.findMany({
+    where: { deletedAt: null, ...(await scopeTenantWhere(req, mode)) },
+    select: { id: true },
+  })
+  return rows.map((r) => r.id)
+}
+
+/**
+ * Narrow an optional client-supplied conceptId to the scope: returns
+ * `{ conceptId }` when it is owned, `{ conceptId: { in: [...] } }` over the
+ * whole scope when absent, and 404s when it is foreign.
+ */
+export async function conceptWhere(
+  req: FastifyRequest,
+  conceptId: string | undefined | null,
+  mode: ScopeMode = 'read',
+): Promise<{ conceptId: string } | { conceptId: { in: string[] } }> {
+  if (conceptId) {
+    await assertConceptOwned(req, conceptId, mode)
+    return { conceptId }
+  }
+  return { conceptId: { in: await conceptIdsInScope(req, mode) } }
 }

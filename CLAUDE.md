@@ -45,6 +45,20 @@ rewritten, trust these corrections:
   are scoped via `resolveTenantScope`, writes pin to the active company, and a
   location may only link brands of its own company (`BRAND_NOT_IN_COMPANY`).
   There is no boot-time PIN reconcile any more — staff choose their own PIN.
+- **Company-scope rules for every route (2026-09-07 sweep).** Helpers live in
+  `backend/src/lib/tenantScope.ts`: `scopeTenantWhere(req, mode)`,
+  `assertConceptOwned(req, conceptId, mode)`, `conceptIdsInScope(req, mode)`,
+  `conceptWhere(req, conceptId?, mode)`. Modes: `read` = view-aware (portfolio
+  header expands), `write` = editing an existing row → every company the
+  operator belongs to, `create` = binding a new row → the ACTIVE company only.
+  Never trust a client `conceptId`/`tableId`/`floorId`/`stationId`/`shiftId`/
+  `locationId`; resolve it through the owning brand's `tenantId` first. Foreign
+  rows are 404, cross-company attaches on create are 422. WebSocket fan-out is
+  per company (`tenant:{id}:orders`, `tenant:{id}:reservations`); `station:` /
+  `concept:` rooms are ownership-checked at join. `bank_accounts`,
+  `modifier_templates`, `webhook_subscriptions` and the four singleton config
+  tables carry `tenantId` (migration `20260907130000`); singleton "global"
+  rows are one per company.
 
 ## What this is
 

@@ -13,9 +13,10 @@ function safeEmitKds(label: string, tenantId: string | null, event: string, data
     return
   }
   try {
-    // Broadcast to the all-orders room (expediters + managers) and to the
-    // station-specific room so the individual KDS screen refreshes instantly.
-    ws.to('all-orders').emit(event, data)
+    // Broadcast to the company's orders room (expediters + managers of that
+    // company only — never every company's screens) and to the station-
+    // specific room so the individual KDS screen refreshes instantly.
+    ws.to(tenantId ? `tenant:${tenantId}:orders` : 'all-orders').emit(event, data)
     if ((data as { stationId?: string }).stationId) {
       ws.to(`station:${(data as { stationId: string }).stationId}`).emit(event, data)
     }
