@@ -1,0 +1,8 @@
+node_modules/
+.next/
+next-env.d.ts
+# local schema copy made by scripts/prisma-generate.mjs — the source of
+# truth is backend/prisma/schema.prisma
+prisma/
+.env*
+!.env.example
