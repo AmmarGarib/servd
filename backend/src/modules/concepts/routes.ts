@@ -76,6 +76,75 @@ export async function conceptRoutes(fastify: FastifyInstance) {
   // `x-servd-portfolio` header. Writes (POST/PATCH/DELETE below) stay
   // scoped to the single active tenant â€” portfolio writes are gated at
   // the client layer.
+  // ── GET /concepts/resolve-maps-link?url=… ────────────────────────────────
+  // Turns a Google Maps share link (maps.app.goo.gl/…, goo.gl/maps/…, or a
+  // full google.com/maps URL) into { lat, lng, name } so the operator can pin
+  // a location by pasting the link they already share, instead of dragging a
+  // marker by eye. Short links only resolve server-side: the browser can't
+  // follow the redirect (CORS), and the destination URL is where the
+  // coordinates live.
+  //
+  // SSRF posture: this is a user-supplied URL that the server fetches, so the
+  // host is checked against a strict allowlist BEFORE the request and on
+  // EVERY redirect hop (a "safe" short link could 302 anywhere). Redirects
+  // are followed manually, capped at 5, with a short timeout. Registered
+  // ahead of /:id so the literal path is never read as a concept id.
+  fastify.get<{ Querystring: { url?: string } }>(
+    '/resolve-maps-link',
+    { preHandler: requireAuth(...MANAGERS) },
+    async (req, reply) => {
+      const raw = (req.query.url ?? '').trim()
+      if (!raw) return reply.status(400).send({ error: { code: 'BAD_URL', message: 'url is required' } })
+
+      const ALLOWED = new Set([
+        'maps.app.goo.gl', 'goo.gl', 'google.com', 'www.google.com',
+        'maps.google.com', 'www.google.com.pk', 'google.com.pk',
+      ])
+      const hostOk = (u: URL) => u.protocol === 'https:' && ALLOWED.has(u.hostname)
+
+      let current: URL
+      try { current = new URL(raw) } catch {
+        return reply.status(400).send({ error: { code: 'BAD_URL', message: 'That is not a valid link' } })
+      }
+      if (!hostOk(current)) {
+        return reply.status(400).send({ error: { code: 'NOT_GOOGLE_MAPS', message: 'Paste a Google Maps link (maps.app.goo.gl or google.com/maps)' } })
+      }
+
+      for (let hop = 0; hop < 5; hop++) {
+        const ctrl = new AbortController()
+        const timer = setTimeout(() => ctrl.abort(), 8_000)
+        let res: Response
+        try {
+          res = await fetch(current.toString(), {
+            method: 'GET', redirect: 'manual', signal: ctrl.signal,
+            headers: { 'user-agent': 'Mozilla/5.0 (servd-admin maps-link resolver)' },
+          })
+        } catch {
+          return reply.status(502).send({ error: { code: 'UNREACHABLE', message: 'Could not reach Google Maps to resolve that link' } })
+        } finally { clearTimeout(timer) }
+
+        const loc = res.headers.get('location')
+        if (res.status >= 300 && res.status < 400 && loc) {
+          const next = new URL(loc, current)
+          if (!hostOk(next)) {
+            return reply.status(400).send({ error: { code: 'REDIRECT_OFF_GOOGLE', message: 'That link redirects away from Google Maps' } })
+          }
+          current = next
+          continue
+        }
+        break
+      }
+
+      const parsed = parseMapsUrl(current)
+      if (!parsed) {
+        return reply.status(422).send({
+          error: { code: 'NO_COORDS', message: 'Could not find coordinates in that link. Open the place in Google Maps, use Share → Copy link, and paste that.' },
+        })
+      }
+      return parsed
+    },
+  )
+
   fastify.get<{ Querystring: { includeInactive?: string } }>('/', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
     const scope = await resolveTenantScope(req)
     // Retired brands (isActive=false, e.g. Simmer) are EXCLUDED by default so
@@ -145,4 +214,31 @@ export async function conceptRoutes(fastify: FastifyInstance) {
     })
     return reply.status(204).send()
   })
+}
+
+/** Pull coordinates (+ place name) out of a resolved Google Maps URL.
+ *  Handles the shapes Maps actually emits:
+ *    /maps/place/<name>/@LAT,LNG,17z/…      (viewport centre — least precise)
+ *    …!3dLAT!4dLNG…                          (the pin itself — preferred)
+ *    ?q=LAT,LNG  /  ?query=LAT,LNG  /  ?ll=LAT,LNG
+ *  Prefers the !3d/!4d pin over the @ viewport when both are present. */
+function parseMapsUrl(u: URL): { lat: number; lng: number; name: string | null } | null {
+  const href = decodeURIComponent(u.href)
+  const inRange = (lat: number, lng: number) =>
+    Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180
+  const nameMatch = href.match(/\/maps\/place\/([^/@?]+)/)
+  const name = nameMatch ? nameMatch[1]!.replace(/\+/g, ' ').trim() : null
+
+  const pin = href.match(/!3d(-?\d+(?:\.\d+)?)!4d(-?\d+(?:\.\d+)?)/)
+  if (pin) { const lat = +pin[1]!, lng = +pin[2]!; if (inRange(lat, lng)) return { lat, lng, name } }
+
+  const at = href.match(/@(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/)
+  if (at) { const lat = +at[1]!, lng = +at[2]!; if (inRange(lat, lng)) return { lat, lng, name } }
+
+  for (const key of ['q', 'query', 'll', 'destination']) {
+    const v = u.searchParams.get(key)
+    const m = v?.match(/^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/)
+    if (m) { const lat = +m[1]!, lng = +m[2]!; if (inRange(lat, lng)) return { lat, lng, name } }
+  }
+  return null
 }

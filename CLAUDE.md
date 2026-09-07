@@ -92,6 +92,7 @@ Settings → Secrets and variables → Actions:
 | `PUBLIC_WS_URL` | Public WebSocket URL | `wss://servd-api.garibsons.app` |
 | `SENTRY_DSN_STOREFRONT` | (optional) Sentry DSN for storefront | |
 | `SENTRY_DSN_ADMIN` | (optional) Sentry DSN for admin | |
+| `GOOGLE_MAPS_API_KEY` | (optional) Maps JavaScript API key — switches the admin location pin picker from OpenStreetMap to Google tiles. Public/build-time: restrict it to the admin origin in Google Cloud. Without it the picker still works (OSM tiles + paste-a-Maps-link resolver). | `AIza…` |
 
 ### Manual fallback
 
