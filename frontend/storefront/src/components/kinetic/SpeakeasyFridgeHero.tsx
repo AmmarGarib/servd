@@ -214,22 +214,29 @@ export function SpeakeasyFridgeHero({
             }}>
               <BlueprintCoolerDoor accent={accent} />
             </div>
-            {/* Inner face — plain insulated steel with the gasket line.
-                Pre-rotated 180° so it faces the viewer once the door has
-                swung past perpendicular. */}
+            {/* Inner face — the same blueprint sheet as everything else:
+                tiber green, the 40px/200px grid, cream line work. Drawn as
+                the door's inside (gasket + interior safety release) so the
+                language holds when the door swings past perpendicular.
+                Pre-rotated 180° so it faces the viewer at that point. */}
             <div aria-hidden="true" style={{
               position: 'absolute', inset: 0,
               transform: 'rotateY(180deg)',
               backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden',
-              background: 'linear-gradient(90deg, #121618 0%, #1c2224 55%, #121618 100%)',
-              boxShadow: 'inset 0 0 0 1px rgba(237,230,211,0.10), inset 0 0 48px rgba(0,0,0,0.65)',
+              background: '#06392F',
+              overflow: 'hidden',
             }}>
               <div style={{
-                position: 'absolute', inset: '14px',
-                borderRadius: '6px',
-                border: '2px solid rgba(8,10,11,0.95)',
-                boxShadow: 'inset 0 0 0 1px rgba(237,230,211,0.07)',
+                position: 'absolute', inset: 0,
+                backgroundImage: `
+                  linear-gradient(rgba(237,230,211,0.06) 1px, transparent 1px),
+                  linear-gradient(90deg, rgba(237,230,211,0.06) 1px, transparent 1px),
+                  linear-gradient(rgba(237,230,211,0.10) 1px, transparent 1px),
+                  linear-gradient(90deg, rgba(237,230,211,0.10) 1px, transparent 1px)
+                `,
+                backgroundSize: '40px 40px, 40px 40px, 200px 200px, 200px 200px',
               }} />
+              <BlueprintDoorInside />
             </div>
           </div>
 
@@ -394,6 +401,45 @@ export function SpeakeasyFridgeHero({
 // Includes the same anatomical parts a real commercial walk-in door
 // has (panel, perimeter trim, hinges, handle, viewing window, kick
 // plate, manufacturer plate) but rendered as line art with annotations.
+
+// ── The door's INSIDE face, in the same blueprint hand as the front. A walk-in
+//    door's interior is plain: the insulated panel, the gasket that seals
+//    against the frame, and the safety-release knob that lets someone shut
+//    inside push their way out. Same 600×880 viewbox so it aligns with the
+//    front face exactly.
+function BlueprintDoorInside() {
+  const line  = 'rgba(237,230,211,0.85)'
+  const fine  = 'rgba(237,230,211,0.45)'
+  const label = '#EDE6D3'
+  return (
+    <svg
+      viewBox="0 0 600 880"
+      preserveAspectRatio="xMidYMid meet"
+      style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', overflow: 'visible' }}
+    >
+      {/* Panel outline */}
+      <rect x="40" y="40" width="520" height="800" fill="rgba(237,230,211,0.03)" stroke={line} strokeWidth="1.5" />
+      {/* Gasket — the sealing strip, dashed, inset from the edge */}
+      <rect x="62" y="62" width="476" height="756" fill="none" stroke={fine} strokeWidth="1" strokeDasharray="6 4" rx="3" />
+      {/* Insulation core — faint hatched band to read as a section */}
+      <rect x="86" y="86" width="428" height="708" fill="none" stroke={fine} strokeWidth="0.7" strokeDasharray="2 3" />
+
+      {/* Interior safety release — knob on the hinge-opposite side, waist height.
+          Mirrors the paddle handle's position on the front face. */}
+      <circle cx="120" cy="446" r="22" fill="none" stroke={line} strokeWidth="1.5" />
+      <circle cx="120" cy="446" r="9"  fill="rgba(237,230,211,0.10)" stroke={line} strokeWidth="1" />
+      <line x1="142" y1="446" x2="200" y2="446" stroke={fine} strokeWidth="0.8" />
+      <text x="206" y="442" fill={label} fontFamily="var(--font-display)" fontSize="11" letterSpacing="2.5">
+        06 —— SAFETY RELEASE
+      </text>
+      <text x="206" y="454" fill={fine} fontFamily="var(--font-display)" fontSize="9" letterSpacing="2">
+        interior · push to open
+      </text>
+      {/* No sheet label down here — at full swing this corner sits over the
+          page's own "↳ DOOR · 1900 × 800 MM" caption and the two collide. */}
+    </svg>
+  )
+}
 
 function BlueprintCoolerDoor({ accent }: { accent: string }) {
   const line   = 'rgba(237,230,211,0.85)'   // primary line colour
