@@ -4227,6 +4227,7 @@ model Tenant {
   riders         Rider[]
   suppliers      Supplier[]      @relation("TenantSuppliers")
   inventoryItems InventoryItem[] @relation("TenantInventoryItems")
+  locations      Location[]      @relation("TenantLocations")
   departments    Department[]
   shiftBands     ShiftBand[]
   positions      Position[]
@@ -4300,10 +4301,17 @@ model Location {
   longitude Float?
   phone     String?
   isActive  Boolean   @default(true)
+  // Company that owns this physical location. Locations are company master
+  // data: GS Foods' Bukhari kitchen must never appear in GSX Viva's Locations
+  // page, and a location may only link brands of its own company. Nullable
+  // only for the column-add; the migration backfills every row from its
+  // linked brands and the API never creates a row without one.
+  tenantId  String?
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
   deletedAt DateTime?
 
+  tenant           Tenant?           @relation("TenantLocations", fields: [tenantId], references: [id])
   concepts         ConceptLocation[]
   orders           Order[]
   shifts           Shift[]
@@ -4312,6 +4320,7 @@ model Location {
   transfersTo      StockTransfer[]   @relation("TransferTo")
   expoPushTokens   ExpoPushToken[]
 
+  @@index([tenantId])
   @@map("locations")
 }
 

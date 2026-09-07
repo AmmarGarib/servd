@@ -526,23 +526,38 @@ async function build() {
     fastify.log.warn(`[tenants] seed/backfill skipped: ${(err as Error).message}`)
   }
 
-  // Locations bootstrap: if no locations exist yet, create a default one and
-  // link every active concept to it. Existing orders stay locationId=null;
-  // POS/storefront paths populate locationId on new orders going forward.
+  // Locations bootstrap: if no locations exist yet, create one default
+  // location PER COMPANY and link that company's brands to it. Locations are
+  // company master data — one shared "Main Location" linking every brand
+  // across every company is exactly the cross-company overlap the Locations
+  // page used to show. Existing orders stay locationId=null; POS/storefront
+  // paths populate locationId on new orders going forward.
   try {
     const count = await prisma.location.count({ where: { deletedAt: null } })
     if (count === 0) {
-      const concepts = await prisma.concept.findMany({ where: { deletedAt: null }, select: { id: true } })
-      const loc = await prisma.location.create({
-        data: { slug: 'main', name: 'Main Location', isActive: true },
+      const tenants = await prisma.tenant.findMany({
+        where: { deletedAt: null, isActive: true },
+        orderBy: { createdAt: 'asc' },
+        select: { id: true, slug: true },
       })
-      if (concepts.length > 0) {
-        await prisma.conceptLocation.createMany({
-          data: concepts.map((c) => ({ conceptId: c.id, locationId: loc.id, isPrimary: true })),
-          skipDuplicates: true,
+      for (const [idx, tenant] of tenants.entries()) {
+        const concepts = await prisma.concept.findMany({
+          where: { deletedAt: null, tenantId: tenant.id }, select: { id: true },
         })
+        const loc = await prisma.location.create({
+          data: {
+            slug: idx === 0 ? 'main' : `main-${tenant.slug}`,
+            name: 'Main Location', isActive: true, tenantId: tenant.id,
+          },
+        })
+        if (concepts.length > 0) {
+          await prisma.conceptLocation.createMany({
+            data: concepts.map((c) => ({ conceptId: c.id, locationId: loc.id, isPrimary: true })),
+            skipDuplicates: true,
+          })
+        }
+        fastify.log.info(`[locations] seeded default location for "${tenant.slug}" with ${concepts.length} concept links`)
       }
-      fastify.log.info(`[locations] seeded default location with ${concepts.length} concept links`)
     }
   } catch (err) {
     fastify.log.warn(`[locations] seed skipped: ${(err as Error).message}`)

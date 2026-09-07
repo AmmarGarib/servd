@@ -39,6 +39,12 @@ rewritten, trust these corrections:
     `package-lock.json`).
   - Aggregator code (Foodpanda/Careem adapters, `FoodpandaSettlement`) is
     fully removed; only historical comments remain.
+- **Locations are company master data (2026-09-07).** `Location.tenantId` is
+  set on every row (migration `20260907120000_location_tenant_scope` backfills
+  from linked brands and drops cross-company brand links). `/locations` reads
+  are scoped via `resolveTenantScope`, writes pin to the active company, and a
+  location may only link brands of its own company (`BRAND_NOT_IN_COMPANY`).
+  There is no boot-time PIN reconcile any more — staff choose their own PIN.
 
 ## What this is
 
