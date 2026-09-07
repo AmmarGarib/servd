@@ -1,8 +1,9 @@
 'use client'
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, type ElementType } from 'react'
 import Link from 'next/link'
 import { usePathname, useSearchParams } from 'next/navigation'
 import type { Concept } from '../../lib/concept'
+import { locationFor } from '../../lib/brandLocations'
 import { formatBrandName, brandSurface, brandWordmark } from '../../lib/concept'
 import { useBrandSlug, getServdHost } from '../../lib/host'
 import { isLight } from '../../lib/ui'
@@ -140,18 +141,25 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
   // The carded-nav brands keep the bar lean — just the useful stuff (Menu,
   // Book, Visit). The logo already covers "home" and the story lives in the
   // footer; everything else is killed. Other brands keep the fuller set.
+  // "Visit" goes straight to the operator's Google Maps link when one is
+  // configured (brandLocations.mapsUrl) — opens in a new tab so the site
+  // stays put. Falls back to the internal /visit page otherwise.
+  const mapsUrl = locationFor(concept.slug)?.mapsUrl
+  const visitLink = mapsUrl
+    ? { href: mapsUrl,          label: 'Visit', external: true }
+    : { href: `${base}/visit`,  label: 'Visit', external: false }
   const links = pillNav
     ? [
-        { href: `${base}/menu`,  label: 'Menu' },
-        ...reserveLink,
-        { href: `${base}/visit`, label: 'Visit' },
+        { href: `${base}/menu`,  label: 'Menu',  external: false },
+        ...reserveLink.map((l) => ({ ...l, external: false })),
+        visitLink,
       ]
     : [
-        { href: base,            label: 'Home' },
-        { href: `${base}/menu`,  label: 'Menu' },
-        { href: `${base}/about`, label: 'Story' },
-        ...reserveLink,
-        { href: `${base}/visit`, label: 'Visit' },
+        { href: base,            label: 'Home',  external: false },
+        { href: `${base}/menu`,  label: 'Menu',  external: false },
+        { href: `${base}/about`, label: 'Story', external: false },
+        ...reserveLink.map((l) => ({ ...l, external: false })),
+        visitLink,
       ]
 
   return (
@@ -235,13 +243,18 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
           }}
         >
           {links.map((l) => {
-            const active = l.href === base
+            const active = !l.external && (l.href === base
               ? pathname === l.href
-              : pathname.startsWith(l.href)
+              : pathname.startsWith(l.href))
+            // External (maps) links use a plain anchor so target/rel apply;
+            // internal ones keep Next's <Link> for client-side navigation.
+            const Tag: ElementType = l.external ? 'a' : Link
+            const extra = l.external ? { target: '_blank', rel: 'noopener noreferrer' } : {}
             return (
-              <Link
+              <Tag
                 key={l.href}
                 href={l.href}
+                {...extra}
                 style={{
                   padding: '0.45rem 0.9rem',
                   color: diner ? 'var(--flipd-ink)' : (active ? surface.text : surface.muted),
@@ -255,7 +268,7 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
                 }}
               >
                 {l.label}
-              </Link>
+              </Tag>
             )
           })}
 

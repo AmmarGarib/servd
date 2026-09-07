@@ -31,6 +31,10 @@ export interface BrandLocation {
   priceRange:          string                // $ / $$ / $$$ / $$$$ for schema.org
   acceptsReservations: boolean
   locationSlug:        string                // /locations/<slug>
+  // Operator's Google Maps share link. When set, the brand nav's "Visit"
+  // goes straight here (new tab) instead of the internal /visit page —
+  // one tap to directions is what a visitor actually wants from that word.
+  mapsUrl?:            string
 }
 
 const DEFAULT_BRAND_LOCATIONS: Record<string, BrandLocation> = {
@@ -48,6 +52,7 @@ const DEFAULT_BRAND_LOCATIONS: Record<string, BrandLocation> = {
     priceRange:          '$$$',
     acceptsReservations: true,
     locationSlug:        'bukhari-commercial',
+    mapsUrl:             'https://maps.app.goo.gl/gJQMwRKsZdEEfoKV6',
   },
   stax: {
     slug:                'stax',
