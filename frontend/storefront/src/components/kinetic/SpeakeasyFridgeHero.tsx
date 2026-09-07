@@ -188,13 +188,18 @@ export function SpeakeasyFridgeHero({
           </div>
 
           {/* ── THE DOOR — rotates open along its left hinge as scroll
-                progresses. Goes from 0deg (closed) to -85deg (wide open). */}
+                progresses. Goes from 0deg (closed) to -120deg (folded back
+                past the frame, the way a real walk-in door sits when
+                someone props it). Swinging past 90° means the viewer sees
+                the door's INNER side, so the panel is two faces with
+                backface-visibility hidden on each — otherwise the blueprint
+                front would show mirrored. */}
           <div
             style={{
               position: 'absolute',
               inset: 0,
               transformOrigin: 'left center',
-              transform: 'rotateY(calc(var(--scroll-progress, 0) * -85deg))',
+              transform: 'rotateY(calc(var(--scroll-progress, 0) * -120deg))',
               transformStyle: 'preserve-3d',
               transition: 'transform 80ms linear',
               zIndex: 3,
@@ -202,7 +207,30 @@ export function SpeakeasyFridgeHero({
               boxShadow: 'calc(var(--scroll-progress, 0) * 30px) 0 60px rgba(0,0,0,0.6)',
             } as React.CSSProperties}
           >
-            <BlueprintCoolerDoor accent={accent} />
+            {/* Front face — the blueprint drawing */}
+            <div style={{
+              position: 'absolute', inset: 0,
+              backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden',
+            }}>
+              <BlueprintCoolerDoor accent={accent} />
+            </div>
+            {/* Inner face — plain insulated steel with the gasket line.
+                Pre-rotated 180° so it faces the viewer once the door has
+                swung past perpendicular. */}
+            <div aria-hidden="true" style={{
+              position: 'absolute', inset: 0,
+              transform: 'rotateY(180deg)',
+              backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden',
+              background: 'linear-gradient(90deg, #121618 0%, #1c2224 55%, #121618 100%)',
+              boxShadow: 'inset 0 0 0 1px rgba(237,230,211,0.10), inset 0 0 48px rgba(0,0,0,0.65)',
+            }}>
+              <div style={{
+                position: 'absolute', inset: '14px',
+                borderRadius: '6px',
+                border: '2px solid rgba(8,10,11,0.95)',
+                boxShadow: 'inset 0 0 0 1px rgba(237,230,211,0.07)',
+              }} />
+            </div>
           </div>
 
           {/* ── DIGITAL THERMOMETER — mounted above the door frame.
