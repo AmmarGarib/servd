@@ -33,7 +33,7 @@ export async function postSupplierBill(billId: string): Promise<{ posted: boolea
   // The `withholdingTaxRecoverable` flag is informational (tracked in audit
   // metadata so the operator can later claim it).
   // Math: Inventory dr X, AP cr (X-WHT), WHT_PAYABLE cr WHT  → balanced.
-  const ops = await getOperationsConfig()
+  const ops = await getOperationsConfig(bill.supplier?.tenantId ?? null)
   let whtCents = 0
   if (ops.withholdingTaxEnabled && ops.withholdingTaxPct > 0 && bill.subtotalCents > 0) {
     whtCents = Math.round(bill.subtotalCents * ops.withholdingTaxPct)

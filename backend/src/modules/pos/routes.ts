@@ -1,10 +1,51 @@
-import type { FastifyInstance } from 'fastify'
+import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
+import type { Prisma } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, CASHIERS, MANAGERS } from '../auth/middleware.js'
 import { createPosOrder, processPayment, openShift, closeShift, getZReport, voidOrderItem, refundOrder, compOrder } from './service.js'
 import { assertConceptAccess } from '../../lib/conceptAccess.js'
+import { AppError, NotFoundError } from '../../lib/errors.js'
+import { scopeTenantWhere, assertConceptOwned, type ScopeMode, type TenantIdWhere } from '../../lib/tenantScope.js'
 import { buildReceiptHtml } from './receipt.js'
+
+// ─── Company scoping ──────────────────────────────────────────────────────────
+//
+// A shift has no company column of its own: it belongs to the company of the
+// location it was opened at, or — for shifts opened without a location — the
+// cashier's company. Both sides are checked so a guessed shift id from another
+// company 404s exactly like a foreign order does.
+
+function shiftOfCompany(where: TenantIdWhere): Prisma.ShiftWhereInput {
+  // Shift.tenantId is stamped at open (and backfilled by migration
+  // 20260907140000); the location / cashier fallbacks cover rows that
+  // predate the column.
+  return { OR: [where, { location: where }, { user: where }] }
+}
+
+/** The shift, or 404 when it isn't in scope for `mode`. */
+async function findShiftInScope(req: FastifyRequest, id: string, mode: ScopeMode) {
+  const shift = await prisma.shift.findFirst({
+    where: { id, ...shiftOfCompany(await scopeTenantWhere(req, mode)) },
+  })
+  if (!shift) throw new NotFoundError('Shift', id)
+  return shift
+}
+
+/**
+ * 422 unless `shiftId` is a shift of `tenantId` (and open, when `mustBeOpen`).
+ * Used wherever a NEW row (order, payment) is about to be attached to a
+ * drawer — company A's takings must never land on company B's Z-report.
+ */
+async function assertShiftOf(tenantId: string, shiftId: string, mustBeOpen: boolean): Promise<void> {
+  const shift = await prisma.shift.findFirst({
+    where: { id: shiftId, ...(mustBeOpen ? { status: 'open' as const } : {}), ...shiftOfCompany({ tenantId }) },
+    select: { id: true },
+  })
+  if (!shift) {
+    throw new AppError('SHIFT_NOT_IN_COMPANY', mustBeOpen ? 'That shift is not an open shift of this company' : 'That shift does not belong to this company', 422)
+  }
+}
 
 const posOrderSchema = z.object({
   conceptId: z.string().uuid(),
@@ -74,10 +115,32 @@ export async function posRoutes(fastify: FastifyInstance) {
   fastify.post('/orders', { preHandler: requireAuth(...CASHIERS) }, async (req, reply) => {
     const body = posOrderSchema.parse(req.body)
     await assertConceptAccess(req.staffUser!, body.conceptId)
-    const concept = await prisma.concept.findFirst({
-      where: { id: body.conceptId, tenantId: req.staffUser!.tenantFilter, deletedAt: null },
-    })
-    if (!concept) return reply.status(403).send({ error: { code: 'CROSS_TENANT', message: 'Concept does not belong to your active company' } })
+    // A ring-up binds a NEW order to a brand, so the brand must belong to the
+    // company the operator is acting in — not merely one they're a member of.
+    const tenantId = req.staffUser!.tenantId
+    if (!tenantId) throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company before ringing up an order', 422)
+    await assertConceptOwned(req, body.conceptId, 'create')
+
+    // Everything the order attaches to must be that brand's / company's own:
+    // the table (brand-anchored), every catalogue line (brand-anchored — a
+    // foreign item would route the ticket to the other brand's KDS station)
+    // and the drawer.
+    if (body.tableId) {
+      const table = await prisma.table.findFirst({
+        where: { id: body.tableId, conceptId: body.conceptId, deletedAt: null },
+        select: { id: true },
+      })
+      if (!table) throw new AppError('TABLE_NOT_IN_BRAND', 'That table does not belong to this brand', 422)
+    }
+    const menuItemIds = Array.from(new Set(body.items.map((i) => i.menuItemId).filter((x): x is string => !!x)))
+    if (menuItemIds.length > 0) {
+      const owned = await prisma.menuItem.count({
+        where: { id: { in: menuItemIds }, conceptId: body.conceptId, deletedAt: null },
+      })
+      if (owned !== menuItemIds.length) throw new AppError('ITEM_NOT_IN_BRAND', 'One or more items do not belong to this brand', 422)
+    }
+    if (body.shiftId) await assertShiftOf(tenantId, body.shiftId, false)
+
     const order = await createPosOrder({
       ...body,
       staffId: req.staffUser!.id,
@@ -94,8 +157,11 @@ export async function posRoutes(fastify: FastifyInstance) {
         id: body.orderId,
         concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
       },
+      select: { id: true, concept: { select: { tenantId: true } } },
     })
-    if (!order) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Order not found in your active company' } })
+    if (!order?.concept.tenantId) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Order not found in your active company' } })
+    // The drawer must be an OPEN shift of the order's own company.
+    await assertShiftOf(order.concept.tenantId, body.shiftId, true)
     const result = await processPayment(body)
     return reply.status(201).send(result)
   })
@@ -103,7 +169,7 @@ export async function posRoutes(fastify: FastifyInstance) {
   // POST /pos/shifts/open
   fastify.post('/shifts/open', { preHandler: requireAuth(...CASHIERS) }, async (req, reply) => {
     const { openingFloatCents } = openShiftSchema.parse(req.body)
-    const shift = await openShift(req.staffUser!.id, openingFloatCents)
+    const shift = await openShift(req.staffUser!.id, openingFloatCents, req.staffUser!.tenantId)
     return reply.status(201).send(shift)
   })
 
@@ -113,10 +179,8 @@ export async function posRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuth(...CASHIERS) },
     async (req, reply) => {
       const { closingFloatCents, notes } = closeShiftSchema.parse(req.body)
-      const shift = await prisma.shift.findFirst({
-        where: { id: req.params.id, user: { tenantId: req.staffUser!.tenantId } },
-      })
-      if (!shift) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Shift not found in your active company' } })
+      // Closing an EXISTING drawer: any company the operator belongs to.
+      const shift = await findShiftInScope(req, req.params.id, 'write')
       // Ownership: a cashier may only close their OWN shift. Closing someone
       // else's drawer (to bury a variance or shift blame onto the closer) is a
       // manager-tier action.
@@ -131,12 +195,10 @@ export async function posRoutes(fastify: FastifyInstance) {
   fastify.get<{ Params: { id: string } }>(
     '/shifts/:id/zreport',
     { preHandler: requireAuth(...MANAGERS) },
-    async (req, reply) => {
-      const shift = await prisma.shift.findFirst({
-        where: { id: req.params.id, user: { tenantId: req.staffUser!.tenantId } },
-      })
-      if (!shift) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Shift not found in your active company' } })
-      return getZReport(req.params.id)
+    async (req) => {
+      // View-aware: the active company, or every company in "All companies".
+      const shift = await findShiftInScope(req, req.params.id, 'read')
+      return getZReport(shift.id)
     },
   )
 
@@ -238,10 +300,8 @@ export async function posRoutes(fastify: FastifyInstance) {
         managerOverridePin: z.string().min(4).max(8).optional(),
       }).parse(req.body)
 
-      const shift = await prisma.shift.findFirst({
-        where: { id: req.params.id, user: { tenantId: req.staffUser!.tenantId } },
-      })
-      if (!shift) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Shift not found in your active company' } })
+      // Recording against an EXISTING drawer: any company the operator belongs to.
+      const shift = await findShiftInScope(req, req.params.id, 'write')
       if (shift.status !== 'open') {
         return reply.status(400).send({ error: { code: 'SHIFT_CLOSED', message: 'Cannot record cash movements on a closed shift' } })
       }
@@ -268,13 +328,10 @@ export async function posRoutes(fastify: FastifyInstance) {
   fastify.get<{ Params: { id: string } }>(
     '/shifts/:id/cash-movements',
     { preHandler: requireAuth(...CASHIERS) },
-    async (req, reply) => {
-      const shift = await prisma.shift.findFirst({
-        where: { id: req.params.id, user: { tenantId: req.staffUser!.tenantId } },
-      })
-      if (!shift) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Shift not found in your active company' } })
+    async (req) => {
+      const shift = await findShiftInScope(req, req.params.id, 'read')
       const movements = await prisma.cashMovement.findMany({
-        where: { shiftId: req.params.id },
+        where: { shiftId: shift.id },
         orderBy: { recordedAt: 'desc' },
         include: { recordedBy: { select: { name: true } } },
       })

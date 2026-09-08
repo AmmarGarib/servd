@@ -1,8 +1,19 @@
-import type { FastifyInstance } from 'fastify'
+import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, MANAGERS } from '../auth/middleware.js'
-import { NotFoundError } from '../../lib/errors.js'
+import { AppError, NotFoundError } from '../../lib/errors.js'
+import { assertConceptOwned, conceptWhere, scopeTenantWhere, type ScopeMode } from '../../lib/tenantScope.js'
+
+// Company scoping: QR codes are brand-anchored (conceptId), so ownership is
+// resolved through the brand: qrCode → concept → tenant. Every operator
+// handler goes through `scopeTenantWhere` (reads are view-aware, edits span
+// every company the operator belongs to, creates bind to the active company
+// only). A QR may only point at a table of its own brand — otherwise a
+// guessed tableId would print another company's table onto the code.
+//
+// `/:id/scan` and `/:id/convert` are public, unauthenticated counters hit by
+// the storefront on QR load; there is no operator context to scope them by.
 
 const createQrSchema = z.object({
   conceptId: z.string().uuid(),
@@ -11,14 +22,44 @@ const createQrSchema = z.object({
   label: z.string().min(1),
 })
 
+/**
+ * Resolve a QR code the operator may act on in `mode`, or 404. Ownership is
+ * through the brand (qrCode.concept.tenantId); a foreign id never confirms
+ * the code exists.
+ */
+async function findOwnedQr(req: FastifyRequest, id: string, mode: ScopeMode) {
+  const qr = await prisma.qrCode.findFirst({
+    where: {
+      id,
+      concept: { deletedAt: null, ...(await scopeTenantWhere(req, mode)) },
+    },
+  })
+  if (!qr) throw new NotFoundError('QrCode', id)
+  return qr
+}
+
+/**
+ * Throws unless `tableId` is a live table of `conceptId`. The brand itself
+ * has already been checked against the company, so same-brand implies
+ * same-company.
+ */
+async function assertTableOfConcept(tableId: string, conceptId: string): Promise<void> {
+  const table = await prisma.table.findFirst({
+    where: { id: tableId, conceptId, deletedAt: null },
+    select: { id: true },
+  })
+  if (!table) throw new NotFoundError('Table', tableId)
+}
+
 export async function qrCodeRoutes(fastify: FastifyInstance) {
-  // GET /qrcodes
+  // GET /qrcodes — view-aware company scope; a client conceptId narrows the
+  // list but is validated (404 for a foreign brand) rather than trusted.
   fastify.get<{ Querystring: { conceptId?: string } }>(
     '/',
     { preHandler: requireAuth(...MANAGERS) },
     async (req) => {
       return prisma.qrCode.findMany({
-        where: req.query.conceptId ? { conceptId: req.query.conceptId } : {},
+        where: await conceptWhere(req, req.query.conceptId, 'read'),
         include: {
           concept: { select: { name: true, slug: true } },
           table: { select: { label: true } },
@@ -28,9 +69,17 @@ export async function qrCodeRoutes(fastify: FastifyInstance) {
     },
   )
 
-  // POST /qrcodes
+  // POST /qrcodes — the brand must belong to the ACTIVE company, and the
+  // table (if any) to that brand.
   fastify.post('/', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
     const body = createQrSchema.parse(req.body)
+    if (!req.staffUser!.tenantId) {
+      throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company before generating a QR code', 422)
+    }
+    // 'create' mode: the active company only — never let a new code land
+    // under a brand of another company the operator happens to belong to.
+    await assertConceptOwned(req, body.conceptId, 'create')
+    if (body.tableId) await assertTableOfConcept(body.tableId, body.conceptId)
     const qr = await prisma.qrCode.create({ data: body })
     // Build QR URL pointing to storefront with qr param
     const storefrontUrl = process.env['STOREFRONT_URL'] ?? 'http://localhost:3002'
@@ -100,22 +149,27 @@ export async function qrCodeRoutes(fastify: FastifyInstance) {
     },
   )
 
-  // PATCH /qrcodes/:id
+  // PATCH /qrcodes/:id — must belong to a company the operator is in. The
+  // brand is fixed at creation (conceptId is stripped from the body); a new
+  // tableId must be a table of that same brand.
   fastify.patch<{ Params: { id: string } }>(
     '/:id',
     { preHandler: requireAuth(...MANAGERS) },
     async (req) => {
       const body = createQrSchema.partial().omit({ conceptId: true }).parse(req.body)
-      return prisma.qrCode.update({ where: { id: req.params.id }, data: body })
+      const existing = await findOwnedQr(req, req.params.id, 'write')
+      if (body.tableId) await assertTableOfConcept(body.tableId, existing.conceptId)
+      return prisma.qrCode.update({ where: { id: existing.id }, data: body })
     },
   )
 
-  // DELETE /qrcodes/:id
+  // DELETE /qrcodes/:id — must belong to a company the operator is in
   fastify.delete<{ Params: { id: string } }>(
     '/:id',
     { preHandler: requireAuth(...MANAGERS) },
     async (req, reply) => {
-      await prisma.qrCode.delete({ where: { id: req.params.id } })
+      const existing = await findOwnedQr(req, req.params.id, 'write')
+      await prisma.qrCode.delete({ where: { id: existing.id } })
       return reply.status(204).send()
     },
   )

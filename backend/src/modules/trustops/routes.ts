@@ -153,7 +153,7 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
     if (!box) throw new NotFoundError('PettyCashBox', body.boxId)
 
     const { getOperationsConfig } = await import('../../lib/setup-config.js')
-    const ops = await getOperationsConfig()
+    const ops = await getOperationsConfig(req.staffUser!.tenantId)
     const photoThreshold = ops?.photoRequiredAboveCents ?? 50000
 
     const absAmount = Math.abs(body.amountCents)

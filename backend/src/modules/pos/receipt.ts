@@ -19,7 +19,7 @@ export async function buildReceiptHtml(orderId: string): Promise<string> {
   const order = await prisma.order.findUnique({
     where: { id: orderId },
     include: {
-      concept: { select: { name: true, taxRate: true, invoiceLegalName: true, ntn: true, strn: true } },
+      concept: { select: { name: true, taxRate: true, invoiceLegalName: true, ntn: true, strn: true, tenantId: true } },
       items: {
         where: { status: { not: 'voided' } },
         include: { modifiers: true },
@@ -32,7 +32,7 @@ export async function buildReceiptHtml(orderId: string): Promise<string> {
 
   if (!order) throw new NotFoundError('Order', orderId)
 
-  const cfg = await getReceiptConfig()
+  const cfg = await getReceiptConfig(order.concept.tenantId)
 
   const taxRate = order.concept.taxRate ?? 17
   const subtotalCents = order.items.reduce((s, i) => {

@@ -843,6 +843,8 @@ model User {
 model Shift {
   id                String      @id @default(uuid())
   userId            String
+  // Owning company — company master data, never shared across companies.
+  tenantId  String?
   locationId        String? // physical place this shift was opened at
   status            ShiftStatus @default(open)
   openedAt          DateTime    @default(now())
@@ -859,6 +861,9 @@ model Shift {
   cashMovements CashMovement[]
 
   @@index([locationId, openedAt(sort: Desc)])
+  tenant Tenant? @relation("TenantShifts", fields: [tenantId], references: [id])
+
+  @@index([tenantId])
   @@map("shifts")
 }
 
@@ -3325,6 +3330,8 @@ model ModifierTemplateOption {
 // Delivery zones — radius-based or polygon-based, with fee + minimum order
 model DeliveryZone {
   id               String   @id @default(cuid())
+  // Owning company — company master data, never shared across companies.
+  tenantId  String?
   conceptId        String? // null = all concepts
   name             String // "Inner DHA", "Phase 5", "Outside city"
   // Distance-based mode
@@ -3342,12 +3349,17 @@ model DeliveryZone {
   updatedAt        DateTime @updatedAt
 
   @@index([conceptId])
+  tenant Tenant? @relation("TenantDeliveryZones", fields: [tenantId], references: [id])
+
+  @@index([tenantId])
   @@map("delivery_zones")
 }
 
 // Notification templates — order events, system events, marketing
 model NotificationTemplate {
   id        String   @id @default(cuid())
+  // Owning company — company master data, never shared across companies.
+  tenantId  String?
   conceptId String? // null = global default
   channel   String // 'email' | 'sms' | 'whatsapp' | 'push'
   event     String // 'order.confirmed' | 'order.ready' | 'order.refunded' | 'shift.opened' | 'reservation.reminder' | etc.
@@ -3360,8 +3372,11 @@ model NotificationTemplate {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@unique([conceptId, channel, event, language])
+  @@unique([tenantId, conceptId, channel, event, language], map: "notification_templates_tenant_scope_key")
   @@index([conceptId, channel])
+  tenant Tenant? @relation("TenantNotificationTemplates", fields: [tenantId], references: [id])
+
+  @@index([tenantId])
   @@map("notification_templates")
 }
 
@@ -3465,6 +3480,8 @@ model WebhookDelivery {
 // Custom fields — operator-defined extensions to core entities
 model CustomFieldDefinition {
   id         String   @id @default(cuid())
+  // Owning company — company master data, never shared across companies.
+  tenantId  String?
   scope      String // 'customer' | 'order' | 'menu_item' | 'supplier'
   key        String // 'gift_recipient', 'table_preference', 'allergy_severity'
   label      String // operator-facing label
@@ -3480,8 +3497,11 @@ model CustomFieldDefinition {
 
   values CustomFieldValue[]
 
-  @@unique([scope, key])
+  @@unique([tenantId, scope, key])
   @@index([scope])
+  tenant Tenant? @relation("TenantCustomFieldDefinitions", fields: [tenantId], references: [id])
+
+  @@index([tenantId])
   @@map("custom_field_definitions")
 }
 
@@ -3504,6 +3524,8 @@ model CustomFieldValue {
 // Scheduled reports — owner gets daily/weekly digests by email
 model ScheduledReport {
   id          String    @id @default(cuid())
+  // Owning company — company master data, never shared across companies.
+  tenantId  String?
   name        String // "Daily P&L"
   reportType  String // 'sales_daily' | 'shift_summary' | 'low_stock' | 'food_cost' | 'ap_aging' | 'menu_engineering'
   cron        String // standard cron syntax
@@ -3518,6 +3540,9 @@ model ScheduledReport {
   updatedAt   DateTime  @updatedAt
   deletedAt   DateTime?
 
+  tenant Tenant? @relation("TenantScheduledReports", fields: [tenantId], references: [id])
+
+  @@index([tenantId])
   @@map("scheduled_reports")
 }
 
@@ -4270,6 +4295,11 @@ model Tenant {
   reservationPolicies  ReservationPolicy[]   @relation("TenantReservationPolicies")
   receiptConfigs       ReceiptConfig[]       @relation("TenantReceiptConfigs")
   operationsConfigs    OperationsConfig[]    @relation("TenantOperationsConfigs")
+  deliveryZones        DeliveryZone[]        @relation("TenantDeliveryZones")
+  notificationTemplates NotificationTemplate[] @relation("TenantNotificationTemplates")
+  scheduledReports     ScheduledReport[]     @relation("TenantScheduledReports")
+  customFieldDefinitions CustomFieldDefinition[] @relation("TenantCustomFieldDefinitions")
+  shifts               Shift[]               @relation("TenantShifts")
   departments    Department[]
   shiftBands     ShiftBand[]
   positions      Position[]

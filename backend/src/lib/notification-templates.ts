@@ -44,16 +44,21 @@ export async function renderTemplate(opts: {
   let template = cached && cached.expiresAt > Date.now() ? cached.value : null
 
   if (!cached || cached.expiresAt <= Date.now()) {
-    // Try concept-scoped first, then global.
+    // Try brand-scoped first, then the brand's COMPANY default (conceptId
+    // null). Never another company's default: templates are company data.
+    const { tenantForConcept, primaryTenantId } = await import('./setup-config.js')
+    const tenantId = (await tenantForConcept(conceptId)) ?? (await primaryTenantId())
     template =
       (conceptId
         ? await prisma.notificationTemplate.findFirst({
             where: { conceptId, channel: opts.channel, event: opts.event, language, isActive: true },
           })
         : null) ??
-      (await prisma.notificationTemplate.findFirst({
-        where: { conceptId: null, channel: opts.channel, event: opts.event, language, isActive: true },
-      }))
+      (tenantId
+        ? await prisma.notificationTemplate.findFirst({
+            where: { tenantId, conceptId: null, channel: opts.channel, event: opts.event, language, isActive: true },
+          })
+        : null)
     cache.set(key, { value: template ? { subject: template.subject, body: template.body } : null, expiresAt: Date.now() + CACHE_TTL_MS })
   }
 

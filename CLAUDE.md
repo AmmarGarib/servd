@@ -59,6 +59,12 @@ rewritten, trust these corrections:
   `modifier_templates`, `webhook_subscriptions` and the four singleton config
   tables carry `tenantId` (migration `20260907130000`); singleton "global"
   rows are one per company.
+  `delivery_zones`, `notification_templates`, `scheduled_reports`,
+  `custom_field_definitions` and `shifts` carry `tenantId` too (migration
+  `20260907140000`) — "All brands" rows are the owning company's defaults,
+  never shared. `lib/setup-config.ts` readers take a `tenantId`
+  (`tenantForConcept()` / `primaryTenantId()` resolve it); never read a
+  company-less singleton row.
 
 ## What this is
 

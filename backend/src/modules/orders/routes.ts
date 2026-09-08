@@ -1,13 +1,34 @@
-import type { FastifyInstance } from 'fastify'
+import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, requireAuthOrPin, ALL_STAFF, MANAGERS } from '../auth/middleware.js'
 import { ingestOrder, listOrders, getOrder, updateOrderStatus, updateItemStatus } from './service.js'
 import { assertConceptAccess, filterConceptIdsForStaff } from '../../lib/conceptAccess.js'
+import { conceptWhere, scopeTenantWhere, type ScopeMode } from '../../lib/tenantScope.js'
 import { audit } from '../../lib/audit.js'
-import { AppError } from '../../lib/errors.js'
+import { AppError, NotFoundError } from '../../lib/errors.js'
 import { getFbrQueue, getSrbQueue } from '../../lib/queue.js'
 import type { OrderDTO } from '@servd/types'
+
+// Orders are brand-anchored (Order.conceptId) and a brand belongs to one
+// company, so "is this order mine?" is always answered through the concept.
+// `assertConceptAccess` is a per-user brand whitelist that NO-OPs for every
+// management role — it is not a company check. Every handler below scopes
+// the lookup itself, before touching a client-supplied id.
+
+/**
+ * `where` fragment: the order's brand belongs to a company in scope for
+ * `mode` — 'read' is view-aware (portfolio expands), 'write' is every
+ * company the operator belongs to. Foreign ids simply don't match → 404.
+ */
+async function orderInCompany(req: FastifyRequest, mode: ScopeMode) {
+  return { concept: { deletedAt: null, ...(await scopeTenantWhere(req, mode)) } }
+}
+
+/** A staff user belongs to `tenantId` as their primary company or via a membership. */
+function userInCompany(tenantId: string) {
+  return { OR: [{ tenantId }, { tenantMemberships: { some: { tenantId } } }] }
+}
 
 const createOrderSchema = z.object({
   source: z.enum(['servd', 'pos', 'cart', 'manual']),
@@ -65,24 +86,24 @@ export async function orderRoutes(fastify: FastifyInstance) {
     }
   }>('/', { preHandler: requireAuthOrPin(...ALL_STAFF) }, async (req) => {
     const { limit, conceptId, ...rest } = req.query
+    // Company scope first: a client conceptId must be a brand the operator
+    // can see (404 otherwise — never confirm a foreign brand exists); absent
+    // → every brand in view (portfolio-aware).
+    const owned = await conceptWhere(req, conceptId, 'read')
+    const tenantConceptIds = typeof owned.conceptId === 'string' ? [owned.conceptId] : owned.conceptId.in
+    // Then the per-user brand whitelist (no-op for management roles).
     const scopedConceptIds = await filterConceptIdsForStaff(
       req.staffUser!,
       conceptId ? [conceptId] : null,
     )
-    // Tenant scope: intersect the staff's allowed concepts with concepts
-    // belonging to the active tenant. Falls back to *only* tenant concepts
-    // when the staff has no per-concept restriction (admin/manager bypass).
-    const tenantConcepts = await prisma.concept.findMany({
-      where: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
-      select: { id: true },
-    })
-    const tenantConceptIds = tenantConcepts.map((c) => c.id)
     const finalConceptIds = scopedConceptIds
       ? scopedConceptIds.filter((id) => tenantConceptIds.includes(id))
       : tenantConceptIds
+    // Empty scope → empty page. listOrders also refuses to run unscoped, but
+    // there's no reason to hit the DB for it.
+    if (finalConceptIds.length === 0) return { data: [], cursor: null, hasMore: false }
     return listOrders({
       ...rest,
-      conceptId: conceptId && tenantConceptIds.includes(conceptId) ? conceptId : undefined,
       conceptIds: finalConceptIds,
       limit: limit ? parseInt(limit, 10) : undefined,
     })
@@ -93,16 +114,10 @@ export async function orderRoutes(fastify: FastifyInstance) {
     '/:id',
     { preHandler: requireAuthOrPin(...ALL_STAFF) },
     async (req) => {
-      const order = await getOrder(req.params.id)
+      // Company-scoped at the lookup itself — a foreign id 404s without the
+      // row ever being fetched.
+      const order = await getOrder(req.params.id, await orderInCompany(req, 'read'))
       await assertConceptAccess(req.staffUser!, order.conceptId)
-      // Verify the order's concept is within the active tenant.
-      const concept = await prisma.concept.findFirst({
-        where: { id: order.conceptId, tenantId: req.staffUser!.tenantFilter, deletedAt: null },
-      })
-      if (!concept) {
-        const { NotFoundError } = await import('../../lib/errors.js')
-        throw new NotFoundError('Order', req.params.id)
-      }
       return order
     },
   )
@@ -110,12 +125,37 @@ export async function orderRoutes(fastify: FastifyInstance) {
   // POST /orders — manual order creation (server / cashier manual intake)
   fastify.post('/', { preHandler: requireAuthOrPin(...ALL_STAFF) }, async (req, reply) => {
     const dto = createOrderSchema.parse(req.body) as OrderDTO
-    await assertConceptAccess(req.staffUser!, dto.concept_id)
-    // Verify concept belongs to active tenant before ingesting.
+    // A create binds to the ACTIVE company only ('create' scope) — the brand
+    // must be one of the active company's (404 otherwise, so a foreign id is
+    // never confirmed), and every row attached below must sit in that same
+    // company. Otherwise a head-office member of both companies could file a
+    // GSX Viva ticket under a GS Foods brand from the wrong tab.
+    const tenantId = req.staffUser!.tenantId
+    if (!tenantId) throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company before creating an order', 422)
     const concept = await prisma.concept.findFirst({
-      where: { id: dto.concept_id, tenantId: req.staffUser!.tenantFilter, deletedAt: null },
+      where: { id: dto.concept_id, deletedAt: null, ...(await scopeTenantWhere(req, 'create')) },
     })
-    if (!concept) return reply.status(403).send({ error: { code: 'CROSS_TENANT', message: 'Concept does not belong to your active company' } })
+    if (!concept) throw new NotFoundError('Concept', dto.concept_id)
+    await assertConceptAccess(req.staffUser!, dto.concept_id)
+
+    // Cross-company attach guards on the body. table_id + menuItemId are
+    // checked against the brand inside ingestOrder (shared with POS /
+    // storefront); shift + cashier are company-anchored through User /
+    // Location, so they're checked here where the active company is known.
+    if (dto.pos_staff_id) {
+      const staff = await prisma.user.findFirst({
+        where: { id: dto.pos_staff_id, deletedAt: null, ...userInCompany(tenantId) },
+        select: { id: true },
+      })
+      if (!staff) throw new AppError('STAFF_NOT_IN_COMPANY', 'pos_staff_id does not belong to this company', 422)
+    }
+    if (dto.shift_id) {
+      const shift = await prisma.shift.findFirst({
+        where: { id: dto.shift_id, OR: [{ location: { tenantId } }, { user: userInCompany(tenantId) }] },
+        select: { id: true },
+      })
+      if (!shift) throw new AppError('SHIFT_NOT_IN_COMPANY', 'shift_id does not belong to this company', 422)
+    }
 
     // SRB alignment: compute GST server-side on the PRE-discount item total
     // (manual orders carry no discount), so taxCents is correct and the SRB
@@ -150,13 +190,14 @@ export async function orderRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuthOrPin(...ALL_STAFF) },
     async (req) => {
       const { conceptId } = req.query
+      // Company scope through the brand: a client conceptId must be ours
+      // (404 otherwise); absent → every brand in view.
+      const brand = await conceptWhere(req, conceptId, 'read')
       if (conceptId) await assertConceptAccess(req.staffUser!, conceptId)
 
       const orders = await prisma.order.findMany({
         where: {
-          ...(conceptId && { conceptId }),
-          // Tenant scope: through Concept relation
-          concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
+          ...brand,
           curbsideVehicle: { not: null },
           // Hide ones we already finished
           curbsideRunnerOutAt: null,
@@ -193,14 +234,11 @@ export async function orderRoutes(fastify: FastifyInstance) {
     '/:id/curbside/running-out',
     { preHandler: requireAuthOrPin(...ALL_STAFF) },
     async (req) => {
-      // Lookup is scoped by tenant — assertConceptAccess alone bypasses the
+      // Lookup is scoped by company — assertConceptAccess alone bypasses the
       // concept ACL for management-tier roles, which would otherwise let a
-      // manager in tenant A mutate orders in tenant B.
+      // manager in company A mutate orders in company B.
       const order = await prisma.order.findFirst({
-        where: {
-          id: req.params.id,
-          concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
-        },
+        where: { id: req.params.id, ...(await orderInCompany(req, 'write')) },
         select: { id: true, conceptId: true, curbsideVehicle: true },
       })
       if (!order) throw new AppError('NOT_FOUND', 'Order not found in your active company', 404)
@@ -220,10 +258,10 @@ export async function orderRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuthOrPin(...ALL_STAFF) },
     async (req, reply) => {
       const { status } = updateOrderStatusSchema.parse(req.body)
-      // Tenant-scoped lookup FIRST — never fetch (or reveal the existence of)
-      // an order outside the caller's company before the scope check.
+      // Company-scoped lookup FIRST — never fetch (or reveal the existence of)
+      // an order outside the caller's companies before the scope check.
       const order = await prisma.order.findFirst({
-        where: { id: req.params.id, concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null } },
+        where: { id: req.params.id, ...(await orderInCompany(req, 'write')) },
         select: { id: true, conceptId: true },
       })
       if (!order) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Order not found in your active company' } })
@@ -238,12 +276,9 @@ export async function orderRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuthOrPin(...ALL_STAFF) },
     async (req) => {
       const { notes } = z.object({ notes: z.string().max(1000) }).parse(req.body)
-      // Tenant-scoped lookup — see /curbside/running-out for the rationale.
+      // Company-scoped lookup — see /curbside/running-out for the rationale.
       const order = await prisma.order.findFirst({
-        where: {
-          id: req.params.id,
-          concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
-        },
+        where: { id: req.params.id, ...(await orderInCompany(req, 'write')) },
         select: { id: true, conceptId: true },
       })
       if (!order) throw new AppError('NOT_FOUND', 'Order not found in your active company', 404)
@@ -261,12 +296,9 @@ export async function orderRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuthOrPin(...ALL_STAFF) },
     async (req, reply) => {
       const body = z.object({ reason: z.string().max(500).optional() }).parse(req.body ?? {})
-      // Tenant-scoped — assertConceptAccess bypasses for management roles.
+      // Company-scoped — assertConceptAccess bypasses for management roles.
       const order = await prisma.order.findFirst({
-        where: {
-          id: req.params.id,
-          concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
-        },
+        where: { id: req.params.id, ...(await orderInCompany(req, 'write')) },
         select: { id: true, conceptId: true, customerId: true, totalCents: true },
       })
       if (!order) throw new AppError('NOT_FOUND', 'Order not found in your active company', 404)
@@ -306,13 +338,10 @@ export async function orderRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuthOrPin(...ALL_STAFF) },
     async (req, reply) => {
       const body = z.object({ reason: z.string().max(500).optional() }).parse(req.body ?? {})
-      // Tenant-scoped — assertConceptAccess bypasses for management roles, so
-      // the lookup itself must enforce the tenant boundary.
+      // Company-scoped — assertConceptAccess bypasses for management roles, so
+      // the lookup itself must enforce the company boundary.
       const order = await prisma.order.findFirst({
-        where: {
-          id: req.params.id,
-          concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
-        },
+        where: { id: req.params.id, ...(await orderInCompany(req, 'write')) },
         select: { id: true, conceptId: true, customerId: true, totalCents: true, status: true },
       })
       if (!order) throw new AppError('NOT_FOUND', 'Order not found in your active company', 404)
@@ -360,12 +389,10 @@ export async function orderRoutes(fastify: FastifyInstance) {
         reason: z.string().min(3, 'Reason is required').max(500),
         mode:   z.enum(['refund', 'cancel']).default('refund'),
       }).parse(req.body)
-      const order = await getOrder(req.params.id)
+      // Company-scoped at the lookup — a foreign order 404s before anything
+      // is read, refunded or audited.
+      const order = await getOrder(req.params.id, await orderInCompany(req, 'write'))
       await assertConceptAccess(req.staffUser!, order.conceptId)
-      const concept = await prisma.concept.findFirst({
-        where: { id: order.conceptId, tenantId: req.staffUser!.tenantFilter, deletedAt: null },
-      })
-      if (!concept) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Order not found in your active company' } })
 
       const targetStatus = body.mode === 'cancel' ? 'cancelled' : 'refunded'
       const updated = await updateOrderStatus(req.params.id, targetStatus as never)
@@ -397,17 +424,12 @@ export async function orderItemRoutes(fastify: FastifyInstance) {
     async (req) => {
       const { status } = updateItemStatusSchema.parse(req.body)
       const { prisma } = await import('../../lib/prisma.js')
+      // Company scope reached through order → concept.
       const item = await prisma.orderItem.findFirst({
-        where: {
-          id: req.params.id,
-          order: { concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null } },
-        },
+        where: { id: req.params.id, order: await orderInCompany(req, 'write') },
         select: { order: { select: { conceptId: true } } },
       })
-      if (!item) {
-        const { NotFoundError } = await import('../../lib/errors.js')
-        throw new NotFoundError('OrderItem', req.params.id)
-      }
+      if (!item) throw new NotFoundError('OrderItem', req.params.id)
       await assertConceptAccess(req.staffUser!, item.order.conceptId)
       return updateItemStatus(req.params.id, status as never, req.staffUser?.id)
     },
@@ -420,17 +442,12 @@ export async function orderItemRoutes(fastify: FastifyInstance) {
     async (req, reply) => {
       const { url } = z.object({ url: z.string().url() }).parse(req.body)
       const { prisma } = await import('../../lib/prisma.js')
+      // Company scope reached through order → concept.
       const item = await prisma.orderItem.findFirst({
-        where: {
-          id: req.params.id,
-          order: { concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null } },
-        },
+        where: { id: req.params.id, order: await orderInCompany(req, 'write') },
         select: { order: { select: { conceptId: true } } },
       })
-      if (!item) {
-        const { NotFoundError } = await import('../../lib/errors.js')
-        throw new NotFoundError('OrderItem', req.params.id)
-      }
+      if (!item) throw new NotFoundError('OrderItem', req.params.id)
       await assertConceptAccess(req.staffUser!, item.order.conceptId)
       await prisma.orderItem.update({
         where: { id: req.params.id },
@@ -452,12 +469,10 @@ export async function orderCourseRoutes(fastify: FastifyInstance) {
     async (req, reply) => {
       const { course } = z.object({ course: z.number().int().min(1).max(20) }).parse(req.body)
       const { prisma } = await import('../../lib/prisma.js')
-      // Verify order belongs to active tenant before firing.
+      // Verify the order belongs to one of the operator's companies before firing.
       const order = await prisma.order.findFirst({
-        where: {
-          id: req.params.id,
-          concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
-        },
+        where: { id: req.params.id, ...(await orderInCompany(req, 'write')) },
+        select: { id: true },
       })
       if (!order) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Order not found in your active company' } })
       const items = await prisma.orderItem.findMany({
@@ -482,10 +497,8 @@ export async function orderCourseRoutes(fastify: FastifyInstance) {
     async (req, reply) => {
       const { prisma } = await import('../../lib/prisma.js')
       const order = await prisma.order.findFirst({
-        where: {
-          id: req.params.id,
-          concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
-        },
+        where: { id: req.params.id, ...(await orderInCompany(req, 'read')) },
+        select: { id: true },
       })
       if (!order) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Order not found in your active company' } })
       const items = await prisma.orderItem.findMany({

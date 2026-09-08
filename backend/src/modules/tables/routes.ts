@@ -1,8 +1,9 @@
-import type { FastifyInstance } from 'fastify'
+import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, MANAGERS, ALL_STAFF } from '../auth/middleware.js'
-import { NotFoundError } from '../../lib/errors.js'
+import { AppError, NotFoundError } from '../../lib/errors.js'
+import { assertConceptOwned, scopeTenantWhere } from '../../lib/tenantScope.js'
 
 const TABLE_STATUSES = ['available', 'seated', 'ordered', 'eating', 'check', 'reserved'] as const
 
@@ -24,18 +25,37 @@ const updateTableSchema = z.object({
   estimatedDepartureAt: z.string().datetime().nullable().optional(),
 })
 
+// Tables are brand-anchored (Table.conceptId) and reach their company through
+// the brand. A table may only be edited or deleted when its brand belongs to
+// a company the operator is a member of ('write' scope); a foreign or unknown
+// id 404s so it never confirms another company's table exists.
+async function findOwnedTable(req: FastifyRequest, id: string) {
+  const table = await prisma.table.findFirst({
+    where: {
+      id,
+      deletedAt: null,
+      concept: { deletedAt: null, ...(await scopeTenantWhere(req, 'write')) },
+    },
+  })
+  if (!table) throw new NotFoundError('Table', id)
+  return table
+}
+
 export async function tableRoutes(fastify: FastifyInstance) {
   // GET /tables?conceptId=
   fastify.get<{ Querystring: { conceptId?: string } }>(
     '/',
     { preHandler: requireAuth(...ALL_STAFF) },
     async (req) => {
+      // A client-supplied conceptId narrows the list but never widens the
+      // scope — a brand outside the current view 404s instead of leaking.
+      if (req.query.conceptId) await assertConceptOwned(req, req.query.conceptId, 'read')
       return prisma.table.findMany({
         where: {
           deletedAt: null,
-          // Scope to active tenant — only return tables for concepts under
-          // the user's currently-selected company.
-          concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
+          // Scope to the active company (or every member company in
+          // "All companies" view) — only tables for brands in that scope.
+          concept: { deletedAt: null, ...(await scopeTenantWhere(req, 'read')) },
           ...(req.query.conceptId && { conceptId: req.query.conceptId }),
         },
         include: { concept: { select: { name: true, slug: true } } },
@@ -50,10 +70,18 @@ export async function tableRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuth(...ALL_STAFF) },
     async (req) => {
       const body = updateTableSchema.parse(req.body)
-      const table = await prisma.table.findFirst({ where: { id: req.params.id, deletedAt: null } })
-      if (!table) throw new NotFoundError('Table', req.params.id)
+      const table = await findOwnedTable(req, req.params.id)
+      // A table can only be pinned to an order of its own brand — otherwise a
+      // guessed order id could tie another company's ticket to this table.
+      if (body.currentOrderId) {
+        const order = await prisma.order.findFirst({
+          where: { id: body.currentOrderId, conceptId: table.conceptId, deletedAt: null },
+          select: { id: true },
+        })
+        if (!order) throw new AppError('ORDER_NOT_IN_BRAND', 'Order does not belong to this table\'s brand', 422)
+      }
       return prisma.table.update({
-        where: { id: req.params.id },
+        where: { id: table.id },
         data: {
           ...body,
           estimatedDepartureAt: body.estimatedDepartureAt
@@ -66,13 +94,12 @@ export async function tableRoutes(fastify: FastifyInstance) {
     },
   )
 
-  // POST /tables — verify the concept belongs to the user's active tenant
+  // POST /tables — the brand must belong to the ACTIVE company. A create
+  // never spans companies, so a brand of another member company 404s.
   fastify.post('/', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
     const body = createTableSchema.parse(req.body)
-    const concept = await prisma.concept.findFirst({
-      where: { id: body.conceptId, tenantId: req.staffUser!.tenantFilter, deletedAt: null },
-    })
-    if (!concept) return reply.status(403).send({ error: { code: 'CROSS_TENANT', message: 'Concept does not belong to your active company' } })
+    if (!req.staffUser!.tenantId) throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company before adding a table', 422)
+    await assertConceptOwned(req, body.conceptId, 'create')
     const table = await prisma.table.create({ data: body })
     return reply.status(201).send(table)
   })
@@ -82,7 +109,8 @@ export async function tableRoutes(fastify: FastifyInstance) {
     '/:id',
     { preHandler: requireAuth(...MANAGERS) },
     async (req, reply) => {
-      await prisma.table.update({ where: { id: req.params.id }, data: { deletedAt: new Date() } })
+      const table = await findOwnedTable(req, req.params.id)
+      await prisma.table.update({ where: { id: table.id }, data: { deletedAt: new Date() } })
       return reply.status(204).send()
     },
   )

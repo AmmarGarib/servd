@@ -132,10 +132,29 @@ export async function ingestOrder(dto: OrderDTO) {
   const menuItemStations = menuItemIds.length > 0
     ? await prisma.menuItem.findMany({
         where: { id: { in: menuItemIds } },
-        select: { id: true, stationId: true, priceCents: true, name: true },
+        select: { id: true, conceptId: true, stationId: true, priceCents: true, name: true },
       })
     : []
   const stationMap = new Map(menuItemStations.map((m) => [m.id, m.stationId]))
+
+  // Brand consistency — every channel (manual, POS, storefront, WhatsApp)
+  // funnels through here, so this is the one place that guarantees an order
+  // for brand X only carries brand X's items and sits at brand X's table.
+  // A guessed id from another brand (or another company) would otherwise
+  // route the ticket to that brand's station / pin it to that brand's table.
+  // 422 either way — an unknown id and a foreign id read the same, so we
+  // never confirm that a row outside this brand exists.
+  const itemConcept = new Map(menuItemStations.map((m) => [m.id, m.conceptId]))
+  if (menuItemIds.some((id) => itemConcept.get(id) !== dto.concept_id)) {
+    throw new AppError('ITEM_NOT_IN_BRAND', 'One or more items do not belong to this brand', 422)
+  }
+  if (dto.table_id) {
+    const table = await prisma.table.findFirst({
+      where: { id: dto.table_id, conceptId: dto.concept_id, deletedAt: null },
+      select: { id: true },
+    })
+    if (!table) throw new AppError('TABLE_NOT_IN_BRAND', 'Table does not belong to this brand', 422)
+  }
 
   // Revenue guard: refuse to take an order for an unpriced (PKR 0) menu item.
   // Items are staged at 0 before the operator sets prices; they may be visible
@@ -357,19 +376,21 @@ export interface ListOrdersFilter {
 export async function listOrders(filter: ListOrdersFilter) {
   const limit = Math.min(filter.limit ?? 50, 200)
 
-  // conceptIds (from staff scoping) constrains the result set; conceptId
-  // (explicit filter) further narrows within that set.
-  const conceptFilter: Record<string, unknown> | undefined =
-    filter.conceptId
-      ? { conceptId: filter.conceptId }
-      : filter.conceptIds && filter.conceptIds.length > 0
-        ? { conceptId: { in: filter.conceptIds } }
-        : undefined
+  // conceptIds (from staff + company scoping) is the hard boundary of the
+  // result set; conceptId (explicit filter) only narrows WITHIN it. The scope
+  // is always applied — an empty scope returns nothing, never everything.
+  // (It used to fall through to an unscoped query when the intersection was
+  // empty, which listed every company's orders.)
+  const scopedIds = filter.conceptIds ?? []
+  const conceptIds = filter.conceptId
+    ? (scopedIds.includes(filter.conceptId) ? [filter.conceptId] : [])
+    : scopedIds
+  if (conceptIds.length === 0) return { data: [], cursor: null, hasMore: false }
 
   const orders = await prisma.order.findMany({
     where: {
       deletedAt: null,
-      ...conceptFilter,
+      conceptId: { in: conceptIds },
       ...(filter.source && { source: filter.source as never }),
       ...(filter.status && filter.status.includes(',')
         ? { status: { in: filter.status.split(',') as OrderStatus[] } }
@@ -413,9 +434,12 @@ export async function listOrders(filter: ListOrdersFilter) {
 
 // ─── Get single order ─────────────────────────────────────────────────────────
 
-export async function getOrder(id: string) {
+// `scope` is the caller's company boundary (e.g. `{ concept: { tenantId } }`
+// from the route's orderInCompany helper) so a foreign id 404s at the lookup
+// itself — the row is never fetched and then filtered.
+export async function getOrder(id: string, scope: Prisma.OrderWhereInput = {}) {
   const order = await prisma.order.findFirst({
-    where: { id, deletedAt: null },
+    where: { id, deletedAt: null, ...scope },
     include: {
       items: {
         include: {

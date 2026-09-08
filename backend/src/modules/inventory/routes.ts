@@ -302,7 +302,7 @@ export async function inventoryRoutes(fastify: FastifyInstance) {
       // waste logs are a classic theft cover-up; making the photo mandatory
       // above PKR X eliminates the easiest version of that abuse.
       const { getOperationsConfig } = await import('../../lib/setup-config.js')
-      const ops = await getOperationsConfig()
+      const ops = await getOperationsConfig(req.staffUser!.tenantId)
       const threshold = ops?.photoRequiredAboveCents ?? 50000
       if (cost && cost >= threshold && !body.photoUrl) {
         throw new AppError(

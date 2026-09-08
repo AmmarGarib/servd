@@ -162,7 +162,9 @@ export async function authRoutes(fastify: FastifyInstance) {
     let geofenceDistanceM: number | null = null
     if (!['admin', 'manager'].includes(result.user.role)) {
       const { getOperationsConfig } = await import('../../lib/setup-config.js')
-      const ops = await getOperationsConfig()
+      const ops = await getOperationsConfig(
+        (await prisma.user.findUnique({ where: { id: result.user.id }, select: { tenantId: true } }))?.tenantId,
+      )
       const ratioEnforced = ops?.geofenceEnforced ?? false
       const selfieRequired = ops?.selfieRequiredAtClockIn ?? false
       const radiusM = ops?.geofenceRadiusMetres ?? 150

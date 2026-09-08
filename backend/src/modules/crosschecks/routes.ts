@@ -67,7 +67,7 @@ export async function crosschecksRoutes(fastify: FastifyInstance) {
     // Photo enforcement — above the configured threshold (sum of line value
     // when costs are present) a photo is required to accept the delivery.
     const { getOperationsConfig } = await import('../../lib/setup-config.js')
-    const ops = await getOperationsConfig()
+    const ops = await getOperationsConfig(req.staffUser!.tenantId)
     const photoThreshold = ops?.photoRequiredAboveCents ?? 50000
     const totalValue = body.lines.reduce((s, l) => s + (l.poUnitCostCents ?? 0) * l.receivedQty, 0)
     if (totalValue >= photoThreshold && !body.photoUrl) {

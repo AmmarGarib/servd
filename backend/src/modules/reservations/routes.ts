@@ -21,6 +21,7 @@ import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, MANAGERS, ALL_STAFF } from '../auth/middleware.js'
 import { assertConceptAccess } from '../../lib/conceptAccess.js'
+import { assertConceptOwned, conceptWhere, scopeTenantWhere, type ScopeMode } from '../../lib/tenantScope.js'
 import { audit } from '../../lib/audit.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { sendSms, sendEmail } from '../../lib/notify.js'
@@ -28,6 +29,58 @@ import { emitReservationEvent } from '../../lib/ws.js'
 import { bumpCustomerRollups } from '../../lib/customerRollups.js'
 
 const DEFAULT_DURATION_MIN = 90
+
+// ─── Company boundary ────────────────────────────────────────────────────────
+// `assertConceptAccess` is a per-user brand whitelist that no-ops for every
+// management role, so it is NOT a company check. Every handler below that
+// takes a brand / table / customer id from the client also runs one of these,
+// so a GS Foods operator can never read or touch a GSX Viva booking, table or
+// guest — even by guessing an id.
+
+/**
+ * A table may only be attached to a reservation of its own brand. The brand
+ * itself has already been resolved inside the operator's companies, so this
+ * closes the "foreign tableId" hole on create / patch / seat. Same message
+ * whether the table is foreign or missing — never confirms a foreign id.
+ */
+async function assertTableInConcept(tableId: string, conceptId: string): Promise<void> {
+  const table = await prisma.table.findFirst({
+    where: { id: tableId, conceptId, deletedAt: null },
+    select: { id: true },
+  })
+  if (!table) throw new AppError('TABLE_NOT_IN_BRAND', 'Table does not belong to this brand', 422)
+}
+
+/**
+ * Customers are global rows (no tenantId), so "mine" means the company has
+ * actually served them: an order or a reservation in one of its brands. Same
+ * rule the CRM module uses. 404 on a stranger's id.
+ */
+async function assertCustomerInScope(req: FastifyRequest, customerId: string, mode: ScopeMode): Promise<void> {
+  const concept = { deletedAt: null, ...(await scopeTenantWhere(req, mode)) }
+  const customer = await prisma.customer.findFirst({
+    where: {
+      id: customerId,
+      deletedAt: null,
+      OR: [
+        { orders:       { some: { concept } } },
+        { reservations: { some: { concept } } },
+      ],
+    },
+    select: { id: true },
+  })
+  if (!customer) throw new NotFoundError('Customer', customerId)
+}
+
+/**
+ * The querystring types below declare `conceptId` / `customerId` as required,
+ * but nothing enforces that at runtime — and an `undefined` id falls through
+ * Prisma as "no filter", which on a write would hit every brand's rows.
+ */
+function requireId(value: string | undefined, name: string): string {
+  if (!value) throw new AppError('MISSING_ID', `${name} is required`, 400)
+  return value
+}
 
 /**
  * Wraps a Prisma write that touches `reservations.tableId + startTime/endTime`.
@@ -104,8 +157,10 @@ export async function reservationRoutes(fastify: FastifyInstance) {
       const { conceptId, date, status } = req.query
       if (conceptId) await assertConceptAccess(req.staffUser!, conceptId)
 
-      const where: Prisma.ReservationWhereInput = {}
-      if (conceptId) where.conceptId = conceptId
+      // Company boundary: a supplied brand must be one the operator can see
+      // (404 otherwise); with none supplied, every brand in view — never
+      // every company's bookings.
+      const where: Prisma.ReservationWhereInput = { ...(await conceptWhere(req, conceptId, 'read')) }
       if (status)    where.status    = status as Prisma.ReservationWhereInput['status']
       if (date) {
         const start = new Date(`${date.slice(0,10)}T00:00:00+05:00`)   // PKT day
@@ -128,6 +183,10 @@ export async function reservationRoutes(fastify: FastifyInstance) {
   fastify.post('/', { preHandler: requireAuth(...ALL_STAFF) }, async (req, reply) => {
     const body = createSchema.parse(req.body)
     await assertConceptAccess(req.staffUser!, body.conceptId)
+    // A new booking binds to a brand of the ACTIVE company only, and any
+    // table it names must be that brand's own.
+    await assertConceptOwned(req, body.conceptId, 'create')
+    if (body.tableId) await assertTableInConcept(body.tableId, body.conceptId)
 
     const startTime = new Date(body.startTime)
     const endTime   = new Date(startTime.getTime() + body.durationMin * 60_000)
@@ -146,8 +205,8 @@ export async function reservationRoutes(fastify: FastifyInstance) {
     // Reservation policy enforcement — owner-controlled rules from /setup/reservation-policy.
     // Bypass if the booking is being created as a walk-in (assumed when source='walkin').
     if (body.source !== 'walkin') {
-      const { getReservationPolicy } = await import('../../lib/setup-config.js')
-      const policy = await getReservationPolicy()
+      const { getReservationPolicy, tenantForConcept } = await import('../../lib/setup-config.js')
+      const policy = await getReservationPolicy(await tenantForConcept(body.conceptId))
 
       if (body.partySize > policy.maxPartySize) {
         throw new AppError('PARTY_TOO_LARGE', `Maximum party size is ${policy.maxPartySize}. Contact the venue for larger groups.`, 400)
@@ -186,8 +245,8 @@ export async function reservationRoutes(fastify: FastifyInstance) {
         body.notes = (body.notes ? body.notes + ' · ' : '') + `Deposit required: PKR ${(policy.depositCents / 100).toFixed(0)} (party of ${body.partySize})`
       }
     } else if (body.source === 'walkin') {
-      const { getReservationPolicy } = await import('../../lib/setup-config.js')
-      const policy = await getReservationPolicy()
+      const { getReservationPolicy, tenantForConcept } = await import('../../lib/setup-config.js')
+      const policy = await getReservationPolicy(await tenantForConcept(body.conceptId))
       if (!policy.walkInsAllowed) {
         throw new AppError('WALKINS_DISABLED', 'Walk-ins are currently not accepted. Please book in advance.', 400)
       }
@@ -279,6 +338,8 @@ export async function reservationRoutes(fastify: FastifyInstance) {
       const r = await prisma.reservation.findFirst({ where: { id: req.params.id, concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null } } })
       if (!r) throw new NotFoundError('Reservation', req.params.id)
       await assertConceptAccess(req.staffUser!, r.conceptId)
+      // Reseating may only target a table of the booking's own brand.
+      if (body.tableId) await assertTableInConcept(body.tableId, r.conceptId)
 
       const startTime = body.startTime ? new Date(body.startTime) : r.startTime
       const endTime   = body.durationMin
@@ -337,6 +398,8 @@ export async function reservationRoutes(fastify: FastifyInstance) {
       if (!r) throw new NotFoundError('Reservation', req.params.id)
       await assertConceptAccess(req.staffUser!, r.conceptId)
       const body = z.object({ tableId: z.string().uuid().optional() }).parse(req.body)
+      // Only a table of the booking's own brand may be flipped to 'seated'.
+      if (body.tableId) await assertTableInConcept(body.tableId, r.conceptId)
       const tableId = body.tableId ?? r.tableId
       if (!tableId) throw new AppError('TABLE_REQUIRED', 'Cannot seat without a table assignment', 422)
 
@@ -461,11 +524,13 @@ export async function reservationRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuth(...ALL_STAFF) },
     async (req) => {
       await assertConceptAccess(req.staffUser!, req.query.conceptId)
+      // Company boundary: foreign brand → 404; absent → every brand in view.
+      const scope = await conceptWhere(req, req.query.conceptId, 'read')
       const today = new Date(); today.setHours(0, 0, 0, 0)
       const tomorrow = new Date(today.getTime() + 86_400_000)
       return prisma.reservation.findMany({
         where: {
-          conceptId: req.query.conceptId,
+          ...scope,
           status: { in: ['booked', 'confirmed'] },
           OR: [
             { tableId: null },
@@ -500,9 +565,13 @@ export async function reservationRoutes(fastify: FastifyInstance) {
       const now = new Date()
       const horizon = new Date(now.getTime() + horizonH * 3_600_000)
 
+      // The KDS widget calls this without a conceptId — scope to every brand
+      // in view rather than every company's arrivals; a foreign id is a 404.
+      const scope = await conceptWhere(req, conceptId, 'read')
+
       const rows = await prisma.reservation.findMany({
         where: {
-          ...(conceptId && { conceptId }),
+          ...scope,
           status: { in: ['booked', 'confirmed', 'seated'] },
           startTime: { gte: now, lt: horizon },
         },
@@ -581,10 +650,12 @@ export async function reservationRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuth(...ALL_STAFF) },
     async (req) => {
       await assertConceptAccess(req.staffUser!, req.query.conceptId)
+      // Company boundary for both the bookings and the table count below.
+      const scope = await conceptWhere(req, req.query.conceptId, 'read')
       const from = new Date(req.query.from)
       const to   = new Date(req.query.to)
       const all = await prisma.reservation.findMany({
-        where: { conceptId: req.query.conceptId, startTime: { gte: from, lte: to } },
+        where: { ...scope, startTime: { gte: from, lte: to } },
         select: { id: true, status: true, partySize: true, startTime: true, customerId: true, source: true },
       })
       const bookedOrAfter = all.filter((r) => !['cancelled'].includes(r.status))
@@ -592,7 +663,7 @@ export async function reservationRoutes(fastify: FastifyInstance) {
       const noShow    = all.filter((r) => r.status === 'no_show')
       const covers    = completed.reduce((s, r) => s + r.partySize, 0)
 
-      const tableCount = await prisma.table.count({ where: { conceptId: req.query.conceptId, deletedAt: null } })
+      const tableCount = await prisma.table.count({ where: { ...scope, deletedAt: null } })
       const days = Math.max(1, Math.ceil((to.getTime() - from.getTime()) / 86_400_000))
       // Naive: assume 4 turn-cycles per day per table (lunch + dinner × 2 seatings).
       // Replace with real seat-time tracking once the data exists.
@@ -644,7 +715,7 @@ export async function reservationRoutes(fastify: FastifyInstance) {
       }
       const concept = await prisma.concept.findFirst({
         where: { slug: req.query.conceptSlug, isActive: true, deletedAt: null },
-        select: { id: true, name: true, type: true, reservationsEnabled: true },
+        select: { id: true, name: true, type: true, reservationsEnabled: true, tenantId: true },
       })
       if (!concept) throw new NotFoundError('Concept', req.query.conceptSlug)
       if (!concept.reservationsEnabled) {
@@ -673,7 +744,7 @@ export async function reservationRoutes(fastify: FastifyInstance) {
       // Pull operator-configured time parameters from ReservationPolicy.
       // The restaurant sets these on /configuration/reservation-policy.
       const { getReservationPolicy } = await import('../../lib/setup-config.js')
-      const policy = await getReservationPolicy()
+      const policy = await getReservationPolicy(concept.tenantId)
       const slotIntervalMin    = policy?.slotIntervalMin    ?? 30
       const defaultDurationMin = policy?.defaultDurationMin ?? 90
 
@@ -792,7 +863,7 @@ export async function reservationRoutes(fastify: FastifyInstance) {
       })
 
       const { getReservationPolicy: getPolicyForBook } = await import('../../lib/setup-config.js')
-      const bookPolicy = await getPolicyForBook()
+      const bookPolicy = await getPolicyForBook(concept.tenantId)
       const durationMin = body.durationMin ?? bookPolicy?.defaultDurationMin ?? DEFAULT_DURATION_MIN
 
       const startTime = new Date(body.startTime)
@@ -1014,10 +1085,11 @@ export async function reservationRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuth(...ALL_STAFF) },
     async (req) => {
       await assertConceptAccess(req.staffUser!, req.query.conceptId)
+      const scope = await conceptWhere(req, req.query.conceptId, 'read')
       const from = req.query.from ? new Date(req.query.from) : new Date()
       const to   = req.query.to   ? new Date(req.query.to)   : new Date(Date.now() + 90 * 86_400_000)
       return prisma.conceptBlockout.findMany({
-        where: { conceptId: req.query.conceptId, startTime: { lt: to }, endTime: { gt: from } },
+        where: { ...scope, startTime: { lt: to }, endTime: { gt: from } },
         orderBy: { startTime: 'asc' },
       })
     },
@@ -1033,6 +1105,8 @@ export async function reservationRoutes(fastify: FastifyInstance) {
       reason:      z.string().max(300).nullable().optional(),
     }).parse(req.body)
     await assertConceptAccess(req.staffUser!, body.conceptId)
+    // A closure can only be raised on a brand of the ACTIVE company.
+    await assertConceptOwned(req, body.conceptId, 'create')
     const created = await prisma.conceptBlockout.create({
       data: {
         conceptId:   body.conceptId,
@@ -1051,10 +1125,13 @@ export async function reservationRoutes(fastify: FastifyInstance) {
     '/blockouts/:id',
     { preHandler: requireAuth(...MANAGERS) },
     async (req, reply) => {
-      const existing = await prisma.conceptBlockout.findUnique({ where: { id: req.params.id } })
+      // Resolved through the brand's company so a foreign id is a plain 404.
+      const existing = await prisma.conceptBlockout.findFirst({
+        where: { id: req.params.id, concept: { deletedAt: null, ...(await scopeTenantWhere(req, 'write')) } },
+      })
       if (!existing) throw new NotFoundError('Blockout', req.params.id)
       await assertConceptAccess(req.staffUser!, existing.conceptId)
-      await prisma.conceptBlockout.delete({ where: { id: req.params.id } })
+      await prisma.conceptBlockout.delete({ where: { id: existing.id } })
       return reply.status(204).send()
     },
   )
@@ -1066,7 +1143,7 @@ export async function reservationRoutes(fastify: FastifyInstance) {
     async (req) => {
       await assertConceptAccess(req.staffUser!, req.query.conceptId)
       return prisma.serviceHours.findMany({
-        where: { conceptId: req.query.conceptId },
+        where: { ...(await conceptWhere(req, req.query.conceptId, 'read')) },
         orderBy: [{ dayOfWeek: 'asc' }, { openMin: 'asc' }],
       })
     },
@@ -1084,11 +1161,15 @@ export async function reservationRoutes(fastify: FastifyInstance) {
           isReservable: z.boolean().default(true),
         })).max(50),
       }).parse(req.body)
-      await assertConceptAccess(req.staffUser!, req.query.conceptId)
+      // Without an id the deleteMany below would match EVERY brand's hours;
+      // with one, it must be a brand of a company the operator belongs to.
+      const conceptId = requireId(req.query.conceptId, 'conceptId')
+      await assertConceptAccess(req.staffUser!, conceptId)
+      await assertConceptOwned(req, conceptId, 'write')
       await prisma.$transaction([
-        prisma.serviceHours.deleteMany({ where: { conceptId: req.query.conceptId } }),
+        prisma.serviceHours.deleteMany({ where: { conceptId } }),
         prisma.serviceHours.createMany({
-          data: body.windows.map((w) => ({ conceptId: req.query.conceptId, ...w })),
+          data: body.windows.map((w) => ({ conceptId, ...w })),
         }),
       ])
       return { ok: true, count: body.windows.length }
@@ -1099,10 +1180,15 @@ export async function reservationRoutes(fastify: FastifyInstance) {
   fastify.get<{ Querystring: { customerId: string } }>(
     '/guest-tags',
     { preHandler: requireAuth(...ALL_STAFF) },
-    async (req) => prisma.guestTag.findMany({
-      where: { customerId: req.query.customerId },
-      orderBy: { createdAt: 'desc' },
-    }),
+    async (req) => {
+      // Without an id the query would return every company's tags.
+      const customerId = requireId(req.query.customerId, 'customerId')
+      await assertCustomerInScope(req, customerId, 'read')
+      return prisma.guestTag.findMany({
+        where: { customerId },
+        orderBy: { createdAt: 'desc' },
+      })
+    },
   )
 
   fastify.post<{ Body: { customerId: string; label: string; color?: string } }>(
@@ -1114,6 +1200,8 @@ export async function reservationRoutes(fastify: FastifyInstance) {
         label:      z.string().min(1).max(40),
         color:      z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
       }).parse(req.body)
+      // Only a guest one of the operator's companies has served can be tagged.
+      await assertCustomerInScope(req, body.customerId, 'write')
       const created = await prisma.guestTag.create({
         data: { ...body, createdById: req.staffUser?.id ?? null },
       })
@@ -1125,7 +1213,23 @@ export async function reservationRoutes(fastify: FastifyInstance) {
     '/guest-tags/:id',
     { preHandler: requireAuth(...ALL_STAFF) },
     async (req, reply) => {
-      await prisma.guestTag.delete({ where: { id: req.params.id } })
+      // Resolved through the tagged guest's company footprint — a bare id
+      // from another company's guest is a plain 404, not a delete.
+      const concept = { deletedAt: null, ...(await scopeTenantWhere(req, 'write')) }
+      const existing = await prisma.guestTag.findFirst({
+        where: {
+          id: req.params.id,
+          customer: {
+            OR: [
+              { orders:       { some: { concept } } },
+              { reservations: { some: { concept } } },
+            ],
+          },
+        },
+        select: { id: true },
+      })
+      if (!existing) throw new NotFoundError('Guest tag', req.params.id)
+      await prisma.guestTag.delete({ where: { id: existing.id } })
       return reply.status(204).send()
     },
   )

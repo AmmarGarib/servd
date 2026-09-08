@@ -3,12 +3,65 @@ import { prisma } from '../../lib/prisma.js'
 import { ingestOrder } from '../orders/service.js'
 import { NotFoundError, AppError } from '../../lib/errors.js'
 import { getFbrQueue, getSrbQueue } from '../../lib/queue.js'
-import { computeServiceCharge, getRefundPolicy, getReceiptConfig } from '../../lib/setup-config.js'
+import { getRefundPolicy, getReceiptConfig, getOperationsConfig } from '../../lib/setup-config.js'
 import { audit } from '../../lib/audit.js'
 import { sendEmail } from '../../lib/notify.js'
 import { flagException } from '../../lib/exceptions.js'
 import type { OrderDTO } from '@servd/types'
-import type { PaymentMethod } from '@prisma/client'
+import type { PaymentMethod, Prisma } from '@prisma/client'
+
+// ─── Company scoping ──────────────────────────────────────────────────────────
+//
+// The singleton config tables hold one global row PER COMPANY (unique on
+// tenantId + scope + scopeId). The shared readers in lib/setup-config.ts still
+// resolve a company-less "first row", which on a multi-company box is
+// whichever company's row happens to sort first — so the till resolves its
+// discount caps, service charge, refund caps and drawer-variance limit for the
+// order's / shift's own company here. A brand with no company (legacy) falls
+// back to the shared reader.
+
+const GLOBAL_SCOPE = { scope: 'global', scopeId: null } as const
+
+async function operationsConfigFor(tenantId: string | null) {
+  if (!tenantId) return getOperationsConfig()
+  const where = { ...GLOBAL_SCOPE, tenantId }
+  return (await prisma.operationsConfig.findFirst({ where })) ?? prisma.operationsConfig.create({ data: where })
+}
+
+async function refundPolicyFor(tenantId: string | null) {
+  if (!tenantId) return getRefundPolicy()
+  const where = { ...GLOBAL_SCOPE, tenantId }
+  return (await prisma.refundPolicy.findFirst({ where })) ?? prisma.refundPolicy.create({ data: where })
+}
+
+async function receiptConfigFor(tenantId: string | null) {
+  if (!tenantId) return getReceiptConfig()
+  const where = { ...GLOBAL_SCOPE, tenantId }
+  return (await prisma.receiptConfig.findFirst({ where })) ?? prisma.receiptConfig.create({ data: where })
+}
+
+/** Mirror of lib/setup-config's computeServiceCharge, fed the company's own row. */
+function serviceChargeFrom(
+  ops: { serviceChargePct: number; serviceChargeAppliesToChannels: string[] } | null,
+  subtotalCents: number,
+  channel: string,
+): number {
+  if (!ops || ops.serviceChargePct <= 0) return 0
+  const channels = ops.serviceChargeAppliesToChannels ?? []
+  if (channels.length > 0 && !channels.includes(channel)) return 0
+  return Math.round(subtotalCents * ops.serviceChargePct)
+}
+
+/**
+ * Only managers of `tenantId` (primary company or a membership) may approve
+ * an override at its tills — a PIN belonging to the other company's manager
+ * must never unlock a discount, void, comp or refund here. No company → no
+ * manager matches.
+ */
+function managersOf(tenantId: string | null): Prisma.UserWhereInput {
+  const ids = tenantId ? [tenantId] : []
+  return { OR: [{ tenantId: { in: ids } }, { tenantMemberships: { some: { tenantId: { in: ids } } } }] }
+}
 
 // ─── POS order creation ───────────────────────────────────────────────────────
 
@@ -62,6 +115,10 @@ export async function createPosOrder(input: PosOrderInput) {
   const discount = input.discountCents ?? 0
   const concept = await prisma.concept.findUnique({ where: { id: input.conceptId } })
   if (!concept) throw new NotFoundError('Concept', input.conceptId)
+  // Every policy read below (discount caps, service charge, manager PINs) is
+  // resolved for the brand's own company.
+  const tenantId = concept.tenantId
+  const ops = await operationsConfigFor(tenantId)
 
   // ── Discount + price-override role gates ─────────────────────────────────
   // Prevents cashiers giving 100%-off to friends. Above policy thresholds the
@@ -69,8 +126,6 @@ export async function createPosOrder(input: PosOrderInput) {
   // (not just session — a cashier can't escalate by hijacking a manager
   // session that walked away from the till).
   if (discount > 0 || hasPriceOverride(input)) {
-    const { getOperationsConfig } = await import('../../lib/setup-config.js')
-    const ops = await getOperationsConfig()
     const cashierDiscountCap = ops?.cashierDiscountPctCap ?? 0.10
     const managerDiscountCap = ops?.managerDiscountPctCap ?? 0.50
     const cashierPriceOverrideCap = ops?.cashierPriceOverrideCap ?? 0
@@ -80,7 +135,7 @@ export async function createPosOrder(input: PosOrderInput) {
     const discountPct = itemTotal > 0 ? discount / itemTotal : 0
     const cap = role === 'admin' || role === 'manager' ? managerDiscountCap : cashierDiscountCap
     if (discountPct > cap) {
-      const approved = await verifyManagerPin(input.managerOverridePin)
+      const approved = await verifyManagerPin(input.managerOverridePin, tenantId)
       if (!approved) {
         throw new AppError(
           'DISCOUNT_OVER_CAP',
@@ -98,7 +153,7 @@ export async function createPosOrder(input: PosOrderInput) {
     if (overrides.length > 0) {
       const totalOverride = overrides.reduce((s, o) => s + o.deltaCents, 0)
       if (role === 'cashier' && totalOverride > cashierPriceOverrideCap) {
-        const approved = await verifyManagerPin(input.managerOverridePin)
+        const approved = await verifyManagerPin(input.managerOverridePin, tenantId)
         if (!approved) {
           throw new AppError(
             'PRICE_OVERRIDE_BLOCKED',
@@ -114,6 +169,7 @@ export async function createPosOrder(input: PosOrderInput) {
         title: `Price override on POS order`,
         description: `${overrides.length} item(s) priced differently from menu. Total delta: PKR ${(totalOverride / 100).toFixed(0)}. Reason: ${input.discountReason ?? 'no reason given'}.`,
         entityType: 'Order',
+        conceptId: input.conceptId,
         actorId: input.staffId,
         amountCents: Math.abs(totalOverride),
         metadata: { overrides, role, conceptId: input.conceptId },
@@ -127,6 +183,7 @@ export async function createPosOrder(input: PosOrderInput) {
         severity: discountPct > managerDiscountCap ? 'high' : 'medium',
         title: `${(discountPct * 100).toFixed(0)}% discount on POS order`,
         description: `Cashier ${input.staffId} applied a ${(discountPct * 100).toFixed(0)}% discount (PKR ${(discount / 100).toFixed(0)} on PKR ${(itemTotal / 100).toFixed(0)} subtotal). Reason: ${input.discountReason ?? 'none given'}.`,
+        conceptId: input.conceptId,
         actorId: input.staffId,
         amountCents: discount,
         metadata: { discountPct, itemTotal, discount, role, reason: input.discountReason },
@@ -150,7 +207,7 @@ export async function createPosOrder(input: PosOrderInput) {
   const taxCents = Math.round(itemTotal * taxRate)
   const netAfterDiscount = itemTotal + taxCents - discount
   // Service charge sits on top of the net (food + tax − discount).
-  const serviceChargeCents = await computeServiceCharge(netAfterDiscount, 'pos')
+  const serviceChargeCents = serviceChargeFrom(ops, netAfterDiscount, 'pos')
   const totalCents = netAfterDiscount + serviceChargeCents
 
   const dto: OrderDTO = {
@@ -389,15 +446,17 @@ export async function processPayment(input: ProcessPaymentInput) {
 
 // ─── Shift management ─────────────────────────────────────────────────────────
 
-export async function openShift(userId: string, openingFloatCents: number) {
+export async function openShift(userId: string, openingFloatCents: number, tenantId: string | null = null) {
   // Check for already-open shift
   const existing = await prisma.shift.findFirst({
     where: { userId, status: 'open' },
   })
   if (existing) throw new AppError('SHIFT_OPEN', 'A shift is already open for this user', 400)
 
+  // The drawer belongs to the company the cashier is acting in — that is
+  // what every shift read/write is scoped on (Shift.tenantId).
   return prisma.shift.create({
-    data: { userId, openingFloatCents, status: 'open' },
+    data: { userId, openingFloatCents, status: 'open', tenantId },
   })
 }
 
@@ -406,7 +465,8 @@ export async function closeShift(shiftId: string, closingFloatCents: number, not
     where: { id: shiftId },
     include: {
       payments: true,
-      user: { select: { name: true } },
+      user: { select: { name: true, tenantId: true } },
+      location: { select: { tenantId: true } },
     },
   })
   if (!shift) throw new NotFoundError('Shift', shiftId)
@@ -425,7 +485,9 @@ export async function closeShift(shiftId: string, closingFloatCents: number, not
     .reduce((s, p) => s + p.amountCents, 0)
   const expected = shift.openingFloatCents + cashSales
   const variance = closingFloatCents - expected
-  const recipt = await getReceiptConfig()
+  // The variance limit of the company whose drawer this is — the location's
+  // company, or the cashier's for shifts opened without a location.
+  const recipt = await receiptConfigFor(shift.location?.tenantId ?? shift.user.tenantId)
   if (Math.abs(variance) > (recipt?.cashVarianceLimitCents ?? 20000)) {
     await flagException({
       kind: 'cash_variance',
@@ -605,6 +667,7 @@ async function ensureCapOrManagerOverride(
   actorRole: string,
   managerOverridePin: string | undefined,
   action: string,
+  tenantId: string | null,
 ): Promise<{ approverId: string | null }> {
   if (policy.requireReason && reason.trim().length === 0) {
     throw new AppError('REASON_REQUIRED', 'Reason required by policy', 400)
@@ -626,7 +689,7 @@ async function ensureCapOrManagerOverride(
   }
 
   const managers = await prisma.user.findMany({
-    where: { isActive: true, role: { in: ['admin', 'manager'] }, pin: { not: null } },
+    where: { isActive: true, role: { in: ['admin', 'manager'] }, pin: { not: null }, ...managersOf(tenantId) },
   })
   const checks = await Promise.all(managers.map(async (m) => ({ m, ok: m.pin ? await bcrypt.compare(managerOverridePin, m.pin) : false })))
   const approver = checks.find((c) => c.ok)?.m ?? null
@@ -670,12 +733,16 @@ async function notifyOwnerIfThreshold(
 }
 
 export async function voidOrderItem(input: VoidInput) {
-  const item = await prisma.orderItem.findUnique({ where: { id: input.orderItemId } })
+  const item = await prisma.orderItem.findUnique({
+    where: { id: input.orderItemId },
+    include: { order: { select: { concept: { select: { tenantId: true } } } } },
+  })
   if (!item || item.orderId !== input.orderId) throw new NotFoundError('OrderItem', input.orderItemId)
   if (item.voidedAt) throw new AppError('ALREADY_VOIDED', 'Item is already voided', 400)
   const lineCents = item.unitPriceCents * item.quantity
+  const tenantId = item.order.concept.tenantId
 
-  const policy = await getRefundPolicy()
+  const policy = await refundPolicyFor(tenantId)
   const { approverId } = await ensureCapOrManagerOverride(
     lineCents,
     policy.cashierVoidLimitCents,
@@ -686,6 +753,7 @@ export async function voidOrderItem(input: VoidInput) {
     input.actorRole,
     input.managerOverridePin,
     'void',
+    tenantId,
   )
 
   const voided = await prisma.orderItem.update({
@@ -738,10 +806,14 @@ interface CompRefundInput {
 }
 
 export async function compOrder(input: CompRefundInput) {
-  const order = await prisma.order.findUnique({ where: { id: input.orderId } })
+  const order = await prisma.order.findUnique({
+    where: { id: input.orderId },
+    include: { concept: { select: { tenantId: true } } },
+  })
   if (!order) throw new NotFoundError('Order', input.orderId)
+  const tenantId = order.concept.tenantId
 
-  const policy = await getRefundPolicy()
+  const policy = await refundPolicyFor(tenantId)
   const { approverId } = await ensureCapOrManagerOverride(
     input.amountCents,
     policy.cashierCompLimitCents,
@@ -752,6 +824,7 @@ export async function compOrder(input: CompRefundInput) {
     input.actorRole,
     input.managerOverridePin,
     'comp',
+    tenantId,
   )
 
   // Comp = settlement at zero cost: a `comp` payment line for the amount.
@@ -780,16 +853,17 @@ export async function compOrder(input: CompRefundInput) {
 export async function refundOrder(input: CompRefundInput) {
   const order = await prisma.order.findUnique({
     where: { id: input.orderId },
-    include: { payments: { where: { status: 'paid' } } },
+    include: { payments: { where: { status: 'paid' } }, concept: { select: { tenantId: true } } },
   })
   if (!order) throw new NotFoundError('Order', input.orderId)
+  const tenantId = order.concept.tenantId
 
   const paidTotal = order.payments.reduce((s, p) => s + p.amountCents, 0)
   if (input.amountCents > paidTotal) {
     throw new AppError('REFUND_EXCEEDS_PAID', `Refund of ${input.amountCents} exceeds paid total of ${paidTotal}`, 400)
   }
 
-  const policy = await getRefundPolicy()
+  const policy = await refundPolicyFor(tenantId)
   const { approverId } = await ensureCapOrManagerOverride(
     input.amountCents,
     policy.cashierRefundLimitCents,
@@ -800,6 +874,7 @@ export async function refundOrder(input: CompRefundInput) {
     input.actorRole,
     input.managerOverridePin,
     'refund',
+    tenantId,
   )
 
   // Mark the most recent paid payment(s) as refunded up to the amount.
@@ -876,10 +951,10 @@ async function detectPriceOverrides(input: PosOrderInput): Promise<Array<{ menuI
   return out
 }
 
-async function verifyManagerPin(pin: string | undefined): Promise<{ id: string; role: string } | null> {
+async function verifyManagerPin(pin: string | undefined, tenantId: string | null): Promise<{ id: string; role: string } | null> {
   if (!pin) return null
   const managers = await prisma.user.findMany({
-    where: { isActive: true, deletedAt: null, role: { in: ['admin', 'manager'] }, pin: { not: null } },
+    where: { isActive: true, deletedAt: null, role: { in: ['admin', 'manager'] }, pin: { not: null }, ...managersOf(tenantId) },
     select: { id: true, role: true, pin: true },
   })
   for (const m of managers) {

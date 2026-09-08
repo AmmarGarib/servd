@@ -115,7 +115,7 @@ export async function crmRoutes(fastify: FastifyInstance) {
     // operator's threshold fire a flag so the owner can spot exfiltration.
     if (customers.length > 0) {
       const { getOperationsConfig } = await import('../../lib/setup-config.js')
-      const ops = await getOperationsConfig()
+      const ops = await getOperationsConfig(req.staffUser!.tenantId)
       const threshold = ops?.pii_export_row_threshold ?? 100
       if (customers.length >= threshold) {
         const { flagException } = await import('../../lib/exceptions.js')

@@ -30,7 +30,12 @@ async function tick(): Promise<void> {
     if (!matchesCron(r.cron, now)) continue
     if (RUNNING.has(r.id)) continue
     RUNNING.add(r.id)
-    void run(r.id, r.reportType as ReportType, r.recipients, r.conceptId, r.name)
+    // Every report runs for ONE company: the brand's, or for "all brands"
+    // schedules the company that owns the schedule. A schedule with no
+    // company at all (pre-migration row) is skipped rather than emailed
+    // org-wide.
+    if (!r.tenantId) { console.warn(`[scheduledReports] ${r.id} has no company — skipped`); continue }
+    void run(r.id, r.reportType as ReportType, r.recipients, r.conceptId, r.tenantId, r.name)
       .catch((err) => console.warn(`[scheduledReports] ${r.id} failed:`, (err as Error).message))
       .finally(() => RUNNING.delete(r.id))
   }
@@ -41,17 +46,18 @@ async function run(
   reportType: ReportType,
   recipients: string[],
   conceptId: string | null,
+  tenantId: string,
   name: string,
 ): Promise<void> {
   let html = ''
   let subject = `[servd] ${name}`
   try {
     if (reportType === 'sales_daily') {
-      ({ subject, html } = await buildDailySalesReport(conceptId))
+      ({ subject, html } = await buildDailySalesReport(conceptId, tenantId))
     } else if (reportType === 'low_stock') {
-      ({ subject, html } = await buildLowStockReport(conceptId))
+      ({ subject, html } = await buildLowStockReport(tenantId))
     } else if (reportType === 'ap_aging') {
-      ({ subject, html } = await buildApAgingReport())
+      ({ subject, html } = await buildApAgingReport(tenantId))
     } else {
       // Stub for shift_summary / food_cost / menu_engineering — wire to real
       // computers once their report endpoints stabilise.
@@ -106,7 +112,7 @@ function matchField(field: string, value: number, min: number, max: number): boo
 
 // ─── Report builders ─────────────────────────────────────────────────────────
 
-async function buildDailySalesReport(conceptId: string | null): Promise<{ subject: string; html: string }> {
+async function buildDailySalesReport(conceptId: string | null, tenantId: string): Promise<{ subject: string; html: string }> {
   const now = new Date()
   const yesterday = new Date(now); yesterday.setDate(yesterday.getDate() - 1)
   const start = new Date(yesterday); start.setHours(0, 0, 0, 0)
@@ -117,7 +123,8 @@ async function buildDailySalesReport(conceptId: string | null): Promise<{ subjec
       placedAt: { gte: start, lte: end },
       status:   { notIn: ['cancelled', 'rejected'] },
       deletedAt: null,
-      ...(conceptId && { conceptId }),
+      // One brand, or every brand of this company — never another company's.
+      ...(conceptId ? { conceptId } : { concept: { tenantId } }),
     },
     select: { totalCents: true, discountCents: true, taxCents: true, source: true },
   })
@@ -143,10 +150,11 @@ async function buildDailySalesReport(conceptId: string | null): Promise<{ subjec
   }
 }
 
-async function buildLowStockReport(conceptId: string | null): Promise<{ subject: string; html: string }> {
+async function buildLowStockReport(tenantId: string): Promise<{ subject: string; html: string }> {
   const items = await prisma.inventoryItem.findMany({
     where: {
       deletedAt: null,
+      tenantId,
       currentStock: { lte: prisma.inventoryItem.fields.parLevel },
     },
     select: { name: true, currentStock: true, parLevel: true, unit: true },
@@ -168,9 +176,9 @@ async function buildLowStockReport(conceptId: string | null): Promise<{ subject:
   }
 }
 
-async function buildApAgingReport(): Promise<{ subject: string; html: string }> {
+async function buildApAgingReport(tenantId: string): Promise<{ subject: string; html: string }> {
   const bills = await prisma.supplierBill.findMany({
-    where: { status: { not: 'void' } },
+    where: { status: { not: 'void' }, supplier: { tenantId } },
     include: { supplier: { select: { name: true } }, applications: true },
   })
   const fmt = (c: number) => `PKR ${(c / 100).toLocaleString('en-PK', { maximumFractionDigits: 0 })}`

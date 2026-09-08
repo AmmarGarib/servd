@@ -6,7 +6,7 @@ import { requireCustomerAuth, requireAuth, MANAGERS } from '../auth/middleware.j
 import { ingestOrder } from '../orders/service.js'
 import { NotFoundError, AppError } from '../../lib/errors.js'
 import { reserveItem, settleCart, getAvailability, getBatchAvailability } from '../../lib/reservation.js'
-import { computeServiceCharge, computeDeliveryFee, haversineKm as zoneHaversineKm } from '../../lib/setup-config.js'
+import { computeServiceCharge, computeDeliveryFee, tenantForConcept, haversineKm as zoneHaversineKm } from '../../lib/setup-config.js'
 import type { OrderDTO } from '@servd/types'
 
 function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
@@ -493,7 +493,7 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
     }
 
     // Service charge — applied to (food + tax + delivery) for storefront orders.
-    const serviceChargeCents = await computeServiceCharge(itemTotal + taxCents + deliveryFeeCents, 'storefront')
+    const serviceChargeCents = await computeServiceCharge(itemTotal + taxCents + deliveryFeeCents, 'storefront', await tenantForConcept(concept.id))
 
     let subtotal = itemTotal + taxCents + deliveryFeeCents + serviceChargeCents
 

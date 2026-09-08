@@ -295,7 +295,7 @@ export async function recipeRoutes(fastify: FastifyInstance) {
       // signal exfiltration and fire a flag.
       if (recipes.length >= 50) {
         const { getOperationsConfig } = await import('../../lib/setup-config.js')
-        const ops = await getOperationsConfig()
+        const ops = await getOperationsConfig(req.staffUser!.tenantId)
         const threshold = ops?.pii_export_row_threshold ?? 100
         if (recipes.length >= threshold) {
           const { flagException } = await import('../../lib/exceptions.js')

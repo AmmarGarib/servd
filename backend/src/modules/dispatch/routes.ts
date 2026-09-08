@@ -8,26 +8,28 @@
 // Auth + tenant model:
 //   - All routes require a staff session (requireAuth ALL_STAFF).
 //   - Every Rider row carries a tenantId (added in migration
-//     20260602100000_rider_tenant_id). Every query in this module filters by
-//     `tenantId IN req.staffUser!.tenantFilter` so a cashier in tenant A
-//     cannot see, mutate, or geofence tenant B's fleet.
+//     20260602100000_rider_tenant_id). Every query in this module is scoped
+//     through `scopeTenantWhere` ('read' on GETs — portfolio-aware; 'write'
+//     on mutations — every company the operator belongs to) so a cashier in
+//     tenant A cannot see, mutate, or geofence tenant B's fleet.
+//   - An order and the rider carrying it must belong to the SAME company. A
+//     head-office operator's write scope spans every company they are a
+//     member of, so "both in scope" is not enough on assign.
 
-import type { FastifyInstance } from 'fastify'
+import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, ALL_STAFF } from '../auth/middleware.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
+import { scopeTenantWhere, type ScopeMode } from '../../lib/tenantScope.js'
 
-// Tenant-scoped rider lookup. `tenantFilter` matches the type emitted by the
-// auth middleware (`string | { in: string[] } | null`) — Prisma accepts the
-// same shape directly on scalar columns. A `null` tenantFilter means the
-// staff user has no tenant assignment, so they should see nothing.
-type TenantFilter = string | { in: string[] } | null
-
-async function findRiderInTenant(id: string, tenantFilter: TenantFilter) {
-  if (tenantFilter == null) return null
+// Company-scoped rider lookup. Goes through scopeTenantWhere rather than the
+// raw tenantFilter so a staff user with no company resolves to an empty
+// `in: []` rather than `tenantId: null` (which would match legacy
+// company-less rows).
+async function findRiderInScope(req: FastifyRequest, id: string, mode: ScopeMode) {
   return prisma.rider.findFirst({
-    where: { id, tenantId: tenantFilter, deletedAt: null },
+    where: { id, deletedAt: null, ...(await scopeTenantWhere(req, mode)) },
   })
 }
 
@@ -49,8 +51,24 @@ export async function dispatchRoutes(fastify: FastifyInstance) {
         orderId:  z.string().uuid().optional(),
       }).parse(req.body)
 
-      const rider = await findRiderInTenant(req.params.id, req.staffUser!.tenantFilter)
+      const rider = await findRiderInScope(req, req.params.id, 'write')
       if (!rider) throw new NotFoundError('Rider', req.params.id)
+
+      // A fix may only be pinned to an order this rider is actually carrying,
+      // under a brand of a company the operator can act in — never a guessed
+      // foreign order id on the GPS trail.
+      if (body.orderId) {
+        const order = await prisma.order.findFirst({
+          where: {
+            id: body.orderId,
+            riderId: rider.id,
+            deletedAt: null,
+            concept: { deletedAt: null, ...(await scopeTenantWhere(req, 'write')) },
+          },
+          select: { id: true },
+        })
+        if (!order) throw new AppError('ORDER_NOT_ASSIGNED', 'Order is not assigned to this rider', 422)
+      }
 
       const now = new Date()
       await prisma.$transaction([
@@ -89,7 +107,7 @@ export async function dispatchRoutes(fastify: FastifyInstance) {
     async (req) => {
       // Verify the rider belongs to the caller's tenant before returning their
       // GPS trail — otherwise this is a competitor-fleet-tracking endpoint.
-      const rider = await findRiderInTenant(req.params.id, req.staffUser!.tenantFilter)
+      const rider = await findRiderInScope(req, req.params.id, 'read')
       if (!rider) throw new NotFoundError('Rider', req.params.id)
       const sinceMin = parseInt(req.query.sinceMin ?? '60', 10)
       const since = new Date(Date.now() - sinceMin * 60_000)
@@ -106,11 +124,12 @@ export async function dispatchRoutes(fastify: FastifyInstance) {
   // view. Riders with no tenantId (legacy / unassigned) are excluded — they
   // shouldn't appear on any dispatch board until an admin assigns them.
   fastify.get('/board', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
+    const scope = await scopeTenantWhere(req, 'read')
     const riders = await prisma.rider.findMany({
       where: {
         isActive: true,
         deletedAt: null,
-        tenantId: req.staffUser!.tenantFilter ?? { in: [] },
+        ...scope,
       },
       orderBy: { name: 'asc' },
       select: {
@@ -122,7 +141,7 @@ export async function dispatchRoutes(fastify: FastifyInstance) {
             deletedAt: null,
             // Belt-and-braces: even within a tenant-scoped rider, only show
             // orders whose concept is in scope.
-            concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
+            concept: { deletedAt: null, ...scope },
           },
           select: {
             id: true, status: true, totalCents: true, customerName: true, deliveryNotes: true,
@@ -150,14 +169,21 @@ export async function dispatchRoutes(fastify: FastifyInstance) {
       const order = await prisma.order.findFirst({
         where: {
           id: req.params.id,
-          concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
+          concept: { deletedAt: null, ...(await scopeTenantWhere(req, 'write')) },
         },
+        select: { id: true, concept: { select: { tenantId: true } } },
       })
       if (!order) throw new NotFoundError('Order', req.params.id)
       // Rider must also be in the same tenant — stops cross-tenant fleet
       // hijacking via order-assign.
-      const rider = await findRiderInTenant(body.riderId, req.staffUser!.tenantFilter)
+      const rider = await findRiderInScope(req, body.riderId, 'write')
       if (!rider) throw new NotFoundError('Rider', body.riderId)
+      // Write scope spans every company a head-office operator belongs to,
+      // so "both in scope" is not "same company": the rider must belong to
+      // the ORDER's company or one fleet ends up carrying the other's orders.
+      if (rider.tenantId !== order.concept.tenantId) {
+        throw new AppError('RIDER_NOT_IN_COMPANY', "Rider does not belong to the order's company", 422)
+      }
       if (rider.status === 'offline') throw new AppError('RIDER_OFFLINE', 'Rider is offline', 422)
 
       return prisma.$transaction(async (tx) => {
@@ -182,7 +208,7 @@ export async function dispatchRoutes(fastify: FastifyInstance) {
       const owned = await prisma.order.findFirst({
         where: {
           id: req.params.id,
-          concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
+          concept: { deletedAt: null, ...(await scopeTenantWhere(req, 'write')) },
         },
       })
       if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Order not found in your active company' } })
@@ -199,7 +225,7 @@ export async function dispatchRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuth(...ALL_STAFF) },
     async (req) => {
       const body = z.object({ status: z.enum(['available', 'busy', 'offline']) }).parse(req.body)
-      const rider = await findRiderInTenant(req.params.id, req.staffUser!.tenantFilter)
+      const rider = await findRiderInScope(req, req.params.id, 'write')
       if (!rider) throw new NotFoundError('Rider', req.params.id)
       return prisma.rider.update({
         where: { id: rider.id },

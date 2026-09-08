@@ -15,13 +15,38 @@
 // We don't yet enforce per-location-manager scoping — this MVP trusts
 // authenticated managers to act in good faith. Enforcement queued for the
 // per-location inventory refactor.
+//
+// Company scoping IS enforced. A transfer has no tenantId of its own — it is
+// owned through its two locations (Location.tenantId, company master data).
+// Reads/writes reach a transfer only when one of its locations belongs to a
+// company in scope; a create pins both locations (and the item) to the
+// ACTIVE company so a transfer can never span GS Foods ↔ GSX Viva.
 
-import type { FastifyInstance } from 'fastify'
+import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, MANAGERS, ALL_STAFF } from '../auth/middleware.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { audit } from '../../lib/audit.js'
+import { scopeTenantWhere, type ScopeMode } from '../../lib/tenantScope.js'
+
+// Prisma `where` fragment: the transfer touches a location of a company in
+// scope for `mode` ('read' = view-aware, 'write' = every member company).
+// OR over both ends so a legacy cross-company row stays visible to each side.
+async function transferScopeWhere(req: FastifyRequest, mode: ScopeMode) {
+  const locationWhere = await scopeTenantWhere(req, mode)
+  return { OR: [{ fromLocation: locationWhere }, { toLocation: locationWhere }] }
+}
+
+// Resolve a transfer the operator may edit, or 404 (never confirm a foreign
+// id exists).
+async function findOwnedTransfer(req: FastifyRequest, id: string) {
+  const t = await prisma.stockTransfer.findFirst({
+    where: { id, ...(await transferScopeWhere(req, 'write')) },
+  })
+  if (!t) throw new NotFoundError('StockTransfer', id)
+  return t
+}
 
 const createSchema = z.object({
   inventoryItemId: z.string().uuid(),
@@ -44,6 +69,8 @@ export async function stockTransferRoutes(fastify: FastifyInstance) {
       const { status, fromLocationId, toLocationId, limit } = req.query
       return prisma.stockTransfer.findMany({
         where: {
+          // Company scope first; the client filters only narrow within it.
+          ...(await transferScopeWhere(req, 'read')),
           ...(status         && { status }),
           ...(fromLocationId && { fromLocationId }),
           ...(toLocationId   && { toLocationId }),
@@ -62,6 +89,26 @@ export async function stockTransferRoutes(fastify: FastifyInstance) {
   // POST /stock-transfers — create (status='requested')
   fastify.post('/', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
     const body = createSchema.parse(req.body)
+
+    // Both ends must be live locations of the ACTIVE company — a transfer
+    // never spans companies, and a guessed foreign location id must not bind.
+    if (!req.staffUser!.tenantId) throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company before requesting a transfer', 422)
+    const createWhere = await scopeTenantWhere(req, 'create')
+    const locations = await prisma.location.findMany({
+      where: { id: { in: [body.fromLocationId, body.toLocationId] }, deletedAt: null, ...createWhere },
+      select: { id: true },
+    })
+    if (locations.length !== 2) {
+      throw new AppError('LOCATION_NOT_IN_COMPANY', 'Both locations must belong to the active company', 422)
+    }
+    // The item must be the active company's own, or a shared sourcing item
+    // (tenantId NULL — the inventory module's convention for master-sheet rows).
+    const item = await prisma.inventoryItem.findFirst({
+      where: { id: body.inventoryItemId, deletedAt: null, OR: [createWhere, { tenantId: null }] },
+      select: { id: true },
+    })
+    if (!item) throw new NotFoundError('InventoryItem', body.inventoryItemId)
+
     const transfer = await prisma.stockTransfer.create({
       data: {
         ...body,
@@ -115,8 +162,7 @@ export async function stockTransferRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuth(...MANAGERS) },
     async (req) => {
       const body = z.object({ reason: z.string().max(300).optional() }).parse(req.body ?? {})
-      const t = await prisma.stockTransfer.findUnique({ where: { id: req.params.id } })
-      if (!t) throw new NotFoundError('StockTransfer', req.params.id)
+      const t = await findOwnedTransfer(req, req.params.id)
       if (t.status === 'received') throw new AppError('IMMUTABLE', 'Cannot cancel a received transfer', 422)
       if (t.status === 'cancelled') return t
       const updated = await prisma.stockTransfer.update({
@@ -140,10 +186,10 @@ async function transition(
   expected: string,
   next: string,
   patch: Record<string, unknown>,
-  req: { staffUser?: { id: string; email: string | null } | null },
+  req: FastifyRequest,
 ) {
-  const t = await prisma.stockTransfer.findUnique({ where: { id } })
-  if (!t) throw new NotFoundError('StockTransfer', id)
+  // Scoped lookup: a transfer of a company the operator isn't in is a 404.
+  const t = await findOwnedTransfer(req, id)
   if (t.status !== expected) {
     throw new AppError(
       'BAD_STATE',
