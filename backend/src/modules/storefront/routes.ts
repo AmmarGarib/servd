@@ -8,6 +8,7 @@ import { NotFoundError, AppError } from '../../lib/errors.js'
 import { reserveItem, settleCart, getAvailability, getBatchAvailability } from '../../lib/reservation.js'
 import { computeServiceCharge, computeDeliveryFee, tenantForConcept, haversineKm as zoneHaversineKm } from '../../lib/setup-config.js'
 import type { OrderDTO } from '@servd/types'
+import { redis } from '../../lib/redis.js'
 
 function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
   const R = 6371
@@ -500,6 +501,9 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
     // Promo code — validated atomically to prevent race conditions on usage limits
     let promoCodeId: string | null = null
     let promoDiscountCents = 0
+    // Redis key held while a promo is being applied, released once the usage
+    // row exists (or on the error paths below).
+    let promoLock: string | null = null
     if (body.promoCode) {
       const promo = await prisma.promoCode.findUnique({ where: { code: body.promoCode.toUpperCase() } })
       const now = new Date()
@@ -522,12 +526,29 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
         if (updated.count === 0) throw new AppError('PROMO_EXHAUSTED', 'Promo code usage limit reached', 400)
       }
 
+      // Per-customer limit. The usage row can only be written after the order
+      // exists, so a plain count-then-check leaves a window where two
+      // simultaneous checkouts both pass. Hold a short lock on
+      // (promo, customer) across that window — a second concurrent attempt is
+      // refused rather than silently granted a second discount.
+      const promoLockKey = `promo:lock:${promo.id}:${customerId}`
+      const gotLock = await redis.set(promoLockKey, '1', 'EX', 60, 'NX').catch(() => 'OK')
+      if (gotLock !== 'OK') {
+        if (promo.maxUsageCount != null) {
+          await prisma.promoCode.update({ where: { id: promo.id }, data: { usedCount: { decrement: 1 } } }).catch(() => {})
+        }
+        throw new AppError('PROMO_LIMIT_REACHED', 'This promo code is already being applied to another order', 400)
+      }
+      promoLock = promoLockKey
+
       const usageCount = await prisma.promoCodeUsage.count({ where: { promoCodeId: promo.id, customerId } })
       if (usageCount >= promo.perCustomerLimit) {
         // Undo the increment if we already bumped it
         if (promo.maxUsageCount != null) {
           await prisma.promoCode.update({ where: { id: promo.id }, data: { usedCount: { decrement: 1 } } }).catch(() => {})
         }
+        await redis.del(promoLockKey).catch(() => {})
+        promoLock = null
         throw new AppError('PROMO_LIMIT_REACHED', 'You have already used this promo code', 400)
       }
 
@@ -643,20 +664,35 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
       const total = order.totalCents + (body.tipCents > 0 ? body.tipCents : 0)
       try {
         const card = await prisma.giftCard.findUnique({ where: { code: body.giftCardCode.toUpperCase() } })
-        if (card && card.status === 'active' && card.balanceCents > 0) {
+        // Expiry is enforced on the redeem endpoint; it has to be enforced
+        // here too or an expired card still pays for a checkout.
+        const expired = !!card?.expiresAt && card.expiresAt.getTime() < Date.now()
+        if (card && card.status === 'active' && card.balanceCents > 0 && !expired) {
           const apply = Math.min(card.balanceCents, total)
-          await prisma.$transaction([
-            prisma.giftCard.update({
+          // Conditional decrement inside the update: the balance is read and
+          // written in ONE statement guarded by `balanceCents >= apply`, so two
+          // checkouts racing on the same card can't both succeed. The previous
+          // read-then-write-absolute-value let both write the same result and
+          // spend the card twice.
+          const spent = await prisma.giftCard.updateMany({
+            where: { id: card.id, status: 'active', balanceCents: { gte: apply } },
+            data: { balanceCents: { decrement: apply } },
+          })
+          if (spent.count === 1) {
+            const after = await prisma.giftCard.findUnique({
               where: { id: card.id },
-              data: {
-                balanceCents: card.balanceCents - apply,
-                ...(card.balanceCents - apply === 0 && { status: 'redeemed_full' as never }),
-              },
-            }),
-            prisma.giftCardRedemption.create({
-              data: { giftCardId: card.id, orderId: order.id, amountCents: apply, balanceAfter: card.balanceCents - apply },
-            }),
-          ])
+              select: { balanceCents: true },
+            })
+            await prisma.giftCardRedemption.create({
+              data: { giftCardId: card.id, orderId: order.id, amountCents: apply, balanceAfter: after?.balanceCents ?? 0 },
+            })
+            if ((after?.balanceCents ?? 0) === 0) {
+              await prisma.giftCard.update({
+                where: { id: card.id },
+                data: { status: 'redeemed_full' as never },
+              })
+            }
+          }
         }
       } catch (err) {
         req.log.error({ err: (err as Error).message }, 'gift card redemption failed')
@@ -667,6 +703,11 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
     if (promoCodeId && promoDiscountCents > 0) {
       await prisma.promoCodeUsage.create({ data: { promoCodeId, customerId, orderId: order.id, discountCents: promoDiscountCents } })
     }
+    // Usage is now on record, so a concurrent attempt would see the real count.
+    if (promoLock) {
+      await redis.del(promoLock).catch(() => {})
+      promoLock = null
+    }
     if (walletAmountCents > 0 && customer) {
       // Atomic deduction: only succeeds if balance is still sufficient (prevents double-spend)
       const walletUpdate = await prisma.customer.updateMany({
@@ -674,7 +715,19 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
         data: { walletBalance: { decrement: walletAmountCents } },
       })
       if (walletUpdate.count === 0) {
-        // Balance changed since we read it — charge nothing from wallet
+        // Balance changed since we read it, so nothing was charged. The order
+        // total was ALREADY discounted by this amount above — leaving it there
+        // gave the customer free credit they never had. Put the amount back on
+        // the bill and clear the wallet attribution.
+        await prisma.order.update({
+          where: { id: order.id },
+          data: {
+            totalCents:        { increment: walletAmountCents },
+            walletAmountCents: 0,
+          },
+        })
+        order.totalCents += walletAmountCents
+        order.walletAmountCents = 0
         walletAmountCents = 0
       } else {
         const updatedCustomer = await prisma.customer.findUnique({ where: { id: customerId }, select: { walletBalance: true } })

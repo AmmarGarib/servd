@@ -139,13 +139,20 @@ export async function inventoryRoutes(fastify: FastifyInstance) {
       const { delta } = adjustStockSchema.parse(req.body)
       const item = await prisma.inventoryItem.findFirst({ where: { id: req.params.id, deletedAt: null } })
       if (!item) throw new NotFoundError('InventoryItem', req.params.id)
-      if (item.currentStock + delta < 0) {
-        throw new AppError('NEGATIVE_STOCK', `Adjustment would leave ${item.name} at ${item.currentStock + delta} ${item.unit ?? ''} (have ${item.currentStock})`, 422)
-      }
-      const updated = await prisma.inventoryItem.update({
-        where: { id: req.params.id },
+      // Guard inside the write, not before it: the read-then-write version let
+      // two concurrent adjustments each pass the check and jointly go negative.
+      const applied = await prisma.inventoryItem.updateMany({
+        where: {
+          id: req.params.id,
+          deletedAt: null,
+          ...(delta < 0 ? { currentStock: { gte: -delta } } : {}),
+        },
         data: { currentStock: { increment: delta } },
       })
+      if (applied.count === 0) {
+        throw new AppError('NEGATIVE_STOCK', `Adjustment would leave ${item.name} below zero (have ${item.currentStock} ${item.unit ?? ''})`, 422)
+      }
+      const updated = await prisma.inventoryItem.findFirstOrThrow({ where: { id: req.params.id } })
 
       // Emit low-stock webhook if the adjustment pushed stock at or below par level.
       // parLevel === 0 means "no threshold configured" — skip to avoid spurious alerts.
@@ -312,8 +319,23 @@ export async function inventoryRoutes(fastify: FastifyInstance) {
         )
       }
 
-      const [wasteLog] = await prisma.$transaction([
-        prisma.wasteLog.create({
+      // Wasting more than is on hand is always a data error (or a cover-up),
+      // and negative stock silently corrupts every variance and COGS figure
+      // downstream. The decrement is conditional on having the quantity, so
+      // two simultaneous waste logs can't both take the last of it either.
+      const wasteLog = await prisma.$transaction(async (tx) => {
+        const taken = await tx.inventoryItem.updateMany({
+          where: { id: req.params.id, deletedAt: null, currentStock: { gte: body.quantity } },
+          data: { currentStock: { decrement: body.quantity } },
+        })
+        if (taken.count === 0) {
+          throw new AppError(
+            'NEGATIVE_STOCK',
+            `Cannot waste ${body.quantity} ${body.unit} of ${item.name} — only ${item.currentStock} on hand. Recount first.`,
+            422,
+          )
+        }
+        return tx.wasteLog.create({
           data: {
             inventoryItemId: req.params.id,
             quantity: body.quantity,
@@ -325,12 +347,8 @@ export async function inventoryRoutes(fastify: FastifyInstance) {
             recordedById: req.staffUser?.id,
           },
           include: { inventoryItem: { select: { name: true, unit: true } } },
-        }),
-        prisma.inventoryItem.update({
-          where: { id: req.params.id },
-          data: { currentStock: { decrement: body.quantity } },
-        }),
-      ])
+        })
+      })
 
       const { postWasteLog } = await import('../accounting/supplierPosting.js')
       postWasteLog(wasteLog.id).catch((err) =>

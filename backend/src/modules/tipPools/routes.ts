@@ -12,6 +12,7 @@ import { requireAuth, APPROVERS, MANAGERS } from '../auth/middleware.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { audit } from '../../lib/audit.js'
 import { postJournalEntry, ACCT } from '../accounting/journal.js'
+import { conceptIdsInScope } from '../../lib/tenantScope.js'
 
 const ROLE_WEIGHT_DEFAULT: Record<string, number> = {
   admin:     0,    // typically out of pool
@@ -39,8 +40,8 @@ export async function tipPoolRoutes(fastify: FastifyInstance) {
     '/:id',
     { preHandler: requireAuth(...MANAGERS) },
     async (req) => {
-      const pool = await prisma.tipPool.findUnique({
-        where: { id: req.params.id },
+      const pool = await prisma.tipPool.findFirst({
+        where: { id: req.params.id, conceptId: { in: await conceptIdsInScope(req, 'read') } },
         include: { members: { orderBy: { userName: 'asc' } } },
       })
       if (!pool) throw new NotFoundError('TipPool', req.params.id)
@@ -153,7 +154,12 @@ export async function tipPoolRoutes(fastify: FastifyInstance) {
     '/:id/post',
     { preHandler: requireAuth(...APPROVERS) },
     async (req) => {
-      const pool = await prisma.tipPool.findUnique({ where: { id: req.params.id }, include: { members: true } })
+      // Tip pools belong to a brand, and therefore to one company. Looking one
+      // up by bare id let a manager distribute another company's pool.
+      const pool = await prisma.tipPool.findFirst({
+        where: { id: req.params.id, conceptId: { in: await conceptIdsInScope(req, 'write') } },
+        include: { members: true },
+      })
       if (!pool) throw new NotFoundError('TipPool', req.params.id)
       if (pool.status !== 'draft') throw new AppError('ALREADY_POSTED', `Pool is ${pool.status}`, 422)
 
@@ -226,7 +232,9 @@ export async function tipPoolRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuth(...APPROVERS) },
     async (req) => {
       const body = z.object({ paidFromAccountCode: z.string().optional() }).parse(req.body)
-      const pool = await prisma.tipPool.findUnique({ where: { id: req.params.id } })
+      const pool = await prisma.tipPool.findFirst({
+        where: { id: req.params.id, conceptId: { in: await conceptIdsInScope(req, 'write') } },
+      })
       if (!pool) throw new NotFoundError('TipPool', req.params.id)
       if (pool.status !== 'posted') throw new AppError('NOT_POSTABLE', `Pool is ${pool.status}`, 422)
 

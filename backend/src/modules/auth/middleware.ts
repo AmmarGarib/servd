@@ -63,13 +63,19 @@ declare module 'fastify' {
 // token belongs at the refresh route (`requireRefresh`). The two helpers
 // below share the same role/tenant plumbing.
 async function attachStaffPrincipal(req: FastifyRequest, payload: { sub: string; email: string | null; role: string }, allowedRoles: UserRole[]) {
-  if (allowedRoles.length > 0 && !allowedRoles.includes(payload.role as UserRole)) {
-    throw new ForbiddenError(`Role '${payload.role}' is not allowed for this resource`)
-  }
   const u = await prisma.user.findUnique({
     where: { id: payload.sub },
-    select: { tenantId: true, name: true, isActive: true, accountStatus: true, deletedAt: true, moduleAllow: true, moduleDeny: true },
+    select: { tenantId: true, name: true, role: true, isActive: true, accountStatus: true, deletedAt: true, moduleAllow: true, moduleDeny: true },
   })
+
+  // Authorise on the role stored in the DB, never the one embedded in the JWT.
+  // A token minted while someone was an admin keeps saying "admin" until it
+  // expires, so demoting them left their existing session at full power —
+  // role revocation failed open. The DB is the only live source of truth.
+  const liveRole = (u?.role ?? payload.role) as UserRole
+  if (allowedRoles.length > 0 && !allowedRoles.includes(liveRole)) {
+    throw new ForbiddenError(`Role '${liveRole}' is not allowed for this resource`)
+  }
 
   // Revocation-on-deactivation: a JWT outlives its user's employment unless we
   // re-check status on every request. Without this, a fired/suspended staffer
@@ -121,7 +127,7 @@ async function attachStaffPrincipal(req: FastifyRequest, payload: { sub: string;
     id:       payload.sub,
     email:    payload.email,
     name:     u?.name ?? null,
-    role:     payload.role as UserRole,
+    role:     liveRole,
     tenantId: effectiveTenantId,
     tenantFilter,
     memberTenantIds: Array.from(memberTenantIds),
@@ -132,7 +138,7 @@ async function attachStaffPrincipal(req: FastifyRequest, payload: { sub: string;
   // moduleAllow/moduleDeny. Runs AFTER the role gate above; no-ops for admin
   // and for ungated paths. See lib/moduleAccess.ts.
   await enforceModuleAccess(req.url, {
-    role: payload.role as UserRole,
+    role: liveRole,
     moduleAllow: u.moduleAllow,
     moduleDeny: u.moduleDeny,
   })

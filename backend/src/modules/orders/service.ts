@@ -5,6 +5,7 @@ import { sendOrderReceipt, sendOrderStatusUpdate } from '../../lib/notify.js'
 import { postOrderCompletion, postOrderRefund } from '../accounting/orderPosting.js'
 import type { OrderDTO } from '@servd/types'
 import type { OrderStatus, ItemStatus, Prisma } from '@prisma/client'
+import { calculatePointsEarned } from '../../lib/loyaltySettings.js'
 
 // ─── Inventory deduction (recipe-driven) ─────────────────────────────────────
 // Called fire-and-forget after a new order is created.
@@ -522,7 +523,10 @@ export async function updateOrderStatus(id: string, status: OrderStatus) {
 
     // ── Loyalty points earn ──────────────────────────────────────────────────
     // Mirror the rate used in the loyalty routes: 1 point per PKR 1 (100 paisa).
-    const pointsToEarn = Math.floor(order.totalCents / 100)
+    // Use the operator's configured earn rate (admin → Loyalty), not a
+    // hardcoded 1 point per PKR 1 — changing the rate on the settings page had
+    // no effect on what customers actually earned.
+    const pointsToEarn = await calculatePointsEarned(order.totalCents)
     if (pointsToEarn > 0) {
       void (async () => {
         try {

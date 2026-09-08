@@ -63,9 +63,13 @@ export async function reportRoutes(fastify: FastifyInstance) {
       const { from, to } = dateRange(dateFrom, dateTo)
       const limit = Math.min(parseInt(lStr ?? '20', 10), 50)
 
+      // Group by price point as well as item. Revenue is Σ(price × qty) per
+      // price point; the old query multiplied the SUM of unit prices by the SUM
+      // of quantities, so three PKR 500 sales reported PKR 4,500 instead of
+      // PKR 1,500 (and worse the more rows an item had).
       const rows = await prisma.orderItem.groupBy({
-        by: ['menuItemId', 'name'],
-        _sum: { quantity: true, unitPriceCents: true },
+        by: ['menuItemId', 'name', 'unitPriceCents'],
+        _sum: { quantity: true },
         where: {
           status: { not: 'voided' },
           menuItemId: { not: null },
@@ -76,17 +80,22 @@ export async function reportRoutes(fastify: FastifyInstance) {
             placedAt: { gte: from, lte: to },
           },
         },
-        orderBy: { _sum: { quantity: 'desc' } },
-        take: limit,
       })
 
-      return rows.map((r, i) => ({
-        rank: i + 1,
-        menuItemId: r.menuItemId,
-        name: r.name,
-        quantity: r._sum.quantity ?? 0,
-        revenueCents: (r._sum.unitPriceCents ?? 0) * (r._sum.quantity ?? 0),
-      }))
+      const byItem = new Map<string, { menuItemId: string | null; name: string; quantity: number; revenueCents: number }>()
+      for (const r of rows) {
+        const key = r.menuItemId ?? r.name
+        const qty = r._sum.quantity ?? 0
+        const slot = byItem.get(key) ?? { menuItemId: r.menuItemId, name: r.name, quantity: 0, revenueCents: 0 }
+        slot.quantity     += qty
+        slot.revenueCents += r.unitPriceCents * qty
+        byItem.set(key, slot)
+      }
+
+      return Array.from(byItem.values())
+        .sort((a, b) => b.quantity - a.quantity)
+        .slice(0, limit)
+        .map((r, i) => ({ rank: i + 1, ...r }))
     },
   )
 

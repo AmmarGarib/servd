@@ -8,6 +8,7 @@ import { requireAuth, MANAGERS, ALL_STAFF, ADMIN_ONLY } from '../auth/middleware
 import { flagException, acknowledgeException, resolveException, type ExceptionKind } from '../../lib/exceptions.js'
 import { assertNotSelfApproval } from '../../lib/separation-of-duties.js'
 import { NotFoundError, AppError } from '../../lib/errors.js'
+import { conceptIdsInScope } from '../../lib/tenantScope.js'
 
 // Variance thresholds. Hardcoded for now; later config-driven.
 const RECEIVING_VARIANCE_THRESHOLD = 0.05    // 5%
@@ -356,7 +357,20 @@ export async function crosschecksRoutes(fastify: FastifyInstance) {
   fastify.delete<{ Params: { id: string } }>('/exceptions/:id',
     { preHandler: requireAuth(...ADMIN_ONLY) },
     async (req, reply) => {
-      await prisma.exceptionFlag.update({ where: { id: req.params.id }, data: { status: 'dismissed' } })
+      // Brand-scoped flags belong to one company; company-less platform flags
+      // (conceptId null) stay dismissible by anyone who can see them.
+      const owned = await prisma.exceptionFlag.findFirst({
+        where: {
+          id: req.params.id,
+          OR: [
+            { conceptId: null },
+            { conceptId: { in: await conceptIdsInScope(req, 'write') } },
+          ],
+        },
+        select: { id: true },
+      })
+      if (!owned) throw new NotFoundError('ExceptionFlag', req.params.id)
+      await prisma.exceptionFlag.update({ where: { id: owned.id }, data: { status: 'dismissed' } })
       return reply.status(204).send()
     },
   )

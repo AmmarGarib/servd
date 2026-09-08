@@ -546,9 +546,16 @@ export async function getZReport(shiftId: string) {
     .filter((p) => p.method === 'comp')
     .reduce((s, p) => s + p.amountCents, 0)
 
-  const voids = payments
-    .filter((p) => p.status === 'refunded')
-    .reduce((s, p) => s + p.amountCents, 0)
+  // Refund rows carry a NEGATIVE amountCents. Summing them raw produced a
+  // negative "voids", and every consumer then SUBTRACTED it — so a refund
+  // *added* to revenue and *raised* expected cash, showing double takings and
+  // a phantom drawer shortage. Work in positive magnitudes instead.
+  const refundedPayments = payments.filter((p) => p.status === 'refunded')
+  const voids = refundedPayments.reduce((s, p) => s + Math.abs(p.amountCents), 0)
+  // Only refunds actually handed back in cash move the drawer.
+  const cashRefunds = refundedPayments
+    .filter((p) => p.method === 'cash')
+    .reduce((s, p) => s + Math.abs(p.amountCents), 0)
 
   const totalSales = cashSales + cardSales + walletSales
   const uniqueOrders = new Map<string, { discountCents: number; taxCents: number; tipCents: number }>()
@@ -577,7 +584,7 @@ export async function getZReport(shiftId: string) {
   // Expected cash = opening + cash sales − cash voids/refunds − drops − payouts + adds + payins
   const expectedCash = shift.openingFloatCents
     + cashSales
-    - voids
+    - cashRefunds
     - cashDrops
     - cashPayouts
     + cashAdds
@@ -853,14 +860,33 @@ export async function compOrder(input: CompRefundInput) {
 export async function refundOrder(input: CompRefundInput) {
   const order = await prisma.order.findUnique({
     where: { id: input.orderId },
-    include: { payments: { where: { status: 'paid' } }, concept: { select: { tenantId: true } } },
+    include: {
+      payments: { where: { status: 'paid' } },
+      concept: { select: { tenantId: true } },
+    },
   })
   if (!order) throw new NotFoundError('Order', input.orderId)
   const tenantId = order.concept.tenantId
 
+  // A refund is recorded as a NEW negative payment row; the original 'paid'
+  // rows are left untouched. So comparing against the paid total alone let the
+  // same order be refunded in full over and over. Subtract what has already
+  // been refunded to get what is actually still refundable.
   const paidTotal = order.payments.reduce((s, p) => s + p.amountCents, 0)
-  if (input.amountCents > paidTotal) {
-    throw new AppError('REFUND_EXCEEDS_PAID', `Refund of ${input.amountCents} exceeds paid total of ${paidTotal}`, 400)
+  const refundedRows = await prisma.payment.findMany({
+    where: { orderId: input.orderId, status: 'refunded' },
+    select: { amountCents: true },
+  })
+  const alreadyRefunded = refundedRows.reduce((s, p) => s + Math.abs(p.amountCents), 0)
+  const refundable = paidTotal - alreadyRefunded
+  if (input.amountCents > refundable) {
+    throw new AppError(
+      'REFUND_EXCEEDS_PAID',
+      alreadyRefunded > 0
+        ? `Refund of ${input.amountCents} exceeds the ${refundable} still refundable (paid ${paidTotal}, already refunded ${alreadyRefunded})`
+        : `Refund of ${input.amountCents} exceeds paid total of ${paidTotal}`,
+      400,
+    )
   }
 
   const policy = await refundPolicyFor(tenantId)
@@ -892,9 +918,14 @@ export async function refundOrder(input: CompRefundInput) {
   // method of the most-recent paid payment so reports attribute the refund
   // to the same tender. Status='refunded' is what the Z-report counts as void.
   const originalMethod = order.payments[0]?.method ?? 'cash'
+  // Attach the refund to the same drawer as the sale. Without a shiftId the
+  // Z-report never saw refunds at all: the cash was out of the till but
+  // expected cash still counted the full sale, so the shift closed "short".
+  const refundShiftId = order.payments[0]?.shiftId ?? order.shiftId ?? null
   const refundPayment = await prisma.payment.create({
     data: {
       orderId: input.orderId,
+      shiftId: refundShiftId,
       method: originalMethod,
       amountCents: -input.amountCents,
       status: 'refunded',

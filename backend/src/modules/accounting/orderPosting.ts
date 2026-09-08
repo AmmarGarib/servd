@@ -10,6 +10,7 @@
 import type { Order, OrderItem, Payment, Concept, Recipe, RecipeIngredient, InventoryItem, Prisma } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
 import { ACCT, postJournalEntry, reverseJournalEntry, revenueCodeForConcept, type JournalLineInput } from './journal.js'
+import { costPerMeasureCents } from '../../lib/recipeCost.js'
 
 const Q_FACTOR = 0.05 // 5% recipe shrinkage uplift, mirrors recipes module
 
@@ -43,7 +44,7 @@ async function loadOrderForPosting(orderId: string): Promise<OrderForPosting | n
                       // at write time below).
                       prepRecipe: {
                         include: {
-                          ingredients: { include: { inventoryItem: { select: { unitCostCents: true } } } },
+                          ingredients: { include: { inventoryItem: { select: { unit: true, unitCostCents: true } } } },
                         },
                       },
                     },
@@ -75,12 +76,15 @@ function computeOrderCogsCents(order: OrderForPosting): number {
     const ingCost = recipe.ingredients.reduce((s, ing) => {
       const yp = ing.yieldPct > 0 ? ing.yieldPct : 1
       if (ing.inventoryItem) {
-        return s + Math.round(ing.inventoryItem.unitCostCents ?? 0) * (ing.quantity / yp)
+        // costPerMeasureCents, not the raw unit cost: an item bought per kg is
+        // priced per kg while the recipe quantity is in grams, so the raw value
+        // booked COGS ~1000x too high for every weighed ingredient.
+        return s + costPerMeasureCents(ing.inventoryItem.unit, ing.inventoryItem.unitCostCents) * (ing.quantity / yp)
       }
-      const prep = (ing as unknown as { prepRecipe?: { ingredients: { quantity: number; yieldPct: number; inventoryItem: { unitCostCents: number | null } | null }[]; laborMinutes: number; yieldGrams: number | null } }).prepRecipe
+      const prep = (ing as unknown as { prepRecipe?: { ingredients: { quantity: number; yieldPct: number; inventoryItem: { unit?: string | null; unitCostCents: number | null } | null }[]; laborMinutes: number; yieldGrams: number | null } }).prepRecipe
       if (prep) {
         const sub = prep.ingredients.reduce(
-          (s2, i2) => s2 + (i2.inventoryItem?.unitCostCents ?? 0) * (i2.quantity / (i2.yieldPct > 0 ? i2.yieldPct : 1)),
+          (s2, i2) => s2 + costPerMeasureCents(i2.inventoryItem?.unit, i2.inventoryItem?.unitCostCents) * (i2.quantity / (i2.yieldPct > 0 ? i2.yieldPct : 1)),
           0,
         )
         const labor = (prep.laborMinutes / 60) * 50_00

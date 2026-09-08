@@ -289,10 +289,22 @@ export async function postPayrollRun(runId: string, postedBy: string, tenantId: 
 // ─── Pay: Dr Wages Payable / Cr Bank ─────────────────────────────────────────
 
 export async function payPayrollRun(runId: string, paidBy: string, tenantId: string, paidFromAccountCode?: string) {
-  const run = await prisma.payrollRun.findUnique({ where: { id: runId } })
+  const run = await prisma.payrollRun.findUnique({
+    where: { id: runId },
+    include: { lines: { select: { netCents: true } } },
+  })
   if (!run) throw new NotFoundError('PayrollRun', runId)
   if (run.status !== 'posted') {
     throw new AppError('NOT_POSTABLE', `Run is ${run.status}; only "posted" runs can be paid`, 422)
+  }
+
+  // Pay what was accrued: NET. postPayrollRun credits Wages Payable with the
+  // sum of line.netCents (gross less deductions and advance recoveries), so
+  // paying out gross both overpaid staff and left Wages Payable permanently
+  // out of balance by the deduction total.
+  const totalNet = run.lines.reduce((s, l) => s + (l.netCents > 0 ? l.netCents : 0), 0)
+  if (totalNet === 0) {
+    throw new AppError('EMPTY_RUN', 'Payroll run has nothing to pay', 422)
   }
 
   const cashAccount = paidFromAccountCode ?? ACCT.BANK
@@ -305,8 +317,8 @@ export async function payPayrollRun(runId: string, paidBy: string, tenantId: str
     entryDate: new Date(),
     postedBy: paidBy,
     lines: [
-      { accountCode: ACCT.WAGES_PAYABLE, type: 'debit',  amountCents: run.totalGrossCents, memo: 'Wages paid' },
-      { accountCode: cashAccount,        type: 'credit', amountCents: run.totalGrossCents, memo: 'Bank transfer to staff' },
+      { accountCode: ACCT.WAGES_PAYABLE, type: 'debit',  amountCents: totalNet, memo: 'Wages paid (net)' },
+      { accountCode: cashAccount,        type: 'credit', amountCents: totalNet, memo: 'Bank transfer to staff' },
     ],
   })
 

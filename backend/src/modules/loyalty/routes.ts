@@ -3,6 +3,10 @@ import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
 import { requireCustomerAuth, requireAuth, MANAGERS } from '../auth/middleware.js'
 import { NotFoundError, AppError } from '../../lib/errors.js'
+import {
+  LOYALTY_SETTING_KEYS, LOYALTY_DEFAULTS, loadLoyaltySettings,
+  calculatePointsEarned, calculatePointsValue, invalidateLoyaltySettings,
+} from '../../lib/loyaltySettings.js'
 
 // ─── Points configuration ────────────────────────────────────────────────
 // Live values are read from the Settings table (key-value store) so the
@@ -12,55 +16,6 @@ import { NotFoundError, AppError } from '../../lib/errors.js'
 // as a fallback in case Settings lookup fails (so loyalty never crashes
 // a checkout).
 
-const LOYALTY_SETTING_KEYS = [
-  'loyalty.earn_cents_per_point',   // cents of spend that earns one point — default 100 (= 1 pt per PKR 1)
-  'loyalty.point_value_cents',      // value of one point at redeem — default 100 (= PKR 1)
-  'loyalty.min_redeem_points',      // minimum points needed to redeem in one go
-  'loyalty.expiry_months',          // months before unused points expire
-  'loyalty.birthday_bonus_points',  // points auto-credited on birthday
-  'loyalty.stamp_threshold',        // visits to earn one free item via stamps (per concept)
-] as const
-
-const LOYALTY_DEFAULTS: Record<typeof LOYALTY_SETTING_KEYS[number], number> = {
-  'loyalty.earn_cents_per_point':  100,
-  'loyalty.point_value_cents':     100,
-  'loyalty.min_redeem_points':     50,
-  'loyalty.expiry_months':         12,
-  'loyalty.birthday_bonus_points': 500,
-  'loyalty.stamp_threshold':       9,
-}
-
-// Small cache so we don't hit Settings on every order — invalidated when
-// the operator saves new values via PATCH /loyalty/settings below.
-let _loyaltyCache: { values: typeof LOYALTY_DEFAULTS; expiresAt: number } | null = null
-const LOYALTY_CACHE_TTL_MS = 60_000
-
-async function loadLoyaltySettings(): Promise<typeof LOYALTY_DEFAULTS> {
-  if (_loyaltyCache && _loyaltyCache.expiresAt > Date.now()) return _loyaltyCache.values
-  try {
-    const rows = await prisma.setting.findMany({ where: { key: { in: [...LOYALTY_SETTING_KEYS] } } })
-    const out = { ...LOYALTY_DEFAULTS }
-    for (const r of rows) {
-      const n = Number(r.value)
-      if (Number.isFinite(n) && n >= 0) (out as Record<string, number>)[r.key] = n
-    }
-    _loyaltyCache = { values: out, expiresAt: Date.now() + LOYALTY_CACHE_TTL_MS }
-    return out
-  } catch {
-    return { ...LOYALTY_DEFAULTS }
-  }
-}
-
-async function calculatePointsEarned(totalCents: number): Promise<number> {
-  const s = await loadLoyaltySettings()
-  const denom = s['loyalty.earn_cents_per_point'] || 100
-  return Math.floor(totalCents / denom)
-}
-
-async function calculatePointsValue(points: number): Promise<number> {
-  const s = await loadLoyaltySettings()
-  return Math.floor(points) * (s['loyalty.point_value_cents'] || 100)
-}
 
 // Tier schema — used by POST/PATCH /loyalty/tiers below. Mirrors the
 // Prisma model. customPerks is a string array of free-form bullets.
@@ -259,7 +214,7 @@ export async function loyaltyRoutes(fastify: FastifyInstance) {
           }),
         ),
     )
-    _loyaltyCache = null    // bust so next earn re-reads
+    invalidateLoyaltySettings()    // bust so next earn re-reads
     return loadLoyaltySettings().then((values) => ({ values }))
   })
 

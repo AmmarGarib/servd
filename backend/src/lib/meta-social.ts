@@ -11,7 +11,12 @@ async function getSetting(key: string): Promise<string | null> {
   return row?.value ?? null
 }
 
-export async function getOAuthUrl(redirectUri: string): Promise<string> {
+// `state` is a one-time CSRF token minted by /integrations/social/connect and
+// verified in the callback. Without it the callback accepted ANY code, so a
+// link sent to a logged-in operator silently swapped the connected Facebook /
+// Instagram page for the attacker's — every scheduled post would then publish
+// to their page.
+export async function getOAuthUrl(redirectUri: string, state: string): Promise<string> {
   const appId = process.env['FACEBOOK_APP_ID']
   if (!appId) throw new Error('FACEBOOK_APP_ID not configured')
   const scope = [
@@ -20,7 +25,7 @@ export async function getOAuthUrl(redirectUri: string): Promise<string> {
     'instagram_basic',
     'instagram_content_publish',
   ].join(',')
-  const params = new URLSearchParams({ client_id: appId, redirect_uri: redirectUri, scope, response_type: 'code' })
+  const params = new URLSearchParams({ client_id: appId, redirect_uri: redirectUri, scope, response_type: 'code', state })
   return `https://www.facebook.com/dialog/oauth?${params}`
 }
 

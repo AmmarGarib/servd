@@ -3,6 +3,7 @@ import jwt, { type SignOptions } from 'jsonwebtoken'
 import { nanoid } from 'nanoid'
 import { serviceClient as prisma } from '../../lib/prisma.js'
 import { AppError, NotFoundError, UnauthorizedError } from '../../lib/errors.js'
+import type { UserRole } from '@prisma/client'
 import { sendMagicLink } from '../../lib/notify.js'
 
 if (!process.env['JWT_SECRET'] || !process.env['JWT_REFRESH_SECRET']) {
@@ -28,6 +29,10 @@ export interface CustomerTokenPayload {
   type: 'customer'
 }
 
+// A real bcrypt hash of a value nobody can supply, compared against when the
+// account is missing so failure timing matches the wrong-password path.
+const DUMMY_PASSWORD_HASH = '$2a$12$C6UzMDM.H6dfI/f/IKcEe.7Zt7Z0y2Nn2Vv9Q8kWzHqjKQ1JZ8lQe'
+
 // ─── Staff auth ───────────────────────────────────────────────────────────────
 
 export async function staffLogin(email: string, password: string) {
@@ -37,7 +42,13 @@ export async function staffLogin(email: string, password: string) {
     where: { email: email.toLowerCase(), isActive: true, deletedAt: null, accountStatus: 'active' },
   })
 
-  if (!user) throw new UnauthorizedError('Invalid credentials')
+  // Always pay the bcrypt cost, even for an unknown address. Returning early
+  // made "no such account" answer in ~1ms and "wrong password" in ~100ms,
+  // which is a reliable oracle for enumerating staff emails.
+  if (!user) {
+    await bcrypt.compare(password, DUMMY_PASSWORD_HASH)
+    throw new UnauthorizedError('Invalid credentials')
+  }
 
   const valid = await bcrypt.compare(password, user.password)
   if (!valid) throw new UnauthorizedError('Invalid credentials')
@@ -61,6 +72,13 @@ export async function staffLogin(email: string, password: string) {
   }
 }
 
+// Roles that may NOT sign in with a 4-digit PIN. A PIN is a shared-tablet
+// convenience credential: 10^4 keyspace, typed in public, often watched. That
+// is an acceptable trade for a line cook clocking in; it is not acceptable for
+// an account that can read the P&L, run payroll, or edit roles. These sign in
+// with email + password only.
+const PIN_LOGIN_BLOCKED_ROLES: UserRole[] = ['admin', 'owner', 'management', 'finance', 'hr']
+
 export async function staffPinLogin(identifier: string | undefined, pin: string) {
   // Staff now identify themselves (name or email) BEFORE the PIN. That lets us:
   //   • compare ONE PIN hash instead of every staff member's (no O(n) bcrypt
@@ -69,22 +87,23 @@ export async function staffPinLogin(identifier: string | undefined, pin: string)
   // Only `active` accounts can complete PIN login — `pending` (awaiting CEO
   // approval) and `suspended` (ex-staff) are excluded.
   const idTrim = (identifier ?? '').trim()
-  const candidates = idTrim
-    ? await prisma.user.findMany({
-        where: {
-          isActive: true, pin: { not: null }, deletedAt: null, accountStatus: 'active',
-          OR: [
-            { email: idTrim.toLowerCase() },
-            { name: { equals: idTrim, mode: 'insensitive' } },
-          ],
-        },
-      })
-    // TEMPORARY fallback for any client not yet sending the name — legacy
-    // all-staff scan. Kept so a client glitch can't lock everyone out during
-    // rollout; remove once every login surface sends `identifier`.
-    : await prisma.user.findMany({
-        where: { isActive: true, pin: { not: null }, deletedAt: null, accountStatus: 'active' },
-      })
+  // The identifier is REQUIRED. Without it the old code bcrypt-compared the
+  // typed PIN against every staff member's hash, which (a) turned one request
+  // into N bcrypt rounds, (b) matched whoever happened to share that PIN, and
+  // (c) escaped the per-person lockout because no single account accumulated
+  // the failures. Every login surface (admin, KDS, time-clock) sends it.
+  if (!idTrim) {
+    throw new UnauthorizedError('Enter your name, then your PIN')
+  }
+  const candidates = await prisma.user.findMany({
+    where: {
+      isActive: true, pin: { not: null }, deletedAt: null, accountStatus: 'active',
+      OR: [
+        { email: idTrim.toLowerCase() },
+        { name: { equals: idTrim, mode: 'insensitive' } },
+      ],
+    },
+  })
 
   // Name isn't guaranteed unique, so compare against the (usually one) matches.
   // The candidate set is tiny and scoped to the typed name — not all staff.
@@ -108,6 +127,13 @@ export async function staffPinLogin(identifier: string | undefined, pin: string)
     && (matchedUser as { pinMustReset?: boolean }).pinMustReset
   ) {
     throw new UnauthorizedError('Your PIN needs to be reissued by an admin before you can sign in. Ask the CEO to rotate it from /workforce.')
+  }
+
+  // Privileged accounts never get a session from a PIN, even a correct one.
+  if (matchedUser && PIN_LOGIN_BLOCKED_ROLES.includes(matchedUser.role)) {
+    throw new UnauthorizedError(
+      'This account signs in with email and password — PIN sign-in is disabled for owner, management and finance accounts.',
+    )
   }
 
   if (!matchedUser) {
@@ -233,8 +259,23 @@ export async function customerRegister(
     if (referrer) referredById = referrer.id
   }
 
-  // Orphaned magic-link account (no password set) — claim it by setting a password
+  // Orphaned magic-link account (no password set). Anyone who signed in via a
+  // magic link has one of these, so "register with that email" MUST NOT be a
+  // way to take it over — it carries wallet balance, loyalty points and order
+  // history. Claiming requires proving control of the account's own phone via
+  // OTP; otherwise the real owner signs in with a magic link and sets a
+  // password from their account page.
   if (existing && !existing.password) {
+    const provedPhone =
+      otpVerified && !!normalisedPhone &&
+      (!existing.phone || existing.phone === normalisedPhone)
+    if (!provedPhone) {
+      throw new AppError(
+        'ACCOUNT_NEEDS_VERIFICATION',
+        'An account already exists for this email. Sign in with the emailed link (or verify your phone) to set a password.',
+        409,
+      )
+    }
     const hashed = await bcrypt.hash(password, 12)
     const customer = await prisma.customer.update({
       where: { id: existing.id },

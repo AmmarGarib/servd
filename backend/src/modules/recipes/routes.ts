@@ -4,6 +4,7 @@ import { Prisma } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, MANAGERS, APPROVERS, ALL_STAFF, assertNotSelfApproval } from '../auth/middleware.js'
 import { NotFoundError, AppError } from '../../lib/errors.js'
+import { costPerMeasureCents } from '../../lib/recipeCost.js'
 
 const Q_FACTOR = 0.05 // 5% miscellaneous surcharge (salt, oil, unmeasured items)
 
@@ -11,11 +12,7 @@ const Q_FACTOR = 0.05 // 5% miscellaneous surcharge (salt, oil, unmeasured items
 // per kg/litre divide by 1000; per g/ml (and per-unit pcs) are already per
 // measure. Used wherever a raw line is costed so weighed items priced per kg
 // aren't ~1000x off — including inside component (prep) batch costing.
-function cpgCents(unit: string | null | undefined, unitCostCents: number | null | undefined): number {
-  const u = (unit ?? '').toLowerCase()
-  const c = unitCostCents ?? 0
-  return (u === 'kg' || u === 'litres' || u === 'l') ? c / 1000 : c
-}
+const cpgCents = costPerMeasureCents
 
 // Components can be composed of other components (one sub-recipe used as an
 // ingredient inside another). Costing therefore recurses: a component's
@@ -202,6 +199,27 @@ async function scopedConceptIdSet(req: { staffUser?: { tenantFilter: unknown } |
   })
   return new Set(concepts.map((c) => c.id))
 }
+/**
+ * Resolve a recipe the operator may act on, or 404. A recipe belongs to a
+ * company through its menu item's brand (or, before approval, through
+ * pendingMenuItem.conceptId). Reads were already scoped; the write handlers
+ * looked recipes up by bare id, so a manager at one company could edit,
+ * approve, reject or delete another company's recipes — and approving one
+ * overwrites the live menu price of that company's item.
+ */
+async function assertRecipeInScope(
+  req: { staffUser?: { tenantFilter: unknown } | null },
+  recipeId: string,
+): Promise<void> {
+  const r = await prisma.recipe.findUnique({
+    where: { id: recipeId },
+    select: { kind: true, pendingMenuItem: true, menuItem: { select: { conceptId: true } } },
+  })
+  if (!r) throw new NotFoundError('Recipe', recipeId)
+  const ids = await scopedConceptIdSet(req)
+  if (!recipeInScope(r, ids)) throw new NotFoundError('Recipe', recipeId)
+}
+
 function recipeInScope(
   r: { kind: string; menuItem?: { conceptId: string } | null; pendingMenuItem?: unknown },
   conceptIds: Set<string>,
@@ -839,6 +857,7 @@ export async function recipeRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuth(...MANAGERS) },
     async (req) => {
       const body = recipeUpdateSchema.parse(req.body)
+      await assertRecipeInScope(req, req.params.id)
       return prisma.$transaction(async (tx) => {
         if (body.ingredients) {
           await tx.recipeIngredient.deleteMany({ where: { recipeId: req.params.id } })
@@ -910,6 +929,7 @@ export async function recipeRoutes(fastify: FastifyInstance) {
     '/:id',
     { preHandler: requireAuth(...MANAGERS) },
     async (req, reply) => {
+      await assertRecipeInScope(req, req.params.id)
       // deleteMany for idempotency — repeated DELETEs (React Query refetch
       // race, browser preflight oddities) on an already-gone row would throw
       // Prisma P2025 → 500. deleteMany silently no-ops.
@@ -931,6 +951,7 @@ export async function recipeRoutes(fastify: FastifyInstance) {
     '/:id/submit',
     { preHandler: requireAuth(...MANAGERS) },
     async (req) => {
+      await assertRecipeInScope(req, req.params.id)
       const recipe = await prisma.recipe.findUnique({ where: { id: req.params.id } })
       if (!recipe) throw new NotFoundError('Recipe', req.params.id)
       if (recipe.status !== 'iteration') {
@@ -953,6 +974,7 @@ export async function recipeRoutes(fastify: FastifyInstance) {
     '/:id/approve',
     { preHandler: requireAuth(...APPROVERS) },
     async (req) => {
+      await assertRecipeInScope(req, req.params.id)
       const recipe = await prisma.recipe.findUnique({ where: { id: req.params.id } })
       if (!recipe) throw new NotFoundError('Recipe', req.params.id)
       if (recipe.status !== 'pending_approval') {
@@ -999,6 +1021,7 @@ export async function recipeRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuth(...APPROVERS) },
     async (req) => {
       const { reason } = z.object({ reason: z.string().max(1000).optional() }).parse(req.body ?? {})
+      await assertRecipeInScope(req, req.params.id)
       const recipe = await prisma.recipe.findUnique({ where: { id: req.params.id } })
       if (!recipe) throw new NotFoundError('Recipe', req.params.id)
       if (recipe.status !== 'pending_approval') {
@@ -1054,6 +1077,7 @@ export async function recipeRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuth(...MANAGERS) },
     async (req, reply) => {
       const body = testAttemptSchema.parse(req.body)
+      await assertRecipeInScope(req, req.params.id)
       const recipe = await prisma.recipe.findUnique({ where: { id: req.params.id }, select: { id: true } })
       if (!recipe) throw new NotFoundError('Recipe', req.params.id)
 
@@ -1265,7 +1289,14 @@ export async function recipeRoutes(fastify: FastifyInstance) {
         taxId:   z.string().optional(),
         notes:   z.string().optional(),
       }).parse(req.body)
-      return prisma.supplier.update({ where: { id: req.params.id }, data: body })
+      // Suppliers are company data (Supplier.tenantId) — editing one by bare
+      // id let a manager rename or re-point another company's vendor.
+      const owned = await prisma.supplier.findFirst({
+        where: { id: req.params.id, tenantId: req.staffUser!.tenantFilter },
+        select: { id: true },
+      })
+      if (!owned) throw new NotFoundError('Supplier', req.params.id)
+      return prisma.supplier.update({ where: { id: owned.id }, data: body })
     },
   )
 
@@ -1323,8 +1354,10 @@ export async function recipeRoutes(fastify: FastifyInstance) {
         })),
       }).parse(req.body)
 
-      const po = await prisma.purchaseOrder.findUnique({
-        where: { id: req.params.id },
+      // Receiving stock against another company's PO would post their goods
+      // (and their liability) from this company's screen.
+      const po = await prisma.purchaseOrder.findFirst({
+        where: { id: req.params.id, supplier: { tenantId: req.staffUser!.tenantFilter } },
         include: { lines: true },
       })
       if (!po) throw new NotFoundError('PurchaseOrder', req.params.id)
@@ -1385,8 +1418,13 @@ export async function recipeRoutes(fastify: FastifyInstance) {
     '/purchase-orders/:id/cancel',
     { preHandler: requireAuth(...APPROVERS) },
     async (req) => {
+      const owned = await prisma.purchaseOrder.findFirst({
+        where: { id: req.params.id, supplier: { tenantId: req.staffUser!.tenantFilter } },
+        select: { id: true },
+      })
+      if (!owned) throw new NotFoundError('PurchaseOrder', req.params.id)
       return prisma.purchaseOrder.update({
-        where: { id: req.params.id },
+        where: { id: owned.id },
         data: { status: 'cancelled' },
       })
     },

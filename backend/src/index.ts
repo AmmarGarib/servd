@@ -39,6 +39,7 @@ import { startSegmentComputationWorker } from './workers/segmentComputation.js'
 import { calendarRoutes } from './modules/calendar/routes.js'
 import { supplierChatRoutes } from './modules/procurement/chat.js'
 import { startSocialPublishWorker } from './workers/socialPublish.js'
+import { randomBytes } from 'crypto'
 import { getOAuthUrl, exchangeCodeForTokens } from './lib/meta-social.js'
 import { requireAuth, MANAGERS } from './modules/auth/middleware.js'
 
@@ -159,7 +160,12 @@ async function build() {
         },
       },
     },
-    trustProxy: true,
+    // Trust ONLY proxies we run (the Cloudflare tunnel / reverse proxy on the
+    // same box). `true` trusted the whole X-Forwarded-For chain, so any client
+    // could set that header and rewrite its own req.ip — which every login
+    // lockout keys on. Rotating the header gave an attacker a fresh rate-limit
+    // bucket per request and unlimited PIN/password guesses.
+    trustProxy: ['loopback', 'linklocal', 'uniquelocal'],
   })
 
   // ─── Plugins ───────────────────────────────────────────────────────────────
@@ -389,16 +395,35 @@ async function build() {
           redirectUri: `${process.env['API_URL'] ?? 'http://localhost:3001'}/api/v1/integrations/social/callback`,
         }
       })
-      api.get('/integrations/social/connect', { preHandler: requireAuth(...MANAGERS) }, async (_req) => {
+      api.get('/integrations/social/connect', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
         const redirectUri = `${process.env['API_URL'] ?? 'http://localhost:3001'}/api/v1/integrations/social/callback`
-        const url = await getOAuthUrl(redirectUri)
+        // One-time CSRF state, tied to the operator who started the flow and
+        // valid for 10 minutes. The callback refuses anything else.
+        const state = randomBytes(32).toString('hex')
+        await redis.setex(`social:oauth:${state}`, 600, req.staffUser!.id)
+        const url = await getOAuthUrl(redirectUri, state)
         return { url }
       })
-      api.get<{ Querystring: { code?: string; error?: string } }>(
+      api.get<{ Querystring: { code?: string; error?: string; state?: string } }>(
         '/integrations/social/callback',
         async (req, reply) => {
-          if (req.query.error) return reply.redirect(`${process.env['WEB_URL'] ?? 'http://localhost:3000'}/settings?social_error=${req.query.error}`)
-          if (!req.query.code) return reply.redirect(`${process.env['WEB_URL'] ?? 'http://localhost:3000'}/settings?social_error=no_code`)
+          const web = process.env['WEB_URL'] ?? 'http://localhost:3000'
+          if (req.query.error) return reply.redirect(`${web}/settings?social_error=${req.query.error}`)
+          if (!req.query.code) return reply.redirect(`${web}/settings?social_error=no_code`)
+
+          // Only finish a flow this server started. The state is consumed on
+          // first use, so a replayed or forged callback is rejected.
+          const state = req.query.state
+          if (!state) return reply.redirect(`${web}/settings?social_error=missing_state`)
+          let stateOwner: string | null = null
+          try {
+            stateOwner = await redis.get(`social:oauth:${state}`)
+            if (stateOwner) await redis.del(`social:oauth:${state}`)
+          } catch {
+            stateOwner = null
+          }
+          if (!stateOwner) return reply.redirect(`${web}/settings?social_error=invalid_state`)
+
           try {
             const redirectUri = `${process.env['API_URL'] ?? 'http://localhost:3001'}/api/v1/integrations/social/callback`
             const result = await exchangeCodeForTokens(req.query.code, redirectUri)

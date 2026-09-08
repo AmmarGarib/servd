@@ -4,6 +4,7 @@ import { prisma } from '../../lib/prisma.js'
 import { requireAuth, MANAGERS, ALL_STAFF } from '../auth/middleware.js'
 import { assertConceptAccess } from '../../lib/conceptAccess.js'
 import { NotFoundError } from '../../lib/errors.js'
+import { scopeTenantWhere } from '../../lib/tenantScope.js'
 
 const shiftSchema = z.object({
   userId: z.string().uuid(),
@@ -115,7 +116,12 @@ export async function schedulingRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuth(...MANAGERS) },
     async (req, reply) => {
       const body = shiftSchema.partial().parse(req.body)
-      const existing = await prisma.scheduledShift.findUnique({ where: { id: req.params.id } })
+      // Scope the lookup itself. assertConceptAccess below is a per-user brand
+      // whitelist that no-ops for every management role, so on its own it let a
+      // manager at one company edit another company's rota.
+      const existing = await prisma.scheduledShift.findFirst({
+        where: { id: req.params.id, concept: { deletedAt: null, ...(await scopeTenantWhere(req, 'write')) } },
+      })
       if (!existing) throw new NotFoundError('ScheduledShift', req.params.id)
       await assertConceptAccess(req.staffUser!, existing.conceptId)
 
@@ -162,10 +168,12 @@ export async function schedulingRoutes(fastify: FastifyInstance) {
     '/:id',
     { preHandler: requireAuth(...MANAGERS) },
     async (req, reply) => {
-      const existing = await prisma.scheduledShift.findUnique({ where: { id: req.params.id } })
+      const existing = await prisma.scheduledShift.findFirst({
+        where: { id: req.params.id, concept: { deletedAt: null, ...(await scopeTenantWhere(req, 'write')) } },
+      })
       if (!existing) throw new NotFoundError('ScheduledShift', req.params.id)
       await assertConceptAccess(req.staffUser!, existing.conceptId)
-      await prisma.scheduledShift.delete({ where: { id: req.params.id } })
+      await prisma.scheduledShift.delete({ where: { id: existing.id } })
       return reply.status(204).send()
     },
   )
@@ -390,8 +398,11 @@ export async function schedulingRoutes(fastify: FastifyInstance) {
     async (req, reply) => {
       const { action } = swapActionSchema.parse(req.body)
 
-      const swapRequest = await prisma.shiftSwapRequest.findUnique({
-        where: { id: req.params.id },
+      const swapRequest = await prisma.shiftSwapRequest.findFirst({
+        where: {
+          id: req.params.id,
+          shift: { concept: { deletedAt: null, ...(await scopeTenantWhere(req, 'write')) } },
+        },
         include: { shift: true },
       })
       if (!swapRequest) throw new NotFoundError('ShiftSwapRequest', req.params.id)
