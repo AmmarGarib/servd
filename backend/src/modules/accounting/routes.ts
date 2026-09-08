@@ -6,6 +6,7 @@ import { AppError } from '../../lib/errors.js'
 import { resolveDateRange, parsePktEndOfDay, fmtPktDate } from './dates.js'
 import { trialBalance, balanceSheet, profitAndLoss, cashFlow } from './reports.js'
 import { salesTaxReturn } from './salesTaxReturn.js'
+import { resolveTenantScope } from '../../lib/tenantScope.js'
 import { toCsv, fmtPkr } from './csv.js'
 import { audit } from '../../lib/audit.js'
 
@@ -97,8 +98,12 @@ export async function accountingRoutes(fastify: FastifyInstance) {
       const limit = Math.min(parseInt(limitStr ?? '50', 10), 1000)
       const { from, to } = resolveDateRange(dateFrom, dateTo)
 
+      // The ledger is per company: single-company view shows that company's
+      // books, "All companies" shows every company the operator belongs to.
+      const scope = await resolveTenantScope(req)
       const entries = await prisma.journalEntry.findMany({
         where: {
+          tenantId: { in: scope.tenantIds },
           ...(accountId && { lines: { some: { accountId } } }),
           entryDate: { gte: from, lte: to },
           ...(cursor && { id: { lt: cursor } }),
@@ -147,9 +152,20 @@ export async function accountingRoutes(fastify: FastifyInstance) {
       })
     }
 
+    // A manual entry is posted into the company the operator is working in,
+    // against that company's chart and its own period close.
+    const tenantId = req.staffUser!.tenantId
+    if (!tenantId) throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company first — the ledger is per company', 422)
+
+    const accountIds = Array.from(new Set(body.lines.map((l) => l.accountId)))
+    const owned = await prisma.account.count({ where: { id: { in: accountIds }, tenantId } })
+    if (owned !== accountIds.length) {
+      throw new AppError('ACCOUNT_NOT_IN_COMPANY', 'One or more accounts belong to another company', 422)
+    }
+
     // Period-lock check
     const entryDate = body.entryDate ? new Date(body.entryDate) : new Date()
-    const lock = await prisma.periodLock.findFirst({ orderBy: { lockedThrough: 'desc' } })
+    const lock = await prisma.periodLock.findFirst({ where: { tenantId }, orderBy: { lockedThrough: 'desc' } })
     if (lock && entryDate <= lock.lockedThrough) {
       throw new AppError(
         'PERIOD_LOCKED',
@@ -160,6 +176,7 @@ export async function accountingRoutes(fastify: FastifyInstance) {
 
     const entry = await prisma.journalEntry.create({
       data: {
+        tenantId,
         reference: body.reference,
         description: body.description,
         entryDate,
@@ -199,8 +216,12 @@ export async function accountingRoutes(fastify: FastifyInstance) {
 
   // ─── Chart of accounts ───────────────────────────────────────────────────
 
-  fastify.get('/accounts', { preHandler: requireAuth(...FINANCIALS_VIEWERS) }, async () => {
-    return prisma.account.findMany({ where: { isActive: true }, orderBy: { code: 'asc' } })
+  fastify.get('/accounts', { preHandler: requireAuth(...FINANCIALS_VIEWERS) }, async (req) => {
+    const scope = await resolveTenantScope(req)
+    return prisma.account.findMany({
+      where: { isActive: true, tenantId: { in: scope.tenantIds } },
+      orderBy: { code: 'asc' },
+    })
   })
 
   // ─── Trial balance ───────────────────────────────────────────────────────
@@ -210,7 +231,7 @@ export async function accountingRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuth(...FINANCIALS_VIEWERS) },
     async (req, reply) => {
       const asOf = req.query.asOf ? parsePktEndOfDay(req.query.asOf) : new Date()
-      const report = await trialBalance(asOf)
+      const report = await trialBalance((await resolveTenantScope(req)).tenantIds, asOf)
 
       if (req.query.format === 'csv') {
         const rows = report.rows.map((r) => ({
@@ -234,7 +255,7 @@ export async function accountingRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuth(...FINANCIALS_VIEWERS) },
     async (req, reply) => {
       const asOf = req.query.asOf ? parsePktEndOfDay(req.query.asOf) : new Date()
-      const report = await balanceSheet(asOf)
+      const report = await balanceSheet((await resolveTenantScope(req)).tenantIds, asOf)
 
       if (req.query.format === 'csv') {
         const flat: Array<Record<string, string | number>> = []
@@ -258,7 +279,7 @@ export async function accountingRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuth(...FINANCIALS_VIEWERS) },
     async (req, reply) => {
       const { from, to } = resolveDateRange(req.query.dateFrom, req.query.dateTo)
-      const report = await profitAndLoss(from, to)
+      const report = await profitAndLoss((await resolveTenantScope(req)).tenantIds, from, to)
 
       if (req.query.format === 'csv') {
         const flat: Array<Record<string, string | number>> = []
@@ -285,7 +306,7 @@ export async function accountingRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuth(...FINANCIALS_VIEWERS) },
     async (req, reply) => {
       const { from, to } = resolveDateRange(req.query.dateFrom, req.query.dateTo)
-      const report = await cashFlow(from, to)
+      const report = await cashFlow((await resolveTenantScope(req)).tenantIds, from, to)
 
       if (req.query.format === 'csv') {
         const flat: Array<Record<string, string | number>> = []
@@ -309,6 +330,7 @@ export async function accountingRoutes(fastify: FastifyInstance) {
       const limit = Math.min(parseInt(req.query.limit ?? '30', 10), 100)
       const [entries, audits, orders] = await Promise.all([
         prisma.journalEntry.findMany({
+          where: { tenantId: { in: (await resolveTenantScope(req)).tenantIds } },
           orderBy: { createdAt: 'desc' }, take: limit,
           select: { id: true, reference: true, description: true, createdAt: true, postedBy: true },
         }),
@@ -371,7 +393,10 @@ export async function accountingRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuth(...FINANCIALS_VIEWERS) },
     async (req, reply) => {
       const { from, to } = resolveDateRange(req.query.dateFrom, req.query.dateTo)
-      const report = await salesTaxReturn(from, to)
+      // A sales-tax return is filed by ONE company — never a blend of two.
+      const filingTenantId = req.staffUser!.tenantId
+      if (!filingTenantId) throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company to file the return for', 422)
+      const report = await salesTaxReturn(filingTenantId, from, to)
 
       if (req.query.format === 'csv') {
         const flat: Array<Record<string, string | number>> = []
@@ -402,8 +427,11 @@ export async function accountingRoutes(fastify: FastifyInstance) {
 
   // ─── Period close ────────────────────────────────────────────────────────
 
-  fastify.get('/period-close', { preHandler: requireAuth(...FINANCIALS_VIEWERS) }, async () => {
+  fastify.get('/period-close', { preHandler: requireAuth(...FINANCIALS_VIEWERS) }, async (req) => {
+    // Each company closes its own books, so this reports the ACTIVE company's
+    // close — a lock elsewhere never shows here.
     const lock = await prisma.periodLock.findFirst({
+      where: { tenantId: req.staffUser!.tenantId },
       orderBy: { lockedThrough: 'desc' },
       select: { lockedThrough: true, lockedAt: true, lockedBy: true, note: true },
     })
@@ -416,8 +444,11 @@ export async function accountingRoutes(fastify: FastifyInstance) {
       note: z.string().optional(),
     }).parse(req.body)
 
+    const tenantId = req.staffUser!.tenantId
+    if (!tenantId) throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company — books are closed per company', 422)
+
     const newLock = parsePktEndOfDay(body.lockedThrough)
-    const existing = await prisma.periodLock.findFirst({ orderBy: { lockedThrough: 'desc' } })
+    const existing = await prisma.periodLock.findFirst({ where: { tenantId }, orderBy: { lockedThrough: 'desc' } })
     if (existing && newLock <= existing.lockedThrough) {
       throw new AppError(
         'LOCK_CANNOT_REGRESS',
@@ -428,6 +459,7 @@ export async function accountingRoutes(fastify: FastifyInstance) {
 
     const created = await prisma.periodLock.create({
       data: {
+        tenantId,
         lockedThrough: newLock,
         lockedBy: req.staffUser!.id,
         note: body.note ?? null,

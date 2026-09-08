@@ -22,15 +22,16 @@ interface AccountTotal {
   totalCents: number   // natural balance in the account's normal direction
 }
 
-async function netCreditCents(accountCode: string, from: Date, to: Date): Promise<number> {
-  const account = await prisma.account.findUnique({ where: { code: accountCode } })
+async function netCreditCents(tenantId: string, accountCode: string, from: Date, to: Date): Promise<number> {
+  // The return is filed by ONE company, against its own chart of accounts.
+  const account = await prisma.account.findFirst({ where: { tenantId, code: accountCode } })
   if (!account) return 0
   const sums = await prisma.journalLine.groupBy({
     by: ['type'],
     _sum: { amountCents: true },
     where: {
       accountId: account.id,
-      journalEntry: { entryDate: { gte: from, lte: to } },
+      journalEntry: { tenantId, entryDate: { gte: from, lte: to } },
     },
   })
   let debit = 0, credit = 0
@@ -41,8 +42,8 @@ async function netCreditCents(accountCode: string, from: Date, to: Date): Promis
   return credit - debit
 }
 
-async function netDebitCents(accountCode: string, from: Date, to: Date): Promise<number> {
-  return -(await netCreditCents(accountCode, from, to))
+async function netDebitCents(tenantId: string, accountCode: string, from: Date, to: Date): Promise<number> {
+  return -(await netCreditCents(tenantId, accountCode, from, to))
 }
 
 export interface SalesTaxReturnReport {
@@ -78,9 +79,9 @@ const PROVINCIAL_OUTPUT_CODES = [
 
 const PROVINCIAL_INPUT_CODES = ['1321', '1322', '1323', '1324']
 
-export async function salesTaxReturn(from: Date, to: Date): Promise<SalesTaxReturnReport> {
+export async function salesTaxReturn(tenantId: string, from: Date, to: Date): Promise<SalesTaxReturnReport> {
   const accounts = await prisma.account.findMany({
-    where: { code: { in: [ACCT.GST_OUTPUT, ACCT.GST_INPUT, ...PROVINCIAL_OUTPUT_CODES, ...PROVINCIAL_INPUT_CODES] } },
+    where: { tenantId, code: { in: [ACCT.GST_OUTPUT, ACCT.GST_INPUT, ...PROVINCIAL_OUTPUT_CODES, ...PROVINCIAL_INPUT_CODES] } },
     select: { code: true, name: true },
   })
   const named = (code: string) => accounts.find((a) => a.code === code)?.name ?? code
@@ -88,16 +89,16 @@ export async function salesTaxReturn(from: Date, to: Date): Promise<SalesTaxRetu
   const [fbrOut, fbrIn,
          praOut, srbOut, kpraOut, braOut,
          praIn,  srbIn,  kpraIn,  braIn] = await Promise.all([
-    netCreditCents(ACCT.GST_OUTPUT, from, to),
-    netDebitCents(ACCT.GST_INPUT,   from, to),
-    netCreditCents(ACCT.PRA_TAX_OUTPUT, from, to),
-    netCreditCents(ACCT.SRB_TAX_OUTPUT, from, to),
-    netCreditCents(ACCT.KPRA_TAX_OUTPUT, from, to),
-    netCreditCents(ACCT.BRA_TAX_OUTPUT, from, to),
-    netDebitCents('1321', from, to),
-    netDebitCents('1322', from, to),
-    netDebitCents('1323', from, to),
-    netDebitCents('1324', from, to),
+    netCreditCents(tenantId, ACCT.GST_OUTPUT, from, to),
+    netDebitCents(tenantId, ACCT.GST_INPUT,   from, to),
+    netCreditCents(tenantId, ACCT.PRA_TAX_OUTPUT, from, to),
+    netCreditCents(tenantId, ACCT.SRB_TAX_OUTPUT, from, to),
+    netCreditCents(tenantId, ACCT.KPRA_TAX_OUTPUT, from, to),
+    netCreditCents(tenantId, ACCT.BRA_TAX_OUTPUT, from, to),
+    netDebitCents(tenantId, '1321', from, to),
+    netDebitCents(tenantId, '1322', from, to),
+    netDebitCents(tenantId, '1323', from, to),
+    netDebitCents(tenantId, '1324', from, to),
   ])
 
   const totalOutput = fbrOut + praOut + srbOut + kpraOut + braOut
@@ -105,19 +106,19 @@ export async function salesTaxReturn(from: Date, to: Date): Promise<SalesTaxRetu
 
   // Per-concept revenue for the period
   const concepts = await prisma.concept.findMany({
-    where: { isActive: true, deletedAt: null },
+    where: { tenantId, isActive: true, deletedAt: null },
     select: { id: true, slug: true, name: true, province: true },
   })
   const taxableByConcept: Array<{ conceptSlug: string; conceptName: string; revenueCents: number }> = []
   let taxableSales = 0
-  const revenueAccounts = await prisma.account.findMany({ where: { type: 'revenue' }, select: { id: true, code: true } })
+  const revenueAccounts = await prisma.account.findMany({ where: { tenantId, type: 'revenue' }, select: { id: true, code: true } })
   for (const c of concepts) {
     // Find the matching 4xxx account by code-mapping in journal.ts (revenueCodeForConcept)
     const revAccount = revenueAccounts.find((a) => a.code === conceptRevenueCodeFromSlug(c.slug))
     if (!revAccount) continue
     const sums = await prisma.journalLine.groupBy({
       by: ['type'], _sum: { amountCents: true },
-      where: { accountId: revAccount.id, journalEntry: { entryDate: { gte: from, lte: to } } },
+      where: { accountId: revAccount.id, journalEntry: { tenantId, entryDate: { gte: from, lte: to } } },
     })
     let debit = 0, credit = 0
     for (const s of sums) {

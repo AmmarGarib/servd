@@ -4,6 +4,8 @@ import { prisma } from '../../lib/prisma.js'
 import { requireAuth, MANAGERS, APPROVERS } from '../auth/middleware.js'
 import { resolveDateRange } from '../accounting/dates.js'
 import { audit } from '../../lib/audit.js'
+import { AppError } from '../../lib/errors.js'
+import { resolveTenantScope } from '../../lib/tenantScope.js'
 import {
   computeHoursForPeriod,
   computePayrollRun,
@@ -146,7 +148,9 @@ export async function payrollRoutes(fastify: FastifyInstance) {
     '/runs/:id/post',
     { preHandler: requireAuth(...APPROVERS) },
     async (req) => {
-      return postPayrollRun(req.params.id, req.staffUser!.id)
+      const tenantId = req.staffUser!.tenantId
+      if (!tenantId) throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company first — payroll posts to that company\'s books', 422)
+      return postPayrollRun(req.params.id, req.staffUser!.id, tenantId)
     },
   )
 
@@ -155,7 +159,9 @@ export async function payrollRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuth(...APPROVERS) },
     async (req) => {
       const body = paySchema.parse(req.body ?? {})
-      return payPayrollRun(req.params.id, req.staffUser!.id, body.paidFromAccountCode)
+      const tenantId = req.staffUser!.tenantId
+      if (!tenantId) throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company first — payroll posts to that company\'s books', 422)
+      return payPayrollRun(req.params.id, req.staffUser!.id, tenantId, body.paidFromAccountCode)
     },
   )
 
@@ -166,7 +172,7 @@ export async function payrollRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuth(...MANAGERS) },
     async (req) => {
       const { from, to } = resolveDateRange(req.query.dateFrom, req.query.dateTo)
-      return labourPctReport(from, to)
+      return labourPctReport((await resolveTenantScope(req)).tenantIds, from, to)
     },
   )
 }

@@ -98,8 +98,13 @@ export async function giftCardRoutes(fastify: FastifyInstance) {
       },
     })
 
-    // Journal: Dr cash/card, Cr Gift Card Liability (2080)
+    // Journal: Dr cash/card, Cr Gift Card Liability (2080). Books belong to
+    // the card's brand, or to the company the operator is selling it in.
+    const jeTenantId = card.conceptId
+      ? (await prisma.concept.findUnique({ where: { id: card.conceptId }, select: { tenantId: true } }))?.tenantId ?? req.staffUser!.tenantId
+      : req.staffUser!.tenantId
     await postJournalEntry({
+      tenantId: jeTenantId!,
       sourceType: 'giftcard.issue',
       sourceId: card.id,
       description: `Gift card issued · ${card.code}`,

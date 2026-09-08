@@ -21,9 +21,15 @@ export async function postShiftClose(shiftId: string): Promise<{ posted: boolean
     where: { id: shiftId },
     include: {
       payments: { include: { order: { include: { concept: { select: { id: true, slug: true } } } } } },
+      // Whose drawer this was: stamped on the shift since 20260907140000, with
+      // the location / cashier as the fallback for older rows.
+      location: { select: { tenantId: true } },
+      user:     { select: { tenantId: true } },
     },
   })
   if (!shift) return { posted: false, entryId: null, reason: 'shift_not_found' }
+  const tenantId = shift.tenantId ?? shift.location?.tenantId ?? shift.user.tenantId
+  if (!tenantId) return { posted: false, entryId: null, reason: 'shift_has_no_company' }
 
   // Bucket revenue per concept and totals across all payment methods
   const byConcept = new Map<string, ConceptBucket>()
@@ -139,6 +145,7 @@ export async function postShiftClose(shiftId: string): Promise<{ posted: boolean
   }
 
   const result = await postJournalEntry({
+    tenantId,
     sourceType: 'shift.close',
     sourceId: shiftId,
     description: `POS shift ${shiftId.slice(0, 8)} closeout`,

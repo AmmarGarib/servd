@@ -2327,7 +2327,11 @@ model SupplierPaymentApplication {
 
 model Account {
   id          String      @id @default(uuid())
-  code        String      @unique // e.g. "4001"
+  // Owning company. Each company keeps its own chart of accounts — GS Foods'
+  // "4001 Simmer Revenue" and GSX Viva's chart are separate ledgers, so the
+  // code is unique PER COMPANY, not globally.
+  tenantId    String?
+  code        String // e.g. "4001"
   name        String // e.g. "Restaurant Revenue"
   type        AccountType
   description String?
@@ -2335,21 +2339,30 @@ model Account {
   createdAt   DateTime    @default(now())
   updatedAt   DateTime    @updatedAt
 
+  tenant       Tenant?       @relation("TenantAccounts", fields: [tenantId], references: [id])
   journalLines JournalLine[]
 
+  @@unique([tenantId, code])
+  @@index([tenantId])
   @@map("accounts")
 }
 
 model JournalEntry {
   id          String   @id @default(uuid())
+  // Company this entry belongs to. Stamped by the posting engine from the
+  // source document (the order's brand, the shift's company, the supplier's
+  // company…) so every ledger report can scope without walking the lines.
+  tenantId    String?
   reference   String? // e.g. order ID, shift ID
   description String
   entryDate   DateTime @default(now())
   postedBy    String? // user ID or "system"
   createdAt   DateTime @default(now())
 
-  lines JournalLine[]
+  tenant Tenant?       @relation("TenantJournalEntries", fields: [tenantId], references: [id])
+  lines  JournalLine[]
 
+  @@index([tenantId, entryDate])
   @@map("journal_entries")
 }
 
@@ -2614,11 +2627,17 @@ model AuditLog {
 // (they post in the open period with their own date), preserving auditability.
 model PeriodLock {
   id            String   @id @default(uuid())
+  // Company whose books are closed. Closing GS Foods' August must not freeze
+  // GSX Viva's ledger, so the lock — and the posting check — is per company.
+  tenantId      String?
   lockedThrough DateTime // inclusive — books are closed up to and including this date
   lockedBy      String // user ID
   lockedAt      DateTime @default(now())
   note          String?
 
+  tenant Tenant? @relation("TenantPeriodLocks", fields: [tenantId], references: [id])
+
+  @@index([tenantId])
   @@map("period_locks")
 }
 
@@ -4300,6 +4319,9 @@ model Tenant {
   scheduledReports     ScheduledReport[]     @relation("TenantScheduledReports")
   customFieldDefinitions CustomFieldDefinition[] @relation("TenantCustomFieldDefinitions")
   shifts               Shift[]               @relation("TenantShifts")
+  accounts             Account[]             @relation("TenantAccounts")
+  periodLocks          PeriodLock[]          @relation("TenantPeriodLocks")
+  journalEntries       JournalEntry[]        @relation("TenantJournalEntries")
   departments    Department[]
   shiftBands     ShiftBand[]
   positions      Position[]

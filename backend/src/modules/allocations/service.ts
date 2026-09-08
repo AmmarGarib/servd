@@ -32,12 +32,14 @@ async function netDebitForAccount(accountId: string, periodStart: Date, periodEn
 
 interface RevenueByConcept { conceptId: string; revenueCents: number }
 
-async function revenueByConcept(periodStart: Date, periodEnd: Date): Promise<RevenueByConcept[]> {
-  const concepts = await prisma.concept.findMany({ select: { id: true, slug: true } })
+async function revenueByConcept(tenantId: string, periodStart: Date, periodEnd: Date): Promise<RevenueByConcept[]> {
+  // Only this company's brands and this company's revenue accounts — an
+  // allocation must never spread one company's overhead over another's sales.
+  const concepts = await prisma.concept.findMany({ where: { tenantId, deletedAt: null }, select: { id: true, slug: true } })
   const out: RevenueByConcept[] = []
   for (const c of concepts) {
-    const account = await prisma.account.findUnique({
-      where: { code: revenueCodeForConcept(c.slug) },
+    const account = await prisma.account.findFirst({
+      where: { tenantId, code: revenueCodeForConcept(c.slug) },
       select: { id: true },
     })
     if (!account) continue
@@ -61,6 +63,10 @@ export async function runAllocationRule(input: {
   periodStart: Date
   periodEnd: Date
   postedById: string
+  // The company the operator is allocating within. CostAllocationRule has no
+  // company column yet, so the route supplies the active company; the source
+  // account, the eligible brands and the posting all resolve inside it.
+  tenantId: string
 }) {
   const rule = await prisma.costAllocationRule.findUnique({
     where: { id: input.ruleId },
@@ -72,7 +78,7 @@ export async function runAllocationRule(input: {
     throw new AppError('NO_WEIGHTS', 'Rule has no weight rows — add at least one concept', 422)
   }
 
-  const sourceAccount = await prisma.account.findUnique({ where: { code: rule.sourceAccountCode } })
+  const sourceAccount = await prisma.account.findFirst({ where: { tenantId: input.tenantId, code: rule.sourceAccountCode } })
   if (!sourceAccount) throw new NotFoundError('Account', rule.sourceAccountCode)
 
   const totalCents = await netDebitForAccount(sourceAccount.id, input.periodStart, input.periodEnd)
@@ -109,7 +115,7 @@ export async function runAllocationRule(input: {
     }
   } else {
     // revenue_share
-    const revenues = await revenueByConcept(input.periodStart, input.periodEnd)
+    const revenues = await revenueByConcept(input.tenantId, input.periodStart, input.periodEnd)
     const eligibleConceptIds = new Set(rule.weights.map((w) => w.conceptId))
     const eligibleRevenues = revenues.filter((r) => eligibleConceptIds.has(r.conceptId))
     const totalRevenueCents = eligibleRevenues.reduce((s, r) => s + r.revenueCents, 0)
@@ -166,6 +172,7 @@ export async function runAllocationRule(input: {
   })
 
   await postJournalEntry({
+    tenantId: input.tenantId,
     sourceType: 'allocation.run',
     sourceId: run.id,
     description: `${rule.name}: ${rule.sourceAccountCode} allocated across concepts`,

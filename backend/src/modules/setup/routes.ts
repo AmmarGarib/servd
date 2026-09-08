@@ -733,8 +733,13 @@ export async function setupRoutes(fastify: FastifyInstance) {
   // 13. Chart of accounts — passes through to existing Account model
   // ════════════════════════════════════════════════════════════════════════
 
-  fastify.get('/chart-of-accounts', { preHandler: requireAuth(...MANAGERS) }, async () => {
-    return prisma.account.findMany({ orderBy: { code: 'asc' } })
+  // Each company keeps its own chart of accounts — the same code means a
+  // different account in a different company's books.
+  fastify.get('/chart-of-accounts', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
+    return prisma.account.findMany({
+      where: await scopeTenantWhere(req, 'read'),
+      orderBy: { code: 'asc' },
+    })
   })
   fastify.post('/chart-of-accounts', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req, reply) => {
     const body = z.object({
@@ -743,7 +748,7 @@ export async function setupRoutes(fastify: FastifyInstance) {
       type:        z.enum(['asset', 'liability', 'equity', 'revenue', 'expense']),
       description: z.string().max(500).nullable().optional(),
     }).parse(req.body)
-    const created = await prisma.account.create({ data: body })
+    const created = await prisma.account.create({ data: { ...body, tenantId: activeTenantId(req) } })
     return reply.status(201).send(created)
   })
   fastify.patch<{ Params: { id: string } }>('/chart-of-accounts/:id', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req) => {
@@ -752,15 +757,24 @@ export async function setupRoutes(fastify: FastifyInstance) {
       description: z.string().max(500).nullable().optional(),
       isActive:    z.boolean().optional(),
     }).parse(req.body)
-    return prisma.account.update({ where: { id: req.params.id }, data: body })
+    const existing = await prisma.account.findFirst({
+      where: { id: req.params.id, ...(await scopeTenantWhere(req, 'write')) },
+      select: { id: true },
+    })
+    if (!existing) throw new NotFoundError('Account', req.params.id)
+    return prisma.account.update({ where: { id: existing.id }, data: body })
   })
 
   // ════════════════════════════════════════════════════════════════════════
   // 14. Period locks — passes through to existing PeriodLock model
   // ════════════════════════════════════════════════════════════════════════
 
-  fastify.get('/period-locks', { preHandler: requireAuth(...MANAGERS) }, async () => {
-    return prisma.periodLock.findMany({ orderBy: { lockedThrough: 'desc' } })
+  // Closing a period freezes THIS company's books only.
+  fastify.get('/period-locks', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
+    return prisma.periodLock.findMany({
+      where: await scopeTenantWhere(req, 'read'),
+      orderBy: { lockedThrough: 'desc' },
+    })
   })
   fastify.post('/period-locks', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req, reply) => {
     const body = z.object({
@@ -769,6 +783,7 @@ export async function setupRoutes(fastify: FastifyInstance) {
     }).parse(req.body)
     const created = await prisma.periodLock.create({
       data: {
+        tenantId: activeTenantId(req),
         lockedThrough: new Date(body.lockedThrough),
         note:          body.note,
         lockedBy:      req.staffUser!.id,
@@ -777,8 +792,11 @@ export async function setupRoutes(fastify: FastifyInstance) {
     return reply.status(201).send(created)
   })
   fastify.delete<{ Params: { id: string } }>('/period-locks/:id', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req, reply) => {
-    const lock = await prisma.periodLock.findUnique({ where: { id: req.params.id } })
-    await prisma.periodLock.delete({ where: { id: req.params.id } })
+    const lock = await prisma.periodLock.findFirst({
+      where: { id: req.params.id, ...(await scopeTenantWhere(req, 'write')) },
+    })
+    if (!lock) throw new NotFoundError('PeriodLock', req.params.id)
+    await prisma.periodLock.delete({ where: { id: lock.id } })
 
     // Reopening a closed period is the single most-abused accounting move
     // when someone wants to backdate a fix. Flag every removal for review.

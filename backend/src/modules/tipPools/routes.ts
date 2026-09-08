@@ -231,7 +231,12 @@ export async function tipPoolRoutes(fastify: FastifyInstance) {
       if (pool.status !== 'posted') throw new AppError('NOT_POSTABLE', `Pool is ${pool.status}`, 422)
 
       const cashAccount = body.paidFromAccountCode ?? ACCT.BANK
+      const payoutTenantId = pool.conceptId
+        ? (await prisma.concept.findUnique({ where: { id: pool.conceptId }, select: { tenantId: true } }))?.tenantId ?? req.staffUser!.tenantId
+        : req.staffUser!.tenantId
+      if (!payoutTenantId) throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company before paying out a tip pool', 422)
       await postJournalEntry({
+        tenantId: payoutTenantId,
         sourceType: 'tippool.payout',
         sourceId: pool.id,
         description: `Tip pool payout · ${pool.name}`,

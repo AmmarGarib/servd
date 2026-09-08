@@ -9,6 +9,11 @@
 //   4. Account codes (not UUIDs) at the call site. Codes are stable; UUIDs
 //      change between environments.
 //   5. PKR cents (Int) throughout. No floats, no rounding drift.
+//   6. One company per entry. Each company keeps its own chart of accounts and
+//      its own books, so every posting names the company it belongs to: the
+//      account codes resolve inside that company, the period-lock check reads
+//      that company's close, and the entry is stamped with it. A posting can
+//      never straddle two companies' ledgers.
 
 import type { Prisma, PrismaClient } from '@prisma/client'
 import { prisma as defaultPrisma } from '../../lib/prisma.js'
@@ -27,6 +32,10 @@ export interface JournalLineInput {
 }
 
 export interface PostJournalEntryInput {
+  // Company whose books this entry belongs to. Resolved from the source
+  // document — the order's brand, the shift's company, the supplier's company,
+  // or the operator's active company for manual entries.
+  tenantId: string
   // Idempotency: a (sourceType, sourceId) pair posts at most once. Reversing
   // entries get a distinct sourceId (e.g. `${orderId}:reversal`).
   sourceType: string         // e.g. 'order.complete', 'order.refund', 'shift.close', 'supplier.bill'
@@ -108,10 +117,13 @@ export const ACCT = {
   CASH_VARIANCE:       '8010',
 } as const
 
-async function resolveAccountIds(tx: Tx, codes: string[]): Promise<Map<string, string>> {
+// Codes resolve inside ONE company's chart. The same code means different
+// rows in different companies (GS Foods' 4001 is not GSX Viva's 4001), so a
+// posting can never land on another company's account.
+async function resolveAccountIds(tx: Tx, tenantId: string, codes: string[]): Promise<Map<string, string>> {
   const unique = Array.from(new Set(codes))
   const accounts = await tx.account.findMany({
-    where: { code: { in: unique }, isActive: true },
+    where: { tenantId, code: { in: unique }, isActive: true },
     select: { id: true, code: true },
   })
   const found = new Map(accounts.map((a) => [a.code, a.id]))
@@ -119,7 +131,7 @@ async function resolveAccountIds(tx: Tx, codes: string[]): Promise<Map<string, s
   if (missing.length > 0) {
     throw new AppError(
       'ACCOUNT_NOT_FOUND',
-      `Chart of accounts is missing required code(s): ${missing.join(', ')}. Run pnpm db:seed to refresh.`,
+      `This company's chart of accounts is missing code(s): ${missing.join(', ')}. Add them in Configuration → Chart of accounts.`,
       500,
     )
   }
@@ -132,6 +144,9 @@ export async function postJournalEntry(
 ): Promise<PostJournalEntryResult> {
   if (!input.sourceType || !input.sourceId) {
     throw new AppError('JOURNAL_MISSING_SOURCE', 'sourceType and sourceId are required for idempotency', 500)
+  }
+  if (!input.tenantId) {
+    throw new AppError('JOURNAL_MISSING_TENANT', 'A journal entry must name the company it belongs to', 500)
   }
   if (input.lines.length < 2) {
     throw new AppError('JOURNAL_TOO_FEW_LINES', 'A journal entry needs at least two lines', 422)
@@ -166,9 +181,11 @@ export async function postJournalEntry(
   const entryDate = input.entryDate ?? new Date()
 
   const run = async (tx: Tx): Promise<PostJournalEntryResult> => {
-    // Idempotency check — an entry with the same reference is treated as a no-op.
+    // Idempotency check — an entry with the same reference is treated as a
+    // no-op. Scoped to the company so one company's books can never suppress
+    // a posting in another's.
     const existing = await tx.journalEntry.findFirst({
-      where: { reference: idempotencyRef },
+      where: { reference: idempotencyRef, tenantId: input.tenantId },
       select: { id: true },
     })
     if (existing) return { entryId: existing.id, posted: false }
@@ -176,7 +193,10 @@ export async function postJournalEntry(
     // Period-lock check: refuse to post into a closed period. Reversal entries
     // can be posted with a current date that targets a closed source — this
     // rule only applies to the entry's own entryDate.
+    // Only THIS company's close counts — GS Foods closing August must not
+    // block GSX Viva from posting.
     const lock = await tx.periodLock.findFirst({
+      where: { tenantId: input.tenantId },
       orderBy: { lockedThrough: 'desc' },
       select: { lockedThrough: true },
     })
@@ -188,10 +208,11 @@ export async function postJournalEntry(
       )
     }
 
-    const accountMap = await resolveAccountIds(tx, lines.map((l) => l.accountCode))
+    const accountMap = await resolveAccountIds(tx, input.tenantId, lines.map((l) => l.accountCode))
 
     const created = await tx.journalEntry.create({
       data: {
+        tenantId: input.tenantId,
         reference: idempotencyRef,
         description: input.description,
         entryDate,
@@ -219,6 +240,7 @@ export async function postJournalEntry(
 // Reverse a previously posted entry by emitting the same lines with type
 // flipped. The reversal is itself idempotent under (sourceType, sourceId+suffix).
 export async function reverseJournalEntry(
+  tenantId: string,
   originalSourceType: string,
   originalSourceId: string,
   reason: string,
@@ -226,8 +248,9 @@ export async function reverseJournalEntry(
 ): Promise<PostJournalEntryResult> {
   const tx = options.tx ?? defaultPrisma
   const reference = `${originalSourceType}:${originalSourceId}`
+  // Scoped to the company — you can only reverse your own company's entry.
   const original = await tx.journalEntry.findFirst({
-    where: { reference },
+    where: { reference, tenantId },
     include: { lines: { include: { account: { select: { code: true } } } } },
   })
   if (!original) {
@@ -241,6 +264,7 @@ export async function reverseJournalEntry(
   const suffix = options.suffix ?? 'reversal'
   return postJournalEntry(
     {
+      tenantId,
       sourceType: `${originalSourceType}.${suffix}`,
       sourceId: originalSourceId,
       description: `Reversal of ${reference}: ${reason}`,

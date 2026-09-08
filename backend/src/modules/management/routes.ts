@@ -15,6 +15,7 @@ import { prisma } from '../../lib/prisma.js'
 import { requireAuth, FINANCIALS_VIEWERS, MARKETING_TEAM } from '../auth/middleware.js'
 import { profitAndLoss, cashFlow, pnlByConcept } from '../accounting/reports.js'
 import { labourPctReport } from '../payroll/service.js'
+import { resolveTenantScope } from '../../lib/tenantScope.js'
 
 // ── Per-brand P&L (revenue-share allocation) ──────────────────────────────────
 // The general ledger books COGS / labour / opex company-wide (journal lines
@@ -24,12 +25,20 @@ import { labourPctReport } from '../payroll/service.js'
 // cost-*ratios* being company-blended. The genuinely differentiated per-brand
 // food-cost % is computed separately (recipe-based) on the client. Shared by
 // /brand-pl and /executive-overview.
-async function computeBrandPl(conceptId: string | undefined, from: Date, to: Date, tenantFilter: Prisma.ConceptWhereInput['tenantId']) {
+async function computeBrandPl(
+  conceptId: string | undefined,
+  from: Date,
+  to: Date,
+  tenantFilter: Prisma.ConceptWhereInput['tenantId'],
+  // Companies in view. The ledger is per company, so the P&L reads only these
+  // companies' books — never a blend with someone else's chart of accounts.
+  tenantIds: string[],
+) {
   const conceptScope: Prisma.ConceptWhereInput = { tenantId: tenantFilter, deletedAt: null }
   const [pl, labour, conceptPnl] = await Promise.all([
-    profitAndLoss(from, to),
-    labourPctReport(from, to),
-    pnlByConcept(from, to),
+    profitAndLoss(tenantIds, from, to),
+    labourPctReport(tenantIds, from, to),
+    pnlByConcept(tenantIds, from, to),
   ])
   const companyCogs   = pl.totals.cogsCents
   const companyContra = pl.totals.contraRevenueCents
@@ -340,7 +349,7 @@ export async function managementRoutes(fastify: FastifyInstance) {
     async (req) => {
       const { conceptId, dateFrom, dateTo } = req.query
       const { from, to } = dateRange(dateFrom, dateTo)
-      return computeBrandPl(conceptId, from, to, req.staffUser!.tenantFilter)
+      return computeBrandPl(conceptId, from, to, req.staffUser!.tenantFilter, (await resolveTenantScope(req)).tenantIds)
     },
   )
 
@@ -357,9 +366,10 @@ export async function managementRoutes(fastify: FastifyInstance) {
       const tenantFilter = req.staffUser!.tenantFilter
       const conceptScope: Prisma.ConceptWhereInput = { tenantId: tenantFilter, deletedAt: null }
 
+      const tenantIds = (await resolveTenantScope(req)).tenantIds
       const [pl, cf, salesEntries] = await Promise.all([
-        computeBrandPl(conceptId, from, to, tenantFilter),
-        cashFlow(from, to),
+        computeBrandPl(conceptId, from, to, tenantFilter, tenantIds),
+        cashFlow(tenantIds, from, to),
         prisma.financialEntry.findMany({
           where: { ...(conceptId ? { conceptId } : {}), concept: conceptScope, entryDate: { gte: from, lte: to } },
           select: { entryDate: true, grossCents: true, netCents: true, taxCents: true },

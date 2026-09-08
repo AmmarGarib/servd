@@ -4,6 +4,7 @@ import { prisma } from '../../lib/prisma.js'
 import { requireAuth, MANAGERS, ADMIN_ONLY } from '../auth/middleware.js'
 import { runAllocationRule } from './service.js'
 import { audit } from '../../lib/audit.js'
+import { AppError } from '../../lib/errors.js'
 
 const ruleSchema = z.object({
   name: z.string().min(1),
@@ -90,7 +91,10 @@ export async function allocationRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuth(...ADMIN_ONLY) },
     async (req, reply) => {
       const body = runSchema.parse(req.body)
+      const tenantId = req.staffUser!.tenantId
+      if (!tenantId) throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company first — the ledger is per company', 422)
       const result = await runAllocationRule({
+        tenantId,
         ruleId: req.params.id,
         periodStart: new Date(body.periodStart),
         periodEnd: new Date(body.periodEnd),

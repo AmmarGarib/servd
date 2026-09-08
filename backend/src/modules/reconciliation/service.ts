@@ -114,8 +114,10 @@ export async function importBankStatement(input: {
   filename?: string
   importedById?: string
   csv: string
+  // Company being reconciled — resolves the bank account inside its own chart.
+  tenantId: string
 }) {
-  const account = await prisma.account.findUnique({ where: { code: input.accountCode } })
+  const account = await prisma.account.findFirst({ where: { tenantId: input.tenantId, code: input.accountCode } })
   if (!account) throw new NotFoundError('Account', input.accountCode)
 
   const parsed = parseStatementCsv(input.csv)
@@ -204,6 +206,10 @@ export async function adjustStatementLine(input: {
   contraAccountCode: string
   memo: string
   postedById: string
+  // Company the operator is reconciling in — BankStatementImport has no
+  // company column yet, so the route supplies it and the adjustment posts to
+  // that company's books.
+  tenantId: string
 }) {
   const line = await prisma.bankStatementLine.findUnique({
     where: { id: input.lineId },
@@ -219,6 +225,7 @@ export async function adjustStatementLine(input: {
   const abs = Math.abs(line.amountCents)
 
   await postJournalEntry({
+    tenantId: input.tenantId,
     sourceType: 'reconciliation.adjustment',
     sourceId: line.id,
     description: `Adjustment: ${line.description} (${input.memo})`,

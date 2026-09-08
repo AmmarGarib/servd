@@ -233,7 +233,10 @@ export async function adjustPayrollLine(lineId: string, adjustmentCents: number,
 
 // ─── Post accrual: Dr Wages (per account) / Cr Wages Payable ────────────────
 
-export async function postPayrollRun(runId: string, postedBy: string) {
+// `tenantId` is the company the operator is running payroll for — PayrollRun
+// has no company column of its own yet, so the caller (the route) supplies it
+// and the accrual lands on that company's books.
+export async function postPayrollRun(runId: string, postedBy: string, tenantId: string) {
   const run = await prisma.payrollRun.findUnique({
     where: { id: runId },
     include: { lines: true },
@@ -263,6 +266,7 @@ export async function postPayrollRun(runId: string, postedBy: string) {
   lines.push({ accountCode: ACCT.WAGES_PAYABLE, type: 'credit', amountCents: totalNet, memo: `Wages payable accrued` })
 
   await postJournalEntry({
+    tenantId,
     sourceType: 'payroll.accrual',
     sourceId: run.id,
     description: `Payroll accrual ${run.periodStart.toISOString().slice(0,10)} → ${run.periodEnd.toISOString().slice(0,10)}`,
@@ -284,7 +288,7 @@ export async function postPayrollRun(runId: string, postedBy: string) {
 
 // ─── Pay: Dr Wages Payable / Cr Bank ─────────────────────────────────────────
 
-export async function payPayrollRun(runId: string, paidBy: string, paidFromAccountCode?: string) {
+export async function payPayrollRun(runId: string, paidBy: string, tenantId: string, paidFromAccountCode?: string) {
   const run = await prisma.payrollRun.findUnique({ where: { id: runId } })
   if (!run) throw new NotFoundError('PayrollRun', runId)
   if (run.status !== 'posted') {
@@ -294,6 +298,7 @@ export async function payPayrollRun(runId: string, paidBy: string, paidFromAccou
   const cashAccount = paidFromAccountCode ?? ACCT.BANK
 
   await postJournalEntry({
+    tenantId,
     sourceType: 'payroll.payment',
     sourceId: run.id,
     description: `Payroll payment for ${run.periodStart.toISOString().slice(0,10)} → ${run.periodEnd.toISOString().slice(0,10)}`,
@@ -318,7 +323,10 @@ export async function payPayrollRun(runId: string, paidBy: string, paidFromAccou
 
 // ─── Labour cost as % of revenue ─────────────────────────────────────────────
 
-export async function labourPctReport(periodStart: Date, periodEnd: Date) {
+// `tenantIds` are the companies in view. Revenue comes out of the ledger,
+// which is per company, so the ratio would otherwise divide one company's
+// wages by two companies' sales.
+export async function labourPctReport(tenantIds: string[], periodStart: Date, periodEnd: Date) {
   // Sum payroll runs whose period falls inside the window (status: posted/paid)
   const runs = await prisma.payrollRun.findMany({
     where: {
@@ -338,7 +346,7 @@ export async function labourPctReport(periodStart: Date, periodEnd: Date) {
     where: {
       type: 'credit',
       account: { type: 'revenue' },
-      journalEntry: { entryDate: { gte: periodStart, lte: periodEnd } },
+      journalEntry: { tenantId: { in: tenantIds }, entryDate: { gte: periodStart, lte: periodEnd } },
     },
   })
   const debitOffsets = await prisma.journalLine.groupBy({
@@ -347,7 +355,7 @@ export async function labourPctReport(periodStart: Date, periodEnd: Date) {
     where: {
       type: 'debit',
       account: { type: 'revenue' },
-      journalEntry: { entryDate: { gte: periodStart, lte: periodEnd } },
+      journalEntry: { tenantId: { in: tenantIds }, entryDate: { gte: periodStart, lte: periodEnd } },
     },
   })
   const debitMap = new Map(debitOffsets.map((d) => [d.accountId, d._sum.amountCents ?? 0]))

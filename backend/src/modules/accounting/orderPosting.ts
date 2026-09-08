@@ -227,7 +227,12 @@ export async function postOrderCompletion(orderId: string): Promise<PostOrderRes
   const cogsCents = computeOrderCogsCents(order)
   const lines = buildSaleLines(order, sa, cogsCents)
 
+  // The order's brand decides whose books this lands in.
+  const tenantId = order.concept.tenantId
+  if (!tenantId) return { posted: false, entryId: null, reason: 'concept_has_no_company' }
+
   const result = await postJournalEntry({
+    tenantId,
     sourceType: 'order.complete',
     sourceId: order.id,
     description: `Order ${order.id.slice(0, 8)} completed (${order.concept.slug} / ${order.source})`,
@@ -241,7 +246,13 @@ export async function postOrderCompletion(orderId: string): Promise<PostOrderRes
 
 export async function reverseOrderCompletion(orderId: string, reason: string): Promise<PostOrderResult> {
   try {
-    const result = await reverseJournalEntry('order.complete', orderId, reason, { suffix: 'reversal' })
+    const order = await prisma.order.findUnique({
+      where: { id: orderId },
+      select: { concept: { select: { tenantId: true } } },
+    })
+    const tenantId = order?.concept.tenantId
+    if (!tenantId) return { posted: false, entryId: null, reason: 'order_not_found' }
+    const result = await reverseJournalEntry(tenantId, 'order.complete', orderId, reason, { suffix: 'reversal' })
     return { posted: result.posted, entryId: result.entryId }
   } catch (err) {
     return { posted: false, entryId: null, reason: (err as Error).message }

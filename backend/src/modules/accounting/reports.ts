@@ -33,14 +33,23 @@ interface AccountAggregation {
 }
 
 // Pulls all journal lines in the date range, grouped by account.
+//
+// `tenantIds` is the company scope: one company in normal view, every company
+// the operator belongs to in "All companies". Each company keeps its own books,
+// so a report that didn't filter would silently consolidate two sets of
+// accounts that happen to share code numbers.
 async function aggregateByAccount(opts: {
+  tenantIds: string[]
   dateFrom?: Date
   dateTo?: Date
   upTo?: Date
 }): Promise<AccountAggregation[]> {
-  const where: Prisma.JournalLineWhereInput = {}
+  const where: Prisma.JournalLineWhereInput = {
+    journalEntry: { tenantId: { in: opts.tenantIds } },
+  }
   if (opts.dateFrom || opts.dateTo || opts.upTo) {
     where.journalEntry = {
+      tenantId: { in: opts.tenantIds },
       entryDate: {
         ...(opts.dateFrom && { gte: opts.dateFrom }),
         ...(opts.dateTo && { lte: opts.dateTo }),
@@ -102,8 +111,8 @@ export interface TrialBalanceReport {
   totals: { debitCents: number; creditCents: number; differenceCents: number }
 }
 
-export async function trialBalance(asOf: Date): Promise<TrialBalanceReport> {
-  const rows = await aggregateByAccount({ upTo: asOf })
+export async function trialBalance(tenantIds: string[], asOf: Date): Promise<TrialBalanceReport> {
+  const rows = await aggregateByAccount({ tenantIds, upTo: asOf })
   const totals = rows.reduce(
     (s, r) => ({ debitCents: s.debitCents + r.debitCents, creditCents: s.creditCents + r.creditCents }),
     { debitCents: 0, creditCents: 0 },
@@ -133,8 +142,8 @@ export interface BalanceSheetReport {
   }
 }
 
-export async function balanceSheet(asOf: Date): Promise<BalanceSheetReport> {
-  const rows = await aggregateByAccount({ upTo: asOf })
+export async function balanceSheet(tenantIds: string[], asOf: Date): Promise<BalanceSheetReport> {
+  const rows = await aggregateByAccount({ tenantIds, upTo: asOf })
 
   const assets = rows.filter((r) => r.type === 'asset').map((r) => ({ code: r.code, name: r.name, balanceCents: r.balanceCents }))
   const liabilities = rows.filter((r) => r.type === 'liability').map((r) => ({ code: r.code, name: r.name, balanceCents: r.balanceCents }))
@@ -188,8 +197,8 @@ export interface ProfitAndLossReport {
 const COGS_PREFIX = '5'
 const CONTRA_REVENUE_PREFIX = '7'
 
-export async function profitAndLoss(dateFrom: Date, dateTo: Date): Promise<ProfitAndLossReport> {
-  const rows = await aggregateByAccount({ dateFrom, dateTo })
+export async function profitAndLoss(tenantIds: string[], dateFrom: Date, dateTo: Date): Promise<ProfitAndLossReport> {
+  const rows = await aggregateByAccount({ tenantIds, dateFrom, dateTo })
 
   const revenue = rows
     .filter((r) => r.type === 'revenue')
@@ -248,11 +257,11 @@ export interface ConceptPnlBucket {
   opexCents: number
 }
 
-export async function pnlByConcept(dateFrom: Date, dateTo: Date): Promise<ConceptPnlBucket[]> {
+export async function pnlByConcept(tenantIds: string[], dateFrom: Date, dateTo: Date): Promise<ConceptPnlBucket[]> {
   const grouped = await prisma.journalLine.groupBy({
     by: ['conceptId', 'accountId', 'type'],
     _sum: { amountCents: true },
-    where: { journalEntry: { entryDate: { gte: dateFrom, lte: dateTo } } },
+    where: { journalEntry: { tenantId: { in: tenantIds }, entryDate: { gte: dateFrom, lte: dateTo } } },
   })
 
   const accountIds = Array.from(new Set(grouped.map((g) => g.accountId)))
@@ -326,9 +335,9 @@ function categorise(code: string): 'operating' | 'investing' | 'financing' {
   return 'operating'
 }
 
-export async function cashFlow(dateFrom: Date, dateTo: Date): Promise<CashFlowReport> {
+export async function cashFlow(tenantIds: string[], dateFrom: Date, dateTo: Date): Promise<CashFlowReport> {
   const cashAccounts = await prisma.account.findMany({
-    where: { code: { in: CASH_ACCOUNT_CODES } },
+    where: { tenantId: { in: tenantIds }, code: { in: CASH_ACCOUNT_CODES } },
     select: { id: true, code: true, name: true },
   })
   const cashAccountIds = new Set(cashAccounts.map((a) => a.id))
@@ -336,6 +345,7 @@ export async function cashFlow(dateFrom: Date, dateTo: Date): Promise<CashFlowRe
   // Pull every line in entries that touched a cash account
   const entriesWithCash = await prisma.journalEntry.findMany({
     where: {
+      tenantId: { in: tenantIds },
       entryDate: { gte: dateFrom, lte: dateTo },
       lines: { some: { accountId: { in: Array.from(cashAccountIds) } } },
     },

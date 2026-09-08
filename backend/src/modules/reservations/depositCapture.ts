@@ -27,14 +27,16 @@ interface CaptureArgs {
 export async function captureReservationDeposit(args: CaptureArgs): Promise<DepositCaptureResult> {
   const r = await prisma.reservation.findUnique({
     where: { id: args.reservationId },
-    include: { concept: { select: { name: true } } },
+    include: { concept: { select: { name: true, tenantId: true } } },
   })
   if (!r) return { captured: false, reason: 'no-deposit' }
   if (r.depositCents <= 0) return { captured: false, reason: 'no-deposit' }
 
   // Post the journal entry (idempotency guarded by sourceType+sourceId in journal lib)
   const { postJournalEntry, ACCT } = await import('../accounting/journal.js')
+  if (!r.concept.tenantId) return { captured: false, reason: 'no-deposit' }
   await postJournalEntry({
+    tenantId: r.concept.tenantId,
     sourceType: 'reservation.deposit_capture',
     sourceId: r.id,
     description: `No-show fee · ${r.concept.name} · ${r.guestName}`,

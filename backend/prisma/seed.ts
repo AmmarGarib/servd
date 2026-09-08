@@ -290,12 +290,20 @@ async function main() {
     { code: '8020', name: 'Foreign Exchange Gain / Loss',       type: 'expense' },
   ]
 
-  for (const acc of accounts) {
-    await prisma.account.upsert({
-      where: { code: acc.code },
-      update: { name: acc.name, type: acc.type, description: acc.description ?? null, isActive: true },
-      create: { ...acc, isActive: true },
-    })
+  // Each company keeps its OWN chart of accounts (Account.tenantId; the code
+  // is unique per company), so seed the full chart for every company.
+  const seedTenants = await prisma.tenant.findMany({
+    where: { isActive: true, deletedAt: null },
+    select: { id: true, slug: true },
+  })
+  for (const t of seedTenants) {
+    for (const acc of accounts) {
+      await prisma.account.upsert({
+        where: { tenantId_code: { tenantId: t.id, code: acc.code } },
+        update: { name: acc.name, type: acc.type, description: acc.description ?? null, isActive: true },
+        create: { ...acc, tenantId: t.id, isActive: true },
+      })
+    }
   }
 
   await prisma.account.updateMany({
@@ -303,7 +311,7 @@ async function main() {
     data: { isActive: false },
   })
 
-  console.info(`✓ Chart of accounts seeded (${accounts.length} accounts)`)
+  console.info(`✓ Chart of accounts seeded (${accounts.length} accounts × ${seedTenants.length} company(ies))`)
 
   // ─── Admin user ────────────────────────────────────────────────────────────
 

@@ -109,6 +109,7 @@ import { kitchenStaffRoutes } from './modules/kitchen-staff/routes.js'
 import { positionRoutes } from './modules/positions/routes.js'
 import { expoRoutes } from './modules/expo/routes.js'
 import { parSheetRoutes } from './modules/par-sheet/routes.js'
+import { ensureChartOfAccounts, REQUIRED_ACCOUNT_CODES } from './lib/chartOfAccounts.js'
 
 const PORT = parseInt(process.env['PORT'] ?? '3001', 10)
 const HOST = '0.0.0.0'
@@ -439,29 +440,37 @@ async function build() {
     // exist. If someone runs the API without seeding the CoA, postings will
     // fail at runtime; surfacing that here lets ALB pull the task before
     // customers feel it.
-    const REQUIRED_CODES = [
-      '1010','1015','1020','1030','1110','1120','1210','1320',
-      '2010','2020','2030','2050','2060','2095',
-      '4001','4090','4100',
-      '5010',
-      '6030','6090',
-      '7010','7020','7040',
-      '8010',
-    ]
+    // Each company keeps its own chart of accounts, so the check runs per
+    // company: a company missing codes cannot post ITS orders, even if every
+    // other company's books are fine.
     try {
-      const found = await prisma.account.findMany({
-        where: { code: { in: REQUIRED_CODES }, isActive: true },
-        select: { code: true },
+      const tenants = await prisma.tenant.findMany({
+        where: { isActive: true, deletedAt: null },
+        select: { id: true, slug: true },
       })
-      const missing = REQUIRED_CODES.filter((c) => !found.some((f) => f.code === c))
+      const found = await prisma.account.findMany({
+        where: { code: { in: REQUIRED_ACCOUNT_CODES }, isActive: true },
+        select: { code: true, tenantId: true },
+      })
+      const byTenant = new Map<string, Set<string>>()
+      for (const a of found) {
+        if (!a.tenantId) continue
+        const set = byTenant.get(a.tenantId) ?? new Set<string>()
+        set.add(a.code)
+        byTenant.set(a.tenantId, set)
+      }
+      const gaps = tenants
+        .map((t) => ({ slug: t.slug, missing: REQUIRED_ACCOUNT_CODES.filter((c) => !byTenant.get(t.id)?.has(c)) }))
+        .filter((g) => g.missing.length > 0)
+      const missing = gaps.flatMap((g) => g.missing.map((c) => `${g.slug}:${c}`))
       if (missing.length === 0) {
         checks.ledger = 'ok'
       } else if (missing.length <= 3) {
         checks.ledger = 'warn'
-        details.ledger = `missing accounts: ${missing.join(',')} — run pnpm db:seed`
+        details.ledger = `missing accounts: ${missing.join(',')}`
       } else {
         checks.ledger = 'error'
-        details.ledger = `${missing.length} required accounts missing — run pnpm db:seed`
+        details.ledger = `${missing.length} required accounts missing across ${gaps.length} company(ies)`
       }
     } catch (err) {
       checks.ledger = 'error'
@@ -561,6 +570,22 @@ async function build() {
     }
   } catch (err) {
     fastify.log.warn(`[locations] seed skipped: ${(err as Error).message}`)
+  }
+
+  // Ledger bootstrap: every company needs its own chart of accounts before a
+  // single order can post (Account.tenantId; codes are unique per company).
+  // Adds only what a company is missing, so operator edits are never touched.
+  try {
+    const tenants = await prisma.tenant.findMany({
+      where: { isActive: true, deletedAt: null },
+      select: { id: true, slug: true },
+    })
+    for (const t of tenants) {
+      const added = await ensureChartOfAccounts(t.id)
+      if (added > 0) fastify.log.info(`[ledger] seeded ${added} account(s) for "${t.slug}"`)
+    }
+  } catch (err) {
+    fastify.log.warn(`[ledger] chart-of-accounts bootstrap skipped: ${(err as Error).message}`)
   }
 
   if (workersEnabled) {

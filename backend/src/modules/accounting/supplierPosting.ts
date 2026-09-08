@@ -50,7 +50,12 @@ export async function postSupplierBill(billId: string): Promise<{ posted: boolea
   const apPayable = bill.totalCents - whtCents
   lines.push({ accountCode: ACCT.AP_SUPPLIERS, type: 'credit', amountCents: apPayable, memo: `${bill.supplier.name} bill ${bill.billNumber}${whtCents > 0 ? ' (net of WHT)' : ''}` })
 
+  // Supplier bills post into the supplier's own company.
+  const tenantId = bill.supplier.tenantId
+  if (!tenantId) return { posted: false, entryId: null, reason: 'supplier_has_no_company' }
+
   const result = await postJournalEntry({
+    tenantId,
     sourceType: 'supplier.bill',
     sourceId: bill.id,
     description: `Supplier bill ${bill.billNumber} from ${bill.supplier.name}`,
@@ -64,7 +69,13 @@ export async function postSupplierBill(billId: string): Promise<{ posted: boolea
 export async function postSupplierBillVoid(billId: string, reason: string): Promise<{ posted: boolean; entryId: string | null }> {
   const { reverseJournalEntry } = await import('./journal.js')
   try {
-    const result = await reverseJournalEntry('supplier.bill', billId, reason, { suffix: 'void' })
+    const bill = await prisma.supplierBill.findUnique({
+      where: { id: billId },
+      select: { supplier: { select: { tenantId: true } } },
+    })
+    const tenantId = bill?.supplier.tenantId
+    if (!tenantId) return { posted: false, entryId: null }
+    const result = await reverseJournalEntry(tenantId, 'supplier.bill', billId, reason, { suffix: 'void' })
     return { posted: result.posted, entryId: result.entryId }
   } catch {
     return { posted: false, entryId: null }
@@ -88,7 +99,11 @@ export async function postSupplierPayment(paymentId: string): Promise<{ posted: 
     { accountCode: cashAccount,       type: 'credit', amountCents: payment.amountCents, memo: `${payment.method} via ${payment.reference ?? 'no ref'}` },
   ]
 
+  const paymentTenantId = payment.supplier.tenantId
+  if (!paymentTenantId) return { posted: false, entryId: null, reason: 'supplier_has_no_company' }
+
   const result = await postJournalEntry({
+    tenantId: paymentTenantId,
     sourceType: 'supplier.payment',
     sourceId: payment.id,
     description: `Supplier payment to ${payment.supplier.name} (${payment.method})`,
@@ -114,7 +129,12 @@ export async function postWasteLog(wasteLogId: string): Promise<{ posted: boolea
     { accountCode: ACCT.INVENTORY_FOOD,  type: 'credit', amountCents: cost, memo: `Inventory derecognised (waste)` },
   ]
 
+  // Waste posts into the company that owns the stock.
+  const wasteTenantId = log.inventoryItem.tenantId
+  if (!wasteTenantId) return { posted: false, entryId: null, reason: 'item_has_no_company' }
+
   const result = await postJournalEntry({
+    tenantId: wasteTenantId,
     sourceType: 'inventory.waste',
     sourceId: log.id,
     description: `Waste — ${log.inventoryItem.name} (${log.reason})`,

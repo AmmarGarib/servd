@@ -17,6 +17,22 @@
 
 import { prisma } from '../../lib/prisma.js'
 import { ACCT, postJournalEntry } from './journal.js'
+import { primaryTenantId } from '../../lib/setup-config.js'
+
+// Loyalty is a customer-facing programme rather than a brand's own ledger
+// event, so the company comes from the order the points were earned or spent
+// on. Point expiry carries no order — that accrual reversal falls back to the
+// primary company, which is where the liability was raised.
+async function loyaltyTenantId(orderId: string | null): Promise<string | null> {
+  if (orderId) {
+    const order = await prisma.order.findUnique({
+      where: { id: orderId },
+      select: { concept: { select: { tenantId: true } } },
+    })
+    if (order?.concept.tenantId) return order.concept.tenantId
+  }
+  return primaryTenantId()
+}
 
 const POINTS_VALUE_CENTS_PER_POINT = 1  // mirrors loyalty/routes.ts
 
@@ -33,7 +49,11 @@ export async function postLoyaltyEarn(loyaltyTxId: string): Promise<{ posted: bo
   const valueCents = tx.pointsDelta * POINTS_VALUE_CENTS_PER_POINT
   if (valueCents <= 0) return { posted: false, entryId: null, reason: 'zero_value' }
 
+  const tenantId = await loyaltyTenantId(tx.orderId)
+  if (!tenantId) return { posted: false, entryId: null, reason: 'no_company' }
+
   const result = await postJournalEntry({
+    tenantId,
     sourceType: 'loyalty.earn',
     sourceId: tx.id,
     description: `Loyalty points earned (customer ${tx.loyaltyAccount.customerId.slice(0,8)})`,
@@ -58,7 +78,11 @@ export async function postLoyaltyRedeem(loyaltyTxId: string): Promise<{ posted: 
   const valueCents = Math.abs(tx.pointsDelta) * POINTS_VALUE_CENTS_PER_POINT
   if (valueCents <= 0) return { posted: false, entryId: null, reason: 'zero_value' }
 
+  const tenantId = await loyaltyTenantId(tx.orderId)
+  if (!tenantId) return { posted: false, entryId: null, reason: 'no_company' }
+
   const result = await postJournalEntry({
+    tenantId,
     sourceType: 'loyalty.redeem',
     sourceId: tx.id,
     description: `Loyalty points redeemed (customer ${tx.loyaltyAccount.customerId.slice(0,8)})`,
@@ -80,7 +104,11 @@ export async function postLoyaltyExpire(loyaltyTxId: string): Promise<{ posted: 
   const valueCents = Math.abs(tx.pointsDelta) * POINTS_VALUE_CENTS_PER_POINT
   if (valueCents <= 0) return { posted: false, entryId: null, reason: 'zero_value' }
 
+  const tenantId = await loyaltyTenantId(tx.orderId)
+  if (!tenantId) return { posted: false, entryId: null, reason: 'no_company' }
+
   const result = await postJournalEntry({
+    tenantId,
     sourceType: 'loyalty.expire',
     sourceId: tx.id,
     description: `Loyalty points expired`,

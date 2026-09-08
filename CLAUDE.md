@@ -65,6 +65,20 @@ rewritten, trust these corrections:
   never shared. `lib/setup-config.ts` readers take a `tenantId`
   (`tenantForConcept()` / `primaryTenantId()` resolve it); never read a
   company-less singleton row.
+- **The ledger is per company (2026-09-08).** Migration `20260908120000`:
+  `accounts.code` is unique per company (`@@unique([tenantId, code])`, not
+  globally), and `journal_entries` / `period_locks` carry `tenantId`.
+  `postJournalEntry` REQUIRES `tenantId` — resolve it from the source document
+  (order → concept.tenantId, shift → shift.tenantId, bill → supplier.tenantId,
+  manual entry → the operator's active company); account codes resolve inside
+  that company's chart, the period-lock check reads that company's close, and
+  the entry is stamped with it. `reverseJournalEntry(tenantId, …)` likewise.
+  Every report (trial balance, balance sheet, P&L, cash flow, GL, labour %)
+  takes `tenantIds: string[]` from `resolveTenantScope(req)`; the sales-tax
+  return takes a single company. New companies get a chart automatically:
+  `lib/chartOfAccounts.ts` holds the canonical list and `ensureChartOfAccounts`
+  runs at boot for every company (and only adds codes that are missing, so
+  operator edits survive). `/health` checks the required codes per company.
 
 ## What this is
 

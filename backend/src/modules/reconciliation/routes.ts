@@ -7,6 +7,7 @@ import {
   adjustStatementLine,
 } from './service.js'
 import { flagException } from '../../lib/exceptions.js'
+import { AppError } from '../../lib/errors.js'
 
 const importBankSchema = z.object({
   source: z.string().min(1),
@@ -51,7 +52,12 @@ export async function reconciliationRoutes(fastify: FastifyInstance) {
 
   fastify.post('/bank/imports', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
     const body = importBankSchema.parse(req.body)
+    // The ledger is per company: the bank account code resolves inside the
+    // company the operator is working in.
+    const tenantId = req.staffUser!.tenantId
+    if (!tenantId) throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company first — the ledger is per company', 422)
     const result = await importBankStatement({
+      tenantId,
       source: body.source,
       accountCode: body.accountCode,
       statementDate: new Date(body.statementDate),
@@ -69,7 +75,10 @@ export async function reconciliationRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuth(...APPROVERS) },
     async (req) => {
       const body = adjustLineSchema.parse(req.body)
+      const tenantId = req.staffUser!.tenantId
+      if (!tenantId) throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company first — the ledger is per company', 422)
       return adjustStatementLine({
+        tenantId,
         lineId: req.params.id,
         contraAccountCode: body.contraAccountCode,
         memo: body.memo,

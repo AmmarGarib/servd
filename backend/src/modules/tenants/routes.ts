@@ -209,12 +209,38 @@ export async function tenantRoutes(fastify: FastifyInstance) {
 
       // Company master data with no company-keyed unique constraint (kitchen
       // staff included — CNIC clashes were refused above): a straight repoint.
+      // The ledger merges account-by-account: both companies run the same
+      // code numbers (4001, 1010, …) on separate rows, so every journal line
+      // pointing at a source account is repointed to the destination's account
+      // with the same code before the entries move. A code the destination
+      // doesn't have is carried across as-is. Source accounts are then retired.
+      const srcAccounts = await tx.account.findMany({
+        where: { tenantId: src }, select: { id: true, code: true },
+      })
+      if (srcAccounts.length > 0) {
+        const dstAccounts = await tx.account.findMany({
+          where: { tenantId: dst, code: { in: srcAccounts.map((a) => a.code) } },
+          select: { id: true, code: true },
+        })
+        const dstByCode = new Map(dstAccounts.map((a) => [a.code, a.id]))
+        for (const a of srcAccounts) {
+          const twin = dstByCode.get(a.code)
+          if (twin) {
+            await tx.journalLine.updateMany({ where: { accountId: a.id }, data: { accountId: twin } })
+            await tx.account.delete({ where: { id: a.id } })
+          } else {
+            await tx.account.update({ where: { id: a.id }, data: { tenantId: dst } })
+          }
+        }
+      }
+
       const repoint: Array<{
         updateMany(args: { where: { tenantId: string }; data: { tenantId: string } }): Promise<unknown>
       }> = [
         tx.location, tx.inventoryItem, tx.supplier, tx.rider, tx.modifierTemplate,
         tx.bankAccount, tx.kdsDevice, tx.webhookSubscription, tx.domain,
         tx.deliveryZone, tx.notificationTemplate, tx.scheduledReport, tx.shift,
+        tx.journalEntry, tx.periodLock,
         tx.capitalLedgerEntry, tx.capexProject, tx.opexCategory, tx.proForma, tx.projection,
         tx.position, tx.kitchenStaff, tx.kitchenPayrollRun, tx.complianceViolation,
       ]
