@@ -33,6 +33,7 @@
 // stickers render from the highlights and stand in as marketing modules
 // until the menu API exposes per-brand items.
 
+import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import type { Concept } from '../../../lib/concept'
 import { CrossBrandStrip } from '../parts/CrossBrandStrip'
@@ -44,10 +45,73 @@ interface Props {
   concepts: Concept[]
 }
 
+// What the counter actually puts out, in the order it reads best. These are
+// menu categories, not marketing lines — the point of the cycler is that a
+// customer who lands here learns what the kitchen makes.
+const COUNTER_LINES = ['sandwiches.', 'pastries.', 'light bites.', 'craft mocktails.', 'grab & go.']
+const DISH_INTERVAL_MS = 2600
+
+// The ticker says the same things in the spec voice. Kept short: at speed,
+// anything longer than a few words is unreadable.
+const TICKER_LINES = [
+  'scratch cooking',
+  'sandwiches',
+  'pastries',
+  'light bites',
+  'craft mocktails',
+  'grab & go market',
+  'twenty seats',
+  'wrapped, not plated',
+]
+
 export function StackdLayout({ concept, concepts }: Props) {
   const hoursData = useHoursData(concept.slug)
   const story = brandStory(concept.slug)
   const reservations = concept.reservationsEnabled !== false
+
+  // The counter cycler. Starts at 0 on the server so the markup hydrates
+  // cleanly, then advances on a timer. Paused while the tab is hidden —
+  // a background tab throttles the interval anyway, and letting it run just
+  // means the word jumps several steps the moment you come back.
+  const [dish, setDish] = useState(0)
+  useEffect(() => {
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+    const id = window.setInterval(() => {
+      if (document.hidden) return
+      setDish((d) => (d + 1) % COUNTER_LINES.length)
+    }, DISH_INTERVAL_MS)
+    return () => window.clearInterval(id)
+  }, [])
+
+  // Scroll reveal for the stickers. Everything renders visible by default and
+  // the .stackd-reveal class is only ADDED here, so a browser without JS (or
+  // without IntersectionObserver) simply gets the page with no animation
+  // rather than a page of invisible cards.
+  const revealRoot = useRef<HTMLDivElement | null>(null)
+  useEffect(() => {
+    const root = revealRoot.current
+    if (!root || typeof IntersectionObserver === 'undefined') return
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+
+    const cards = Array.from(root.querySelectorAll<HTMLElement>('[data-reveal]'))
+    cards.forEach((el, i) => {
+      el.classList.add('stackd-reveal')
+      el.style.transitionDelay = `${Math.min(i, 6) * 70}ms`
+    })
+
+    const io = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) {
+          if (!e.isIntersecting) continue
+          e.target.classList.add('is-in')
+          io.unobserve(e.target)   // one-way: cards don't fade back out on scroll up
+        }
+      },
+      { rootMargin: '0px 0px -12% 0px', threshold: 0.15 },
+    )
+    cards.forEach((el) => io.observe(el))
+    return () => io.disconnect()
+  }, [])
 
   // Classes (.stackd-page, .stackd-mono, .stackd-spec, .stackd-rule,
   // .stackd-line, .stackd-display, .stackd-btn, .stackd-btn-ghost,
@@ -154,20 +218,67 @@ export function StackdLayout({ concept, concepts }: Props) {
         </section>
 
         {/* ── THE MASCOT ──────────────────────────────────────────────────────
-            One big showcase and nothing else. No caption, no heading, no
-            explanation of the artwork — a customer does not need the character
-            described to them, and writing about him instead of showing him is
-            the fastest way to make him look small. He is the section. */}
-        <section className="stackd-mascot-band" aria-label="stackd">
-          <div className="stackd-mascot-stage">
-            <div className="stackd-mascot-seal">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src="/brand/stackd-mascot.png"
-                alt="The stackd character — a stack of bread slices carried on a plum tray, striped trousers below"
-                width={338}
-                height={453}
-              />
+            Off-centre on purpose: he sits right of the axis and leans past the
+            container, and the space that leaves on the left carries the one
+            thing a customer wants there — what actually comes out of the
+            kitchen — cycling a line at a time, with the way in underneath.
+            Still no copy describing the drawing. */}
+        <section>
+          <div className="stackd-mascot-band">
+            <div>
+              <span className="stackd-spec">On the counter</span>
+              <p className="stackd-cycler">
+                <span className="stackd-cycler-lead">we do</span>
+                {/* A screen reader gets the whole list once, in place of a
+                    slot that would otherwise announce a new word every 2.6
+                    seconds — which is what a live region here would do, and it
+                    is unbearable. The animated slot is hidden from them. */}
+                <span
+                  style={{
+                    position: 'absolute', width: 1, height: 1, overflow: 'hidden',
+                    clip: 'rect(0 0 0 0)', clipPath: 'inset(50%)', whiteSpace: 'nowrap',
+                  }}
+                >
+                  {COUNTER_LINES.join(' ')}
+                </span>
+                <span className="stackd-cycler-slot" aria-hidden>
+                  {/* key forces a remount so the entry animation replays. */}
+                  <span key={dish} className="stackd-cycler-word">
+                    {COUNTER_LINES[dish]}
+                  </span>
+                </span>
+              </p>
+              <div style={{ marginTop: 'clamp(1.75rem, 4vh, 2.5rem)', display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+                <Link href={`/${concept.slug}`} className="stackd-btn">Order stackd</Link>
+                <Link href={`/brand/${concept.slug}/menu`} className="stackd-btn stackd-btn-ghost">See the menu</Link>
+              </div>
+            </div>
+
+            <div className="stackd-mascot-stage">
+              <div className="stackd-mascot-seal">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src="/brand/stackd-mascot.png"
+                  alt="The stackd character — a stack of bread slices carried on a plum tray, striped trousers below"
+                  width={338}
+                  height={453}
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* The same words again, full-bleed and moving. Two identical tracks
+              so the loop never shows a seam. aria-hidden: it is decoration,
+              and the cycler above already says all of it. */}
+          <div className="stackd-ticker" aria-hidden>
+            <div className="stackd-ticker-track">
+              {[0, 1].map((track) => (
+                <div key={track} style={{ display: 'flex' }}>
+                  {TICKER_LINES.map((t) => (
+                    <span key={`${track}-${t}`} className="stackd-ticker-item">{t}</span>
+                  ))}
+                </div>
+              ))}
             </div>
           </div>
         </section>
@@ -176,7 +287,7 @@ export function StackdLayout({ concept, concepts }: Props) {
             Each highlight is a seal, in the packaging palette and set slightly
             off-square, the way a label goes on by hand. */}
         <section style={{ padding: 'clamp(3rem, 8vh, 5rem) clamp(1.5rem, 5vw, 3rem)' }}>
-          <div style={{ maxWidth: '76rem', margin: '0 auto' }}>
+          <div ref={revealRoot} style={{ maxWidth: '76rem', margin: '0 auto' }}>
             <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '2rem', marginBottom: '1.5rem', flexWrap: 'wrap' }}>
               <h2 className="stackd-display" style={{ fontSize: 'clamp(1.9rem, 4vw, 2.8rem)', margin: 0 }}>
                 What we do.
@@ -195,6 +306,7 @@ export function StackdLayout({ concept, concepts }: Props) {
               {story.highlights.map((h, i) => (
                 <div
                   key={h}
+                  data-reveal
                   className="stackd-sticker"
                   style={{ padding: '1.75rem 1.6rem', minHeight: '9rem', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}
                 >

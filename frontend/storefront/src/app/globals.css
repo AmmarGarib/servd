@@ -489,8 +489,17 @@ summary:focus-visible {
    onto a bag (see the packaging seals in the brand deck). These replace the
    thin rectangular "menu boards" — the boxes were straight lines in a brand
    that has none. */
+/* Three things want to move a sticker at once — the hand-applied tilt, the
+   hover lift, and the scroll reveal — and a plain `transform` on each would
+   mean the most specific selector silently wins and the others vanish. So the
+   transform is composed ONCE here out of custom properties, and every rule
+   below sets a property rather than the transform itself. */
 .stackd-page .stackd-sticker {
   position: relative;
+  --stackd-tilt: 0deg;
+  --stackd-lift: 0px;
+  --stackd-reveal-y: 0px;
+  transform: rotate(var(--stackd-tilt)) translateY(calc(var(--stackd-lift) + var(--stackd-reveal-y)));
   border-radius: 1.75rem;
   background: var(--stackd-cream);
   color: var(--stackd-plum-dark);
@@ -498,7 +507,7 @@ summary:focus-visible {
   box-shadow:
     0 0 0 3px rgba(252,232,206,0.55),
     0 14px 30px -14px rgba(28,16,19,0.75);
-  transition: transform 220ms ease, box-shadow 220ms ease;
+  transition: transform 220ms ease, box-shadow 220ms ease, opacity 220ms ease;
 }
 /* Alternate the palette across a row, as the packaging seals do. */
 .stackd-page .stackd-sticker:nth-child(4n+2) { background: var(--stackd-butter); }
@@ -506,11 +515,11 @@ summary:focus-visible {
 .stackd-page .stackd-sticker:nth-child(4n+4) { background: var(--stackd-cream); }
 
 /* Applied by hand, so never perfectly square. */
-.stackd-page .stackd-sticker:nth-child(4n+1) { transform: rotate(-1.6deg); }
-.stackd-page .stackd-sticker:nth-child(4n+2) { transform: rotate(1.2deg); }
-.stackd-page .stackd-sticker:nth-child(4n+3) { transform: rotate(-0.8deg); }
-.stackd-page .stackd-sticker:nth-child(4n+4) { transform: rotate(1.9deg); }
-.stackd-page .stackd-sticker:hover { transform: rotate(0deg) translateY(-3px); }
+.stackd-page .stackd-sticker:nth-child(4n+1) { --stackd-tilt: -1.6deg; }
+.stackd-page .stackd-sticker:nth-child(4n+2) { --stackd-tilt: 1.2deg; }
+.stackd-page .stackd-sticker:nth-child(4n+3) { --stackd-tilt: -0.8deg; }
+.stackd-page .stackd-sticker:nth-child(4n+4) { --stackd-tilt: 1.9deg; }
+.stackd-page .stackd-sticker:hover { --stackd-tilt: 0deg; --stackd-lift: -3px; }
 
 /* The big one — the story panel — is a sticker too, just calmer. */
 .stackd-page .stackd-sticker-lg {
@@ -534,55 +543,170 @@ summary:focus-visible {
   .stackd-page .stackd-sticker:hover { transform: none; transition: none; }
 }
 
+/* ── Scroll reveal ───────────────────────────────────────────────────────
+   Stickers arrive as if pressed on. The class is added by an
+   IntersectionObserver in StackdLayout; nothing renders hidden without it,
+   so a browser with no JS just gets the page with no animation rather than a
+   grid of invisible cards. On a sticker this feeds the shared transform above
+   via --stackd-reveal-y, so it composes with the tilt instead of clobbering
+   it; on anything else the plain transform applies. */
+.stackd-page .stackd-reveal { opacity: 0; transform: translateY(22px); }
+.stackd-page .stackd-reveal.is-in { opacity: 1; transform: translateY(0); }
+.stackd-page .stackd-sticker.stackd-reveal { --stackd-reveal-y: 22px; transform: rotate(var(--stackd-tilt)) translateY(calc(var(--stackd-lift) + var(--stackd-reveal-y))); }
+.stackd-page .stackd-sticker.stackd-reveal.is-in { --stackd-reveal-y: 0px; }
+.stackd-page .stackd-reveal:not(.stackd-sticker) {
+  transition: opacity 620ms ease, transform 620ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
 /* ── The mascot section ──────────────────────────────────────────────────
-   One centred showcase, deliberately with no copy in it. The character sells
-   himself; a heading and a paragraph next to him just shrink him and explain
-   a drawing nobody asked to have explained. So: big seal, lots of air, and
-   nothing else in the band. */
+   Deliberately OFF-CENTRE. The character sits right of the axis and pushes
+   past the container edge; the space he leaves on the left carries the thing
+   a customer actually wants there — what comes out of the kitchen — cycling
+   one line at a time, plus the way in. Nothing describes the drawing.
+   He bobs, because he has legs. */
 .stackd-page .stackd-mascot-band {
-  display: flex;
-  justify-content: center;
-  padding: clamp(3rem, 9vh, 6rem) clamp(1.5rem, 5vw, 3rem);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr);
+  align-items: center;
+  gap: clamp(2rem, 5vw, 4.5rem);
+  max-width: 76rem;
+  margin: 0 auto;
+  padding: clamp(3rem, 9vh, 6rem) clamp(1.5rem, 5vw, 3rem) clamp(2rem, 5vh, 3.5rem);
 }
 .stackd-page .stackd-mascot-seal {
   background: var(--stackd-cream);
   border-radius: clamp(2.25rem, 5vw, 4rem);
   padding: clamp(2rem, 5vw, 4rem) clamp(2.5rem, 6vw, 5rem);
-  transform: rotate(-2.2deg);
   box-shadow:
     0 0 0 5px rgba(252,232,206,0.45),
     0 50px 90px -38px rgba(28,16,19,0.92);
-  transition: transform 260ms ease;
+  /* The bob lives on the seal; the tilt lives on the keyframes so the two
+     don't fight over `transform`. */
+  animation: stackd-bob 5.5s ease-in-out infinite;
+  transition: box-shadow 260ms ease;
 }
-.stackd-page .stackd-mascot-band:hover .stackd-mascot-seal { transform: rotate(0deg); }
 .stackd-page .stackd-mascot-seal img {
   display: block;
   /* The art is 338x453. Capped at 30rem so it stays under 2x on the retina
      screens this mostly lands on rather than going soft. */
-  width: clamp(15rem, 42vw, 30rem);
+  width: clamp(15rem, 38vw, 30rem);
   height: auto;
 }
+@keyframes stackd-bob {
+  0%,
+  100% { transform: rotate(-2.4deg) translateY(0); }
+  50%  { transform: rotate(-1.1deg) translateY(-14px); }
+}
 /* The pale-blue disc behind the seal — the one cool accent in the palette,
-   used here as a spotlight rather than as another card. */
+   used as a spotlight rather than as another card. It breathes on a longer
+   cycle than the bob so the two never sync up and read as one pulse. */
 .stackd-page .stackd-mascot-stage {
   position: relative;
   display: flex;
   justify-content: center;
+  /* The offset: he leans out past the grid column toward the page edge. */
+  margin-right: calc(-1 * clamp(0rem, 5vw, 4.5rem));
 }
 .stackd-page .stackd-mascot-stage::before {
   content: '';
   position: absolute;
   inset: -14% -10%;
   border-radius: 50%;
-  background: radial-gradient(circle at 50% 45%, rgba(155,211,221,0.28), rgba(155,211,221,0) 68%);
+  background: radial-gradient(circle at 50% 45%, rgba(155,211,221,0.30), rgba(155,211,221,0) 68%);
   pointer-events: none;
+  animation: stackd-glow 9s ease-in-out infinite;
 }
-@media (prefers-reduced-motion: reduce) {
-  .stackd-page .stackd-mascot-seal,
-  .stackd-page .stackd-mascot-band:hover .stackd-mascot-seal {
-    transform: none;
-    transition: none;
+@keyframes stackd-glow {
+  0%,
+  100% { opacity: 0.7;  transform: scale(1); }
+  50%  { opacity: 1;    transform: scale(1.07); }
+}
+
+/* The cycler — "we do" holds still, the dish changes under it. */
+.stackd-page .stackd-cycler {
+  font-family: var(--stackd-display);
+  font-weight: 600;
+  line-height: 1.02;
+  margin: 0.9rem 0 0;
+  color: var(--stackd-cream);
+}
+.stackd-page .stackd-cycler-lead {
+  display: block;
+  font-size: clamp(1.1rem, 2vw, 1.5rem);
+  color: var(--stackd-cream-faint);
+  font-style: italic;
+}
+.stackd-page .stackd-cycler-slot {
+  display: block;
+  /* Reserve the tallest line so the CTA below never jumps as words swap. */
+  min-height: 1.15em;
+  font-size: clamp(2.1rem, 5.2vw, 3.9rem);
+  overflow: hidden;
+}
+.stackd-page .stackd-cycler-word {
+  display: inline-block;
+  animation: stackd-word 520ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+@keyframes stackd-word {
+  from { opacity: 0; transform: translateY(0.5em) rotate(-1.5deg); }
+  to   { opacity: 1; transform: translateY(0) rotate(0deg); }
+}
+
+/* ── The ticker ──────────────────────────────────────────────────────────
+   Full-bleed band of the same words, running edge to edge. Two identical
+   tracks, each 50% of the strip, so the loop is seamless at any width. */
+.stackd-page .stackd-ticker {
+  overflow: hidden;
+  border-top: 1px solid var(--stackd-line-faint);
+  border-bottom: 1px solid var(--stackd-line-faint);
+  padding: 0.9rem 0;
+  /* Fade the ends so words enter and leave rather than being cut off. */
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 8%, #000 92%, transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 8%, #000 92%, transparent);
+}
+.stackd-page .stackd-ticker-track {
+  display: flex;
+  width: max-content;
+  animation: stackd-ticker 38s linear infinite;
+}
+.stackd-page .stackd-ticker:hover .stackd-ticker-track { animation-play-state: paused; }
+.stackd-page .stackd-ticker-item {
+  font-family: var(--stackd-mono);
+  font-size: 0.78rem;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--stackd-cream-dim);
+  padding: 0 1.6rem;
+  white-space: nowrap;
+}
+.stackd-page .stackd-ticker-item::after {
+  content: '·';
+  margin-left: 1.6rem;
+  color: var(--stackd-sky);
+}
+@keyframes stackd-ticker {
+  from { transform: translateX(0); }
+  to   { transform: translateX(-50%); }
+}
+
+@media (max-width: 860px) {
+  .stackd-page .stackd-mascot-band {
+    grid-template-columns: 1fr;
+    /* Character first on a phone — he is the reason to stop scrolling. */
+    gap: clamp(1.5rem, 5vw, 2.5rem);
   }
+  .stackd-page .stackd-mascot-stage { order: -1; margin-right: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stackd-page .stackd-mascot-seal {
+    animation: none;
+    transform: rotate(-2.4deg);
+  }
+  .stackd-page .stackd-mascot-stage::before { animation: none; opacity: 0.85; }
+  .stackd-page .stackd-ticker-track { animation: none; }
+  .stackd-page .stackd-cycler-word { animation: none; }
+  .stackd-page .stackd-reveal { opacity: 1; transform: none; transition: none; }
 }
 
 /* The counter-face grid tile is gone with the rest of the grid. */
