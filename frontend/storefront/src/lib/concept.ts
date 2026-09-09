@@ -163,7 +163,7 @@ export const BRAND_STORIES: Record<string, BrandStory> = {
     tagline: 'Cooked here. Wrapped, not plated.',
     oneLiner: 'A twenty-seat scratch-cooking café and small market — sandwiches, pastries, light bites and craft mocktails.',
     long: 'stackd is a scratch cooking café: sandwiches, pastries, light bites and craft mocktails, made here rather than assembled. Service is a deliberate choice — the food comes in packaging, not on plates. Not throwaway pieces, but a vessel built for the dish it carries and branded like everything else we make. Twenty seats, and a small market folded into the cashier and barista bar: a chiller for grab-and-go and drinks, and a case for the morning’s pastries.',
-    highlights: ['Scratch cooking', 'Sandwiches & pastries', 'Craft mocktails', 'Branded service vessels', 'Grab-and-go market', 'Twenty seats'],
+    highlights: ['Scratch cooking', 'Sandwiches & pastries', 'Craft mocktails', 'Grab-and-go market'],
     hours: 'Daily 8:00 AM – 11:00 PM',
   },
   'flipd': {
