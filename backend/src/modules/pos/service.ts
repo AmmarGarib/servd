@@ -423,7 +423,7 @@ export async function processPayment(input: ProcessPaymentInput) {
       }
     }
 
-    return { payments: createdPayments }
+    return { payments: createdPayments, customerId: order.customerId }
   })
 
   // Tax-invoicing fan-out. FBR (federal) stays fire-and-forget. SRB (Sindh) is
@@ -439,9 +439,23 @@ export async function processPayment(input: ProcessPaymentInput) {
       ?.add('submit', { orderId: input.orderId })
       .catch((err: Error) => console.warn('[FBR] Failed to enqueue invoice submission:', err.message))
     srb = await submitSrbForReceipt(input.orderId)
+
+    // Refresh the customer's denormalised order history. The till completes an
+    // order inside the transaction above rather than going through
+    // updateOrderStatus, so it never reached the rollup bump that path does —
+    // meaning firstOrderAt, lastOrderAt and totalSpentCents stayed stale for
+    // every counter and dine-in sale, which is most of them. Fire-and-forget:
+    // a rollup must never fail a sale that has already been paid for.
+    if (result.customerId) {
+      const { bumpCustomerRollups } = await import('../../lib/customerRollups.js')
+      bumpCustomerRollups(result.customerId)
+    }
   }
 
-  return { ...result, srb }
+  // customerId was only carried out of the transaction to drive the rollup
+  // above; it isn't part of the settle response.
+  const { customerId: _customerId, ...response } = result
+  return { ...response, srb }
 }
 
 // ─── Shift management ─────────────────────────────────────────────────────────

@@ -15,14 +15,33 @@ type Tx = PrismaClient | Parameters<Parameters<PrismaClient['$transaction']>[0]>
 
 /**
  * Recompute and write the rollups for one customer based on the source-of-truth
- * tables. Cheap (3-4 indexed counts/aggregates), called fire-and-forget from
- * status-change handlers.
+ * tables. Cheap (a handful of indexed counts/aggregates), called
+ * fire-and-forget from status-change handlers.
+ *
+ * firstOrderAt / lastOrderAt / totalSpentCents were previously declared on
+ * Customer and read in several places but never written by anything, so they
+ * stayed NULL and 0 for every customer in the system. The consequences were
+ * not cosmetic:
+ *
+ *   - The referral reward worker selects on `firstOrderAt: { not: null }`, so
+ *     it matched nothing and NO referral bonus was ever paid — to either side.
+ *     The /account referrals box showed every referral as forever "pending".
+ *   - The first-order welcome message never fired.
+ *   - The activation nag selects on `firstOrderAt: null`, which was true for
+ *     everyone, so customers who had already ordered kept being told to place
+ *     their first order.
+ *   - The lapsed and at-risk CRM segments compare against lastOrderAt, and a
+ *     NULL never satisfies `<`, so both were permanently empty.
+ *   - The customer list showed every customer as having spent zero.
+ *
+ * They are computed here rather than incremented at the till, so a re-run after
+ * a crash still converges on the truth, exactly like the other rollups.
  */
 export async function recomputeCustomerRollups(
   customerId: string,
   tx: Tx = defaultPrisma,
 ): Promise<void> {
-  const [noShows, complaints, reviewAgg, lastSeated] = await Promise.all([
+  const [noShows, complaints, reviewAgg, lastSeated, orderAgg, firstOrder] = await Promise.all([
     tx.reservation.aggregate({
       where: { customerId, status: 'no_show' },
       _count: { _all: true },
@@ -44,12 +63,23 @@ export async function recomputeCustomerRollups(
       select: { seatedAt: true },
       orderBy: { seatedAt: 'desc' },
     }),
+    // Order history. Only COMPLETED orders count: a cancelled or rejected
+    // order is not a visit and its total is not revenue, and "completed their
+    // first order" is what the referral reward is supposed to mean.
+    tx.order.aggregate({
+      where: { customerId, status: 'completed', deletedAt: null },
+      _count: { _all: true },
+      _sum: { totalCents: true },
+      _max: { completedAt: true },
+    }),
+    tx.order.findFirst({
+      where: { customerId, status: 'completed', deletedAt: null },
+      select: { completedAt: true },
+      orderBy: { completedAt: 'asc' },
+    }),
   ])
 
-  const lastOrder = (await tx.customer.findUnique({
-    where: { id: customerId },
-    select: { lastOrderAt: true },
-  }))?.lastOrderAt ?? null
+  const lastOrder = orderAgg._max.completedAt ?? null
 
   const lastVisitAt =
     lastOrder && lastSeated?.seatedAt
@@ -67,6 +97,14 @@ export async function recomputeCustomerRollups(
       lastReviewedAt:  reviewAgg._max.createdAt,
       avgReviewRating: reviewAgg._avg.rating,
       lastVisitAt,
+      // These three were declared on Customer and read in half a dozen places
+      // — the referral reward, the first-order welcome trigger, the "never
+      // ordered" activation nag, the lapsed/at-risk CRM segments, the customer
+      // list's spend column — but nothing ever wrote them. See the note above
+      // recomputeCustomerRollups.
+      firstOrderAt:    firstOrder?.completedAt ?? null,
+      lastOrderAt:     lastOrder,
+      totalSpentCents: orderAgg._sum.totalCents ?? 0,
     },
   })
 }

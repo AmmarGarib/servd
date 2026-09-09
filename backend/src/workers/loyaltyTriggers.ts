@@ -325,9 +325,37 @@ async function runSpendMilestoneTrigger() {
 
 // Referral reward — when a referred customer's first order completes, BOTH
 // parties get a bonus. Idempotent via referralRewardCreditedAt stamp.
-async function runReferralRewardTrigger() {
+// Exported so the guards below can be exercised directly in a test rather
+// than by waiting out the worker's schedule.
+export async function runReferralRewardTrigger() {
   const REFERRER_BONUS = 200
   const REFEREE_BONUS  = 200
+
+  // ─── Anti-farming guards ───────────────────────────────────────────────────
+  //
+  // 200 + 200 points is PKR 400 of real value per referral, and signing up
+  // costs an email address. Without these, a script with disposable addresses
+  // mints PKR 400 a head, and the only thing standing in the way is the price
+  // of one order.
+  //
+  //   MIN_FIRST_ORDER_CENTS  The referral must not pay out more than the order
+  //                          that triggered it was worth. Below this the whole
+  //                          exercise is the operator paying someone to take
+  //                          money off them.
+  //   MAX_PER_REFERRER_30D   A real customer refers friends and family. Someone
+  //                          past this in a month is running a farm, and the
+  //                          cap turns an unbounded loss into a bounded one.
+  //                          Referrals beyond it still register — they just
+  //                          don't pay, and they wait rather than being voided,
+  //                          so a genuinely popular referrer collects next
+  //                          month instead of losing them.
+  //
+  // The referee's phone must also be verified. An email address is free and
+  // infinite; a phone number that receives a WhatsApp OTP is neither, and it is
+  // the cheapest thing standing between a marketing budget and a script.
+  const MIN_FIRST_ORDER_CENTS = 50_000   // PKR 500
+  const MAX_PER_REFERRER_30D  = 10
+  const thirtyDaysAgo = new Date(Date.now() - 30 * 86_400_000)
 
   // Pull referred customers who placed their first order recently AND whose
   // referral reward hasn't been credited yet. We require BOTH parties to
@@ -340,7 +368,7 @@ async function runReferralRewardTrigger() {
       referralRewardCreditedAt: null,
     },
     select: {
-      id: true, name: true,
+      id: true, name: true, phoneVerifiedAt: true,
       loyaltyAccount: { select: { id: true } },
       referredBy: { select: { id: true, name: true, email: true, phone: true, marketingOptIn: true, loyaltyAccount: { select: { id: true } } } },
     },
@@ -358,6 +386,38 @@ async function runReferralRewardTrigger() {
         where: { id: referee.id },
         data: { referralRewardCreditedAt: new Date() },
       })
+      continue
+    }
+
+    // Unverified phone: no payout, and no stamp either. If they verify later,
+    // this referral is picked up on a subsequent run.
+    if (!referee.phoneVerifiedAt) continue
+
+    // The order that triggered this has to be worth more than the reward.
+    const firstOrder = await prisma.order.findFirst({
+      where: { customerId: referee.id, status: 'completed', deletedAt: null },
+      select: { totalCents: true },
+      orderBy: { completedAt: 'asc' },
+    })
+    if (!firstOrder || firstOrder.totalCents < MIN_FIRST_ORDER_CENTS) {
+      // Not a fraud signal on its own — someone may just have bought a drink.
+      // Leave it unstamped so a later, larger first order isn't needed; the
+      // referral simply doesn't pay on this one.
+      continue
+    }
+
+    // Monthly cap per referrer.
+    const rewardedRecently = await prisma.customer.count({
+      where: {
+        referredById: referrer.id,
+        referralRewardCreditedAt: { gte: thirtyDaysAgo },
+      },
+    })
+    if (rewardedRecently >= MAX_PER_REFERRER_30D) {
+      console.warn(
+        `[referral] ${referrer.id} has hit the ${MAX_PER_REFERRER_30D}/30d payout cap — ` +
+        `holding the reward for referee ${referee.id}. Worth a look if this keeps happening.`,
+      )
       continue
     }
 
