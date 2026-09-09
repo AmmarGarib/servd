@@ -122,7 +122,10 @@ export async function groupOrderRoutes(fastify: FastifyInstance) {
   // POST /group-orders/:code/items — member adds an item
   fastify.post<{ Params: { code: string } }>(
     '/:code/items',
-    { preHandler: requireCustomerAuth },
+    // Quantity is capped per line but the number of lines was not, so one
+    // member could bury a group — and the kitchen ticket — under thousands of
+    // rows. A real table orders dozens of things, not hundreds.
+    { preHandler: requireCustomerAuth, config: { rateLimit: { max: 120, timeWindow: '1 minute' } } },
     async (req) => {
       const code = req.params.code.toUpperCase()
       const body = z.object({
@@ -225,6 +228,12 @@ export async function groupOrderRoutes(fastify: FastifyInstance) {
       if (go.orderId) {
         return { orderId: go.orderId, alreadySubmitted: true }
       }
+      // A cancelled group must not still fire a ticket. Cancel doesn't set
+      // orderId, and orderId was the only thing being checked here, so
+      // cancel-then-submit sent the order to the kitchen anyway.
+      if (go.status === 'cancelled') {
+        throw new AppError('GROUP_CANCELLED', 'This group order was cancelled', 422)
+      }
       if (go.items.length === 0) throw new AppError('NO_ITEMS', 'Group has no items', 422)
 
       // Auth: submitter must be a group member (joining is required upstream,
@@ -245,7 +254,9 @@ export async function groupOrderRoutes(fastify: FastifyInstance) {
         select: { id: true, name: true },
       })
 
-      const order = await prisma.$transaction(async (tx) => {
+      let order
+      try {
+        order = await prisma.$transaction(async (tx) => {
         const created = await tx.order.create({
           data: {
             conceptId:    go.conceptId,
@@ -280,12 +291,60 @@ export async function groupOrderRoutes(fastify: FastifyInstance) {
             },
           },
         })
-        await tx.groupOrder.update({
-          where: { id: go.id },
+        // Claim the group conditionally. The `go.orderId` check above happens
+        // outside this transaction, so two submits landing together — a
+        // double-tapped button is enough — both passed it and both created an
+        // Order. That is two kitchen tickets and two Payment rows for one
+        // group, with the losing Order orphaned but already fired to the pass.
+        //
+        // Only one writer can move the group from orderId=null, and the loser
+        // throws, which rolls back the Order it just created.
+        const claimed = await tx.groupOrder.updateMany({
+          where: { id: go.id, orderId: null },
           data: { status: 'submitted', orderId: created.id },
         })
+        if (claimed.count === 0) {
+          throw new AppError('ALREADY_SUBMITTED', 'This group order has already been submitted', 409)
+        }
         return created
-      })
+        })
+      } catch (err) {
+        // The losing side of a concurrent submit — a double-tapped button is
+        // enough to produce one.
+        //
+        // Two things stop a second Order being created, and both land here.
+        // The database already had @@unique([source, externalId]) and the
+        // externalId is `group-<shareCode>`, so the duplicate insert fails with
+        // P2002; the conditional claim above catches the case where a submit
+        // gets past that. Either way the loser's Order is rolled back and the
+        // winner's is live.
+        //
+        // What was wrong was the answer: both arrive as a 500 "Internal server
+        // error", because Prisma re-wraps whatever comes out of $transaction.
+        // Telling someone the system broke when their order went through fine
+        // invites them to try again.
+        const e = err as { code?: string }
+        const isConcurrentSubmit =
+          e.code === 'P2002' || (err instanceof AppError && err.code === 'ALREADY_SUBMITTED')
+        if (!isConcurrentSubmit) throw err
+
+        // The winner may not have committed at the instant we failed, so read
+        // the group again before answering.
+        for (let attempt = 0; attempt < 3; attempt++) {
+          const fresh = await prisma.groupOrder.findUnique({
+            where: { id: go.id },
+            select: { orderId: true },
+          })
+          if (fresh?.orderId) return { orderId: fresh.orderId, alreadySubmitted: true }
+          await new Promise((r) => setTimeout(r, 60))
+        }
+        throw new AppError(
+          'ALREADY_SUBMITTED',
+          'This group order is already being submitted. Refresh to see the order.',
+          409,
+        )
+      }
+
       return { orderId: order.id, total }
     },
   )
