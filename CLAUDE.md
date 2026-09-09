@@ -130,6 +130,53 @@ rewritten, trust these corrections:
   every company's brands and now includes `tenantId`. Anything that claims
   brands are related ("same kitchen group", shared cart) must filter on it.
 
+## Second-pass audit findings, all fixed (2026-09-09)
+
+31 findings, adversarially verified, then fixed and tested. The patterns worth
+remembering, because most of them recurred:
+
+- **A guard that never ran.** `type: 'reversal' as never` — the enum value did
+  not exist, Postgres rejected the insert, and the shared transaction rolled the
+  whole claw-back back. Refunds had never reversed a loyalty point. **An `as
+  never` or `as unknown` cast on a DB write is a bug until proven otherwise.**
+- **A comment describing a flag that was never added.** The gift-card refund
+  said it was idempotent "on a flag we add (reversedAt)"; the column did not
+  exist and the code re-credited unconditionally. Both `GiftCardRedemption` and
+  `LoyaltyTransaction` now really carry `reversedAt`, claimed before the money
+  moves.
+- **Money applied to the order before the money was taken.** Checkout discounted
+  the order, created it, then tried the deduction — and on failure only zeroed
+  local variables. Restore the ORDER (and the pending payment), the way the
+  wallet path does. Gift cards had the mirror bug: card drained, bill unchanged.
+- **Idempotency keyed on the wrong thing.** Per order rather than per
+  transaction (loyalty reversal), or a server-generated `Date.now()` used as an
+  external id — two checkouts in the same millisecond deduped onto ONE order, so
+  a customer got a stranger's order back. Storefront order ids are UUIDs now.
+- **Unauthenticated endpoints that send messages.** Public booking, and
+  `/cart/abandon`, both accepted an attacker-chosen phone/email and later texted
+  or emailed it on GS Foods' account. Contact details must come from the
+  session; cap per phone, not per IP.
+- **Scope helpers that fail open.** `tenantId: (tenantFilter ?? undefined)` is
+  "no filter" in Prisma. Always use `lib/tenantScope.ts`, which returns
+  `{ tenantId: { in: [] } }` and denies. Staff CAN have a null tenant.
+- **Fallbacks OR'd instead of chained.** `{ OR: [where, {location: where},
+  {user: where}] }` let a cashier's other company override the shift's own
+  company. A fallback for legacy rows must be gated on the real column being
+  NULL.
+- **One-sided journal lines.** The cash-variance line had no counterpart, so any
+  drawer that didn't reconcile made the entry unbalanced, `postJournalEntry`
+  threw, the caller logged it, and the ENTIRE shift never reached the ledger.
+  Assert debits == credits before posting, and log the source id when it fails.
+- **GST.** `Order.taxCents` was never written by `ingestOrder`, so storefront
+  GST filed as zero. Group orders billed the legacy `concept.taxRate` (17%)
+  instead of the tender split (`taxRateCash` 15% / `taxRateCard` 8%). Both
+  fixed — never use `concept.taxRate` in new code.
+
+Regression suites live in the session scratchpad, not the repo: login/smoke,
+2FA, rate limiter, reservations, group orders, referrals, and five audit
+batches. Reproduce them against a local Postgres + Redis before touching auth,
+checkout or the ledger.
+
 ## What this is
 
 `servd` is the in-house restaurant management system for **GS Foods** — a
@@ -226,12 +273,14 @@ are switched on in `BrandFallback.tsx`. Live brands:
   Amarante + Times, no white, no gradients, no exclamation marks,
   no emojis, banned-word list, single orange signal per viewport,
   tagline `simmer down.` always below the wordmark, never above.
-- **stax** — Industrial navy-grey (oceanic noir `#142834` + greys, palettepoint set)
+- **stackd** — Industrial plum (Pantone 19-2025 Red Plum `#7C2946` + Pantone
+  9180 cream `#FCE8CE`, Pantone 635 `#9BD3DD` as the one cool accent). Was
+  "stax" / navy-grey; see the 2026-09-09 note above.
 - **flipd** — Cool diner (curious blue `#2092E9` + bone `#EDE6D3` + midnight-oil ink `#090D17`)
 
 CSS tokens for all three are defined in
 `frontend/storefront/src/app/globals.css` under `:root` (search
-`--simmer-*`, `--stax-*`, `--flipd-*`).
+`--simmer-*`, `--stackd-*`, `--flipd-*`).
 
 ### Two visual systems exist in the storefront
 
