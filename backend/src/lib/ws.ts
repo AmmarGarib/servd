@@ -98,15 +98,13 @@ export function initWebSocket(fastify: FastifyInstance): SocketIOServer {
     const token = auth?.token ?? queryToken ?? cookieToken
     if (!token) return next(new Error('UNAUTHORIZED'))
     try {
-      // KDS screens use PIN tokens; admin/manager browser sessions use access
-      // tokens. Either authenticates the socket — `requireAuthOrPin` mirrors
-      // the same policy on HTTP routes.
-      let payload
-      try { payload = verifyStaffToken(token, 'access') }
-      catch (e: unknown) {
-        if ((e as { code?: string }).code !== 'INVALID_TOKEN_TYPE') throw e
-        payload = verifyStaffToken(token, 'pin')
-      }
+      // Every client — KDS screens included — now holds a normal access token;
+      // PIN tokens are no longer minted. The old fallback to `verifyStaffToken(
+      // token, 'pin')` is gone with them. Note the whole io.use body is wrapped
+      // in a catch that collapses any failure to UNAUTHORIZED, so a mistake
+      // here shows up as an unexplained socket reconnect loop on the KDS
+      // screens rather than an error anyone would see.
+      const payload = verifyStaffToken(token, 'access')
       // A valid signature is not the same as a live session. The HTTP guards
       // check the deny list and the account's current state on every request;
       // this handshake checked neither, so a token belonging to someone who has

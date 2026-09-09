@@ -216,11 +216,19 @@ export async function clearFailures(limit: Limit, ip: string): Promise<void> {
   }
 }
 
-// PIN: 4-digit PIN has only 10K combos. Cap aggressively, both per-IP and per-user.
-// (per-user variant is checked separately in the PIN handler — see auth/routes.ts)
-export const PIN_LIMIT:               Limit = { scope: 'pin',              max: 3, lockoutSec: 30 * 60 }
-export const PIN_USER_LIMIT:          Limit = { scope: 'pin-user',         max: 5, lockoutSec: 60 * 60 }
-export const STAFF_PASSWORD_LIMIT:    Limit = { scope: 'staff-login',      max: 5, lockoutSec: 15 * 60 }
+// A restaurant is ONE public IP. Every tablet, till and KDS screen on site
+// shares it, so a per-IP cap of 5 means five fumbled passwords anywhere in the
+// building locks out the whole venue for 15 minutes — including the manager
+// who would fix it. That was survivable while cooks typed PINs into a separate
+// bucket; with email+password as the only way in, all of that traffic lands
+// here.
+//
+// So the per-IP cap is loose enough to absorb a shift's honest mistakes, and
+// the PER-ACCOUNT cap below is the one doing the real work: an attacker
+// grinding one account hits 8 and stops, while a busy venue never trips 40.
+// Rotating the source IP does not help them, because the account bucket is
+// keyed on the email.
+export const STAFF_PASSWORD_LIMIT:    Limit = { scope: 'staff-login',      max: 40, lockoutSec: 10 * 60 }
 // Per-account companion to the above, keyed on the email rather than the IP.
 // An IP limit alone is the easy half to evade — rotate the source and the
 // budget resets — and password is now the ONLY way into the owner, management

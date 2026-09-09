@@ -169,17 +169,6 @@ export function requireAuth(...allowedRoles: UserRole[]) {
  * the KDS station controls. Use this on every `kds/*` route that takes
  * destructive actions (bump/recall/hold/fire).
  */
-export function requirePinSession(...allowedRoles: UserRole[]) {
-  return async (req: FastifyRequest, _reply: FastifyReply) => {
-    const token = tokenFromRequest(req)
-    if (!token) {
-      throw new UnauthorizedError('Missing authentication')
-    }
-    const payload = verifyStaffToken(token, 'pin')
-    await assertNotRevoked(token, payload)
-    await attachStaffPrincipal(req, payload, allowedRoles)
-  }
-}
 
 /**
  * Refresh-token-only gate. Wire this on `POST /auth/refresh` and nowhere
@@ -203,25 +192,6 @@ export async function requireRefresh(req: FastifyRequest, _reply: FastifyReply) 
  * serve both contexts — refusing a PIN session here would be a UX regression for
  * line cooks; refusing an access token would block managers from spot-checking.
  */
-export function requireAuthOrPin(...allowedRoles: UserRole[]) {
-  return async (req: FastifyRequest, _reply: FastifyReply) => {
-    const token = tokenFromRequest(req)
-    if (!token) {
-      throw new UnauthorizedError('Missing authentication')
-    }
-    let payload
-    try {
-      payload = verifyStaffToken(token, 'access')
-    } catch (e: unknown) {
-      // Fall through to PIN if it wasn't an access token. Anything else
-      // (signature mismatch, expired, etc.) is rethrown.
-      if ((e as { code?: string }).code !== 'INVALID_TOKEN_TYPE') throw e
-      payload = verifyStaffToken(token, 'pin')
-    }
-    await assertNotRevoked(token, payload)
-    await attachStaffPrincipal(req, payload, allowedRoles)
-  }
-}
 
 export async function requireCustomerAuth(req: FastifyRequest, _reply: FastifyReply) {
   const authHeader = req.headers.authorization

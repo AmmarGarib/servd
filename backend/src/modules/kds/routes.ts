@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify'
 import { prisma } from '../../lib/prisma.js'
-import { requireAuth, requireAuthOrPin, ALL_STAFF, MANAGERS } from '../auth/middleware.js'
+import { requireAuth, ALL_STAFF, MANAGERS } from '../auth/middleware.js'
 import { NotFoundError } from '../../lib/errors.js'
 import { getIOSafe } from '../../lib/ws.js'
 
@@ -32,7 +32,7 @@ export async function kdsRoutes(fastify: FastifyInstance) {
   // List stations with live load â€” count of non-completed OrderItems per station.
   fastify.get<{ Querystring: { conceptId?: string } }>(
     '/stations',
-    { preHandler: requireAuthOrPin(...ALL_STAFF) },
+    { preHandler: requireAuth(...ALL_STAFF) },
     async (req) => {
       // tenantId stays a single string so writes (safeEmit / order updates)
       // can use it; reads filter via tenantFilter which expands to an IN-clause
@@ -94,7 +94,7 @@ export async function kdsRoutes(fastify: FastifyInstance) {
   ])
   fastify.get(
     '/my-stations',
-    { preHandler: requireAuthOrPin(...ALL_STAFF) },
+    { preHandler: requireAuth(...ALL_STAFF) },
     async (req) => {
       const tenantFilter = req.staffUser!.tenantFilter
       const role = req.staffUser!.role
@@ -152,7 +152,7 @@ export async function kdsRoutes(fastify: FastifyInstance) {
   // All active OrderItems routed to this station (not bumped or voided).
   fastify.get<{ Params: { stationId: string } }>(
     '/queue/:stationId',
-    { preHandler: requireAuthOrPin(...ALL_STAFF) },
+    { preHandler: requireAuth(...ALL_STAFF) },
     async (req) => {
       const { stationId } = req.params
       // tenantId stays a single string so writes (safeEmit / order updates)
@@ -217,7 +217,7 @@ export async function kdsRoutes(fastify: FastifyInstance) {
   // Transition item to 'preparing' (fire), stamp firedAt, broadcast kds:item_fired.
   fastify.post<{ Params: { itemId: string } }>(
     '/items/:itemId/fire',
-    { preHandler: requireAuthOrPin(...ALL_STAFF) },
+    { preHandler: requireAuth(...ALL_STAFF) },
     async (req) => {
       const { itemId } = req.params
       // tenantId stays a single string so writes (safeEmit / order updates)
@@ -257,7 +257,7 @@ export async function kdsRoutes(fastify: FastifyInstance) {
   // Transition item to 'bumped', stamp completedAt, broadcast kds:item_bumped.
   fastify.post<{ Params: { itemId: string } }>(
     '/items/:itemId/bump',
-    { preHandler: requireAuthOrPin(...ALL_STAFF) },
+    { preHandler: requireAuth(...ALL_STAFF) },
     async (req) => {
       const { itemId } = req.params
       // tenantId stays a single string so writes (safeEmit / order updates)
@@ -318,7 +318,7 @@ export async function kdsRoutes(fastify: FastifyInstance) {
   // Pull a bumped item back to 'preparing', clear completedAt, broadcast kds:item_recalled.
   fastify.post<{ Params: { itemId: string } }>(
     '/items/:itemId/recall',
-    { preHandler: requireAuthOrPin(...ALL_STAFF) },
+    { preHandler: requireAuth(...ALL_STAFF) },
     async (req) => {
       const { itemId } = req.params
       // tenantId stays a single string so writes (safeEmit / order updates)

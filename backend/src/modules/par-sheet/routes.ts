@@ -8,7 +8,7 @@
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
-import { requireAuth, requireAuthOrPin, ALL_STAFF, MANAGERS } from '../auth/middleware.js'
+import { requireAuth, ALL_STAFF, MANAGERS } from '../auth/middleware.js'
 import { NotFoundError } from '../../lib/errors.js'
 
 // Midnight UTC of the requested service day (or today if none).
@@ -25,7 +25,7 @@ export async function parSheetRoutes(fastify: FastifyInstance) {
   // the morning rollover hasn't been done yet). Expo sees this on /expo.
   fastify.get<{ Querystring: { date?: string } }>(
     '/',
-    { preHandler: requireAuthOrPin(...ALL_STAFF) },
+    { preHandler: requireAuth(...ALL_STAFF) },
     async (req) => {
       const tenantId = req.staffUser!.tenantId
       const tenantFilter = req.staffUser!.tenantFilter
@@ -67,7 +67,7 @@ export async function parSheetRoutes(fastify: FastifyInstance) {
   // when they finish a batch; expo calls it in the morning to set targets.
   fastify.put<{ Params: { componentId: string }; Body: Record<string, unknown> }>(
     '/:componentId',
-    { preHandler: requireAuthOrPin(...ALL_STAFF) },
+    { preHandler: requireAuth(...ALL_STAFF) },
     async (req, reply) => {
       const body = z.object({
         date:    z.string().optional(),
@@ -115,7 +115,7 @@ export async function parSheetRoutes(fastify: FastifyInstance) {
   // read-modify-write race.
   fastify.post<{ Params: { componentId: string }; Body: { delta: number; date?: string } }>(
     '/:componentId/adjust',
-    { preHandler: requireAuthOrPin(...ALL_STAFF) },
+    { preHandler: requireAuth(...ALL_STAFF) },
     async (req, reply) => {
       const body = z.object({
         delta: z.number(),

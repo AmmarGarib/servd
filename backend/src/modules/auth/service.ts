@@ -4,6 +4,7 @@ import { isTwoFactorEnabled, startLoginChallenge } from './twoFactor.js'
 import { nanoid } from 'nanoid'
 import { serviceClient as prisma } from '../../lib/prisma.js'
 import { AppError, NotFoundError, UnauthorizedError } from '../../lib/errors.js'
+import { isStaffEmail, normaliseStaffEmail } from '../../lib/staffEmail.js'
 import type { UserRole } from '@prisma/client'
 import { sendMagicLink } from '../../lib/notify.js'
 
@@ -14,7 +15,6 @@ const JWT_SECRET = process.env['JWT_SECRET'] as string
 const JWT_REFRESH_SECRET = process.env['JWT_REFRESH_SECRET'] as string
 const JWT_ACCESS_EXPIRY: SignOptions['expiresIn']  = (process.env['JWT_ACCESS_EXPIRY']  ?? '15m') as SignOptions['expiresIn']
 const JWT_REFRESH_EXPIRY: SignOptions['expiresIn'] = (process.env['JWT_REFRESH_EXPIRY'] ?? '7d')  as SignOptions['expiresIn']
-const PIN_TOKEN_EXPIRY: SignOptions['expiresIn']   = (process.env['PIN_TOKEN_EXPIRY']   ?? '12h') as SignOptions['expiresIn']
 
 export interface StaffTokenPayload {
   sub: string   // user ID
@@ -22,7 +22,7 @@ export interface StaffTokenPayload {
   // /workforce don't have an address yet. Login mints empty string for those.
   email: string | null
   role: string
-  type: 'access' | 'refresh' | 'pin' | 'mfa'
+  type: 'access' | 'refresh' | 'mfa'
 }
 
 export interface CustomerTokenPayload {
@@ -37,11 +37,22 @@ const DUMMY_PASSWORD_HASH = '$2a$12$C6UzMDM.H6dfI/f/IKcEe.7Zt7Z0y2Nn2Vv9Q8kWzHqj
 // ─── Staff auth ───────────────────────────────────────────────────────────────
 
 export async function staffLogin(email: string, password: string) {
-  // accountStatus gate matches PIN login — `pending` (awaiting CEO approval)
-  // and `suspended` accounts must not be able to password-login either.
-  const user = await prisma.user.findFirst({
-    where: { email: email.toLowerCase(), isActive: true, deletedAt: null, accountStatus: 'active' },
-  })
+  // Domain rule enforced HERE as well as at account creation. Creation-only
+  // would leave every pre-existing off-domain row able to sign in, which makes
+  // it a suggestion rather than a rule.
+  //
+  // It still pays the bcrypt cost below rather than returning early, for the
+  // same reason an unknown address does: an instant rejection here would tell
+  // an attacker which domains are staff domains.
+  const onDomain = isStaffEmail(email)
+
+  // accountStatus gate: `pending` (awaiting CEO approval) and `suspended`
+  // accounts must not be able to sign in either.
+  const user = onDomain
+    ? await prisma.user.findFirst({
+        where: { email: normaliseStaffEmail(email), isActive: true, deletedAt: null, accountStatus: 'active' },
+      })
+    : null
 
   // Always pay the bcrypt cost, even for an unknown address. Returning early
   // made "no such account" answer in ~1ms and "wrong password" in ~100ms,
@@ -100,123 +111,6 @@ export function issueStaffSession(user: { id: string; name: string; email: strin
 // is an acceptable trade for a line cook clocking in; it is not acceptable for
 // an account that can read the P&L, run payroll, or edit roles. These sign in
 // with email + password only.
-const PIN_LOGIN_BLOCKED_ROLES: UserRole[] = [
-  'admin', 'owner', 'management', 'finance', 'hr',
-  // `manager` is the legacy spelling of `management` and gets exactly the same
-  // module set (MANAGEMENT_MODULES in lib/moduleAccess.ts). Blocking one and
-  // not the other left the same access reachable with a 4-digit PIN.
-  'manager',
-  // fnb_manager carries finance_pl and accounting.
-  'fnb_manager',
-]
-
-export async function staffPinLogin(identifier: string | undefined, pin: string) {
-  // Staff now identify themselves (name or email) BEFORE the PIN. That lets us:
-  //   • compare ONE PIN hash instead of every staff member's (no O(n) bcrypt
-  //     loop → no timing leak / DoS), and
-  //   • rate-limit failed attempts per person (done at the route).
-  // Only `active` accounts can complete PIN login — `pending` (awaiting CEO
-  // approval) and `suspended` (ex-staff) are excluded.
-  const idTrim = (identifier ?? '').trim()
-  // The identifier is REQUIRED. Without it the old code bcrypt-compared the
-  // typed PIN against every staff member's hash, which (a) turned one request
-  // into N bcrypt rounds, (b) matched whoever happened to share that PIN, and
-  // (c) escaped the per-person lockout because no single account accumulated
-  // the failures. Every login surface (admin, KDS, time-clock) sends it.
-  if (!idTrim) {
-    throw new UnauthorizedError('Enter your name, then your PIN')
-  }
-  const candidates = await prisma.user.findMany({
-    where: {
-      isActive: true, pin: { not: null }, deletedAt: null, accountStatus: 'active',
-      OR: [
-        { email: idTrim.toLowerCase() },
-        { name: { equals: idTrim, mode: 'insensitive' } },
-      ],
-    },
-  })
-
-  // Name isn't guaranteed unique, so compare against the (usually one) matches.
-  // The candidate set is tiny and scoped to the typed name — not all staff.
-  let matchedUser: (typeof candidates)[number] | null = null
-  for (const user of candidates) {
-    if (user.pin && await bcrypt.compare(pin, user.pin)) { matchedUser = user; break }
-  }
-
-  // Legacy PIN rotation gate. Any account whose PIN was derived from the
-  // last 4 digits of the phone (i.e. all pre-rotation accounts) is flagged
-  // pinMustReset=true by the user_pin_must_reset migration. Login is blocked
-  // until an admin issues a fresh CSPRNG PIN.
-  //
-  // Admin accounts are EXCLUDED from this gate because the admin is the one
-  // who issues PINs to everyone else — locking them out is a chicken-and-egg
-  // bootstrap break. Admins get nagged on every login to rotate (handled in
-  // the response payload) but aren't blocked.
-  if (
-    matchedUser
-    && matchedUser.role !== 'admin'
-    && (matchedUser as { pinMustReset?: boolean }).pinMustReset
-  ) {
-    throw new UnauthorizedError('Your PIN needs to be reissued by an admin before you can sign in. Ask the CEO to rotate it from /workforce.')
-  }
-
-  // Privileged accounts never get a session from a PIN, even a correct one.
-  if (matchedUser && PIN_LOGIN_BLOCKED_ROLES.includes(matchedUser.role)) {
-    throw new UnauthorizedError(
-      'This account signs in with email and password — PIN sign-in is disabled for owner, management and finance accounts.',
-    )
-  }
-
-  if (!matchedUser) {
-    // Distinguish "wrong PIN" from "your account is still pending". Knowing
-    // approval is pending tells the new hire they're not crazy — without
-    // leaking which PINs belong to active vs pending users.
-    const pendingExists = await prisma.user.findFirst({
-      where: { isActive: true, pin: { not: null }, deletedAt: null, accountStatus: 'pending' },
-      select: { id: true },
-    })
-    if (pendingExists) {
-      // We can't tell if THIS pin matches a pending account without comparing,
-      // and that defeats the privacy goal. Surface a generic "wrong or pending"
-      // message — the new hire will understand from context, attackers learn
-      // nothing they couldn't already learn.
-    }
-    throw new UnauthorizedError('PIN not recognised — or your account is still awaiting approval')
-  }
-
-  // PIN login is the day-to-day login for shift staff (clocks them in on a
-  // shared tablet), so it issues a full access + refresh pair just like
-  // password login does. The PIN-typed token still ships for KDS/POS shared-
-  // device flows that want a 12-hour station session. Admin role is blocked
-  // above — admins must use email + password.
-  const accessToken = jwt.sign(
-    { sub: matchedUser.id, email: matchedUser.email, role: matchedUser.role, type: 'access' } satisfies StaffTokenPayload,
-    JWT_SECRET,
-    { expiresIn: JWT_ACCESS_EXPIRY },
-  )
-  const refreshToken = jwt.sign(
-    { sub: matchedUser.id, email: matchedUser.email, role: matchedUser.role, type: 'refresh' } satisfies StaffTokenPayload,
-    JWT_REFRESH_SECRET,
-    { expiresIn: JWT_REFRESH_EXPIRY },
-  )
-  const pinToken = jwt.sign(
-    { sub: matchedUser.id, email: matchedUser.email, role: matchedUser.role, type: 'pin' } satisfies StaffTokenPayload,
-    JWT_SECRET,
-    { expiresIn: PIN_TOKEN_EXPIRY },
-  )
-
-  return {
-    accessToken,
-    refreshToken,
-    pinToken,
-    // `token` kept as an alias of accessToken so legacy clients reading
-    // `data.token` still work — every existing call site now lands on the
-    // access path, which is what they actually wanted.
-    token: accessToken,
-    user: { id: matchedUser.id, name: matchedUser.name, email: matchedUser.email, role: matchedUser.role },
-  }
-}
-
 export async function refreshStaffToken(refreshToken: string) {
   let payload: StaffTokenPayload
   try {
@@ -485,7 +379,7 @@ export async function verifyMagicLink(token: string) {
 // not pass `requireAuth`, etc. We throw a distinct `INVALID_TOKEN_TYPE` so the
 // audit log makes it obvious when a confused-deputy attempt happens.
 
-type StaffTokenType = 'access' | 'refresh' | 'pin'
+type StaffTokenType = 'access' | 'refresh'
 
 export function verifyStaffToken(token: string, expected: StaffTokenType): StaffTokenPayload {
   let payload: StaffTokenPayload
@@ -494,7 +388,7 @@ export function verifyStaffToken(token: string, expected: StaffTokenType): Staff
   } catch {
     throw new UnauthorizedError('Invalid or expired token')
   }
-  if (!['access', 'refresh', 'pin', 'mfa'].includes(payload.type)) {
+  if (!['access', 'refresh', 'mfa'].includes(payload.type)) {
     throw new UnauthorizedError('Invalid token type')
   }
   if (payload.type !== expected) {

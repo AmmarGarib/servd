@@ -118,26 +118,24 @@ export default function TimeClockPage() {
       }
 
       setStage('submitting')
-      const result = await api.post<{ accessToken: string; user: { name: string; role: string } }>(
-        '/auth/pin',
+      // Clocking in is now its own action for an already-signed-in person,
+      // rather than a side effect of a PIN login. The geofence and selfie
+      // rules are unchanged — they moved server-side into enforceClockInPolicy
+      // and both /auth/clock-in and the old PIN route shared them.
+      await api.post<{ clockedInAt: string }>(
+        '/auth/clock-in',
         {
-          identifier: name.trim(),
-          pin,
           ...(coords && { lat: coords.lat, lng: coords.lng }),
           ...(selfieUrl && { selfieUrl }),
         },
       )
-      // F43: persist via the auth store so token + user + WebSocket stay in
-      // sync. Manager can navigate elsewhere from the same browser and the
-      // session works everywhere; otherwise the success message + clear is
-      // the only UX.
-      useAuthStore.getState().setAuth(
-        { id: '', name: result.user.name, role: result.user.role },
-        result.accessToken,
-      )
-      setFeedback(`Welcome, ${result.user.name}. You're clocked in.`)
+      // No setAuth here any more. Clocking in used to BE the login, so it
+      // returned a session to persist; it is now an action taken by someone
+      // who is already signed in, and overwriting the store with a fresh
+      // session would be wrong.
+      const who = useAuthStore.getState().user?.name
+      setFeedback(who ? `Welcome, ${who}. You're clocked in.` : "You're clocked in.")
       setStage('success')
-      setPin('')
       // After 4s, reset to idle for the next person.
       setTimeout(() => setStage('idle'), 4000)
     } catch (err) {

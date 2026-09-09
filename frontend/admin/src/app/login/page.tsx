@@ -1,178 +1,71 @@
 'use client'
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuthStore } from '../../store/auth'
-import { isExecutive } from '../../lib/appRoles'
 
 const API_URL         = process.env['NEXT_PUBLIC_API_URL']         ?? 'http://localhost:3001'
 const STOREFRONT_URL  = process.env['NEXT_PUBLIC_STOREFRONT_URL']  ?? 'http://localhost:3002'
 
-type Mode = 'pin' | 'password' | 'signup' | 'twofactor'
+type Mode = 'password' | 'twofactor' | 'changepw'
 
 /**
- * The single staff login page. Two modes:
+ * The single staff login page. Email + password, and nothing else.
  *
- *   pin    — Default. Staff sign in with a 4–8 digit PIN that THEY choose at
- *            signup (the old phone-derived PINs are gone — the server rejects
- *            weak ones and an admin can re-issue). The pad accepts up to 8 and
- *            submits on the explicit "Sign in" button (it deliberately does
- *            NOT auto-fire at 4 — that locked out longer-PIN users).
+ * PIN sign-in is gone. It was the default here, and it minted a full session
+ * from four digits typed on a shared tablet — fine for a line cook, not fine
+ * when the same session can read the P&L. Every member of staff now has their
+ * own device, so the shared-tablet case that justified it no longer exists.
  *
- *   signup — A new hire fills name, email, phone, role. We create a User row
- *            with status='pending'; PIN is auto-derived from their phone.
- *            The CEO sees them in the pending-approvals list and flips them
- *            active, after which their PIN works.
+ * Staff self-signup is gone too. Its whole value was that a new hire chose a
+ * PIN and could sign in the moment the CEO approved them; under email+password
+ * it would create a pending row with a random password nobody ever sees, so an
+ * approved hire still could not get in. Accounts are created from Workforce,
+ * where the generated password is shown once to hand over.
  *
- *   password — Email + password. REQUIRED for owner, management and finance
- *            accounts: a 4-digit PIN typed on a shared tablet is fine for a
- *            line cook, but it must not mint a session that can read the P&L
- *            or run payroll, so the server refuses PIN login for those roles.
- *            Everyone else can use either.
+ * Modes:
+ *   password  — the default and the only way in.
+ *   twofactor — the WhatsApp OTP step, for accounts enrolled in it.
+ *   changepw  — reachable from the sign-in form WITHOUT a session, because
+ *               someone handed a generated password needs to replace it before
+ *               they have anything else to sign in with.
  */
 export default function StaffLoginPage() {
   const router  = useRouter()
   const setAuth = useAuthStore((s) => s.setAuth)
-  const [mode, setMode] = useState<Mode>('pin')
+  const [mode, setMode] = useState<Mode>('password')
 
-  // ── Password state (owner / management / finance sign in this way)
   const [pwEmail,    setPwEmail]    = useState('')
   const [pwPassword, setPwPassword] = useState('')
 
   // Second-factor step. The challenge token is what the API handed back instead
   // of a session; the code is what arrives on WhatsApp. Neither is a credential
-  // on its own — the challenge is only good for ten minutes and only for
+  // on its own — the challenge is good for ten minutes and only for
   // /auth/2fa/verify.
   const [mfaChallenge, setMfaChallenge] = useState('')
   const [mfaHint,      setMfaHint]      = useState('')
   const [mfaCode,      setMfaCode]      = useState('')
 
-  // ── PIN state
-  const [pin,     setPin]     = useState('')
-  const [pinName, setPinName] = useState('')   // staff name entered before the PIN
+  // Change-password step.
+  const [cpCurrent, setCpCurrent] = useState('')
+  const [cpNew,     setCpNew]     = useState('')
+  const [cpNew2,    setCpNew2]    = useState('')
+  const [cpDone,    setCpDone]    = useState(false)
+
   const [error,   setError]   = useState('')
-  const [status,  setStatus]  = useState('')
   const [loading, setLoading] = useState(false)
 
-  // ── Signup state
-  const [name,        setName]        = useState('')
-  const [email,       setEmail]       = useState('')
-  const [phone,       setPhone]       = useState('')
-  const [role,        setRole]        = useState<'manager' | 'cashier' | 'kitchen' | 'expediter' | 'marketing'>('cashier')
-  const [reason,      setReason]      = useState('')
-  const [signupDone,  setSignupDone]  = useState<{ name: string; pin: string } | null>(null)
-  // The PIN the new hire chooses. Staff signup REQUIRES one (4-8 digits, and
-  // the server rejects weak ones); the form never collected it, so every
-  // signup from this page failed validation before it reached a human.
-  const [signupPin,   setSignupPin]   = useState('')
-  const [signupPin2,  setSignupPin2]  = useState('')
-
-  async function getCoords(): Promise<{ lat: number; lng: number } | null> {
-    if (!navigator.geolocation) return null
-    return new Promise((resolve) => {
-      navigator.geolocation.getCurrentPosition(
-        (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
-        ()    => resolve(null),
-        { timeout: 8000, maximumAge: 60_000, enableHighAccuracy: true },
-      )
-    })
+  const field = 'w-full mb-3 rounded-xl px-4 py-3 text-s-text outline-none'
+  const fieldStyle = { background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)' }
+  const cta = 'w-full rounded-xl py-3 text-sm font-black transition-opacity disabled:opacity-40'
+  const ctaStyle = {
+    background: 'linear-gradient(135deg, #00D4B1, #6366F1)',
+    color: '#000',
+    boxShadow: '0 4px 20px rgba(0,212,177,0.25)',
   }
 
-  async function submitPin(pinVal: string) {
-    setError(''); setLoading(true)
-    setStatus('Getting your location…')
-    const coords = await getCoords()
-    setStatus('Signing in…')
-    try {
-      const res = await fetch(`${API_URL}/api/v1/auth/pin`, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',                          // accept the httpOnly session cookie
-        body:    JSON.stringify({ identifier: pinName.trim(), pin: pinVal, ...coords }),
-      })
-      if (!res.ok) {
-        const d = await res.json() as { error?: { message?: string } }
-        throw new Error(d.error?.message ?? 'PIN not recognised')
-      }
-      const data = await res.json() as {
-        token: string                                // alias of accessToken (legacy)
-        accessToken?: string
-        refreshToken?: string
-        user: { id: string; name: string; role: string }
-      }
-      setAuth(data.user, data.accessToken ?? data.token, data.refreshToken)
-      // Non-CEO staff land on the Time Clock kiosk first — clocking in is the
-      // first thing they do every shift. CEO (admin role) bypasses straight
-      // to the dashboard.
-      // Everyone lands on the module hub — it is the map of the whole system.
-      // Floor staff who only hold the time-clock atom still see the hub; their
-      // modules simply render as locked.
-      router.replace('/modules')
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'PIN not recognised')
-      setPin('')
-    } finally {
-      setLoading(false); setStatus('')
-    }
-  }
-
-  async function submitSignup(e: React.FormEvent) {
-    e.preventDefault()
-    if (signupPin !== signupPin2) { setError('The two PINs do not match'); return }
-    setError(''); setLoading(true)
-    try {
-      const res = await fetch(`${API_URL}/api/v1/auth/staff/signup`, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({
-          name: name.trim(),
-          email: email.trim(),
-          phone: phone.trim(),
-          pin: signupPin,
-          role,
-          ...(reason.trim() && { reason: reason.trim() }),
-        }),
-      })
-      const data = await res.json() as { name?: string; phone?: string; error?: { message?: string; code?: string } }
-      if (!res.ok) {
-        throw new Error(data.error?.message ?? 'Could not create account')
-      }
-      // Show back the PIN they chose. This used to display the last 4 digits
-      // of their phone, which is what PINs used to be derived from — staff now
-      // pick their own, so the old line told them the wrong number.
-      setSignupDone({ name: data.name ?? name, pin: signupPin })
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not create account')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  function pressDigit(d: string) {
-    if (pin.length >= 8 || loading) return
-    const next = pin + d
-    setPin(next)
-    // PINs are variable length (4–8 digits): most staff use the 4-digit
-    // last-of-phone PIN, the CEO and any admin-issued PINs are 6 digits.
-    // The client can't know the length, so we DON'T auto-submit at 4 — that
-    // truncated a 6-digit PIN and then froze the pad on `loading`, locking
-    // longer-PIN users out. Auto-submit only when the field is full (8), the
-    // one length where no further input is possible; otherwise the user taps
-    // "Sign in" when done.
-    if (next.length === 8) setTimeout(() => void submitPin(next), 120)
-  }
-
-  function pressBack() { if (!loading) { setError(''); setPin((p) => p.slice(0, -1)) } }
-
-  function trySubmit() {
-    if (loading || pin.length < 4) return
-    void submitPin(pin)
-  }
-
-  // Physical-keyboard support — the CEO often signs in from a laptop, not the
   async function submitPassword(e: React.FormEvent) {
     e.preventDefault()
-    setError('')
-    setLoading(true)
+    setError(''); setLoading(true)
     try {
       const res = await fetch(`${API_URL}/api/v1/auth/login`, {
         method: 'POST',
@@ -183,8 +76,8 @@ export default function StaffLoginPage() {
       const d = await res.json()
       if (!res.ok) throw new Error(d.error?.message ?? 'Invalid credentials')
 
-      // Account has two-factor on: no session yet, just a challenge. Move to
-      // the code step rather than trying to read tokens that aren't there.
+      // Two-factor on: no session yet, only a challenge. Move to the code step
+      // rather than reading tokens that are not there.
       if (d.twoFactorRequired) {
         setMfaChallenge(d.challengeToken)
         setMfaHint(d.phoneHint ?? '')
@@ -194,7 +87,10 @@ export default function StaffLoginPage() {
       }
 
       setAuth(d.user, d.accessToken, d.refreshToken)
-      router.replace('/modules')
+      // Nudge, never a block: an account created with a generated password is
+      // flagged, but it still signs in. Blocking on this flag is how people get
+      // stranded on deploy day.
+      router.replace(d.user?.mustChangePassword ? '/account/password' : '/modules')
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Invalid credentials')
     } finally {
@@ -204,8 +100,7 @@ export default function StaffLoginPage() {
 
   async function submitTwoFactor(e: React.FormEvent) {
     e.preventDefault()
-    setError('')
-    setLoading(true)
+    setError(''); setLoading(true)
     try {
       const res = await fetch(`${API_URL}/api/v1/auth/2fa/verify`, {
         method: 'POST',
@@ -224,53 +119,38 @@ export default function StaffLoginPage() {
     }
   }
 
-  // tablet keypad. Digits type, Backspace deletes, Enter submits (when ≥4).
-  useEffect(() => {
-    if (mode !== 'pin' || signupDone) return
-    function onKey(e: KeyboardEvent) {
-      if (loading) return
-      // Don't hijack the keyboard while the user is typing in a field (e.g. the
-      // name box) — let Backspace and every other key edit that field normally.
-      // The pad shortcuts only apply when nothing editable is focused; tapping a
-      // pad key blurs the name input, after which the keyboard drives the PIN.
-      const t = e.target as HTMLElement | null
-      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
-      if (e.key.length === 1 && e.key >= '0' && e.key <= '9') { e.preventDefault(); pressDigit(e.key) }
-      else if (e.key === 'Backspace') { e.preventDefault(); pressBack() }
-      else if (e.key === 'Enter')     { e.preventDefault(); trySubmit() }
+  async function submitChangePassword(e: React.FormEvent) {
+    e.preventDefault()
+    if (cpNew !== cpNew2) { setError('The two new passwords do not match'); return }
+    setError(''); setLoading(true)
+    try {
+      const res = await fetch(`${API_URL}/api/v1/auth/password/change`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: pwEmail.trim().toLowerCase(),
+          currentPassword: cpCurrent,
+          newPassword: cpNew,
+        }),
+      })
+      if (res.status === 204) {
+        setCpDone(true)
+        setPwPassword('')
+        setCpCurrent(''); setCpNew(''); setCpNew2('')
+        return
+      }
+      const d = await res.json().catch(() => ({}))
+      throw new Error(d.error?.message ?? 'Could not change your password')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not change your password')
+    } finally {
+      setLoading(false)
     }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pin, loading, mode, signupDone])
+  }
 
-  const PAD = ['1','2','3','4','5','6','7','8','9','','0','⌫']
-
-  // ── Signup-success screen ─────────────────────────────────────────────────
-  if (mode === 'signup' && signupDone) {
-    return (
-      <div className="min-h-screen bg-s-bg flex flex-col items-center justify-center px-4">
-        <div className="w-full max-w-sm rounded-3xl p-8 text-center"
-          style={{ background: 'rgba(0,212,177,0.06)', border: '1px solid rgba(0,212,177,0.2)' }}>
-          <p className="text-4xl mb-3">⏳</p>
-          <h1 className="text-xl font-black text-s-text mb-2">Welcome, {signupDone.name}</h1>
-          <p className="text-sm text-s-muted leading-relaxed mb-5">
-            Your account is created and waiting for the CEO to approve it.
-          </p>
-          <div className="rounded-2xl p-4 mb-5"
-            style={{ background: 'rgba(0,0,0,0.4)', border: '1px solid rgba(255,255,255,0.06)' }}>
-            <p className="text-[10px] uppercase tracking-wider font-bold text-s-dim mb-1">The PIN you chose</p>
-            <p className="text-3xl font-black tracking-[0.4em] text-s-text">{signupDone.pin}</p>
-            <p className="text-[10px] text-s-dim mt-2">Keep this to yourself — it is your login PIN. Sign in with your name (or email) + this PIN once the CEO approves your account.</p>
-          </div>
-          <button onClick={() => { setMode('pin'); setSignupDone(null); setName(''); setEmail(''); setPhone(''); setReason(''); setSignupPin(''); setSignupPin2('') }}
-            className="w-full rounded-xl py-3 text-sm font-black transition-all active:scale-[0.98]"
-            style={{ background: 'linear-gradient(135deg, #00D4B1 0%, #6366F1 100%)', color: '#000' }}>
-            Back to PIN pad
-          </button>
-        </div>
-      </div>
-    )
+  function backToSignIn() {
+    setMode('password'); setError(''); setCpDone(false)
+    setMfaChallenge(''); setMfaCode('')
   }
 
   return (
@@ -294,22 +174,19 @@ export default function StaffLoginPage() {
       <div className="flex-1 flex items-center justify-center px-4 py-10">
         <div className="w-full max-w-xs">
 
-          {/* Title */}
           <div className="text-center mb-8">
             <p className="text-[11px] font-bold text-s-muted uppercase tracking-[0.25em] mb-2">
               Staff Portal
             </p>
             <h1 className="text-2xl font-black text-s-text">
-              {mode === 'pin' ? 'Enter your PIN'
-                : mode === 'password' ? 'Sign in'
+              {mode === 'password'  ? 'Sign in'
                 : mode === 'twofactor' ? 'Check WhatsApp'
-                : 'Apply to join'}
+                : 'Change your password'}
             </h1>
             <p className="text-xs text-s-dim mt-1">
-              {mode === 'pin' ? 'Authorized personnel only'
-                : mode === 'password' ? 'Owner, management and finance accounts'
+              {mode === 'password'  ? 'Authorized personnel only'
                 : mode === 'twofactor' ? `We sent a 6-digit code to ${mfaHint || 'your number'}`
-                : 'CEO will review your request'}
+                : 'You need your current password to set a new one'}
             </p>
           </div>
 
@@ -324,264 +201,98 @@ export default function StaffLoginPage() {
                 placeholder="000000"
                 autoFocus
                 className="w-full mb-3 rounded-xl px-4 py-3 text-center text-2xl font-black tracking-[0.4em] text-s-text outline-none"
-                style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)' }}
+                style={fieldStyle}
               />
               {error && <p className="text-xs text-red-400 mb-3 text-center">{error}</p>}
-              <button
-                type="submit"
-                disabled={loading || mfaCode.length < 6}
-                className="w-full rounded-xl py-3 text-sm font-black transition-all active:scale-[0.98] disabled:opacity-40"
-                style={{ background: 'linear-gradient(135deg, #00D4B1 0%, #6366F1 100%)', color: '#000' }}
-              >
+              <button type="submit" disabled={loading || mfaCode.length < 6} className={cta} style={ctaStyle}>
                 {loading ? 'Checking…' : 'Sign in'}
               </button>
-              <button
-                type="button"
-                onClick={() => { setMode('password'); setError(''); setMfaChallenge(''); setMfaCode('') }}
-                className="w-full mt-3 text-xs text-s-dim hover:text-s-muted transition-colors"
-              >
+              <button type="button" onClick={backToSignIn}
+                className="w-full mt-3 text-xs text-s-dim hover:text-s-muted transition-colors">
                 ← Start over
               </button>
               <p className="text-[10px] text-s-dim mt-4 text-center leading-relaxed">
                 Didn&rsquo;t ask to sign in? Someone has your password. Change it as soon as you&rsquo;re in.
               </p>
             </form>
-          ) : mode === 'password' ? (
+
+          ) : mode === 'changepw' ? (
+            cpDone ? (
+              <div className="text-center">
+                <p className="text-sm text-s-text mb-2">Password changed.</p>
+                <p className="text-xs text-s-dim mb-5 leading-relaxed">
+                  Every other device signed in as you has been signed out.
+                </p>
+                <button type="button" onClick={backToSignIn} className={cta} style={ctaStyle}>
+                  Sign in
+                </button>
+              </div>
+            ) : (
+              <form onSubmit={submitChangePassword}>
+                <input
+                  type="email" value={pwEmail} onChange={(e) => setPwEmail(e.target.value)}
+                  placeholder="Email" autoComplete="username" autoFocus
+                  className={field} style={fieldStyle}
+                />
+                <input
+                  type="password" value={cpCurrent} onChange={(e) => setCpCurrent(e.target.value)}
+                  placeholder="Current password" autoComplete="current-password"
+                  className={field} style={fieldStyle}
+                />
+                <input
+                  type="password" value={cpNew} onChange={(e) => setCpNew(e.target.value)}
+                  placeholder="New password" autoComplete="new-password"
+                  className={field} style={fieldStyle}
+                />
+                <input
+                  type="password" value={cpNew2} onChange={(e) => setCpNew2(e.target.value)}
+                  placeholder="Repeat new password" autoComplete="new-password"
+                  className="w-full mb-4 rounded-xl px-4 py-3 text-s-text outline-none" style={fieldStyle}
+                />
+                <p className="text-[10px] text-s-dim mb-3 text-center">At least 12 characters.</p>
+                {error && <p className="text-xs text-center mb-3" style={{ color: '#F87171' }}>{error}</p>}
+                <button type="submit" className={cta} style={ctaStyle}
+                  disabled={loading || !pwEmail.trim() || !cpCurrent || cpNew.length < 12}>
+                  {loading ? 'Changing…' : 'Change password'}
+                </button>
+                <button type="button" onClick={backToSignIn}
+                  className="w-full mt-3 text-xs text-s-dim hover:text-s-muted transition-colors">
+                  ← Back to sign in
+                </button>
+              </form>
+            )
+
+          ) : (
             <form onSubmit={submitPassword}>
               <input
-                type="email"
-                value={pwEmail}
-                onChange={(e) => setPwEmail(e.target.value)}
-                placeholder="Email"
-                autoComplete="username"
-                autoFocus
-                className="w-full mb-3 rounded-xl px-4 py-3 text-s-text outline-none"
-                style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)' }}
+                type="email" value={pwEmail} onChange={(e) => setPwEmail(e.target.value)}
+                placeholder="Email" autoComplete="username" autoFocus
+                className={field} style={fieldStyle}
               />
               <input
-                type="password"
-                value={pwPassword}
-                onChange={(e) => setPwPassword(e.target.value)}
-                placeholder="Password"
-                autoComplete="current-password"
-                className="w-full mb-4 rounded-xl px-4 py-3 text-s-text outline-none"
-                style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)' }}
+                type="password" value={pwPassword} onChange={(e) => setPwPassword(e.target.value)}
+                placeholder="Password" autoComplete="current-password"
+                className="w-full mb-4 rounded-xl px-4 py-3 text-s-text outline-none" style={fieldStyle}
               />
               {error && <p className="text-xs text-center mb-3" style={{ color: '#F87171' }}>{error}</p>}
-              <button
-                type="submit"
-                disabled={loading || !pwEmail.trim() || pwPassword.length < 8}
-                className="w-full rounded-xl py-3 text-sm font-black transition-opacity disabled:opacity-40"
-                style={{
-                  background: 'linear-gradient(135deg, #00D4B1, #6366F1)',
-                  color: '#000',
-                  boxShadow: '0 4px 20px rgba(0,212,177,0.25)',
-                }}>
+              <button type="submit" className={cta} style={ctaStyle}
+                disabled={loading || !pwEmail.trim() || pwPassword.length < 8}>
                 {loading ? 'Signing in…' : 'Sign in'}
               </button>
-            </form>
-          ) : mode === 'pin' ? (
-            <>
-              {/* Name first — lets the server check ONE PIN and lock out a
-                  single bad guesser. */}
-              <input
-                type="text"
-                value={pinName}
-                onChange={(e) => setPinName(e.target.value)}
-                placeholder="Your name"
-                autoComplete="off"
-                className="w-full mb-4 rounded-xl px-4 py-3 text-center text-s-text outline-none"
-                style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)' }}
-              />
-
-              {/* PIN dots — grow with the entered digits so longer (6-digit)
-                  PINs get real feedback past the 4th digit. Minimum 4 outline
-                  placeholders, expands up to the 8-digit max as you type. */}
-              <div className="flex justify-center gap-3 mb-2">
-                {Array.from({ length: Math.max(4, pin.length) }).map((_, i) => (
-                  <div key={i}
-                    className="h-3 w-3 rounded-full border-2 transition-all duration-100"
-                    style={{
-                      background:   i < pin.length ? '#00D4B1'             : 'transparent',
-                      borderColor:  i < pin.length ? '#00D4B1'             : 'rgba(255,255,255,0.15)',
-                      transform:    i < pin.length ? 'scale(1.15)'         : 'scale(1)',
-                      boxShadow:    i < pin.length ? '0 0 8px rgba(0,212,177,0.5)' : 'none',
-                    }} />
-                ))}
-              </div>
-
-              {/* Status / error */}
-              <div className="h-6 flex items-center justify-center mb-4 px-2">
-                {error ? (
-                  <p className="text-xs text-s-red font-semibold text-center">{error}</p>
-                ) : status ? (
-                  <p className="text-xs text-s-muted">{status}</p>
-                ) : null}
-              </div>
-
-              {/* Numpad */}
-              <div className="grid grid-cols-3 gap-2.5">
-                {PAD.map((key, idx) => {
-                  if (key === '') return <div key={idx} />
-                  if (key === '⌫') return (
-                    <button key={idx} onClick={pressBack} disabled={loading || pin.length === 0}
-                      aria-label="Delete last digit"
-                      className="h-16 rounded-2xl border transition-all select-none"
-                      style={{
-                        background:   'rgba(255,255,255,0.04)',
-                        borderColor:  'rgba(255,255,255,0.08)',
-                        color:        'rgba(255,255,255,0.35)',
-                        fontSize:     '18px',
-                      }}
-                      onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.07)'; e.currentTarget.style.color = 'rgba(255,255,255,0.65)' }}
-                      onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.04)'; e.currentTarget.style.color = 'rgba(255,255,255,0.35)' }}>
-                      ⌫
-                    </button>
-                  )
-                  return (
-                    <button key={idx} onClick={() => pressDigit(key)} disabled={loading}
-                      aria-label={`Digit ${key}`}
-                      className="h-16 rounded-2xl border font-bold text-xl transition-all select-none disabled:opacity-30"
-                      style={{
-                        background:  'rgba(255,255,255,0.04)',
-                        borderColor: 'rgba(255,255,255,0.08)',
-                        color:       'rgba(255,255,255,0.82)',
-                      }}
-                      onMouseEnter={(e) => {
-                        e.currentTarget.style.background   = 'rgba(0,212,177,0.08)'
-                        e.currentTarget.style.borderColor  = 'rgba(0,212,177,0.25)'
-                        e.currentTarget.style.color        = '#00D4B1'
-                      }}
-                      onMouseLeave={(e) => {
-                        e.currentTarget.style.background   = 'rgba(255,255,255,0.04)'
-                        e.currentTarget.style.borderColor  = 'rgba(255,255,255,0.08)'
-                        e.currentTarget.style.color        = 'rgba(255,255,255,0.82)'
-                      }}>
-                      {key}
-                    </button>
-                  )
-                })}
-              </div>
-
-              {/* Sign in — explicit submit. Required because PINs vary in
-                  length (4–8) and the pad no longer auto-fires at 4. Enabled
-                  once the minimum 4 digits are in. */}
               <button
-                onClick={trySubmit}
-                disabled={loading || pin.length < 4}
-                className="w-full mt-3 rounded-2xl py-4 text-sm font-black transition-all active:scale-[0.98] disabled:opacity-30 disabled:cursor-not-allowed"
-                style={{
-                  background: (loading || pin.length < 4)
-                    ? 'rgba(255,255,255,0.06)'
-                    : 'linear-gradient(135deg, #00D4B1 0%, #6366F1 100%)',
-                  color: (loading || pin.length < 4) ? 'rgba(255,255,255,0.4)' : '#000',
-                }}>
-                {loading ? (status || 'Signing in…') : 'Sign in'}
-              </button>
-            </>
-          ) : (
-            <form onSubmit={(e) => { void submitSignup(e) }} className="space-y-3">
-              <div className="h-6 flex items-center justify-center -mt-2 mb-1 px-2">
-                {error && <p className="text-xs text-s-red font-semibold text-center">{error}</p>}
-              </div>
-
-              {([
-                ['name',  'Full name',       'text', 'Your name',        name,  setName],
-                ['email', 'Email',           'email','you@example.com',  email, setEmail],
-                ['phone', 'Mobile',           'tel',  '0300 1234567',     phone, setPhone],
-              ] as const).map(([id, label, type, ph, val, set]) => (
-                <div key={id}>
-                  <label htmlFor={`signup-${id}`} className="block text-[10px] font-black uppercase tracking-[0.2em] mb-1.5"
-                    style={{ color: 'rgba(255,255,255,0.4)' }}>{label}</label>
-                  <input id={`signup-${id}`} type={type} value={val} onChange={(e) => (set as (v: string) => void)(e.target.value)}
-                    placeholder={ph} required autoComplete="off"
-                    className="w-full rounded-xl px-4 py-3 text-sm font-semibold focus:outline-none transition-all"
-                    style={{ background: 'rgba(255,255,255,0.04)', border: '1.5px solid rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.9)' }} />
-                </div>
-              ))}
-
-              <div>
-                <label htmlFor="signup-pin" className="block text-[10px] font-black uppercase tracking-[0.2em] mb-1.5"
-                  style={{ color: 'rgba(255,255,255,0.4)' }}>Choose a PIN (4&ndash;8 digits)</label>
-                <input id="signup-pin" type="password" inputMode="numeric" autoComplete="new-password"
-                  value={signupPin} onChange={(e) => setSignupPin(e.target.value.replace(/\D/g, '').slice(0, 8))}
-                  placeholder="••••" required minLength={4}
-                  className="w-full rounded-xl px-4 py-3 text-sm font-semibold tracking-[0.3em] focus:outline-none transition-all"
-                  style={{ background: 'rgba(255,255,255,0.04)', border: '1.5px solid rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.9)' }} />
-                <p className="text-[10px] text-s-dim mt-1.5">
-                  You will type this on the shared tablet, so avoid 1234, your birth year, or four of the same digit.
-                </p>
-              </div>
-
-              <div>
-                <label htmlFor="signup-pin2" className="block text-[10px] font-black uppercase tracking-[0.2em] mb-1.5"
-                  style={{ color: 'rgba(255,255,255,0.4)' }}>Confirm PIN</label>
-                <input id="signup-pin2" type="password" inputMode="numeric" autoComplete="new-password"
-                  value={signupPin2} onChange={(e) => setSignupPin2(e.target.value.replace(/\D/g, '').slice(0, 8))}
-                  placeholder="••••" required minLength={4}
-                  className="w-full rounded-xl px-4 py-3 text-sm font-semibold tracking-[0.3em] focus:outline-none transition-all"
-                  style={{ background: 'rgba(255,255,255,0.04)', border: '1.5px solid rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.9)' }} />
-              </div>
-
-              <div>
-                <label htmlFor="signup-role" className="block text-[10px] font-black uppercase tracking-[0.2em] mb-1.5"
-                  style={{ color: 'rgba(255,255,255,0.4)' }}>Role</label>
-                <select id="signup-role" value={role} onChange={(e) => setRole(e.target.value as typeof role)}
-                  className="w-full rounded-xl px-4 py-3 text-sm font-semibold focus:outline-none transition-all cursor-pointer"
-                  style={{ background: 'rgba(255,255,255,0.04)', border: '1.5px solid rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.9)' }}>
-                  <option value="manager">🧑‍💼 Manager</option>
-                  <option value="cashier">💳 Cashier</option>
-                  <option value="kitchen">🍳 Kitchen</option>
-                  <option value="expediter">🪧 Expediter</option>
-                  <option value="marketing">🚀 Marketing</option>
-                </select>
-              </div>
-
-              <div>
-                <label htmlFor="signup-reason" className="block text-[10px] font-black uppercase tracking-[0.2em] mb-1.5"
-                  style={{ color: 'rgba(255,255,255,0.4)' }}>Note to CEO (optional)</label>
-                <textarea id="signup-reason" value={reason} onChange={(e) => setReason(e.target.value)} rows={2}
-                  placeholder="e.g. starting Monday — head chef referral"
-                  className="w-full rounded-xl px-4 py-3 text-sm font-semibold focus:outline-none transition-all resize-none"
-                  style={{ background: 'rgba(255,255,255,0.04)', border: '1.5px solid rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.9)' }} />
-              </div>
-
-              <button type="submit" disabled={loading || !name || !email || !phone}
-                className="w-full rounded-xl py-3.5 font-black text-sm transition-all disabled:opacity-40 active:scale-[0.98] mt-1"
-                style={{
-                  background: 'linear-gradient(135deg, #00D4B1 0%, #6366F1 100%)',
-                  color: '#000',
-                  boxShadow: '0 4px 20px rgba(0,212,177,0.25)',
-                }}>
-                {loading ? 'Submitting…' : 'Submit for approval'}
+                type="button"
+                onClick={() => { setMode('changepw'); setError(''); setCpDone(false) }}
+                className="w-full mt-4 text-xs text-s-dim hover:text-s-muted transition-colors"
+              >
+                Change my password
               </button>
             </form>
           )}
 
-          {/* Mode toggles */}
-          <div className="mt-6 space-y-2">
-            <button type="button"
-              onClick={() => { setMode(mode === 'password' ? 'pin' : 'password'); setError(''); setPin('') }}
-              className="w-full text-center text-xs font-bold transition-colors"
-              style={{ color: 'rgba(255,255,255,0.55)' }}
-              onMouseEnter={(e) => (e.currentTarget.style.color = '#00D4B1')}
-              onMouseLeave={(e) => (e.currentTarget.style.color = 'rgba(255,255,255,0.55)')}>
-              {mode === 'password'
-                ? '← Back to PIN'
-                : 'Owner / management / finance? Sign in with password →'}
-            </button>
-            <button type="button"
-              onClick={() => { setMode((m) => m === 'signup' ? 'pin' : 'signup'); setError(''); setPin('') }}
-              className="w-full text-center text-xs font-bold transition-colors"
-              style={{ color: 'rgba(255,255,255,0.4)' }}
-              onMouseEnter={(e) => (e.currentTarget.style.color = '#00D4B1')}
-              onMouseLeave={(e) => (e.currentTarget.style.color = 'rgba(255,255,255,0.4)')}>
-              {mode === 'signup'
-                ? '← Already approved? Back to PIN'
-                : 'New staff? Apply to join →'}
-            </button>
-          </div>
-
+          <p className="text-[10px] text-s-dim mt-8 text-center leading-relaxed">
+            Need an account? Ask the CEO to add you from Workforce — they will
+            hand you a password to sign in with.
+          </p>
         </div>
       </div>
     </div>

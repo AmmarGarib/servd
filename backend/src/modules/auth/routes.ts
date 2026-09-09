@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify'
 import { randomBytes } from 'crypto'
 import bcrypt from 'bcryptjs'                  // PIN collision check on staff signup
 import { z } from 'zod'
-import { staffLogin, staffPinLogin, refreshStaffToken, customerRegister, customerLogin, verifyMagicLink, requestMagicLink, hashPassword, hashPin, issueStaffSession } from './service.js'
+import { staffLogin, refreshStaffToken, customerRegister, customerLogin, verifyMagicLink, requestMagicLink, hashPassword, hashPin, issueStaffSession } from './service.js'
 import {
   verifyLoginChallenge,
   startEnrolment,
@@ -11,18 +11,17 @@ import {
   maskPhone,
 } from './twoFactor.js'
 import { requestOtp, verifyOtp, normalisePhone } from './otp.js'
-import { requireAuth, requireAuthOrPin, requireCustomerAuth, ADMIN_ONLY, MANAGERS, ALL_STAFF } from './middleware.js'
+import { requireAuth, requireCustomerAuth, ADMIN_ONLY, MANAGERS, ALL_STAFF } from './middleware.js'
 import { revokeBearer, revokeAllForSubject } from '../../lib/tokenRevocation.js'
 import { setAuthCookies, setAccessCookie, clearAuthCookies, readCookie, ACCESS_COOKIE, REFRESH_COOKIE } from '../../lib/cookies.js'
 import { serviceClient as prisma } from '../../lib/prisma.js'
 import { resolveTenantScope, tenantWhere } from '../../lib/tenantScope.js'
 import { AppError } from '../../lib/errors.js'
+import { isStaffEmail, normaliseStaffEmail, STAFF_EMAIL_MESSAGE } from '../../lib/staffEmail.js'
 import {
   check as checkRateLimit,
   recordFailure,
   clearFailures,
-  PIN_LIMIT,
-  PIN_USER_LIMIT,
   STAFF_PASSWORD_LIMIT,
   STAFF_PASSWORD_USER_LIMIT,
   CUSTOMER_PASSWORD_LIMIT,
@@ -298,56 +297,6 @@ export async function authRoutes(fastify: FastifyInstance) {
     }
   })
 
-  // POST /auth/pin — staff PIN login with rate limiting + geolocation + auto clock-in
-  fastify.post('/pin', async (req, reply) => {
-    const ip = req.ip ?? 'unknown'
-    await checkRateLimit(PIN_LIMIT, ip)
-    // Per-person lockout — keyed by the typed name/email. Now possible because
-    // staff identify themselves before the PIN (5 wrong tries → 1h lockout for
-    // THAT person, independent of the per-IP limit above).
-    const idKeyRaw = (req.body as { identifier?: unknown })?.identifier
-    const idKey = typeof idKeyRaw === 'string' ? idKeyRaw.trim().toLowerCase() : ''
-    if (idKey) await checkRateLimit(PIN_USER_LIMIT, idKey)
-
-    const body = z.object({
-      identifier: z.string().min(1).max(120).optional(), // staff name or email — entered before the PIN (clients send it; optional during rollout)
-      pin: z.string().min(4).max(8),
-      lat: z.number().min(-90).max(90).optional(),
-      lng: z.number().min(-180).max(180).optional(),
-      selfieUrl: z.string().url().optional(),         // captured at clock-in to prevent buddy-punching
-    }).parse(req.body)
-
-    let result: Awaited<ReturnType<typeof staffPinLogin>>
-    try {
-      result = await staffPinLogin(body.identifier, body.pin)
-      await clearFailures(PIN_LIMIT, ip)
-      if (idKey) await clearFailures(PIN_USER_LIMIT, idKey)
-    } catch (err) {
-      await recordFailure(PIN_LIMIT, ip)
-      if (idKey) await recordFailure(PIN_USER_LIMIT, idKey)
-      throw err
-    }
-
-    const { geofenceMatched, geofenceDistanceM } = await enforceClockInPolicy(result.user, body)
-
-    // Auto clock-in record — capture selfie + geofence verdict for audit
-    await prisma.clockLog.create({
-      data: {
-        userId: result.user.id,
-        type: 'in',
-        lat: body.lat ?? null,
-        lng: body.lng ?? null,
-        selfieUrl: body.selfieUrl ?? null,
-        geofenceMatched,
-        geofenceDistanceM,
-        ipAddress: req.ip,
-      },
-    })
-
-    setAuthCookies(reply, result.accessToken, result.refreshToken)
-    return reply.status(200).send(result)
-  })
-
   // ─── Password self-service ────────────────────────────────────────────
   //
   // Reachable from the LOGIN PAGE, so it cannot require a session: someone
@@ -587,7 +536,7 @@ export async function authRoutes(fastify: FastifyInstance) {
   // POST /auth/logout — revoke the caller's session. JWTs are stateless, so we
   // add the presented token (and refresh token, if sent) to the Redis deny
   // list for the remainder of their life. Accepts PIN sessions too (KDS).
-  fastify.post('/logout', { preHandler: requireAuthOrPin(...ALL_STAFF) }, async (req, reply) => {
+  fastify.post('/logout', { preHandler: requireAuth(...ALL_STAFF) }, async (req, reply) => {
     await revokeBearer(req.headers.authorization)
     // Manager web sends no Bearer — revoke whatever's in the cookies, then clear.
     const cookieAt = readCookie(req, ACCESS_COOKIE);  if (cookieAt) await revokeBearer(`Bearer ${cookieAt}`)
@@ -785,7 +734,10 @@ export async function authRoutes(fastify: FastifyInstance) {
       })
     }
 
-    const email = body.email.toLowerCase()
+    if (!isStaffEmail(body.email)) {
+      return reply.status(400).send({ error: { code: 'EMAIL_NOT_COMPANY_DOMAIN', message: STAFF_EMAIL_MESSAGE } })
+    }
+    const email = normaliseStaffEmail(body.email)
     // Duplicate email = nicer error than a 500 from the unique constraint.
     const existing = await prisma.user.findUnique({ where: { email } })
     if (existing) {
@@ -953,41 +905,6 @@ export async function authRoutes(fastify: FastifyInstance) {
       })
     },
   )
-
-  // POST /auth/pin/forgot — staff raises a "forgot my PIN" escalation.
-  //
-  // Unauthenticated by necessity (they can't log in). Deliberately
-  // enumeration-safe: always returns the same 200 whether or not the
-  // identifier matches, so this can't be used to discover who works here.
-  // It never touches the existing PIN — it only raises a flag the CEO sees in
-  // the staff directory, and the CEO issues a temporary PIN from there.
-  fastify.post('/pin/forgot', async (req, reply) => {
-    const ip = req.ip ?? 'unknown'
-    await checkRateLimit(STAFF_PASSWORD_LIMIT, ip)
-
-    const body = z.object({
-      identifier: z.string().min(1).max(120),   // name or email
-    }).parse(req.body)
-
-    const id = body.identifier.trim().toLowerCase()
-    const user = await prisma.user.findFirst({
-      where: {
-        deletedAt: null,
-        OR: [{ email: id }, { name: { equals: body.identifier.trim(), mode: 'insensitive' } }],
-      },
-      select: { id: true },
-    })
-    if (user) {
-      await prisma.user.update({
-        where: { id: user.id },
-        data: { pinResetRequestedAt: new Date() },
-      })
-    }
-
-    return reply.status(200).send({
-      message: 'If that account exists, your manager has been notified. They will give you a temporary PIN.',
-    })
-  })
 
   // POST /auth/pin/change — staff sets their OWN PIN.
   //
@@ -1180,10 +1097,17 @@ export async function authRoutes(fastify: FastifyInstance) {
       }
     }
 
+    // Email is now mandatory and must be on the company domain: it is the ONLY
+    // way to sign in, so creating a staff row without one creates an account
+    // nobody can ever use.
+    if (!isStaffEmail(body.email)) {
+      return reply.status(400).send({ error: { code: 'EMAIL_NOT_COMPANY_DOMAIN', message: STAFF_EMAIL_MESSAGE } })
+    }
+
     const user = await prisma.user.create({
       data: {
         name: body.name?.trim() || 'Unnamed staff',
-        ...(body.email ? { email: body.email.toLowerCase() } : {}),
+        email: normaliseStaffEmail(body.email!),
         ...(body.phone ? { phone: body.phone.trim() } : {}),
         ...(body.jobTitle ? { jobTitle: body.jobTitle.trim() } : {}),
         password,
@@ -1328,7 +1252,10 @@ export async function authRoutes(fastify: FastifyInstance) {
             400,
           )
         }
-        data.email = body.email.trim().toLowerCase()
+        if (!isStaffEmail(body.email)) {
+          throw new AppError('EMAIL_NOT_COMPANY_DOMAIN', STAFF_EMAIL_MESSAGE, 400)
+        }
+        data.email = normaliseStaffEmail(body.email)
       }
       if (body.role     != null) data.role      = body.role
       if (body.isActive != null) data.isActive  = body.isActive

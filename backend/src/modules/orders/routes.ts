@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
-import { requireAuth, requireAuthOrPin, ALL_STAFF, MANAGERS } from '../auth/middleware.js'
+import { requireAuth, ALL_STAFF, MANAGERS } from '../auth/middleware.js'
 import { ingestOrder, listOrders, getOrder, updateOrderStatus, updateItemStatus } from './service.js'
 import { assertConceptAccess, filterConceptIdsForStaff } from '../../lib/conceptAccess.js'
 import { conceptWhere, scopeTenantWhere, type ScopeMode } from '../../lib/tenantScope.js'
@@ -84,7 +84,7 @@ export async function orderRoutes(fastify: FastifyInstance) {
       cursor?: string
       limit?: string
     }
-  }>('/', { preHandler: requireAuthOrPin(...ALL_STAFF) }, async (req) => {
+  }>('/', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
     const { limit, conceptId, ...rest } = req.query
     // Company scope first: a client conceptId must be a brand the operator
     // can see (404 otherwise — never confirm a foreign brand exists); absent
@@ -112,7 +112,7 @@ export async function orderRoutes(fastify: FastifyInstance) {
   // GET /orders/:id
   fastify.get<{ Params: { id: string } }>(
     '/:id',
-    { preHandler: requireAuthOrPin(...ALL_STAFF) },
+    { preHandler: requireAuth(...ALL_STAFF) },
     async (req) => {
       // Company-scoped at the lookup itself — a foreign id 404s without the
       // row ever being fetched.
@@ -123,7 +123,7 @@ export async function orderRoutes(fastify: FastifyInstance) {
   )
 
   // POST /orders — manual order creation (server / cashier manual intake)
-  fastify.post('/', { preHandler: requireAuthOrPin(...ALL_STAFF) }, async (req, reply) => {
+  fastify.post('/', { preHandler: requireAuth(...ALL_STAFF) }, async (req, reply) => {
     const dto = createOrderSchema.parse(req.body) as OrderDTO
     // A create binds to the ACTIVE company only ('create' scope) — the brand
     // must be one of the active company's (404 otherwise, so a foreign id is
@@ -187,7 +187,7 @@ export async function orderRoutes(fastify: FastifyInstance) {
   // cars-still-coming. Powers the admin /orders/curbside dashboard.
   fastify.get<{ Querystring: { conceptId?: string } }>(
     '/curbside',
-    { preHandler: requireAuthOrPin(...ALL_STAFF) },
+    { preHandler: requireAuth(...ALL_STAFF) },
     async (req) => {
       const { conceptId } = req.query
       // Company scope through the brand: a client conceptId must be ours
@@ -232,7 +232,7 @@ export async function orderRoutes(fastify: FastifyInstance) {
   // order drops off the curbside queue.
   fastify.post<{ Params: { id: string } }>(
     '/:id/curbside/running-out',
-    { preHandler: requireAuthOrPin(...ALL_STAFF) },
+    { preHandler: requireAuth(...ALL_STAFF) },
     async (req) => {
       // Lookup is scoped by company — assertConceptAccess alone bypasses the
       // concept ACL for management-tier roles, which would otherwise let a
@@ -255,7 +255,7 @@ export async function orderRoutes(fastify: FastifyInstance) {
   // PATCH /orders/:id/status
   fastify.patch<{ Params: { id: string } }>(
     '/:id/status',
-    { preHandler: requireAuthOrPin(...ALL_STAFF) },
+    { preHandler: requireAuth(...ALL_STAFF) },
     async (req, reply) => {
       const { status } = updateOrderStatusSchema.parse(req.body)
       // Company-scoped lookup FIRST — never fetch (or reveal the existence of)
@@ -273,7 +273,7 @@ export async function orderRoutes(fastify: FastifyInstance) {
   // PATCH /orders/:id/notes — add/update an admin note on an order
   fastify.patch<{ Params: { id: string }; Body: { notes: string } }>(
     '/:id/notes',
-    { preHandler: requireAuthOrPin(...ALL_STAFF) },
+    { preHandler: requireAuth(...ALL_STAFF) },
     async (req) => {
       const { notes } = z.object({ notes: z.string().max(1000) }).parse(req.body)
       // Company-scoped lookup — see /curbside/running-out for the rationale.
@@ -293,7 +293,7 @@ export async function orderRoutes(fastify: FastifyInstance) {
   // Records a strike + appends a note.
   fastify.post<{ Params: { id: string }; Body: { reason?: string } }>(
     '/:id/cod-unpaid',
-    { preHandler: requireAuthOrPin(...ALL_STAFF) },
+    { preHandler: requireAuth(...ALL_STAFF) },
     async (req, reply) => {
       const body = z.object({ reason: z.string().max(500).optional() }).parse(req.body ?? {})
       // Company-scoped — assertConceptAccess bypasses for management roles.
@@ -335,7 +335,7 @@ export async function orderRoutes(fastify: FastifyInstance) {
   // what the driver was told ("looked rude", "different person at door", etc.)
   fastify.post<{ Params: { id: string }; Body: { reason?: string } }>(
     '/:id/refused-at-door',
-    { preHandler: requireAuthOrPin(...ALL_STAFF) },
+    { preHandler: requireAuth(...ALL_STAFF) },
     async (req, reply) => {
       const body = z.object({ reason: z.string().max(500).optional() }).parse(req.body ?? {})
       // Company-scoped — assertConceptAccess bypasses for management roles, so
@@ -420,7 +420,7 @@ export async function orderItemRoutes(fastify: FastifyInstance) {
   // ticket state for items in concept B by guessing/scraping the item id.
   fastify.patch<{ Params: { id: string } }>(
     '/:id/status',
-    { preHandler: requireAuthOrPin(...ALL_STAFF) },
+    { preHandler: requireAuth(...ALL_STAFF) },
     async (req) => {
       const { status } = updateItemStatusSchema.parse(req.body)
       const { prisma } = await import('../../lib/prisma.js')
@@ -438,7 +438,7 @@ export async function orderItemRoutes(fastify: FastifyInstance) {
   // PATCH /order-items/:id/bump-photo — attach plating photo URL after bump
   fastify.patch<{ Params: { id: string }; Body: { url: string } }>(
     '/:id/bump-photo',
-    { preHandler: requireAuthOrPin(...ALL_STAFF) },
+    { preHandler: requireAuth(...ALL_STAFF) },
     async (req, reply) => {
       const { url } = z.object({ url: z.string().url() }).parse(req.body)
       const { prisma } = await import('../../lib/prisma.js')
@@ -465,7 +465,7 @@ export async function orderCourseRoutes(fastify: FastifyInstance) {
   // POST /orders/:id/fire-course — body: { course: 2 } fires items at course 2.
   fastify.post<{ Params: { id: string }; Body: { course: number } }>(
     '/:id/fire-course',
-    { preHandler: requireAuthOrPin(...ALL_STAFF) },
+    { preHandler: requireAuth(...ALL_STAFF) },
     async (req, reply) => {
       const { course } = z.object({ course: z.number().int().min(1).max(20) }).parse(req.body)
       const { prisma } = await import('../../lib/prisma.js')
@@ -493,7 +493,7 @@ export async function orderCourseRoutes(fastify: FastifyInstance) {
   // GET /orders/:id/courses — summary of items per course + their status
   fastify.get<{ Params: { id: string } }>(
     '/:id/courses',
-    { preHandler: requireAuthOrPin(...ALL_STAFF) },
+    { preHandler: requireAuth(...ALL_STAFF) },
     async (req, reply) => {
       const { prisma } = await import('../../lib/prisma.js')
       const order = await prisma.order.findFirst({

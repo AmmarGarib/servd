@@ -11,7 +11,7 @@
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
-import { requireAuth, requireAuthOrPin, ALL_STAFF, MANAGERS } from '../auth/middleware.js'
+import { requireAuth, ALL_STAFF, MANAGERS } from '../auth/middleware.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { getIOSafe } from '../../lib/ws.js'
 
@@ -27,7 +27,7 @@ export async function expoRoutes(fastify: FastifyInstance) {
   //   • stations     — live load per station (already on the right sidebar).
   fastify.get(
     '/queue',
-    { preHandler: requireAuthOrPin(...ALL_STAFF) },
+    { preHandler: requireAuth(...ALL_STAFF) },
     async (req) => {
       const tenantId = req.staffUser!.tenantFilter
       const conceptScope = { tenantId, deletedAt: null }
@@ -271,7 +271,7 @@ export async function expoRoutes(fastify: FastifyInstance) {
   // Each entry carries enough order context for the KDS card to render.
   fastify.get<{ Params: { stationId: string } }>(
     '/station/:stationId/queue',
-    { preHandler: requireAuthOrPin(...ALL_STAFF) },
+    { preHandler: requireAuth(...ALL_STAFF) },
     async (req) => {
       const tenantId = req.staffUser!.tenantFilter
       const stationId = req.params.stationId
@@ -377,7 +377,7 @@ export async function expoRoutes(fastify: FastifyInstance) {
   // dependants to `preparing`, and emits expo:fire to their stations.
   fastify.post<{ Params: { id: string } }>(
     '/steps/:id/bump',
-    { preHandler: requireAuthOrPin(...ALL_STAFF) },
+    { preHandler: requireAuth(...ALL_STAFF) },
     async (req, reply) => {
       const { bumpStep, broadcastCascade } = await import('./stepCascade.js')
       const step = await prisma.orderItemStep.findUnique({
@@ -419,7 +419,7 @@ export async function expoRoutes(fastify: FastifyInstance) {
   // timestamp so the dispatch queue can pick it up.
   fastify.post<{ Params: { id: string } }>(
     '/orders/:id/handoff',
-    { preHandler: requireAuthOrPin(...ALL_STAFF) },
+    { preHandler: requireAuth(...ALL_STAFF) },
     async (req, reply) => {
       const tenantId = req.staffUser!.tenantFilter
       const order = await prisma.order.findFirst({
