@@ -154,47 +154,20 @@ export function StackdLayout({ concept, concepts }: Props) {
         </section>
 
         {/* ── THE MASCOT ──────────────────────────────────────────────────────
-            The character gets a whole band to himself. He is the brand's
-            personality and the thing that goes on the cups, the wrappers and
-            the market shelf, so he is shown at size on his own seal rather
-            than tucked beside the wordmark. */}
-        <section style={{ padding: 'clamp(3.5rem, 11vh, 7rem) clamp(1.5rem, 5vw, 3rem)' }}>
-          <div className="stackd-mascot-band">
-            <div className="stackd-mascot-stage">
-              <div className="stackd-mascot-seal">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src="/brand/stackd-mascot.png"
-                  alt="The stackd character — a stack of bread slices carried on a plum tray, striped trousers below"
-                  width={338}
-                  height={453}
-                />
-              </div>
-            </div>
-
-            <div>
-              <span className="stackd-spec">The character</span>
-              <h2
-                className="stackd-display"
-                style={{ fontSize: 'clamp(2.1rem, 5vw, 3.6rem)', margin: '0.9rem 0 1.4rem', lineHeight: 1.05 }}
-              >
-                He carries the whole thing.
-              </h2>
-              <p
-                style={{
-                  fontFamily: 'var(--stackd-body)',
-                  fontSize: '1.05rem',
-                  lineHeight: 1.75,
-                  color: 'var(--stackd-cream-dim)',
-                  margin: 0,
-                  maxWidth: '46ch',
-                }}
-              >
-                Drawn by hand, one line at a time. He goes on the cups, the
-                wrappers, the pastry bags and the market shelf — which is the
-                point of serving in packaging rather than on plates. The vessel
-                is part of the dish, so it may as well be part of the brand.
-              </p>
+            One big showcase and nothing else. No caption, no heading, no
+            explanation of the artwork — a customer does not need the character
+            described to them, and writing about him instead of showing him is
+            the fastest way to make him look small. He is the section. */}
+        <section className="stackd-mascot-band" aria-label="stackd">
+          <div className="stackd-mascot-stage">
+            <div className="stackd-mascot-seal">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src="/brand/stackd-mascot.png"
+                alt="The stackd character — a stack of bread slices carried on a plum tray, striped trousers below"
+                width={338}
+                height={453}
+              />
             </div>
           </div>
         </section>
