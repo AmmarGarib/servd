@@ -4,12 +4,12 @@ import type { CSSProperties } from 'react'
 import { useScrollProgress } from './motionHooks'
 
 /**
- * StaxStackBuilderHero — Stax cinematic.
+ * StackdStackBuilderHero — Stackd cinematic.
  *
  * Concept (from the operator):
- *   "Stax is upscale chef-driven, healthy-forward sandwiches and bowls.
+ *   "Stackd is upscale chef-driven, healthy-forward sandwiches and bowls.
  *    Industrial interior. The whole brand is about *stacking* — Smash
- *    Stax, Pub Stax, Flaky Stax, Golden Stax, Stacked Bowls."
+ *    Stackd, Pub Stackd, Flaky Stackd, Golden Stackd, Stacked Bowls."
  *
  * The hero is a brushed-steel chef's table viewed in 3/4 perspective.
  * As the user scrolls, ingredient layers drop in from above and land on
@@ -50,7 +50,7 @@ interface Layer {
 
 interface Props {
   brandName:  string
-  /** Primary brand accent — copper / fire-orange for Stax. */
+  /** Primary brand accent — copper / fire-orange for Stackd. */
   accent:     string
   /** Industrial steel surface colour. */
   steel?:     string
@@ -70,20 +70,20 @@ const DEFAULT_LAYERS: Layer[] = [
   { variant: 'bottom-bun', label: 'House Brioche', sub: 'baked in-house, never frozen',          height: 10,   fireAt: 0.06 },
   { label: 'Stacked Bowls',           sub: 'grain · greens · house dressing',
     height: 6, bg: 'linear-gradient(180deg, #b8d870 0%, #4d7a25 100%)',     fireAt: 0.18, shadow: '#356015', textColor: '#0a0a0a' },
-  { label: 'Smash Stax',              sub: 'double smash patty, MCD / Smash / build-your-own',
+  { label: 'Smash Stackd',              sub: 'double smash patty, MCD / Smash / build-your-own',
     height: 7, bg: 'linear-gradient(180deg, #5b2f12 0%, #2a1108 100%)',     fireAt: 0.30 },
-  { label: 'Pub Stax',                sub: 'thick patty, C-stack, CC-stack',
+  { label: 'Pub Stackd',                sub: 'thick patty, C-stack, CC-stack',
     height: 6.5, bg: 'linear-gradient(180deg, #6e3a18 0%, #321408 100%)',   fireAt: 0.42 },
-  { label: 'Flaky Stax',              sub: 'sandwiches in house-made croissants',
+  { label: 'Flaky Stackd',              sub: 'sandwiches in house-made croissants',
     height: 5.5, bg: 'linear-gradient(180deg, #f4c97a 0%, #b6781f 100%)',   fireAt: 0.54, textColor: '#3a1f08' },
-  { label: 'Golden Stax',             sub: 'sandwiches in house-made foccacia',
+  { label: 'Golden Stackd',             sub: 'sandwiches in house-made foccacia',
     height: 5, bg: 'linear-gradient(180deg, #e5b25d 0%, #9c6a16 100%)',     fireAt: 0.64, textColor: '#3a1f08' },
-  { label: 'Side Stax · Desserts',    sub: 'pommes stax · roasties · stacked desserts',
+  { label: 'Side Stackd · Desserts',    sub: 'pommes stackd · roasties · stacked desserts',
     height: 4.5, bg: 'linear-gradient(180deg, #c97d4a 0%, #7a3d18 100%)',   fireAt: 0.74 },
   { variant: 'top-bun',   label: 'House Brioche', sub: 'sesame · brushed butter · pressed on the flat-top', height: 13, fireAt: 0.86 },
 ]
 
-export function StaxStackBuilderHero({
+export function StackdStackBuilderHero({
   brandName, accent,
   steel = '#3a3f42',
   ink   = '#0d0a09',
@@ -330,17 +330,17 @@ function TopBun() {
         display: 'block',
         overflow: 'visible',
         filter: 'drop-shadow(0 14px 24px rgba(0,0,0,0.45))',
-        animation: 'staxBunBreath 5.5s ease-in-out infinite alternate',
+        animation: 'stackdBunBreath 5.5s ease-in-out infinite alternate',
       }}
     >
       <defs>
-        <radialGradient id="staxTopBun" cx="50%" cy="22%" r="80%">
+        <radialGradient id="stackdTopBun" cx="50%" cy="22%" r="80%">
           <stop offset="0%"   stopColor="#FFE3A8" />
           <stop offset="32%"  stopColor="#E0A95C" />
           <stop offset="72%"  stopColor="#B46F2A" />
           <stop offset="100%" stopColor="#7A4318" />
         </radialGradient>
-        <radialGradient id="staxTopBunHi" cx="50%" cy="14%" r="40%">
+        <radialGradient id="stackdTopBunHi" cx="50%" cy="14%" r="40%">
           <stop offset="0%"   stopColor="white" stopOpacity="0.9" />
           <stop offset="100%" stopColor="white" stopOpacity="0" />
         </radialGradient>
@@ -351,7 +351,7 @@ function TopBun() {
            Q 400 8, 590 40
            Q 760 70, 760 198
            Z"
-        fill="url(#staxTopBun)"
+        fill="url(#stackdTopBun)"
       />
       <path
         d="M40 198
@@ -359,7 +359,7 @@ function TopBun() {
            Q 400 8, 590 40
            Q 760 70, 760 198
            Z"
-        fill="url(#staxTopBunHi)"
+        fill="url(#stackdTopBunHi)"
       />
       {/* Sesame seeds — scattered across the dome with subtle rotation */}
       {SESAME.map((s, i) => (
@@ -392,17 +392,17 @@ function BottomBun() {
         display: 'block',
         overflow: 'visible',
         filter: 'drop-shadow(0 18px 32px rgba(0,0,0,0.5))',
-        animation: 'staxBunBreath 6s ease-in-out infinite alternate-reverse',
+        animation: 'stackdBunBreath 6s ease-in-out infinite alternate-reverse',
       }}
     >
       <defs>
-        <radialGradient id="staxBottomBun" cx="50%" cy="78%" r="80%">
+        <radialGradient id="stackdBottomBun" cx="50%" cy="78%" r="80%">
           <stop offset="0%"   stopColor="#E5B976" />
           <stop offset="38%"  stopColor="#C28A3A" />
           <stop offset="78%"  stopColor="#8a541a" />
           <stop offset="100%" stopColor="#4d2810" />
         </radialGradient>
-        <linearGradient id="staxBottomBunHi" x1="50%" y1="0%" x2="50%" y2="100%">
+        <linearGradient id="stackdBottomBunHi" x1="50%" y1="0%" x2="50%" y2="100%">
           <stop offset="0%"   stopColor="white" stopOpacity="0.55" />
           <stop offset="35%"  stopColor="white" stopOpacity="0" />
         </linearGradient>
@@ -414,7 +414,7 @@ function BottomBun() {
            Q 400 132, 200 118
            Q 40 100, 40 14
            Z"
-        fill="url(#staxBottomBun)"
+        fill="url(#stackdBottomBun)"
       />
       <path
         d="M40 14
@@ -423,7 +423,7 @@ function BottomBun() {
            Q 400 132, 200 118
            Q 40 100, 40 14
            Z"
-        fill="url(#staxBottomBunHi)"
+        fill="url(#stackdBottomBunHi)"
       />
     </svg>
   )

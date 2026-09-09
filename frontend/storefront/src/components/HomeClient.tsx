@@ -29,19 +29,19 @@ interface Props {
 // Fallback brand cards — used when the live concepts API returns nothing
 // (api warmup, network blip, etc.). Order matches the live brand grid.
 const FALLBACK_BRANDS = [
-  { id: 'fallback-stax',   name: 'Stax',   slug: 'stax',   primaryColor: null },
+  { id: 'fallback-stackd',   name: 'Stackd',   slug: 'stackd',   primaryColor: null },
   { id: 'fallback-simmer', name: 'Simmer', slug: 'simmer', primaryColor: null },
   { id: 'fallback-flipd',  name: 'Flipd',  slug: 'flipd',  primaryColor: null },
 ] as Array<Pick<Concept, 'id' | 'name' | 'slug' | 'primaryColor'>>
 
 export function HomeClient({ concepts, heroConfig }: Props) {
-  const source = concepts.filter((c) => ['simmer', 'stax', 'flipd'].includes(c.slug))
+  const source = concepts.filter((c) => ['simmer', 'stackd', 'flipd'].includes(c.slug))
   // If the live concept list came back empty (api blip), fall through
   // to the hardcoded fallback so the home page never looks blank.
   const usable = source.length > 0 ? source : FALLBACK_BRANDS
 
   const brands = usable
-    .sort((a, b) => ['stax', 'simmer', 'flipd'].indexOf(a.slug) - ['stax', 'simmer', 'flipd'].indexOf(b.slug))
+    .sort((a, b) => ['stackd', 'simmer', 'flipd'].indexOf(a.slug) - ['stackd', 'simmer', 'flipd'].indexOf(b.slug))
     .map((c) => ({
       id: c.id,
       name: c.name,
@@ -80,7 +80,7 @@ export function HomeClient({ concepts, heroConfig }: Props) {
           <div style={{ display: 'grid', gap: '1.25rem' }}>
             {brands.map((b) => (
               // Card wrapper — used to be a single Link to /${slug} (the
-              // order page), which meant tapping anywhere on a Stax /
+              // order page), which meant tapping anywhere on a Stackd /
               // Simmer / Flipd card dropped customers straight onto the
               // ordering surface and skipped the brand's own landing
               // page entirely. CEO wants the card body to go to the
@@ -273,7 +273,7 @@ export function HomeClient({ concepts, heroConfig }: Props) {
 
           {/* Per-brand Insiders perks. Per the loyalty-program skill:
               simmer (premium) gets exclusive recognition framing — no
-              points, no "buy N get 1," no coupony language; stax + flipd
+              points, no "buy N get 1," no coupony language; stackd + flipd
               (casual, higher-frequency) get a clean generous points
               mechanic. Same brand-keyed card pattern as the brand grid
               above so the section reads as "Insiders at each kitchen,
@@ -294,11 +294,11 @@ export function HomeClient({ concepts, heroConfig }: Props) {
                 featured: false,
               },
               {
-                slug: 'stax',
+                slug: 'stackd',
                 accent: 'rgba(255,255,255,0.18)',
-                badge: '★', tag: 'Stax · stack club',
+                badge: '★', tag: 'Stackd · stack club',
                 head: 'Stack five, the sixth’s on us',
-                body: 'Order five from Stax, the sixth burger’s on the house. Insiders also get first dibs on Friday-only stacks before they go public.',
+                body: 'Order five from Stackd, the sixth burger’s on the house. Insiders also get first dibs on Friday-only stacks before they go public.',
                 featured: true,
               },
               {

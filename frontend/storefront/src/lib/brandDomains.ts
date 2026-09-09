@@ -6,7 +6,7 @@
 // (eatstrata, bukharirice, craveman.pk, garnish.pk) were removed in
 // May 2026 — those brands are not real operations.
 export const BRAND_DOMAIN_MAP: Record<string, string> = {
-  'eatstax.com':     'stax',
+  'eatstax.com':     'stackd',
   'eatsimmer.com':   'simmer',
   'eatflipd.com':    'flipd',
 }

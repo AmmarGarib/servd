@@ -55,9 +55,9 @@ const DEFAULT_BRAND_LOCATIONS: Record<string, BrandLocation> = {
     locationSlug:        'ittehad-commercial',
     mapsUrl:             'https://maps.app.goo.gl/gJQMwRKsZdEEfoKV6',
   },
-  stax: {
-    slug:                'stax',
-    name:                'Stax',
+  stackd: {
+    slug:                'stackd',
+    name:                'stackd',
     street:              'TODO_FILL_STREET',
     area:                'Ittehad Commercial, DHA Phase 6',
     city:                'Karachi',
@@ -69,7 +69,7 @@ const DEFAULT_BRAND_LOCATIONS: Record<string, BrandLocation> = {
     cuisine:             'Smash burger',
     priceRange:          '$$',
     acceptsReservations: false,
-    locationSlug:        'stax-kitchen',
+    locationSlug:        'stackd-kitchen',
     mapsUrl:             'https://maps.app.goo.gl/wa3fEKMevo1CZhkS8',
   },
   flipd: {

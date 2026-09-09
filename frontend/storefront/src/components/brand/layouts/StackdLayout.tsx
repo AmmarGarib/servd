@@ -1,0 +1,326 @@
+'use client'
+// stackd — brand microsite layout.
+//
+// Design direction comes from the brand deck (Sept 2026), not from the old
+// stax theme, which this replaces wholesale:
+//
+//   Palette   Pantone 19-2025 Red Plum as the field, Pantone 9180 cream as
+//             the type, Pantone 635 pale blue as the single cool accent.
+//             The chips are photographed in the deck; the hexes live in
+//             globals.css as --stackd-*.
+//   Wordmark  lowercase "stackd." in a high-contrast didone, cream on plum,
+//             with "stackd & servd" set in italic beneath it. Lowercase is
+//             the brand — never "Stackd" in display type.
+//   Room      warm industrial: exposed brick, micro-cement, black steel
+//             frames, cane and wood, track lighting, menu boards suspended
+//             from a ceiling rail, grid tile on the counter faces.
+//
+// The old layout dressed the page as a workshop parts catalogue — "SPEC
+// SHEET v.2026", grill temperatures, factory numbering. That was a cold
+// blueprint idea and it fights both the plum field and the fashion-serif
+// wordmark. The structure here instead borrows the one piece of the room
+// that is already a typographic object: the suspended menu boards.
+//
+// No real menu data is wired in yet; the boards render from BRAND_STORIES
+// highlights and stand in as marketing modules until the menu API exposes
+// per-brand items.
+
+import Link from 'next/link'
+import type { Concept } from '../../../lib/concept'
+import { CrossBrandStrip } from '../parts/CrossBrandStrip'
+import { OpenStatusBadge, HoursGrid, useHoursData } from '../parts/OpenStatusBadge'
+import { brandStory } from '../../../lib/concept'
+
+interface Props {
+  concept: Concept
+  concepts: Concept[]
+}
+
+export function StackdLayout({ concept, concepts }: Props) {
+  const hoursData = useHoursData(concept.slug)
+  const story = brandStory(concept.slug)
+  const reservations = concept.reservationsEnabled !== false
+
+  // Classes (.stackd-page, .stackd-mono, .stackd-spec, .stackd-rule,
+  // .stackd-line, .stackd-display, .stackd-btn, .stackd-btn-ghost,
+  // .stackd-board, .stackd-rail, .stackd-tile, .stackd-visit-grid) live in
+  // globals.css.
+  return (
+    <div className="stackd-page">
+      {/* The plum field: fixed, full-bleed, with the faint grid-tile ruling and
+          the warm pool of track light. Sized in lvh so a mobile toolbar toggle
+          can't resize it mid-scroll. z-index 0 keeps it under the sticky nav. */}
+      <div aria-hidden className="stackd-bg-fixed" />
+
+      <div style={{ position: 'relative', zIndex: 1 }}>
+        {concept.announcementBanner && (
+          <div
+            role="status"
+            style={{
+              background: 'var(--stackd-plum-dark)',
+              color: 'var(--stackd-cream)',
+              padding: '0.7rem 1.5rem',
+              textAlign: 'center',
+              fontFamily: 'var(--stackd-mono)',
+              fontSize: '0.74rem',
+              letterSpacing: '0.2em',
+              textTransform: 'uppercase',
+            }}
+          >
+            {concept.announcementBanner}
+          </div>
+        )}
+
+        {/* ── HERO ────────────────────────────────────────────────────────────
+            The wordmark, set the way the brand sets it: lowercase, cream, with
+            the full stop, and the italic lockup line underneath. Nothing else
+            competes with it above the fold. */}
+        <section style={{ padding: 'clamp(4.5rem, 14vh, 9rem) clamp(1.5rem, 5vw, 3rem) clamp(3rem, 7vh, 4.5rem)' }}>
+          <div style={{ maxWidth: '76rem', margin: '0 auto' }}>
+            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '2rem', flexWrap: 'wrap', marginBottom: '3rem' }}>
+              <span className="stackd-spec">Karachi</span>
+              <span className="stackd-spec">Burgers · dine in · delivery</span>
+            </div>
+
+            {/* The supplied wordmark asset, not a webfont approximation. The
+                brand face is a bespoke didone we don't have a licence for, and
+                Playfair only rhymes with it. The source PNG's plum background
+                was knocked out to alpha so the cream artwork sits on any panel.
+                The <h1> stays real text for search and screen readers; the
+                image is decorative on top of it. */}
+            <h1
+              style={{
+                margin: '0 0 2.75rem',
+                position: 'relative',
+                display: 'block',
+                maxWidth: 'min(34rem, 78vw)',
+              }}
+            >
+              <span
+                style={{
+                  position: 'absolute', width: 1, height: 1, overflow: 'hidden',
+                  clip: 'rect(0 0 0 0)', clipPath: 'inset(50%)', whiteSpace: 'nowrap',
+                }}
+              >
+                stackd — stackd &amp; servd
+              </span>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src="/brand/stackd-wordmark-tagline.png"
+                alt=""
+                aria-hidden="true"
+                width={599}
+                height={195}
+                style={{ display: 'block', width: '100%', height: 'auto' }}
+              />
+            </h1>
+
+            <hr className="stackd-line" />
+
+            <p
+              className="stackd-display"
+              style={{ fontSize: 'clamp(1.5rem, 2.8vw, 2.3rem)', maxWidth: '30ch', margin: '2rem 0 0', fontWeight: 500, lineHeight: 1.15 }}
+            >
+              {story.tagline}
+            </p>
+
+            <p
+              style={{
+                fontFamily: 'var(--stackd-body)',
+                fontSize: '1rem',
+                lineHeight: 1.65,
+                maxWidth: '52ch',
+                margin: '1.25rem 0 0',
+                color: 'var(--stackd-cream-dim)',
+              }}
+            >
+              {story.oneLiner}
+            </p>
+
+            <div style={{ marginTop: '3rem', display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+              <Link href={`/${concept.slug}`} className="stackd-btn">Order stackd</Link>
+              <Link href={`/brand/${concept.slug}/menu`} className="stackd-btn stackd-btn-ghost">View menu</Link>
+            </div>
+          </div>
+        </section>
+
+        {/* ── THE BOARDS ──────────────────────────────────────────────────────
+            The signature move of the room: a ceiling rail with menu boards
+            hung off it in thin black-steel frames. Each highlight gets a
+            board. Replaces the old "spec sheet" grid of grill temperatures. */}
+        <section style={{ padding: 'clamp(3rem, 8vh, 5rem) clamp(1.5rem, 5vw, 3rem)' }}>
+          <div style={{ maxWidth: '76rem', margin: '0 auto' }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '2rem', marginBottom: '1.5rem', flexWrap: 'wrap' }}>
+              <h2 className="stackd-display" style={{ fontSize: 'clamp(1.9rem, 4vw, 2.8rem)', margin: 0 }}>
+                What we do.
+              </h2>
+              <span className="stackd-spec">The short version</span>
+            </div>
+
+            {/* the rail the boards hang from */}
+            <hr className="stackd-rail" />
+
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))',
+                gap: 'clamp(1rem, 2vw, 1.5rem)',
+                marginTop: '2.25rem',
+              }}
+            >
+              {story.highlights.map((h, i) => (
+                <div key={h} style={{ display: 'flex', flexDirection: 'column', alignItems: 'stretch' }}>
+                  {/* the two hangers */}
+                  <div aria-hidden style={{ display: 'flex', justifyContent: 'space-between', padding: '0 1.75rem', height: '1.5rem' }}>
+                    <span style={{ width: 1, background: 'var(--stackd-line)' }} />
+                    <span style={{ width: 1, background: 'var(--stackd-line)' }} />
+                  </div>
+                  <div
+                    className="stackd-board"
+                    style={{ padding: '1.6rem 1.5rem', minHeight: '9rem', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}
+                  >
+                    <span className="stackd-spec">{String(i + 1).padStart(2, '0')}</span>
+                    <p
+                      className="stackd-display"
+                      style={{ fontSize: '1.15rem', lineHeight: 1.3, margin: '1.1rem 0 0', fontWeight: 500 }}
+                    >
+                      {h}
+                    </p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        {/* ── THE ROOM ────────────────────────────────────────────────────────
+            The long story, set as a single sober column on a micro-cement
+            panel with a grid-tile face — the counter, essentially. */}
+        <section style={{ padding: 'clamp(3rem, 8vh, 5rem) clamp(1.5rem, 5vw, 3rem)' }}>
+          <div
+            className="stackd-board stackd-tile"
+            style={{ maxWidth: '58rem', margin: '0 auto', padding: 'clamp(2.25rem, 5vw, 3.5rem)' }}
+          >
+            <span className="stackd-spec">The room</span>
+            <h2 className="stackd-display" style={{ fontSize: 'clamp(1.9rem, 4vw, 2.8rem)', margin: '0.75rem 0 1.5rem' }}>
+              Built to sit in.
+            </h2>
+            <p
+              style={{
+                fontFamily: 'var(--stackd-body)',
+                fontSize: '1.05rem',
+                lineHeight: 1.75,
+                color: 'var(--stackd-cream-dim)',
+                margin: 0,
+                maxWidth: '62ch',
+              }}
+            >
+              {story.long}
+            </p>
+          </div>
+        </section>
+
+        {/* ── HOURS + WHERE ───────────────────────────────────────────────── */}
+        <section style={{ padding: 'clamp(3rem, 8vh, 5rem) clamp(1.5rem, 5vw, 3rem)' }}>
+          <div
+            className="stackd-visit-grid"
+            style={{ maxWidth: '76rem', margin: '0 auto', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'clamp(2rem, 5vw, 4rem)' }}
+          >
+            <div>
+              <span className="stackd-spec">Hours</span>
+              <h2 className="stackd-display" style={{ fontSize: 'clamp(1.6rem, 3vw, 2.2rem)', margin: '0.7rem 0 1.75rem' }}>
+                When we&rsquo;re on.
+              </h2>
+              <div style={{ marginBottom: '1.5rem' }}><OpenStatusBadge hoursData={hoursData} /></div>
+              <div className="stackd-mono" style={{ fontSize: '0.95rem' }}>
+                {hoursData?.hours && hoursData.hours.length > 0 ? (
+                  <HoursGrid hoursData={hoursData} />
+                ) : (
+                  <p style={{ opacity: 0.6 }}>Hours not published yet.</p>
+                )}
+              </div>
+            </div>
+
+            <div>
+              <span className="stackd-spec">Where</span>
+              <h2 className="stackd-display" style={{ fontSize: 'clamp(1.6rem, 3vw, 2.2rem)', margin: '0.7rem 0 1.75rem' }}>
+                Find us.
+              </h2>
+              <p className="stackd-display" style={{ fontSize: '1.3rem', lineHeight: 1.45, margin: '0 0 1rem', fontWeight: 500 }}>
+                {concept.address ?? 'Karachi · address TBA'}
+              </p>
+              {concept.phone && (
+                <p className="stackd-mono" style={{ fontSize: '0.95rem', margin: 0 }}>
+                  <a
+                    href={`tel:${concept.phone.replace(/\s/g, '')}`}
+                    style={{ color: 'var(--stackd-cream)', textDecoration: 'none', borderBottom: '1px solid currentColor' }}
+                  >
+                    {concept.phone}
+                  </a>
+                </p>
+              )}
+              {reservations && (
+                <div style={{ marginTop: '2rem' }}>
+                  <Link href={`/reserve/${concept.slug}`} className="stackd-btn stackd-btn-ghost">Reserve a table</Link>
+                </div>
+              )}
+            </div>
+          </div>
+        </section>
+
+        <hr className="stackd-rule" />
+
+        {/* ── CROSS-BRAND STRIP ───────────────────────────────────────────── */}
+        <CrossBrandStrip
+          current={concept}
+          concepts={concepts}
+          accent="var(--stackd-cream)"
+          kicker="Also from the same kitchen group"
+          heading="Other lines coming out of the same kitchen group."
+        />
+
+        {/* ── SIGN-OFF ────────────────────────────────────────────────────────
+            The lockup again, on the deepest plum, to bookend the page. No order
+            button here on purpose: BrandShell renders its own "ready when you
+            are" CTA immediately below this, and stacking two order buttons a
+            screen apart just splits the click. This closes the brand; the shell
+            closes the sale. */}
+        <section
+          style={{
+            background: 'var(--stackd-plum-dark)',
+            color: 'var(--stackd-cream)',
+            padding: 'clamp(4.5rem, 12vh, 8rem) clamp(1.5rem, 5vw, 3rem)',
+          }}
+        >
+          <div style={{ maxWidth: '64rem', margin: '0 auto', textAlign: 'center' }}>
+            <h2 style={{ margin: '0 0 2.5rem' }}>
+              <span
+                style={{
+                  position: 'absolute', width: 1, height: 1, overflow: 'hidden',
+                  clip: 'rect(0 0 0 0)', clipPath: 'inset(50%)', whiteSpace: 'nowrap',
+                }}
+              >
+                stackd &amp; servd
+              </span>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src="/brand/stackd-wordmark-tagline.png"
+                alt=""
+                aria-hidden="true"
+                width={599}
+                height={195}
+                style={{ display: 'block', width: 'min(22rem, 70vw)', height: 'auto', margin: '0 auto' }}
+              />
+            </h2>
+            <p
+              className="stackd-spec"
+              style={{ margin: 0, color: 'var(--stackd-cream-faint)' }}
+            >
+              {concept.address ?? 'Karachi'}
+            </p>
+          </div>
+        </section>
+      </div>
+    </div>
+  )
+}

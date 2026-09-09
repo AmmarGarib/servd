@@ -11,7 +11,7 @@ const PUBLIC_HOST = process.env.NEXT_PUBLIC_PUBLIC_HOST ?? 'https://servd-app.ga
 
 const BRAND_NAMES: Record<string, string> = {
   simmer: 'Simmer',
-  stax:   'Stax',
+  stackd:   'Stackd',
   flipd:  'Flipd',
 }
 

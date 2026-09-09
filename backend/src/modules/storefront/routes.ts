@@ -371,6 +371,12 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
       where: { isActive: true, storefrontVisible: true, deletedAt: null },
       select: {
         id: true, name: true, slug: true, type: true, description: true,
+        // tenantId identifies the operating company. The storefront is a
+        // multi-company marketplace, so this list spans companies — and the
+        // "other lines from the same kitchen group" strip on a brand page must
+        // only offer siblings from the SAME company, or it tells a customer a
+        // different operator's restaurant is run by this one.
+        tenantId: true,
         logoUrl: true, primaryColor: true, heroTagline: true, announcementBanner: true,
         latitude: true, longitude: true, deliveryRadiusKm: true,
         reservationsEnabled: true,

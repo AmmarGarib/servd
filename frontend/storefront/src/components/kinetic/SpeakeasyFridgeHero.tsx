@@ -5,7 +5,7 @@ import { useScrollProgress } from './motionHooks'
 /**
  * SpeakeasyFridgeHero — Simmer's web entrance, mirroring the physical one.
  *
- * IRL: Simmer is in the basement of Stax. The entrance — inside Stax —
+ * IRL: Simmer is in the basement of Stackd. The entrance — inside Stackd —
  * looks like a walk-in fridge door, no signage, no labels. Customers
  * who know, know. They walk up to what looks like a chiller, pull on
  * the handle, and it opens into the speakeasy.
@@ -134,7 +134,7 @@ export function SpeakeasyFridgeHero({
           textTransform: 'uppercase',
         }}>
           <p style={{ color: 'rgba(237,230,211,0.45)' }}>· PROJECT</p>
-          <p style={{ color: '#EDE6D3', fontWeight: 700 }}>{brandName.toUpperCase()} · BELOW STAX</p>
+          <p style={{ color: '#EDE6D3', fontWeight: 700 }}>{brandName.toUpperCase()} · BELOW STACKD</p>
           <p style={{ color: 'rgba(237,230,211,0.45)', marginTop: '0.6rem' }}>· SHEET A-02 / ENTRANCE</p>
         </div>
         {/* TITLE BLOCK — top-right corner: scale + revision */}

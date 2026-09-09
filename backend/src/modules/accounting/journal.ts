@@ -57,7 +57,8 @@ export interface PostJournalEntryResult {
 // the matching Account row.
 export const CONCEPT_REVENUE_CODE: Record<string, string> = {
   'simmer':          '4001',
-  'stax':            '4002',
+  'stackd':          '4002',
+  'stax':            '4002',  // pre-rename slug — keep so historical rows still map
   'strata':          '4003',
   'flipd':           '4004',
   'garnish-station': '4005',

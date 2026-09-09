@@ -11,6 +11,8 @@ export interface Concept {
   name: string
   slug: string
   type: string
+  /** The operating company. Brands only cross-promote within one company. */
+  tenantId?: string | null
   description: string | null
   logoUrl: string | null
   primaryColor: string | null
@@ -45,7 +47,7 @@ export interface Concept {
 // is the source of truth for /brand/<slug> chrome.
 const BRAND_ACCENT_OVERRIDES: Record<string, string> = {
   simmer: '#E94E1B',  // fiery orange — the simmer brand bible's signal color
-  stax:   '#B0B2B8',  // astroscopus grey — industrial navy-grey palette
+  stackd: '#FCE8CE',  // Pantone 9180 cream — the wordmark colour on the plum field
   flipd:  '#2092E9',  // curious blue — cool diner palette
 }
 
@@ -58,7 +60,7 @@ export function brandAccent(slug: string, fallback: string | null | undefined): 
 // Per-brand surface palette for the dark "ink" sections (the microsite footer,
 // and any full-bleed themed band). Each brand gets its OWN background + text
 // colours instead of a generic black slab, so the chrome reads as that brand:
-//   simmer → forest green + bone     stax  → bone/grey + ink
+//   simmer → forest green + bone     stackd → red plum + cream
 //   flipd  → ink-blue + light-blue   servd → deep purple + white
 // The brand accent (brandAccent) still layers on top as the signal colour.
 export interface BrandSurface {
@@ -70,7 +72,7 @@ export interface BrandSurface {
 
 const BRAND_SURFACE: Record<string, BrandSurface> = {
   simmer: { bg: '#06392F', text: '#F3ECDE', muted: 'rgba(243,236,222,0.62)', border: 'rgba(243,236,222,0.14)' },
-  stax:   { bg: '#142834', text: '#C5C7CC', muted: '#8D8F97',                border: 'rgba(197,199,204,0.14)' },
+  stackd: { bg: '#7C2946', text: '#FCE8CE', muted: 'rgba(252,232,206,0.72)', border: 'rgba(252,232,206,0.20)' },
   // flipd is a LIGHT diner page (bone surface, midnight-oil ink) — its chrome
   // integrates on bone with ink text, not the dark treatment the others use.
   flipd:  { bg: '#EDE6D3', text: '#090D17', muted: 'rgba(9,13,23,0.60)',     border: 'rgba(9,13,23,0.12)'     },
@@ -88,7 +90,7 @@ export function brandSurface(slug: string): BrandSurface {
 export function brandWordmark(slug: string): { font: string; color: string; weight: number } {
   switch (slug) {
     case 'simmer': return { font: 'var(--simmer-display)', color: 'var(--simmer-bone)',  weight: 400 }
-    case 'stax':   return { font: 'var(--stax-display)',   color: 'var(--stax-cream)',   weight: 700 }
+    case 'stackd':   return { font: 'var(--stackd-display)',   color: 'var(--stackd-cream)',   weight: 700 }
     case 'flipd':  return { font: 'var(--flipd-marquee)',  color: 'var(--flipd-sky)',    weight: 400 }
     default:       return { font: 'var(--font-wordmark)',  color: 'var(--brand-accent)', weight: 800 }
   }
@@ -117,10 +119,10 @@ export function typeLabel(t: string): string {
 // to the generic image below.
 const HERO_BY_SLUG: Record<string, string> = {
   'simmer':          'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?w=1200&q=85',
-  // Stax — rustic toasted focaccia/rye sandwich on a wood board. Matches
+  // Stackd — rustic toasted focaccia/rye sandwich on a wood board. Matches
   // the upscale dine-in / Italian-leaning brand direction.
-  'stax':            'https://images.unsplash.com/photo-1559054663-e8d23213f55c?w=1200&q=85',
-  // Flipd — smash burger (was Stax's image; now belongs to Flipd, the
+  'stackd':            'https://images.unsplash.com/photo-1559054663-e8d23213f55c?w=1200&q=85',
+  // Flipd — smash burger (was Stackd's image; now belongs to Flipd, the
   // court-side smash-burger brand).
   'flipd':           'https://images.unsplash.com/photo-1568901346375-23c9450c58cd?w=1200&q=85',
 }
@@ -146,10 +148,10 @@ export const BRAND_STORIES: Record<string, BrandStory> = {
     highlights: ['Plated table service', 'Hand-built mocktails', 'Seasonal small plates', 'Mains & desserts', 'Reservations welcome'],
     hours: 'Dinner 7:00 PM – 10:30 PM · Late Night 10:30 PM – 2:30 AM',
   },
-  'stax': {
+  'stackd': {
     tagline: 'Smashed, stacked, sauced.',
     oneLiner: 'Upscale smash-burger room — dry-aged patties, house-baked brioche, table service.',
-    long: 'Stax is a sit-down burger concept. Dry-aged beef on the cast iron, brioche we bake here every morning, sauces blended in-house. The room is built for a long lunch or a slow dinner — you bring people for the burger, you stay for the table.',
+    long: 'stackd is a sit-down burger concept. Dry-aged beef on the cast iron, brioche we bake here every morning, sauces blended in-house. The room is built for a long lunch or a slow dinner — you bring people for the burger, you stay for the table.',
     highlights: ['Dry-aged smash patties', 'House-baked brioche', 'Premium sides', 'Dine-in service'],
     hours: 'Lunch 12:00 PM – 3:00 PM · Dinner 7:00 PM – 11:00 PM',
   },

@@ -70,7 +70,7 @@ interface Concept    {
 // Currency rendering — brand-aware per the marketing bundle.
 // Simmer's brand bible specifies `1200`, no prefix, tax-exclusive
 // (premium positioning; the PKR prefix reads transactional). Casual
-// brands (Stax, Flipd) keep the press-format `PKR 1,200`.
+// brands (Stackd, Flipd) keep the press-format `PKR 1,200`.
 function fmtFor(slug: string | null | undefined) {
   return (cents: number): string => {
     const n = (cents / 100).toLocaleString('en-PK', { maximumFractionDigits: 0 })
@@ -236,7 +236,7 @@ export default function ConceptOrderPage() {
   // generic servd treatment.
   const brandSkinClass =
     slug === 'simmer' ? 'simmer-ordering' :
-    slug === 'stax'   ? 'stax-ordering'   :
+    slug === 'stackd'   ? 'stackd-ordering'   :
     slug === 'flipd'  ? 'flipd-ordering'  :
     ''
 
@@ -376,7 +376,7 @@ export default function ConceptOrderPage() {
           accent={accent}
           fmt={fmt}
           onCheckout={() => {
-            // On a brand custom domain (eatstax.com, stax.localhost:3002…),
+            // On a brand custom domain (eatstax.com, stackd.localhost:3002…),
             // hand the cart off to the canonical servd checkout via a URL
             // token so the user can be cross-sold items from other GS Foods
             // brands. On the servd host itself, fall through to the local

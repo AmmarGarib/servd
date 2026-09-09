@@ -16,7 +16,7 @@ import { resolveBrandSlug } from './lib/brandDomains'
 //
 // Local development:
 //   * Browsers natively route *.localhost to 127.0.0.1 — no /etc/hosts edits.
-//   * Visit http://stax.localhost:3002, http://flipd.localhost:3002, etc.
+//   * Visit http://stackd.localhost:3002, http://flipd.localhost:3002, etc.
 //   * The wildcard rule auto-resolves any <slug>.localhost / <slug>.servd.app
 //     hostname without a code change.
 

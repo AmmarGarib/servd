@@ -1,7 +1,7 @@
 /* Inter for body text, Bricolage Grotesque for the kinetic display headlines
    that drive the new asymmetric / chunky look. Falls back to Inter Black if
    the display family fails to load — keeps the bold weight intact. */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&family=Amarante&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Lobster&family=Bungee&family=Special+Elite&family=Syne:wght@400;600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&family=Amarante&family=Space+Grotesk:wght@400;500;600;700&family=Playfair+Display:ital,wght@0,500;0,600;0,700;0,800;0,900;1,500;1,600;1,700&family=JetBrains+Mono:wght@400;500;700&family=Lobster&family=Bungee&family=Special+Elite&family=Syne:wght@400;600;700;800&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -51,26 +51,35 @@
   --simmer-display:     'Amarante', serif;
   --simmer-body:        'Times New Roman', Times, serif;
 
-  /* ── Stax brand tokens (industrial: cool navy-grey palette, palettepoint)
-        Oceanic-noir background, technical-drawing line work, light-grey
-        annotations. Greys for text hierarchy. */
-  --stax-blueprint:        #142834;            /* oceanic noir surface */
-  --stax-blueprint-deep:   #0D1B24;            /* darker — gradient end */
-  --stax-line:             rgba(255,255,255,0.16); /* borders / rules */
-  --stax-line-faint:       rgba(255,255,255,0.07);
-  /* Moving grid — light-grey lines on the navy field. */
-  --stax-grid:             rgba(176,178,184,0.22); /* major grid (astroscopus) */
-  --stax-grid-faint:       rgba(176,178,184,0.09); /* minor grid (astroscopus) */
-  --stax-cream:            #C5C7CC;            /* annotation labels (flat aluminium) */
-  --stax-cream-dim:        rgba(197,199,204,0.7);
-  --stax-grey-100:         #FFFFFF;            /* brightest text */
-  --stax-grey-80:          #C5C7CC;            /* primary body (flat aluminium) */
-  --stax-grey-60:          #B0B2B8;            /* secondary text (astroscopus) */
-  --stax-grey-40:          #8D8F97;            /* tertiary, dividers (tulle) */
-  --stax-grey-20:          #293B47;            /* card backgrounds (adept) */
-  --stax-ink:              #FFFFFF;
-  --stax-display:          'Space Grotesk', 'Inter', sans-serif;
-  --stax-mono:             'JetBrains Mono', 'Courier New', monospace;
+  /* ── stackd brand tokens ────────────────────────────────────────────────
+        Palette straight off the Pantone chips in the brand deck:
+          19-2025 Red Plum  → the brand field. Everything sits on it.
+          9180              → butter/cream. The wordmark colour and all type.
+          635               → pale blue. One cool accent, used sparingly.
+        The interior direction is industrial but WARM — exposed brick, micro-
+        cement, black steel frames, cane and wood — so the greys here are warm
+        greys, never the cold navy the old stax theme used. */
+  --stackd-plum:             #7C2946;   /* Pantone 19-2025 Red Plum — brand field */
+  --stackd-plum-deep:        #5A1B32;   /* pressed/darker plum for depth */
+  --stackd-plum-dark:        #3D1122;   /* near-black plum — footer, deep panels */
+  --stackd-cream:            #FCE8CE;   /* Pantone 9180 — the wordmark cream */
+  --stackd-cream-dim:        rgba(252,232,206,0.72);
+  --stackd-cream-faint:      rgba(252,232,206,0.42);
+  --stackd-sky:              #9BD3DD;   /* Pantone 635 — the one cool accent */
+
+  /* Line work: thin black-steel frames over the plum field. */
+  --stackd-line:             rgba(252,232,206,0.22);
+  --stackd-line-faint:       rgba(252,232,206,0.10);
+  --stackd-steel:            #1C1013;   /* black steel — frames, rails, brackets */
+
+  /* Warm concrete/micro-cement, for panels that lift off the plum. */
+  --stackd-cement:           #2E1922;
+  --stackd-cement-light:     #3A2029;
+
+  --stackd-ink:              #FCE8CE;
+  --stackd-display:          'Playfair Display', 'Bodoni Moda', Georgia, serif;
+  --stackd-body:             'Inter', system-ui, sans-serif;
+  --stackd-mono:             'JetBrains Mono', 'Courier New', monospace;
 
   /* ── Per-brand microsite component classes (moved out of <style jsx>
         because Next.js standalone build doesn't transpile styled-jsx in
@@ -224,108 +233,108 @@ summary:focus-visible {
   text-transform: lowercase !important;
 }
 
-/* stax-checkout — blueprint industrial. Dark surface, dark cards,
+/* stackd-checkout — blueprint industrial. Dark surface, dark cards,
    cream signal accent. Same pattern as .simmer-ordering: remap the
    --servd-* tokens the JSX already references + a few targeted
    !important overrides for the inline `background: white` cards
    and the focus-glow on inputs. */
-.stax-ordering {
-  --servd-ink:        var(--stax-grey-80);
-  --servd-mute:       var(--stax-grey-60);
+.stackd-ordering {
+  --servd-ink:        var(--stackd-cream);
+  --servd-mute:       var(--stackd-cream-dim);
   --servd-line:       rgba(255,255,255,0.14);
-  --servd-surface:    var(--stax-grey-20);
-  --servd-green:      var(--stax-cream);
-  --servd-green-dark: var(--stax-cream);
+  --servd-surface:    var(--stackd-cement);
+  --servd-green:      var(--stackd-cream);
+  --servd-green-dark: var(--stackd-cream);
 
-  background: var(--stax-blueprint);
-  color: var(--stax-grey-80);
-  font-family: var(--stax-display);
+  background: var(--stackd-plum);
+  color: var(--stackd-cream);
+  font-family: var(--stackd-display);
   letter-spacing: 0.01em;
 }
-.stax-ordering h1,
-.stax-ordering h2,
-.stax-ordering h3 {
-  font-family: var(--stax-display);
+.stackd-ordering h1,
+.stackd-ordering h2,
+.stackd-ordering h3 {
+  font-family: var(--stackd-display);
   letter-spacing: -0.02em;
-  color: var(--stax-grey-100);
+  color: var(--stackd-cream);
 }
 /* Panel + sub-panel cards — dark on the blueprint */
-.stax-ordering .rounded-2xl[style*="background: white"],
-.stax-ordering .rounded-2xl[style*="background:#fff"],
-.stax-ordering .rounded-2xl[style*="background: #fff"],
-.stax-ordering .rounded-xl[style*="background: white"],
-.stax-ordering .rounded-xl[style*="background:#fff"],
-.stax-ordering .rounded-xl[style*="background: #fff"] {
-  background: var(--stax-grey-20) !important;
+.stackd-ordering .rounded-2xl[style*="background: white"],
+.stackd-ordering .rounded-2xl[style*="background:#fff"],
+.stackd-ordering .rounded-2xl[style*="background: #fff"],
+.stackd-ordering .rounded-xl[style*="background: white"],
+.stackd-ordering .rounded-xl[style*="background:#fff"],
+.stackd-ordering .rounded-xl[style*="background: #fff"] {
+  background: var(--stackd-cement) !important;
   border-color: rgba(255,255,255,0.10) !important;
   box-shadow: 0 1px 3px rgba(0,0,0,0.4) !important;
-  color: var(--stax-grey-80);
+  color: var(--stackd-cream);
 }
 /* Fulfilment / tip-rider blue washes → faint cream wash */
-.stax-ordering div[style*="rgba(58,14,105,0.06)"],
-.stax-ordering div[style*="rgba(58,14,105,0.08)"],
-.stax-ordering div[style*="rgba(58,14,105,0.25)"],
-.stax-ordering div[style*="rgba(58,14,105,0.2)"] {
+.stackd-ordering div[style*="rgba(58,14,105,0.06)"],
+.stackd-ordering div[style*="rgba(58,14,105,0.08)"],
+.stackd-ordering div[style*="rgba(58,14,105,0.25)"],
+.stackd-ordering div[style*="rgba(58,14,105,0.2)"] {
   background: rgba(242,235,218,0.06) !important;
   border-color: rgba(242,235,218,0.18) !important;
 }
 /* Inputs + textareas — dark wash, light text, low-key border */
-.stax-ordering input[style*="background: #fff"],
-.stax-ordering input[style*="background:#fff"],
-.stax-ordering input[style*="background: white"],
-.stax-ordering textarea[style*="background: #fff"],
-.stax-ordering textarea[style*="background:#fff"],
-.stax-ordering textarea[style*="background: white"] {
+.stackd-ordering input[style*="background: #fff"],
+.stackd-ordering input[style*="background:#fff"],
+.stackd-ordering input[style*="background: white"],
+.stackd-ordering textarea[style*="background: #fff"],
+.stackd-ordering textarea[style*="background:#fff"],
+.stackd-ordering textarea[style*="background: white"] {
   background: rgba(255,255,255,0.06) !important;
-  color: var(--stax-grey-80) !important;
+  color: var(--stackd-cream) !important;
   border-color: rgba(255,255,255,0.16) !important;
 }
 /* Bottom fixed CTA bar — dark blueprint wash */
-.stax-ordering .fixed.bottom-0 {
+.stackd-ordering .fixed.bottom-0 {
   background: rgba(10,24,87,0.95) !important;
   border-top-color: rgba(255,255,255,0.14) !important;
 }
 /* The Place Order pill hardcodes `color: '#fff'` inline; on a cream
    button that's unreadable. Force dark ink for the CTA inside the
-   Stax checkout. */
-.stax-ordering .fixed.bottom-0 button {
-  color: var(--stax-blueprint-deep) !important;
+   Stackd checkout. */
+.stackd-ordering .fixed.bottom-0 button {
+  color: var(--stackd-plum-dark) !important;
 }
 /* The H1 "Checkout" defaults to text-lg + font-black; on Space Grotesk
    it still feels thin against the dark blueprint. Bump to cream so it
    reads as the page label, matching the brand's headline accent. */
-.stax-ordering h1 {
-  color: var(--stax-cream) !important;
+.stackd-ordering h1 {
+  color: var(--stackd-cream) !important;
 }
 /* Menu page — wrapper + sticky nav + modal surfaces. Replace the white
    inline backgrounds with the blueprint dark so the menu reads as the
    same workshop the brand microsite established. */
-.stax-ordering[style*="background: #fff"],
-.stax-ordering[style*="background: white"] {
-  background: var(--stax-blueprint) !important;
+.stackd-ordering[style*="background: #fff"],
+.stackd-ordering[style*="background: white"] {
+  background: var(--stackd-plum) !important;
 }
-.stax-ordering [style*="background: '#fff'"],
-.stax-ordering [style*="background: '#fff', "],
-.stax-ordering [style*="background:'#fff'"],
-.stax-ordering [style*="background: '#fff',"] {
-  background: var(--stax-grey-20) !important;
-  color: var(--stax-grey-80) !important;
+.stackd-ordering [style*="background: '#fff'"],
+.stackd-ordering [style*="background: '#fff', "],
+.stackd-ordering [style*="background:'#fff'"],
+.stackd-ordering [style*="background: '#fff',"] {
+  background: var(--stackd-cement) !important;
+  color: var(--stackd-cream) !important;
 }
-.stax-ordering [style*="rgba(255,255,255,0.95)"] {
+.stackd-ordering [style*="rgba(255,255,255,0.95)"] {
   background: rgba(10,24,87,0.95) !important;
   border-color: rgba(255,255,255,0.14) !important;
   backdrop-filter: blur(16px);
 }
-.stax-ordering [style*="rgba(255,255,255,0.9)"] {
+.stackd-ordering [style*="rgba(255,255,255,0.9)"] {
   background: rgba(10,24,87,0.92) !important;
 }
 /* Menu item cards — keep the dark surface treatment + mono spec touches */
-.stax-ordering h3,
-.stax-ordering h2 {
-  color: var(--stax-cream) !important;
+.stackd-ordering h3,
+.stackd-ordering h2 {
+  color: var(--stackd-cream) !important;
 }
 /* All-caps spec eyebrow on buttons + headlines for industrial flavour */
-.stax-ordering button[style*="background: var(--servd-green)"] {
+.stackd-ordering button[style*="background: var(--servd-green)"] {
   text-transform: uppercase !important;
   letter-spacing: 0.08em !important;
 }
@@ -391,67 +400,118 @@ summary:focus-visible {
   background: rgba(245,251,255,0.92) !important;
 }
 
-/* stax — industrial blueprint */
-.stax-page {
-  /* Solid concrete base — the fixed concrete image layer (mounted in
-     StaxLayout) sits on top; this colour is the safety net so a mobile
-     fixed-layer hiccup never flashes white. No more scrolling CSS grid
-     (it diverged from the fixed background and caused the seam on scroll). */
-  background-color: #18242E;
-  color: var(--stax-grey-80);
-  font-family: var(--stax-display);
+/* stackd — industrial plum.
+   Visual vocabulary lifted from the design deck: a plum field, cream type,
+   thin black-steel frames, suspended menu boards, grid tile, micro-cement.
+   Warm industrial, not the cold blueprint the old stax theme used. */
+.stackd-page {
+  background-color: var(--stackd-plum);
+  color: var(--stackd-cream);
+  font-family: var(--stackd-body);
 }
-/* Solid panels (cross-brand + CTA) — float as a translucent darken over the
-   concrete backdrop instead of carrying their own grid. */
-.stax-page .stax-grid-live {
-  background-color: rgba(13,27,36,0.55);
-}
-@keyframes staxBlueprintDrift {
-  from { background-position: 0 0, 0 0, 0 0, 0 0, center; }
-  to   { background-position: 100px 100px, 100px 100px, 100px 100px, 100px 100px, center; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .stax-page,
-  .stax-page .stax-grid-live { animation: none; }
-}
-.stax-page .stax-mono { font-family: var(--stax-mono); letter-spacing: 0.02em; color: var(--stax-grey-60); }
-.stax-page .stax-spec { font-family: var(--stax-mono); font-size: 0.72rem; letter-spacing: 0.18em; text-transform: uppercase; color: var(--stax-cream); }
-.stax-page .stax-rule { height: 1px; background: var(--stax-line); border: 0; margin: 0; }
-.stax-page .stax-line { height: 1px; background: var(--stax-cream); border: 0; width: 3rem; margin: 0; }
-.stax-page .stax-display { font-family: var(--stax-display); font-weight: 700; letter-spacing: -0.025em; line-height: 1.02; color: var(--stax-grey-100); }
-.stax-page .stax-btn {
-  display: inline-flex; align-items: center; gap: 0.65rem;
-  font-family: var(--stax-mono); font-size: 0.78rem;
-  letter-spacing: 0.18em; text-transform: uppercase;
-  padding: 1rem 1.6rem; background: var(--stax-cream); color: var(--stax-blueprint);
-  border: 0; text-decoration: none; transition: background 180ms ease, color 180ms ease;
-}
-.stax-page .stax-btn:hover { background: white; color: var(--stax-blueprint-deep); }
-.stax-page .stax-btn-ghost { background: transparent; color: var(--stax-cream); border: 1px solid var(--stax-line); }
-.stax-page .stax-btn-ghost:hover { border-color: var(--stax-cream); background: rgba(242,235,218,0.06); }
-.stax-page .stax-grid-bg {
-  /* (hero grid hatching removed with the blueprint grid — concrete shows through) */
-  background-image: none;
-}
-/* Fixed concrete backdrop. Height is pinned to the LARGE viewport (lvh) so the
-   mobile toolbar showing/hiding does NOT resize the layer — with inset:0 the
-   layer resized on every toolbar toggle and `cover` re-centred the image, which
-   made the concrete panels jump while scrolling. lvh is constant across toggles. */
-.stax-bg-fixed {
+
+/* The page ground: plum, with a faint grid-tile ruling (the white square tile
+   with dark grout that runs across the counters in the deck) and a soft warm
+   pool of light where the track lighting would fall. */
+.stackd-bg-fixed {
   position: fixed;
   top: 0; left: 0;
   width: 100vw;
-  height: 100vh;   /* fallback for older browsers */
+  height: 100vh;   /* fallback */
   height: 100lvh;  /* stable across mobile toolbar show/hide */
   z-index: 0;
   pointer-events: none;
-  background-color: #18242E;
-  background-image: url(/brand/stax-concrete.webp);
-  background-size: cover;
-  background-position: center top;
-  background-repeat: no-repeat;
+  background-color: var(--stackd-plum);
+  background-image:
+    radial-gradient(120% 80% at 50% -10%, rgba(252,232,206,0.10), transparent 60%),
+    radial-gradient(90% 60% at 50% 110%, rgba(61,17,34,0.55), transparent 65%),
+    linear-gradient(var(--stackd-line-faint) 1px, transparent 1px),
+    linear-gradient(90deg, var(--stackd-line-faint) 1px, transparent 1px);
+  background-size: 100% 100%, 100% 100%, 68px 68px, 68px 68px;
+  background-position: center, center, center, center;
 }
-@media (max-width: 700px) { .stax-visit-grid { grid-template-columns: 1fr !important; } }
+
+/* Panels that lift off the plum field — micro-cement, very slightly warmer. */
+.stackd-page .stackd-grid-live { background-color: rgba(61,17,34,0.45); }
+
+.stackd-page .stackd-mono {
+  font-family: var(--stackd-mono);
+  letter-spacing: 0.02em;
+  color: var(--stackd-cream-dim);
+}
+
+/* Spec tag — the small stencilled label on a steel frame. */
+.stackd-page .stackd-spec {
+  font-family: var(--stackd-mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--stackd-cream-faint);
+}
+
+.stackd-page .stackd-rule { height: 1px; background: var(--stackd-line-faint); border: 0; margin: 0; }
+.stackd-page .stackd-line { height: 2px; background: var(--stackd-cream); border: 0; width: 3rem; margin: 0; }
+
+/* Display type is the wordmark's high-contrast serif — a didone, set tight and
+   lowercase, exactly as the wordmark sets "stackd." */
+.stackd-page .stackd-display {
+  font-family: var(--stackd-display);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.02;
+  color: var(--stackd-cream);
+}
+
+.stackd-page .stackd-btn {
+  display: inline-flex; align-items: center; gap: 0.65rem;
+  font-family: var(--stackd-mono); font-size: 0.74rem;
+  letter-spacing: 0.2em; text-transform: uppercase;
+  padding: 1.05rem 1.7rem;
+  background: var(--stackd-cream); color: var(--stackd-plum-dark);
+  border: 0; text-decoration: none;
+  transition: background 180ms ease, color 180ms ease, transform 180ms ease;
+}
+.stackd-page .stackd-btn:hover { background: #fff; transform: translateY(-1px); }
+.stackd-page .stackd-btn-ghost {
+  background: transparent; color: var(--stackd-cream);
+  border: 1px solid var(--stackd-line);
+}
+.stackd-page .stackd-btn-ghost:hover {
+  border-color: var(--stackd-cream);
+  background: rgba(252,232,206,0.07);
+}
+
+/* A suspended board: thin black-steel frame with a cream hairline inside it,
+   the way the menu boards hang off the ceiling rail in the deck. */
+.stackd-page .stackd-board {
+  border: 1px solid var(--stackd-line);
+  background: linear-gradient(180deg, rgba(61,17,34,0.42), rgba(61,17,34,0.62));
+  box-shadow: inset 0 0 0 1px rgba(28,16,19,0.55), 0 18px 40px -28px rgba(28,16,19,0.9);
+}
+
+/* The rail the boards hang from. */
+.stackd-page .stackd-rail {
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--stackd-line), transparent);
+  border: 0; margin: 0;
+}
+
+/* Grid-tile texture, for the one panel that should read as the counter face. */
+.stackd-page .stackd-tile {
+  background-image:
+    linear-gradient(var(--stackd-line-faint) 1px, transparent 1px),
+    linear-gradient(90deg, var(--stackd-line-faint) 1px, transparent 1px);
+  background-size: 34px 34px, 34px 34px;
+}
+
+.stackd-page .stackd-grid-bg { background-image: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .stackd-page, .stackd-page .stackd-grid-live { animation: none; }
+  .stackd-page .stackd-btn:hover { transform: none; }
+}
+
+@media (max-width: 700px) { .stackd-visit-grid { grid-template-columns: 1fr !important; } }
 
 /* flipd — old-school American diner ───────────────────────────────────
    Cream paper base, Lobster cursive script, Bungee marquee wordmark,
@@ -830,7 +890,7 @@ a { color: inherit; }
    Shared visual language inspired by agency sites (Buzz Interactive et al):
    big asymmetric headlines, atmospheric floating shapes, marquee strips,
    drag carousels. Per-brand colour comes through --brand-accent so the
-   same components work for Stax (orange), Simmer (green), Flipd (yellow). */
+   same components work for Stackd (orange), Simmer (green), Flipd (yellow). */
 
 /* Display type — used for hero headlines and section openers. The
    Bricolage Grotesque optical-size axis gives us bigger sizes a slightly
@@ -1166,9 +1226,9 @@ button:hover > .kinetic-caret::after { transform: translateX(6px); }
   filter: saturate(1.15) contrast(1.05);
 }
 
-/* Stax bun "breath" — subtle scale + skew wobble so the buns feel like
-   freshly-baked dough, not flat decals. Used by StaxStackBuilderHero. */
-@keyframes staxBunBreath {
+/* Stackd bun "breath" — subtle scale + skew wobble so the buns feel like
+   freshly-baked dough, not flat decals. Used by StackdStackBuilderHero. */
+@keyframes stackdBunBreath {
   0%   { transform: scale(1, 1) translateY(0); }
   50%  { transform: scale(1.012, 0.99) translateY(-2px); }
   100% { transform: scale(0.995, 1.008) translateY(1px); }

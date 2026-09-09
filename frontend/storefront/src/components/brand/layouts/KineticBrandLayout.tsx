@@ -12,7 +12,7 @@ import { DragRail } from '../../kinetic/DragRail'
 //   - concept.name / description / hero image
 //   - the per-brand voice line + emoji motif below (BRAND_VOICE)
 //
-// This replaces the old per-brand bespoke layouts (Stax/Simmer/Flipd) as the
+// This replaces the old per-brand bespoke layouts (Stackd/Simmer/Flipd) as the
 // default. Bespoke layouts still exist as files for future fine-tuning, but
 // every brand currently inherits this kinetic structure so the customer
 // experience is consistent across the three brands.
@@ -26,10 +26,10 @@ interface Props {
 // playful 3D motif (no actual 3D asset needed). Brands not in this map fall
 // through to a generic spotlight string + a plate emoji.
 const BRAND_VOICE: Record<string, { voice: string; emoji: string; menuTeaser: string[] }> = {
-  stax: {
+  stackd: {
     voice: 'Smashed. Stacked. Sauced.',
     emoji: '🍔',
-    menuTeaser: ['The Stax Classic', 'Double Smash', 'Smoke Stack', 'Spicy Honey Crunch'],
+    menuTeaser: ['The Stackd Classic', 'Double Smash', 'Smoke Stack', 'Spicy Honey Crunch'],
   },
   simmer: {
     voice: 'Slow nights. Plated softly.',

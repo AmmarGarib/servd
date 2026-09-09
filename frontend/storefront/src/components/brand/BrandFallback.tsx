@@ -1,13 +1,13 @@
 'use client'
 import type { Concept } from '../../lib/concept'
-import { StaxLayout }         from './layouts/StaxLayout'
+import { StackdLayout }         from './layouts/StackdLayout'
 import { SimmerLayout }       from './layouts/SimmerLayout'
 import { FlipdLayout }        from './layouts/FlipdLayout'
 import { GenericBrandLayout } from './layouts/GenericBrandLayout'
 
 // BrandFallback — dispatches to a per-brand layout when the operator hasn't
 // customised the CMS blocks for this brand yet. GS Foods runs three live
-// consumer brands: Stax, Simmer, Flipd. Each has its own bespoke layout
+// consumer brands: Stackd, Simmer, Flipd. Each has its own bespoke layout
 // (typography, colour palette, section composition, brand-unique modules)
 // so /brand/<slug> reads as that brand's website, not a servd template
 // with the colour swapped. Any unknown slug renders through the generic
@@ -20,8 +20,8 @@ interface Props {
 
 export function BrandFallback({ concept, concepts }: Props) {
   switch (concept.slug) {
-    case 'stax':
-      return <StaxLayout    concept={concept} concepts={concepts} />
+    case 'stackd':
+      return <StackdLayout    concept={concept} concepts={concepts} />
     case 'simmer':
       return <SimmerLayout  concept={concept} concepts={concepts} />
     case 'flipd':

@@ -33,7 +33,7 @@ export function BrandShell({ concept, children }: Props) {
   // doesn't define one.
   const accent = concept.primaryColor || 'var(--servd-green)'
   // Pick the text/ink colour based on luminance of the accent. Light
-  // accents (Flipd sky blue) get black ink, dark accents (Stax purple,
+  // accents (Flipd sky blue) get black ink, dark accents (Stackd purple,
   // Simmer green, servd royal blue) get white. Defaults to white when
   // we can't parse the accent (e.g. it's a CSS var name).
   const accentInk = accent.startsWith('#') && isLight(accent) ? '#0a0a0a' : 'white'
@@ -120,10 +120,10 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
 
   // Carded-nav brands collapse the bar into ONE rounded pill — the lean links
   // plus Order on a single capsule. This is the flipd treatment ported to
-  // simmer + stax, in each brand's own palette: flipd keeps its high-contrast
+  // simmer + stackd, in each brand's own palette: flipd keeps its high-contrast
   // pale/ink card, the dark brands get a faint glass capsule (translucent fill
   // + hairline) so labels read on their deep backgrounds.
-  const pillNav = diner || concept.slug === 'simmer' || concept.slug === 'stax'
+  const pillNav = diner || concept.slug === 'simmer' || concept.slug === 'stackd'
   const pillTint = concept.slug === 'simmer' ? '243,236,222' : '197,199,204' // bone / grey
   const navPill: React.CSSProperties = diner
     ? dinerCard
@@ -274,7 +274,7 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
 
           {/* Order joins the SAME pill as the final, emphasized item — one
               pill, not a separate CTA. Bold brand ink with an accent arrow so
-              it still reads as the action (flipd green; simmer/stax accent). */}
+              it still reads as the action (flipd green; simmer/stackd accent). */}
           {pillNav && (
             <Link
               href={`/${concept.slug}`}

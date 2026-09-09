@@ -14,7 +14,16 @@ interface Props {
 }
 
 export function CrossBrandStrip({ current, concepts, accent, kicker, heading }: Props) {
-  const others = concepts.filter((c) => c.slug !== current.slug).slice(0, 6)
+  // Only siblings from the SAME operating company. The storefront's concept
+  // list spans every company on servd, and this strip claims "same operator,
+  // same standards" and that you can pair the brands in one cart — both false
+  // across companies, and the shared cart genuinely doesn't work that way. If
+  // the API hasn't sent tenantId (older cached response, or the static
+  // fallback list), fall back to showing nothing rather than guessing wrong.
+  const others = concepts
+    .filter((c) => c.slug !== current.slug)
+    .filter((c) => (current.tenantId ? c.tenantId === current.tenantId : false))
+    .slice(0, 6)
   if (others.length === 0) return null
 
   return (

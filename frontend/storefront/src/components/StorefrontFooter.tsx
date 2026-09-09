@@ -3,14 +3,14 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 
 // Live brands only — the long historical list (Strata, Craveman, Garnish
-// Station, Stax@Padel) lived in the footer when they had no concept rows,
+// Station, Stackd@Padel) lived in the footer when they had no concept rows,
 // promising the customer kitchens they couldn't actually order from. Pulled
 // down to match the live state on the home page. Add back when their
 // concept rows + microsites land.
 // Accents match the canonical per-brand palette (lib/concept BRAND_ACCENT_OVERRIDES).
 // "simmer" is lowercase per its brand rules.
 const BRANDS = [
-  { slug: 'stax',   name: 'Stax',   accent: '#B0B2B8' },
+  { slug: 'stackd',   name: 'Stackd',   accent: '#B0B2B8' },
   { slug: 'simmer', name: 'simmer', accent: '#E94E1B' },
   { slug: 'flipd',  name: 'Flipd',  accent: '#2092E9' },
 ]

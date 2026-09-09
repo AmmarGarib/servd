@@ -40,7 +40,7 @@ export const FOOD_HERO_DEFAULTS: HeroConfig = {
   overview:
     'Order from any of our kitchens in one place. Pick what you are craving, add something from another brand if you like, and check out once.',
   conclusion:
-    'Simmer, Stax, Flipd — explore the brands, then join Insiders for rewards on every order.',
+    'Simmer, Stackd, Flipd — explore the brands, then join Insiders for rewards on every order.',
 };
 
 interface RawBlock {

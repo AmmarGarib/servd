@@ -298,7 +298,7 @@ export function SimmerLayout({ concept, concepts }: Props) {
       {/* ── SPEAKEASY FRIDGE HERO ────────────────────────────────────────
           Scroll-driven walk-in chiller door that swings open to reveal
           "RESERVATIONS ONLY". Mirrors the IRL entrance — Simmer is in
-          the basement of Stax, accessed through what looks like a
+          the basement of Stackd, accessed through what looks like a
           fridge door. The web entrance is the same. Pure scroll, no
           clicks. */}
       <SpeakeasyFridgeHero

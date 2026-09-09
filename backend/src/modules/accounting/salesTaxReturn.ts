@@ -170,7 +170,8 @@ export async function salesTaxReturn(tenantId: string, from: Date, to: Date): Pr
 // Mirror of revenueCodeForConcept (kept private here to avoid circular import).
 const SLUG_TO_REVENUE_CODE: Record<string, string> = {
   'simmer':          '4001',
-  'stax':            '4002',
+  'stackd':          '4002',
+  'stax':            '4002',  // pre-rename slug — keep so historical rows still map
   'strata':          '4003',
   'flipd':           '4004',
   'garnish-station': '4005',

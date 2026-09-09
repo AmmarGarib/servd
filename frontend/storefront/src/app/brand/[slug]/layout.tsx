@@ -24,8 +24,8 @@ const FALLBACK_CONCEPTS: Record<string, Concept> = {
     logoUrl: null, primaryColor: null,
     reservationsEnabled: true,
   },
-  stax: {
-    id: 'fallback-stax', name: 'Stax', slug: 'stax', type: 'restaurant',
+  stackd: {
+    id: 'fallback-stackd', name: 'Stackd', slug: 'stackd', type: 'restaurant',
     description: 'Smash burgers, loaded fries, delivery-first ghost kitchen.',
     logoUrl: null, primaryColor: null,
     reservationsEnabled: false,

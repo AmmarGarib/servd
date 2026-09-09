@@ -29,13 +29,13 @@ type FulfilmentOption = 'dine-in' | 'pickup' | 'curbside' | 'delivery'
 
 // Per-brand allow-list. The brand's operating model decides what
 // fulfilment modes the customer can pick. Simmer is plated dining
-// only (the QR card is at the table); Stax is a ghost kitchen with
+// only (the QR card is at the table); Stackd is a ghost kitchen with
 // counter pickup + curbside; Flipd ships hot from the kitchen, so it
 // also opens up delivery. Slugs not in the map see the full set
 // (legacy / generic brand pages).
 const BRAND_FULFILMENT: Record<string, FulfilmentOption[]> = {
   simmer: ['dine-in'],
-  stax:   ['dine-in', 'pickup', 'curbside'],
+  stackd:   ['dine-in', 'pickup', 'curbside'],
   flipd:  ['dine-in', 'pickup', 'curbside', 'delivery'],
 }
 const FULFILMENT_LABEL: Record<FulfilmentOption, string> = {
@@ -77,7 +77,7 @@ export default function CheckoutPage() {
   // `background: white` cards the JSX hardcodes.
   const brandSkinClass =
     slug === 'simmer' ? 'simmer-ordering' :
-    slug === 'stax'   ? 'stax-ordering'   :
+    slug === 'stackd'   ? 'stackd-ordering'   :
     slug === 'flipd'  ? 'flipd-ordering'  :
     ''
   // Cross-brand upsell ("want a side from another GS Foods kitchen?")
@@ -93,7 +93,7 @@ export default function CheckoutPage() {
   }, [token, slug, router])
 
   // Cross-domain handoff: when a user builds a cart on a brand custom domain
-  // (eatstax.com, stax.localhost:3002…) and clicks checkout, the brand site
+  // (eatstax.com, stackd.localhost:3002…) and clicks checkout, the brand site
   // appends the cart as a base64url-encoded token. Hydrate on mount, then
   // strip the param so a refresh doesn't re-hydrate stale data.
   useEffect(() => {
@@ -219,7 +219,7 @@ export default function CheckoutPage() {
           or pick a different kitchen
         </p>
         <div className="flex gap-2 flex-wrap justify-center">
-          {['stax', 'simmer', 'flipd'].filter((s) => s !== slug).map((s) => (
+          {['stackd', 'simmer', 'flipd'].filter((s) => s !== slug).map((s) => (
             <Link key={s} href={`/${s}`}
               className="rounded-full px-4 py-2 text-xs font-bold transition-colors"
               style={{
@@ -511,7 +511,7 @@ export default function CheckoutPage() {
             {/* Dine-in table number — required for dine-in so the runner
                 knows which table to bring the plates to. Renders for both
                 the "single option" case (Simmer) and the chooser case
-                (Stax, Flipd) whenever dine-in is selected. */}
+                (Stackd, Flipd) whenever dine-in is selected. */}
             {fulfilmentType === 'dine-in' && (
               <div className="space-y-2 mt-2">
                 <p className="text-[11px]" style={{ color: 'var(--servd-mute)' }}>

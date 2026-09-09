@@ -6,7 +6,7 @@ Customer-facing routes.
 - [`browse/`](./browse/) — Combined-menu browse view.
 - [`[concept]/`](./[concept]/) — Per-concept ordering flow (menu → cart → checkout → order tracking).
 - [`brand/[slug]/`](./brand/) — Brand microsite (about, menu, visit pages).
-- [`brands/`](./brands/) — Static brand homepages (Stax, Strata, Flipd).
+- [`brands/`](./brands/) — Static brand homepages (Stackd, Strata, Flipd).
 - [`account/`](./account/) — Logged-in customer portal (profile, addresses, orders, loyalty, complaints).
 - [`auth/`](./auth/), [`login/`](./login/), [`signup/`](./signup/) — Authentication.
 - [`order/`](./order/), [`orders/`](./orders/) — Order tracking.
