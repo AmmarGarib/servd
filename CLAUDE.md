@@ -82,15 +82,36 @@ rewritten, trust these corrections:
 
 ## Recent additions (2026-09-09)
 
-- **The burger brand is `stackd`, not `stax`.** Palette is Pantone 19-2025 Red
-  Plum (`#7C2946`) + Pantone 9180 cream (`#FCE8CE`), with Pantone 635 pale blue
-  (`#9BD3DD`) as a single cool accent. Tokens are `--stackd-*` in
-  `globals.css`; the layout is `StackdLayout.tsx`. The hero uses the real
-  wordmark asset (`/brand/stackd-wordmark-tagline.png`, cream on transparent),
-  not a webfont. Lowercase everywhere user-visible — capital-S "Stackd" is a
-  bug, same rule as simmer. `/stax*` paths redirect permanently.
-  **Not renamed:** `stax-padel` (separate padel business) and the registered
-  domain `eatstax.com` (which now maps to the `stackd` slug).
+- **`stackd` (formerly `stax`) is a café and market, NOT a burger brand.**
+  A 20-seat scratch-cooking café doing sandwiches, pastries, light bites and
+  craft mocktails, with a small market integrated into the cashier/barista bar
+  (display chiller for grab-and-go + drinks, case for pastries). Its signature
+  is that **packaging is the service vessel, not plates** — branded vessels
+  built per menu item, not disposables. Any "smash burger / dry-aged / brioche"
+  copy is stale and wrong; that is Flipd's territory. Storefront copy lives in
+  `BRAND_STORIES` in `frontend/storefront/src/lib/concept.ts`, but the
+  **`description` shown in page titles, JSON-LD and cross-brand cards comes
+  from the DB `Concept.description`** — edit it in admin → Marketing → Brands,
+  not in code (the code string is only an API-down fallback).
+
+  Palette is Pantone 19-2025 Red Plum (`#7C2946`) + Pantone 9180 cream
+  (`#FCE8CE`), with Pantone 635 pale blue (`#9BD3DD`) as a single cool accent.
+  Tokens are `--stackd-*` in `globals.css`; the layout is `StackdLayout.tsx`.
+  The hero uses the real wordmark asset
+  (`/brand/stackd-wordmark-tagline.png`, cream on transparent), not a webfont.
+  The hand-drawn mascot (`/brand/stackd-mascot.png`) gets its own full band —
+  he goes on the cups, wrappers and pastry bags, so he is shown at size, never
+  as a corner thumbnail. Cards are **stickers**, never rectangles: rounded
+  lozenges in cream/butter/sky, set slightly off-square. **No grid anywhere** —
+  the blueprint grid was a stax hangover and is gone.
+
+  Lowercase everywhere user-visible — capital-S "Stackd" is a bug, same rule as
+  simmer. Both brands are in `LOWERCASE_BRANDS` and every user-visible name
+  must go through `formatBrandName()`; hardcoding the string bypasses the rule,
+  which is how it regressed once already. `/stax*` paths redirect permanently.
+  **Not renamed:** `stax-padel` (separate padel business, and it IS a burger
+  concept) and the registered domain `eatstax.com` (which now maps to the
+  `stackd` slug).
 
 - **Staff 2FA over WhatsApp OTP.** `POST /auth/login` returns
   `{ twoFactorRequired, challengeToken, phoneHint }` instead of a session when
