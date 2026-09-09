@@ -80,6 +80,56 @@ rewritten, trust these corrections:
   runs at boot for every company (and only adds codes that are missing, so
   operator edits survive). `/health` checks the required codes per company.
 
+## Recent additions (2026-09-09)
+
+- **The burger brand is `stackd`, not `stax`.** Palette is Pantone 19-2025 Red
+  Plum (`#7C2946`) + Pantone 9180 cream (`#FCE8CE`), with Pantone 635 pale blue
+  (`#9BD3DD`) as a single cool accent. Tokens are `--stackd-*` in
+  `globals.css`; the layout is `StackdLayout.tsx`. The hero uses the real
+  wordmark asset (`/brand/stackd-wordmark-tagline.png`, cream on transparent),
+  not a webfont. Lowercase everywhere user-visible — capital-S "Stackd" is a
+  bug, same rule as simmer. `/stax*` paths redirect permanently.
+  **Not renamed:** `stax-padel` (separate padel business) and the registered
+  domain `eatstax.com` (which now maps to the `stackd` slug).
+
+- **Staff 2FA over WhatsApp OTP.** `POST /auth/login` returns
+  `{ twoFactorRequired, challengeToken, phoneHint }` instead of a session when
+  the account is enrolled; `POST /auth/2fa/verify` trades the challenge + code
+  for tokens. Enrol via `/auth/2fa/start` then `/auth/2fa/enable` (two steps so
+  a mistyped number can't lock anyone out); `/auth/2fa/disable` requires the
+  password. **2FA is per-account, never by role** — enforcing by role would
+  lock out every owner on deploy. The challenge is a `type: 'mfa'` JWT and is
+  rejected everywhere an access token is expected.
+
+- **The login rate limiter no longer fails open.** It falls back to per-process
+  in-memory counters when Redis is unreachable, and `/health` reports
+  `loginRateLimit: warn`. Anything on a request path that must degrade rather
+  than block should use the `redisFast` connection from `lib/redis.ts` — the
+  shared `redis` client carries BullMQ's `maxRetriesPerRequest: null`, so a
+  command issued while Redis is down never rejects, it hangs forever.
+
+- **Customer order rollups are written now.** `firstOrderAt`, `lastOrderAt` and
+  `totalSpentCents` were read all over the system and written by nothing, so
+  referral rewards never paid out, the first-order welcome never fired, the
+  "place your first order" nag targeted everyone forever, and the lapsed CRM
+  segments were always empty. `recomputeCustomerRollups` computes them from
+  completed orders. **Any new path that completes an order must call
+  `bumpCustomerRollups`** — the POS till didn't, which was most orders.
+
+- **Referral payouts are guarded**: the referee's phone must be verified, the
+  first order must be at least PKR 500, and a referrer is capped at 10 payouts
+  per 30 days. Held-back referrals stay unstamped so they can pay later.
+
+- **Zero known dependency vulnerabilities.** The API is on Fastify 5. Don't
+  re-add `@fastify/jwt` (auth uses `jsonwebtoken`), `@fastify/multipart`
+  (uploads go via the S3 presigner) or `@fastify/websocket` (realtime is
+  socket.io) — they were removed as unused, and `@fastify/jwt` was the source
+  of the one critical finding.
+
+- **The public storefront spans companies.** `/storefront/concepts` returns
+  every company's brands and now includes `tenantId`. Anything that claims
+  brands are related ("same kitchen group", shared cart) must filter on it.
+
 ## What this is
 
 `servd` is the in-house restaurant management system for **GS Foods** — a
