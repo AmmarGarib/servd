@@ -380,6 +380,9 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
         // different operator's restaurant is run by this one.
         tenantId: true,
         logoUrl: true, primaryColor: true, heroTagline: true, announcementBanner: true,
+        // Brand microsite artwork. This select is explicit, so a new column is
+        // invisible to the storefront until it is named here.
+        wordmarkUrl: true, mascotUrl: true,
         latitude: true, longitude: true, deliveryRadiusKm: true,
         reservationsEnabled: true,
         phone: true, whatsapp: true,

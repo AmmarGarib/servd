@@ -225,6 +225,18 @@ model Concept {
   announcementBanner String? // live message customers see (e.g. "Closed today")
   storefrontLayout   Json? // ordered array of page blocks (page builder)
 
+  // Brand microsite artwork — the two pieces of supplied art a brand page
+  // renders as images rather than as type. Both were hardcoded to files
+  // bundled into the storefront build, so replacing a low-resolution export
+  // took a code change and a redeploy. Operator-editable now. NULL keeps the
+  // bundled fallback, so an unset brand renders exactly as it did before.
+  //   wordmarkUrl — the brand's own lettering (a bespoke face we can't set as
+  //                 live text), used in the hero and the sign-off.
+  //   mascotUrl   — the brand character, shown in its own showcase band.
+  // Prefer a transparent PNG at 1000px+ on the long edge, or an SVG.
+  wordmarkUrl        String?
+  mascotUrl          String?
+
   // Reservation availability — per-brand master toggle. When false, public
   // booking endpoints reject (RESERVATIONS_DISABLED) and customer-facing
   // surfaces hide the "Book a table" CTA. Staff can still create reservations

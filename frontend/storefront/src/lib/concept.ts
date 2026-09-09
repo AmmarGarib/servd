@@ -16,6 +16,12 @@ export interface Concept {
   description: string | null
   logoUrl: string | null
   primaryColor: string | null
+  // Brand microsite artwork, uploaded from admin → Marketing → Brands →
+  // Storefront. Null means "use the asset bundled in this build", which is how
+  // every brand behaved before these existed — so a brand page must always
+  // supply a fallback rather than rendering a broken image.
+  wordmarkUrl?: string | null
+  mascotUrl?: string | null
   // Operator-editable strings returned by the API but optional in the type
   // — used for the brand-page promo strip and hero subhead respectively.
   heroTagline?: string | null

@@ -38,7 +38,7 @@ import Link from 'next/link'
 import type { Concept } from '../../../lib/concept'
 import { CrossBrandStrip } from '../parts/CrossBrandStrip'
 import { OpenStatusBadge, HoursGrid, useHoursData } from '../parts/OpenStatusBadge'
-import { brandStory } from '../../../lib/concept'
+import { brandStory, formatBrandName } from '../../../lib/concept'
 
 interface Props {
   concept: Concept
@@ -48,6 +48,12 @@ interface Props {
 // What the counter actually puts out, in the order it reads best. These are
 // menu categories, not marketing lines — the point of the cycler is that a
 // customer who lands here learns what the kitchen makes.
+// Bundled artwork. Used until the operator uploads a replacement in
+// admin -> Marketing -> Brands -> Storefront. These files ship in
+// public/brand/ so the page never depends on the uploads host being up.
+const FALLBACK_WORDMARK = '/brand/stackd-wordmark-tagline.png'
+const FALLBACK_MASCOT = '/brand/stackd-mascot.png'
+
 const COUNTER_LINES = ['sandwiches.', 'pastries.', 'light bites.', 'craft mocktails.', 'grab & go.']
 const DISH_INTERVAL_MS = 2600
 
@@ -68,6 +74,26 @@ export function StackdLayout({ concept, concepts }: Props) {
   const hoursData = useHoursData(concept.slug)
   const story = brandStory(concept.slug)
   const reservations = concept.reservationsEnabled !== false
+
+  // Artwork comes from the brand row when the operator has uploaded it, and
+  // falls back to the copy bundled in this build otherwise. `|| fallback`
+  // rather than `??` on purpose: an empty string is what a cleared admin field
+  // sends, and it must fall back too, not render a broken image.
+  const wordmarkSrc = concept.wordmarkUrl || FALLBACK_WORDMARK
+  const mascotSrc = concept.mascotUrl || FALLBACK_MASCOT
+  // width/height on an <img> declare the INTRINSIC ratio so the browser can
+  // reserve the right space before the file arrives. We know the bundled
+  // files' dimensions; we know nothing about an upload, and stating the old
+  // numbers for a differently-shaped image reserves the wrong box and shifts
+  // the page on load. So the hint is given only for the fallback.
+  const wordmarkDims = concept.wordmarkUrl ? {} : { width: 599, height: 195 }
+  const mascotDims = concept.mascotUrl ? {} : { width: 338, height: 453 }
+  // The specific description only holds for the artwork we ship. Once an
+  // operator uploads their own, we have no idea what it depicts, so fall back
+  // to naming its role instead of describing a picture that may not be there.
+  const mascotAlt = concept.mascotUrl
+    ? `${formatBrandName(concept.name)} brand character`
+    : 'The stackd character — a stack of bread slices carried on a plum tray, striped trousers below'
 
   // The counter cycler. Starts at 0 on the server so the markup hydrates
   // cleanly, then advances on a timer. Paused while the tab is hidden —
@@ -179,11 +205,10 @@ export function StackdLayout({ concept, concepts }: Props) {
               </span>
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
-                src="/brand/stackd-wordmark-tagline.png"
+                src={wordmarkSrc}
                 alt=""
                 aria-hidden="true"
-                width={599}
-                height={195}
+                {...wordmarkDims}
                 style={{ display: 'block', width: '100%', height: 'auto' }}
               />
             </h1>
@@ -258,10 +283,9 @@ export function StackdLayout({ concept, concepts }: Props) {
               <div className="stackd-mascot-seal">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
-                  src="/brand/stackd-mascot.png"
-                  alt="The stackd character — a stack of bread slices carried on a plum tray, striped trousers below"
-                  width={338}
-                  height={453}
+                  src={mascotSrc}
+                  alt={mascotAlt}
+                  {...mascotDims}
                 />
               </div>
             </div>
@@ -433,11 +457,10 @@ export function StackdLayout({ concept, concepts }: Props) {
               </span>
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
-                src="/brand/stackd-wordmark-tagline.png"
+                src={wordmarkSrc}
                 alt=""
                 aria-hidden="true"
-                width={599}
-                height={195}
+                {...wordmarkDims}
                 style={{ display: 'block', width: 'min(22rem, 70vw)', height: 'auto', margin: '0 auto' }}
               />
             </h2>

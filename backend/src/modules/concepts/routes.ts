@@ -6,6 +6,20 @@ import { requireAuth, MANAGERS, ADMIN_ONLY } from '../auth/middleware.js'
 import { NotFoundError } from '../../lib/errors.js'
 import { resolveTenantScope, tenantWhere } from '../../lib/tenantScope.js'
 
+// An uploaded artwork URL: either what the R2 presigner returns
+// (https://media.../marketing/xyz.png) or, when R2_PUBLIC_URL is unset, the
+// root-relative path it falls back to. Empty string clears the field.
+const brandArtworkUrl = z
+  .string()
+  .max(2048)
+  .refine(
+    (v) => v === '' || /^https?:\/\//i.test(v) || v.startsWith('/'),
+    { message: 'Must be an http(s) URL or a root-relative path' },
+  )
+  .optional()
+  .nullable()
+  .transform((v) => v || null)
+
 const createConceptSchema = z.object({
   name: z.string().min(1),
   slug: z.string().min(1).regex(/^[a-z0-9-]+$/),
@@ -26,6 +40,18 @@ const createConceptSchema = z.object({
   storefrontVisible: z.boolean().optional(),
   heroTagline: z.string().max(120).optional().nullable(),
   announcementBanner: z.string().max(300).optional().nullable(),
+  // Brand microsite artwork. Null / '' means "use the asset bundled in the
+  // storefront build", which is what every brand did before these existed.
+  //
+  // Deliberately NOT z.string().url() like logoUrl above: getSignedUploadUrl
+  // builds its publicUrl as `${R2_PUBLIC_URL}/${key}`, so on any environment
+  // where R2_PUBLIC_URL is unset it hands back a root-relative '/marketing/x.png'
+  // — which .url() rejects, and the operator sees their upload fail on save
+  // with no clue why. Accept an absolute http(s) URL or a root-relative path,
+  // and reject anything else (notably javascript: and data:, which would
+  // otherwise ride straight into an <img src> on the public storefront).
+  wordmarkUrl: brandArtworkUrl,
+  mascotUrl: brandArtworkUrl,
   // Per-brand reservations master toggle (false = brand isn't accepting bookings)
   reservationsEnabled: z.boolean().optional(),
   // Brand strategy brief â€” captured during onboarding

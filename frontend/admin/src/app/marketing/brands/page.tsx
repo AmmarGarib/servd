@@ -23,6 +23,11 @@ interface Concept {
   reservationsEnabled: boolean
   heroTagline: string | null
   announcementBanner: string | null
+  // Brand microsite artwork. Null = the storefront falls back to the file
+  // bundled in its build, which is how every brand behaved before these
+  // existed — so clearing one is safe, not a broken image.
+  wordmarkUrl: string | null
+  mascotUrl: string | null
   latitude: number | null
   longitude: number | null
   deliveryRadiusKm: number
@@ -161,6 +166,8 @@ function BrandForm({ concept }: { concept: Concept }) {
   const [announcementBanner, setAnnouncementBanner] = useState(concept.announcementBanner ?? '')
   const [storefrontVisible, setStorefrontVisible] = useState(concept.storefrontVisible)
   const [reservationsEnabled, setReservationsEnabled] = useState(concept.reservationsEnabled)
+  const [wordmarkUrl, setWordmarkUrl] = useState(concept.wordmarkUrl ?? '')
+  const [mascotUrl, setMascotUrl] = useState(concept.mascotUrl ?? '')
 
   const [latitude, setLatitude] = useState(concept.latitude !== null ? String(concept.latitude) : '')
   const [longitude, setLongitude] = useState(concept.longitude !== null ? String(concept.longitude) : '')
@@ -184,6 +191,7 @@ function BrandForm({ concept }: { concept: Concept }) {
     setName(concept.name); setDescription(concept.description ?? ''); setLogoUrl(concept.logoUrl ?? '')
     setPrimaryColor(concept.primaryColor ?? '#00D4B1'); setIsActive(concept.isActive)
     setHeroTagline(concept.heroTagline ?? ''); setAnnouncementBanner(concept.announcementBanner ?? '')
+    setWordmarkUrl(concept.wordmarkUrl ?? ''); setMascotUrl(concept.mascotUrl ?? '')
     setStorefrontVisible(concept.storefrontVisible)
     setReservationsEnabled(concept.reservationsEnabled)
     setLatitude(concept.latitude !== null ? String(concept.latitude) : '')
@@ -201,6 +209,7 @@ function BrandForm({ concept }: { concept: Concept }) {
       name, description: description || null, logoUrl: logoUrl || null,
       primaryColor: primaryColor || null, isActive,
       heroTagline: heroTagline || null, announcementBanner: announcementBanner || null,
+      wordmarkUrl: wordmarkUrl || null, mascotUrl: mascotUrl || null,
       storefrontVisible,
       reservationsEnabled,
       latitude: latitude ? parseFloat(latitude) : null,
@@ -218,26 +227,52 @@ function BrandForm({ concept }: { concept: Concept }) {
     },
   })
 
-  async function handleLogoUpload(e: React.ChangeEvent<HTMLInputElement>) {
+  // One uploader for all three brand images (logo, wordmark, mascot). `setUrl`
+  // is the state setter for whichever field is being replaced.
+  //
+  // `credentials: 'include'` matters: the bearer token lives in memory only, so
+  // after a page reload there is nothing in the header and the request has to
+  // fall back to the session cookie. Without it this 401s on a fresh load while
+  // the identical uploader on the storefront-hero page keeps working — which is
+  // exactly what made it look like an intermittent R2 problem.
+  async function uploadBrandImage(
+    e: React.ChangeEvent<HTMLInputElement>,
+    setUrl: (v: string) => void,
+  ) {
     const file = e.target.files?.[0]
     if (!file) return
     setUploading(true); setUploadError('')
     try {
-      const token = useAuthStore.getState().token   // F43
+      const token = useAuthStore.getState().token
       const qs = new URLSearchParams({ filename: file.name, contentType: file.type, category: 'marketing' })
       const res = await fetch(`${API_URL}/api/v1/media/upload-url?${qs}`, {
+        credentials: 'include',
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       })
-      if (!res.ok) throw new Error('Failed to get upload URL')
+      if (!res.ok) {
+        // The presigner rejects anything outside its allowlist (jpeg, png,
+        // webp, gif). Say so, rather than blaming R2 for a wrong file type.
+        throw new Error(res.status === 400 ? 'type' : 'presign')
+      }
       const { uploadUrl, publicUrl } = await res.json() as { uploadUrl: string; publicUrl: string }
-      await fetch(uploadUrl, { method: 'PUT', body: file, headers: { 'Content-Type': file.type } })
-      setLogoUrl(publicUrl)
-    } catch {
-      setUploadError('Upload failed — check R2 setup in Configuration → Integrations')
+      const put = await fetch(uploadUrl, { method: 'PUT', body: file, headers: { 'Content-Type': file.type } })
+      if (!put.ok) throw new Error('put')
+      setUrl(publicUrl)
+    } catch (err) {
+      setUploadError(
+        (err as Error).message === 'type'
+          ? `${file.type || 'That file type'} isn’t accepted — use PNG, JPEG, WebP or GIF.`
+          : 'Upload failed — check R2 setup in Configuration → Integrations',
+      )
     } finally {
       setUploading(false)
+      // Let the same file be picked again after a failure; without this the
+      // input holds the old value and onChange never fires a second time.
+      e.target.value = ''
     }
   }
+
+  const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => uploadBrandImage(e, setLogoUrl)
 
   const TABS: Array<{ key: typeof tab; label: string; emoji: string }> = [
     { key: 'identity',   label: 'Identity',   emoji: '🏷' },
@@ -381,6 +416,32 @@ function BrandForm({ concept }: { concept: Concept }) {
               </Field>
             </div>
           </Section>
+          <Section
+            title="Brand artwork"
+            subtitle="Supplied art the microsite renders as images instead of type. Leave empty to use the artwork built into the storefront."
+          >
+            <div className="space-y-4">
+              <ArtworkField
+                label="Wordmark"
+                hint="The brand's own lettering, shown in the hero and the sign-off. Transparent PNG, 1200px wide or more."
+                value={wordmarkUrl}
+                onChange={setWordmarkUrl}
+                onFile={(e) => uploadBrandImage(e, setWordmarkUrl)}
+                uploading={uploading}
+                previewBg={palette?.surfaceBg ?? '#17181d'}
+              />
+              <ArtworkField
+                label="Character / mascot"
+                hint="The brand character, shown in its own band. Transparent PNG, 1000px or more on the long edge — it renders up to ~960px wide on a retina screen, so anything smaller looks soft."
+                value={mascotUrl}
+                onChange={setMascotUrl}
+                onFile={(e) => uploadBrandImage(e, setMascotUrl)}
+                uploading={uploading}
+                previewBg={palette?.surfaceBg ?? '#17181d'}
+              />
+              {uploadError && <p className="text-xs text-red-400">{uploadError}</p>}
+            </div>
+          </Section>
           {palette && (
             <Section title="Storefront palette" subtitle="Live brand colours rendered on the microsite. Source of truth is in code; shown here so this tab carries the colour info.">
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -500,6 +561,89 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
       {children}
       {hint && <p className="text-[10px] text-white/35 mt-1">{hint}</p>}
     </div>
+  )
+}
+
+/** Upload-or-paste control for one piece of brand artwork.
+ *
+ *  The preview sits on the brand's own dark surface rather than the admin's
+ *  panel colour: this art is cream-on-plum with a transparent background, and
+ *  on a light chip it would look like an empty box. The pixel size is read off
+ *  the loaded image and shown back, because "is this file big enough?" is the
+ *  entire reason an operator opens this field. */
+function ArtworkField({
+  label, hint, value, onChange, onFile, uploading, previewBg,
+}: {
+  label: string
+  hint?: string
+  value: string
+  onChange: (v: string) => void
+  onFile: (e: React.ChangeEvent<HTMLInputElement>) => void
+  uploading: boolean
+  previewBg: string
+}) {
+  const [dims, setDims] = useState<{ w: number; h: number } | null>(null)
+  useEffect(() => { setDims(null) }, [value])
+
+  // What the storefront actually renders these at, in device pixels on a 2x
+  // screen. Under this and the art visibly softens.
+  const MIN_LONG_EDGE = 960
+  const tooSmall = dims !== null && Math.max(dims.w, dims.h) < MIN_LONG_EDGE
+
+  return (
+    <Field label={label} hint={hint}>
+      <div className="flex items-start gap-3">
+        <div
+          className="h-24 w-24 shrink-0 rounded-xl border border-white/10 flex items-center justify-center overflow-hidden"
+          style={{ background: previewBg }}
+        >
+          {value ? (
+            <img
+              src={value}
+              alt=""
+              className="max-h-full max-w-full object-contain"
+              onLoad={(e) => setDims({
+                w: e.currentTarget.naturalWidth,
+                h: e.currentTarget.naturalHeight,
+              })}
+              onError={() => setDims(null)}
+            />
+          ) : (
+            <span className="text-[9px] text-white/30 text-center px-2 leading-tight">Using built-in</span>
+          )}
+        </div>
+
+        <div className="flex-1 min-w-0 space-y-2">
+          <input
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            placeholder="Upload a file, or paste an image URL"
+            className="s-input w-full font-mono text-xs"
+          />
+          <div className="flex items-center gap-2 flex-wrap">
+            <label className="cursor-pointer text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-white/70">
+              {uploading ? 'Uploading…' : 'Upload file'}
+              <input type="file" accept="image/*" onChange={onFile} disabled={uploading} className="sr-only" />
+            </label>
+            {value && (
+              <button
+                type="button"
+                onClick={() => onChange('')}
+                className="text-[11px] px-2.5 py-1.5 rounded-lg text-white/45 hover:text-white/80"
+              >
+                Clear
+              </button>
+            )}
+            {dims && (
+              <span className={`text-[10px] font-mono ${tooSmall ? 'text-amber-400' : 'text-white/35'}`}>
+                {dims.w} × {dims.h}
+                {tooSmall && ` — under ${MIN_LONG_EDGE}px, will look soft`}
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+    </Field>
   )
 }
 
