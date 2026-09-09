@@ -7,7 +7,7 @@ import { isExecutive } from '../../lib/appRoles'
 const API_URL         = process.env['NEXT_PUBLIC_API_URL']         ?? 'http://localhost:3001'
 const STOREFRONT_URL  = process.env['NEXT_PUBLIC_STOREFRONT_URL']  ?? 'http://localhost:3002'
 
-type Mode = 'pin' | 'signup'
+type Mode = 'pin' | 'password' | 'signup'
 
 /**
  * The single staff login page. Two modes:
@@ -23,13 +23,20 @@ type Mode = 'pin' | 'signup'
  *            The CEO sees them in the pending-approvals list and flips them
  *            active, after which their PIN works.
  *
- * No email/password login at all — the CEO doesn't want it, and the PIN flow
- * is uniform across kitchen, FOH, and back-office.
+ *   password — Email + password. REQUIRED for owner, management and finance
+ *            accounts: a 4-digit PIN typed on a shared tablet is fine for a
+ *            line cook, but it must not mint a session that can read the P&L
+ *            or run payroll, so the server refuses PIN login for those roles.
+ *            Everyone else can use either.
  */
 export default function StaffLoginPage() {
   const router  = useRouter()
   const setAuth = useAuthStore((s) => s.setAuth)
   const [mode, setMode] = useState<Mode>('pin')
+
+  // ── Password state (owner / management / finance sign in this way)
+  const [pwEmail,    setPwEmail]    = useState('')
+  const [pwPassword, setPwPassword] = useState('')
 
   // ── PIN state
   const [pin,     setPin]     = useState('')
@@ -147,6 +154,28 @@ export default function StaffLoginPage() {
   }
 
   // Physical-keyboard support — the CEO often signs in from a laptop, not the
+  async function submitPassword(e: React.FormEvent) {
+    e.preventDefault()
+    setError('')
+    setLoading(true)
+    try {
+      const res = await fetch(`${API_URL}/api/v1/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ email: pwEmail.trim().toLowerCase(), password: pwPassword }),
+      })
+      const d = await res.json()
+      if (!res.ok) throw new Error(d.error?.message ?? 'Invalid credentials')
+      setAuth(d.user, d.accessToken, d.refreshToken)
+      router.replace('/modules')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Invalid credentials')
+    } finally {
+      setLoading(false)
+    }
+  }
+
   // tablet keypad. Digits type, Backspace deletes, Enter submits (when ≥4).
   useEffect(() => {
     if (mode !== 'pin' || signupDone) return
@@ -223,14 +252,50 @@ export default function StaffLoginPage() {
               Staff Portal
             </p>
             <h1 className="text-2xl font-black text-s-text">
-              {mode === 'pin' ? 'Enter your PIN' : 'Apply to join'}
+              {mode === 'pin' ? 'Enter your PIN' : mode === 'password' ? 'Sign in' : 'Apply to join'}
             </h1>
             <p className="text-xs text-s-dim mt-1">
-              {mode === 'pin' ? 'Authorized personnel only' : 'CEO will review your request'}
+              {mode === 'pin'
+                ? 'Authorized personnel only'
+                : mode === 'password' ? 'Owner, management and finance accounts' : 'CEO will review your request'}
             </p>
           </div>
 
-          {mode === 'pin' ? (
+          {mode === 'password' ? (
+            <form onSubmit={submitPassword}>
+              <input
+                type="email"
+                value={pwEmail}
+                onChange={(e) => setPwEmail(e.target.value)}
+                placeholder="Email"
+                autoComplete="username"
+                autoFocus
+                className="w-full mb-3 rounded-xl px-4 py-3 text-s-text outline-none"
+                style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)' }}
+              />
+              <input
+                type="password"
+                value={pwPassword}
+                onChange={(e) => setPwPassword(e.target.value)}
+                placeholder="Password"
+                autoComplete="current-password"
+                className="w-full mb-4 rounded-xl px-4 py-3 text-s-text outline-none"
+                style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)' }}
+              />
+              {error && <p className="text-xs text-center mb-3" style={{ color: '#F87171' }}>{error}</p>}
+              <button
+                type="submit"
+                disabled={loading || !pwEmail.trim() || pwPassword.length < 8}
+                className="w-full rounded-xl py-3 text-sm font-black transition-opacity disabled:opacity-40"
+                style={{
+                  background: 'linear-gradient(135deg, #00D4B1, #6366F1)',
+                  color: '#000',
+                  boxShadow: '0 4px 20px rgba(0,212,177,0.25)',
+                }}>
+                {loading ? 'Signing in…' : 'Sign in'}
+              </button>
+            </form>
+          ) : mode === 'pin' ? (
             <>
               {/* Name first — lets the server check ONE PIN and lock out a
                   single bad guesser. */}
@@ -385,17 +450,29 @@ export default function StaffLoginPage() {
             </form>
           )}
 
-          {/* Mode toggle */}
-          <button type="button"
-            onClick={() => { setMode((m) => m === 'pin' ? 'signup' : 'pin'); setError(''); setPin('') }}
-            className="w-full mt-6 text-center text-xs font-bold transition-colors"
-            style={{ color: 'rgba(255,255,255,0.4)' }}
-            onMouseEnter={(e) => (e.currentTarget.style.color = '#00D4B1')}
-            onMouseLeave={(e) => (e.currentTarget.style.color = 'rgba(255,255,255,0.4)')}>
-            {mode === 'pin'
-              ? 'New staff? Apply to join →'
-              : '← Already approved? Back to PIN'}
-          </button>
+          {/* Mode toggles */}
+          <div className="mt-6 space-y-2">
+            <button type="button"
+              onClick={() => { setMode(mode === 'password' ? 'pin' : 'password'); setError(''); setPin('') }}
+              className="w-full text-center text-xs font-bold transition-colors"
+              style={{ color: 'rgba(255,255,255,0.55)' }}
+              onMouseEnter={(e) => (e.currentTarget.style.color = '#00D4B1')}
+              onMouseLeave={(e) => (e.currentTarget.style.color = 'rgba(255,255,255,0.55)')}>
+              {mode === 'password'
+                ? '← Back to PIN'
+                : 'Owner / management / finance? Sign in with password →'}
+            </button>
+            <button type="button"
+              onClick={() => { setMode((m) => m === 'signup' ? 'pin' : 'signup'); setError(''); setPin('') }}
+              className="w-full text-center text-xs font-bold transition-colors"
+              style={{ color: 'rgba(255,255,255,0.4)' }}
+              onMouseEnter={(e) => (e.currentTarget.style.color = '#00D4B1')}
+              onMouseLeave={(e) => (e.currentTarget.style.color = 'rgba(255,255,255,0.4)')}>
+              {mode === 'signup'
+                ? '← Already approved? Back to PIN'
+                : 'New staff? Apply to join →'}
+            </button>
+          </div>
 
         </div>
       </div>
