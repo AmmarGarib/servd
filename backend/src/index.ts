@@ -193,6 +193,14 @@ async function build() {
       fastify.log.warn({ origin }, 'CORS rejected origin')
       cb(null, false)
     },
+    // MUST be explicit. @fastify/cors v9 defaulted to
+    // 'GET,HEAD,PUT,PATCH,POST,DELETE'; v10 narrowed the default to the
+    // CORS-safelisted 'GET,HEAD,POST'. Nothing here changed except the major
+    // version, and every write from a browser silently stopped: the preflight
+    // still answered 204, so the API looked healthy while Chrome refused to
+    // send the PUT and the admin reported "Backend unreachable". Never rely on
+    // this default — the whole admin is PUT/PATCH/DELETE.
+    methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     credentials: true,
     maxAge: 3600,
   })
