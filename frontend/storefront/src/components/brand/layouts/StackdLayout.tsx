@@ -95,7 +95,6 @@ const TICKER_LINES = [
   'light bites',
   'craft mocktails',
   'grab & go market',
-  'twenty seats',
   'wrapped, not plated',
 ]
 
