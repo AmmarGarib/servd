@@ -86,18 +86,6 @@ const FALLBACK_MASCOT = '/brand/stackd-mascot.png'
 const COUNTER_LINES = ['sandwiches.', 'pastries.', 'light bites.', 'craft mocktails.', 'grab & go.']
 const DISH_INTERVAL_MS = 2600
 
-// The ticker says the same things in the spec voice. Kept short: at speed,
-// anything longer than a few words is unreadable.
-const TICKER_LINES = [
-  'scratch cooking',
-  'sandwiches',
-  'pastries',
-  'light bites',
-  'craft mocktails',
-  'grab & go market',
-  'wrapped, not plated',
-]
-
 export function StackdLayout({ concept, concepts }: Props) {
   const hoursData = useHoursData(concept.slug)
   const story = brandStory(concept.slug)
@@ -319,20 +307,6 @@ export function StackdLayout({ concept, concepts }: Props) {
             </div>
           </div>
 
-          {/* The same words again, full-bleed and moving. Two identical tracks
-              so the loop never shows a seam. aria-hidden: it is decoration,
-              and the cycler above already says all of it. */}
-          <div className="stackd-ticker" aria-hidden>
-            <div className="stackd-ticker-track">
-              {[0, 1].map((track) => (
-                <div key={track} style={{ display: 'flex' }}>
-                  {TICKER_LINES.map((t) => (
-                    <span key={`${track}-${t}`} className="stackd-ticker-item">{t}</span>
-                  ))}
-                </div>
-              ))}
-            </div>
-          </div>
         </section>
 
         {/* ── STICKERS ────────────────────────────────────────────────────────

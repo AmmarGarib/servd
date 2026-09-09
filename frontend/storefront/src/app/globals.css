@@ -703,42 +703,6 @@ summary:focus-visible {
   to   { opacity: 1; transform: translateY(0) rotate(0deg); }
 }
 
-/* ── The ticker ──────────────────────────────────────────────────────────
-   Full-bleed band of the same words, running edge to edge. Two identical
-   tracks, each 50% of the strip, so the loop is seamless at any width. */
-.stackd-page .stackd-ticker {
-  overflow: hidden;
-  border-top: 1px solid var(--stackd-line-faint);
-  border-bottom: 1px solid var(--stackd-line-faint);
-  padding: 0.9rem 0;
-  /* Fade the ends so words enter and leave rather than being cut off. */
-  -webkit-mask-image: linear-gradient(90deg, transparent, #000 8%, #000 92%, transparent);
-  mask-image: linear-gradient(90deg, transparent, #000 8%, #000 92%, transparent);
-}
-.stackd-page .stackd-ticker-track {
-  display: flex;
-  width: max-content;
-  animation: stackd-ticker 38s linear infinite;
-}
-.stackd-page .stackd-ticker:hover .stackd-ticker-track { animation-play-state: paused; }
-.stackd-page .stackd-ticker-item {
-  font-family: var(--stackd-mono);
-  font-size: 0.78rem;
-  letter-spacing: 0.24em;
-  text-transform: uppercase;
-  color: var(--stackd-cream-dim);
-  padding: 0 1.6rem;
-  white-space: nowrap;
-}
-.stackd-page .stackd-ticker-item::after {
-  content: '·';
-  margin-left: 1.6rem;
-  color: var(--stackd-sky);
-}
-@keyframes stackd-ticker {
-  from { transform: translateX(0); }
-  to   { transform: translateX(-50%); }
-}
 
 @media (max-width: 860px) {
   .stackd-page .stackd-mascot-band {
@@ -755,8 +719,7 @@ summary:focus-visible {
     transform: rotate(-2.4deg);
   }
   .stackd-page .stackd-mascot-stage::before { animation: none; opacity: 0.85; }
-  .stackd-page .stackd-ticker-track { animation: none; }
-  .stackd-page .stackd-cycler-word { animation: none; }
+    .stackd-page .stackd-cycler-word { animation: none; }
   .stackd-page .stackd-reveal { opacity: 1; transform: none; transition: none; }
 }
 
