@@ -107,17 +107,37 @@ export function initWebSocket(fastify: FastifyInstance): SocketIOServer {
         if ((e as { code?: string }).code !== 'INVALID_TOKEN_TYPE') throw e
         payload = verifyStaffToken(token, 'pin')
       }
+      // A valid signature is not the same as a live session. The HTTP guards
+      // check the deny list and the account's current state on every request;
+      // this handshake checked neither, so a token belonging to someone who has
+      // logged out — or been let go — still opened a socket onto the live order
+      // and reservation feed, and kept it open indefinitely.
+      const { isRevoked } = await import('./tokenRevocation.js')
+      if (await isRevoked(token, payload.sub, (payload as { iat?: number }).iat)) {
+        return next(new Error('UNAUTHORIZED'))
+      }
+
       // Re-resolve tenant so we know which company the socket can subscribe to.
       // A multi-company operator (CEO in "All companies") belongs to several —
       // collect them all so tenant rooms cover every company they may view.
       const [u, memberships] = await Promise.all([
-        prisma.user.findUnique({ where: { id: payload.sub }, select: { tenantId: true } }),
+        prisma.user.findUnique({
+          where: { id: payload.sub },
+          select: { tenantId: true, role: true, isActive: true, accountStatus: true, deletedAt: true },
+        }),
         prisma.tenantMember.findMany({ where: { userId: payload.sub }, select: { tenantId: true } }),
       ])
+      if (!u || u.deletedAt || !u.isActive || u.accountStatus !== 'active') {
+        return next(new Error('UNAUTHORIZED'))
+      }
+
       const tenantIds = new Set<string>(memberships.map((m) => m.tenantId))
-      if (u?.tenantId) tenantIds.add(u.tenantId)
+      if (u.tenantId) tenantIds.add(u.tenantId)
       ;(socket.data as Record<string, unknown>).user = {
-        id: payload.sub, role: payload.role, tenantId: u?.tenantId ?? null,
+        // The LIVE role, not the one baked into the token. A demotion has to
+        // take effect on the socket too, or the room-join checks below are
+        // deciding on a role the person no longer holds.
+        id: payload.sub, role: u.role, tenantId: u.tenantId ?? null,
         tenantIds: Array.from(tenantIds),
       }
       return next()

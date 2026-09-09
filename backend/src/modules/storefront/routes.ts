@@ -698,6 +698,21 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
                 data: { status: 'redeemed_full' as never },
               })
             }
+            // The card has paid part of this bill, so the bill has to come
+            // down by that much. Draining the balance and leaving totalCents
+            // alone charged the guest twice: the card was spent AND the full
+            // amount was still due on the pending payment. No Payment row of
+            // method 'gift_card' is created here either, so nothing else was
+            // accounting for the money.
+            await prisma.order.update({
+              where: { id: order.id },
+              data: { totalCents: { decrement: apply } },
+            })
+            order.totalCents -= apply
+            await prisma.payment.updateMany({
+              where: { orderId: order.id, status: 'pending' },
+              data: { amountCents: { decrement: apply } },
+            })
           }
         }
       } catch (err) {
@@ -760,6 +775,26 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
           )
         }
       } else {
+        // The balance moved between reading it and spending it, so NO points
+        // were taken — but the order was already created at the discounted
+        // price. Zeroing the locals here (and nothing else) handed the customer
+        // the discount for free, and the response then reported
+        // loyaltyDiscountCents: 0, so nothing downstream showed it either.
+        //
+        // Fire N checkouts at once with the same balance and exactly one
+        // deduction wins; before this, the other N-1 all kept their discount
+        // and the points were never spent, so one balance bought an unlimited
+        // number of discounts. Put the money back on the bill, exactly as the
+        // wallet path above does.
+        await prisma.order.update({
+          where: { id: order.id },
+          data: { totalCents: { increment: loyaltyDiscountCents } },
+        })
+        order.totalCents += loyaltyDiscountCents
+        await prisma.payment.updateMany({
+          where: { orderId: order.id, status: 'pending' },
+          data: { amountCents: { increment: loyaltyDiscountCents } },
+        })
         loyaltyPointsRedeemed = 0
         loyaltyDiscountCents  = 0
       }

@@ -100,7 +100,15 @@ export function issueStaffSession(user: { id: string; name: string; email: strin
 // is an acceptable trade for a line cook clocking in; it is not acceptable for
 // an account that can read the P&L, run payroll, or edit roles. These sign in
 // with email + password only.
-const PIN_LOGIN_BLOCKED_ROLES: UserRole[] = ['admin', 'owner', 'management', 'finance', 'hr']
+const PIN_LOGIN_BLOCKED_ROLES: UserRole[] = [
+  'admin', 'owner', 'management', 'finance', 'hr',
+  // `manager` is the legacy spelling of `management` and gets exactly the same
+  // module set (MANAGEMENT_MODULES in lib/moduleAccess.ts). Blocking one and
+  // not the other left the same access reachable with a 4-digit PIN.
+  'manager',
+  // fnb_manager carries finance_pl and accounting.
+  'fnb_manager',
+]
 
 export async function staffPinLogin(identifier: string | undefined, pin: string) {
   // Staff now identify themselves (name or email) BEFORE the PIN. That lets us:
@@ -219,8 +227,24 @@ export async function refreshStaffToken(refreshToken: string) {
 
   if (payload.type !== 'refresh') throw new UnauthorizedError('Invalid token type')
 
+  // Revocation. Every other authenticated entry point runs this check, but
+  // refresh went straight from "the signature is valid" to minting a new access
+  // token — so logout did not actually end a session. /auth/logout puts the
+  // refresh token on the deny list and bumps the per-user token-valid-after
+  // stamp, and both were being ignored here: a token lifted from a shared
+  // tablet, or held by someone who has just been let go, kept producing fresh
+  // access tokens for the whole life of the refresh token. The same stamp is
+  // what a role change and a forced sign-out rely on.
+  const { isRevoked } = await import('../../lib/tokenRevocation.js')
+  if (await isRevoked(refreshToken, payload.sub, (payload as { iat?: number }).iat)) {
+    throw new UnauthorizedError('Session has been signed out')
+  }
+
+  // accountStatus was not checked either, so a `suspended` account — the state
+  // an operator puts an ex-employee in — could still refresh its way to a live
+  // session. Both login paths gate on this; refresh has to as well.
   const user = await prisma.user.findFirst({
-    where: { id: payload.sub, isActive: true, deletedAt: null },
+    where: { id: payload.sub, isActive: true, deletedAt: null, accountStatus: 'active' },
   })
   if (!user) throw new UnauthorizedError('User not found or inactive')
 
