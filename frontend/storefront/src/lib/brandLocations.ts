@@ -14,7 +14,7 @@
 // operator hasn't filled the admin fields yet — clearly marked TODO_FILL
 // so a wrong value can't silently ship to Google.
 
-import type { Concept } from './concept'
+import { formatBrandName, type Concept } from './concept'
 
 export interface BrandLocation {
   slug:                string
@@ -40,7 +40,7 @@ export interface BrandLocation {
 const DEFAULT_BRAND_LOCATIONS: Record<string, BrandLocation> = {
   simmer: {
     slug:                'simmer',
-    name:                'Simmer',
+    name:                'simmer',
     street:              'TODO_FILL_STREET',
     area:                'Ittehad Commercial, DHA Phase 6',
     city:                'Karachi',
@@ -104,7 +104,7 @@ const PRICE_TIER_TO_RANGE: Record<string, string> = {
 export function locationFromConcept(c: Concept): BrandLocation {
   const base = DEFAULT_BRAND_LOCATIONS[c.slug] ?? {
     slug:                c.slug,
-    name:                c.name,
+    name:                formatBrandName(c.name),
     street:              'TODO_FILL_STREET',
     area:                'TODO_FILL_AREA',
     city:                'Karachi',
@@ -126,7 +126,9 @@ export function locationFromConcept(c: Concept): BrandLocation {
   return {
     ...base,
     slug:                c.slug,
-    name:                c.name,
+    // Lowercase brands (simmer, stackd) must read lowercase everywhere the
+    // NAP name surfaces — JSON-LD, footer, /locations pages.
+    name:                formatBrandName(c.name),
     street:              c.address ?? base.street,
     area:                c.addressLocality ?? base.area,
     phone:               c.phone ?? base.phone,

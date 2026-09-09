@@ -9,9 +9,10 @@ import { QRCard } from './QRCard'
 
 const PUBLIC_HOST = process.env.NEXT_PUBLIC_PUBLIC_HOST ?? 'https://servd-app.garibsons.app'
 
+// simmer and stackd are lowercase per their brand rules.
 const BRAND_NAMES: Record<string, string> = {
-  simmer: 'Simmer',
-  stackd:   'Stackd',
+  simmer: 'simmer',
+  stackd: 'stackd',
   flipd:  'Flipd',
 }
 

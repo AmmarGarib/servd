@@ -11,15 +11,17 @@
 //   Wordmark  lowercase "stackd." in a high-contrast didone, cream on plum,
 //             with "stackd & servd" set in italic beneath it. Lowercase is
 //             the brand — never "Stackd" in display type.
-//   Room      warm industrial: exposed brick, micro-cement, black steel
-//             frames, cane and wood, track lighting, menu boards suspended
-//             from a ceiling rail, grid tile on the counter faces.
+//   Mascot    the hand-drawn bread-stack character — a stack of slices over a
+//             plum tray bar with two hands on it, striped trousers, shoes.
+//   Stickers  the brand's seals: heavily-rounded lozenges in cream, butter and
+//             pale blue with plum ink, applied slightly off-square. Every card
+//             on this page is one of these, not a rectangle — the brand has no
+//             straight-edged boxes anywhere in its collateral.
 //
-// The old layout dressed the page as a workshop parts catalogue — "SPEC
-// SHEET v.2026", grill temperatures, factory numbering. That was a cold
-// blueprint idea and it fights both the plum field and the fashion-serif
-// wordmark. The structure here instead borrows the one piece of the room
-// that is already a typographic object: the suspended menu boards.
+// Deliberately NO grid anywhere. The first pass ruled the background and the
+// story panel with graph paper, which was a hangover from the old stax
+// blueprint theme; it fought a brand whose whole visual language is hand-drawn
+// ink, rounded seals and warm paper.
 //
 // No real menu data is wired in yet; the boards render from BRAND_STORIES
 // highlights and stand in as marketing modules until the menu API exposes
@@ -43,13 +45,13 @@ export function StackdLayout({ concept, concepts }: Props) {
 
   // Classes (.stackd-page, .stackd-mono, .stackd-spec, .stackd-rule,
   // .stackd-line, .stackd-display, .stackd-btn, .stackd-btn-ghost,
-  // .stackd-board, .stackd-rail, .stackd-tile, .stackd-visit-grid) live in
-  // globals.css.
+  // .stackd-sticker, .stackd-sticker-lg, .stackd-mascot-sticker,
+  // .stackd-hero-row, .stackd-visit-grid) live in globals.css.
   return (
     <div className="stackd-page">
-      {/* The plum field: fixed, full-bleed, with the faint grid-tile ruling and
-          the warm pool of track light. Sized in lvh so a mobile toolbar toggle
-          can't resize it mid-scroll. z-index 0 keeps it under the sticky nav. */}
+      {/* The plum field: fixed, full-bleed, with a soft pool of warm light at
+          the top and nothing else — no grid. Sized in lvh so a mobile toolbar
+          toggle can't resize it mid-scroll. z-index 0 keeps it under the nav. */}
       <div aria-hidden className="stackd-bg-fixed" />
 
       <div style={{ position: 'relative', zIndex: 1 }}>
@@ -88,6 +90,7 @@ export function StackdLayout({ concept, concepts }: Props) {
                 was knocked out to alpha so the cream artwork sits on any panel.
                 The <h1> stays real text for search and screen readers; the
                 image is decorative on top of it. */}
+            <div className="stackd-hero-row">
             <h1
               style={{
                 margin: '0 0 2.75rem',
@@ -114,6 +117,15 @@ export function StackdLayout({ concept, concepts }: Props) {
                 style={{ display: 'block', width: '100%', height: 'auto' }}
               />
             </h1>
+
+            {/* The mascot — the bread-stack character from the brand deck. He
+                sits on his own cream sticker, which is how he appears on the
+                merch: pressed onto the surface rather than printed into it. */}
+            <div aria-hidden className="stackd-mascot-sticker">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src="/brand/stackd-mascot.png" alt="" width={338} height={453} />
+            </div>
+            </div>
 
             <hr className="stackd-line" />
 
@@ -144,10 +156,9 @@ export function StackdLayout({ concept, concepts }: Props) {
           </div>
         </section>
 
-        {/* ── THE BOARDS ──────────────────────────────────────────────────────
-            The signature move of the room: a ceiling rail with menu boards
-            hung off it in thin black-steel frames. Each highlight gets a
-            board. Replaces the old "spec sheet" grid of grill temperatures. */}
+        {/* ── STICKERS ────────────────────────────────────────────────────────
+            Each highlight is a seal, in the packaging palette and set slightly
+            off-square, the way a label goes on by hand. */}
         <section style={{ padding: 'clamp(3rem, 8vh, 5rem) clamp(1.5rem, 5vw, 3rem)' }}>
           <div style={{ maxWidth: '76rem', margin: '0 auto' }}>
             <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '2rem', marginBottom: '1.5rem', flexWrap: 'wrap' }}>
@@ -156,9 +167,6 @@ export function StackdLayout({ concept, concepts }: Props) {
               </h2>
               <span className="stackd-spec">The short version</span>
             </div>
-
-            {/* the rail the boards hang from */}
-            <hr className="stackd-rail" />
 
             <div
               style={{
@@ -169,24 +177,18 @@ export function StackdLayout({ concept, concepts }: Props) {
               }}
             >
               {story.highlights.map((h, i) => (
-                <div key={h} style={{ display: 'flex', flexDirection: 'column', alignItems: 'stretch' }}>
-                  {/* the two hangers */}
-                  <div aria-hidden style={{ display: 'flex', justifyContent: 'space-between', padding: '0 1.75rem', height: '1.5rem' }}>
-                    <span style={{ width: 1, background: 'var(--stackd-line)' }} />
-                    <span style={{ width: 1, background: 'var(--stackd-line)' }} />
-                  </div>
-                  <div
-                    className="stackd-board"
-                    style={{ padding: '1.6rem 1.5rem', minHeight: '9rem', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}
+                <div
+                  key={h}
+                  className="stackd-sticker"
+                  style={{ padding: '1.75rem 1.6rem', minHeight: '9rem', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}
+                >
+                  <span className="stackd-spec">{String(i + 1).padStart(2, '0')}</span>
+                  <p
+                    className="stackd-display"
+                    style={{ fontSize: '1.2rem', lineHeight: 1.25, margin: '1.1rem 0 0', fontWeight: 600 }}
                   >
-                    <span className="stackd-spec">{String(i + 1).padStart(2, '0')}</span>
-                    <p
-                      className="stackd-display"
-                      style={{ fontSize: '1.15rem', lineHeight: 1.3, margin: '1.1rem 0 0', fontWeight: 500 }}
-                    >
-                      {h}
-                    </p>
-                  </div>
+                    {h}
+                  </p>
                 </div>
               ))}
             </div>
@@ -194,11 +196,10 @@ export function StackdLayout({ concept, concepts }: Props) {
         </section>
 
         {/* ── THE ROOM ────────────────────────────────────────────────────────
-            The long story, set as a single sober column on a micro-cement
-            panel with a grid-tile face — the counter, essentially. */}
+            The long story on one large seal — same language, calmer angle. */}
         <section style={{ padding: 'clamp(3rem, 8vh, 5rem) clamp(1.5rem, 5vw, 3rem)' }}>
           <div
-            className="stackd-board stackd-tile"
+            className="stackd-sticker-lg"
             style={{ maxWidth: '58rem', margin: '0 auto', padding: 'clamp(2.25rem, 5vw, 3.5rem)' }}
           >
             <span className="stackd-spec">The room</span>
@@ -210,7 +211,7 @@ export function StackdLayout({ concept, concepts }: Props) {
                 fontFamily: 'var(--stackd-body)',
                 fontSize: '1.05rem',
                 lineHeight: 1.75,
-                color: 'var(--stackd-cream-dim)',
+                color: 'rgba(61,17,34,0.78)',
                 margin: 0,
                 maxWidth: '62ch',
               }}

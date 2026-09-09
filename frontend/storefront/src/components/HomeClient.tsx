@@ -29,8 +29,8 @@ interface Props {
 // Fallback brand cards — used when the live concepts API returns nothing
 // (api warmup, network blip, etc.). Order matches the live brand grid.
 const FALLBACK_BRANDS = [
-  { id: 'fallback-stackd',   name: 'Stackd',   slug: 'stackd',   primaryColor: null },
-  { id: 'fallback-simmer', name: 'Simmer', slug: 'simmer', primaryColor: null },
+  { id: 'fallback-stackd', name: 'stackd', slug: 'stackd', primaryColor: null },
+  { id: 'fallback-simmer', name: 'simmer', slug: 'simmer', primaryColor: null },
   { id: 'fallback-flipd',  name: 'Flipd',  slug: 'flipd',  primaryColor: null },
 ] as Array<Pick<Concept, 'id' | 'name' | 'slug' | 'primaryColor'>>
 
@@ -296,9 +296,9 @@ export function HomeClient({ concepts, heroConfig }: Props) {
               {
                 slug: 'stackd',
                 accent: 'rgba(255,255,255,0.18)',
-                badge: '★', tag: 'Stackd · stack club',
+                badge: '★', tag: 'stackd · stack club',
                 head: 'Stack five, the sixth’s on us',
-                body: 'Order five from Stackd, the sixth burger’s on the house. Insiders also get first dibs on Friday-only stacks before they go public.',
+                body: 'Order five from stackd, the sixth burger’s on the house. Insiders also get first dibs on Friday-only stacks before they go public.',
                 featured: true,
               },
               {

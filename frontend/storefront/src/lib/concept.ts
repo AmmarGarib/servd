@@ -96,12 +96,17 @@ export function brandWordmark(slug: string): { font: string; color: string; weig
   }
 }
 
-/** The Simmer wordmark is ALWAYS lowercase per brand guidelines — capital-S
- *  "Simmer" anywhere user-visible is a bug. Other brands render as stored.
- *  Wrap any user-visible brand/concept name with this. */
+/** Brands whose wordmark is ALWAYS lowercase per their brand guidelines — a
+ *  capital first letter anywhere user-visible is a bug. Keyed on the lowercased
+ *  stored name so an operator typing "Stackd" in admin still renders correctly. */
+const LOWERCASE_BRANDS = new Set(['simmer', 'stackd'])
+
+/** Other brands render as stored. Wrap any user-visible brand/concept name
+ *  with this. */
 export function formatBrandName(name: string | null | undefined): string {
   const n = (name ?? '').trim()
-  return n.toLowerCase() === 'simmer' ? 'simmer' : n
+  const lower = n.toLowerCase()
+  return LOWERCASE_BRANDS.has(lower) ? lower : n
 }
 
 export function typeLabel(t: string): string {

@@ -215,7 +215,9 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
           {concept.logoUrl
             // eslint-disable-next-line @next/next/no-img-element
             ? <img src={concept.logoUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-            : formatBrandName(concept.name).charAt(0).toUpperCase()}
+            // Not force-uppercased: simmer and stackd are lowercase brands, so
+            // a capital monogram breaks the same rule the wordmark follows.
+            : formatBrandName(concept.name).charAt(0)}
         </span>
         <span style={{
           fontFamily: wordmark.font,

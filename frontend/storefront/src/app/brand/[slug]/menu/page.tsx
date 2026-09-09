@@ -16,12 +16,12 @@ export const dynamic = 'force-dynamic'
 // would see the storefront 404 instead of the placeholder menu.
 const FALLBACK_CONCEPTS: Record<string, Concept> = {
   simmer: {
-    id: 'fallback-simmer', name: 'Simmer', slug: 'simmer', type: 'restaurant',
+    id: 'fallback-simmer', name: 'simmer', slug: 'simmer', type: 'restaurant',
     description: 'Small plates and mocktails. A dark room on Ittehad, served softly.',
     logoUrl: null, primaryColor: null, reservationsEnabled: true,
   },
   stackd: {
-    id: 'fallback-stackd', name: 'Stackd', slug: 'stackd', type: 'restaurant',
+    id: 'fallback-stackd', name: 'stackd', slug: 'stackd', type: 'restaurant',
     description: 'Smash burgers, loaded fries, delivery-first ghost kitchen.',
     logoUrl: null, primaryColor: null, reservationsEnabled: false,
   },

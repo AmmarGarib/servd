@@ -66,6 +66,7 @@
   --stackd-cream-dim:        rgba(252,232,206,0.72);
   --stackd-cream-faint:      rgba(252,232,206,0.42);
   --stackd-sky:              #9BD3DD;   /* Pantone 635 — the one cool accent */
+  --stackd-butter:           #F7DFA5;   /* Pantone 9180 — the warm seal colour */
 
   /* Line work: thin black-steel frames over the plum field. */
   --stackd-line:             rgba(252,232,206,0.22);
@@ -422,13 +423,14 @@ summary:focus-visible {
   z-index: 0;
   pointer-events: none;
   background-color: var(--stackd-plum);
+  /* No grid. It read as blueprint/graph paper — a hangover from the old stax
+     theme — and fought the hand-drawn, sticker-and-seal feel of the brand.
+     Just the plum field with a soft pool of light at the top. */
   background-image:
     radial-gradient(120% 80% at 50% -10%, rgba(252,232,206,0.10), transparent 60%),
-    radial-gradient(90% 60% at 50% 110%, rgba(61,17,34,0.55), transparent 65%),
-    linear-gradient(var(--stackd-line-faint) 1px, transparent 1px),
-    linear-gradient(90deg, var(--stackd-line-faint) 1px, transparent 1px);
-  background-size: 100% 100%, 100% 100%, 68px 68px, 68px 68px;
-  background-position: center, center, center, center;
+    radial-gradient(90% 60% at 50% 110%, rgba(61,17,34,0.55), transparent 65%);
+  background-size: 100% 100%, 100% 100%;
+  background-position: center, center;
 }
 
 /* Panels that lift off the plum field — micro-cement, very slightly warmer. */
@@ -481,28 +483,89 @@ summary:focus-visible {
   background: rgba(252,232,206,0.07);
 }
 
-/* A suspended board: thin black-steel frame with a cream hairline inside it,
-   the way the menu boards hang off the ceiling rail in the deck. */
-.stackd-page .stackd-board {
-  border: 1px solid var(--stackd-line);
-  background: linear-gradient(180deg, rgba(61,17,34,0.42), rgba(61,17,34,0.62));
-  box-shadow: inset 0 0 0 1px rgba(28,16,19,0.55), 0 18px 40px -28px rgba(28,16,19,0.9);
+/* ── Stickers ───────────────────────────────────────────────────────────────
+   The brand's seals: heavily-rounded lozenges in cream, butter and pale blue
+   with plum ink, applied slightly off-square the way a hand presses a label
+   onto a bag (see the packaging seals in the brand deck). These replace the
+   thin rectangular "menu boards" — the boxes were straight lines in a brand
+   that has none. */
+.stackd-page .stackd-sticker {
+  position: relative;
+  border-radius: 1.75rem;
+  background: var(--stackd-cream);
+  color: var(--stackd-plum-dark);
+  /* The die-cut edge: a pale rim, then a soft drop so it lifts off the plum. */
+  box-shadow:
+    0 0 0 3px rgba(252,232,206,0.55),
+    0 14px 30px -14px rgba(28,16,19,0.75);
+  transition: transform 220ms ease, box-shadow 220ms ease;
+}
+/* Alternate the palette across a row, as the packaging seals do. */
+.stackd-page .stackd-sticker:nth-child(4n+2) { background: var(--stackd-butter); }
+.stackd-page .stackd-sticker:nth-child(4n+3) { background: var(--stackd-sky); }
+.stackd-page .stackd-sticker:nth-child(4n+4) { background: var(--stackd-cream); }
+
+/* Applied by hand, so never perfectly square. */
+.stackd-page .stackd-sticker:nth-child(4n+1) { transform: rotate(-1.6deg); }
+.stackd-page .stackd-sticker:nth-child(4n+2) { transform: rotate(1.2deg); }
+.stackd-page .stackd-sticker:nth-child(4n+3) { transform: rotate(-0.8deg); }
+.stackd-page .stackd-sticker:nth-child(4n+4) { transform: rotate(1.9deg); }
+.stackd-page .stackd-sticker:hover { transform: rotate(0deg) translateY(-3px); }
+
+/* The big one — the story panel — is a sticker too, just calmer. */
+.stackd-page .stackd-sticker-lg {
+  border-radius: 2.25rem;
+  background: var(--stackd-cream);
+  color: var(--stackd-plum-dark);
+  box-shadow:
+    0 0 0 3px rgba(252,232,206,0.5),
+    0 24px 50px -24px rgba(28,16,19,0.8);
+  transform: rotate(-0.5deg);
 }
 
-/* The rail the boards hang from. */
-.stackd-page .stackd-rail {
-  height: 2px;
-  background: linear-gradient(90deg, transparent, var(--stackd-line), transparent);
-  border: 0; margin: 0;
+/* Type inside a sticker is plum ink on the label, not cream on plum. */
+.stackd-page .stackd-sticker .stackd-display,
+.stackd-page .stackd-sticker-lg .stackd-display { color: var(--stackd-plum-dark); }
+.stackd-page .stackd-sticker .stackd-spec,
+.stackd-page .stackd-sticker-lg .stackd-spec { color: rgba(61,17,34,0.55); }
+
+@media (prefers-reduced-motion: reduce) {
+  .stackd-page .stackd-sticker,
+  .stackd-page .stackd-sticker:hover { transform: none; transition: none; }
 }
 
-/* Grid-tile texture, for the one panel that should read as the counter face. */
-.stackd-page .stackd-tile {
-  background-image:
-    linear-gradient(var(--stackd-line-faint) 1px, transparent 1px),
-    linear-gradient(90deg, var(--stackd-line-faint) 1px, transparent 1px);
-  background-size: 34px 34px, 34px 34px;
+/* Hero: wordmark on the left, the mascot pressed on beside it. */
+.stackd-page .stackd-hero-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: clamp(1.5rem, 5vw, 4rem);
+  flex-wrap: wrap;
 }
+.stackd-page .stackd-mascot-sticker {
+  flex: 0 0 auto;
+  background: var(--stackd-cream);
+  border-radius: 1.75rem;
+  padding: 1.1rem 1.4rem 0.9rem;
+  transform: rotate(2.4deg);
+  box-shadow:
+    0 0 0 3px rgba(252,232,206,0.5),
+    0 18px 38px -18px rgba(28,16,19,0.8);
+}
+.stackd-page .stackd-mascot-sticker img {
+  display: block;
+  width: clamp(7rem, 13vw, 11rem);
+  height: auto;
+}
+@media (max-width: 760px) {
+  .stackd-page .stackd-mascot-sticker { transform: rotate(2.4deg) scale(0.85); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .stackd-page .stackd-mascot-sticker { transform: none; }
+}
+
+/* The counter-face grid tile is gone with the rest of the grid. */
+.stackd-page .stackd-tile { background-image: none; }
 
 .stackd-page .stackd-grid-bg { background-image: none; }
 

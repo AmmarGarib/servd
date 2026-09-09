@@ -6,7 +6,7 @@
 // as the only fallback so brand pages match the depth of the servd home.
 
 import { notFound } from 'next/navigation'
-import { brandAccent, brandStory, type Concept } from '../../../lib/concept'
+import { brandAccent, brandStory, formatBrandName, type Concept } from '../../../lib/concept'
 import type { Block } from '../../../lib/blocks'
 import { PageRenderer } from '../../../components/blocks/PageRenderer'
 import { BrandFallback } from '../../../components/brand/BrandFallback'
@@ -28,12 +28,12 @@ interface LayoutResponse {
 // reached (api warmup / network blip).
 const FALLBACK_CONCEPTS: Record<string, Concept> = {
   simmer: {
-    id: 'fallback-simmer', name: 'Simmer', slug: 'simmer', type: 'restaurant',
+    id: 'fallback-simmer', name: 'simmer', slug: 'simmer', type: 'restaurant',
     description: 'Small plates and mocktails. A dark room on Ittehad, served softly.',
     logoUrl: null, primaryColor: null, reservationsEnabled: true,
   },
   stackd: {
-    id: 'fallback-stackd', name: 'Stackd', slug: 'stackd', type: 'restaurant',
+    id: 'fallback-stackd', name: 'stackd', slug: 'stackd', type: 'restaurant',
     description: 'Smash burgers, loaded fries, delivery-first ghost kitchen.',
     logoUrl: null, primaryColor: null, reservationsEnabled: false,
   },
@@ -97,7 +97,7 @@ export default async function BrandHome({
     }),
     breadcrumbSchema([
       { name: 'servd',      url: 'https://servd-app.garibsons.app/' },
-      { name: concept.name, url: `https://servd-app.garibsons.app/brand/${slug}` },
+      { name: formatBrandName(concept.name), url: `https://servd-app.garibsons.app/brand/${slug}` },
     ]),
   ]
 
@@ -120,7 +120,7 @@ export default async function BrandHome({
         context={{
           conceptSlug: slug,
           brand: {
-            name: concept.name,
+            name: formatBrandName(concept.name),
             description: concept.description,
             primaryColor: concept.primaryColor,
             slug,
