@@ -15,7 +15,7 @@ import swaggerUi from '@fastify/swagger-ui'
 import { initWebSocket } from './lib/ws.js'
 import { serviceClient as prisma } from './lib/prisma.js'
 import { runWithRlsContext } from './lib/rlsContext.js'
-import { redis } from './lib/redis.js'
+import { redis, redisFast } from './lib/redis.js'
 import { AppError, errorResponse } from './lib/errors.js'
 import { ZodError } from 'zod'
 import { startCartReleaseWorker } from './lib/reservation.js'
@@ -111,6 +111,7 @@ import { positionRoutes } from './modules/positions/routes.js'
 import { expoRoutes } from './modules/expo/routes.js'
 import { parSheetRoutes } from './modules/par-sheet/routes.js'
 import { ensureChartOfAccounts, REQUIRED_ACCOUNT_CODES } from './lib/chartOfAccounts.js'
+import { isDegraded as loginLimiterDegraded } from './lib/loginRateLimit.js'
 
 const PORT = parseInt(process.env['PORT'] ?? '3001', 10)
 const HOST = '0.0.0.0'
@@ -458,12 +459,34 @@ async function build() {
     }
 
     try {
-      await redis.ping()
+      // Ping on `redisFast`, not `redis`. The shared connection carries
+      // BullMQ's `maxRetriesPerRequest: null`, so a ping issued while Redis is
+      // down never resolves OR rejects — it waits forever in the offline queue.
+      // /health then hangs instead of reporting the outage, which is precisely
+      // backwards: the endpoint goes silent at the moment its answer matters,
+      // and the deploy webhook that polls it hangs with it.
+      await redisFast.ping()
       checks.redis = 'ok'
     } catch (err) {
       checks.redis = 'error'
       details.redis = (err as Error).message
     }
+
+    // Login rate limiting keeps working when Redis goes away, but on weaker,
+    // per-process counters. That is a real reduction in protection, so say so
+    // here rather than letting it pass silently.
+    // Report it when the limiter HAS fallen back, and also when Redis is down
+    // and it is therefore about to — an operator reading /health during an
+    // outage should not have to wait for someone to attempt a login before the
+    // reduced protection shows up.
+    if (loginLimiterDegraded() || checks.redis === 'error') {
+      checks.loginRateLimit = 'warn'
+      details.loginRateLimit =
+        'Redis unreachable — running on per-process in-memory counters. Limits still apply but are not shared across instances or preserved across restarts.'
+    } else {
+      checks.loginRateLimit = 'ok'
+    }
+
 
     // Ledger readiness — every account code the posting engine references must
     // exist. If someone runs the API without seeding the CoA, postings will
