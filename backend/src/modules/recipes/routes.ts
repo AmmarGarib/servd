@@ -1,10 +1,11 @@
-import type { FastifyInstance } from 'fastify'
+import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import { Prisma } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, MANAGERS, APPROVERS, ALL_STAFF, assertNotSelfApproval } from '../auth/middleware.js'
 import { NotFoundError, AppError } from '../../lib/errors.js'
 import { costPerMeasureCents } from '../../lib/recipeCost.js'
+import { scopeTenantWhere, type ScopeMode } from '../../lib/tenantScope.js'
 
 const Q_FACTOR = 0.05 // 5% miscellaneous surcharge (salt, oil, unmeasured items)
 
@@ -192,9 +193,20 @@ const poSchema = z.object({
 // concept — or, pre-approval, through pendingMenuItem.conceptId (a Json
 // payload, so it can't be filtered in SQL; we post-filter). Components are
 // shared across every brand by design and always pass.
-async function scopedConceptIdSet(req: { staffUser?: { tenantFilter: unknown } | null }): Promise<Set<string>> {
+async function scopedConceptIdSet(req: FastifyRequest, mode: ScopeMode = 'read'): Promise<Set<string>> {
+  // This used to read `tenantId: (tenantFilter ?? undefined)`, and Prisma
+  // treats `undefined` as "no filter" — so a null tenantFilter returned EVERY
+  // company's concepts instead of none. That is the one fail-open scope helper
+  // in the codebase; every other one returns `{ tenantId: { in: [] } }` and
+  // denies. It mattered because a staff account CAN have a null tenant:
+  // /auth/staff/signup creates users with no tenantId and no TenantMember row,
+  // and approving them only flips accountStatus. Such an account saw every
+  // company's recipes with their costs and margins, and assertRecipeInScope —
+  // the guard added specifically to stop cross-company recipe writes — passed
+  // for every recipe id, so edit, delete, approve and reject all went through.
+  // Approving overwrites the live menu price of the other company's item.
   const concepts = await prisma.concept.findMany({
-    where: { tenantId: (req.staffUser!.tenantFilter ?? undefined) as string, deletedAt: null },
+    where: { deletedAt: null, ...(await scopeTenantWhere(req, mode)) },
     select: { id: true },
   })
   return new Set(concepts.map((c) => c.id))
@@ -208,7 +220,7 @@ async function scopedConceptIdSet(req: { staffUser?: { tenantFilter: unknown } |
  * overwrites the live menu price of that company's item.
  */
 async function assertRecipeInScope(
-  req: { staffUser?: { tenantFilter: unknown } | null },
+  req: FastifyRequest,
   recipeId: string,
 ): Promise<void> {
   const r = await prisma.recipe.findUnique({
@@ -216,7 +228,9 @@ async function assertRecipeInScope(
     select: { kind: true, pendingMenuItem: true, menuItem: { select: { conceptId: true } } },
   })
   if (!r) throw new NotFoundError('Recipe', recipeId)
-  const ids = await scopedConceptIdSet(req)
+  // 'write': editing an existing row is allowed for any company the operator
+  // belongs to, independent of which one the portfolio header is viewing.
+  const ids = await scopedConceptIdSet(req, 'write')
   if (!recipeInScope(r, ids)) throw new NotFoundError('Recipe', recipeId)
 }
 

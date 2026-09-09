@@ -1,6 +1,7 @@
 // Public storefront API — no auth for menu/concept reads; customer auth for orders
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
+import { randomUUID } from 'node:crypto'
 import { prisma } from '../../lib/prisma.js'
 import { requireCustomerAuth, requireAuth, MANAGERS } from '../auth/middleware.js'
 import { ingestOrder } from '../orders/service.js'
@@ -654,7 +655,21 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
 
     const dto: OrderDTO = {
       source: 'servd',
-      external_id: `direct-${Date.now()}`,
+      // Unique per request. This was `direct-${Date.now()}` — millisecond
+      // precision, with nothing in it identifying the customer or the cart —
+      // and ingestOrder deduplicates on (source, external_id). Two checkouts
+      // landing in the same millisecond therefore collided: the second one got
+      // back the FIRST one's order with created:false, so its items were never
+      // ordered and it was handed a stranger's order id, while every
+      // post-creation step (loyalty, promo usage, gift card) ran a second time
+      // against that one shared row.
+      //
+      // A server-generated timestamp was never real idempotency in any case —
+      // a client retry produces a new one — so it was pure collision surface.
+      // Genuine retry-safety needs a client-supplied idempotency key; that is a
+      // separate change, and this at least stops one customer's checkout
+      // landing on another's order.
+      external_id: `direct-${randomUUID()}`,
       concept_id: concept.id,
       placed_at: new Date().toISOString(),
       scheduled_for: body.scheduledFor ?? null,

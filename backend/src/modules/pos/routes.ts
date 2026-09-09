@@ -18,9 +18,29 @@ import { buildReceiptHtml } from './receipt.js'
 
 function shiftOfCompany(where: TenantIdWhere): Prisma.ShiftWhereInput {
   // Shift.tenantId is stamped at open (and backfilled by migration
-  // 20260907140000); the location / cashier fallbacks cover rows that
+  // 20260907140000); the location / cashier fallbacks exist ONLY for rows that
   // predate the column.
-  return { OR: [where, { location: where }, { user: where }] }
+  //
+  // They used to be OR'd flat, which made them override the real answer rather
+  // than stand in for a missing one. Shift.tenantId is stamped from the
+  // operator's ACTIVE company, while user.tenantId is the cashier's primary
+  // company — and cashiers routinely belong to more than one (that is what the
+  // x-servd-active-tenant header exists for). So a shift opened while active in
+  // company A, at A's location, still matched a scope of company B through
+  // `{ user: { tenantId: B } }`. That let a manager at B read and CLOSE A's
+  // drawer and its Z-report, and let B's orders and payments attach to A's open
+  // shift — so B's cash landed on A's Z-report and, through postShiftClose,
+  // in A's ledger.
+  //
+  // As a precedence chain each fallback only applies when the more reliable
+  // field above it is absent, which is what "covers older rows" actually means.
+  return {
+    OR: [
+      where,
+      { AND: [{ tenantId: null }, { location: where }] },
+      { AND: [{ tenantId: null }, { locationId: null }, { user: where }] },
+    ],
+  }
 }
 
 /** The shift, or 404 when it isn't in scope for `mode`. */

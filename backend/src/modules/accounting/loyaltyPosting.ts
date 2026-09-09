@@ -21,15 +21,34 @@ import { primaryTenantId } from '../../lib/setup-config.js'
 
 // Loyalty is a customer-facing programme rather than a brand's own ledger
 // event, so the company comes from the order the points were earned or spent
-// on. Point expiry carries no order — that accrual reversal falls back to the
-// primary company, which is where the liability was raised.
-async function loyaltyTenantId(orderId: string | null): Promise<string | null> {
+// on.
+//
+// Expiry carries no order, and the fallback was primaryTenantId() — the OLDEST
+// company on the system. So every expiry reversal landed in one company's books
+// regardless of where the customer had actually earned the points, crediting a
+// liability that company never raised and leaving the real one carrying an
+// accrual that never unwinds. With one company that was invisible; with two it
+// is a standing misstatement in both sets of books.
+//
+// A customer who has ordered tells us where their points came from: the company
+// behind their most recent order. primaryTenantId() stays as the last resort
+// for a customer with no order history at all, where there is genuinely nothing
+// better to go on.
+async function loyaltyTenantId(orderId: string | null, customerId?: string | null): Promise<string | null> {
   if (orderId) {
     const order = await prisma.order.findUnique({
       where: { id: orderId },
       select: { concept: { select: { tenantId: true } } },
     })
     if (order?.concept.tenantId) return order.concept.tenantId
+  }
+  if (customerId) {
+    const lastOrder = await prisma.order.findFirst({
+      where: { customerId, deletedAt: null, concept: { tenantId: { not: null } } },
+      orderBy: { placedAt: 'desc' },
+      select: { concept: { select: { tenantId: true } } },
+    })
+    if (lastOrder?.concept.tenantId) return lastOrder.concept.tenantId
   }
   return primaryTenantId()
 }
@@ -49,7 +68,7 @@ export async function postLoyaltyEarn(loyaltyTxId: string): Promise<{ posted: bo
   const valueCents = tx.pointsDelta * POINTS_VALUE_CENTS_PER_POINT
   if (valueCents <= 0) return { posted: false, entryId: null, reason: 'zero_value' }
 
-  const tenantId = await loyaltyTenantId(tx.orderId)
+  const tenantId = await loyaltyTenantId(tx.orderId, tx.loyaltyAccount?.customerId ?? null)
   if (!tenantId) return { posted: false, entryId: null, reason: 'no_company' }
 
   const result = await postJournalEntry({
@@ -78,7 +97,7 @@ export async function postLoyaltyRedeem(loyaltyTxId: string): Promise<{ posted: 
   const valueCents = Math.abs(tx.pointsDelta) * POINTS_VALUE_CENTS_PER_POINT
   if (valueCents <= 0) return { posted: false, entryId: null, reason: 'zero_value' }
 
-  const tenantId = await loyaltyTenantId(tx.orderId)
+  const tenantId = await loyaltyTenantId(tx.orderId, tx.loyaltyAccount?.customerId ?? null)
   if (!tenantId) return { posted: false, entryId: null, reason: 'no_company' }
 
   const result = await postJournalEntry({
@@ -97,14 +116,17 @@ export async function postLoyaltyRedeem(loyaltyTxId: string): Promise<{ posted: 
 }
 
 export async function postLoyaltyExpire(loyaltyTxId: string): Promise<{ posted: boolean; entryId: string | null; reason?: string }> {
-  const tx = await prisma.loyaltyTransaction.findUnique({ where: { id: loyaltyTxId } })
+  const tx = await prisma.loyaltyTransaction.findUnique({
+    where: { id: loyaltyTxId },
+    include: { loyaltyAccount: { select: { customerId: true } } },
+  })
   if (!tx) return { posted: false, entryId: null, reason: 'tx_not_found' }
   if (tx.type !== 'expire' || tx.pointsDelta >= 0) return { posted: false, entryId: null, reason: 'not_expire_tx' }
 
   const valueCents = Math.abs(tx.pointsDelta) * POINTS_VALUE_CENTS_PER_POINT
   if (valueCents <= 0) return { posted: false, entryId: null, reason: 'zero_value' }
 
-  const tenantId = await loyaltyTenantId(tx.orderId)
+  const tenantId = await loyaltyTenantId(tx.orderId, tx.loyaltyAccount?.customerId ?? null)
   if (!tenantId) return { posted: false, entryId: null, reason: 'no_company' }
 
   const result = await postJournalEntry({

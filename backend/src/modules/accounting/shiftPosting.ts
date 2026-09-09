@@ -114,14 +114,28 @@ export async function postShiftClose(shiftId: string): Promise<{ posted: boolean
     totalGrossRevenue += b.grossRevenueCents
   }
 
-  // Cash variance: short ⇒ debit expense; over ⇒ credit (negative expense)
+  // Cash variance, as a BALANCED pair against the drawer.
+  //
+  // This used to push a single one-sided line to CASH_VARIANCE with nothing on
+  // the other side, so the entry was out of balance by exactly the variance.
+  // postJournalEntry rejects an unbalanced entry, and the caller in
+  // pos/service.ts logs that rejection and carries on — so any shift whose
+  // drawer did not reconcile to the cent produced NO journal entry at all.
+  // Not the variance line: the whole shift. Every sale in it went missing from
+  // the trial balance, the P&L, cash flow and the sales-tax return, while the
+  // Z-report still showed the money. Drawers are rarely exact, so this was the
+  // normal case, not the edge case.
+  //
+  // The drawer is debited above by cashSalesCents — what the sales say should
+  // be in it. When the count is short the money genuinely isn't there, so the
+  // shortfall moves off the drawer and onto the variance expense; when it is
+  // over, the reverse.
   if (cashVariance !== 0) {
-    lines.push({
-      accountCode: ACCT.CASH_VARIANCE,
-      type: cashVariance < 0 ? 'debit' : 'credit',
-      amountCents: Math.abs(cashVariance),
-      memo: `Drawer ${cashVariance < 0 ? 'short' : 'over'} (shift ${shiftId.slice(0, 8)})`,
-    })
+    const short = cashVariance < 0
+    const amountCents = Math.abs(cashVariance)
+    const memo = `Drawer ${short ? 'short' : 'over'} (shift ${shiftId.slice(0, 8)})`
+    lines.push({ accountCode: short ? ACCT.CASH_VARIANCE : ACCT.CASH_DRAWER,   type: 'debit',  amountCents, memo })
+    lines.push({ accountCode: short ? ACCT.CASH_DRAWER   : ACCT.CASH_VARIANCE, type: 'credit', amountCents, memo })
   }
 
   // ── Credits: revenue per concept + GST output ──────────────────────────
@@ -142,6 +156,23 @@ export async function postShiftClose(shiftId: string): Promise<{ posted: boolean
 
   if (lines.length < 2) {
     return { posted: false, entryId: null, reason: 'no_postable_activity' }
+  }
+
+  // Fail loudly rather than silently. postJournalEntry rejects an unbalanced
+  // entry, and the caller logs that rejection and moves on — which is how a
+  // whole shift's sales went missing without anyone noticing. Check here, where
+  // the shift id and the totals are in hand, so the log says which shift and by
+  // how much.
+  const debits  = lines.filter((l) => l.type === 'debit').reduce((t, l) => t + l.amountCents, 0)
+  const credits = lines.filter((l) => l.type === 'credit').reduce((t, l) => t + l.amountCents, 0)
+  if (debits !== credits) {
+    console.error(
+      `[shiftPosting] shift ${shiftId} would post an UNBALANCED entry: debits ${debits} vs credits ${credits} ` +
+      `(difference ${debits - credits}). Refusing to post — this shift's sales are NOT in the ledger. ` +
+      `cash=${cashSalesCents} card=${cardSalesCents} comps=${compCents} variance=${cashVariance} ` +
+      `tax=${totalTax} revenue=${totalGrossRevenue} discounts=${totalDiscount} wallet=${totalWalletApplied}`,
+    )
+    return { posted: false, entryId: null, reason: 'unbalanced' }
   }
 
   const result = await postJournalEntry({

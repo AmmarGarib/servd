@@ -340,16 +340,31 @@ export async function payPayrollRun(runId: string, paidBy: string, tenantId: str
 // wages by two companies' sales.
 export async function labourPctReport(tenantIds: string[], periodStart: Date, periodEnd: Date) {
   // Sum payroll runs whose period falls inside the window (status: posted/paid)
+  // PayrollRun has no company column — a run is a period, and its lines can
+  // cover staff from more than one company. Reaching the company therefore
+  // means going line -> user -> tenantId.
+  //
+  // This used to sum run.totalGrossCents, which is EVERY company's wages in
+  // that period, and divide it by revenue that was correctly scoped to
+  // `tenantIds`. The comment above the function already said the ratio must not
+  // mix the two; the query didn't. With two companies on the system the labour
+  // percentage was simply wrong — inflated for whichever company was in view,
+  // and the more staff the other company had, the worse it got.
   const runs = await prisma.payrollRun.findMany({
     where: {
       periodStart: { gte: periodStart },
       periodEnd:   { lte: periodEnd },
       status:      { in: ['posted', 'paid'] },
     },
-    select: { totalGrossCents: true, lines: { select: { wageAccountCode: true, grossCents: true } } },
+    select: {
+      lines: {
+        where: { user: { tenantId: { in: tenantIds } } },
+        select: { wageAccountCode: true, grossCents: true },
+      },
+    },
   })
 
-  const labourCents = runs.reduce((s, r) => s + r.totalGrossCents, 0)
+  const labourCents = runs.reduce((s, r) => s + r.lines.reduce((t, l) => t + l.grossCents, 0), 0)
 
   // Revenue from ledger
   const revenueRows = await prisma.journalLine.groupBy({
