@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, MANAGERS } from '../auth/middleware.js'
+import { verifyCustomerToken } from '../auth/service.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 
 const createPromoSchema = z.object({
@@ -102,11 +103,27 @@ export async function promoRoutes(fastify: FastifyInstance) {
   )
 
   // POST /promos/validate — storefront: check if code is valid for a cart
+  // Unauthenticated by design — the storefront checks a code before the
+  // customer commits to anything — but rate limited, because an endpoint that
+  // answers "is this a real code" instantly and without limit is a promo-code
+  // oracle: guess against it until something comes back valid, then read the
+  // discount terms straight out of the response.
   fastify.post<{ Body: { code: string; conceptId: string; orderCents: number; customerId?: string } }>(
     '/validate',
+    { config: { rateLimit: { max: 20, timeWindow: '1 minute' } } },
     async (req) => {
-      const { code, conceptId, orderCents, customerId } = req.body
+      const { code, conceptId, orderCents } = req.body
       const now = new Date()
+
+      // customerId is taken from the SESSION, not the body. As a body field on
+      // an unauthenticated route it let anyone probe whether a given customer
+      // had already used a given code — and it is the per-customer limit
+      // itself, so a caller could simply omit it to look past their own.
+      let customerId: string | undefined
+      const bearer = req.headers.authorization
+      if (bearer?.startsWith('Bearer ')) {
+        try { customerId = verifyCustomerToken(bearer.slice(7)).sub } catch { /* anonymous */ }
+      }
 
       const promo = await prisma.promoCode.findUnique({ where: { code: code.toUpperCase() } })
 

@@ -4,6 +4,7 @@ import { z } from 'zod'
 import { randomUUID } from 'node:crypto'
 import { prisma } from '../../lib/prisma.js'
 import { requireCustomerAuth, requireAuth, MANAGERS } from '../auth/middleware.js'
+import { verifyCustomerToken } from '../auth/service.js'
 import { ingestOrder } from '../orders/service.js'
 import { NotFoundError, AppError } from '../../lib/errors.js'
 import { reserveItem, settleCart, getAvailability, getBatchAvailability } from '../../lib/reservation.js'
@@ -1328,12 +1329,17 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
   )
 
   // POST /storefront/cart/abandon — record an abandoned cart for CRM/analytics
-  fastify.post('/cart/abandon', async (req, reply) => {
+  fastify.post('/cart/abandon', {
+    config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
+  }, async (req, reply) => {
     const body = z.object({
       cartId: z.string().min(1),
       conceptSlug: z.string(),
       items: z.array(z.object({ menuItemId: z.string(), name: z.string(), quantity: z.number().int(), priceCents: z.number().int() })),
       subtotalCents: z.number().int(),
+      // Accepted so older clients don't fail validation, but DELIBERATELY
+      // IGNORED — see the note below. Contact details are read from the
+      // session. Do not wire these back in.
       customerPhone: z.string().optional(),
       customerEmail: z.string().email().optional(),
       customerId: z.string().uuid().optional(),
@@ -1342,14 +1348,47 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
     const concept = await prisma.concept.findFirst({ where: { slug: body.conceptSlug }, select: { id: true } })
     if (!concept) return reply.status(204).send()
 
+    // Contact details come from the SESSION, never from the body.
+    //
+    // This route is unauthenticated and stored whatever email, phone and
+    // customerId it was handed. Two hours later runAbandonedCartTrigger emails
+    // or texts that contact "you left something in your cart" — so anyone could
+    // POST here with a stranger's address, or a thousand strangers' addresses
+    // under a thousand cart ids, and have GS Foods send every one of them a
+    // marketing message from its own domain and number. Cost, complaints and
+    // sender reputation, all pointed at us.
+    //
+    // An anonymous cart is still recorded — it is the analytics that matter for
+    // the funnel — it just carries no one to message.
+    let cartCustomerId: string | null = null
+    let cartPhone: string | null = null
+    let cartEmail: string | null = null
+    const bearer = req.headers.authorization
+    if (bearer?.startsWith('Bearer ')) {
+      try {
+        const payload = verifyCustomerToken(bearer.slice(7))
+        const self = await prisma.customer.findFirst({
+          where: { id: payload.sub, deletedAt: null },
+          select: { id: true, email: true, phone: true },
+        })
+        if (self) {
+          cartCustomerId = self.id
+          cartEmail = self.email ?? null
+          cartPhone = self.phone ?? null
+        }
+      } catch {
+        // Not a valid customer token — record the cart anonymously.
+      }
+    }
+
     await prisma.abandonedCart.upsert({
       where: { cartId: body.cartId },
       create: {
         cartId: body.cartId,
         conceptId: concept.id,
-        customerId: body.customerId ?? null,
-        customerPhone: body.customerPhone ?? null,
-        customerEmail: body.customerEmail ?? null,
+        customerId: cartCustomerId,
+        customerPhone: cartPhone,
+        customerEmail: cartEmail,
         items: body.items,
         subtotalCents: body.subtotalCents,
       },

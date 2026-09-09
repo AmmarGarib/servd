@@ -24,6 +24,7 @@ import {
   PIN_LIMIT,
   PIN_USER_LIMIT,
   STAFF_PASSWORD_LIMIT,
+  STAFF_PASSWORD_USER_LIMIT,
   CUSTOMER_PASSWORD_LIMIT,
   MAGIC_LINK_VERIFY_LIMIT,
 } from '../../lib/loginRateLimit.js'
@@ -118,11 +119,25 @@ export async function authRoutes(fastify: FastifyInstance) {
     await checkRateLimit(STAFF_PASSWORD_LIMIT, ip)
 
     const body = staffLoginSchema.parse(req.body)
+
+    // Per-ACCOUNT limit as well as per-IP. PIN login has had both since it was
+    // hardened; password login only ever had the IP one, and an IP limit is the
+    // easy half to get around — a botnet or a rotating proxy gives an attacker
+    // a fresh budget per request against a single, known address.
+    //
+    // That matters more now than it used to: blocking PIN login for owner,
+    // management and finance made the password the ONLY way into those
+    // accounts, which is exactly the set worth attacking.
+    const accountKey = `email:${body.email.trim().toLowerCase()}`
+    await checkRateLimit(STAFF_PASSWORD_USER_LIMIT, accountKey)
+
     let result: Awaited<ReturnType<typeof staffLogin>>
     try {
       result = await staffLogin(body.email, body.password)
       await clearFailures(STAFF_PASSWORD_LIMIT, ip)
+      await clearFailures(STAFF_PASSWORD_USER_LIMIT, accountKey)
     } catch (err) {
+      await recordFailure(STAFF_PASSWORD_USER_LIMIT, accountKey)
       await recordFailure(STAFF_PASSWORD_LIMIT, ip)
       throw err
     }

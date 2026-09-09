@@ -443,11 +443,28 @@ export async function reservationRoutes(fastify: FastifyInstance) {
       const r = await prisma.reservation.findFirst({ where: { id: req.params.id, concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null } } })
       if (!r) throw new NotFoundError('Reservation', req.params.id)
       await assertConceptAccess(req.staffUser!, r.conceptId)
+
+      // Completing is a one-way step. There was no status check, so calling
+      // this again re-ran the whole block — including the flat 100-point
+      // loyalty bonus below, which any staff member could therefore mint in a
+      // loop against any customer. Answer idempotently rather than erroring:
+      // a host double-tapping "complete" has done nothing wrong.
+      if (r.status === 'completed') return r
+      if (r.status === 'cancelled' || r.status === 'no_show') {
+        throw new AppError('RESERVATION_CLOSED', `This reservation is already marked ${r.status}.`, 422)
+      }
+
       const completed = await prisma.$transaction(async (tx) => {
-        const updated = await tx.reservation.update({
-          where: { id: r.id },
+        // Claim the transition conditionally so two simultaneous completes
+        // can't both award the bonus.
+        const claimed = await tx.reservation.updateMany({
+          where: { id: r.id, status: { not: 'completed' } },
           data: { status: 'completed', completedAt: new Date() },
         })
+        if (claimed.count === 0) {
+          throw new AppError('ALREADY_COMPLETED', 'This reservation was just completed.', 409)
+        }
+        const updated = await tx.reservation.findUniqueOrThrow({ where: { id: r.id } })
         if (r.tableId) {
           await tx.table.update({ where: { id: r.tableId }, data: { status: 'cleaning' } })
         }

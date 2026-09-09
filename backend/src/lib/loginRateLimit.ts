@@ -221,5 +221,12 @@ export async function clearFailures(limit: Limit, ip: string): Promise<void> {
 export const PIN_LIMIT:               Limit = { scope: 'pin',              max: 3, lockoutSec: 30 * 60 }
 export const PIN_USER_LIMIT:          Limit = { scope: 'pin-user',         max: 5, lockoutSec: 60 * 60 }
 export const STAFF_PASSWORD_LIMIT:    Limit = { scope: 'staff-login',      max: 5, lockoutSec: 15 * 60 }
+// Per-account companion to the above, keyed on the email rather than the IP.
+// An IP limit alone is the easy half to evade — rotate the source and the
+// budget resets — and password is now the ONLY way into the owner, management
+// and finance accounts. Slightly more generous than the per-IP cap so a real
+// person fumbling their password from a couple of devices isn't locked out
+// before the IP limit would have stopped them.
+export const STAFF_PASSWORD_USER_LIMIT: Limit = { scope: 'staff-login-user', max: 8, lockoutSec: 15 * 60 }
 export const CUSTOMER_PASSWORD_LIMIT: Limit = { scope: 'customer-login',   max: 8, lockoutSec: 15 * 60 }
 export const MAGIC_LINK_VERIFY_LIMIT: Limit = { scope: 'magic-link-verify', max: 30, lockoutSec: 5 * 60 }
