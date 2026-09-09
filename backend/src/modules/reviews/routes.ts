@@ -3,7 +3,8 @@ import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, ALL_STAFF } from '../auth/middleware.js'
 import { requireCustomerAuth } from '../auth/middleware.js'
-import { AppError, ConflictError } from '../../lib/errors.js'
+import { AppError, ConflictError, NotFoundError } from '../../lib/errors.js'
+import { conceptWhere, assertConceptOwned } from '../../lib/tenantScope.js'
 
 export async function reviewRoutes(fastify: FastifyInstance) {
   // GET /reviews — staff: list all reviews with filters
@@ -11,9 +12,15 @@ export async function reviewRoutes(fastify: FastifyInstance) {
     Querystring: { conceptId?: string; rating?: string; dateFrom?: string; dateTo?: string; limit?: string }
   }>('/', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
     const { conceptId, rating, dateFrom, dateTo, limit } = req.query
+    // Company scope. There was none: any staff member of any company got every
+    // company's reviews, and each row carries the reviewer's name, email and
+    // phone through the order include below. A client-supplied conceptId was
+    // taken on trust too, so naming another company's brand returned its
+    // reviews directly. conceptWhere resolves ownership before it is used.
+    const scope = await conceptWhere(req, conceptId, 'read')
     const reviews = await prisma.orderReview.findMany({
       where: {
-        ...(conceptId && { conceptId }),
+        ...scope,
         ...(rating && { rating: parseInt(rating, 10) }),
         ...(dateFrom || dateTo ? {
           createdAt: {
@@ -140,6 +147,21 @@ export async function reviewRoutes(fastify: FastifyInstance) {
       comment: z.string().max(1000).optional(),
       source: z.string().default('manual'),
     }).parse(req.body)
+
+    // The brand has to be one this operator's company owns, and the order has
+    // to belong to that brand. Neither was checked, so a staff member at one
+    // company could post a review of any rating onto another company's brand —
+    // dragging down (or propping up) a competitor's public average, since these
+    // rows feed the storefront rating.
+    await assertConceptOwned(req, body.conceptId, 'create')
+    const order = await prisma.order.findFirst({
+      where: { id: body.orderId, conceptId: body.conceptId, deletedAt: null },
+      select: { id: true },
+    })
+    if (!order) throw new NotFoundError('Order', body.orderId)
+
+    const existing = await prisma.orderReview.findUnique({ where: { orderId: body.orderId } })
+    if (existing) throw new ConflictError('Order already reviewed')
 
     const review = await prisma.orderReview.create({ data: body })
     return reply.status(201).send(review)

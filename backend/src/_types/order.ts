@@ -50,6 +50,8 @@ export interface OrderDTO {
   is_pre_order?: boolean
   // Promo code
   promo_code_id?: string | null
+  /** GST charged on this order, in cents. Persisted to Order.taxCents. */
+  tax_cents?: number
   promo_discount_cents?: number
   // Wallet payment
   wallet_amount_cents?: number

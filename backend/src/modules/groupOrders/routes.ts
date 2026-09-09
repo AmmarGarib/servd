@@ -236,6 +236,26 @@ export async function groupOrderRoutes(fastify: FastifyInstance) {
       }
       if (go.items.length === 0) throw new AppError('NO_ITEMS', 'Group has no items', 422)
 
+      // The blacklist applies here too. Storefront checkout refuses a banned
+      // customer and the public reservation form refuses a banned phone or
+      // email, but group-order submit checked neither — so a barred customer
+      // could open a group, add the whole order themselves, and fire a kitchen
+      // ticket through a door nobody was watching.
+      const submitter0 = await prisma.customer.findUnique({
+        where: { id: req.customer!.id },
+        select: { isBlacklisted: true, email: true, phone: true },
+      })
+      if (submitter0?.isBlacklisted) {
+        throw new AppError('BLACKLISTED', 'Your account is not permitted to place orders', 403)
+      }
+      const { assertNotBanned } = await import('../../lib/banCheck.js')
+      await assertNotBanned({
+        email: submitter0?.email ?? null,
+        phone: submitter0?.phone ?? null,
+        ip:    req.ip ?? null,
+        intent: 'order',
+      })
+
       // Auth: submitter must be a group member (joining is required upstream,
       // but a stranger holding the shareCode is otherwise able to submit).
       if (!go.members.some((m) => m.customerId === req.customer!.id)) {

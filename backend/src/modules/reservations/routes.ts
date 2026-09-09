@@ -24,6 +24,7 @@ import { assertConceptAccess } from '../../lib/conceptAccess.js'
 import { assertConceptOwned, conceptWhere, scopeTenantWhere, type ScopeMode } from '../../lib/tenantScope.js'
 import { audit } from '../../lib/audit.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
+import { verifyCustomerToken } from '../auth/service.js'
 import { sendSms, sendEmail } from '../../lib/notify.js'
 import { emitReservationEvent } from '../../lib/ws.js'
 import { bumpCustomerRollups } from '../../lib/customerRollups.js'
@@ -968,19 +969,44 @@ export async function reservationRoutes(fastify: FastifyInstance) {
       })
       if (closure) throw new AppError('CLOSED', 'We are closed for this time slot', 409)
 
-      // Auto-link to existing customer
+      // Link to a customer account ONLY when the caller has proved they are
+      // that customer.
+      //
+      // This route is unauthenticated, and it used to attach the booking to
+      // whichever account matched the typed phone or email — neither of which
+      // anybody had verified. So knowing a regular's mobile number was enough
+      // to book in their name, not turn up, and have the no-show recorded
+      // against their real account: recomputeCustomerRollups bumps noShowCount,
+      // which is what the naughty list and blacklisting read. You could strike
+      // a customer out of their own restaurant from a phone box. It also hung a
+      // stranger's booking, with its notes, off their visit history.
+      //
+      // A booking with no linked account still works perfectly — guestName,
+      // guestPhone and guestEmail are stored on the row and are what the host
+      // stand actually reads.
       let customerId: string | null = null
-      const match = await prisma.customer.findFirst({
-        where: {
-          deletedAt: null,
-          OR: [
-            ...(body.guestEmail ? [{ email: body.guestEmail.toLowerCase() }] : []),
-            { phone: body.guestPhone },
-          ],
-        },
-        select: { id: true },
-      })
-      if (match) customerId = match.id
+      const bearer = req.headers.authorization
+      if (bearer?.startsWith('Bearer ')) {
+        try {
+          const payload = verifyCustomerToken(bearer.slice(7))
+          const self = await prisma.customer.findFirst({
+            where: { id: payload.sub, deletedAt: null },
+            select: { id: true, phone: true, email: true },
+          })
+          // Only link to the signed-in account, and only if the booking is
+          // actually in that person's own contact details.
+          const typedEmail = body.guestEmail?.toLowerCase() ?? null
+          if (
+            self &&
+            ((typedEmail && self.email?.toLowerCase() === typedEmail) ||
+             (self.phone && self.phone === body.guestPhone))
+          ) {
+            customerId = self.id
+          }
+        } catch {
+          // Not a valid customer token — book as a guest.
+        }
+      }
 
       // Generate confirmation token — CSPRNG, not Math.random (xorshift128+
       // state is recoverable from a single 32-char emission, which would let

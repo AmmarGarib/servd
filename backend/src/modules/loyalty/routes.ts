@@ -67,6 +67,27 @@ export async function loyaltyRoutes(fastify: FastifyInstance) {
     const order = await prisma.order.findFirst({ where: { id: orderId, customerId: req.customer!.id } })
     if (!order) throw new NotFoundError('Order', orderId)
 
+    // The order has to still be open. Ownership was the only check, so a
+    // customer could redeem against an order that was already completed,
+    // cancelled or refunded — incrementing discountCents on a settled bill,
+    // which inflates the discount line in the P&L and makes postLoyaltyRedeem
+    // discharge liability against a transaction that is closed.
+    const SETTLED: string[] = ['completed', 'cancelled', 'rejected', 'refunded']
+    if (SETTLED.includes(order.status)) {
+      throw new AppError('ORDER_NOT_OPEN', 'That order is already closed — points cannot be redeemed against it.', 422)
+    }
+
+    // And it has to be redeemable once. There was no idempotency at all, so the
+    // same order could be redeemed against repeatedly, each call adding to
+    // discountCents.
+    const already = await prisma.loyaltyTransaction.findFirst({
+      where: { orderId, type: 'redeem' },
+      select: { id: true },
+    })
+    if (already) {
+      throw new AppError('ALREADY_REDEEMED', 'Points have already been redeemed on this order.', 409)
+    }
+
     const discountCents = await calculatePointsValue(pointsToRedeem)
 
     // Atomic: conditional update prevents race condition where two concurrent requests
@@ -134,6 +155,32 @@ export async function loyaltyRoutes(fastify: FastifyInstance) {
       })
       if (!order) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Order not found in your active company' } })
 
+      // Points come from what the order is actually worth, not from a number in
+      // the request body. `totalCents` was taken on trust and fed straight into
+      // calculatePointsEarned, so whoever called this decided how many points
+      // to mint — and the liability posted to the ledger followed the same
+      // number. The body value is now only accepted if it matches the order.
+      if (totalCents !== order.totalCents) {
+        return reply.status(422).send({
+          error: {
+            code: 'TOTAL_MISMATCH',
+            message: `Order total is ${order.totalCents}, not ${totalCents}. Points are earned on the order's real total.`,
+          },
+        })
+      }
+
+      // Earning is once per order. There was no idempotency, so re-calling this
+      // minted a fresh batch of points and a fresh liability accrual every time.
+      const earned = await prisma.loyaltyTransaction.findFirst({
+        where: { orderId, type: 'earn' },
+        select: { id: true },
+      })
+      if (earned) {
+        return reply.status(409).send({
+          error: { code: 'ALREADY_EARNED', message: 'Points have already been awarded for this order.' },
+        })
+      }
+
       let account = await prisma.loyaltyAccount.findUnique({ where: { customerId } })
       if (!account) {
         account = await prisma.loyaltyAccount.create({
@@ -142,7 +189,7 @@ export async function loyaltyRoutes(fastify: FastifyInstance) {
       }
 
       const settings = await loadLoyaltySettings()
-      const points = await calculatePointsEarned(totalCents)
+      const points = await calculatePointsEarned(order.totalCents)
       const stampThreshold = settings['loyalty.stamp_threshold'] || 9
 
       // Stamp card logic

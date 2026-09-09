@@ -188,6 +188,12 @@ export async function ingestOrder(dto: OrderDTO) {
           posStaffId: dto.pos_staff_id ?? null,
           shiftId: dto.shift_id ?? null,
           totalCents: dto.payment.amountCents,
+          // GST. Every storefront order charges it — it is folded into the
+          // total the customer pays — but it was never written to the order,
+          // so Order.taxCents sat at its default of 0 for the entire history.
+          // The FBR/SRB tax invoice reads this field, and so does the sales-tax
+          // return, which means GST collected was being filed as zero.
+          taxCents: dto.tax_cents ?? 0,
           promoCodeId: dto.promo_code_id ?? null,
           promoDiscountCents: dto.promo_discount_cents ?? 0,
           walletAmountCents: dto.wallet_amount_cents ?? 0,

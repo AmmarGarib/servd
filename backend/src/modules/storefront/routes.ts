@@ -405,7 +405,34 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
   })
 
   // POST /storefront/orders — direct order (customer auth required)
-  fastify.post('/orders', { preHandler: requireCustomerAuth }, async (req, reply) => {
+  // A promo's usage count is claimed BEFORE the order exists — that ordering is
+  // deliberate, it's what stops two simultaneous checkouts from both taking the
+  // last use of a limited code. The cost is that anything failing between the
+  // claim and the order being written leaks a use: the count stays incremented
+  // and the code is a little more exhausted for everyone else, with nobody
+  // having got a discount. One error path already compensated by hand; the
+  // others (order creation itself, the curbside and delivery validations, any
+  // database error) did not.
+  //
+  // Compensating in an onError hook covers all of them at once, including
+  // future ones, instead of relying on every new throw remembering to undo it.
+  // `promoClaim` is set at the moment of the increment and cleared once the
+  // usage row exists, so this only ever fires for a claim that never became a
+  // real usage.
+  fastify.post('/orders', {
+    preHandler: requireCustomerAuth,
+    onError: async (req, _reply, _err) => {
+      const claim = (req as { promoClaim?: { promoId: string; counted: boolean; lockKey: string | null } }).promoClaim
+      if (!claim) return
+      ;(req as { promoClaim?: unknown }).promoClaim = undefined
+      if (claim.counted) {
+        await prisma.promoCode
+          .update({ where: { id: claim.promoId }, data: { usedCount: { decrement: 1 } } })
+          .catch(() => {})
+      }
+      if (claim.lockKey) await redis.del(claim.lockKey).catch(() => {})
+    },
+  }, async (req, reply) => {
     const body = createDirectOrderSchema.parse(req.body)
     const customerId = req.customer!.id
 
@@ -490,6 +517,28 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
     // Only applies to delivery orders that supply lat/lng. Throws if order
     // is below the zone's minimum.
     let deliveryFeeCents = 0
+    if (body.type === 'delivery') {
+      // Coordinates are REQUIRED for delivery. They were optional, and the fee
+      // block was guarded on them being present, so a client that simply left
+      // them out got free delivery and skipped the zone's minimum-order check
+      // as well — no error, no fee, order accepted. Omitting them is also not
+      // survivable further down the line: dispatch has no drop point to send a
+      // rider to and the live tracker has nothing to draw.
+      if (body.deliveryLat == null || body.deliveryLng == null) {
+        throw new AppError(
+          'DELIVERY_LOCATION_REQUIRED',
+          'We need your delivery location to work out the fee and send a rider. Please pick your address on the map.',
+          400,
+        )
+      }
+      if (concept.latitude == null || concept.longitude == null) {
+        throw new AppError(
+          'DELIVERY_UNAVAILABLE',
+          "This kitchen hasn't set its location yet, so we can't quote delivery. Please choose pickup.",
+          409,
+        )
+      }
+    }
     if (body.type === 'delivery' && body.deliveryLat != null && body.deliveryLng != null && concept.latitude != null && concept.longitude != null) {
       const distKm = zoneHaversineKm(concept.latitude, concept.longitude, body.deliveryLat, body.deliveryLng)
       const zone = await computeDeliveryFee(itemTotal, distKm, concept.id)
@@ -531,6 +580,13 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
         })
         if (updated.count === 0) throw new AppError('PROMO_EXHAUSTED', 'Promo code usage limit reached', 400)
       }
+      // From here on the claim is outstanding; the onError hook above returns it
+      // if this request doesn't finish.
+      ;(req as { promoClaim?: unknown }).promoClaim = {
+        promoId: promo.id,
+        counted: promo.maxUsageCount != null,
+        lockKey: null,
+      }
 
       // Per-customer limit. The usage row can only be written after the order
       // exists, so a plain count-then-check leaves a window where two
@@ -546,6 +602,10 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
         throw new AppError('PROMO_LIMIT_REACHED', 'This promo code is already being applied to another order', 400)
       }
       promoLock = promoLockKey
+      {
+        const claim = (req as { promoClaim?: { lockKey: string | null } }).promoClaim
+        if (claim) claim.lockKey = promoLockKey
+      }
 
       const usageCount = await prisma.promoCodeUsage.count({ where: { promoCodeId: promo.id, customerId } })
       if (usageCount >= promo.perCustomerLimit) {
@@ -555,6 +615,9 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
         }
         await redis.del(promoLockKey).catch(() => {})
         promoLock = null
+        // Already compensated by hand above — drop the claim so the onError
+        // hook doesn't decrement the same count a second time.
+        ;(req as { promoClaim?: unknown }).promoClaim = undefined
         throw new AppError('PROMO_LIMIT_REACHED', 'You have already used this promo code', 400)
       }
 
@@ -604,6 +667,7 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
       loyalty_points_earned: null,
       delivery_notes: body.deliveryAddress ?? null,
       estimated_pickup: null,
+      tax_cents: taxCents,
       promo_code_id: promoCodeId,
       promo_discount_cents: promoDiscountCents,
       wallet_amount_cents: walletAmountCents,
@@ -723,6 +787,8 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
     // Post-order: record promo usage (count already atomically incremented above) + deduct wallet
     if (promoCodeId && promoDiscountCents > 0) {
       await prisma.promoCodeUsage.create({ data: { promoCodeId, customerId, orderId: order.id, discountCents: promoDiscountCents } })
+      // The claim is now a recorded usage — nothing to give back.
+      ;(req as { promoClaim?: unknown }).promoClaim = undefined
     }
     // Usage is now on record, so a concurrent attempt would see the real count.
     if (promoLock) {

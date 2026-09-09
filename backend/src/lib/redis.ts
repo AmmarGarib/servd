@@ -60,6 +60,14 @@ export const redisFast = new Redis(redisUrl, {
   ...baseOpts,
   maxRetriesPerRequest: 1,
   enableOfflineQueue: false,
+  // A much tighter reconnect than the shared clients use. Their backoff climbs
+  // to a 30s ceiling, which is sensible for a job queue and wrong here: with
+  // the offline queue disabled, every second this socket stays down is a second
+  // of login rate limiting running on the weaker in-memory fallback and a
+  // second of /health reporting red. Measured: with the 30s ceiling this
+  // connection was still refusing commands ten seconds after Redis came back.
+  // Cap at 2s so recovery tracks the server, not the backoff curve.
+  retryStrategy: (times: number) => Math.min(100 * 2 ** times, 2_000),
 })
 
 redis.on('error',     makeThrottledLogger('Redis'))
