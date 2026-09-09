@@ -12,7 +12,12 @@ const OTP_TTL_MS = 5 * 60_000
 const MAX_ATTEMPTS = 5
 const RESEND_COOLDOWN_MS = 30_000        // can't spam-request OTPs
 
-export type OtpPurpose = 'signup' | 'phone_verify' | 'password_reset'
+export type OtpPurpose =
+  | 'signup'
+  | 'phone_verify'
+  | 'password_reset'
+  | 'staff_2fa'        // second factor on a staff sign-in
+  | 'staff_2fa_enrol'  // proving a number before 2FA is switched on for it
 
 /** Normalise a Pakistani-style phone number to digits-only (E.164 minus the +). */
 export function normalisePhone(raw: string): string {
@@ -26,10 +31,36 @@ export function normalisePhone(raw: string): string {
   return digits
 }
 
+// Constant-time compare. Attempt limits already bound brute force, so this is
+// belt-and-braces rather than the main defence — but a length-and-content
+// dependent `!==` on a secret is the kind of thing that gets copied into
+// somewhere it does matter.
+function codesMatch(expected: string, provided: string): boolean {
+  const a = Buffer.from(expected, 'utf8')
+  const b = Buffer.from(provided, 'utf8')
+  if (a.length !== b.length) return false
+  return crypto.timingSafeEqual(a, b)
+}
+
 function generateCode(): string {
   // Cryptographically-strong 6-digit. randomInt(0, 1_000_000) padded is fine —
   // it's not used for anything else.
   return crypto.randomInt(0, 1_000_000).toString().padStart(6, '0')
+}
+
+// The message says what the code is FOR. A staff member who gets a sign-in code
+// they didn't ask for should be able to tell immediately that someone has their
+// password, rather than assuming it's the usual signup noise.
+function messageFor(purpose: OtpPurpose, code: string): string {
+  const tail = 'It expires in 5 minutes. Do not share this code with anyone.'
+  switch (purpose) {
+    case 'staff_2fa':
+      return `${code} is your servd sign-in code. ${tail} If you did not just try to sign in, your password is known to someone else — change it now.`
+    case 'staff_2fa_enrol':
+      return `${code} is your servd code to turn on two-factor sign-in for this number. ${tail}`
+    default:
+      return `Your servd verification code is ${code}. ${tail}`
+  }
 }
 
 /**
@@ -66,7 +97,7 @@ export async function requestOtp(opts: {
   // Send via WhatsApp. If the call fails (e.g. WHATSAPP_TOKEN missing in dev),
   // we still keep the row so the developer can read the code from the DB.
   try {
-    await sendText(phone, `Your servd verification code is ${code}. It expires in 5 minutes. Do not share this code with anyone.`)
+    await sendText(phone, messageFor(opts.purpose, code))
   } catch (err) {
     // Don't leak the WA error to the client — surface a generic message. The
     // dev-only fallback below lets us continue testing locally without WA.
@@ -104,7 +135,7 @@ export async function verifyOtp(opts: {
   if (row.attempts >= MAX_ATTEMPTS) {
     throw new AppError('OTP_LOCKED', 'Too many wrong attempts — request a new code', 429)
   }
-  if (row.code !== opts.code.trim()) {
+  if (!codesMatch(row.code, opts.code.trim())) {
     // Wrong code: bump counter so brute-force is bounded.
     await prisma.phoneOtp.update({ where: { id: row.id }, data: { attempts: { increment: 1 } } })
     const left = MAX_ATTEMPTS - (row.attempts + 1)

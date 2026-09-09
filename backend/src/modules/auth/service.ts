@@ -1,5 +1,6 @@
 import bcrypt from 'bcryptjs'
 import jwt, { type SignOptions } from 'jsonwebtoken'
+import { isTwoFactorEnabled, startLoginChallenge } from './twoFactor.js'
 import { nanoid } from 'nanoid'
 import { serviceClient as prisma } from '../../lib/prisma.js'
 import { AppError, NotFoundError, UnauthorizedError } from '../../lib/errors.js'
@@ -21,7 +22,7 @@ export interface StaffTokenPayload {
   // /workforce don't have an address yet. Login mints empty string for those.
   email: string | null
   role: string
-  type: 'access' | 'refresh' | 'pin'
+  type: 'access' | 'refresh' | 'pin' | 'mfa'
 }
 
 export interface CustomerTokenPayload {
@@ -53,6 +54,28 @@ export async function staffLogin(email: string, password: string) {
   const valid = await bcrypt.compare(password, user.password)
   if (!valid) throw new UnauthorizedError('Invalid credentials')
 
+  // Second factor, if this account has one. The password is already verified at
+  // this point and deliberately so: sending a code before checking it would let
+  // anyone who knows an address flood that person's WhatsApp, and the fact that
+  // a code was sent at all would confirm the address belongs to a real account.
+  //
+  // Nothing here keys off role. An account has 2FA because someone enrolled it,
+  // full stop — enforcing by role would have locked out every owner the moment
+  // this deployed.
+  if (isTwoFactorEnabled(user)) {
+    const { challengeToken, phoneHint } = await startLoginChallenge(user)
+    return { twoFactorRequired: true as const, challengeToken, phoneHint }
+  }
+
+  return { twoFactorRequired: false as const, ...issueStaffSession(user) }
+}
+
+/**
+ * Mints the access + refresh pair for a staff member. Split out of staffLogin
+ * so the 2FA path issues a session on exactly the same terms as the direct one
+ * — the two must not drift.
+ */
+export function issueStaffSession(user: { id: string; name: string; email: string | null; role: UserRole }) {
   const accessToken = jwt.sign(
     { sub: user.id, email: user.email, role: user.role, type: 'access' } satisfies StaffTokenPayload,
     JWT_SECRET,
@@ -447,7 +470,7 @@ export function verifyStaffToken(token: string, expected: StaffTokenType): Staff
   } catch {
     throw new UnauthorizedError('Invalid or expired token')
   }
-  if (!['access', 'refresh', 'pin'].includes(payload.type)) {
+  if (!['access', 'refresh', 'pin', 'mfa'].includes(payload.type)) {
     throw new UnauthorizedError('Invalid token type')
   }
   if (payload.type !== expected) {

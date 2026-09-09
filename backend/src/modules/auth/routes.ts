@@ -2,7 +2,14 @@ import type { FastifyInstance } from 'fastify'
 import { randomBytes } from 'crypto'
 import bcrypt from 'bcryptjs'                  // PIN collision check on staff signup
 import { z } from 'zod'
-import { staffLogin, staffPinLogin, refreshStaffToken, customerRegister, customerLogin, verifyMagicLink, requestMagicLink, hashPassword, hashPin } from './service.js'
+import { staffLogin, staffPinLogin, refreshStaffToken, customerRegister, customerLogin, verifyMagicLink, requestMagicLink, hashPassword, hashPin, issueStaffSession } from './service.js'
+import {
+  verifyLoginChallenge,
+  startEnrolment,
+  completeEnrolment,
+  disable as disableTwoFactor,
+  maskPhone,
+} from './twoFactor.js'
 import { requestOtp, verifyOtp, normalisePhone } from './otp.js'
 import { requireAuth, requireAuthOrPin, requireCustomerAuth, ADMIN_ONLY, MANAGERS, ALL_STAFF } from './middleware.js'
 import { revokeBearer, revokeAllForSubject } from '../../lib/tokenRevocation.js'
@@ -119,10 +126,91 @@ export async function authRoutes(fastify: FastifyInstance) {
       await recordFailure(STAFF_PASSWORD_LIMIT, ip)
       throw err
     }
+    // 2FA accounts get no session yet — just the challenge and a masked hint
+    // of where the code went. No cookies are set here.
+    if (result.twoFactorRequired) {
+      return reply.status(200).send({
+        twoFactorRequired: true,
+        challengeToken: result.challengeToken,
+        phoneHint: result.phoneHint,
+      })
+    }
+
     // Manager web: also set httpOnly session cookies (the token stays out of
     // JS). Tablet/mobile ignore these and keep using the body tokens + Bearer.
     setAuthCookies(reply, result.accessToken, result.refreshToken)
     return reply.status(200).send(result)
+  })
+
+  // POST /auth/2fa/verify — trade a login challenge + WhatsApp code for a session.
+  //
+  // Rate limited on the same bucket as password login: the challenge is only
+  // handed out after a correct password, but a limit here still bounds anyone
+  // grinding codes against a challenge they have obtained.
+  fastify.post('/2fa/verify', async (req, reply) => {
+    const ip = req.ip ?? 'unknown'
+    await checkRateLimit(STAFF_PASSWORD_LIMIT, ip)
+
+    const body = z.object({
+      challengeToken: z.string().min(1),
+      code: z.string().min(4).max(10),
+    }).parse(req.body)
+
+    let user
+    try {
+      user = await verifyLoginChallenge(body.challengeToken, body.code)
+      await clearFailures(STAFF_PASSWORD_LIMIT, ip)
+    } catch (err) {
+      await recordFailure(STAFF_PASSWORD_LIMIT, ip)
+      throw err
+    }
+
+    const session = issueStaffSession(user)
+    setAuthCookies(reply, session.accessToken, session.refreshToken)
+    return reply.status(200).send(session)
+  })
+
+  // ─── 2FA enrolment (authenticated) ─────────────────────────────────────────
+  //
+  // Two steps on purpose: the number is stored only after a code sent to it has
+  // been typed back, so nobody can switch 2FA on for a number they mistyped and
+  // lock themselves out of their own account.
+
+  // POST /auth/2fa/start — send a code to the number being enrolled.
+  fastify.post('/2fa/start', { preHandler: requireAuth() }, async (req) => {
+    const body = z.object({ phone: z.string().min(6) }).parse(req.body)
+    return startEnrolment(req.staffUser!.id, body.phone)
+  })
+
+  // POST /auth/2fa/enable — code came back; store the number and switch 2FA on.
+  fastify.post('/2fa/enable', { preHandler: requireAuth() }, async (req) => {
+    const body = z.object({
+      phone: z.string().min(6),
+      code: z.string().min(4).max(10),
+    }).parse(req.body)
+    const { phoneHint } = await completeEnrolment(req.staffUser!.id, body.phone, body.code)
+    return { enabled: true, phoneHint }
+  })
+
+  // POST /auth/2fa/disable — requires the account password, not just a session,
+  // so a walked-up-to laptop or a stolen token can't strip the second factor.
+  fastify.post('/2fa/disable', { preHandler: requireAuth() }, async (req) => {
+    const body = z.object({ password: z.string().min(1) }).parse(req.body)
+    await disableTwoFactor(req.staffUser!.id, body.password)
+    return { enabled: false }
+  })
+
+  // GET /auth/2fa/status — what the settings screen renders.
+  fastify.get('/2fa/status', { preHandler: requireAuth() }, async (req) => {
+    const u = await prisma.user.findFirst({
+      where: { id: req.staffUser!.id, deletedAt: null },
+      select: { twoFactorPhone: true, twoFactorEnabledAt: true },
+    })
+    return {
+      enabled: Boolean(u?.twoFactorEnabledAt && u?.twoFactorPhone),
+      phoneHint: u?.twoFactorPhone ? maskPhone(u.twoFactorPhone) : null,
+      enabledAt: u?.twoFactorEnabledAt ?? null,
+    }
   })
 
   // POST /auth/pin — staff PIN login with rate limiting + geolocation + auto clock-in

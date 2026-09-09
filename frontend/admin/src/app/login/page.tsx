@@ -7,7 +7,7 @@ import { isExecutive } from '../../lib/appRoles'
 const API_URL         = process.env['NEXT_PUBLIC_API_URL']         ?? 'http://localhost:3001'
 const STOREFRONT_URL  = process.env['NEXT_PUBLIC_STOREFRONT_URL']  ?? 'http://localhost:3002'
 
-type Mode = 'pin' | 'password' | 'signup'
+type Mode = 'pin' | 'password' | 'signup' | 'twofactor'
 
 /**
  * The single staff login page. Two modes:
@@ -37,6 +37,14 @@ export default function StaffLoginPage() {
   // ── Password state (owner / management / finance sign in this way)
   const [pwEmail,    setPwEmail]    = useState('')
   const [pwPassword, setPwPassword] = useState('')
+
+  // Second-factor step. The challenge token is what the API handed back instead
+  // of a session; the code is what arrives on WhatsApp. Neither is a credential
+  // on its own — the challenge is only good for ten minutes and only for
+  // /auth/2fa/verify.
+  const [mfaChallenge, setMfaChallenge] = useState('')
+  const [mfaHint,      setMfaHint]      = useState('')
+  const [mfaCode,      setMfaCode]      = useState('')
 
   // ── PIN state
   const [pin,     setPin]     = useState('')
@@ -167,10 +175,43 @@ export default function StaffLoginPage() {
       })
       const d = await res.json()
       if (!res.ok) throw new Error(d.error?.message ?? 'Invalid credentials')
+
+      // Account has two-factor on: no session yet, just a challenge. Move to
+      // the code step rather than trying to read tokens that aren't there.
+      if (d.twoFactorRequired) {
+        setMfaChallenge(d.challengeToken)
+        setMfaHint(d.phoneHint ?? '')
+        setMfaCode('')
+        setMode('twofactor')
+        return
+      }
+
       setAuth(d.user, d.accessToken, d.refreshToken)
       router.replace('/modules')
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Invalid credentials')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function submitTwoFactor(e: React.FormEvent) {
+    e.preventDefault()
+    setError('')
+    setLoading(true)
+    try {
+      const res = await fetch(`${API_URL}/api/v1/auth/2fa/verify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ challengeToken: mfaChallenge, code: mfaCode.trim() }),
+      })
+      const d = await res.json()
+      if (!res.ok) throw new Error(d.error?.message ?? 'That code did not work')
+      setAuth(d.user, d.accessToken, d.refreshToken)
+      router.replace('/modules')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'That code did not work')
     } finally {
       setLoading(false)
     }
@@ -252,16 +293,53 @@ export default function StaffLoginPage() {
               Staff Portal
             </p>
             <h1 className="text-2xl font-black text-s-text">
-              {mode === 'pin' ? 'Enter your PIN' : mode === 'password' ? 'Sign in' : 'Apply to join'}
+              {mode === 'pin' ? 'Enter your PIN'
+                : mode === 'password' ? 'Sign in'
+                : mode === 'twofactor' ? 'Check WhatsApp'
+                : 'Apply to join'}
             </h1>
             <p className="text-xs text-s-dim mt-1">
-              {mode === 'pin'
-                ? 'Authorized personnel only'
-                : mode === 'password' ? 'Owner, management and finance accounts' : 'CEO will review your request'}
+              {mode === 'pin' ? 'Authorized personnel only'
+                : mode === 'password' ? 'Owner, management and finance accounts'
+                : mode === 'twofactor' ? `We sent a 6-digit code to ${mfaHint || 'your number'}`
+                : 'CEO will review your request'}
             </p>
           </div>
 
-          {mode === 'password' ? (
+          {mode === 'twofactor' ? (
+            <form onSubmit={submitTwoFactor}>
+              <input
+                type="text"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                value={mfaCode}
+                onChange={(e) => setMfaCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                placeholder="000000"
+                autoFocus
+                className="w-full mb-3 rounded-xl px-4 py-3 text-center text-2xl font-black tracking-[0.4em] text-s-text outline-none"
+                style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)' }}
+              />
+              {error && <p className="text-xs text-red-400 mb-3 text-center">{error}</p>}
+              <button
+                type="submit"
+                disabled={loading || mfaCode.length < 6}
+                className="w-full rounded-xl py-3 text-sm font-black transition-all active:scale-[0.98] disabled:opacity-40"
+                style={{ background: 'linear-gradient(135deg, #00D4B1 0%, #6366F1 100%)', color: '#000' }}
+              >
+                {loading ? 'Checking…' : 'Sign in'}
+              </button>
+              <button
+                type="button"
+                onClick={() => { setMode('password'); setError(''); setMfaChallenge(''); setMfaCode('') }}
+                className="w-full mt-3 text-xs text-s-dim hover:text-s-muted transition-colors"
+              >
+                ← Start over
+              </button>
+              <p className="text-[10px] text-s-dim mt-4 text-center leading-relaxed">
+                Didn&rsquo;t ask to sign in? Someone has your password. Change it as soon as you&rsquo;re in.
+              </p>
+            </form>
+          ) : mode === 'password' ? (
             <form onSubmit={submitPassword}>
               <input
                 type="email"

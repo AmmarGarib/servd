@@ -763,6 +763,23 @@ model User {
   // the request to the CEO/owner in the staff directory; cleared when a new
   // PIN is issued. Never reveals anything about the old PIN.
   pinResetRequestedAt DateTime?
+  // ─── Two-factor authentication (WhatsApp OTP) ───────────────────────
+  // A second factor for the accounts that can move money and read the
+  // whole company: a 6-digit code sent to WhatsApp after the password
+  // checks out.
+  //
+  // twoFactorPhone is NOT the `phone` field above. That one is a contact
+  // number an admin types in from a form and nobody has proved. This one
+  // is only ever written after the staff member has received a code on it
+  // and typed it back, so enabling 2FA cannot lock someone out of their
+  // own account with a mistyped number.
+  //
+  // 2FA is on for an account when twoFactorEnabledAt is set — nothing else
+  // turns it on. Enforcing it by role alone would have locked out every
+  // owner the moment this shipped, which is exactly the mistake the PIN
+  // change already made once.
+  twoFactorPhone      String?
+  twoFactorEnabledAt  DateTime?
   role            UserRole      @default(kitchen)
   // Free-text job title shown next to the role chip in /workforce. The role
   // enum is the *category* (FOH / BOH / Procurement / etc); jobTitle is what
