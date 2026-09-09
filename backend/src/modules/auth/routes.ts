@@ -112,6 +112,76 @@ function haversineMeters(lat1: number, lng1: number, lat2: number, lng2: number)
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
 }
 
+// Clock-in policy: geofence + anti-buddy-punching selfie.
+//
+// Extracted so POST /auth/pin and POST /auth/clock-in enforce the SAME rules.
+// It previously lived only inside the PIN handler, which meant deleting PIN
+// login would have switched attendance fraud control off silently — the
+// OperationsConfig screen would keep rendering settings that controlled
+// nothing. Returns the geofence verdict for the audit record.
+async function enforceClockInPolicy(
+  user: { id: string; role: string },
+  body: { lat?: number; lng?: number; selfieUrl?: string },
+): Promise<{ geofenceMatched: boolean | null; geofenceDistanceM: number | null }> {
+  let geofenceMatched: boolean | null = null
+  let geofenceDistanceM: number | null = null
+  if (['admin', 'manager'].includes(user.role)) return { geofenceMatched, geofenceDistanceM }
+
+  const { getOperationsConfig } = await import('../../lib/setup-config.js')
+  const ops = await getOperationsConfig(
+    (await prisma.user.findUnique({ where: { id: user.id }, select: { tenantId: true } }))?.tenantId,
+  )
+  const ratioEnforced = ops?.geofenceEnforced ?? false
+  const selfieRequired = ops?.selfieRequiredAtClockIn ?? false
+  const radiusM = ops?.geofenceRadiusMetres ?? 150
+
+  const concept = await prisma.concept.findFirst({
+    where: { latitude: { not: null }, longitude: { not: null }, isActive: true, deletedAt: null },
+    select: { latitude: true, longitude: true, name: true },
+  })
+
+  if (selfieRequired && !body.selfieUrl) {
+    throw new AppError('SELFIE_REQUIRED', 'Snap a selfie to clock in. Buddy-punching is blocked.', 403)
+  }
+
+  if (ratioEnforced && concept?.latitude != null && concept?.longitude != null) {
+    if (body.lat == null || body.lng == null) {
+      throw new AppError('LOCATION_REQUIRED', 'Allow location in your browser — you can only clock in on-site.', 403)
+    }
+    geofenceDistanceM = haversineMeters(concept.latitude, concept.longitude, body.lat, body.lng)
+    geofenceMatched = geofenceDistanceM <= radiusM
+    if (!geofenceMatched) {
+      throw new AppError(
+        'OUTSIDE_GEOFENCE',
+        `You must be within ${radiusM}m of ${concept.name} to clock in (you are ${Math.round(geofenceDistanceM)}m away).`,
+        403,
+      )
+    }
+  } else if (concept?.latitude != null && body.lat != null && body.lng != null) {
+    geofenceDistanceM = haversineMeters(concept.latitude, concept.longitude!, body.lat, body.lng)
+    geofenceMatched = geofenceDistanceM <= radiusM
+  }
+
+  if (!ratioEnforced) {
+    const row = await prisma.setting.findUnique({ where: { key: 'location_config' } })
+    if (row) {
+      let cfg: { enabled: boolean; lat: number | null; lng: number | null; radiusMeters: number }
+      try { cfg = JSON.parse(row.value) } catch { cfg = { enabled: false, lat: null, lng: null, radiusMeters: 200 } }
+      if (cfg.enabled && cfg.lat !== null && cfg.lng !== null) {
+        if (body.lat == null || body.lng == null) {
+          throw new AppError('LOCATION_REQUIRED', 'Location access is required to sign in. Please allow location in your browser.', 403)
+        }
+        const dist = haversineMeters(cfg.lat, cfg.lng, body.lat, body.lng)
+        if (dist > cfg.radiusMeters) {
+          throw new AppError('OUTSIDE_LOCATION', `You must be within ${cfg.radiusMeters}m of the restaurant to clock in (you are ${Math.round(dist)}m away).`, 403)
+        }
+      }
+    }
+  }
+  return { geofenceMatched, geofenceDistanceM }
+}
+
+
 export async function authRoutes(fastify: FastifyInstance) {
   // POST /auth/login — staff email+password login (brute-force protected)
   fastify.post('/login', async (req, reply) => {
@@ -258,71 +328,7 @@ export async function authRoutes(fastify: FastifyInstance) {
       throw err
     }
 
-    // Geofence + selfie enforcement — skip for admin / manager. New
-    // OperationsConfig fields drive this; falls back to the legacy Setting
-    // row if no OperationsConfig exists yet.
-    let geofenceMatched: boolean | null = null
-    let geofenceDistanceM: number | null = null
-    if (!['admin', 'manager'].includes(result.user.role)) {
-      const { getOperationsConfig } = await import('../../lib/setup-config.js')
-      const ops = await getOperationsConfig(
-        (await prisma.user.findUnique({ where: { id: result.user.id }, select: { tenantId: true } }))?.tenantId,
-      )
-      const ratioEnforced = ops?.geofenceEnforced ?? false
-      const selfieRequired = ops?.selfieRequiredAtClockIn ?? false
-      const radiusM = ops?.geofenceRadiusMetres ?? 150
-
-      // Concept geofence — read the first active concept's lat/lng. Multi-
-      // concept tenants will eventually need per-concept clock-in but for
-      // now a single tenant lat/lng works.
-      const concept = await prisma.concept.findFirst({
-        where: { latitude: { not: null }, longitude: { not: null }, isActive: true, deletedAt: null },
-        select: { latitude: true, longitude: true, name: true },
-      })
-
-      // Selfie required when configured
-      if (selfieRequired && !body.selfieUrl) {
-        throw new AppError('SELFIE_REQUIRED', 'Snap a selfie to clock in. Buddy-punching is blocked.', 403)
-      }
-
-      if (ratioEnforced && concept?.latitude != null && concept?.longitude != null) {
-        if (body.lat == null || body.lng == null) {
-          throw new AppError('LOCATION_REQUIRED', 'Allow location in your browser — you can only clock in on-site.', 403)
-        }
-        geofenceDistanceM = haversineMeters(concept.latitude, concept.longitude, body.lat, body.lng)
-        geofenceMatched = geofenceDistanceM <= radiusM
-        if (!geofenceMatched) {
-          throw new AppError(
-            'OUTSIDE_GEOFENCE',
-            `You must be within ${radiusM}m of ${concept.name} to clock in (you are ${Math.round(geofenceDistanceM)}m away).`,
-            403,
-          )
-        }
-      } else if (concept?.latitude != null && body.lat != null && body.lng != null) {
-        // Soft mode: still record distance, just don't enforce
-        geofenceDistanceM = haversineMeters(concept.latitude, concept.longitude!, body.lat, body.lng)
-        geofenceMatched = geofenceDistanceM <= radiusM
-      }
-
-      // Legacy Setting row fallback (unchanged behaviour for any tenant
-      // already using it). Removed once all tenants migrate to OperationsConfig.
-      if (!ratioEnforced) {
-        const row = await prisma.setting.findUnique({ where: { key: 'location_config' } })
-        if (row) {
-          let cfg: { enabled: boolean; lat: number | null; lng: number | null; radiusMeters: number }
-          try { cfg = JSON.parse(row.value) } catch { cfg = { enabled: false, lat: null, lng: null, radiusMeters: 200 } }
-          if (cfg.enabled && cfg.lat !== null && cfg.lng !== null) {
-            if (body.lat == null || body.lng == null) {
-              throw new AppError('LOCATION_REQUIRED', 'Location access is required to sign in. Please allow location in your browser.', 403)
-            }
-            const dist = haversineMeters(cfg.lat, cfg.lng, body.lat, body.lng)
-            if (dist > cfg.radiusMeters) {
-              throw new AppError('OUTSIDE_LOCATION', `You must be within ${cfg.radiusMeters}m of the restaurant to clock in (you are ${Math.round(dist)}m away).`, 403)
-            }
-          }
-        }
-      }
-    }
+    const { geofenceMatched, geofenceDistanceM } = await enforceClockInPolicy(result.user, body)
 
     // Auto clock-in record — capture selfie + geofence verdict for audit
     await prisma.clockLog.create({
@@ -340,6 +346,178 @@ export async function authRoutes(fastify: FastifyInstance) {
 
     setAuthCookies(reply, result.accessToken, result.refreshToken)
     return reply.status(200).send(result)
+  })
+
+  // ─── Password self-service ────────────────────────────────────────────
+  //
+  // Reachable from the LOGIN PAGE, so it cannot require a session: someone
+  // handed a generated password needs to replace it before they have anything
+  // else. That makes it an unauthenticated endpoint that verifies a password,
+  // i.e. a second front door — so it deliberately shares the SAME rate-limit
+  // buckets and the SAME generic error as /auth/login. Given its own scope it
+  // would be a clean bypass of the login lockout: grind currentPassword here
+  // instead of there.
+  const passwordChangeSchema = z.object({
+    // Min 12 to match src/scripts/set-staff-password.ts. /auth/login accepts 8
+    // for legacy reasons; new passwords do not get to be shorter than the
+    // break-glass tool enforces.
+    newPassword: z.string().min(12).max(200),
+  })
+
+  async function applyPasswordChange(userId: string, email: string, newPassword: string): Promise<void> {
+    if (newPassword.toLowerCase().includes(email.split('@')[0]!.toLowerCase())) {
+      throw new AppError('WEAK_PASSWORD', 'Your password cannot contain your email name.', 400)
+    }
+    await prisma.user.update({
+      where: { id: userId },
+      data: { password: await hashPassword(newPassword), mustChangePassword: false },
+    })
+    // Every other session for this person dies with the old password —
+    // otherwise "change my password" does not evict whoever knew the old one.
+    await revokeAllForSubject(userId)
+  }
+
+  // POST /auth/password/change — no session required. Linked from /login.
+  fastify.post('/password/change', async (req, reply) => {
+    const ip = req.ip ?? 'unknown'
+    const body = passwordChangeSchema.extend({
+      email: z.string().email().max(200),
+      currentPassword: z.string().min(1).max(200),
+    }).parse(req.body)
+    const emailKey = body.email.trim().toLowerCase()
+
+    await checkRateLimit(STAFF_PASSWORD_LIMIT, ip)
+    await checkRateLimit(STAFF_PASSWORD_USER_LIMIT, emailKey)
+
+    const user = await prisma.user.findUnique({
+      where: { email: emailKey },
+      select: { id: true, email: true, password: true, isActive: true, accountStatus: true, deletedAt: true },
+    })
+    const ok = user
+      && user.deletedAt === null
+      && user.isActive
+      && user.accountStatus === 'active'
+      && await bcrypt.compare(body.currentPassword, user.password)
+
+    if (!ok) {
+      await recordFailure(STAFF_PASSWORD_LIMIT, ip)
+      await recordFailure(STAFF_PASSWORD_USER_LIMIT, emailKey)
+      // Same wording as a failed login — this must not become an oracle that
+      // says "that account exists, wrong password".
+      throw new AppError('UNAUTHORIZED', 'Invalid credentials', 401)
+    }
+    if (body.currentPassword === body.newPassword) {
+      throw new AppError('WEAK_PASSWORD', 'Your new password must be different from the current one.', 400)
+    }
+
+    await clearFailures(STAFF_PASSWORD_LIMIT, ip)
+    await clearFailures(STAFF_PASSWORD_USER_LIMIT, emailKey)
+    await applyPasswordChange(user!.id, user!.email!, body.newPassword)
+    return reply.status(204).send()
+  })
+
+  // POST /auth/password/change-authed — same thing for a signed-in user.
+  fastify.post('/password/change-authed', { preHandler: requireAuth(...ALL_STAFF) }, async (req, reply) => {
+    const body = passwordChangeSchema.extend({
+      currentPassword: z.string().min(1).max(200),
+    }).parse(req.body)
+    const me = await prisma.user.findUnique({
+      where: { id: req.staffUser!.id },
+      select: { id: true, email: true, password: true },
+    })
+    if (!me || !await bcrypt.compare(body.currentPassword, me.password)) {
+      throw new AppError('UNAUTHORIZED', 'Current password is incorrect', 401)
+    }
+    if (body.currentPassword === body.newPassword) {
+      throw new AppError('WEAK_PASSWORD', 'Your new password must be different from the current one.', 400)
+    }
+    await applyPasswordChange(me.id, me.email ?? '@', body.newPassword)
+    return reply.status(204).send()
+  })
+
+  // POST /auth/users/:id/2fa/reset — admin clears someone's 2FA enrolment.
+  //
+  // Without this, an account enrolled in WhatsApp OTP whose phone is lost,
+  // stolen or reassigned is locked out permanently: /auth/2fa/disable is
+  // self-service and needs that person's own password, and PATCH /auth/users
+  // has no twoFactor field. PIN login used to be the accidental escape hatch
+  // because staffPinLogin never checked 2FA at all — that hatch closes when
+  // PIN login goes, so the deliberate one has to exist first.
+  fastify.post<{ Params: { id: string } }>(
+    '/users/:id/2fa/reset',
+    { preHandler: requireAuth(...ADMIN_ONLY) },
+    async (req, reply) => {
+      const target = await prisma.user.findFirst({
+        where: { id: req.params.id, deletedAt: null, tenantId: req.staffUser!.tenantFilter },
+        select: { id: true, name: true, twoFactorEnabledAt: true },
+      })
+      if (!target) {
+        return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Staff member not found in your active company' } })
+      }
+      await prisma.user.update({
+        where: { id: target.id },
+        data: { twoFactorPhone: null, twoFactorEnabledAt: null },
+      })
+      // Their sessions die too: whoever holds the old phone should not keep a
+      // live session after we have unhooked the second factor.
+      await revokeAllForSubject(target.id)
+      req.log.warn({ actor: req.staffUser!.id, target: target.id }, '2FA reset by admin')
+      return reply.status(200).send({ id: target.id, name: target.name, twoFactorEnabled: false })
+    },
+  )
+
+  // POST /auth/clock-in — staff clocks in.
+  //
+  // Until now the ONLY thing in the backend that created a `type: 'in'`
+  // ClockLog was the PIN-login handler. That made clock-in a side effect of a
+  // login method we are removing, and removing it would have been silent and
+  // expensive: payroll pairs in/out (payroll/service.ts computeHoursForPeriod)
+  // and an 'out' with no open 'in' contributes nothing, so every hourly
+  // staffer would compute ZERO hours and zero wages. Tip pools pair the same
+  // way and skip anyone with hours <= 0, so a pool would be built with no
+  // members and tips already booked as owed to staff would go to nobody.
+  // Neither surfaces an error — the numbers just get smaller.
+  //
+  // So clock-in becomes its own authenticated action, enforcing the same
+  // geofence + selfie policy the PIN route did.
+  fastify.post('/clock-in', { preHandler: requireAuth(...ALL_STAFF) }, async (req, reply) => {
+    const body = z.object({
+      lat: z.number().min(-90).max(90).optional(),
+      lng: z.number().min(-180).max(180).optional(),
+      selfieUrl: z.string().url().optional(),
+    }).parse(req.body ?? {})
+
+    const user = req.staffUser!
+
+    // Already clocked in? Return the open shift rather than stacking a second
+    // 'in', which would leave an unpaired record and skew the hours pairing.
+    const lastLog = await prisma.clockLog.findFirst({
+      where: { userId: user.id },
+      orderBy: { recordedAt: 'desc' },
+      select: { type: true, recordedAt: true },
+    })
+    if (lastLog?.type === 'in') {
+      return reply.status(200).send({ alreadyClockedIn: true, since: lastLog.recordedAt })
+    }
+
+    const { geofenceMatched, geofenceDistanceM } = await enforceClockInPolicy(
+      { id: user.id, role: user.role },
+      body,
+    )
+
+    const log = await prisma.clockLog.create({
+      data: {
+        userId: user.id,
+        type: 'in',
+        lat: body.lat ?? null,
+        lng: body.lng ?? null,
+        selfieUrl: body.selfieUrl ?? null,
+        geofenceMatched,
+        geofenceDistanceM,
+        ipAddress: req.ip,
+      },
+    })
+    return reply.status(201).send({ clockedInAt: log.recordedAt, geofenceMatched, geofenceDistanceM })
   })
 
   // POST /auth/clock-out — staff clocks out
@@ -961,7 +1139,12 @@ export async function authRoutes(fastify: FastifyInstance) {
     }).parse(req.body)
 
     // Password not used for login (PIN-only) — store a random unusable hash
-    const password = await hashPassword(Math.random().toString(36) + Date.now())
+    // CSPRNG, not Math.random(). This value is the account's ONLY credential
+    // under email+password login, and Math.random() is V8's xorshift128+ while
+    // Date.now() is observable from the API's own response headers — together
+    // they narrow the search space for anyone who can observe one account
+    // creation and guess at others made in the same process.
+    const password = await hashPassword(randomBytes(24).toString('base64url'))
     // PIN = the explicit body.pin if the CEO typed one, otherwise a CSPRNG
     // temporary PIN that the staff member MUST change on first login. Never
     // derived from the phone number — a phone's last 4 digits are effectively
@@ -1134,7 +1317,19 @@ export async function authRoutes(fastify: FastifyInstance) {
       const data: Record<string, unknown> = {}
       if (body.name     != null) data.name      = body.name
       if (body.phone    != null) data.phone     = body.phone || null
-      if (body.email    != null) data.email     = body.email ? body.email.toLowerCase() : null
+      // Refuse to CLEAR an email. Sign-in matches on email alone and there is
+      // no reset flow, so blanking it from this ordinary admin form is an
+      // unrecoverable action — the account can never be signed into again.
+      if (body.email != null) {
+        if (!body.email.trim()) {
+          throw new AppError(
+            'EMAIL_REQUIRED',
+            'Staff sign in with their email, so it cannot be removed. Change it to a different address instead.',
+            400,
+          )
+        }
+        data.email = body.email.trim().toLowerCase()
+      }
       if (body.role     != null) data.role      = body.role
       if (body.isActive != null) data.isActive  = body.isActive
       if (body.jobTitle != null) data.jobTitle  = body.jobTitle || null

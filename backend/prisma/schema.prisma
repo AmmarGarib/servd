@@ -782,6 +782,10 @@ model User {
   // of their phone number. Login is blocked for these accounts until an admin
   // re-issues a CSPRNG PIN via POST /auth/staff/:id/issue-pin. New signups
   // ship with this false because their PIN is already CSPRNG-generated.
+  // Set when an account is created with a generated password, or an admin
+  // reissues one. A nudge for the client to prompt a change — NEVER a login
+  // block: hard-blocking here is how you strand people on deploy day.
+  mustChangePassword Boolean    @default(false)
   pinMustReset    Boolean       @default(false)
   // Set when a staff member taps "forgot PIN" on the login screen. Surfaces
   // the request to the CEO/owner in the staff directory; cleared when a new

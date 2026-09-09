@@ -136,6 +136,11 @@ async function build() {
           'req.headers["x-keenu-signature"]',
           'res.headers["set-cookie"]',
           '*.password', '*.pin', '*.token', '*.refreshToken', '*.accessToken',
+          // pino's '*.password' matches a key named exactly `password`, so the
+          // change-password bodies would otherwise land in production logs in
+          // plaintext.
+          '*.currentPassword', '*.newPassword',
+          'req.body.currentPassword', 'req.body.newPassword',
           '*.jwt', '*.apiKey', '*.secret', '*.webhookSecret',
           // Customer PII
           '*.email', '*.phone', '*.address',
