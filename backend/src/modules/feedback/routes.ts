@@ -12,6 +12,7 @@ import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, ALL_STAFF, MANAGERS } from '../auth/middleware.js'
+import { conceptWhere } from '../../lib/tenantScope.js'
 import { verifyCustomerToken } from '../auth/service.js'
 
 const FEEDBACK_KINDS = ['nps', 'csat', 'open'] as const
@@ -75,9 +76,13 @@ export async function feedbackRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuth(...ALL_STAFF) },
     async (req) => {
       const { kind, conceptId, limit } = req.query
-      const where: Record<string, unknown> = {}
+      // Company scope. There was none: `where` started empty and a client
+      // conceptId was used on trust, so any staff member of any company could
+      // read every company's feedback — and the include below carries the
+      // submitter's name, email and phone. Same shape as the hole closed in
+      // /reviews; this one was missed at the time.
+      const where: Record<string, unknown> = { ...(await conceptWhere(req, conceptId, 'read')) }
       if (kind && (FEEDBACK_KINDS as readonly string[]).includes(kind)) where.kind = kind
-      if (conceptId) where.conceptId = conceptId
 
       const entries = await prisma.feedbackEntry.findMany({
         where,
@@ -109,11 +114,15 @@ export async function feedbackRoutes(fastify: FastifyInstance) {
     async (req) => {
       const days = parseInt(req.query.days ?? '30', 10)
       const since = new Date(Date.now() - days * 86_400_000)
+      // Scoped for the same reason as the list above — without it the NPS and
+      // CSAT headline numbers were computed across every company's feedback,
+      // so one operator's scoreboard moved when another operator's guests
+      // rated them.
       const where = {
         createdAt: { gte: since },
         customerId: { not: null },
-        ...(req.query.conceptId && { conceptId: req.query.conceptId }),
-      } as const
+        ...(await conceptWhere(req, req.query.conceptId, 'read')),
+      }
 
       const [npsRows, csatAgg, openCount] = await Promise.all([
         prisma.feedbackEntry.findMany({
