@@ -5,7 +5,7 @@ process.on('unhandledRejection', (err) => {
   console.error('[unhandledRejection]', err instanceof Error ? err.message : err)
 })
 
-import Fastify from 'fastify'
+import Fastify, { type FastifyError } from 'fastify'
 import cors from '@fastify/cors'
 import helmet from '@fastify/helmet'
 import rateLimit from '@fastify/rate-limit'
@@ -233,7 +233,10 @@ async function build() {
 
   // ─── Error handler ─────────────────────────────────────────────────────────
 
-  fastify.setErrorHandler((err, _req, reply) => {
+  // Fastify 5 types the caught error as `unknown` rather than FastifyError,
+  // because a thrown value need not be an Error at all. Narrow before reading
+  // anything off it.
+  fastify.setErrorHandler((err: unknown, _req, reply) => {
     if (err instanceof AppError) {
       return reply.status(err.statusCode).send(errorResponse(err))
     }
@@ -243,9 +246,10 @@ async function build() {
       })
     }
     // Fastify validation errors
-    if (err.validation) {
+    const validation = (err as FastifyError | undefined)?.validation
+    if (validation) {
       return reply.status(422).send({
-        error: { code: 'VALIDATION_ERROR', message: 'Validation failed', details: err.validation },
+        error: { code: 'VALIDATION_ERROR', message: 'Validation failed', details: validation },
       })
     }
     fastify.log.error(err)

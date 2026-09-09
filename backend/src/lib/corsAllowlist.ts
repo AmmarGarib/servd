@@ -30,6 +30,19 @@ const STATIC_FROM_ENV = [
   process.env['STOREFRONT_URL'] ?? 'http://localhost:3002',
 ]
 
+// The canonical servd hosts, hardcoded rather than read from env.
+//
+// These used to reach the allowlist ONLY through WEB_URL / STOREFRONT_URL. That
+// makes a two-character env typo — a trailing slash, http instead of https — a
+// total outage: every browser call from the admin app is blocked by CORS and
+// the operator sees "network error" on a healthy API. These hostnames are ours
+// and are not going to change, so list them. The env vars still work and still
+// take effect; this is a floor, not a replacement.
+const CANONICAL_HOSTS = [
+  'servd-admin.garibsons.app',
+  'servd-app.garibsons.app',
+]
+
 const DEFAULT_BRAND_HOSTS = [
   'eatstax.com',
   'eatstrata.com',
@@ -47,10 +60,21 @@ const BRAND_HOSTS = (process.env['BRAND_HOSTS'] ?? '')
 
 const RESOLVED_BRAND_HOSTS = BRAND_HOSTS.length > 0 ? BRAND_HOSTS : DEFAULT_BRAND_HOSTS
 
-const STATIC_ALLOWED = new Set<string>([
-  ...STATIC_FROM_ENV,
-  ...RESOLVED_BRAND_HOSTS.flatMap((h) => [`https://${h}`, `https://www.${h}`]),
-])
+// An Origin header is scheme + host + optional port, never a path and never a
+// trailing slash. WEB_URL, though, is written by hand into a .env file and is
+// routinely set to "https://servd-admin.garibsons.app/" — which would never
+// match an incoming Origin. Normalise both sides so it does.
+function normaliseOrigin(value: string): string {
+  return value.trim().replace(/\/+$/, '').toLowerCase()
+}
+
+const STATIC_ALLOWED = new Set<string>(
+  [
+    ...STATIC_FROM_ENV,
+    ...CANONICAL_HOSTS.flatMap((h) => [`https://${h}`, `https://www.${h}`]),
+    ...RESOLVED_BRAND_HOSTS.flatMap((h) => [`https://${h}`, `https://www.${h}`]),
+  ].map(normaliseOrigin),
+)
 
 // Catch-alls for dev and brand subdomains.
 //   *.localhost           → dev: stax.localhost:3002, simmer.localhost:3002
@@ -63,8 +87,9 @@ const WILDCARD_PATTERNS: RegExp[] = [
 
 export function isAllowedOrigin(origin: string | undefined): boolean {
   if (!origin) return true                // server-to-server / curl / webhooks
-  if (STATIC_ALLOWED.has(origin)) return true
-  if (WILDCARD_PATTERNS.some((p) => p.test(origin))) return true
+  const o = normaliseOrigin(origin)
+  if (STATIC_ALLOWED.has(o)) return true
+  if (WILDCARD_PATTERNS.some((p) => p.test(o))) return true
   return false
 }
 
