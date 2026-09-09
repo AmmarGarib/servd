@@ -26,7 +26,7 @@ const FALLBACK_CONCEPTS: Record<string, Concept> = {
   },
   stackd: {
     id: 'fallback-stackd', name: 'stackd', slug: 'stackd', type: 'restaurant',
-    description: 'Smash burgers, loaded fries, delivery-first ghost kitchen.',
+    description: 'Scratch-cooking café and small market — sandwiches, pastries, light bites and craft mocktails.',
     logoUrl: null, primaryColor: null,
     reservationsEnabled: false,
   },

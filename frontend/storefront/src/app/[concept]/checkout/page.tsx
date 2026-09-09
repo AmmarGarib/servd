@@ -29,8 +29,9 @@ type FulfilmentOption = 'dine-in' | 'pickup' | 'curbside' | 'delivery'
 
 // Per-brand allow-list. The brand's operating model decides what
 // fulfilment modes the customer can pick. Simmer is plated dining
-// only (the QR card is at the table); Stackd is a ghost kitchen with
-// counter pickup + curbside; Flipd ships hot from the kitchen, so it
+// only (the QR card is at the table); stackd is a twenty-seat cafe
+// with a grab-and-go counter, so it adds pickup + curbside; Flipd
+// ships hot from the kitchen, so it
 // also opens up delivery. Slugs not in the map see the full set
 // (legacy / generic brand pages).
 const BRAND_FULFILMENT: Record<string, FulfilmentOption[]> = {

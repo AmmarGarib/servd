@@ -228,7 +228,7 @@ export const BLOCK_CATALOG: BlockSpec[] = [
       kicker: 'The line-up',
       voices: [
         { brand: 'simmer', line: 'Slow nights, plated softly.' },
-        { brand: 'stackd', line: 'Smashed, stacked, sauced.' },
+        { brand: 'stackd', line: 'Cooked here. Wrapped, not plated.' },
       ],
     }),
   },
@@ -302,7 +302,7 @@ export function defaultServdHomeLayout(): Block[] {
       kicker: 'The line-up',
       voices: [
         { brand: 'simmer', line: 'Slow nights, plated softly.' },
-        { brand: 'stackd', line: 'Smashed, stacked, sauced.' },
+        { brand: 'stackd', line: 'Cooked here. Wrapped, not plated.' },
         { brand: 'Flipd',   line: 'Buttermilk-brined, hand-breaded, hot.' },
       ],
     },

@@ -13,6 +13,9 @@
 //             the brand — never "Stackd" in display type.
 //   Mascot    the hand-drawn bread-stack character — a stack of slices over a
 //             plum tray bar with two hands on it, striped trousers, shoes.
+//             He gets a band of his own, at size. He is what goes on the cups,
+//             wrappers and pastry bags, and since the packaging IS the service
+//             vessel here, the character does the work a plate would.
 //   Stickers  the brand's seals: heavily-rounded lozenges in cream, butter and
 //             pale blue with plum ink, applied slightly off-square. Every card
 //             on this page is one of these, not a rectangle — the brand has no
@@ -23,9 +26,12 @@
 // blueprint theme; it fought a brand whose whole visual language is hand-drawn
 // ink, rounded seals and warm paper.
 //
-// No real menu data is wired in yet; the boards render from BRAND_STORIES
-// highlights and stand in as marketing modules until the menu API exposes
-// per-brand items.
+// The concept is a 20-seat scratch-cooking cafe with a small market at the
+// cashier/barista bar — sandwiches, pastries, light bites, craft mocktails.
+// It is NOT the burger room the first pass described. Copy lives in
+// BRAND_STORIES (lib/concept.ts); no real menu data is wired in yet, so the
+// stickers render from the highlights and stand in as marketing modules
+// until the menu API exposes per-brand items.
 
 import Link from 'next/link'
 import type { Concept } from '../../../lib/concept'
@@ -45,8 +51,9 @@ export function StackdLayout({ concept, concepts }: Props) {
 
   // Classes (.stackd-page, .stackd-mono, .stackd-spec, .stackd-rule,
   // .stackd-line, .stackd-display, .stackd-btn, .stackd-btn-ghost,
-  // .stackd-sticker, .stackd-sticker-lg, .stackd-mascot-sticker,
-  // .stackd-hero-row, .stackd-visit-grid) live in globals.css.
+  // .stackd-sticker, .stackd-sticker-lg, .stackd-mascot-band,
+  // .stackd-mascot-stage, .stackd-mascot-seal, .stackd-visit-grid)
+  // live in globals.css.
   return (
     <div className="stackd-page">
       {/* The plum field: fixed, full-bleed, with a soft pool of warm light at
@@ -81,7 +88,7 @@ export function StackdLayout({ concept, concepts }: Props) {
           <div style={{ maxWidth: '76rem', margin: '0 auto' }}>
             <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '2rem', flexWrap: 'wrap', marginBottom: '3rem' }}>
               <span className="stackd-spec">Karachi</span>
-              <span className="stackd-spec">Burgers · dine in · delivery</span>
+              <span className="stackd-spec">Café · market · scratch kitchen</span>
             </div>
 
             {/* The supplied wordmark asset, not a webfont approximation. The
@@ -90,7 +97,6 @@ export function StackdLayout({ concept, concepts }: Props) {
                 was knocked out to alpha so the cream artwork sits on any panel.
                 The <h1> stays real text for search and screen readers; the
                 image is decorative on top of it. */}
-            <div className="stackd-hero-row">
             <h1
               style={{
                 margin: '0 0 2.75rem',
@@ -117,15 +123,6 @@ export function StackdLayout({ concept, concepts }: Props) {
                 style={{ display: 'block', width: '100%', height: 'auto' }}
               />
             </h1>
-
-            {/* The mascot — the bread-stack character from the brand deck. He
-                sits on his own cream sticker, which is how he appears on the
-                merch: pressed onto the surface rather than printed into it. */}
-            <div aria-hidden className="stackd-mascot-sticker">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src="/brand/stackd-mascot.png" alt="" width={338} height={453} />
-            </div>
-            </div>
 
             <hr className="stackd-line" />
 
@@ -156,6 +153,52 @@ export function StackdLayout({ concept, concepts }: Props) {
           </div>
         </section>
 
+        {/* ── THE MASCOT ──────────────────────────────────────────────────────
+            The character gets a whole band to himself. He is the brand's
+            personality and the thing that goes on the cups, the wrappers and
+            the market shelf, so he is shown at size on his own seal rather
+            than tucked beside the wordmark. */}
+        <section style={{ padding: 'clamp(3.5rem, 11vh, 7rem) clamp(1.5rem, 5vw, 3rem)' }}>
+          <div className="stackd-mascot-band">
+            <div className="stackd-mascot-stage">
+              <div className="stackd-mascot-seal">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src="/brand/stackd-mascot.png"
+                  alt="The stackd character — a stack of bread slices carried on a plum tray, striped trousers below"
+                  width={338}
+                  height={453}
+                />
+              </div>
+            </div>
+
+            <div>
+              <span className="stackd-spec">The character</span>
+              <h2
+                className="stackd-display"
+                style={{ fontSize: 'clamp(2.1rem, 5vw, 3.6rem)', margin: '0.9rem 0 1.4rem', lineHeight: 1.05 }}
+              >
+                He carries the whole thing.
+              </h2>
+              <p
+                style={{
+                  fontFamily: 'var(--stackd-body)',
+                  fontSize: '1.05rem',
+                  lineHeight: 1.75,
+                  color: 'var(--stackd-cream-dim)',
+                  margin: 0,
+                  maxWidth: '46ch',
+                }}
+              >
+                Drawn by hand, one line at a time. He goes on the cups, the
+                wrappers, the pastry bags and the market shelf — which is the
+                point of serving in packaging rather than on plates. The vessel
+                is part of the dish, so it may as well be part of the brand.
+              </p>
+            </div>
+          </div>
+        </section>
+
         {/* ── STICKERS ────────────────────────────────────────────────────────
             Each highlight is a seal, in the packaging palette and set slightly
             off-square, the way a label goes on by hand. */}
@@ -171,7 +214,7 @@ export function StackdLayout({ concept, concepts }: Props) {
             <div
               style={{
                 display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(330px, 1fr))',
                 gap: 'clamp(1rem, 2vw, 1.5rem)',
                 marginTop: '2.25rem',
               }}
@@ -204,7 +247,7 @@ export function StackdLayout({ concept, concepts }: Props) {
           >
             <span className="stackd-spec">The room</span>
             <h2 className="stackd-display" style={{ fontSize: 'clamp(1.9rem, 4vw, 2.8rem)', margin: '0.75rem 0 1.5rem' }}>
-              Built to sit in.
+              Twenty seats, and a market.
             </h2>
             <p
               style={{

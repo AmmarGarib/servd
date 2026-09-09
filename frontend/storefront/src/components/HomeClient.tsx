@@ -296,9 +296,9 @@ export function HomeClient({ concepts, heroConfig }: Props) {
               {
                 slug: 'stackd',
                 accent: 'rgba(255,255,255,0.18)',
-                badge: '★', tag: 'stackd · stack club',
-                head: 'Stack five, the sixth’s on us',
-                body: 'Order five from stackd, the sixth burger’s on the house. Insiders also get first dibs on Friday-only stacks before they go public.',
+                badge: '★', tag: 'stackd · counter club',
+                head: 'Five coffees in, the sixth is on us',
+                body: 'Buy five drinks at stackd and the sixth is on the house. Insiders also get first look at the pastry case before the morning bake goes out to the floor.',
                 featured: true,
               },
               {

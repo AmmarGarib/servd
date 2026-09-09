@@ -154,11 +154,11 @@ export const BRAND_STORIES: Record<string, BrandStory> = {
     hours: 'Dinner 7:00 PM – 10:30 PM · Late Night 10:30 PM – 2:30 AM',
   },
   'stackd': {
-    tagline: 'Smashed, stacked, sauced.',
-    oneLiner: 'Upscale smash-burger room — dry-aged patties, house-baked brioche, table service.',
-    long: 'stackd is a sit-down burger concept. Dry-aged beef on the cast iron, brioche we bake here every morning, sauces blended in-house. The room is built for a long lunch or a slow dinner — you bring people for the burger, you stay for the table.',
-    highlights: ['Dry-aged smash patties', 'House-baked brioche', 'Premium sides', 'Dine-in service'],
-    hours: 'Lunch 12:00 PM – 3:00 PM · Dinner 7:00 PM – 11:00 PM',
+    tagline: 'Cooked here. Wrapped, not plated.',
+    oneLiner: 'A twenty-seat scratch-cooking café and small market — sandwiches, pastries, light bites and craft mocktails.',
+    long: 'stackd is a scratch cooking café: sandwiches, pastries, light bites and craft mocktails, made here rather than assembled. Service is a deliberate choice — the food comes in packaging, not on plates. Not throwaway pieces, but a vessel built for the dish it carries and branded like everything else we make. Twenty seats, and a small market folded into the cashier and barista bar: a chiller for grab-and-go and drinks, and a case for the morning’s pastries.',
+    highlights: ['Scratch cooking', 'Sandwiches & pastries', 'Craft mocktails', 'Branded service vessels', 'Grab-and-go market', 'Twenty seats'],
+    hours: 'Daily 8:00 AM – 11:00 PM',
   },
   'flipd': {
     tagline: 'Game, set, smash.',
