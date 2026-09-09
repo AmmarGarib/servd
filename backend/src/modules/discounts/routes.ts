@@ -102,10 +102,33 @@ export async function discountRoutes(fastify: FastifyInstance) {
     },
   )
 
-  // GET /discounts/active — storefront: get active section discounts for a concept right now
-  fastify.get<{ Querystring: { conceptId: string } }>(
+  // GET /discounts/active — storefront: active section discounts for ONE brand.
+  //
+  // Unauthenticated by design: the public menu needs to show a live discount
+  // before anyone signs in. That makes the where-clause the only thing standing
+  // between one company's pricing and everybody else's, and it had two holes:
+  //
+  //   1. `conceptId` was typed as required but never validated. Omit it and
+  //      Prisma receives `{ conceptId: undefined }`, which it treats as "no
+  //      filter" — the OR collapsed to `[{}, …]`, matching EVERY active
+  //      discount in the database, across every company. Same fail-open shape
+  //      as the tenantId ?? undefined bug in lib/tenantScope.ts.
+  //   2. `{ conceptId: null }` pulled in "all brands" rows. SectionDiscount has
+  //      no tenantId, so such a row belongs to no company and would be served
+  //      to all of them. POST /sections already refuses to create one
+  //      (CONCEPT_REQUIRED) and GET /sections already excludes them for exactly
+  //      this reason; this endpoint was the one that still read them.
+  //
+  // Now: the brand must be named, and only that brand's own rows come back.
+  fastify.get<{ Querystring: { conceptId?: string } }>(
     '/active',
-    async (req) => {
+    async (req, reply) => {
+      const conceptId = req.query.conceptId
+      if (!conceptId || !/^[0-9a-f-]{36}$/i.test(conceptId)) {
+        return reply.status(400).send({
+          error: { code: 'CONCEPT_REQUIRED', message: 'conceptId is required' },
+        })
+      }
       const now = new Date()
       const timeStr = now.toTimeString().substring(0, 5) // "HH:MM"
       const discounts = await prisma.sectionDiscount.findMany({
@@ -113,10 +136,7 @@ export async function discountRoutes(fastify: FastifyInstance) {
           isActive: true,
           startDate: { lte: now },
           endDate: { gte: now },
-          OR: [
-            { conceptId: req.query.conceptId },
-            { conceptId: null },
-          ],
+          conceptId,
         },
       })
       // Filter by time window

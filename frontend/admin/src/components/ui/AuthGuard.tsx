@@ -3,7 +3,23 @@ import { useState, useEffect } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
 import { useAuthStore } from '../../store/auth'
 
+// Exact paths anyone may load without a session.
 const PUBLIC_PATHS = ['/', '/login', '/kds/login']
+
+// Public route SUBTREES. Empty on purpose.
+//
+// `/supplier/<token>` — the external supplier portal — was the one candidate.
+// It authenticates on a token in the URL rather than a staff session, so
+// gating it locks suppliers out. Per the product owner that is accepted: the
+// portal stays behind the staff gate rather than carrying an exception that
+// has to stay correct forever. Anything added here is a page served to the
+// open internet, so it needs the same scrutiny as an unauthenticated API
+// route — name the reason, or leave it out.
+const PUBLIC_PREFIXES: string[] = []
+
+function isPublicPath(pathname: string): boolean {
+  return PUBLIC_PATHS.includes(pathname) || PUBLIC_PREFIXES.some((p) => pathname.startsWith(p))
+}
 
 export function AuthGuard({ children }: { children: React.ReactNode }) {
   const [hydrated, setHydrated] = useState(false)
@@ -24,14 +40,28 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (!hydrated) return
-    if (!user && !PUBLIC_PATHS.includes(pathname)) {
+    if (!user && !isPublicPath(pathname)) {
       router.replace('/login')
     }
   }, [user, pathname, router, hydrated])
 
-  // Always render children during SSR and initial hydration (matches server output).
-  // After hydration, hide content if redirect is pending.
-  if (hydrated && !user && !PUBLIC_PATHS.includes(pathname)) return null
+  // A protected route renders NOTHING until the client has rehydrated and found
+  // a user. It used to render children during SSR and first paint "to match
+  // server output", which meant `curl https://servd-admin…/modules` returned
+  // the whole module hub — every module name, the finance and payroll and
+  // ledger nav — to anyone, with no session at all. No business data leaked
+  // (the API 401s every request without a token) but the app's shape did, and
+  // with JS disabled the page simply stayed up.
+  //
+  // There is no server-side gate available here on purpose: the session cookie
+  // is host-only to the API (see backend/src/lib/cookies.ts), so Next
+  // middleware on the admin host cannot see it. Rendering nothing until the
+  // client proves a session is the correct gate for this architecture.
+  //
+  // No hydration mismatch: the server and the first client pass both render
+  // null for a protected path. Children appear only on a later pass.
+  const isPublic = isPublicPath(pathname)
+  if (!isPublic && (!hydrated || !user)) return null
 
   return <>{children}</>
 }
