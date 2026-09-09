@@ -253,6 +253,22 @@ async function build() {
         error: { code: 'VALIDATION_ERROR', message: 'Validation failed', details: validation },
       })
     }
+    // Errors raised by Fastify itself and by its plugins carry a real status
+    // code and a safe, client-facing message: rate limiting (429), payload too
+    // large (413), unsupported media type (415), bad JSON (400). Reporting them
+    // as 500 "Internal server error" told a guest who had simply booked too
+    // fast that the restaurant's system was broken, and left the client no
+    // status to branch on. Only 4xx is passed through — a 5xx from a plugin is
+    // still ours to own and still gets the generic message.
+    const e = err as FastifyError | undefined
+    const status = typeof e?.statusCode === 'number' ? e.statusCode : 0
+    if (status >= 400 && status < 500) {
+      fastify.log.warn({ err, code: e?.code, statusCode: status }, 'request rejected')
+      return reply.status(status).send({
+        error: { code: e?.code ?? 'BAD_REQUEST', message: e?.message ?? 'Request rejected' },
+      })
+    }
+
     fastify.log.error(err)
     return reply.status(500).send({ error: { code: 'INTERNAL_ERROR', message: 'Internal server error' } })
   })

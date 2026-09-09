@@ -30,6 +30,15 @@ import { bumpCustomerRollups } from '../../lib/customerRollups.js'
 
 const DEFAULT_DURATION_MIN = 90
 
+// Public-booking caps, keyed on the guest's phone number. See the block in the
+// POST /public handler for why these are per phone and not per IP.
+//
+// Six upcoming bookings is far past what any real guest holds at once and still
+// leaves room for a family booking several occasions. Three an hour is more
+// than enough to correct a mistake and retry.
+const MAX_UPCOMING_PER_PHONE = 6
+const MAX_BOOKINGS_PER_PHONE_PER_HOUR = 3
+
 // ─── Company boundary ────────────────────────────────────────────────────────
 // `assertConceptAccess` is a per-user brand whitelist that no-ops for every
 // management role, so it is NOT a company check. Every handler below that
@@ -868,6 +877,85 @@ export async function reservationRoutes(fastify: FastifyInstance) {
 
       const startTime = new Date(body.startTime)
       const endTime   = new Date(startTime.getTime() + durationMin * 60_000)
+
+      // ─── The operator's booking rules apply to the public widget too ───────
+      //
+      // These were enforced on the staff route and NOT here, so the public form
+      // was the way around every rule the restaurant had set: a party of 20 at
+      // a venue capped at 8, a table held sixteen months out, a booking for a
+      // date in 1990. The rules are the operator's, and the person most likely
+      // to ignore them is the one not standing in the restaurant.
+      const maxParty = bookPolicy?.maxPartySize ?? 20
+      if (body.partySize > maxParty) {
+        throw new AppError(
+          'PARTY_TOO_LARGE',
+          `Maximum party size is ${maxParty}. Please call us for larger groups.`,
+          400,
+        )
+      }
+
+      const hoursAhead = (startTime.getTime() - Date.now()) / 3_600_000
+      const minAdvanceHours = bookPolicy?.minAdvanceHours ?? 2
+      const maxAdvanceDays  = bookPolicy?.maxAdvanceDays ?? 60
+      if (hoursAhead < minAdvanceHours) {
+        throw new AppError(
+          'TOO_SOON',
+          hoursAhead < 0
+            ? 'That time has already passed.'
+            : `Reservations must be made at least ${minAdvanceHours} hours in advance.`,
+          400,
+        )
+      }
+      if (hoursAhead / 24 > maxAdvanceDays) {
+        throw new AppError('TOO_FAR', `Reservations cannot be made more than ${maxAdvanceDays} days ahead.`, 400)
+      }
+
+      // ─── Per-phone limits ─────────────────────────────────────────────────
+      //
+      // The route's rate limit is per IP, which bounds nothing that matters
+      // here. Two things it does not stop:
+      //
+      //   Slot squatting. One phone number can hold every table on the book;
+      //   no confirmation is required for the reservation to occupy a slot.
+      //
+      //   SMS bombing. Every booking fires an SMS to a phone number the caller
+      //   chose, on the operator's Twilio account. Without a per-number cap
+      //   this endpoint is a free SMS relay pointed at any number in Pakistan,
+      //   billed to GS Foods — and the target need never have heard of us.
+      //
+      // Both are bounded per phone rather than per IP, because the phone is the
+      // thing being protected and the thing being spent.
+      const phoneKey = body.guestPhone.replace(/\D/g, '')
+      const [upcomingForPhone, recentForPhone] = await Promise.all([
+        prisma.reservation.count({
+          where: {
+            guestPhone: body.guestPhone,
+            startTime: { gte: new Date() },
+            status: { in: ['booked', 'confirmed'] },
+          },
+        }),
+        prisma.reservation.count({
+          where: {
+            guestPhone: body.guestPhone,
+            createdAt: { gte: new Date(Date.now() - 3_600_000) },
+          },
+        }),
+      ])
+      if (upcomingForPhone >= MAX_UPCOMING_PER_PHONE) {
+        throw new AppError(
+          'TOO_MANY_BOOKINGS',
+          `This number already has ${upcomingForPhone} upcoming reservations. Cancel one before booking another, or call us.`,
+          429,
+        )
+      }
+      if (recentForPhone >= MAX_BOOKINGS_PER_PHONE_PER_HOUR) {
+        req.log.warn({ phoneTail: phoneKey.slice(-4) }, 'public booking: per-phone hourly cap hit')
+        throw new AppError(
+          'TOO_MANY_BOOKINGS',
+          'Too many booking attempts for this number. Please try again later or call us.',
+          429,
+        )
+      }
 
       // Refuse bookings into closures
       const closure = await prisma.conceptBlockout.findFirst({
