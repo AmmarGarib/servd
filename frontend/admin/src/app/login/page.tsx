@@ -12,9 +12,9 @@ type Mode = 'pin' | 'password' | 'signup' | 'twofactor'
 /**
  * The single staff login page. Two modes:
  *
- *   pin    — Default. Staff sign in with a 4–8 digit PIN. Most staff use the
- *            last 4 digits of their registered phone; the CEO and any
- *            admin-issued PINs are 6 digits. The pad accepts up to 8 and
+ *   pin    — Default. Staff sign in with a 4–8 digit PIN that THEY choose at
+ *            signup (the old phone-derived PINs are gone — the server rejects
+ *            weak ones and an admin can re-issue). The pad accepts up to 8 and
  *            submits on the explicit "Sign in" button (it deliberately does
  *            NOT auto-fire at 4 — that locked out longer-PIN users).
  *
@@ -60,6 +60,11 @@ export default function StaffLoginPage() {
   const [role,        setRole]        = useState<'manager' | 'cashier' | 'kitchen' | 'expediter' | 'marketing'>('cashier')
   const [reason,      setReason]      = useState('')
   const [signupDone,  setSignupDone]  = useState<{ name: string; pin: string } | null>(null)
+  // The PIN the new hire chooses. Staff signup REQUIRES one (4-8 digits, and
+  // the server rejects weak ones); the form never collected it, so every
+  // signup from this page failed validation before it reached a human.
+  const [signupPin,   setSignupPin]   = useState('')
+  const [signupPin2,  setSignupPin2]  = useState('')
 
   async function getCoords(): Promise<{ lat: number; lng: number } | null> {
     if (!navigator.geolocation) return null
@@ -112,6 +117,7 @@ export default function StaffLoginPage() {
 
   async function submitSignup(e: React.FormEvent) {
     e.preventDefault()
+    if (signupPin !== signupPin2) { setError('The two PINs do not match'); return }
     setError(''); setLoading(true)
     try {
       const res = await fetch(`${API_URL}/api/v1/auth/staff/signup`, {
@@ -121,6 +127,7 @@ export default function StaffLoginPage() {
           name: name.trim(),
           email: email.trim(),
           phone: phone.trim(),
+          pin: signupPin,
           role,
           ...(reason.trim() && { reason: reason.trim() }),
         }),
@@ -129,10 +136,10 @@ export default function StaffLoginPage() {
       if (!res.ok) {
         throw new Error(data.error?.message ?? 'Could not create account')
       }
-      // Compute the PIN the server derived (last 4 of phone) so we can show
-      // it back to the new hire. They'll need it once approved.
-      const derivedPin = phone.replace(/\D/g, '').slice(-4)
-      setSignupDone({ name: data.name ?? name, pin: derivedPin })
+      // Show back the PIN they chose. This used to display the last 4 digits
+      // of their phone, which is what PINs used to be derived from — staff now
+      // pick their own, so the old line told them the wrong number.
+      setSignupDone({ name: data.name ?? name, pin: signupPin })
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not create account')
     } finally {
@@ -252,11 +259,11 @@ export default function StaffLoginPage() {
           </p>
           <div className="rounded-2xl p-4 mb-5"
             style={{ background: 'rgba(0,0,0,0.4)', border: '1px solid rgba(255,255,255,0.06)' }}>
-            <p className="text-[10px] uppercase tracking-wider font-bold text-s-dim mb-1">Your login PIN</p>
+            <p className="text-[10px] uppercase tracking-wider font-bold text-s-dim mb-1">The PIN you chose</p>
             <p className="text-3xl font-black tracking-[0.4em] text-s-text">{signupDone.pin}</p>
-            <p className="text-[10px] text-s-dim mt-2">This is the last 4 digits of your phone number — it's your permanent login PIN. Sign in with your name (or email) + this PIN once the CEO approves your account.</p>
+            <p className="text-[10px] text-s-dim mt-2">Keep this to yourself — it is your login PIN. Sign in with your name (or email) + this PIN once the CEO approves your account.</p>
           </div>
-          <button onClick={() => { setMode('pin'); setSignupDone(null); setName(''); setEmail(''); setPhone(''); setReason('') }}
+          <button onClick={() => { setMode('pin'); setSignupDone(null); setName(''); setEmail(''); setPhone(''); setReason(''); setSignupPin(''); setSignupPin2('') }}
             className="w-full rounded-xl py-3 text-sm font-black transition-all active:scale-[0.98]"
             style={{ background: 'linear-gradient(135deg, #00D4B1 0%, #6366F1 100%)', color: '#000' }}>
             Back to PIN pad
@@ -481,7 +488,7 @@ export default function StaffLoginPage() {
               {([
                 ['name',  'Full name',       'text', 'Your name',        name,  setName],
                 ['email', 'Email',           'email','you@example.com',  email, setEmail],
-                ['phone', 'Mobile (your PIN = last 4 digits)', 'tel', '0300 1234567', phone, setPhone],
+                ['phone', 'Mobile',           'tel',  '0300 1234567',     phone, setPhone],
               ] as const).map(([id, label, type, ph, val, set]) => (
                 <div key={id}>
                   <label htmlFor={`signup-${id}`} className="block text-[10px] font-black uppercase tracking-[0.2em] mb-1.5"
@@ -492,6 +499,29 @@ export default function StaffLoginPage() {
                     style={{ background: 'rgba(255,255,255,0.04)', border: '1.5px solid rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.9)' }} />
                 </div>
               ))}
+
+              <div>
+                <label htmlFor="signup-pin" className="block text-[10px] font-black uppercase tracking-[0.2em] mb-1.5"
+                  style={{ color: 'rgba(255,255,255,0.4)' }}>Choose a PIN (4&ndash;8 digits)</label>
+                <input id="signup-pin" type="password" inputMode="numeric" autoComplete="new-password"
+                  value={signupPin} onChange={(e) => setSignupPin(e.target.value.replace(/\D/g, '').slice(0, 8))}
+                  placeholder="••••" required minLength={4}
+                  className="w-full rounded-xl px-4 py-3 text-sm font-semibold tracking-[0.3em] focus:outline-none transition-all"
+                  style={{ background: 'rgba(255,255,255,0.04)', border: '1.5px solid rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.9)' }} />
+                <p className="text-[10px] text-s-dim mt-1.5">
+                  You will type this on the shared tablet, so avoid 1234, your birth year, or four of the same digit.
+                </p>
+              </div>
+
+              <div>
+                <label htmlFor="signup-pin2" className="block text-[10px] font-black uppercase tracking-[0.2em] mb-1.5"
+                  style={{ color: 'rgba(255,255,255,0.4)' }}>Confirm PIN</label>
+                <input id="signup-pin2" type="password" inputMode="numeric" autoComplete="new-password"
+                  value={signupPin2} onChange={(e) => setSignupPin2(e.target.value.replace(/\D/g, '').slice(0, 8))}
+                  placeholder="••••" required minLength={4}
+                  className="w-full rounded-xl px-4 py-3 text-sm font-semibold tracking-[0.3em] focus:outline-none transition-all"
+                  style={{ background: 'rgba(255,255,255,0.04)', border: '1.5px solid rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.9)' }} />
+              </div>
 
               <div>
                 <label htmlFor="signup-role" className="block text-[10px] font-black uppercase tracking-[0.2em] mb-1.5"
