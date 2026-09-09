@@ -112,10 +112,18 @@ export async function salesTaxReturn(tenantId: string, from: Date, to: Date): Pr
   const taxableByConcept: Array<{ conceptSlug: string; conceptName: string; revenueCents: number }> = []
   let taxableSales = 0
   const revenueAccounts = await prisma.account.findMany({ where: { tenantId, type: 'revenue' }, select: { id: true, code: true } })
+  // A brand with no entry in the code map falls back to 4090 (Other/Catering),
+  // and several brands can share it. The loop looked the account up per brand
+  // and summed it each time, so 4090's revenue was counted once per unmapped
+  // brand — over-declaring taxable sales, and therefore output GST, on a return
+  // filed with FBR/SRB. Count each account at most once.
+  const countedAccountIds = new Set<string>()
   for (const c of concepts) {
     // Find the matching 4xxx account by code-mapping in journal.ts (revenueCodeForConcept)
     const revAccount = revenueAccounts.find((a) => a.code === conceptRevenueCodeFromSlug(c.slug))
     if (!revAccount) continue
+    if (countedAccountIds.has(revAccount.id)) continue
+    countedAccountIds.add(revAccount.id)
     const sums = await prisma.journalLine.groupBy({
       by: ['type'], _sum: { amountCents: true },
       where: { accountId: revAccount.id, journalEntry: { tenantId, entryDate: { gte: from, lte: to } } },

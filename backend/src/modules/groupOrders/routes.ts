@@ -81,7 +81,7 @@ export async function groupOrderRoutes(fastify: FastifyInstance) {
       const go = await prisma.groupOrder.findUnique({
         where: { shareCode: code },
         include: {
-          concept: { select: { id: true, name: true, slug: true, taxRate: true } },
+          concept: { select: { id: true, name: true, slug: true, taxRate: true, taxRateCash: true } },
           members: { orderBy: { joinedAt: 'asc' } },
           items:   { orderBy: { createdAt: 'asc' } },
         },
@@ -263,7 +263,17 @@ export async function groupOrderRoutes(fastify: FastifyInstance) {
       }
 
       const subtotal = go.items.reduce((s, i) => s + i.unitPriceCents * i.quantity, 0)
-      const taxRate  = go.concept.taxRate / 100
+      // GST is split by tender: taxRateCash (15%) for cash, taxRateCard (8%)
+      // for card and digital — see pos/service.ts. concept.taxRate is the
+      // legacy single rate, still defaulting to 17%, and this was the only
+      // place still using it, so a group bill was charged roughly nine points
+      // more GST than the same food ordered at the till or online.
+      //
+      // A group order settles at the till under whatever tender the table
+      // chooses, which isn't known here, so it takes the cash rate — the same
+      // default the POS applies when the cashier hasn't picked a method, and
+      // the conservative side of the two.
+      const taxRate  = (go.concept.taxRateCash ?? go.concept.taxRate) / 100
       const taxCents = Math.round(subtotal * taxRate)
       const total    = subtotal + taxCents
 

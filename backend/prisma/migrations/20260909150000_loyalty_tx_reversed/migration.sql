@@ -1,0 +1,11 @@
+-- Reverse EVERY loyalty earn on a refunded order, not just the first.
+--
+-- The refund path deduplicated on (orderId, type='reversal') — per order rather
+-- than per transaction. An order can carry more than one earn: the completion
+-- earn, plus the 50-point "posted a review within 24h" bonus, which is written
+-- against the same orderId. Only the first was ever reversed, so the customer
+-- kept points for an order that was refunded.
+--
+-- Existing earn rows are left NULL: none has been reversed by this mechanism,
+-- and a later refund should still claw them back exactly once.
+ALTER TABLE "loyalty_transactions" ADD COLUMN IF NOT EXISTS "reversedAt" TIMESTAMP(3);

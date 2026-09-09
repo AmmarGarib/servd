@@ -132,6 +132,13 @@ enum LoyaltyTxType {
   redeem
   expire
   adjustment
+  // Points clawed back when the order that earned them is refunded.
+  // This value was MISSING while orderPosting.ts wrote `type: 'reversal' as
+  // never` — the cast silenced the compiler, Postgres rejected the insert at
+  // runtime, and because the insert shared a transaction with the balance
+  // decrement, the whole reversal rolled back. Refunds have never clawed a
+  // single loyalty point back.
+  reversal
 }
 
 enum BroadcastStatus {
@@ -717,6 +724,11 @@ model GiftCardRedemption {
   balanceAfter Int
   redeemedAt   DateTime @default(now())
   redeemedById String? // staff user when manual
+  // Set when a refund has re-credited this redemption back onto the card.
+  // The refund path claimed to be idempotent "on a flag we add
+  // (reversedAt)" — the flag was never actually added, so every write of
+  // status 'refunded' re-credited the card again, minting balance.
+  reversedAt   DateTime?
 
   giftCard GiftCard @relation(fields: [giftCardId], references: [id], onDelete: Cascade)
   order    Order?   @relation(fields: [orderId], references: [id])
@@ -1432,6 +1444,12 @@ model LoyaltyTransaction {
   pointsDelta      Int
   description      String?
   createdAt        DateTime      @default(now())
+  // Set on an `earn` row once a refund has clawed those points back.
+  // Reversal used to be idempotent on (orderId, type='reversal') — per ORDER,
+  // not per transaction — so an order carrying two earns (the completion earn
+  // and the 50-point review bonus both share its orderId) had only the first
+  // reversed and the second survived the refund.
+  reversedAt       DateTime?
 
   loyaltyAccount LoyaltyAccount @relation(fields: [loyaltyAccountId], references: [id])
   order          Order?         @relation(fields: [orderId], references: [id])

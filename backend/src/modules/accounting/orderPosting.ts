@@ -301,10 +301,15 @@ export async function postOrderRefund(orderId: string, reason: string): Promise<
 
   // 2) Loyalty earn reversal — idempotent on (orderId, type='reversal')
   for (const earn of order.loyaltyTxs) {
-    const alreadyReversed = await prisma.loyaltyTransaction.findFirst({
-      where: { orderId: earn.orderId, type: 'reversal' as never },
+    // Claim THIS earn, not the order. The old check asked whether the order had
+    // any reversal at all, so the second earn on an order — the review bonus,
+    // which carries the same orderId as the completion earn — was skipped and
+    // the customer kept those points on a refunded order.
+    const claimed = await prisma.loyaltyTransaction.updateMany({
+      where: { id: earn.id, reversedAt: null },
+      data: { reversedAt: new Date() },
     })
-    if (alreadyReversed) continue
+    if (claimed.count === 0) continue
     try {
       await prisma.$transaction([
         prisma.loyaltyAccount.update({
@@ -318,13 +323,17 @@ export async function postOrderRefund(orderId: string, reason: string): Promise<
           data: {
             loyaltyAccountId: earn.loyaltyAccountId,
             orderId: earn.orderId,
-            type: 'reversal' as never,
+            type: 'reversal',
             pointsDelta: -earn.pointsDelta,
             description: `Reversed earn from refunded order: ${reason}`,
           },
         }),
       ])
     } catch (err) {
+      // Release the claim so a retry can still claw the points back.
+      await prisma.loyaltyTransaction
+        .updateMany({ where: { id: earn.id }, data: { reversedAt: null } })
+        .catch(() => {})
       console.error(`[refund] loyalty reversal for order ${orderId} failed:`, (err as Error).message)
     }
   }
@@ -363,13 +372,18 @@ export async function postOrderRefund(orderId: string, reason: string): Promise<
   //    flag we add to GiftCardRedemption (reversedAt). Falls back to balance
   //    restoration only if not already reversed.
   for (const r of order.giftCardRedemptions) {
-    const existing = await prisma.giftCardRedemption.findUnique({
-      where: { id: r.id },
-      select: { balanceAfter: true } as never,
-    })
-    if (!existing) continue
-    // Re-credit the gift card by the redeemed amount, re-activating if needed.
     try {
+      // Claim the reversal before touching the balance. The old code read the
+      // row, ignored what it read, and incremented unconditionally — so every
+      // write of status 'refunded' put the money back on the card again. Two
+      // status writes doubled the customer's balance; a loop minted it. The
+      // conditional update means exactly one caller can ever win.
+      const claimed = await prisma.giftCardRedemption.updateMany({
+        where: { id: r.id, reversedAt: null },
+        data: { reversedAt: new Date() },
+      })
+      if (claimed.count === 0) continue   // already reversed
+
       await prisma.giftCard.update({
         where: { id: r.giftCardId },
         data: {
@@ -378,6 +392,10 @@ export async function postOrderRefund(orderId: string, reason: string): Promise<
         },
       })
     } catch (err) {
+      // Release the claim so a retry can still restore the balance.
+      await prisma.giftCardRedemption
+        .updateMany({ where: { id: r.id }, data: { reversedAt: null } })
+        .catch(() => {})
       console.error(`[refund] gift card restore for ${r.giftCardId} failed:`, (err as Error).message)
     }
   }

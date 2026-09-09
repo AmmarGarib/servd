@@ -1,0 +1,11 @@
+-- Make gift-card refund reversal idempotent.
+--
+-- The refund path re-credited the redeemed amount onto the card every time it
+-- ran, with a comment claiming it was guarded by a `reversedAt` flag that had
+-- never been added to the table. Repeated writes of order status 'refunded'
+-- therefore minted gift-card balance out of nothing.
+--
+-- Existing rows are left NULL: they have not been reversed by this mechanism,
+-- and a future refund of one of those orders should still restore the balance
+-- exactly once.
+ALTER TABLE "gift_card_redemptions" ADD COLUMN IF NOT EXISTS "reversedAt" TIMESTAMP(3);
