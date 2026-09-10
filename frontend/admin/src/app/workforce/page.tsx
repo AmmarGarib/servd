@@ -1122,8 +1122,14 @@ function AddStaffModal({
   onClose: () => void; onCreated: (created: StaffUser | null) => void
 }) {
   const [name, setName]         = useState('')
+  const [email, setEmail]       = useState('')
   const [category, setCategory] = useState<string>('management')
   const [jobTitle, setJobTitle] = useState('')
+  // The generated password, shown ONCE after creation. It is never
+  // retrievable again — only the bcrypt hash is stored — so if this screen
+  // does not surface it, the account it just made is one nobody can sign into.
+  const [issued, setIssued] = useState<{ name: string; email: string; password: string } | null>(null)
+  const [copied, setCopied] = useState(false)
   // Multi-tenant from the get-go: head-office hires (procurement, finance,
   // HR, marketing) typically work across every company. Default to the
   // operator's currently active tenant when single-tenant; empty in
@@ -1147,20 +1153,32 @@ function AddStaffModal({
   }, [category])
 
   const create = useMutation({
-    mutationFn: () => api.post<StaffUser>('/auth/users', {
+    mutationFn: () => api.post<StaffUser & { temporaryPassword?: string }>('/auth/users', {
       ...(name.trim() ? { name: name.trim() } : {}),
+      email: email.trim().toLowerCase(),
       role: primaryRole,
       ...(jobTitle.trim() ? { jobTitle: jobTitle.trim() } : {}),
       ...(primaryTenantId ? { tenantId: primaryTenantId } : {}),
       ...(tenantIds.length > 0 ? { tenantIds } : {}),
     }),
-    onSuccess: (created) => onCreated(created ?? null),
+    onSuccess: (created) => {
+      // Hold the modal open on the password. Closing straight to the list —
+      // which is what it used to do — would throw away the only copy of the
+      // credential that exists.
+      if (created?.temporaryPassword) {
+        setIssued({ name: created.name ?? name, email: created.email ?? email, password: created.temporaryPassword })
+      } else {
+        onCreated(created ?? null)
+      }
+    },
     onError:   (e: unknown) => setErr(e instanceof Error ? e.message : 'Failed to create staff'),
   })
 
   function submit() {
     setErr(null)
     if (!jobTitle.trim()) return setErr('Type a role / job title so you remember who this is.')
+    if (!email.trim()) return setErr('An email is required — it is how they sign in.')
+    if (!/@gsfoods\.pk$/i.test(email.trim())) return setErr('Staff sign in with an @gsfoods.pk address.')
     if (tenants.length > 0 && tenantIds.length === 0) return setErr('Pick at least one company this hire works for.')
     create.mutate()
   }
@@ -1169,13 +1187,63 @@ function AddStaffModal({
     <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4" onClick={onClose}>
       <div className="bg-kds-card border border-kds-border rounded-2xl p-5 w-full max-w-md"
         onClick={(e) => e.stopPropagation()}>
+        {issued ? (
+          <>
+            <h2 className="font-black text-lg mb-1">{issued.name} is set up</h2>
+            <p className="text-xs text-kds-subtext mb-4">
+              Give them these two things. The password is shown <strong>once</strong> — we
+              store only a hash, so nobody can look it up later. If you lose it, issue a new one.
+            </p>
+            <div className="rounded-lg border border-kds-border bg-kds-bg p-3 space-y-2 mb-4">
+              <div>
+                <div className="text-[10px] uppercase tracking-wider text-kds-subtext mb-0.5">Email</div>
+                <div className="font-mono text-sm text-kds-text break-all">{issued.email}</div>
+              </div>
+              <div>
+                <div className="text-[10px] uppercase tracking-wider text-kds-subtext mb-0.5">Password</div>
+                <div className="font-mono text-base font-bold text-emerald-400 break-all">{issued.password}</div>
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => {
+                  void navigator.clipboard?.writeText(`${issued.email}\n${issued.password}`)
+                    .then(() => setCopied(true)).catch(() => undefined)
+                }}
+                className="flex-1 rounded-lg py-2 text-xs font-bold border border-kds-border text-kds-text hover:border-emerald-400/40">
+                {copied ? 'Copied' : 'Copy both'}
+              </button>
+              <button
+                onClick={() => onCreated(null)}
+                className="flex-1 rounded-lg py-2 text-xs font-black bg-emerald-500 text-black">
+                Done
+              </button>
+            </div>
+            <p className="text-[10px] text-kds-subtext/70 mt-3">
+              They can change it themselves from the &ldquo;Change my password&rdquo; link on the sign-in page.
+            </p>
+          </>
+        ) : (
+        <>
         <h2 className="font-black text-lg mb-1">Add staff</h2>
         <p className="text-xs text-kds-subtext mb-4">
-          Pick the companies they work for, their category, and a role title. Fill in name,
-          email, phone, and PIN on the row right after — no second click needed.
+          Their email is how they sign in, so it is required and must be
+          @gsfoods.pk. We generate a password and show it once on the next
+          screen for you to hand over.
         </p>
 
         <div className="space-y-2.5">
+          <Field label="Email" hint="Required — this is their sign-in">
+            <input
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="firstname.lastname@gsfoods.pk"
+              type="email"
+              autoCapitalize="none"
+              className={inputCls}
+            />
+          </Field>
+
           {/* Multi-tenant picker. Head-office staff (procurement, finance,
               HR, marketing) typically work for every company — pick more than
               one and the first becomes their primary. */}
@@ -1248,6 +1316,8 @@ function AddStaffModal({
             {create.isPending ? 'Adding…' : 'Add staff →'}
           </button>
         </div>
+        </>
+        )}
       </div>
     </div>
   )

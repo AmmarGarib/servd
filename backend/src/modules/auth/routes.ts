@@ -18,6 +18,7 @@ import { serviceClient as prisma } from '../../lib/prisma.js'
 import { resolveTenantScope, tenantWhere } from '../../lib/tenantScope.js'
 import { AppError } from '../../lib/errors.js'
 import { isStaffEmail, normaliseStaffEmail, STAFF_EMAIL_MESSAGE } from '../../lib/staffEmail.js'
+import { generateStaffPassword } from '../../lib/generatePassword.js'
 import {
   check as checkRateLimit,
   recordFailure,
@@ -722,17 +723,7 @@ export async function authRoutes(fastify: FastifyInstance) {
       phone:   z.string().min(7).max(20),
       role:    STAFF_ROLE,
       reason:  z.string().max(280).optional(),    // free-text "why I'm joining"
-      // The new hire chooses their own PIN. Never derived from the phone
-      // number any more — a phone's last 4 digits are effectively public, and
-      // anyone who knew them could log in as that person.
-      pin:     z.string().regex(/^\d{4,8}$/, 'PIN must be 4–8 digits'),
     }).parse(req.body)
-
-    if (isWeakPin(body.pin)) {
-      return reply.status(400).send({
-        error: { code: 'WEAK_PIN', message: 'That PIN is too easy to guess — avoid repeated digits (1111), runs (1234), and your birth year.' },
-      })
-    }
 
     if (!isStaffEmail(body.email)) {
       return reply.status(400).send({ error: { code: 'EMAIL_NOT_COMPANY_DOMAIN', message: STAFF_EMAIL_MESSAGE } })
@@ -746,23 +737,26 @@ export async function authRoutes(fastify: FastifyInstance) {
       })
     }
 
-    // The staff member's own PIN. The CEO never sees it — approval gates the
-    // ACCOUNT, not the credential, and the account stays `pending` (unable to
-    // log in) until the CEO activates it.
-    const pinPlain = body.pin
-
-    // Random unusable password hash — we don't use password login at all.
-    const password = await hashPassword(randomBytes(16).toString('hex'))
-    const pin      = await hashPin(pinPlain)
+    // This is a REQUEST TO JOIN, not an account with a credential.
+    //
+    // It used to be: the hire picks a PIN, the CEO approves, the PIN works.
+    // Under email+password there is no credential a stranger can safely set
+    // for themselves, so the row is created with an unusable random password
+    // and NO way in. Approving it is not enough either — the CEO then issues a
+    // password from Workforce, which is the only path that produces one.
+    // Saying that here matters: the old copy told the hire they could sign in
+    // after approval, which would now be a lie.
+    const password = await hashPassword(randomBytes(24).toString('base64url'))
 
     const user = await prisma.user.create({
       data: {
         name: body.name.trim(),
         email,
         phone: body.phone.trim(),
-        password, pin,
+        password,
         role: body.role,
         accountStatus: 'pending',
+        mustChangePassword: true,
         signupReason: body.reason ?? null,
         // isActive stays true; accountStatus is the real gate. We keep isActive
         // for legacy "soft disable" semantics.
@@ -770,11 +764,9 @@ export async function authRoutes(fastify: FastifyInstance) {
       select: { id: true, name: true, email: true, role: true, phone: true, accountStatus: true },
     })
 
-    // No PIN echoed back — they chose it, they already know it. Only the
-    // bcrypt hash is stored, so nobody (CEO included) can read it later.
     return reply.status(201).send({
       ...user,
-      message: 'Account created with the PIN you chose. The CEO will review and activate your account — you can log in once it is approved.',
+      message: 'Request sent. Once the CEO approves you they will give you a password to sign in with.',
     })
   })
 
@@ -1056,12 +1048,19 @@ export async function authRoutes(fastify: FastifyInstance) {
     }).parse(req.body)
 
     // Password not used for login (PIN-only) — store a random unusable hash
-    // CSPRNG, not Math.random(). This value is the account's ONLY credential
-    // under email+password login, and Math.random() is V8's xorshift128+ while
-    // Date.now() is observable from the API's own response headers — together
-    // they narrow the search space for anyone who can observe one account
-    // creation and guess at others made in the same process.
-    const password = await hashPassword(randomBytes(24).toString('base64url'))
+    // The generated password. This is the account's ONLY credential under
+    // email+password login, so two things matter:
+    //
+    //  1. It is CSPRNG. It used to be `Math.random() + Date.now()` —
+    //     xorshift128+ plus a value readable from the API's own response
+    //     headers, which narrows the search space for anyone who can observe
+    //     one account creation and guess at others made in the same process.
+    //  2. The PLAINTEXT is returned ONCE, below. Until now the response
+    //     carried no credential at all, so creating a staff member produced an
+    //     account nobody could ever sign into — the CEO had no password to
+    //     hand over and there is no reset flow to recover with.
+    const temporaryPassword = generateStaffPassword()
+    const password = await hashPassword(temporaryPassword)
     // PIN = the explicit body.pin if the CEO typed one, otherwise a CSPRNG
     // temporary PIN that the staff member MUST change on first login. Never
     // derived from the phone number — a phone's last 4 digits are effectively
@@ -1144,6 +1143,10 @@ export async function authRoutes(fastify: FastifyInstance) {
     })
     return reply.status(201).send({
       ...user,
+      // Shown once, then unrecoverable — only the bcrypt hash is stored. The
+      // admin UI must surface this at creation time or the account is dead on
+      // arrival.
+      temporaryPassword,
       hasPin: !!user.pin,
       pin: undefined,
       tenants: dedupeTenants([
