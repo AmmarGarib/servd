@@ -385,6 +385,50 @@ export async function authRoutes(fastify: FastifyInstance) {
     return reply.status(204).send()
   })
 
+  // POST /auth/users/:id/reissue-password — admin issues a fresh password.
+  //
+  // The gap this fills: a forgotten password had NO remedy. Self-service
+  // change needs the current one, there is no email reset flow, and the only
+  // other path was editing the database by hand on the production box. The
+  // Workforce hand-over screen already tells the operator "if you lose it,
+  // issue a new one" — until now that was not true.
+  //
+  // Returns the plaintext ONCE, same contract as account creation: we store a
+  // bcrypt hash and nobody, admin included, can read it back afterwards.
+  fastify.post<{ Params: { id: string } }>(
+    '/users/:id/reissue-password',
+    { preHandler: requireAuth(...ADMIN_ONLY) },
+    async (req, reply) => {
+      const target = await prisma.user.findFirst({
+        where: { id: req.params.id, deletedAt: null, tenantId: req.staffUser!.tenantFilter },
+        select: { id: true, name: true, email: true },
+      })
+      if (!target) {
+        return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Staff member not found in your active company' } })
+      }
+      if (!target.email) {
+        return reply.status(400).send({ error: { code: 'EMAIL_REQUIRED', message: 'This account has no email, so it has no way to sign in. Add one first.' } })
+      }
+
+      const temporaryPassword = generateStaffPassword()
+      await prisma.user.update({
+        where: { id: target.id },
+        data: { password: await hashPassword(temporaryPassword), mustChangePassword: true },
+      })
+      // Whoever knew the old password loses their sessions with it. A reissue
+      // is most often triggered BECAUSE a credential is suspect.
+      await revokeAllForSubject(target.id)
+      req.log.warn({ actor: req.staffUser!.id, target: target.id }, 'password reissued by admin')
+
+      return reply.status(200).send({
+        id: target.id,
+        name: target.name,
+        email: target.email,
+        temporaryPassword,
+      })
+    },
+  )
+
   // POST /auth/users/:id/2fa/reset — admin clears someone's 2FA enrolment.
   //
   // Without this, an account enrolled in WhatsApp OTP whose phone is lost,

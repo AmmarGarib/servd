@@ -818,6 +818,16 @@ function InlineEditor({
     mutationFn: () => api.patch(`/auth/staff/${user.id}/reject`, {}),
     onSuccess:  () => onChange(),
   })
+  // Reissuing a password is the ONLY remedy for a forgotten one: self-service
+  // change needs the current password, and there is no email reset flow. The
+  // new password comes back once and is held on screen until dismissed —
+  // closing without copying means issuing another.
+  const [reissued, setReissued] = useState<string | null>(null)
+  const reissue = useMutation({
+    mutationFn: () => api.post<{ temporaryPassword: string }>(`/auth/users/${user.id}/reissue-password`, {}),
+    onSuccess: (r) => setReissued(r?.temporaryPassword ?? null),
+  })
+
   const toggleActive = useMutation({
     mutationFn: () => api.patch(`/auth/users/${user.id}`, { isActive: !user.isActive }),
     onSuccess:  () => onChange(),
@@ -1102,12 +1112,44 @@ function InlineEditor({
             </button>
           )}
           <button onClick={() => {
+              if (window.confirm(`Issue a new password for ${user.name}? Their current one stops working immediately and they will be signed out everywhere.`)) reissue.mutate()
+            }} disabled={reissue.isPending}
+            className="rounded-md px-2 py-1.5 text-[11px] font-bold border border-kds-border text-kds-subtext hover:text-emerald-400 hover:border-emerald-400/40">
+            {reissue.isPending ? 'Issuing…' : 'New password'}
+          </button>
+          <button onClick={() => {
               if (window.confirm(`Delete ${user.name}? This soft-deletes — history is preserved.`)) remove.mutate()
             }} disabled={remove.isPending}
             className="rounded-md px-2 py-1.5 text-[11px] font-bold border border-kds-border text-kds-subtext hover:text-red-400 hover:border-red-400/40">
             🗑 Delete
           </button>
         </div>
+
+        {/* The reissued password, held on screen until dismissed. Only a hash
+            is stored, so this is the only moment it exists in readable form. */}
+        {reissued && (
+          <div className="mt-3 rounded-lg border border-emerald-400/30 bg-emerald-400/5 p-3">
+            <div className="text-[10px] uppercase tracking-wider text-emerald-400/80 mb-1">
+              New password for {user.name} — shown once
+            </div>
+            <div className="font-mono text-sm font-bold text-emerald-400 break-all mb-2">{reissued}</div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => { void navigator.clipboard?.writeText(reissued).catch(() => undefined) }}
+                className="rounded-md px-2 py-1 text-[11px] font-bold border border-kds-border text-kds-text hover:border-emerald-400/40">
+                Copy
+              </button>
+              <button
+                onClick={() => setReissued(null)}
+                className="rounded-md px-2 py-1 text-[11px] font-bold text-kds-subtext hover:text-kds-text">
+                Done
+              </button>
+            </div>
+            <p className="text-[10px] text-kds-subtext/70 mt-2">
+              They can set their own from the &ldquo;Change my password&rdquo; link on the sign-in page.
+            </p>
+          </div>
+        )}
       </div>
     </div>
   )
