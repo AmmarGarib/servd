@@ -34,7 +34,6 @@ import type { Concept } from '../../../lib/concept'
 import { CrossBrandStrip } from '../parts/CrossBrandStrip'
 import { OpenStatusBadge, HoursGrid, useHoursData } from '../parts/OpenStatusBadge'
 import { brandStory } from '../../../lib/concept'
-import { FLIPD_MENU } from './FlipdMenu'
 
 interface Props {
   concept: Concept
@@ -138,8 +137,12 @@ export function FlipdLayout({ concept, concepts }: Props) {
           </p>
 
           <div style={{ marginTop: '2.5rem', display: 'flex', gap: '0.75rem', flexWrap: 'wrap', justifyContent: 'center' }}>
+            {/* Order now goes to the ordering surface (live prices, live
+                availability, basket). See the menu goes to the read-only menu
+                page. Two different jobs, two different pages — the landing
+                page carries neither. */}
             <Link href={`/${concept.slug}`} className="flipd-btn">Order now</Link>
-            <a href="#menu" className="flipd-btn flipd-btn-ghost">See the menu</a>
+            <Link href={`/brand/${concept.slug}/menu`} className="flipd-btn flipd-btn-ghost">See the menu</Link>
           </div>
         </div>
       </section>
@@ -161,60 +164,10 @@ export function FlipdLayout({ concept, concepts }: Props) {
         </div>
       </section>
 
-      {/* ── MENU ─────────────────────────────────────────────────────────────
-          Build lines verbatim from the spec sheet. No prices: the ordering
-          flow owns money, and a second copy of the price list on a brand page
-          is a thing that silently goes stale. */}
-      <section id="menu" style={{ padding: 'clamp(2rem, 5vh, 3rem) clamp(1.5rem, 5vw, 3rem) clamp(3rem, 8vh, 5rem)' }}>
-        <div style={{ maxWidth: '68rem', margin: '0 auto' }}>
-          <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '1.5rem', flexWrap: 'wrap', marginBottom: '1.75rem' }}>
-            <h2 className="flipd-display" style={{ fontSize: 'clamp(1.9rem, 4vw, 2.8rem)', margin: 0 }}>The menu.</h2>
-            <span className="flipd-eyebrow">Built to spec</span>
-          </div>
-
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 26rem), 1fr))', gap: 'clamp(1rem, 2.5vw, 1.75rem)', alignItems: 'start' }}>
-            {FLIPD_MENU.map((group) => (
-              <div key={group.page} className="flipd-panel" style={{ padding: 'clamp(1.5rem, 3vw, 2rem)' }}>
-                <h3 className="flipd-display" style={{ fontSize: '1.5rem', margin: '0 0 0.35rem' }}>{group.page}</h3>
-
-                {group.sections.map((sec) => (
-                  <div key={sec.section} style={{ marginTop: '1.4rem' }}>
-                    <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.6rem', flexWrap: 'wrap' }}>
-                      <span className="flipd-eyebrow">{sec.section}</span>
-                      {sec.note && (
-                        <span style={{ fontSize: '0.74rem', color: 'var(--flipd-blue-faint)' }}>{sec.note}</span>
-                      )}
-                    </div>
-
-                    <div style={{ marginTop: '0.6rem' }}>
-                      {sec.items.map((item) => (
-                        <div key={item.name} className="flipd-item" style={{ padding: '0.85rem 0' }}>
-                          <p className="flipd-item-name" style={{ margin: 0 }}>{item.name}</p>
-                          <p className="flipd-item-build" style={{ margin: '0.25rem 0 0' }}>{item.build}</p>
-                          {item.options && (
-                            <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap', marginTop: '0.55rem' }}>
-                              {item.options.map((o) => (
-                                <span key={o} className="flipd-chip">{o}</span>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ))}
-          </div>
-
-          <p style={{ fontSize: '0.8rem', color: 'var(--flipd-blue-faint)', marginTop: '1.5rem', textAlign: 'center' }}>
-            Prices and availability live on the ordering page.
-          </p>
-        </div>
-      </section>
-
-      <Checker />
-
+      {/* The menu used to live here, inline. It is now its own page
+          (/brand/flipd/menu) driven by the live menu API, so the landing page
+          stays a pitch and there is exactly one copy of the menu — the one
+          the kitchen and the till already agree on. */}
       {/* ── CORE VALUES ──────────────────────────────────────────────────────
           On the inverted band: Flipd Blue field, mustard type. */}
       <section

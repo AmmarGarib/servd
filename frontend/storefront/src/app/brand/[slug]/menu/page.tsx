@@ -1,7 +1,8 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
-import type { Concept } from '../../../../lib/concept'
+import { formatBrandName, type Concept } from '../../../../lib/concept'
 import { SimmerMenu } from '../../../../components/brand/layouts/SimmerMenu'
+import { FlipdMenuPage } from '../../../../components/brand/layouts/FlipdMenuPage'
 
 const API_URL = process.env.INTERNAL_API_URL ?? process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -32,11 +33,19 @@ const FALLBACK_CONCEPTS: Record<string, Concept> = {
   },
 }
 
+interface ModifierGroup {
+  id: string
+  name: string
+  modifiers?: { id: string; name: string; priceDeltaCents?: number }[]
+}
 interface MenuItem {
   id: string; name: string; description: string | null; priceCents: number
   imageUrl: string | null
   videoUrl: string | null
   isAvailable?: boolean
+  // The API returns these; the generic layout ignores them but the flipd
+  // layout prints them as the item's options (Single / Double / Lettuce wrap).
+  modifierGroups?: ModifierGroup[]
 }
 interface MenuCategory { id: string; name: string; items: MenuItem[] }
 
@@ -88,6 +97,20 @@ export default async function BrandMenuPage({ params }: { params: Promise<{ slug
   // pricing and availability stay accurate.
   if (slug === 'simmer' && !hasAnyItems) {
     return <SimmerMenu slug={concept.slug} conceptName={concept.name} />
+  }
+
+  // flipd renders its menu in its own brand chrome whether or not anything is
+  // published — unlike simmer's, this layout is driven entirely by the live
+  // categories and has its own empty state, so there is no point dropping to
+  // the generic white table once a menu exists.
+  if (slug === 'flipd') {
+    return (
+      <FlipdMenuPage
+        slug={concept.slug}
+        conceptName={formatBrandName(concept.name)}
+        categories={categories}
+      />
+    )
   }
 
   return (
