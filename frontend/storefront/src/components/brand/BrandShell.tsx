@@ -1,7 +1,7 @@
 'use client'
 import { useState, useEffect, useMemo, type ElementType } from 'react'
 import Link from 'next/link'
-import { usePathname, useSearchParams } from 'next/navigation'
+import { usePathname } from 'next/navigation'
 import type { Concept } from '../../lib/concept'
 import { locationFor } from '../../lib/brandLocations'
 import { formatBrandName, brandSurface, brandWordmark } from '../../lib/concept'
@@ -33,28 +33,20 @@ export function BrandShell({ concept, children }: Props) {
   // doesn't define one.
   const accent = concept.primaryColor || 'var(--servd-green)'
   // Pick the text/ink colour based on luminance of the accent. Light
-  // accents (Flipd sky blue) get black ink, dark accents (Stackd purple,
-  // Simmer green, servd royal blue) get white. Defaults to white when
+  // accents get black ink, dark accents (flipd blue, stackd plum, simmer
+  // green, servd royal blue) get white. Defaults to white when
   // we can't parse the accent (e.g. it's a CSS var name).
   const accentInk = accent.startsWith('#') && isLight(accent) ? '#0a0a0a' : 'white'
   const surface = brandSurface(concept.slug)
-  // Padel-turf shade comparison: globals.css holds the "vivid" turf defaults;
-  // ?turf=muted swaps the deeper/muted set on the flipd wrapper so both shade
-  // sets can be A/B'd live on the real page. Bone (--flipd-cream) is constant.
-  const sp = useSearchParams()
-  const flipdMuted = concept.slug === 'flipd' && sp.get('turf') === 'muted'
-  const turfVars: Record<string, string> = flipdMuted ? {
-    '--flipd-sky':        '#1B3F9E',
-    '--flipd-sky-deep':   '#14306F',
-    '--flipd-green':      '#3E7E2B',
-    '--flipd-green-deep': '#2E6020',
-    '--flipd-pale':       '#E5ECE7',
-    '--flipd-ink':        '#14331D',
-  } : {}
+  // The ?turf=muted A/B switch lived here: it overrode --flipd-sky/-green/
+  // -pale/-ink so the two padel-court shade sets could be compared live.
+  // That palette is gone (the brand book forbids borrowing the court's
+  // identity), and with it the tokens it overrode — so the switch overrode
+  // nothing. Removed rather than repointed at the blue/mustard set, which
+  // has no competing shade set to compare.
   const wrapperStyle = {
     background: surface.bg,
     minHeight: '100vh',
-    ...turfVars,
     ['--brand-accent' as string]:      accent,
     ['--brand-accent-dark' as string]: accent,
     ['--brand-ink' as string]:         accentInk,
@@ -99,29 +91,29 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
       }
     : diner
     ? {
-        backgroundColor: 'var(--flipd-cream)',
+        backgroundColor: 'var(--flipd-bone)',
         backgroundImage: 'var(--flipd-checker)',
         backgroundSize: '36px 36px',
         backgroundRepeat: 'repeat',
       }
     : { background: `linear-gradient(to bottom, ${surface.bg}F2 0%, ${surface.bg}00 100%)` }
   // The diner checker is high-contrast and shreds plain text. Instead of a
-  // text outline, flipd floats its nav on light-blue "cards" (flipd-pale) with
-  // a midnight-oil outline + hard drop shadow — the established flipd-card look
-  // — so every label reads as flat midnight-oil ink. No-op for other brands.
+  // text outline, flipd floats its nav on bone "cards" — the brand book's
+  // quiet surface — outlined in Flipd Blue with a hard blue drop shadow, so
+  // every label reads as flat blue ink. No-op for other brands.
   const dinerCard: React.CSSProperties = diner
     ? {
-        background: 'var(--flipd-pale)',
-        border: '2px solid var(--flipd-ink)',
+        background: 'var(--flipd-bone)',
+        border: '2px solid var(--flipd-blue)',
         borderRadius: '999px',
-        boxShadow: '0 3px 0 var(--flipd-ink)',
+        boxShadow: '0 3px 0 var(--flipd-blue)',
       }
     : {}
 
   // Carded-nav brands collapse the bar into ONE rounded pill — the lean links
   // plus Order on a single capsule. This is the flipd treatment ported to
   // simmer + stackd, in each brand's own palette: flipd keeps its high-contrast
-  // pale/ink card, the dark brands get a faint glass capsule (translucent fill
+  // bone/blue card, the dark brands get a faint glass capsule (translucent fill
   // + hairline) so labels read on their deep backgrounds.
   const pillNav = diner || concept.slug === 'simmer' || concept.slug === 'stackd'
   const pillTint = concept.slug === 'simmer' ? '243,236,222' : '197,199,204' // bone / grey
@@ -202,8 +194,10 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
           borderRadius: '50%',
           overflow: 'hidden',
           flexShrink: 0,
-          background: diner ? 'var(--flipd-green)' : accent,
-          color: diner ? 'var(--flipd-cream)' : '#0a0a0a',
+          // The logo disc is the one place the two brand colours meet head-on:
+          // Flipd Blue field, Smash Mustard mark.
+          background: diner ? 'var(--flipd-blue)' : accent,
+          color: diner ? 'var(--flipd-mustard)' : '#0a0a0a',
           display: 'inline-flex',
           alignItems: 'center', justifyContent: 'center',
           fontSize: '1.1rem',
@@ -225,8 +219,8 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
           fontWeight: wordmark.weight,
           letterSpacing: '-0.01em',
           lineHeight: 1,
-          // flipd wordmark is flat midnight-oil ink on its light-blue card.
-          color: diner ? 'var(--flipd-ink)' : wordmark.color,
+          // flipd wordmark is flat Flipd Blue on its bone card.
+          color: diner ? 'var(--flipd-blue)' : wordmark.color,
         }}>
           {formatBrandName(concept.name)}
         </span>
@@ -259,7 +253,7 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
                 {...extra}
                 style={{
                   padding: '0.45rem 0.9rem',
-                  color: diner ? 'var(--flipd-ink)' : (active ? surface.text : surface.muted),
+                  color: diner ? 'var(--flipd-blue)' : (active ? surface.text : surface.muted),
                   fontWeight: active ? 700 : (pillNav ? 600 : 500),
                   fontSize: '0.92rem',
                   textDecoration: 'none',
@@ -283,7 +277,7 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
               aria-label={`Order from ${formatBrandName(concept.name)}`}
               style={{
                 padding: '0.45rem 0.95rem',
-                color: diner ? 'var(--flipd-ink)' : surface.text,
+                color: diner ? 'var(--flipd-blue)' : surface.text,
                 fontWeight: 800,
                 fontSize: '0.92rem',
                 textDecoration: 'none',
@@ -291,7 +285,9 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
                 whiteSpace: 'nowrap',
               }}
             >
-              Order <span style={{ color: diner ? 'var(--flipd-green)' : accent }}>→</span>
+              {/* flipd's system is two colours; there is no third signal to
+                  tint the arrow with, so it stays ink like the label. */}
+              Order <span style={{ color: diner ? 'var(--flipd-blue)' : accent }}>→</span>
             </Link>
           )}
         </div>
@@ -335,7 +331,7 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
           aria-expanded={open}
           onClick={() => setOpen((o) => !o)}
           className="inline-flex items-center justify-center sm:hidden"
-          style={{ width: '2.75rem', height: '2.75rem', marginLeft: '0.15rem', background: diner ? 'var(--flipd-pale)' : pillNav ? `rgba(${pillTint},0.05)` : 'transparent', border: diner ? '2px solid var(--flipd-ink)' : pillNav ? `1px solid rgba(${pillTint},0.18)` : 'none', borderRadius: pillNav ? '50%' : undefined, boxShadow: diner ? '0 3px 0 var(--flipd-ink)' : undefined, color: diner ? 'var(--flipd-ink)' : surface.text, cursor: 'pointer' }}
+          style={{ width: '2.75rem', height: '2.75rem', marginLeft: '0.15rem', background: diner ? 'var(--flipd-bone)' : pillNav ? `rgba(${pillTint},0.05)` : 'transparent', border: diner ? '2px solid var(--flipd-blue)' : pillNav ? `1px solid rgba(${pillTint},0.18)` : 'none', borderRadius: pillNav ? '50%' : undefined, boxShadow: diner ? '0 3px 0 var(--flipd-blue)' : undefined, color: diner ? 'var(--flipd-blue)' : surface.text, cursor: 'pointer' }}
         >
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             {open

@@ -60,7 +60,6 @@
         cement, black steel frames, cane and wood — so the greys here are warm
         greys, never the cold navy the old stax theme used. */
   --stackd-plum:             #7C2946;   /* Pantone 19-2025 Red Plum — brand field */
-  --stackd-plum-deep:        #5A1B32;   /* pressed/darker plum for depth */
   --stackd-plum-dark:        #3D1122;   /* near-black plum — footer, deep panels */
   --stackd-cream:            #FCE8CE;   /* Pantone 9180 — the wordmark cream */
   --stackd-cream-dim:        rgba(252,232,206,0.72);
@@ -73,13 +72,10 @@
   /* Line work: thin black-steel frames over the plum field. */
   --stackd-line:             rgba(252,232,206,0.22);
   --stackd-line-faint:       rgba(252,232,206,0.10);
-  --stackd-steel:            #1C1013;   /* black steel — frames, rails, brackets */
 
   /* Warm concrete/micro-cement, for panels that lift off the plum. */
   --stackd-cement:           #2E1922;
-  --stackd-cement-light:     #3A2029;
 
-  --stackd-ink:              #FCE8CE;
   --stackd-display:          'Playfair Display', 'Bodoni Moda', Georgia, serif;
   --stackd-body:             'Inter', system-ui, sans-serif;
   --stackd-mono:             'JetBrains Mono', 'Courier New', monospace;
@@ -869,11 +865,9 @@ summary:focus-visible {
   --flipd-blue:         #294375;  /* Flipd Blue — ink, rules, line art */
   --flipd-blue-deep:    #1D3159;  /* pressed / deeper panels */
   --flipd-mustard:      #FED561;  /* Smash Mustard — the brand field */
-  --flipd-mustard-deep: #F3C33F;  /* hover / pressed on mustard */
   --flipd-bone:         #F9F0E1;  /* Bone — the calm surface */
   --flipd-blue-dim:     rgba(41,67,117,0.72);
   --flipd-blue-faint:   rgba(41,67,117,0.42);
-  --flipd-bone-dim:     rgba(249,240,225,0.74);
 
   /* The checker is the brand's signature edge — navy and bone, never yellow,
      so it reads as a border against the mustard field rather than dissolving

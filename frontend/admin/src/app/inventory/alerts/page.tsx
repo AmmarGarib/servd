@@ -81,7 +81,10 @@ export default function InventoryAlertsPage() {
 }
 
 function Section({ title, rows, loading, severity }: { title: string; rows: InventoryItem[]; loading: boolean; severity: 'red' | 'amber' }) {
-  const accent = severity === 'red' ? 'var(--s-red)' : 'var(--s-amber)'
+  // s.red / s.amber are TAILWIND colours (tailwind.config.ts), not CSS custom
+  // properties — `var(--s-red)` never resolved, so both severities rendered
+  // the same colourless stripe. Hex straight from the config.
+  const accent = severity === 'red' ? '#FF4D4F' : '#F59E0B'
   return (
     <div className="s-card overflow-hidden">
       <div className="px-4 py-3 border-b border-s-border bg-s-bg-soft" style={{ borderLeft: `3px solid ${accent}` }}>

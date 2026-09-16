@@ -348,7 +348,11 @@
     right: 0;
     width: 100%;
     max-height: 50vh;
-    border-top: 1px solid var(--s-border, rgba(0,0,0,0.1));
+    /* s.border is a Tailwind colour, not a custom property, so var(--s-border)
+       never resolved and this always used the fallback. It's the right value
+       anyway — s.border is #222530, which is invisible on the white panel
+       below — so the dead var is dropped rather than defined. */
+    border-top: 1px solid rgba(0,0,0,0.1);
     background: white;
     box-shadow: 0 -8px 24px rgba(0,0,0,0.08);
   }

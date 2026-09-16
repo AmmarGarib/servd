@@ -90,9 +90,13 @@ export default function PosPage() {
       )}
 
       {/* Mobile cart drawer */}
-      <div className={`fixed inset-x-0 bottom-0 z-50 lg:hidden transition-transform duration-300 ${cartOpen ? 'translate-y-0' : 'translate-y-full'}`}
+      {/* kds.card is a Tailwind colour, not a custom property, so the old
+          `var(--kds-card, #141720)` always fell through to a hex that is in no
+          palette. This drawer already uses border-kds-border / text-kds-text,
+          so it takes the kds card colour via the class. */}
+      <div className={`fixed inset-x-0 bottom-0 z-50 lg:hidden transition-transform duration-300 bg-kds-card ${cartOpen ? 'translate-y-0' : 'translate-y-full'}`}
         style={{ maxHeight: '85dvh', display: 'flex', flexDirection: 'column',
-          background: 'var(--kds-card, #141720)', borderTop: '1px solid rgba(255,255,255,0.08)',
+          borderTop: '1px solid rgba(255,255,255,0.08)',
           borderRadius: '16px 16px 0 0' }}>
         <div className="flex items-center justify-between px-4 py-3 border-b border-kds-border shrink-0">
           <span className="font-bold text-kds-text">Current Order</span>
