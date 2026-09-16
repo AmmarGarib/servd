@@ -86,14 +86,14 @@ export default function BrandAssetsPage() {
         <Section title="Social handles" desc="Surfaced in receipt footers + auto-included in marketing posts">
           <div className="grid grid-cols-2 gap-3">
             <Field label="Instagram">
-              <input value={form.socialInstagramHandle ?? ''} onChange={(e) => patch('socialInstagramHandle', e.target.value || null)} placeholder="@stax_kitchen" className={fieldCls} />
+              <input value={form.socialInstagramHandle ?? ''} onChange={(e) => patch('socialInstagramHandle', e.target.value || null)} placeholder="@stackd_cafe" className={fieldCls} />
             </Field>
             <Field label="TikTok">
-              <input value={form.socialTiktokHandle ?? ''} onChange={(e) => patch('socialTiktokHandle', e.target.value || null)} placeholder="@stax_kitchen" className={fieldCls} />
+              <input value={form.socialTiktokHandle ?? ''} onChange={(e) => patch('socialTiktokHandle', e.target.value || null)} placeholder="@stackd_cafe" className={fieldCls} />
             </Field>
           </div>
           <Field label="Facebook URL">
-            <input value={form.socialFacebookUrl ?? ''} onChange={(e) => patch('socialFacebookUrl', e.target.value || null)} placeholder="https://facebook.com/staxkitchen" className={fieldCls} />
+            <input value={form.socialFacebookUrl ?? ''} onChange={(e) => patch('socialFacebookUrl', e.target.value || null)} placeholder="https://facebook.com/stackdcafe" className={fieldCls} />
           </Field>
         </Section>
 

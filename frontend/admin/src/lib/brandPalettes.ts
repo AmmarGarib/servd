@@ -29,28 +29,30 @@ export const BRAND_PALETTES: Record<string, BrandPalette> = {
     ],
     note: 'Night-mode editorial — forest green + bone, single orange signal per viewport.',
   },
-  stax: {
-    accent: '#B0B2B8', surfaceBg: '#142834', surfaceText: '#C5C7CC',
+  // Keyed `stackd`, not `stax`. The brand was renamed and the lookup is by
+  // slug, so the old key meant brandPalette('stackd') returned null and the
+  // admin showed no palette at all for it — while the swatches it did hold
+  // were the dead navy-grey stax set.
+  stackd: {
+    accent: '#FCE8CE', surfaceBg: '#7C2946', surfaceText: '#FCE8CE',
     swatches: [
-      { name: 'Oceanic noir', hex: '#142834' },
-      { name: 'Adept', hex: '#293B47' },
-      { name: 'Royal navy', hex: '#45505C' },
-      { name: 'Backwater', hex: '#686D77' },
-      { name: 'Tulle grey', hex: '#8D8F97' },
-      { name: 'Astroscopus grey', hex: '#B0B2B8' },
-      { name: 'Flat aluminium', hex: '#C5C7CC' },
+      { name: 'Red Plum (Pantone 19-2025)', hex: '#7C2946' },
+      { name: 'Plum dark', hex: '#3D1122' },
+      { name: 'Cream (Pantone 9180)', hex: '#FCE8CE' },
+      { name: 'Pale blue (Pantone 635)', hex: '#9BD3DD' },
+      { name: 'Cement', hex: '#2E1922' },
     ],
-    note: 'Cool industrial navy-grey set (palettepoint).',
+    note: 'Warm industrial — red plum field, cream type, one cool pale-blue accent.',
   },
   flipd: {
-    accent: '#2092E9', surfaceBg: '#EDE6D3', surfaceText: '#090D17',
+    accent: '#294375', surfaceBg: '#294375', surfaceText: '#FED561',
     swatches: [
-      { name: 'Midnight oil (ink)', hex: '#090D17' },
-      { name: 'Curious blue', hex: '#2092E9' },
-      { name: 'Bone', hex: '#EDE6D3' },
-      { name: 'Pale blue', hex: '#E8F4FF' },
+      { name: 'Flipd Blue (Pantone 19-4057)', hex: '#294375' },
+      { name: 'Blue deep', hex: '#1D3159' },
+      { name: 'Smash Mustard (Pantone 13-0840)', hex: '#FED561' },
+      { name: 'Bone (Pantone 9180)', hex: '#F9F0E1' },
     ],
-    note: 'Cool diner — curious blue + bone on midnight-oil ink.',
+    note: 'Blue + mustard with a navy/bone checker. Not padel — the court is never borrowed.',
   },
   servd: {
     accent: '#4E2A4F', surfaceBg: '#2D1E2F', surfaceText: '#FFFFFF',

@@ -91,7 +91,7 @@ export default function BrandIdentityPage() {
 
             <Section title="Logo">
               <Field label="Logo URL">
-                <input value={logoUrl} onChange={(e) => setLogoUrl(e.target.value)} placeholder="https://cdn.servd.app/brands/stax/logo.png" className={fieldCls} />
+                <input value={logoUrl} onChange={(e) => setLogoUrl(e.target.value)} placeholder="https://cdn.servd.app/brands/stackd/logo.png" className={fieldCls} />
                 <Hint>Hosted URL. Upload to your media library or paste any public image link.</Hint>
               </Field>
               {logoUrl && (
