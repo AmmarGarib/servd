@@ -101,29 +101,10 @@ export function FlipdLayout({ concept, concepts }: Props) {
       )}
 
       {/* ── HERO: THE BUILD SHEET ────────────────────────────────────────
-          Was a static badge with the tagline under it — the brand book laid
-          on a page. It is now the book's own exploded-burger artwork, at
-          size, assembling on scroll with the real build spec on leader
-          lines. See FlipdSpecHero for the reasoning. The badge still leads
-          the page, above the diagram, because the book says it carries the
-          brand and nothing should compete with it. */}
-      <section style={{ padding: 'clamp(2.5rem, 7vh, 4rem) clamp(1.5rem, 5vw, 3rem) 0' }}>
-        <div style={{ maxWidth: '68rem', margin: '0 auto', textAlign: 'center' }}>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={badge}
-            alt={`${concept.name} logo`}
-            {...(badgeIsFallback ? { width: 1200, height: 1200 } : {})}
-            style={{
-              display: 'block',
-              width: 'clamp(9rem, 20vw, 14rem)',
-              height: 'auto',
-              margin: '0 auto',
-            }}
-          />
-        </div>
-      </section>
-
+          The badge is NOT repeated here. It sits in the nav at top left,
+          where a logo belongs — parked in the middle of the page it landed
+          straight on the eyeline and competed with the diagram, which is the
+          thing that should hold the centre. See FlipdSpecHero. */}
       <FlipdSpecHero
         brandName={formatBrandName(concept.name)}
         orderHref={`/${concept.slug}`}
@@ -264,6 +245,7 @@ export function FlipdLayout({ concept, concepts }: Props) {
           src={badge}
           alt=""
           aria-hidden="true"
+          {...(badgeIsFallback ? { width: 1200, height: 1200 } : {})}
           style={{ display: 'block', width: 'min(11rem, 40vw)', height: 'auto', margin: '0 auto 1.25rem' }}
         />
         <p className="flipd-eyebrow" style={{ color: 'rgba(254,213,97,0.6)' }}>

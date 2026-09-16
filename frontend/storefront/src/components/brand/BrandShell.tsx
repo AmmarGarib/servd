@@ -183,12 +183,26 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
         href={base}
         aria-label={formatBrandName(concept.name)}
         style={{
-          display: 'flex', alignItems: 'center', gap: '0.7rem',
+          display: 'flex', alignItems: 'center', gap: diner ? 0 : '0.7rem',
           textDecoration: 'none',
-          // flipd: sit the mark on a light-blue card so the wordmark reads over
-          // the checker (matches the carded nav on the right).
-          ...(diner ? { ...dinerCard, padding: '0.3rem 0.9rem 0.3rem 0.35rem' } : {}),
+          // flipd gets NO card. The badge is a die-cut stamp with its own
+          // outline and its own mustard field; a rounded bone pill around a
+          // square badge crops it and reads as a blob. It sits on the page
+          // field directly, which is how the book uses it everywhere.
         }}>
+        {/* flipd carries the real badge here rather than an initial in a disc.
+            The badge already contains the wordmark — it IS the lockup — so it
+            replaces both the disc and the text beside it, or the nav would say
+            the brand name twice. Everyone else keeps disc + wordmark. */}
+        {diner ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={concept.wordmarkUrl || '/brand/flipd-badge.png'}
+            alt=""
+            aria-hidden="true"
+            style={{ height: 'clamp(3rem, 5vw, 3.6rem)', width: 'auto', display: 'block' }}
+          />
+        ) : (
         <span aria-hidden="true" style={{
           width: '2.5rem', height: '2.5rem',
           borderRadius: '50%',
@@ -213,17 +227,19 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
             // a capital monogram breaks the same rule the wordmark follows.
             : formatBrandName(concept.name).charAt(0)}
         </span>
+        )}
+        {!diner && (
         <span style={{
           fontFamily: wordmark.font,
           fontSize: '1.6rem',
           fontWeight: wordmark.weight,
           letterSpacing: '-0.01em',
           lineHeight: 1,
-          // flipd wordmark is flat Flipd Blue on its bone card.
-          color: diner ? 'var(--flipd-blue)' : wordmark.color,
+          color: wordmark.color,
         }}>
           {formatBrandName(concept.name)}
         </span>
+        )}
       </Link>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
