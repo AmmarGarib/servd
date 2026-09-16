@@ -90,7 +90,34 @@ afterAll(async () => {
 })
 
 describe('POST /auth/password/forgot', () => {
-  test('is not an account-existence oracle', async () => {
+  // The suite runs with no SMTP_USER and no WHATSAPP_API_URL, which is also
+  // how production was found to be configured — so this is the live behaviour,
+  // not a hypothetical. Both branches are asserted: when nothing can be
+  // delivered the endpoint must SAY so rather than promise a link, and when a
+  // rail exists it must go back to the silent, oracle-free 202.
+  const canDeliver = Boolean(
+    (process.env['SMTP_USER'] && process.env['SMTP_PASS'])
+    || (process.env['WHATSAPP_API_URL'] && process.env['WHATSAPP_API_KEY']),
+  )
+
+  test('refuses honestly when no delivery channel is configured', async () => {
+    const res = await post('/auth/password/forgot', { email: LIVE_EMAIL })
+    if (canDeliver) {
+      expect(res.status).toBe(202)
+    } else {
+      expect(res.status).toBe(503)
+      expect(res.body?.error?.code).toBe('RESET_UNAVAILABLE')
+    }
+  })
+
+  test('the refusal is not an oracle either — same answer for an unknown address', async () => {
+    const real   = await post('/auth/password/forgot', { email: LIVE_EMAIL })
+    const nobody = await post('/auth/password/forgot', { email: UNKNOWN_EMAIL })
+    expect(nobody.status).toBe(real.status)
+    expect(nobody.body).toEqual(real.body)
+  })
+
+  test.skipIf(!canDeliver)('is not an account-existence oracle', async () => {
     const real    = await post('/auth/password/forgot', { email: LIVE_EMAIL })
     const nobody  = await post('/auth/password/forgot', { email: UNKNOWN_EMAIL })
 
@@ -102,13 +129,13 @@ describe('POST /auth/password/forgot', () => {
     expect(nobody.body).toEqual(real.body)
   })
 
-  test('issues a token for a real account', async () => {
+  test.skipIf(!canDeliver)('issues a token for a real account', async () => {
     await post('/auth/password/forgot', { email: LIVE_EMAIL })
     const rows = await prisma.staffPasswordReset.findMany({ where: { userId: userIds[0] } })
     expect(rows.length).toBeGreaterThan(0)
   })
 
-  test('issues nothing for an address with no account', async () => {
+  test.skipIf(!canDeliver)('issues nothing for an address with no account', async () => {
     const before = await prisma.staffPasswordReset.count()
     await post('/auth/password/forgot', { email: UNKNOWN_EMAIL })
     expect(await prisma.staffPasswordReset.count()).toBe(before)
@@ -126,7 +153,7 @@ describe('POST /auth/password/forgot', () => {
     }
   })
 
-  test('a new request invalidates the previous link', async () => {
+  test.skipIf(!canDeliver)('a new request invalidates the previous link', async () => {
     const first = await issueToken(userIds[0]!)
     await post('/auth/password/forgot', { email: LIVE_EMAIL })
 

@@ -11,7 +11,7 @@ import {
   maskPhone,
 } from './twoFactor.js'
 import { requestOtp, verifyOtp, normalisePhone } from './otp.js'
-import { requestPasswordReset, consumeResetToken, checkResetToken } from './passwordReset.js'
+import { requestPasswordReset, consumeResetToken, checkResetToken, deliveryConfigured } from './passwordReset.js'
 import { requireAuth, requireCustomerAuth, ADMIN_ONLY, MANAGERS, ALL_STAFF } from './middleware.js'
 import { revokeBearer, revokeAllForSubject } from '../../lib/tokenRevocation.js'
 import { setAuthCookies, setAccessCookie, clearAuthCookies, readCookie, ACCESS_COOKIE, REFRESH_COOKIE } from '../../lib/cookies.js'
@@ -379,6 +379,18 @@ export async function authRoutes(fastify: FastifyInstance) {
   fastify.post('/password/forgot', async (req, reply) => {
     const body = z.object({ email: z.string().email().max(200) }).parse(req.body)
     const emailKey = body.email.trim().toLowerCase()
+
+    // Say so rather than promising a link that physically cannot be sent.
+    // This is a fact about the server, not about the account, so it gives away
+    // nothing — and the alternative is someone refreshing an inbox forever.
+    if (!deliveryConfigured()) {
+      req.log.error('password reset requested but no delivery channel is configured')
+      throw new AppError(
+        'RESET_UNAVAILABLE',
+        'Password reset is not available right now — this server has no way to send you a link. Ask an admin to issue you a new password from Workforce.',
+        503,
+      )
+    }
 
     // Keyed on the email, not the IP: the abuse this guards against is using
     // our gateway to spam ONE person's inbox and phone, which rotating source

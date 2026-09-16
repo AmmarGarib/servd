@@ -132,17 +132,26 @@ export default function StaffLoginPage() {
     e.preventDefault()
     setError(''); setLoading(true)
     try {
-      await fetch(`${API_URL}/api/v1/auth/password/forgot`, {
+      const res = await fetch(`${API_URL}/api/v1/auth/password/forgot`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: pwEmail.trim().toLowerCase() }),
       })
-      // Shown on success AND on failure. The endpoint returns the same body
-      // for an address with no account, and a UI that distinguished them here
-      // would put the enumeration oracle back that the API just avoided.
+      if (res.status === 503) {
+        // The server has no way to send anything. That is a fact about the
+        // server, not about this account, so showing it leaks nothing — and
+        // "check your email" would send someone to watch an inbox that is
+        // never going to receive anything.
+        const d = await res.json().catch(() => ({}))
+        setError(d.error?.message ?? 'Password reset is unavailable right now.')
+        return
+      }
+      // Otherwise: shown whether or not the address has an account. The API
+      // answers identically for both, and a UI that distinguished them here
+      // would put back the enumeration oracle the API just avoided.
       setFgDone(true)
     } catch {
-      setFgDone(true)
+      setError('Could not reach the server. Check your connection and try again.')
     } finally {
       setLoading(false)
     }

@@ -46,6 +46,25 @@ export function hashToken(token: string): string {
   return crypto.createHash('sha256').update(token).digest('hex')
 }
 
+/**
+ * Can a reset link reach anybody at all?
+ *
+ * This is a property of the SERVER, not of any account, so answering it to an
+ * unauthenticated caller leaks nothing — which is what lets /forgot be honest
+ * about "we cannot send you anything" without becoming the account-existence
+ * oracle it otherwise refuses to be.
+ *
+ * It matters because the failure it describes is invisible: with no transport
+ * configured, sendEmail throws and sendWhatsApp throws, and a /forgot that
+ * still answered "a link is on its way" would leave someone refreshing an
+ * inbox that is never going to receive anything.
+ */
+export function deliveryConfigured(): boolean {
+  const email    = Boolean(process.env['SMTP_USER'] && process.env['SMTP_PASS'])
+  const whatsapp = Boolean(process.env['WHATSAPP_API_URL'] && process.env['WHATSAPP_API_KEY'])
+  return email || whatsapp
+}
+
 export interface DeliveryOutcome {
   email: 'sent' | 'failed' | 'skipped'
   whatsapp: 'sent' | 'failed' | 'skipped'
