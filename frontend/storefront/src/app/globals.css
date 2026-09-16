@@ -839,8 +839,247 @@ summary:focus-visible {
   white-space: nowrap;
 }
 
+/* ── The build sheet ───────────────────────────────────────────────────────
+   flipd's hero: the burger as an exploded parts diagram that assembles on
+   scroll. See components/kinetic/FlipdSpecHero.tsx for why it is this and not
+   something else.
+
+   Everything here reads --scroll-progress, written on the section by
+   useScrollProgress, and each part's own --t (its 0..1 seating position). No
+   JS touches these styles per frame — React renders once and the compositor
+   does the rest, which is what keeps it smooth on a phone. */
+.flipd-page .flipd-spec {
+  position: relative;
+  /* Tall enough that all six parts get a comfortable seating window and the
+     outro has somewhere to land. Shorter and the whole build flashes past. */
+  height: 460vh;
+}
+.flipd-page .flipd-spec-pin {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  justify-items: center;
+  align-items: center;
+  gap: clamp(0.5rem, 2vh, 1.25rem);
+  overflow: hidden;
+  padding: clamp(1rem, 3vh, 2rem) clamp(1rem, 4vw, 2.5rem) clamp(1.25rem, 4vh, 2.25rem);
+}
+
+/* Title block, as any technical drawing carries. */
+.flipd-page .flipd-spec-title {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(0.75rem, 3vw, 1.5rem);
+  padding: 0 clamp(1rem, 5vw, 3rem);
+}
+.flipd-page .flipd-spec-titleno {
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.26em;
+  text-transform: uppercase;
+  color: var(--flipd-blue-dim);
+  white-space: nowrap;
+}
+.flipd-page .flipd-spec-titlerule {
+  flex: 1;
+  height: 2px;
+  background: repeating-linear-gradient(90deg,
+    var(--flipd-blue) 0 6px, transparent 6px 12px);
+  opacity: 0.45;
+  max-width: 22rem;
+}
+
+/* The stage the parts seat onto. Fixed aspect so the leader lines always have
+   room either side; the parts are laid out in normal flow so the stack closes
+   by itself without any magic numbers. */
+.flipd-page .flipd-spec-stage {
+  position: relative;
+  width: min(100%, 27rem);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  /* The drawing has to fit the row it was given, whatever the viewport does.
+     Below ~700px tall there simply isn't room for six parts plus callouts, so
+     it scales down rather than colliding with the outro. */
+  max-height: 100%;
+}
+.flipd-page .flipd-spec-art svg { display: block; max-height: 13vh; width: 100%; }
+
+.flipd-page .flipd-spec-part {
+  position: relative;
+  width: 100%;
+  /* --t is 0 before the part moves, 1 when it is seated. */
+  transform: translateY(calc((1 - var(--t, 0)) * var(--drop, -200px)));
+  opacity: calc(var(--t, 0) * 3);
+  will-change: transform, opacity;
+}
+/* The patty turns over on the way down — a flat thing flipping on the griddle,
+   so it rotates about X, not about the page normal. Scoped to the art because
+   the callout beside it must stay the right way up. */
+.flipd-page .flipd-spec-art {
+  transform: perspective(700px) rotateX(calc((1 - var(--t, 0)) * var(--flip, 0deg)));
+  transform-style: preserve-3d;
+}
+/* The exploded gap is fixed. Each part has a slot and drops into it; the
+   layout never moves. An earlier version closed this gap as the parts seated,
+   which meant the slots slid upward while things were still falling into them
+   and the whole stack bunched at the top of the stage. */
+.flipd-page .flipd-spec-part + .flipd-spec-part {
+  margin-top: 0.4rem;
+}
+.flipd-page .flipd-spec-art { display: block; }
+
+/* Callouts sit outside the stage on a leader line, alternating sides. */
+.flipd-page .flipd-spec-callout {
+  position: absolute;
+  top: 50%;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  opacity: calc(max(0, var(--t, 0) - 0.55) * 2.6);
+  white-space: nowrap;
+}
+.flipd-page .flipd-spec-part--left .flipd-spec-callout {
+  right: calc(100% + 0.5rem);
+  flex-direction: row-reverse;
+  text-align: right;
+}
+.flipd-page .flipd-spec-part--right .flipd-spec-callout {
+  left: calc(100% + 0.5rem);
+}
+.flipd-page .flipd-spec-lead {
+  display: block;
+  width: clamp(1.5rem, 5vw, 3.5rem);
+  height: 2px;
+  background: var(--flipd-blue);
+  opacity: 0.5;
+}
+.flipd-page .flipd-spec-no {
+  font-family: var(--flipd-body);
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: var(--flipd-blue);
+  border: 2px solid var(--flipd-blue);
+  border-radius: 999px;
+  padding: 0.1rem 0.45rem;
+}
+.flipd-page .flipd-spec-text { display: flex; flex-direction: column; gap: 0.1rem; }
+.flipd-page .flipd-spec-name {
+  font-family: var(--flipd-display);
+  font-size: clamp(0.82rem, 1.6vw, 1.05rem);
+  line-height: 1.1;
+  color: var(--flipd-blue);
+}
+.flipd-page .flipd-spec-sub {
+  font-size: clamp(0.66rem, 1.2vw, 0.78rem);
+  line-height: 1.35;
+  color: var(--flipd-blue-dim);
+}
+
+/* The wordmark occupies the patty's slot until the stack closes over it —
+   which is exactly where FLIPD sits inside the badge. */
+.flipd-page .flipd-spec-mark {
+  position: absolute;
+  top: 44%;
+  left: 0; right: 0;
+  margin: 0;
+  text-align: center;
+  font-family: var(--flipd-display);
+  font-size: clamp(2rem, 7vw, 3.4rem);
+  color: var(--flipd-blue);
+  pointer-events: none;
+  opacity: calc(1 - var(--t, 0));
+}
+
+/* The accessible copy of the diagram, and the mobile layout. */
+.flipd-page .flipd-spec-list {
+  display: none;              /* desktop reads it off the leader lines */
+  list-style: none;
+  margin: 0 auto;
+  padding: 0 clamp(1.25rem, 6vw, 2rem) clamp(2rem, 6vh, 3rem);
+  width: min(100%, 26rem);
+}
+.flipd-page .flipd-spec-list li {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.15rem 0.6rem;
+  padding: 0.5rem 0;
+  border-top: 1px solid rgba(41,67,117,0.16);
+}
+.flipd-page .flipd-spec-list .flipd-spec-no { grid-row: span 2; align-self: center; }
+
+.flipd-page .flipd-spec-outro {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+  padding: 0 1.25rem;
+  text-align: center;
+  opacity: var(--t, 0);
+  transform: translateY(calc((1 - var(--t, 0)) * 14px));
+  pointer-events: none;
+}
+.flipd-page .flipd-spec-outro > * { pointer-events: auto; }
+.flipd-page .flipd-spec-tagline {
+  margin: 0;
+  font-family: var(--flipd-display);
+  font-size: clamp(1.05rem, 2.6vw, 1.6rem);
+  line-height: 1.2;
+  max-width: 24ch;
+  color: var(--flipd-blue);
+}
+.flipd-page .flipd-spec-cta { display: flex; gap: 0.6rem; flex-wrap: wrap; justify-content: center; }
+
+.flipd-page .flipd-spec-hint {
+  position: absolute;
+  bottom: clamp(0.5rem, 2vh, 1rem);
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--flipd-blue-dim);
+  opacity: calc(1 - var(--t, 0));
+}
+
+/* Narrow screens: no room for leader lines beside a 30rem stage, so the
+   callouts come off and the written list comes on. The build still animates —
+   it is the same diagram, read top to bottom instead of outward. */
+@media (max-width: 820px) {
+  /* No room for leader lines beside the stage, so the callouts come off and
+     the written list below the section carries the same information. The build
+     still animates — the diagram is read top to bottom instead of outward. */
+  .flipd-page .flipd-spec { height: 340vh; }
+  .flipd-page .flipd-spec-stage { width: min(100%, 17rem); }
+  .flipd-page .flipd-spec-art svg { max-height: 9vh; }
+  .flipd-page .flipd-spec-callout { display: none; }
+  .flipd-page .flipd-spec-list { display: block; }
+  .flipd-page .flipd-spec-hint { display: none; }
+  .flipd-page .flipd-spec-title { gap: 0.6rem; }
+  .flipd-page .flipd-spec-titleno { font-size: 0.55rem; letter-spacing: 0.18em; }
+}
+
+/* Reduced motion: the drawing is the point, the movement is only how it is
+   read. Show it assembled, with every callout, and drop the pinned scroll
+   entirely so the page is an ordinary length. */
 @media (prefers-reduced-motion: reduce) {
   .flipd-page .flipd-btn:hover { transform: none; }
+  .flipd-page .flipd-spec { height: auto; }
+  .flipd-page .flipd-spec-pin { position: static; height: auto; padding-block: 4rem; }
+  .flipd-page .flipd-spec-part { transform: none; opacity: 1; }
+  .flipd-page .flipd-spec-art  { transform: none; }
+  .flipd-page .flipd-spec-part + .flipd-spec-part { margin-top: 0.4rem; }
+  .flipd-page .flipd-spec-callout { opacity: 1; }
+  .flipd-page .flipd-spec-mark { opacity: 0; }
+  .flipd-page .flipd-spec-outro { opacity: 1; transform: none; margin-top: 2rem; }
+  .flipd-page .flipd-spec-art svg { max-height: none; }
+  .flipd-page .flipd-spec-hint { display: none; }
+  .flipd-page .flipd-spec-list { display: block; }
 }
 @media (max-width: 700px) { .flipd-visit-grid { grid-template-columns: 1fr !important; } }
 

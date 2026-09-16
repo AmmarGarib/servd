@@ -33,7 +33,8 @@ import Link from 'next/link'
 import type { Concept } from '../../../lib/concept'
 import { CrossBrandStrip } from '../parts/CrossBrandStrip'
 import { OpenStatusBadge, HoursGrid, useHoursData } from '../parts/OpenStatusBadge'
-import { brandStory } from '../../../lib/concept'
+import { brandStory, formatBrandName } from '../../../lib/concept'
+import { FlipdSpecHero } from '../../kinetic/FlipdSpecHero'
 
 interface Props {
   concept: Concept
@@ -99,10 +100,14 @@ export function FlipdLayout({ concept, concepts }: Props) {
         </div>
       )}
 
-      {/* ── HERO ─────────────────────────────────────────────────────────────
-          The badge carries the brand; the type underneath states what this is
-          in the book's own words. Nothing competes with the badge. */}
-      <section style={{ padding: 'clamp(3rem, 9vh, 5.5rem) clamp(1.5rem, 5vw, 3rem) clamp(2.5rem, 6vh, 4rem)' }}>
+      {/* ── HERO: THE BUILD SHEET ────────────────────────────────────────
+          Was a static badge with the tagline under it — the brand book laid
+          on a page. It is now the book's own exploded-burger artwork, at
+          size, assembling on scroll with the real build spec on leader
+          lines. See FlipdSpecHero for the reasoning. The badge still leads
+          the page, above the diagram, because the book says it carries the
+          brand and nothing should compete with it. */}
+      <section style={{ padding: 'clamp(2.5rem, 7vh, 4rem) clamp(1.5rem, 5vw, 3rem) 0' }}>
         <div style={{ maxWidth: '68rem', margin: '0 auto', textAlign: 'center' }}>
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
@@ -111,41 +116,20 @@ export function FlipdLayout({ concept, concepts }: Props) {
             {...(badgeIsFallback ? { width: 1200, height: 1200 } : {})}
             style={{
               display: 'block',
-              width: 'clamp(13rem, 30vw, 21rem)',
+              width: 'clamp(9rem, 20vw, 14rem)',
               height: 'auto',
-              margin: '0 auto clamp(1.75rem, 4vh, 2.5rem)',
+              margin: '0 auto',
             }}
           />
-
-          <h1
-            className="flipd-display"
-            style={{ fontSize: 'clamp(1.75rem, 4.4vw, 3.1rem)', margin: '0 auto', maxWidth: '20ch' }}
-          >
-            {story.tagline}
-          </h1>
-
-          <p
-            style={{
-              fontSize: '1.02rem',
-              lineHeight: 1.65,
-              color: 'var(--flipd-blue-dim)',
-              maxWidth: '46ch',
-              margin: '1.25rem auto 0',
-            }}
-          >
-            {story.oneLiner}
-          </p>
-
-          <div style={{ marginTop: '2.5rem', display: 'flex', gap: '0.75rem', flexWrap: 'wrap', justifyContent: 'center' }}>
-            {/* Order now goes to the ordering surface (live prices, live
-                availability, basket). See the menu goes to the read-only menu
-                page. Two different jobs, two different pages — the landing
-                page carries neither. */}
-            <Link href={`/${concept.slug}`} className="flipd-btn">Order now</Link>
-            <Link href={`/brand/${concept.slug}/menu`} className="flipd-btn flipd-btn-ghost">See the menu</Link>
-          </div>
         </div>
       </section>
+
+      <FlipdSpecHero
+        brandName={formatBrandName(concept.name)}
+        orderHref={`/${concept.slug}`}
+        menuHref={`/brand/${concept.slug}/menu`}
+        tagline={story.tagline}
+      />
 
       <Checker />
 
