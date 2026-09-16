@@ -4,7 +4,13 @@ import { useRouter, usePathname } from 'next/navigation'
 import { useAuthStore } from '../../store/auth'
 
 // Exact paths anyone may load without a session.
-const PUBLIC_PATHS = ['/', '/login', '/kds/login']
+//
+// `/reset-password` is public because it HAS to be: it is where the emailed
+// reset link lands, and the entire situation it exists for is "this person
+// cannot obtain a session". The credential is the one-shot token in the query
+// string, which the API checks; the page itself renders nothing sensitive and
+// reads no account data before that token is verified.
+const PUBLIC_PATHS = ['/', '/login', '/kds/login', '/reset-password']
 
 // Public route SUBTREES. Empty on purpose.
 //

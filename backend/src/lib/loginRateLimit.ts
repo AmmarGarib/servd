@@ -238,3 +238,12 @@ export const STAFF_PASSWORD_LIMIT:    Limit = { scope: 'staff-login',      max: 
 export const STAFF_PASSWORD_USER_LIMIT: Limit = { scope: 'staff-login-user', max: 8, lockoutSec: 15 * 60 }
 export const CUSTOMER_PASSWORD_LIMIT: Limit = { scope: 'customer-login',   max: 8, lockoutSec: 15 * 60 }
 export const MAGIC_LINK_VERIFY_LIMIT: Limit = { scope: 'magic-link-verify', max: 30, lockoutSec: 5 * 60 }
+// Password-reset REQUESTS, keyed on the email. Deliberately tight: each one
+// sends a real message to a real inbox and WhatsApp, so an unthrottled endpoint
+// is a way to flood someone else's phone using our gateway. Three is enough for
+// "it didn't arrive, try again"; the fourth waits.
+export const PASSWORD_RESET_LIMIT:   Limit = { scope: 'password-reset',      max: 3,  lockoutSec: 15 * 60 }
+// Reset-link REDEMPTIONS, keyed on IP. The token is 32 random bytes so guessing
+// is not the threat; this just stops a scripted sweep from burning CPU on
+// bcrypt for every attempt.
+export const PASSWORD_RESET_USE_LIMIT: Limit = { scope: 'password-reset-use', max: 20, lockoutSec: 10 * 60 }

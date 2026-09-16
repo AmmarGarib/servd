@@ -516,6 +516,28 @@ async function build() {
       checks.loginRateLimit = 'ok'
     }
 
+    // Password recovery depends on being able to reach a person out-of-band.
+    // Neither rail is checked at boot beyond a console warning, so an unset
+    // SMTP_USER in production has exactly one visible symptom: somebody asks
+    // for a reset link, is told one is on its way, and it never arrives. Say it
+    // here instead, where it can be read before that happens.
+    const emailConfigured    = Boolean(process.env['SMTP_USER'] && process.env['SMTP_PASS'])
+    const whatsappConfigured = Boolean(process.env['WHATSAPP_API_URL'] && process.env['WHATSAPP_API_KEY'])
+    if (emailConfigured && whatsappConfigured) {
+      checks.passwordRecovery = 'ok'
+    } else if (!emailConfigured && !whatsappConfigured) {
+      // Both rails down means a forgotten password has no self-service remedy
+      // at all — it is back to an admin reissuing by hand.
+      checks.passwordRecovery = 'error'
+      details.passwordRecovery =
+        'Neither email (SMTP_USER/SMTP_PASS) nor WhatsApp (WHATSAPP_API_URL/WHATSAPP_API_KEY) is configured — /auth/password/forgot cannot deliver a reset link to anyone.'
+    } else {
+      checks.passwordRecovery = 'warn'
+      details.passwordRecovery = emailConfigured
+        ? 'WhatsApp is not configured — reset links go by email only, so an account with no reachable inbox has no way back in.'
+        : 'Email (SMTP_USER/SMTP_PASS) is not configured — reset links only reach accounts that have a phone number on file.'
+    }
+
 
     // Ledger readiness — every account code the posting engine references must
     // exist. If someone runs the API without seeding the CoA, postings will

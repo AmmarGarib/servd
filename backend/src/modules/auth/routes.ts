@@ -11,6 +11,7 @@ import {
   maskPhone,
 } from './twoFactor.js'
 import { requestOtp, verifyOtp, normalisePhone } from './otp.js'
+import { requestPasswordReset, consumeResetToken, checkResetToken } from './passwordReset.js'
 import { requireAuth, requireCustomerAuth, ADMIN_ONLY, MANAGERS, ALL_STAFF } from './middleware.js'
 import { revokeBearer, revokeAllForSubject } from '../../lib/tokenRevocation.js'
 import { setAuthCookies, setAccessCookie, clearAuthCookies, readCookie, ACCESS_COOKIE, REFRESH_COOKIE } from '../../lib/cookies.js'
@@ -27,6 +28,8 @@ import {
   STAFF_PASSWORD_USER_LIMIT,
   CUSTOMER_PASSWORD_LIMIT,
   MAGIC_LINK_VERIFY_LIMIT,
+  PASSWORD_RESET_LIMIT,
+  PASSWORD_RESET_USE_LIMIT,
 } from '../../lib/loginRateLimit.js'
 
 const staffLoginSchema = z.object({
@@ -363,6 +366,78 @@ export async function authRoutes(fastify: FastifyInstance) {
     await clearFailures(STAFF_PASSWORD_LIMIT, ip)
     await clearFailures(STAFF_PASSWORD_USER_LIMIT, emailKey)
     await applyPasswordChange(user!.id, user!.email!, body.newPassword)
+    return reply.status(204).send()
+  })
+
+  // POST /auth/password/forgot — the way back in when you don't know the
+  // password. Sends a one-shot link to the account's email and, when there's a
+  // phone on file, to WhatsApp as well.
+  //
+  // Always answers 202 with the same body. Whether the address belongs to an
+  // account is not something this endpoint will tell you — the message itself
+  // is the only signal, and it only reaches the real owner.
+  fastify.post('/password/forgot', async (req, reply) => {
+    const body = z.object({ email: z.string().email().max(200) }).parse(req.body)
+    const emailKey = body.email.trim().toLowerCase()
+
+    // Keyed on the email, not the IP: the abuse this guards against is using
+    // our gateway to spam ONE person's inbox and phone, which rotating source
+    // addresses would sail straight past.
+    await checkRateLimit(PASSWORD_RESET_LIMIT, emailKey)
+    await recordFailure(PASSWORD_RESET_LIMIT, emailKey)
+
+    const outcome = await requestPasswordReset(emailKey, req.ip ?? null)
+    if (outcome.errors.length > 0) {
+      // Log loudly. A reset that silently fails to send is indistinguishable
+      // from one the user just hasn't opened yet, and that is exactly how
+      // somebody ends up locked out with no idea why.
+      req.log.error({ email: emailKey, outcome }, 'password reset delivery failed')
+    } else if (outcome.email === 'sent' || outcome.whatsapp === 'sent') {
+      req.log.info({ email: emailKey, email_: outcome.email, whatsapp: outcome.whatsapp }, 'password reset sent')
+    }
+
+    return reply.status(202).send({
+      ok: true,
+      message: 'If that account exists, a reset link is on its way to its email and WhatsApp.',
+    })
+  })
+
+  // GET /auth/password/reset?token=… — is this link still good? Lets the reset
+  // page say "this link has expired" before asking for a new password rather
+  // than after.
+  fastify.get<{ Querystring: { token?: string } }>('/password/reset', async (req) => {
+    const token = (req.query.token ?? '').trim()
+    if (!token) return { valid: false }
+    return { valid: await checkResetToken(token) }
+  })
+
+  // POST /auth/password/reset — redeem the link.
+  fastify.post('/password/reset', async (req, reply) => {
+    const ip = req.ip ?? 'unknown'
+    const body = passwordChangeSchema.extend({
+      token: z.string().min(10).max(500),
+    }).parse(req.body)
+
+    await checkRateLimit(PASSWORD_RESET_USE_LIMIT, ip)
+
+    const user = await consumeResetToken(body.token.trim())
+    if (!user) {
+      await recordFailure(PASSWORD_RESET_USE_LIMIT, ip)
+      throw new AppError('RESET_LINK_INVALID', 'That reset link has expired or already been used. Request a new one.', 400)
+    }
+
+    await clearFailures(PASSWORD_RESET_USE_LIMIT, ip)
+    // Clear the login lockouts too. Someone who just proved control of the
+    // account's inbox should not then be told to wait 15 minutes because they
+    // burned the login budget guessing before they gave up and reset.
+    await clearFailures(STAFF_PASSWORD_LIMIT, ip)
+    await clearFailures(STAFF_PASSWORD_USER_LIMIT, user.email)
+    await clearFailures(PASSWORD_RESET_LIMIT, user.email)
+
+    // applyPasswordChange revokes every existing session, which is what we
+    // want: a reset is how you respond to a credential you no longer trust.
+    await applyPasswordChange(user.id, user.email, body.newPassword)
+    req.log.warn({ target: user.id }, 'password reset via emailed link')
     return reply.status(204).send()
   })
 

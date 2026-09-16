@@ -16,8 +16,26 @@ beforeAll(async () => {
     throw new Error(`Refusing to run tests against non-test DATABASE_URL: ${process.env.DATABASE_URL}`)
   }
 
-  // Reset + apply migrations on the test DB
-  execSync('pnpm exec prisma migrate reset --force --skip-seed', {
+  // Build the schema straight from schema.prisma rather than replaying the
+  // migration history.
+  //
+  // `migrate reset` cannot run against an empty database any more. Two data
+  // migrations — 20260529103000_seed_simmer_menu_items_v2 and
+  // 20260529120000_seed_stax_flipd_menus — INSERT menu rows against hardcoded
+  // PRODUCTION concept and category UUIDs. They carry a `WHERE NOT EXISTS`
+  // guard on the item name, which makes them idempotent, but nothing checks
+  // that the concept exists at all, so on a fresh database every insert trips
+  // the menu_items -> concepts foreign key and the whole reset aborts. That
+  // took the entire suite down with it.
+  //
+  // Those files are NOT edited here on purpose: they are already applied in
+  // production, and changing an applied migration's contents changes its
+  // checksum, which makes the next `migrate deploy` on the box refuse to run.
+  // The test database wants the CURRENT schema, not a history lesson, so it
+  // gets `db push` instead. (The migration history still can't rebuild a
+  // database from scratch — that's a real disaster-recovery gap, and fixing it
+  // means a new migration that repairs the old ones, not an edit in place.)
+  execSync('pnpm exec prisma db push --force-reset --skip-generate --accept-data-loss', {
     stdio: 'inherit',
     env: process.env,
   })
@@ -63,11 +81,21 @@ async function seedTestAccounts(prisma: PrismaClient): Promise<void> {
     { code: '7040', name: 'Refunds',                            type: 'expense' },
     { code: '8010', name: 'Cash Variance',                      type: 'expense' },
   ]
+  // `accounts.code` stopped being globally unique when the ledger went
+  // per-company (migration 20260908120000) — it is `@@unique([tenantId, code])`
+  // now. This upsert still keyed on `code` alone, so it had been failing at
+  // argument validation ever since, taking every suite down in beforeAll.
+  //
+  // These rows are the company-less chart the posting tests fall back on, so
+  // tenantId stays null and the composite key is (null, code). Prisma cannot
+  // match a null inside a compound unique via upsert, so it's find-then-create.
   for (const a of accounts) {
-    await prisma.account.upsert({
-      where: { code: a.code },
-      create: { ...a, isActive: true },
-      update: {},
+    const existing = await prisma.account.findFirst({
+      where: { tenantId: null, code: a.code },
+      select: { id: true },
     })
+    if (!existing) {
+      await prisma.account.create({ data: { ...a, isActive: true } })
+    }
   }
 }

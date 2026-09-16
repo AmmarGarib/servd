@@ -6,7 +6,7 @@ import { useAuthStore } from '../../store/auth'
 const API_URL         = process.env['NEXT_PUBLIC_API_URL']         ?? 'http://localhost:3001'
 const STOREFRONT_URL  = process.env['NEXT_PUBLIC_STOREFRONT_URL']  ?? 'http://localhost:3002'
 
-type Mode = 'password' | 'twofactor' | 'changepw'
+type Mode = 'password' | 'twofactor' | 'changepw' | 'forgot'
 
 /**
  * The single staff login page. Email + password, and nothing else.
@@ -28,6 +28,11 @@ type Mode = 'password' | 'twofactor' | 'changepw'
  *   changepw  — reachable from the sign-in form WITHOUT a session, because
  *               someone handed a generated password needs to replace it before
  *               they have anything else to sign in with.
+ *   forgot    — for when you don't know the current password either. Mails a
+ *               one-shot link (and WhatsApps it, if there's a number on file).
+ *               This is the only path that does not require knowing SOMETHING,
+ *               which is why it existed nowhere until now: the owner's account
+ *               could only be recovered by another admin.
  */
 export default function StaffLoginPage() {
   const router  = useRouter()
@@ -50,6 +55,10 @@ export default function StaffLoginPage() {
   const [cpNew,     setCpNew]     = useState('')
   const [cpNew2,    setCpNew2]    = useState('')
   const [cpDone,    setCpDone]    = useState(false)
+
+  // Forgot-password step. `fgDone` is set whatever the API says, because the
+  // API deliberately answers the same way for an address that has no account.
+  const [fgDone, setFgDone] = useState(false)
 
   const [error,   setError]   = useState('')
   const [loading, setLoading] = useState(false)
@@ -119,6 +128,26 @@ export default function StaffLoginPage() {
     }
   }
 
+  async function submitForgot(e: React.FormEvent) {
+    e.preventDefault()
+    setError(''); setLoading(true)
+    try {
+      await fetch(`${API_URL}/api/v1/auth/password/forgot`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: pwEmail.trim().toLowerCase() }),
+      })
+      // Shown on success AND on failure. The endpoint returns the same body
+      // for an address with no account, and a UI that distinguished them here
+      // would put the enumeration oracle back that the API just avoided.
+      setFgDone(true)
+    } catch {
+      setFgDone(true)
+    } finally {
+      setLoading(false)
+    }
+  }
+
   async function submitChangePassword(e: React.FormEvent) {
     e.preventDefault()
     if (cpNew !== cpNew2) { setError('The two new passwords do not match'); return }
@@ -149,7 +178,7 @@ export default function StaffLoginPage() {
   }
 
   function backToSignIn() {
-    setMode('password'); setError(''); setCpDone(false)
+    setMode('password'); setError(''); setCpDone(false); setFgDone(false)
     setMfaChallenge(''); setMfaCode('')
   }
 
@@ -216,6 +245,42 @@ export default function StaffLoginPage() {
               </p>
             </form>
 
+          ) : mode === 'forgot' ? (
+            fgDone ? (
+              <div className="text-center">
+                <p className="text-sm text-s-text mb-2">Check your email.</p>
+                <p className="text-xs text-s-dim mb-5 leading-relaxed">
+                  If that address has an account, a reset link is on its way
+                  there &mdash; and to its WhatsApp, if we have a number for it.
+                  The link works once and expires in 30 minutes.
+                </p>
+                <button type="button" onClick={backToSignIn} className={cta} style={ctaStyle}>
+                  Back to sign in
+                </button>
+              </div>
+            ) : (
+              <form onSubmit={submitForgot}>
+                <p className="text-xs text-s-dim mb-4 leading-relaxed text-center">
+                  Enter the email you sign in with and we&rsquo;ll send you a link
+                  to set a new password.
+                </p>
+                <input
+                  type="email" value={pwEmail} onChange={(e) => setPwEmail(e.target.value)}
+                  placeholder="Email" autoComplete="username" autoFocus
+                  className="w-full mb-4 rounded-xl px-4 py-3 text-s-text outline-none" style={fieldStyle}
+                />
+                {error && <p className="text-xs text-center mb-3" style={{ color: '#F87171' }}>{error}</p>}
+                <button type="submit" className={cta} style={ctaStyle}
+                  disabled={loading || !pwEmail.trim()}>
+                  {loading ? 'Sending…' : 'Send reset link'}
+                </button>
+                <button type="button" onClick={backToSignIn}
+                  className="w-full mt-3 text-xs text-s-dim hover:text-s-muted transition-colors">
+                  &larr; Back to sign in
+                </button>
+              </form>
+            )
+
           ) : mode === 'changepw' ? (
             cpDone ? (
               <div className="text-center">
@@ -279,13 +344,23 @@ export default function StaffLoginPage() {
                 disabled={loading || !pwEmail.trim() || pwPassword.length < 8}>
                 {loading ? 'Signing in…' : 'Sign in'}
               </button>
-              <button
-                type="button"
-                onClick={() => { setMode('changepw'); setError(''); setCpDone(false) }}
-                className="w-full mt-4 text-xs text-s-dim hover:text-s-muted transition-colors"
-              >
-                Change my password
-              </button>
+              <div className="mt-4 flex items-center justify-center gap-4">
+                <button
+                  type="button"
+                  onClick={() => { setMode('forgot'); setError(''); setFgDone(false) }}
+                  className="text-xs text-s-dim hover:text-s-muted transition-colors"
+                >
+                  Forgot my password
+                </button>
+                <span className="text-xs text-s-dim">&middot;</span>
+                <button
+                  type="button"
+                  onClick={() => { setMode('changepw'); setError(''); setCpDone(false) }}
+                  className="text-xs text-s-dim hover:text-s-muted transition-colors"
+                >
+                  Change my password
+                </button>
+              </div>
             </form>
           )}
 

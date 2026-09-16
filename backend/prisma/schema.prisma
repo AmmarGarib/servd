@@ -879,6 +879,7 @@ model User {
   // tenants they're authorised to switch into.
   tenantMemberships      TenantMember[]
   positionsFilled        Position[]             @relation("PositionFilledBy")
+  passwordResets         StaffPasswordReset[]
 
   @@map("users")
 }
@@ -1430,6 +1431,36 @@ model PhoneOtp {
 
   @@index([phone, purpose, createdAt])
   @@map("phone_otps")
+}
+
+// ─── StaffPasswordReset ───────────────────────────────────────────────────────
+//
+// Self-service "I forgot my password" for staff. Before this existed the only
+// remedies were /auth/password/change (which needs the password you forgot) and
+// an admin calling /auth/users/:id/reissue-password — so the one person most
+// likely to be locked out, the admin, had no way back in without someone else.
+//
+// Deliberately NOT reusing PhoneOtp: that model is keyed on a phone number and
+// stores its code in plaintext, which is tolerable for a 5-minute 6-digit code
+// but not for a link token that is a full account takeover in one click. Here
+// we store only a SHA-256 of the token, so a database read does not hand
+// anyone a working reset link.
+model StaffPasswordReset {
+  id          String    @id @default(uuid())
+  userId      String
+  // SHA-256 hex of the token. The token itself only ever exists in the message.
+  tokenHash   String    @unique
+  expiresAt   DateTime
+  consumedAt  DateTime?
+  // Who asked, for the audit trail — a burst of these is worth noticing.
+  requestedIp String?
+  createdAt   DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId, createdAt])
+  @@index([expiresAt])
+  @@map("staff_password_resets")
 }
 
 // ─── LoyaltyAccount ───────────────────────────────────────────────────────────
