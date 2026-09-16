@@ -303,7 +303,7 @@ export function defaultServdHomeLayout(): Block[] {
       voices: [
         { brand: 'simmer', line: 'Slow nights, plated softly.' },
         { brand: 'stackd', line: 'Cooked here. Wrapped, not plated.' },
-        { brand: 'Flipd',   line: 'Buttermilk-brined, hand-breaded, hot.' },
+        { brand: 'Flipd', line: 'Same burger, every time.' },
       ],
     },
     {

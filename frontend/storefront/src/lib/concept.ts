@@ -54,7 +54,7 @@ export interface Concept {
 const BRAND_ACCENT_OVERRIDES: Record<string, string> = {
   simmer: '#E94E1B',  // fiery orange — the simmer brand bible's signal color
   stackd: '#FCE8CE',  // Pantone 9180 cream — the wordmark colour on the plum field
-  flipd:  '#2092E9',  // curious blue — cool diner palette
+  flipd:  '#294375',  // Flipd Blue (Pantone 19-4057) — the brand book's ink
 }
 
 /** Returns the brand accent the storefront should use for this concept,
@@ -67,7 +67,7 @@ export function brandAccent(slug: string, fallback: string | null | undefined): 
 // and any full-bleed themed band). Each brand gets its OWN background + text
 // colours instead of a generic black slab, so the chrome reads as that brand:
 //   simmer → forest green + bone     stackd → red plum + cream
-//   flipd  → ink-blue + light-blue   servd → deep purple + white
+//   flipd  → Flipd Blue + mustard    servd → deep purple + white
 // The brand accent (brandAccent) still layers on top as the signal colour.
 export interface BrandSurface {
   bg: string      // section background
@@ -79,9 +79,9 @@ export interface BrandSurface {
 const BRAND_SURFACE: Record<string, BrandSurface> = {
   simmer: { bg: '#06392F', text: '#F3ECDE', muted: 'rgba(243,236,222,0.62)', border: 'rgba(243,236,222,0.14)' },
   stackd: { bg: '#7C2946', text: '#FCE8CE', muted: 'rgba(252,232,206,0.72)', border: 'rgba(252,232,206,0.20)' },
-  // flipd is a LIGHT diner page (bone surface, midnight-oil ink) — its chrome
-  // integrates on bone with ink text, not the dark treatment the others use.
-  flipd:  { bg: '#EDE6D3', text: '#090D17', muted: 'rgba(9,13,23,0.60)',     border: 'rgba(9,13,23,0.12)'     },
+  // flipd's dark band is Flipd Blue with mustard type — the inverse of the
+  // page, which is mustard with blue type. Both halves of the brand book.
+  flipd:  { bg: '#294375', text: '#FED561', muted: 'rgba(254,213,97,0.72)',  border: 'rgba(254,213,97,0.22)'  },
   servd:  { bg: '#4E2A4F', text: '#FFFFFF', muted: 'rgba(255,255,255,0.60)', border: 'rgba(255,255,255,0.10)' },
 }
 
@@ -97,7 +97,7 @@ export function brandWordmark(slug: string): { font: string; color: string; weig
   switch (slug) {
     case 'simmer': return { font: 'var(--simmer-display)', color: 'var(--simmer-bone)',  weight: 400 }
     case 'stackd':   return { font: 'var(--stackd-display)',   color: 'var(--stackd-cream)',   weight: 700 }
-    case 'flipd':  return { font: 'var(--flipd-marquee)',  color: 'var(--flipd-sky)',    weight: 400 }
+    case 'flipd':  return { font: 'var(--flipd-display)', color: 'var(--flipd-blue)',   weight: 400 }
     default:       return { font: 'var(--font-wordmark)',  color: 'var(--brand-accent)', weight: 800 }
   }
 }
@@ -133,8 +133,8 @@ const HERO_BY_SLUG: Record<string, string> = {
   // Stackd — rustic toasted focaccia/rye sandwich on a wood board. Matches
   // the upscale dine-in / Italian-leaning brand direction.
   'stackd':            'https://images.unsplash.com/photo-1559054663-e8d23213f55c?w=1200&q=85',
-  // Flipd — smash burger (was Stackd's image; now belongs to Flipd, the
-  // court-side smash-burger brand).
+  // Flipd — smash burger, close-up and warm-lit, which is what the brand
+  // book's imagery rules ask for: bold close-up angles, warm light, no filters.
   'flipd':           'https://images.unsplash.com/photo-1568901346375-23c9450c58cd?w=1200&q=85',
 }
 
@@ -167,11 +167,11 @@ export const BRAND_STORIES: Record<string, BrandStory> = {
     hours: 'Daily 8:00 AM – 11:00 PM',
   },
   'flipd': {
-    tagline: 'Game, set, smash.',
-    oneLiner: 'Smash burgers cooked court-side. Order between sets, eat at the bench.',
-    long: 'Flipd is the court-side burger. Dry-aged beef smashed on a cast-iron flat-top a few steps from the net, brioche toasted to order, sauces blended in-house. Built for the people who want a real burger right after they’ve put in real work. Game on, grill on, eat after the match.',
-    highlights: ['Cast-iron smash, court-side', 'Open-fire, open-air kitchen', 'Order between sets', 'Pick up at the bench'],
-    hours: 'Court hours — typically 10:00 AM – 10:00 PM',
+    tagline: 'A gourmet burger joint that happens to be at a padel court.',
+    oneLiner: 'Every burger built on a fixed spec. Same burger, every time — whether you came off the court or came only for the food.',
+    long: 'Every burger is built on quality ingredients and a fixed spec, whether you just came off the court or came only for the food. Same burger, every time. Consistency isn’t a value-add here; it’s the product. Patties are seasoned with salt and pepper, nothing else, because you should taste the meat. We build with real components, not sauce, going against where the market’s headed. Drinks follow the same logic: electrolytes, coconut water, sparkling water — fuel that fits the food and fits the court.',
+    highlights: ['Smashed & grilled', 'Salt and pepper, nothing else', 'House-made jams and aiolis', 'Hand-cut, triple-cooked'],
+    hours: 'Daily 12:00 PM – 12:00 AM',
   },
 }
 

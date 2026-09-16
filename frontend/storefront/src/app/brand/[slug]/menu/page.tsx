@@ -27,7 +27,7 @@ const FALLBACK_CONCEPTS: Record<string, Concept> = {
   },
   flipd: {
     id: 'fallback-flipd', name: 'Flipd', slug: 'flipd', type: 'restaurant',
-    description: 'Buttermilk-brined fried chicken, made-to-order.',
+    description: 'Gourmet smash and grilled burgers, built to a fixed spec. Same burger, every time.',
     logoUrl: null, primaryColor: null, reservationsEnabled: false,
   },
 }

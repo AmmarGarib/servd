@@ -1,7 +1,7 @@
 /* Inter for body text, Bricolage Grotesque for the kinetic display headlines
    that drive the new asymmetric / chunky look. Falls back to Inter Black if
    the display family fails to load — keeps the bold weight intact. */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&family=Amarante&family=Space+Grotesk:wght@400;500;600;700&family=Playfair+Display:ital,wght@0,500;0,600;0,700;0,800;0,900;1,500;1,600;1,700&family=JetBrains+Mono:wght@400;500;700&family=Lobster&family=Bungee&family=Special+Elite&family=Syne:wght@400;600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&family=Amarante&family=Space+Grotesk:wght@400;500;600;700&family=Playfair+Display:ital,wght@0,500;0,600;0,700;0,800;0,900;1,500;1,600;1,700&family=JetBrains+Mono:wght@400;500;700&family=Alfa+Slab+One&family=Poppins:wght@400;500;600;700&family=Syne:wght@400;600;700;800&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -342,19 +342,21 @@ summary:focus-visible {
   letter-spacing: 0.08em !important;
 }
 
-/* flipd-checkout — cool diner. Pale cream surface, sky-blue signal,
-   deep navy ink. Same token-swap pattern as the others. */
+/* flipd ordering skin. Bone surface rather than mustard: this is the
+   checkout, where legibility of prices and totals beats brand expression, and
+   a full-strength yellow field behind form fields is punishing to read.
+   Flipd Blue still does every mark. Same token-swap pattern as the others. */
 .flipd-ordering {
-  --servd-ink:        var(--flipd-ink);
-  --servd-mute:       rgba(14,26,42,0.62);
-  --servd-line:       rgba(14,26,42,0.14);
-  --servd-surface:    var(--flipd-pale);
-  --servd-green:      var(--flipd-sky-deep);
-  --servd-green-dark: var(--flipd-sky-deep);
+  --servd-ink:        var(--flipd-blue);
+  --servd-mute:       var(--flipd-blue-dim);
+  --servd-line:       rgba(41,67,117,0.16);
+  --servd-surface:    #FFFFFF;
+  --servd-green:      var(--flipd-blue);
+  --servd-green-dark: var(--flipd-blue-deep);
 
-  background: var(--flipd-cream);
-  color: var(--flipd-ink);
-  font-family: 'Inter', system-ui, sans-serif;
+  background: var(--flipd-bone);
+  color: var(--flipd-blue);
+  font-family: var(--flipd-body);
   letter-spacing: -0.005em;
 }
 .flipd-ordering h1,
@@ -369,7 +371,7 @@ summary:focus-visible {
 .flipd-ordering .rounded-2xl[style*="background: white"],
 .flipd-ordering .rounded-2xl[style*="background:#fff"],
 .flipd-ordering .rounded-2xl[style*="background: #fff"] {
-  background: var(--flipd-pale) !important;
+  background: #FFFFFF !important;
   border-color: rgba(14,26,42,0.14) !important;
   box-shadow: 0 1px 3px rgba(14,26,42,0.06) !important;
 }
@@ -389,11 +391,11 @@ summary:focus-visible {
 /* Menu page — outer wrapper, sticky category nav, item modal + cart drawer */
 .flipd-ordering[style*="background: #fff"],
 .flipd-ordering[style*="background: white"] {
-  background: var(--flipd-cream) !important;
+  background: var(--flipd-bone) !important;
 }
 .flipd-ordering [style*="background: '#fff'"],
 .flipd-ordering [style*="background:'#fff'"] {
-  background: var(--flipd-pale) !important;
+  background: #FFFFFF !important;
 }
 .flipd-ordering [style*="rgba(255,255,255,0.95)"] {
   background: rgba(245,251,255,0.97) !important;
@@ -735,111 +737,110 @@ summary:focus-visible {
 
 @media (max-width: 700px) { .stackd-visit-grid { grid-template-columns: 1fr !important; } }
 
-/* flipd — old-school American diner ───────────────────────────────────
-   Cream paper base, Lobster cursive script, Bungee marquee wordmark,
-   Special Elite typewriter body. Sky blue + cream drive the awning +
-   wrappers; ink black is the tertiary that grounds the wordmark, the
-   3D shadows, and the checkered floor. No red. No neon glow. */
+/* flipd — from the brand book ─────────────────────────────────────────────
+   A yellow brand. Smash Mustard is the field, Flipd Blue is every mark on it,
+   Bone is the third checker square and the quiet surface. Nothing else.
+
+   The book's personality section is the spec for this page: "Playful, not
+   childish. Energetic, not chaotic. Bold, not brash." and "Hand-made: marker
+   lines over vectors. Slightly wrong is on-brand." So the decoration is
+   line-art and checker, never gradients, glows or drop shadows on type. */
 .flipd-page {
-  background: var(--flipd-cream);
-  color: var(--flipd-ink);
-  font-family: 'Inter', system-ui, sans-serif;
+  background: var(--flipd-mustard);
+  color: var(--flipd-blue);
+  font-family: var(--flipd-body);
 }
-.flipd-page .flipd-display  { font-family: var(--flipd-script);  font-weight: 400; letter-spacing: 0.01em; line-height: 0.98; }
-.flipd-page .flipd-marquee  { font-family: var(--flipd-marquee); letter-spacing: 0.04em; line-height: 0.92; }
-.flipd-page .flipd-type     { font-family: var(--flipd-type);    letter-spacing: 0.02em; }
-.flipd-page .flipd-eyebrow  {
-  font-family: var(--flipd-type);
-  font-size: 0.78rem; font-weight: 400;
-  letter-spacing: 0.32em; text-transform: uppercase;
-  color: var(--flipd-sky-deep);
+.flipd-page .flipd-display {
+  font-family: var(--flipd-display);
+  font-weight: 400;
+  letter-spacing: -0.01em;
+  line-height: 1.02;
+  color: var(--flipd-blue);
 }
-/* Primary CTA — sky-blue capsule, ink border, ink text, ink 3D shadow.
-   On hover it deepens to sky-deep with cream text. Tertiary black does
-   all the "diner signage outline" work that red used to do. */
-.flipd-page .flipd-btn {
-  display: inline-flex; align-items: center; gap: 0.6rem;
-  font-family: var(--flipd-marquee);
-  font-size: 0.92rem; letter-spacing: 0.06em;
-  padding: 0.95rem 1.7rem;
-  background: var(--flipd-green);
-  color: var(--flipd-cream);
-  border: 2px solid var(--flipd-ink);
-  border-radius: 999px; text-decoration: none;
+.flipd-page .flipd-eyebrow {
+  font-family: var(--flipd-body);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.28em;
   text-transform: uppercase;
-  box-shadow: 0 3px 0 var(--flipd-ink), 0 6px 16px rgba(14,26,42,0.18);
-  transition: transform 140ms ease, box-shadow 140ms ease, background 180ms ease, color 180ms ease;
-}
-.flipd-page .flipd-btn:hover {
-  background: var(--flipd-green-deep);
-  color: var(--flipd-cream);
-  transform: translateY(-2px);
-  box-shadow: 0 5px 0 var(--flipd-ink), 0 10px 24px rgba(14,26,42,0.32);
-}
-.flipd-page .flipd-btn:active {
-  transform: translateY(0);
-  box-shadow: 0 1px 0 var(--flipd-ink);
-}
-/* Ghost variant — cream paper, ink trim. Inverts to ink/cream on hover. */
-.flipd-page .flipd-btn-ghost {
-  background: var(--flipd-cream); color: var(--flipd-ink);
-  border-color: var(--flipd-ink);
-  box-shadow: 0 3px 0 var(--flipd-ink), 0 6px 16px rgba(14,26,42,0.12);
-}
-.flipd-page .flipd-btn-ghost:hover {
-  background: var(--flipd-ink); color: var(--flipd-cream);
-  box-shadow: 0 5px 0 #06101c, 0 10px 24px rgba(14,26,42,0.28);
+  color: var(--flipd-blue-dim);
 }
 
-/* Card — formica counter look: pale blue top, chrome trim */
-.flipd-page .flipd-card {
-  background: var(--flipd-pale);
-  border: 2px solid var(--flipd-ink);
-  border-radius: 1rem;
-  padding: 1.8rem;
-  box-shadow: 0 4px 0 var(--flipd-ink), 0 8px 24px rgba(14,26,42,0.10);
-  position: relative;
-}
-
-/* Awning / wrapper stripes — sky + cream diagonals. Doubles as the
-   takeout-paper print across the brand: same stripe pattern wraps the
-   tenders, lines the basket, fronts the website. */
-.flipd-awning {
-  background-image:
-    linear-gradient(45deg, var(--flipd-sky) 25%, transparent 25%, transparent 50%,
-                          var(--flipd-sky) 50%, var(--flipd-sky) 75%, transparent 75%, transparent);
-  background-size: 36px 36px;
-  background-color: var(--flipd-cream);
-}
-
-/* Checkerboard floor — turf-blue + bone court tiles. Apply to a section so it
-   reads as a padel court without overwhelming the page. */
-.flipd-tile {
-  background-color: var(--flipd-cream);
+/* The checker band — the brand's signature edge. Used as a rule between
+   sections and at the top and bottom of the page, exactly as the book does. */
+.flipd-page .flipd-checker {
+  height: 22px;
   background-image: var(--flipd-checker);
-  background-size: 36px 36px;
-  background-repeat: repeat;       /* exact 36px tiles → crisp, integer 18px cells */
-  background-position: 0 0;
+  background-size: 22px 22px;
+  background-repeat: repeat-x;
+  border: 0;
+  margin: 0;
 }
 
-/* Deep-green court turf — the textured fill for the "bland" dark panels.
-   Same sand grain + fibre noise as the floor, over the deep court green. */
-.flipd-turf-ink {
-  color: var(--flipd-cream);
-  background-color: var(--flipd-ink);
-  background-image:
-    var(--flipd-turf-noise),
-    radial-gradient(rgba(237,230,211,0.16) 0.6px, transparent 1.3px),
-    radial-gradient(rgba(237,230,211,0.10) 0.6px, transparent 1.3px);
-  background-size: 180px 180px, 6px 6px, 9px 9px;
-  background-position: 0 0, 0 0, 3px 4px;
-  background-blend-mode: overlay, normal, normal;
+/* Primary CTA — blue capsule on the mustard field. The book bans decoration
+   for its own sake, so there is no gradient and no glow: a flat fill, and a
+   1px lift on hover. */
+.flipd-page .flipd-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: var(--flipd-blue);
+  color: var(--flipd-mustard);
+  font-family: var(--flipd-body);
+  font-weight: 700;
+  font-size: 0.82rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 0.95rem 1.7rem;
+  border-radius: 999px;
+  border: 2px solid var(--flipd-blue);
+  text-decoration: none;
+  transition: transform 160ms ease, background 160ms ease, color 160ms ease;
+}
+.flipd-page .flipd-btn:hover { transform: translateY(-1px); background: var(--flipd-blue-deep); }
+.flipd-page .flipd-btn-ghost {
+  background: transparent;
+  color: var(--flipd-blue);
+}
+.flipd-page .flipd-btn-ghost:hover { background: var(--flipd-blue); color: var(--flipd-mustard); }
+
+/* A bone panel on the mustard field — used for the menu and any long read. */
+.flipd-page .flipd-panel {
+  background: var(--flipd-bone);
+  border: 2px solid var(--flipd-blue);
+  border-radius: 1.25rem;
 }
 
-/* Chrome rule — horizontal hairline with metallic gradient */
-.flipd-page .flipd-chrome-rule {
-  height: 3px; border: 0; margin: 0;
-  background: linear-gradient(180deg, #fff 0%, var(--flipd-chrome) 50%, #6b7180 100%);
+/* Menu rows. The book's voice rule is "names the ingredient, skips the
+   adjective", so the build line is the hero and the name is just a label. */
+.flipd-page .flipd-item + .flipd-item {
+  border-top: 1px solid rgba(41,67,117,0.16);
+}
+.flipd-page .flipd-item-name {
+  font-family: var(--flipd-display);
+  font-size: 1.12rem;
+  line-height: 1.15;
+  color: var(--flipd-blue);
+}
+.flipd-page .flipd-item-build {
+  font-size: 0.86rem;
+  line-height: 1.5;
+  color: var(--flipd-blue-dim);
+}
+/* The option chips (SINGLE / DOUBLE / LETTUCE WRAP, MASALA / SALT N PEPPER …).
+   These come straight off the menu spec and are the "precise" part of the
+   personality — weights, temps and timings get said out loud. */
+.flipd-page .flipd-chip {
+  display: inline-block;
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  padding: 0.26rem 0.6rem;
+  border-radius: 999px;
+  border: 1px solid rgba(41,67,117,0.3);
+  color: var(--flipd-blue-dim);
+  white-space: nowrap;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -853,29 +854,41 @@ summary:focus-visible {
        tertiary that handles the marquee wordmark, 3D shadows under the
        cards/buttons, and the checkered floor. No red anywhere — the
        brand reads as a takeout chicken-paper print, not Coca-Cola. */
-  /* ── Padel-court turf palette. Bone is the ONLY colour kept from the old
-       diner scheme; everything else is court turf — a blue court + green
-       action accent, grounded by a deep court ink. (These are the "vivid"
-       defaults; the ?turf=muted toggle swaps the deep set on the brand
-       wrapper so both shade sets can be compared live.) */
-  --flipd-sky:          #1E4FC4;  /* padel court blue — proper vivid royal/cobalt turf */
-  --flipd-sky-deep:     #163C96;  /* deep court blue — eyebrows / ledges on light */
-  --flipd-green:        #4C9A35;  /* padel court green — grass turf / action accent */
-  --flipd-green-deep:   #3A7A28;  /* deep grass green (hover) */
-  --flipd-optic:        #C9DB2E;  /* optic ball yellow-green — pop accent on dark turf */
-  --flipd-pale:         #E7EFEA;  /* pale turf tint — card faces */
-  --flipd-ink:          #163E22;  /* deep court green — lines, outlines, 3D shadows, text, dark panels */
-  --flipd-cream:        #EDE6D3;  /* bone — court line / sand-infill light, kept from the diner palette */
-  /* Sand-infill grain + turf-fibre noise, layered over the court colours. */
-  --flipd-turf-noise:   url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='fn'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23fn)' opacity='0.6'/%3E%3C/svg%3E");
-  /* Checker as a tiled SVG (two 18px squares per 36px tile) — tessellates
-     pixel-perfectly from the top-left, unlike the 4-gradient recipe which
-     malformed the first row at the top edge. */
-  --flipd-checker:      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='36' height='36'%3E%3Crect width='36' height='36' fill='%23EDE6D3'/%3E%3Crect width='18' height='18' fill='%23163E22'/%3E%3Crect x='18' y='18' width='18' height='18' fill='%23163E22'/%3E%3C/svg%3E");
-  --flipd-chrome:       #C8CCD2;            /* booth chrome */
-  --flipd-script:       'Lobster', cursive;
-  --flipd-marquee:      'Bungee', 'Impact', sans-serif;
-  --flipd-type:         'Special Elite', 'Courier New', monospace;
+  /* ── flipd — from the GS Foods brand book (Sept 2026) ──────────────────
+       Three colours, no more:
+         Flipd Blue    #294375  (Pantone 19-4057 TCX) — ink, dark panels, the
+                                 badge line-work. Everything structural.
+         Smash Mustard #FED561  (Pantone 13-0840 TCX) — the field. flipd is a
+                                 yellow brand; the blue sits ON the yellow.
+         Bone          #F9F0E1  (Pantone 9180) — the third checker square and
+                                 the quiet surface.
+       The previous palette was padel-court turf — vivid court blue, grass
+       green, optic-ball yellow-green. That directly contradicts the brand
+       book's own rule ("Not about padel: we happen to be there, we never
+       borrow the court's identity"), so it is gone rather than dimmed. */
+  --flipd-blue:         #294375;  /* Flipd Blue — ink, rules, line art */
+  --flipd-blue-deep:    #1D3159;  /* pressed / deeper panels */
+  --flipd-mustard:      #FED561;  /* Smash Mustard — the brand field */
+  --flipd-mustard-deep: #F3C33F;  /* hover / pressed on mustard */
+  --flipd-bone:         #F9F0E1;  /* Bone — the calm surface */
+  --flipd-blue-dim:     rgba(41,67,117,0.72);
+  --flipd-blue-faint:   rgba(41,67,117,0.42);
+  --flipd-bone-dim:     rgba(249,240,225,0.74);
+
+  /* The checker is the brand's signature edge — navy and bone, never yellow,
+     so it reads as a border against the mustard field rather than dissolving
+     into it. Tiled SVG so it tessellates exactly from the top-left; the old
+     four-gradient recipe malformed the first row. */
+  --flipd-checker:      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='36' height='36'%3E%3Crect width='36' height='36' fill='%23F9F0E1'/%3E%3Crect width='18' height='18' fill='%23294375'/%3E%3Crect x='18' y='18' width='18' height='18' fill='%23294375'/%3E%3C/svg%3E");
+
+  /* Display is "Bronto Burger" in the book — a Canva face with no webfont
+     licence we hold, so it cannot ship. Alfa Slab One is the closest thing
+     available: same heavy retro slab weight and warmth at heading sizes. The
+     wordmark itself is the supplied badge image, so the one place the real
+     face matters is unaffected. Swap this the day we license Bronto Burger.
+     Body is Poppins, which IS the book's choice and is freely available. */
+  --flipd-display:      'Alfa Slab One', 'Bevan', Georgia, serif;
+  --flipd-body:         'Poppins', system-ui, sans-serif;
 }
 
 html {
