@@ -8,6 +8,12 @@ const config: Config = {
         // ─── 2030 Ops Design System ───────────────────────────────────────
         s: {
           bg:           '#0C0D10',   // deepest surface
+          // `bg-s-bg-soft` is used in 83 places (card headers, list-row hover)
+          // but was never defined here, so Tailwind emitted no rule and all 83
+          // rendered with no background — most visibly, list rows had no hover
+          // feedback at all. Set one step up from the .s-card base (#13151A),
+          // which is what "soft" meant: same value as `elevated`.
+          'bg-soft':    '#1A1D24',   // card headers, row hover
           surface:      '#13151A',   // card base
           elevated:     '#1A1D24',   // raised panels
           overlay:      '#20242E',   // dropdowns, modals

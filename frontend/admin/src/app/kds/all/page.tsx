@@ -44,7 +44,9 @@ export default function AllOrdersPage() {
               fixed-width track. Without overflow-y-auto + min-h-0, columns
               with 20+ orders overflow the viewport and visually collide
               with the next column's headers. */}
-          {['pos', 'servd', 'ubereats', 'doordash', 'deliveroo', 'cart', 'manual'].map((source) => {
+          {/* Aggregator columns (ubereats/doordash/deliveroo) removed — GS
+              Foods runs its own fleet and no order can carry those sources. */}
+          {['pos', 'servd', 'cart', 'manual'].map((source) => {
             const sourceOrders = activeOrders.filter((o) => o.source === source)
             if (sourceOrders.length === 0) return null
             return (

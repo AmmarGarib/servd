@@ -8,11 +8,13 @@ import { useKdsStore } from '../../store/kds'
 import { useAuthStore } from '../../store/auth'
 import { PhotoBumpModal } from './PhotoBumpModal'
 
+// Aggregator sources (ubereats / doordash / deliveroo) are gone. GS Foods
+// runs its own fleet and will never take orders through an aggregator, so the
+// colours were already removed from the `source` palette — these three entries
+// pointed at classes Tailwind never emitted, and a ticket from one of them
+// would have rendered an unstyled badge anyway. No such ticket can exist.
 const SOURCE_COLORS: Record<string, string> = {
   servd: 'bg-source-servd',
-  ubereats: 'bg-source-ubereats',
-  doordash: 'bg-source-doordash',
-  deliveroo: 'bg-source-deliveroo',
   pos: 'bg-source-pos',
   cart: 'bg-source-cart',
   manual: 'bg-source-manual',
@@ -20,9 +22,6 @@ const SOURCE_COLORS: Record<string, string> = {
 
 const SOURCE_LABELS: Record<string, string> = {
   servd: 'DIRECT',
-  ubereats: 'UBER',
-  doordash: 'DD',
-  deliveroo: 'ROOOO',
   pos: 'POS',
   cart: 'CART',
   manual: 'MANUAL',
