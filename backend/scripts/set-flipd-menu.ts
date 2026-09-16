@@ -6,76 +6,82 @@
 // of them (bacon) isn't something the kitchen serves at all. This script is
 // the correction.
 //
+// It talks to the HTTP API rather than Prisma, so it runs from anywhere with
+// network access to the API — not just from the database host — and every
+// write goes through the same tenant-scoping and role checks the admin UI
+// uses. Nothing here can touch another company's menu.
+//
 // Item names and build lines are VERBATIM from the sheet. The brand book's
 // voice rule is "plain-spoken: names the ingredient, skips the adjective" and
 // its first core value is "the spec is the boss", so the build line IS the
 // description and nothing is written around it.
 //
-// Idempotent: run it as many times as you like. It matches on (category name,
-// item name) and updates in place, so prices edited in admin are overwritten
-// by whatever is in PRICES below — that is the point, it's an import, not a
-// merge. Items that exist in the DB but not on the sheet are soft-deleted
-// (deletedAt), never hard-deleted, because historical order rows point at them.
+// Idempotent: it matches on name and updates in place, so running it twice is
+// the same as running it once. Items and categories in the DB that are not on
+// the sheet are deleted through the API, which soft-deletes — historical order
+// rows keep pointing at them.
 //
-//   npx tsx scripts/set-flipd-menu.ts            # dry run, prints the plan
-//   npx tsx scripts/set-flipd-menu.ts --apply    # writes
+//   SERVD_EMAIL=you@gsfoods.pk SERVD_PASSWORD=... npx tsx scripts/set-flipd-menu.ts
+//   ...same, plus --apply, to actually write.
+//
+// Credentials come from the environment. Never put them in this file.
 
-import { PrismaClient } from '@prisma/client'
-
-const prisma = new PrismaClient()
+const API = process.env.SERVD_API_URL ?? 'https://servd-api.garibsons.app'
+const EMAIL = process.env.SERVD_EMAIL
+const PASSWORD = process.env.SERVD_PASSWORD
 const APPLY = process.argv.includes('--apply')
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PRICES — the only thing here that did not come off the sheet.
 //
-// The menu sheet carries builds and options, not money, so these are set from
-// the operator's price list. Everything is in PAISA (PKR * 100), matching the
-// rest of the system: 1200_00 is PKR 1,200.
+// The sheet carries builds and options, not money. Everything is in PAISA
+// (PKR * 100) to match the rest of the system: 120000 is PKR 1,200.
 //
-// A null price means "not priced yet". The script refuses to publish a null
-// item — it creates it as isAvailable: false and says so — so a half-filled
-// table can never put an unpriced item in front of a customer.
+// null means "not priced yet". An unpriced item is created HIDDEN
+// (isAvailable: false) so it can be priced in admin → Menu and switched on,
+// and can never reach a customer at PKR 0 in the meantime.
 // ─────────────────────────────────────────────────────────────────────────────
 type Paisa = number | null
 
 const PRICES: Record<string, Paisa> = {
-  // Burgers · Smashed  (base price = Single)
+  // Smashed (base price = Single)
   'Chimi Shimi': null,
   'Garlic Shroom': null,
   'Sweet Chili Shroom': null,
-  // Burgers · Grilled
+  // Grilled
   'Chili Jam Chicken': null,
   'Pub Classic': null,
   'Pub Shroom': null,
-  // Sides · Fried
+  // Fried
   'Chili Jam Tenders': null,
   'Buffalo Tenders': null,
   'Masala Tenders': null,
-  // Sides · Taters
+  // Taters
   'Handcut Fries': null,
   'Curly Fries': null,
   'Roasted Potatoes': null,
-  // Drinks
+  // Electrolytes
   'Wild Berry': null,
   'Pineapple': null,
   'Lemon & Lime': null,
   'Orange': null,
   'Strawberry Limeade': null,
-  // Flip Side
+  // Sweet
   'Salted Chocolate Mousse': null,
   'Brownie & Ice Cream': null,
   'Cookie & Ice Cream': null,
 }
 
-// Per-option price deltas, in paisa. 0 means the option costs nothing extra.
-// Keyed by the option's own name so one entry covers every item that offers it.
+// Per-option price deltas, in paisa, keyed by the option's own name so one
+// entry covers every item offering it. A null delta means the option is left
+// OFF the item rather than guessed at — a "Double" silently priced at +0 is a
+// second patty given away on every order.
 const OPTION_DELTAS: Record<string, Paisa> = {
-  // Burger sizes. Single is the base (0). Double needs the second patty's
-  // price; lettuce wrap is usually level with single but say so explicitly.
+  // Burger size. Single is the base.
   'Single': 0,
   'Double': null,
   'Lettuce wrap': 0,
-  // Tenders: served in a brioche or tossed loose. Same food either way.
+  // Tenders: in a brioche or tossed loose. Same food either way.
   'Brioched': 0,
   'Tossed': 0,
   // Tater dressings — all included.
@@ -83,7 +89,7 @@ const OPTION_DELTAS: Record<string, Paisa> = {
   'Salt n pepper': 0,
   'Roasted garlic aioli': 0,
   'Chimichurri aioli': 0,
-  // Drinks base. Coconut water typically costs more than still or sparkling.
+  // Drink base. Coconut water normally costs more than still or sparkling.
   'Still': 0,
   'Sparkling': 0,
   'Coconut': null,
@@ -97,32 +103,23 @@ const OPTION_DELTAS: Record<string, Paisa> = {
 // ─────────────────────────────────────────────────────────────────────────────
 // THE MENU — verbatim from the sheet.
 //
-// Categories are the sheet's sections rather than its four page headings.
-// "Burgers" alone would hide the smashed/grilled split, which the brand treats
-// as a real distinction (it is the first thing in its own highlights), and
-// "Smashed" alone reads as nothing on an ordering screen. "Burgers · Smashed"
-// keeps both and sorts next to its sibling.
+// Categories are the sheet's SECTION names. The page headings above them
+// (Burgers / Sides / Drinks / Flip Side) are the operator's own sectioning
+// markers, not menu headings, so they are not surfaced.
 // ─────────────────────────────────────────────────────────────────────────────
-interface Item {
-  name: string
-  build: string
-  /** Modifier group name → the options in it. One group per item, as the sheet has it. */
-  options?: { group: string; choices: string[] }
-}
-interface Category {
-  name: string
-  items: Item[]
-}
+interface Options { group: string; choices: string[] }
+interface Item { name: string; build: string; options?: Options }
+interface Category { name: string; items: Item[] }
 
-const SIZE = { group: 'Size', choices: ['Single', 'Double', 'Lettuce wrap'] }
-const SERVE = { group: 'Serve it', choices: ['Brioched', 'Tossed'] }
-const DRESS = { group: 'Dressed', choices: ['Masala', 'Salt n pepper', 'Roasted garlic aioli', 'Chimichurri aioli'] }
-const WATER = { group: 'Base', choices: ['Still', 'Sparkling', 'Coconut'] }
-const SWEET = { group: 'Topping', choices: ['Chocolate', 'Salted caramel', 'Brown butter crumble', 'Cookie crumble'] }
+const SIZE:  Options = { group: 'Size',       choices: ['Single', 'Double', 'Lettuce wrap'] }
+const SERVE: Options = { group: 'Serve it',   choices: ['Brioched', 'Tossed'] }
+const DRESS: Options = { group: 'Dressed',    choices: ['Masala', 'Salt n pepper', 'Roasted garlic aioli', 'Chimichurri aioli'] }
+const WATER: Options = { group: 'Base',       choices: ['Still', 'Sparkling', 'Coconut'] }
+const SWEET: Options = { group: 'Topping',    choices: ['Chocolate', 'Salted caramel', 'Brown butter crumble', 'Cookie crumble'] }
 
 const MENU: Category[] = [
   {
-    name: 'Burgers · Smashed',
+    name: 'Smashed',
     items: [
       { name: 'Chimi Shimi',        build: 'Brioche, smash patty, chimichurri aioli, American cheese', options: SIZE },
       { name: 'Garlic Shroom',      build: 'Brioche, smash patty, shroom & onion jam, roasted garlic aioli, American cheese', options: SIZE },
@@ -130,7 +127,7 @@ const MENU: Category[] = [
     ],
   },
   {
-    name: 'Burgers · Grilled',
+    name: 'Grilled',
     items: [
       { name: 'Chili Jam Chicken', build: 'Brioche, grilled chicken breast, house made chili jam', options: SIZE },
       { name: 'Pub Classic',       build: 'Brioche, 6oz grilled beef patty, ketchup, mustard, pickles, American cheese', options: SIZE },
@@ -138,7 +135,7 @@ const MENU: Category[] = [
     ],
   },
   {
-    name: 'Sides · Fried',
+    name: 'Fried',
     items: [
       { name: 'Chili Jam Tenders', build: 'Brined and fried tenders, house made chili jam, roasted garlic aioli', options: SERVE },
       { name: 'Buffalo Tenders',   build: 'Brined and fried tenders, buffalo sauce, roasted garlic aioli',        options: SERVE },
@@ -146,7 +143,7 @@ const MENU: Category[] = [
     ],
   },
   {
-    name: 'Sides · Taters',
+    name: 'Taters',
     items: [
       { name: 'Handcut Fries',    build: 'Hand cut. Triple cooked.',                          options: DRESS },
       { name: 'Curly Fries',      build: 'Twisty. Crispy.',                                   options: DRESS },
@@ -154,7 +151,7 @@ const MENU: Category[] = [
     ],
   },
   {
-    name: 'Drinks',
+    name: 'Electrolytes',
     items: [
       { name: 'Wild Berry',         build: 'Electrolytes', options: WATER },
       { name: 'Pineapple',          build: 'Electrolytes', options: WATER },
@@ -164,7 +161,7 @@ const MENU: Category[] = [
     ],
   },
   {
-    name: 'Flip Side',
+    name: 'Sweet',
     items: [
       { name: 'Salted Chocolate Mousse', build: 'Chocolate mousse',                         options: SWEET },
       { name: 'Brownie & Ice Cream',     build: 'Brownie, vanilla ice cream',               options: SWEET },
@@ -173,27 +170,60 @@ const MENU: Category[] = [
   },
 ]
 
-async function main() {
-  const concept = await prisma.concept.findFirst({
-    where: { slug: 'flipd', deletedAt: null },
-    select: { id: true, name: true, tenantId: true },
-  })
-  if (!concept) throw new Error('No concept with slug "flipd" — nothing to import into.')
+// ─── API plumbing ────────────────────────────────────────────────────────────
 
+let token = ''
+
+async function api<T>(method: string, path: string, body?: unknown): Promise<T> {
+  // Fastify rejects any request that DECLARES application/json but sends no
+  // body, so the content-type only goes on when there is one. A bodyless
+  // write (POST /tenants/switch/:id) still needs a body, so it sends `{}`.
+  const hasBody = body !== undefined || (method !== 'GET' && method !== 'DELETE')
+  const payload = body !== undefined ? JSON.stringify(body) : '{}'
+  const res = await fetch(`${API}/api/v1${path}`, {
+    method,
+    headers: {
+      ...(hasBody ? { 'Content-Type': 'application/json' } : {}),
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    ...(hasBody ? { body: payload } : {}),
+  })
+  if (res.status === 204) return undefined as T
+  const text = await res.text()
+  if (!res.ok) throw new Error(`${method} ${path} → ${res.status} ${text.slice(0, 400)}`)
+  return text ? (JSON.parse(text) as T) : (undefined as T)
+}
+
+interface LiveModifier { id: string; name: string; priceDeltaCents: number }
+interface LiveGroup { id: string; name: string; modifiers: LiveModifier[] }
+interface LiveItem { id: string; name: string; description: string | null; priceCents: number; isAvailable: boolean; modifierGroups: LiveGroup[] }
+interface LiveCategory { id: string; name: string; items: LiveItem[] }
+
+async function login() {
+  if (!EMAIL || !PASSWORD) {
+    throw new Error('Set SERVD_EMAIL and SERVD_PASSWORD in the environment.')
+  }
+  const res = await api<{ accessToken?: string; twoFactorRequired?: boolean }>(
+    'POST', '/auth/login', { email: EMAIL, password: PASSWORD },
+  )
+  if (!res.accessToken) {
+    throw new Error(res.twoFactorRequired
+      ? 'That account has 2FA on. Use an account without it, or add the challenge flow here.'
+      : 'Login did not return an access token.')
+  }
+  token = res.accessToken
+}
+
+async function main() {
   const unpriced = Object.entries(PRICES).filter(([, p]) => p === null).map(([n]) => n)
   const unpricedOptions = Object.entries(OPTION_DELTAS).filter(([, p]) => p === null).map(([n]) => n)
+  const itemCount = MENU.reduce((n, c) => n + c.items.length, 0)
 
-  console.log(`concept   ${concept.name} (${concept.id})`)
+  console.log(`api       ${API}`)
   console.log(`mode      ${APPLY ? 'APPLY — writing' : 'DRY RUN — nothing will be written'}`)
-  console.log(`menu      ${MENU.length} categories, ${MENU.reduce((n, c) => n + c.items.length, 0)} items`)
-  if (unpriced.length) {
-    console.log(`\n!! ${unpriced.length} items have no price and will be created UNAVAILABLE:`)
-    for (const n of unpriced) console.log(`     ${n}`)
-  }
-  if (unpricedOptions.length) {
-    console.log(`\n!! ${unpricedOptions.length} options have no price delta and will be SKIPPED:`)
-    for (const n of unpricedOptions) console.log(`     ${n}`)
-  }
+  console.log(`menu      ${MENU.length} categories, ${itemCount} items`)
+  if (unpriced.length) console.log(`unpriced  ${unpriced.length}/${itemCount} items → created HIDDEN until priced in admin`)
+  if (unpricedOptions.length) console.log(`no delta  ${unpricedOptions.join(', ')} → option left off the item`)
   console.log()
 
   if (!APPLY) {
@@ -201,150 +231,155 @@ async function main() {
       console.log(`[${cat.name}]`)
       for (const it of cat.items) {
         const p = PRICES[it.name]
-        console.log(`   ${it.name.padEnd(26)} ${p === null ? '(no price)' : `PKR ${(p / 100).toFixed(0)}`}  ${it.build}`)
+        console.log(`   ${it.name.padEnd(26)} ${p == null ? '(no price — hidden)' : `PKR ${(p / 100).toFixed(0)}`.padEnd(19)} ${it.build}`)
       }
     }
     console.log('\nRe-run with --apply to write.')
-    await prisma.$disconnect()
     return
   }
 
-  const keptCategoryIds: string[] = []
-  const keptItemIds: string[] = []
+  await login()
+
+  // flipd is not in the same company as simmer and stackd — it belongs to the
+  // GS x Viva JV — and the menu routes scope to the operator's ACTIVE company,
+  // not every company they're a member of. So find flipd's company from the
+  // public concept list (which spans companies and carries tenantId), switch
+  // into it, and switch back at the end so the account is left where it was.
+  const publicConcepts = await api<Array<{ slug: string; tenantId: string | null }>>('GET', '/storefront/concepts')
+  const flipdTenantId = publicConcepts.find((c) => c.slug === 'flipd')?.tenantId
+  if (!flipdTenantId) throw new Error('Could not resolve flipd\'s company from /storefront/concepts.')
+
+  const myTenants = await api<Array<{ id: string; name: string }>>('GET', '/tenants')
+  const target = myTenants.find((t) => t.id === flipdTenantId)
+  if (!target) {
+    throw new Error(`This account is not a member of flipd's company (${flipdTenantId}). Use an account that is.`)
+  }
+
+  // Remember where to put the account back. /concepts is scoped to the active
+  // company, so whichever company its rows belong to is the current one.
+  const before = await api<Array<{ tenantId: string | null }>>('GET', '/concepts')
+  const previousTenantId = before[0]?.tenantId ?? null
+
+  let switched = false
+  if (previousTenantId !== flipdTenantId) {
+    await api('POST', `/tenants/switch/${flipdTenantId}`)
+    switched = true
+    console.log(`company   switched to ${target.name}`)
+  }
+
+  try {
+    await importMenu()
+  } finally {
+    if (switched && previousTenantId) {
+      await api('POST', `/tenants/switch/${previousTenantId}`)
+      console.log(`company   switched back`)
+    }
+  }
+}
+
+async function importMenu() {
+  const concepts = await api<Array<{ id: string; slug: string; name: string }>>('GET', '/concepts')
+  const concept = concepts.find((c) => c.slug === 'flipd')
+  if (!concept) throw new Error('No concept with slug "flipd" visible in the active company.')
+  console.log(`concept   ${concept.name} (${concept.id})\n`)
+
+  const live = await api<LiveCategory[]>('GET', `/menu/${concept.id}`)
+  const liveCategories = new Map(live.map((c) => [c.name, c]))
+  const liveItems = new Map(live.flatMap((c) => c.items.map((i) => [i.name, i] as const)))
+
+  const keptCategoryIds = new Set<string>()
+  const keptItemIds = new Set<string>()
 
   for (const [ci, cat] of MENU.entries()) {
-    let category = await prisma.category.findFirst({
-      where: { conceptId: concept.id, name: cat.name, deletedAt: null },
-      select: { id: true },
-    })
-    if (!category) {
-      category = await prisma.category.create({
-        data: { conceptId: concept.id, name: cat.name, displayOrder: ci },
-        select: { id: true },
+    let categoryId = liveCategories.get(cat.name)?.id
+    if (!categoryId) {
+      const created = await api<{ id: string }>('POST', '/menu/categories', {
+        conceptId: concept.id, name: cat.name, sortOrder: ci,
       })
+      categoryId = created.id
       console.log(`+ category  ${cat.name}`)
     } else {
-      await prisma.category.update({ where: { id: category.id }, data: { displayOrder: ci } })
+      await api('PATCH', `/menu/categories/${categoryId}`, { sortOrder: ci })
       console.log(`= category  ${cat.name}`)
     }
-    keptCategoryIds.push(category.id)
+    keptCategoryIds.add(categoryId)
 
     for (const [ii, it] of cat.items.entries()) {
       const price = PRICES[it.name]
       const priceCents = price ?? 0
-      // Unpriced items go in hidden. They exist so the structure is complete
-      // and so filling the price in admin is a one-field job, but a PKR 0 item
-      // must never be orderable.
-      const isAvailable = price !== null
+      const isAvailable = price != null
+      const existing = liveItems.get(it.name)
 
-      let item = await prisma.menuItem.findFirst({
-        where: { conceptId: concept.id, name: it.name, deletedAt: null },
-        select: { id: true },
-      })
-      if (!item) {
-        item = await prisma.menuItem.create({
-          data: {
-            conceptId: concept.id,
-            categoryId: category.id,
-            name: it.name,
-            description: it.build,
-            priceCents,
-            isAvailable,
-            displayOrder: ii,
-          },
-          select: { id: true },
+      let itemId: string
+      if (!existing) {
+        const created = await api<{ id: string }>('POST', '/menu/items', {
+          conceptId: concept.id, categoryId, name: it.name,
+          description: it.build, priceCents, isAvailable, displayOrder: ii,
         })
+        itemId = created.id
         console.log(`  + item    ${it.name}${isAvailable ? '' : '  (hidden — no price)'}`)
       } else {
-        await prisma.menuItem.update({
-          where: { id: item.id },
-          data: {
-            categoryId: category.id,
-            description: it.build,
-            priceCents,
-            isAvailable,
-            displayOrder: ii,
-          },
+        itemId = existing.id
+        await api('PATCH', `/menu/items/${itemId}`, {
+          categoryId, description: it.build, priceCents, isAvailable, displayOrder: ii,
         })
         console.log(`  = item    ${it.name}${isAvailable ? '' : '  (hidden — no price)'}`)
       }
-      keptItemIds.push(item.id)
+      keptItemIds.add(itemId)
 
       if (!it.options) continue
 
-      // One modifier group per item. Required + exactly one choice, because
-      // every group on this sheet is a "pick how you want it", not an add-on.
-      let group = await prisma.modifierGroup.findFirst({
-        where: { menuItemId: item.id, name: it.options.group, deletedAt: null },
-        select: { id: true },
-      })
-      if (!group) {
-        group = await prisma.modifierGroup.create({
-          data: { menuItemId: item.id, name: it.options.group, minSelect: 1, maxSelect: 1, isRequired: true, sortOrder: 0 },
-          select: { id: true },
+      // Every group on this sheet is a "pick how you want it", never an
+      // optional add-on, so each is required and exactly one choice.
+      const modifiers = it.options.choices
+        .map((name, sortOrder) => ({ name, delta: OPTION_DELTAS[name], sortOrder }))
+        .filter((m) => {
+          if (m.delta == null) { console.log(`    ! skip  ${m.name} — no price delta`); return false }
+          return true
         })
-      } else {
-        await prisma.modifierGroup.update({
-          where: { id: group.id },
-          data: { minSelect: 1, maxSelect: 1, isRequired: true },
-        })
-      }
+        .map((m) => ({ name: m.name, priceDeltaCents: m.delta as number, isDefault: m.sortOrder === 0, sortOrder: m.sortOrder }))
 
-      const keptModifierIds: string[] = []
-      for (const [oi, choice] of it.options.choices.entries()) {
-        const delta = OPTION_DELTAS[choice]
-        if (delta === null || delta === undefined) {
-          // No delta known — leave the option off rather than guess it's free.
-          // A "Double" silently priced at +0 is a burger given away.
-          console.log(`    ! skip  ${choice} — no price delta`)
-          continue
-        }
-        const existing = await prisma.modifier.findFirst({
-          where: { groupId: group.id, name: choice, deletedAt: null },
-          select: { id: true },
-        })
-        if (existing) {
-          await prisma.modifier.update({
-            where: { id: existing.id },
-            data: { priceDeltaCents: delta, isDefault: oi === 0, sortOrder: oi },
-          })
-          keptModifierIds.push(existing.id)
-        } else {
-          const created = await prisma.modifier.create({
-            data: { groupId: group.id, name: choice, priceDeltaCents: delta, isDefault: oi === 0, sortOrder: oi },
-            select: { id: true },
-          })
-          keptModifierIds.push(created.id)
-        }
-      }
+      if (modifiers.length === 0) continue
 
-      // Retire modifiers that are no longer on the sheet.
-      const staleMods = await prisma.modifier.updateMany({
-        where: { groupId: group.id, deletedAt: null, id: { notIn: keptModifierIds.length ? keptModifierIds : ['-'] } },
-        data: { deletedAt: new Date() },
+      // Groups are replaced wholesale rather than diffed: there is one group
+      // per item and the option list is short, so rebuilding it is simpler
+      // than reconciling it, and the delete is a soft delete.
+      for (const g of existing?.modifierGroups ?? []) {
+        await api('DELETE', `/menu/modifier-groups/${g.id}`)
+      }
+      await api('POST', '/menu/modifier-groups', {
+        menuItemId: itemId, name: it.options.group,
+        minSelect: 1, maxSelect: 1, isRequired: true, sortOrder: 0,
+        modifiers,
       })
-      if (staleMods.count) console.log(`    - retired ${staleMods.count} old option(s)`)
+      console.log(`    ~ ${it.options.group}: ${modifiers.map((m) => m.name).join(', ')}`)
     }
   }
 
-  // Retire everything that isn't on the sheet. Soft delete only — order rows
-  // reference these, and a hard delete would orphan history.
-  const staleItems = await prisma.menuItem.updateMany({
-    where: { conceptId: concept.id, deletedAt: null, id: { notIn: keptItemIds } },
-    data: { deletedAt: new Date(), isAvailable: false },
-  })
-  const staleCats = await prisma.category.updateMany({
-    where: { conceptId: concept.id, deletedAt: null, id: { notIn: keptCategoryIds } },
-    data: { deletedAt: new Date() },
-  })
-  console.log(`\nretired   ${staleItems.count} old item(s), ${staleCats.count} old category(ies)`)
-  console.log('done.')
+  // Retire what isn't on the sheet. Items first — the API refuses to delete a
+  // category that still has items in it.
+  let retiredItems = 0
+  for (const cat of live) {
+    for (const item of cat.items) {
+      if (keptItemIds.has(item.id)) continue
+      await api('DELETE', `/menu/items/${item.id}`)
+      console.log(`- retired item      ${item.name}`)
+      retiredItems++
+    }
+  }
+  let retiredCategories = 0
+  for (const cat of live) {
+    if (keptCategoryIds.has(cat.id)) continue
+    await api('DELETE', `/menu/categories/${cat.id}`)
+    console.log(`- retired category  ${cat.name}`)
+    retiredCategories++
+  }
 
-  await prisma.$disconnect()
+  console.log(`\nretired   ${retiredItems} item(s), ${retiredCategories} category(ies)`)
+  console.log('done.')
 }
 
-main().catch(async (e) => {
-  console.error(e)
-  await prisma.$disconnect()
+main().catch((e) => {
+  console.error(String(e instanceof Error ? e.message : e))
   process.exit(1)
 })
