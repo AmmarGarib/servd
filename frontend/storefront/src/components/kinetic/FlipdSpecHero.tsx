@@ -59,6 +59,8 @@ interface Part {
   name: string
   /** One line, verbatim from the menu sheet or the brand book. */
   spec: string
+  /** Which piece of the badge artwork this part is. */
+  art: 'crown' | 'lettuce' | 'wing' | 'patty' | 'heel'
   /** Which side the leader line runs to on desktop. */
   side: 'left' | 'right'
   /** Scroll progress at which this part starts to seat. */
@@ -72,91 +74,42 @@ interface Part {
 }
 
 const PARTS: Part[] = [
-  { no: '01', name: 'Crown',  spec: 'Brioche.',                        side: 'left',  fire: 0.04, drop: -120 },
-  { no: '02', name: 'Cheese', spec: 'American.',                       side: 'right', fire: 0.15, drop: -105 },
-  { no: '03', name: 'Patty',  spec: 'Salt and pepper. Nothing else.',  side: 'left',  fire: 0.26, drop: -92, flip: true },
-  { no: '04', name: 'Jam',    spec: 'Shroom & onion. House made.',     side: 'right', fire: 0.37, drop: -78 },
-  { no: '05', name: 'Aioli',  spec: 'Chimichurri. Roasted garlic.',    side: 'left',  fire: 0.46, drop: -64 },
-  { no: '06', name: 'Heel',   spec: 'Brioche.',                        side: 'right', fire: 0.55, drop: -50 },
+  { no: '01', name: 'Crown',  spec: 'Brioche.',                       art: 'crown',   side: 'left',  fire: 0.05, drop: -120 },
+  { no: '02', name: 'Jam',    spec: 'Shroom & onion. House made.',    art: 'lettuce', side: 'right', fire: 0.17, drop: -104 },
+  { no: '03', name: 'Aioli',  spec: 'Chimichurri. Roasted garlic.',   art: 'wing',    side: 'left',  fire: 0.29, drop: -88 },
+  { no: '04', name: 'Patty',  spec: 'Salt and pepper. Nothing else.', art: 'patty',   side: 'right', fire: 0.41, drop: -72, flip: true },
+  { no: '05', name: 'Heel',   spec: 'Brioche.',                       art: 'heel',    side: 'left',  fire: 0.53, drop: -56 },
 ]
 
 /** 0..1 for one part: how far through its own seating window the scroll is. */
 const seat = (fire: number, rate = 5) =>
   `max(0, min(1, (var(--scroll-progress, 0) - ${fire}) * ${rate}))`
 
-/** Hand-drawn navy line art, one <g> per part. Cream fill, navy stroke —
- *  the die-cut sticker treatment from the brand book, pulled apart. */
+/**
+ * The parts are the BRAND'S OWN ARTWORK, cut out of the badge.
+ *
+ * These were hand-drawn SVG approximations until the operator pointed out
+ * there was no reason to approximate: the badge already contains every one of
+ * these pieces, drawn properly, and the exploded versions are how the brand
+ * uses them on the shirt backs and the bags. So each part is now a slice of
+ * the real plate — segmented off the high-resolution badge by colour distance
+ * and connected-component analysis, with a soft alpha so the hand-drawn edge
+ * keeps its texture instead of being hard-thresholded into a jaggy silhouette.
+ *
+ * They are navy line art on transparent, so they sit on the mustard field the
+ * way the book draws them. Each is a plain <img>: no filters, no recolouring —
+ * the book says the artwork is "stamped, not printed... keep it that way".
+ */
 function PartArt({ part }: { part: Part }) {
-  const common = {
-    fill: 'var(--flipd-bone)',
-    stroke: 'var(--flipd-blue)',
-    strokeWidth: 5,
-    strokeLinejoin: 'round' as const,
-    strokeLinecap: 'round' as const,
-  }
-  switch (part.no) {
-    case '01': // Brioche crown — domed, seeded.
-      return (
-        <svg viewBox="0 0 320 96" width="100%" aria-hidden>
-          <path d="M14 88 C10 40 62 10 160 10 C258 10 310 40 306 88 Z" {...common} />
-          {[[92, 52], [136, 38], [186, 42], [230, 56], [116, 70], [204, 70], [160, 56]].map(([x, y], i) => (
-            <ellipse key={i} cx={x} cy={y} rx="7" ry="4.5" fill="var(--flipd-blue)"
-              transform={`rotate(${(i * 37) % 60 - 30} ${x} ${y})`} />
-          ))}
-        </svg>
-      )
-    case '02': // Cheese — square slab, corners hanging over, melted drips.
-      return (
-        <svg viewBox="0 0 320 60" width="100%" aria-hidden>
-          <path d="M28 8 L292 8 L300 30 C270 40 250 26 232 38 C214 50 196 32 174 42
-                   C152 52 136 30 114 40 C92 50 74 28 52 38 L20 30 Z" {...common} />
-        </svg>
-      )
-    case '03': // Smash patty — the one part drawn irregular on purpose. A smash
-               // patty has a ragged lacy edge where the beef hit the flat top
-               // and crisped past the round, so the silhouette is bumpy rather
-               // than an ellipse, and the surface carries char speckle.
-      return (
-        <svg viewBox="0 0 320 78" width="100%" aria-hidden>
-          <path d="M16 42 C14 30 24 22 38 20 C44 10 58 8 70 12 C82 4 98 6 108 12
-                   C120 4 138 6 150 11 C164 3 182 6 194 12 C208 5 226 8 236 15
-                   C252 10 268 16 276 24 C294 26 306 32 304 44
-                   C306 58 290 66 274 66 C262 74 244 74 232 68 C218 76 200 74 188 68
-                   C174 76 156 74 144 68 C130 76 112 74 100 68 C86 74 68 72 58 65
-                   C40 64 18 58 16 42 Z" {...common} />
-          {/* Char speckle — the crust, not decoration: it is the whole point of
-              a smash patty and the reason the spec line says salt and pepper. */}
-          <g fill="var(--flipd-blue)" opacity="0.55">
-            {[[62,34],[96,28],[132,38],[168,30],[206,36],[240,30],[268,40],
-              [80,52],[118,56],[158,50],[196,56],[232,50],[258,56]].map(([x,y],i)=>(
-              <ellipse key={i} cx={x} cy={y} rx="4.5" ry="2.6"
-                transform={`rotate(${(i*53)%70-35} ${x} ${y})`} />
-            ))}
-          </g>
-        </svg>
-      )
-    case '04': // Jam — thin wavy band.
-      return (
-        <svg viewBox="0 0 320 42" width="100%" aria-hidden>
-          <path d="M26 14 C60 2 92 24 126 12 C160 0 192 22 226 10 C258 -1 286 18 296 14
-                   L296 28 C286 36 258 20 226 30 C192 42 160 20 126 32 C92 44 60 22 26 30 Z"
-            {...common} />
-        </svg>
-      )
-    case '05': // Aioli — a drizzle, not a layer. Drawn as a stroke only.
-      return (
-        <svg viewBox="0 0 320 38" width="100%" aria-hidden>
-          <path d="M34 22 C66 6 84 32 116 18 C148 4 166 30 198 16 C230 2 252 28 286 16"
-            fill="none" stroke="var(--flipd-blue)" strokeWidth="7" strokeLinecap="round" />
-        </svg>
-      )
-    default: // 06 — Brioche heel. Flat top, rounded base.
-      return (
-        <svg viewBox="0 0 320 62" width="100%" aria-hidden>
-          <path d="M18 8 L302 8 C306 40 262 54 160 54 C58 54 14 40 18 8 Z" {...common} />
-        </svg>
-      )
-  }
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={`/brand/parts/${part.art}.png`}
+      alt=""
+      aria-hidden="true"
+      style={{ display: 'block', width: '100%', height: 'auto' }}
+    />
+  )
 }
 
 export function FlipdSpecHero({ brandName, orderHref, menuHref, tagline }: Props) {

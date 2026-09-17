@@ -9,6 +9,12 @@ export const BRAND_DOMAIN_MAP: Record<string, string> = {
   'eatstax.com':     'stackd',
   'eatsimmer.com':   'simmer',
   'eatflipd.com':    'flipd',
+  // flipd.pk is live and was NOT listed here, so resolveBrandSlug returned
+  // null for it: the middleware never rewrote `/` onto /brand/flipd, and the
+  // client thought it was on the servd canonical host. Add a domain here the
+  // moment DNS points at the storefront, or it silently behaves as servd.
+  'flipd.pk':        'flipd',
+  'www.flipd.pk':    'flipd',
 }
 
 export const RESERVED_SUBDOMAINS = new Set(['www', 'app', 'admin', 'api', 'cdn', 'media'])
