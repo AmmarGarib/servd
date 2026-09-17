@@ -13,7 +13,9 @@ import Link from 'next/link'
 import { fetchBrandLocations, whatsappLink, locationFor } from '../../lib/brandLocations'
 import { breadcrumbSchema, jsonLdScript } from '../../lib/jsonLd'
 
-const SITE = 'https://servd-app.garibsons.app'
+import { SERVD_ORIGIN } from '../../lib/brandDomains'
+
+const SITE = SERVD_ORIGIN
 const API_URL = process.env.INTERNAL_API_URL ?? process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
 export const dynamic = 'force-dynamic'

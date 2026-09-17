@@ -15,7 +15,9 @@
 
 import { type BrandLocation } from './brandLocations'
 
-const SITE_URL = 'https://servd-app.garibsons.app'
+import { SERVD_ORIGIN } from './brandDomains'
+
+const SITE_URL = SERVD_ORIGIN
 
 interface OrgGraphInput {
   name:        string

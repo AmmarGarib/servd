@@ -7,6 +7,7 @@
 // known live brands so customers don't get a 404 wall.
 
 import { notFound } from 'next/navigation'
+import { brandCanonical } from '../../../lib/brandDomains'
 import { BrandShell } from '../../../components/brand/BrandShell'
 import { brandAccent, formatBrandName, type Concept } from '../../../lib/concept'
 
@@ -82,5 +83,9 @@ export async function generateMetadata({
   return {
     title: displayName,
     description: concept.description ?? `Order from ${displayName} on servd.`,
+    // The canonical is the brand's OWN domain. This page is reachable at both
+    // servd.pk/brand/flipd and flipd.pk/, and without this Google picks one
+    // itself — which defeats the reason each brand owns a domain at all.
+    alternates: { canonical: brandCanonical(slug) },
   }
 }

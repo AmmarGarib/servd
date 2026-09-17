@@ -7,7 +7,11 @@
 
 import { QRCard } from './QRCard'
 
-const PUBLIC_HOST = process.env.NEXT_PUBLIC_PUBLIC_HOST ?? 'https://servd-app.garibsons.app'
+import { SERVD_ORIGIN } from '../../../../lib/brandDomains'
+
+// QR codes get PRINTED. Whatever host is baked in here outlives every deploy,
+// so it follows the canonical origin rather than a tunnel hostname.
+const PUBLIC_HOST = process.env.NEXT_PUBLIC_PUBLIC_HOST ?? SERVD_ORIGIN
 
 // simmer and stackd are lowercase per their brand rules.
 const BRAND_NAMES: Record<string, string> = {

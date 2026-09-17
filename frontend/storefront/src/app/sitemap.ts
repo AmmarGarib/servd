@@ -10,7 +10,9 @@ import { fetchBrandLocations } from '../lib/brandLocations'
 // concept in admin instantly puts its URLs in the sitemap on the next
 // request; no code change needed.
 
-const SITE = 'https://servd-app.garibsons.app'
+import { SERVD_ORIGIN, brandCanonical } from '../lib/brandDomains'
+
+const SITE = SERVD_ORIGIN
 const API_URL = process.env.INTERNAL_API_URL ?? process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 const now  = new Date()
 
@@ -26,10 +28,16 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     { url: `${SITE}/press`,   lastModified: now, changeFrequency: 'monthly', priority: 0.5 },
   ]
 
+  // Brand microsites are listed at their CANONICAL URLs — each brand's own
+  // domain — not at servd.pk/brand/<slug>. Listing the servd path would have
+  // the sitemap say "index this" while the page's canonical says "index the
+  // other one", which wastes crawl budget and dilutes the brand domain that
+  // owning the domain was meant to build up. Cross-host entries are fine so
+  // long as both domains are verified together in Search Console.
   const brand: MetadataRoute.Sitemap = brandSlugs.flatMap((slug) => [
-    { url: `${SITE}/brand/${slug}`,        lastModified: now, changeFrequency: 'weekly',  priority: 0.9 },
-    { url: `${SITE}/brand/${slug}/menu`,   lastModified: now, changeFrequency: 'daily',   priority: 0.9 },
-    { url: `${SITE}/brand/${slug}/visit`,  lastModified: now, changeFrequency: 'monthly', priority: 0.7 },
+    { url: brandCanonical(slug),           lastModified: now, changeFrequency: 'weekly',  priority: 0.9 },
+    { url: brandCanonical(slug, 'menu'),   lastModified: now, changeFrequency: 'daily',   priority: 0.9 },
+    { url: brandCanonical(slug, 'visit'),  lastModified: now, changeFrequency: 'monthly', priority: 0.7 },
     { url: `${SITE}/${slug}`,              lastModified: now, changeFrequency: 'daily',   priority: 0.9 },
   ])
 

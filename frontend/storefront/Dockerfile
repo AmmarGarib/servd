@@ -15,6 +15,14 @@ WORKDIR /app
 ARG NEXT_PUBLIC_API_URL
 ARG NEXT_PUBLIC_WS_URL
 ARG NEXT_PUBLIC_SENTRY_DSN
+# The canonical public host, and the ordering host a brand domain hands off to.
+# Both are NEXT_PUBLIC_, so they are inlined into the client bundle at BUILD
+# time — unset at build means unset forever, however the container is run.
+# NEXT_PUBLIC_SERVD_HOST being unset is what kept checkout on the brand domain.
+ARG NEXT_PUBLIC_SITE_URL
+ARG NEXT_PUBLIC_SERVD_HOST
+ENV NEXT_PUBLIC_SITE_URL=$NEXT_PUBLIC_SITE_URL
+ENV NEXT_PUBLIC_SERVD_HOST=$NEXT_PUBLIC_SERVD_HOST
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 ENV NEXT_PUBLIC_WS_URL=$NEXT_PUBLIC_WS_URL
 ENV NEXT_PUBLIC_SENTRY_DSN=$NEXT_PUBLIC_SENTRY_DSN

@@ -5,16 +5,28 @@
 // Only the three live consumer brands. Phantom brand domains
 // (eatstrata, bukharirice, craveman.pk, garnish.pk) were removed in
 // May 2026 — those brands are not real operations.
+//   <brand>.pk  → the brand microsite. This is the live setup: each brand owns
+//                 its own domain so it reads as a real independent restaurant
+//                 and builds its own SEO authority.
+//   servd.pk    → the consumer-facing servd site and the ordering system. It is
+//                 in SERVD_HOSTS below, NOT here.
+//
+// A domain missing from this map does not fail loudly — resolveBrandSlug just
+// returns null, the middleware never rewrites `/` onto /brand/<slug>, and the
+// site quietly serves servd chrome on the brand's domain. That is exactly what
+// flipd.pk did until it was noticed. Add the entry the moment DNS is pointed.
 export const BRAND_DOMAIN_MAP: Record<string, string> = {
+  'flipd.pk':        'flipd',
+  'www.flipd.pk':    'flipd',
+  'stackd.pk':       'stackd',
+  'www.stackd.pk':   'stackd',
+  'simmer.pk':       'simmer',
+  'www.simmer.pk':   'simmer',
+  // The eat*.com set predates the .pk domains. Kept because they are
+  // registered and anything already shared on them keeps resolving.
   'eatstax.com':     'stackd',
   'eatsimmer.com':   'simmer',
   'eatflipd.com':    'flipd',
-  // flipd.pk is live and was NOT listed here, so resolveBrandSlug returned
-  // null for it: the middleware never rewrote `/` onto /brand/flipd, and the
-  // client thought it was on the servd canonical host. Add a domain here the
-  // moment DNS points at the storefront, or it silently behaves as servd.
-  'flipd.pk':        'flipd',
-  'www.flipd.pk':    'flipd',
 }
 
 export const RESERVED_SUBDOMAINS = new Set(['www', 'app', 'admin', 'api', 'cdn', 'media'])
@@ -35,4 +47,47 @@ export function resolveBrandSlug(host: string): string | null {
   if (m?.[1] && !RESERVED_SUBDOMAINS.has(m[1])) return m[1]
 
   return null
+}
+
+// ─── Canonical origins ────────────────────────────────────────────────────────
+//
+// Which URL each surface calls home. This is what tells Google that the flipd
+// microsite lives at https://flipd.pk and not at some tunnel hostname — the
+// whole reason each brand owns a domain in the first place.
+//
+// Every canonical URL, the sitemap, robots.txt, the JSON-LD and the printed-QR
+// generator used to hardcode the tunnel host `servd-app.garibsons.app`, in nine
+// separate files. A brand page therefore told search engines it lived on
+// servd's domain, which is the opposite of the intent.
+
+/** The consumer-facing servd site: the ordering system. Override per env. */
+export const SERVD_ORIGIN: string =
+  (process.env['NEXT_PUBLIC_SITE_URL'] ?? 'https://servd.pk').replace(/\/+$/, '')
+
+/** Each brand's own domain — the canonical home of its microsite. */
+export const BRAND_ORIGIN: Record<string, string> = {
+  flipd:  'https://flipd.pk',
+  stackd: 'https://stackd.pk',
+  simmer: 'https://simmer.pk',
+}
+
+/**
+ * Canonical origin for a brand's microsite, falling back to servd for a brand
+ * with no domain of its own (where the microsite really does live under
+ * servd.pk/brand/<slug>).
+ */
+export function brandOrigin(slug: string): string {
+  return BRAND_ORIGIN[slug] ?? SERVD_ORIGIN
+}
+
+/**
+ * Canonical URL for a brand microsite path. On its own domain the brand IS the
+ * root, so `/brand/<slug>/menu` on servd is `/menu` on the brand domain — the
+ * same rewrite the middleware does for incoming requests, in reverse.
+ */
+export function brandCanonical(slug: string, subpath = ''): string {
+  const origin = brandOrigin(slug)
+  const tail = subpath.replace(/^\/+/, '')
+  if (origin === SERVD_ORIGIN) return `${origin}/brand/${slug}${tail ? `/${tail}` : ''}`
+  return tail ? `${origin}/${tail}` : `${origin}/`
 }

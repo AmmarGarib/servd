@@ -1,6 +1,8 @@
 import type { MetadataRoute } from 'next'
 
-const SITE = 'https://servd-app.garibsons.app'
+import { SERVD_ORIGIN } from '../lib/brandDomains'
+
+const SITE = SERVD_ORIGIN
 
 export default function robots(): MetadataRoute.Robots {
   return {

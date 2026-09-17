@@ -53,6 +53,8 @@ jobs:
             NEXT_PUBLIC_API_URL=${{ secrets.PUBLIC_API_URL }}
             NEXT_PUBLIC_WS_URL=${{ secrets.PUBLIC_WS_URL }}
             NEXT_PUBLIC_SENTRY_DSN=${{ secrets.SENTRY_DSN_STOREFRONT }}
+            NEXT_PUBLIC_SITE_URL=${{ vars.PUBLIC_SITE_URL || 'https://servd.pk' }}
+            NEXT_PUBLIC_SERVD_HOST=${{ vars.PUBLIC_SITE_URL || 'https://servd.pk' }}
           cache-from: type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/servd:storefront
           cache-to: type=inline
 

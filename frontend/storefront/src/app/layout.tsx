@@ -3,11 +3,12 @@ import './globals.css'
 import { StorefrontNav } from '../components/StorefrontNav'
 import { StorefrontFooter } from '../components/StorefrontFooter'
 import { FeedbackWidget } from '../components/feedback/FeedbackWidget'
+import { SERVD_ORIGIN } from '../lib/brandDomains'
 
 export const metadata: Metadata = {
-  // Absolute base for og:image / canonical resolution. Single source for the
-  // public host — flip via NEXT_PUBLIC_SITE_URL when the domain moves to servd.pk.
-  metadataBase: new URL(process.env['NEXT_PUBLIC_SITE_URL'] ?? 'https://servd-app.garibsons.app'),
+  // Absolute base for og:image / canonical resolution. SERVD_ORIGIN is the one
+  // source for the public host; override it with NEXT_PUBLIC_SITE_URL per env.
+  metadataBase: new URL(SERVD_ORIGIN),
   title: { default: 'servd — order from your favourite kitchens', template: '%s · servd' },
   description: 'One place to order from simmer, stackd, and Flipd. Explore the kitchens and join Insiders for rewards on every order.',
   applicationName: 'servd',

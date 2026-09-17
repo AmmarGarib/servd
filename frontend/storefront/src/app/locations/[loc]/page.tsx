@@ -11,7 +11,9 @@ import { addressLine, whatsappLink, fetchBrandLocations, LEGACY_LOCATION_SLUGS }
 import { restaurantSchema, breadcrumbSchema, jsonLdScript } from '../../../lib/jsonLd'
 import { brandStory } from '../../../lib/concept'
 
-const SITE = 'https://servd-app.garibsons.app'
+import { SERVD_ORIGIN } from '../../../lib/brandDomains'
+
+const SITE = SERVD_ORIGIN
 const API_URL = process.env.INTERNAL_API_URL ?? process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
 export const dynamic = 'force-dynamic'

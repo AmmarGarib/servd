@@ -6,6 +6,7 @@
 // the *real* DB state, with HomeClient as the only fallback.
 
 import { PageRenderer } from '../components/blocks/PageRenderer'
+import { SERVD_ORIGIN } from '../lib/brandDomains'
 import { HomeClient } from '../components/HomeClient'
 import type { Block } from '../lib/blocks'
 import type { Concept } from '../lib/concept'
@@ -69,8 +70,8 @@ export default async function HomePage() {
   const schema = [
     organizationSchema({
       name:    'servd',
-      url:     'https://servd-app.garibsons.app',
-      logoUrl: 'https://servd-app.garibsons.app/icon.png',
+      url:     SERVD_ORIGIN,
+      logoUrl: `${SERVD_ORIGIN}/icon.png`,
       sameAs:  ['https://instagram.com/simmer_down'],
     }),
     websiteSchema(),

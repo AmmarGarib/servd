@@ -12,6 +12,7 @@ import { PageRenderer } from '../../../components/blocks/PageRenderer'
 import { BrandFallback } from '../../../components/brand/BrandFallback'
 import ConceptViewTracker from '../../../components/ConceptViewTracker'
 import { locationFromConcept } from '../../../lib/brandLocations'
+import { SERVD_ORIGIN, brandCanonical } from '../../../lib/brandDomains'
 import { restaurantSchema, breadcrumbSchema, jsonLdScript } from '../../../lib/jsonLd'
 
 const API_URL = process.env.INTERNAL_API_URL ?? process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
@@ -95,9 +96,11 @@ export default async function BrandHome({
       description: concept.description ?? brandStory(slug).tagline,
       hours:       concept.serviceHours ?? undefined,
     }),
+    // Rooted at servd (the ordering system) then the brand on its own domain,
+    // which is where the microsite actually lives.
     breadcrumbSchema([
-      { name: 'servd',      url: 'https://servd-app.garibsons.app/' },
-      { name: formatBrandName(concept.name), url: `https://servd-app.garibsons.app/brand/${slug}` },
+      { name: 'servd', url: `${SERVD_ORIGIN}/` },
+      { name: formatBrandName(concept.name), url: brandCanonical(slug) },
     ]),
   ]
 
