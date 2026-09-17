@@ -42,7 +42,7 @@ import { CrossBrandStrip } from '../parts/CrossBrandStrip'
 import { OpenStatusBadge, HoursGrid, useHoursData } from '../parts/OpenStatusBadge'
 import { brandStory, formatBrandName } from '../../../lib/concept'
 import { DIE_SHAPES } from '../../../lib/stackdDie'
-import { StackdDropHero } from '../../kinetic/StackdDropHero'
+import { StackdSlipHero } from '../../kinetic/StackdSlipHero'
 
 interface Props {
   concept: Concept
@@ -163,19 +163,18 @@ export function StackdLayout({ concept, concepts }: Props) {
           </div>
         )}
 
-        {/* ── THE DROP ────────────────────────────────────────────────────────
-            He falls the height of the viewport and the stack never tilts. This
-            replaced a standing mascot band further down the page — he only
-            appears once, and appearing once as a full-height fall is worth more
-            than appearing twice standing still. See StackdDropHero. */}
-        <StackdDropHero
+        {/* ── THE SLIP ────────────────────────────────────────────────────────
+            He goes down and the bread goes up. Scroll down, it climbs — the
+            inversion is the gag. This replaced a standing mascot band further
+            down the page; he appears once, at full height. See StackdSlipHero. */}
+        <StackdSlipHero
           brandName={formatBrandName(concept.name)}
           orderHref={`/${concept.slug}`}
           menuHref={`/brand/${concept.slug}/menu`}
-          mascotSrc={mascotSrc}
-          mascotDims={mascotDims}
           mascotAlt={mascotAlt}
           counterLines={COUNTER_LINES}
+          customMascotSrc={concept.mascotUrl}
+          customMascotDims={mascotDims}
         />
 
         {/* ── HERO ────────────────────────────────────────────────────────────
