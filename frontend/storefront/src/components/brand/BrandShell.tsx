@@ -88,17 +88,26 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
   // the hero down by the height of the bar and put the seam back. The hero's
   // pinned area already pads its top to clear this bar.
   const flipdFixed = flipdOverlay
-  // Transparent over the hero, then a mustard band once the page has moved:
-  // past the hero the bar would otherwise float over the build sheet with the
-  // drawing running underneath it.
+  // All three brand microsites keep their header in view as the page moves.
+  //
+  // They do it two different ways, and the difference is forced by the layout,
+  // not a preference. flipd's bar is out of flow so the hero's checker can run
+  // up under it as one unbroken floor — it has to be `fixed`, because `sticky`
+  // is in flow and would push the hero down and put a half-tile seam back.
+  // simmer and stackd already sit in flow and paint their own band, so `sticky`
+  // is right for them: it pins on scroll and changes nothing about the layout.
+  const pinnedNav = diner || concept.slug === 'simmer' || concept.slug === 'stackd'
+  // Once the page has moved, the bar needs a solid band under it or the content
+  // scrolls through it — flipd is transparent over its hero, and stackd's band
+  // is a scrim that fades out at the bottom edge.
   const [scrolled, setScrolled] = useState(false)
   useEffect(() => {
-    if (!flipdFixed) return
+    if (!pinnedNav) return
     const onScroll = () => setScrolled(window.scrollY > 48)
     onScroll()
     window.addEventListener('scroll', onScroll, { passive: true })
     return () => window.removeEventListener('scroll', onScroll)
-  }, [flipdFixed])
+  }, [pinnedNav])
   const navBg: React.CSSProperties = concept.slug === 'simmer'
     ? {
         backgroundColor: surface.bg,
@@ -178,24 +187,33 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
     <nav
       aria-label={`${formatBrandName(concept.name)} navigation`}
       style={{
-        // flipd's bar is FIXED: it floats as a transparent overlay so the hero
-        // checker reads through it as one continuous floor, and it stays there
-        // as the page moves. Every other brand's header sits at the top of the
-        // page and scrolls away with the content — a top-of-page mark, not a
-        // persistent bar — and paints its own band.
-        position: flipdFixed ? 'fixed' : 'relative',
-        ...(flipdFixed ? { top: 0, left: 0, right: 0 } : null),
+        // A brand microsite's header stays in view; see pinnedNav above for why
+        // flipd is fixed and the other two are sticky. Anything that is not a
+        // brand microsite keeps a plain top-of-page header that scrolls away.
+        position: flipdFixed ? 'fixed' : pinnedNav ? 'sticky' : 'relative',
+        ...(pinnedNav ? { top: 0 } : null),
+        ...(flipdFixed ? { left: 0, right: 0 } : null),
         zIndex: 50,
         // Simmer carries the blueprint grid into the header (connects to the
         // chiller); other brands use a soft scrim of their own bg (no band).
         ...(flipdFixed ? {} : navBg),
-        // Nothing behind it over the hero; a flat mustard band once past it, so
-        // the drawing never runs under the badge and the pill.
-        ...(flipdFixed && scrolled
-          ? {
-              backgroundColor: 'var(--flipd-mustard)',
-              boxShadow: '0 2px 0 var(--flipd-blue)',
-            }
+        // The scrolled band, each brand in its own colours.
+        //
+        //  • flipd — its mustard field under a hard blue rule. It has no band
+        //    at rest at all, being a transparent overlay on the hero.
+        //  • stackd — its resting band is a scrim that fades to nothing at the
+        //    bottom edge, so text scrolls through it. Swap it for a flat panel:
+        //    backgroundImage has to be cleared explicitly, since backgroundColor
+        //    alone would sit UNDER the gradient rather than replace it.
+        //  • simmer — already an opaque panel, and it carries the blueprint grid
+        //    through from the chiller, so it only gains the hairline. Clearing
+        //    its backgroundImage here would delete the grid.
+        ...(pinnedNav && scrolled
+          ? diner
+            ? { backgroundColor: 'var(--flipd-mustard)', boxShadow: '0 2px 0 var(--flipd-blue)' }
+            : concept.slug === 'stackd'
+            ? { backgroundColor: surface.bg, backgroundImage: 'none', boxShadow: `0 1px 0 ${surface.border}` }
+            : { boxShadow: `0 1px 0 ${surface.border}` }
           : null),
         transition: 'background-color 160ms linear, box-shadow 160ms linear',
         borderBottom: 'none',

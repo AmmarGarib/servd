@@ -586,7 +586,10 @@ summary:focus-visible {
   display: grid;
   grid-template-rows: minmax(0, 1fr) auto;
   justify-items: center;
-  padding: 0 1.25rem clamp(1.5rem, 5vh, 3rem);
+  /* Top padding clears the brand header, which is sticky at top:0 — the same
+     offset this hero pins at. Without it the header sits over the top of the
+     stage and swallows the scroll cue. */
+  padding: 5.25rem 1.25rem clamp(1.5rem, 5vh, 3rem);
 }
 .stackd-page .stackd-slip-stage {
   position: relative;
