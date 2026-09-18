@@ -139,7 +139,7 @@ export function FlipdMenuPage({ slug, conceptName, categories }: Props) {
                 key={cat.id}
                 id={`cat-${cat.id}`}
                 className="flipd-panel"
-                style={{ padding: 'clamp(1.5rem, 3.5vw, 2.25rem)', scrollMarginTop: '5rem' }}
+                style={{ padding: 'clamp(1.5rem, 3.5vw, 2.25rem)', scrollMarginTop: '7rem' }}
               >
                 <h2 className="flipd-display" style={{ fontSize: 'clamp(1.5rem, 3vw, 2rem)', margin: '0 0 0.25rem' }}>
                   {cat.name}

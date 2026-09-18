@@ -46,6 +46,17 @@ export const SERVD_HOSTS = new Set(['servd.app', 'servd.pk', 'localhost'])
  */
 export const BRAND_HOST_HEADER = 'x-servd-brand-host'
 
+/**
+ * The paths that, on a brand host, ARE the brand microsite.
+ *
+ * The middleware rewrites exactly these onto /brand/<slug>; everything else on
+ * a brand domain (/browse, /login, /orders, the ordering screens) is an
+ * ordinary servd page that keeps the servd header. Shared with the client so
+ * the header can answer "is this render a microsite?" on every client-side
+ * navigation, not just on the document load.
+ */
+export const BRAND_REWRITE_PATHS = new Set(['/', '/menu', '/about', '/visit'])
+
 // Resolve a Host header (or window.location.hostname) to a brand slug, or
 // null if it's the servd canonical domain.
 export function resolveBrandSlug(host: string): string | null {

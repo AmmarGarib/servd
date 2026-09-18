@@ -1062,10 +1062,16 @@ summary:focus-visible {
   /* Paced between two failures. At 460vh the build was a slideshow — one part
      per screenful, nothing ever moving at the same time as anything else. At
      240vh it was too quick to follow: a part's whole fall went by in 20vh of
-     travel. Here each part falls over about 40vh and the whole build reads at
-     roughly half the speed it did, with a real pause on the finished burger
-     before the drop. */
-  height: 340vh;
+     travel. Here each part falls over about 40vh, with a real pause on the
+     finished burger before the drop.
+
+     The travel is capped in PIXELS as well as vh, because a wheel notch is
+     100px on every monitor no matter how tall it is. Pure vh meant the same
+     five ingredients cost 19 notches of wheel on a laptop and 35 on a 1440-tall
+     screen — more total effort than the 460vh version that was rejected as a
+     slideshow. 2200px leaves every laptop size exactly as measured and only
+     bites on the big displays that were overpaying. */
+  height: calc(100vh + min(240vh, 2200px));
 }
 .flipd-page .flipd-spec-pin {
   position: sticky;
@@ -1080,7 +1086,11 @@ summary:focus-visible {
   /* Top padding clears the floating nav. flipd's header is an absolute overlay
      on the hero (so the checker runs unbroken), which means the build-sheet
      title block would otherwise sit underneath the logo and the nav pill. */
-  padding: clamp(4.5rem, 9vh, 6rem) clamp(1rem, 4vw, 2.5rem) clamp(1.25rem, 4vh, 2.25rem);
+  /* Top padding clears the brand header, which is FIXED at the top of the
+     viewport and 88px tall at desktop sizes. The old 4.5rem floor was 72px, so
+     the bar's opaque band sliced 9-16px off the top of the title block once it
+     stopped being transparent. */
+  padding: clamp(6.25rem, 11vh, 7.5rem) clamp(1rem, 4vw, 2.5rem) clamp(1.25rem, 4vh, 2.25rem);
 }
 
 /* Title block, as any technical drawing carries.
@@ -1388,7 +1398,7 @@ summary:focus-visible {
   }
 }
 @media (max-width: 820px) {
-  .flipd-page .flipd-spec { height: 280vh; }
+  .flipd-page .flipd-spec { height: calc(100vh + min(180vh, 1500px)); }
   .flipd-page .flipd-spec-field { --fw: min(15rem, 34vh); }
   .flipd-page .flipd-spec-hint { display: none; }
   .flipd-page .flipd-spec-title { gap: 0.6rem; }

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { resolveBrandSlug, BRAND_HOST_HEADER } from './lib/brandDomains'
+import { resolveBrandSlug, BRAND_HOST_HEADER, BRAND_REWRITE_PATHS } from './lib/brandDomains'
 
 // Host-based brand routing.
 //
@@ -20,10 +20,11 @@ import { resolveBrandSlug, BRAND_HOST_HEADER } from './lib/brandDomains'
 //   * The wildcard rule auto-resolves any <slug>.localhost / <slug>.servd.app
 //     hostname without a code change.
 
-// Paths that, on a brand host, get rewritten under /brand/<slug>. Everything
-// else (cart pages /[concept]/*, /api, /account, /checkout, etc.) passes
-// through untouched so the existing app routing keeps working.
-const BRAND_REWRITE_PATHS = new Set(['/', '/menu', '/about', '/visit'])
+// Paths that, on a brand host, get rewritten under /brand/<slug>, live in
+// lib/brandDomains.ts — the header needs the same list to decide, on every
+// client-side navigation, whether the page it is on is a brand microsite.
+// Everything else (cart pages /[concept]/*, /api, /account, /checkout, etc.)
+// passes through untouched so the existing app routing keeps working.
 
 export function middleware(req: NextRequest) {
   const host = req.headers.get('host') ?? ''

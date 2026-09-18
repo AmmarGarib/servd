@@ -173,19 +173,20 @@ export function FlipdSpecHero({ brandName, orderHref, menuHref, tagline }: Props
   // liveAt matches the outro's own fade-in point exactly, so `past` flips at
   // the same instant its opacity leaves 0 — the links become reachable and
   // visible together, with no visual change from the switch.
-  const { ref, past } = useScrollProgress<HTMLElement>({ liveAt: 0.82 })
+  const { ref, past } = useScrollProgress<HTMLElement>({ liveAt: 0.86 })
 
   // The assembled burger drops onto the datum line. Squared so it accelerates
   // — the CSS reads --fall and uses t*t, same as the parts.
-  // The crown seats at 0.627. The drop does not start until 0.70, which leaves
-  // a deliberate beat — about 17vh of scroll — looking at a finished burger
+  // The crown seats at 0.627. The drop does not start until 0.76, which leaves
+  // a deliberate beat — 0.133 of the scroll, about 2.5 wheel notches — looking
+  // at a finished burger
   // before it moves. Without that pause the last part seating and the whole
   // thing dropping run together into one event, and the drop stops reading as
   // a separate thing that happens to a burger that is already built.
-  const fall = seat(0.70, 12)
+  const fall = seat(0.76, 12)
   // The hit. The rise is deliberately violent — it goes 0 to 1 over the last
   // eight thousandths of the scroll, which is the last fifth of the fall — and
-  // it tops out at 0.7833, exactly when the fall completes. Starting it
+  // it tops out at 0.8433, exactly when the fall completes. Starting it
   // earlier, which it used to, had the rule flexing and the ticks striking
   // while the burger still had three-quarters of its drop to go. The decay is
   // slow by comparison: a hit, then a settle.
@@ -193,11 +194,11 @@ export function FlipdSpecHero({ brandName, orderHref, menuHref, tagline }: Props
   // This one window does NOT get slower as the section grows. An impact is
   // fast or it is not an impact; stretching it just turns the strike into a
   // slow bloom.
-  const hit = pulse(0.7755, 128, 0.7833, 9)
+  const hit = pulse(0.8355, 128, 0.8433, 12)
   // Lands once the burger has. The rate is set so it reaches full opacity by
   // the very end of the scroll rather than short of it — at a slower rate the
   // section runs out first and the CTAs never quite arrive.
-  const built = seat(0.82, 5.6)
+  const built = seat(0.86, 7.15)
   // The wordmark holds the middle of the sheet until parts start arriving on
   // top of it. It must be gone before the heel — the first part to fall —
   // reaches it.
