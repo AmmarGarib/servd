@@ -1051,9 +1051,11 @@ summary:focus-visible {
    does the rest, which is what keeps it smooth on a phone. */
 .flipd-page .flipd-spec {
   position: relative;
-  /* Tall enough that all six parts get a comfortable seating window and the
-     outro has somewhere to land. Shorter and the whole build flashes past. */
-  height: 460vh;
+  /* Every part gets a fifteenth of the scroll to fall, which at this height is
+     about a flick of the wheel each. An earlier pass ran to 460vh and the
+     build turned into a slideshow: one part per screenful, nothing ever in
+     motion at the same time as anything else. */
+  height: 240vh;
 }
 .flipd-page .flipd-spec-pin {
   position: sticky;
@@ -1097,46 +1099,124 @@ summary:focus-visible {
   max-width: 22rem;
 }
 
-/* The stage the parts seat onto. Fixed aspect so the leader lines always have
-   room either side; the parts are laid out in normal flow so the stack closes
-   by itself without any magic numbers. */
+/* The field holds the build and the datum line it lands on, stacked: the
+   burger sits directly on the rule, so the drop has something to hit. */
+.flipd-page .flipd-spec-field {
+  position: relative;
+  /* One control for the whole drawing, and the unit the falls are measured in.
+     The stack's height is a fixed ratio of its width (the artwork's own aspect
+     ratios, stacked), so capping the width against the viewport HEIGHT too is
+     what keeps a short window from pushing the burger into the outro — cheaper
+     and steadier than capping each part. */
+  --fw: min(22rem, 42vh);
+  width: min(100%, var(--fw));
+  max-height: 100%;
+  /* Centred in its row, with the drawing sized so there is still clear sheet
+     above it for the parts to fall through. Pinning it to the bottom of the
+     row buys a longer fall but leaves a third of the screen empty above the
+     burger, which reads as an unfinished page rather than as a composed one. */
+  align-self: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+/* The stage the parts seat onto, and the thing that drops as one piece once
+   they have. Origin at the base so the landing squash compresses it onto the
+   datum rather than shrinking it about its middle. */
 .flipd-page .flipd-spec-stage {
   position: relative;
-  width: min(100%, 27rem);
+  width: 100%;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  /* The drawing has to fit the row it was given, whatever the viewport does.
-     Below ~700px tall there simply isn't room for six parts plus callouts, so
-     it scales down rather than colliding with the outro. */
-  max-height: 100%;
+  transform-origin: 50% 100%;
+  transform:
+    /* Squared, so the burger accelerates into the datum. */
+    translateY(calc(var(--fall, 0) * var(--fall, 0) * 5vh))
+    scaleY(calc(1 - var(--hit, 0) * 0.09))
+    scaleX(calc(1 + var(--hit, 0) * 0.05));
+  will-change: transform;
 }
-.flipd-page .flipd-spec-art svg { display: block; max-height: 13vh; width: 100%; }
 
 .flipd-page .flipd-spec-part {
   position: relative;
   width: 100%;
-  /* --t is 0 before the part moves, 1 when it is seated. */
-  transform: translateY(calc((1 - var(--t, 0)) * var(--drop, -200px)));
-  opacity: calc(var(--t, 0) * 3);
+  display: flex;
+  justify-content: center;
+  /* --t is 0 before the part moves, 1 when it is seated. Squared, so it
+     accelerates: a falling thing is not a sliding thing. --drop is the part's
+     own start height as a multiple of the drawing's width, so every part
+     starts from the same line above the burger and the lower ones fall
+     further — see the Part type for why that matters. */
+  transform: translateY(calc((1 - var(--t, 0) * var(--t, 0)) * var(--fw) * var(--drop, -1)));
+  /* Fully opaque well before it enters the sheet, so nothing fades in mid-air. */
+  opacity: calc(var(--t, 0) * 6);
   will-change: transform, opacity;
 }
 /* The patty turns over on the way down — a flat thing flipping on the griddle,
    so it rotates about X, not about the page normal. Scoped to the art because
    the callout beside it must stay the right way up. */
 .flipd-page .flipd-spec-art {
+  display: block;
+  /* Its real width relative to the widest piece. Stretching all five to 100%
+     gives a patty as wide as the lettuce, which reads as a stack of shapes
+     rather than a burger. */
+  width: var(--w, 100%);
   transform: perspective(700px) rotateX(calc((1 - var(--t, 0)) * var(--flip, 0deg)));
   transform-style: preserve-3d;
 }
-/* The exploded gap is fixed. Each part has a slot and drops into it; the
-   layout never moves. An earlier version closed this gap as the parts seated,
-   which meant the slots slid upward while things were still falling into them
-   and the whole stack bunched at the top of the stage. */
+.flipd-page .flipd-spec-art img { display: block; width: 100%; height: auto; }
+/* The slots are FLUSH — the burger closes. Each source PNG carries an 8px
+   transparent margin, so a small negative margin (a percentage, therefore of
+   the stage width, therefore scaling with the artwork) takes that back out and
+   lands each layer on the one below. The layout itself never moves: parts drop
+   into fixed slots, which is what stops the stack bunching at the top while
+   things are still falling into it. */
 .flipd-page .flipd-spec-part + .flipd-spec-part {
-  margin-top: 0.4rem;
+  margin-top: -2.6%;
 }
-.flipd-page .flipd-spec-art { display: block; }
+
+/* ── THE DATUM ──────────────────────────────────────────────────────────────
+   The rule the build sits on. Present from the first frame — it is part of the
+   drawing, not an effect that appears for the impact. On landing it snaps to
+   full width and six register marks strike off it. Navy line art, struck, no
+   dust and no glow: this brand draws its impacts. */
+.flipd-page .flipd-spec-datum {
+  position: relative;
+  width: 100%;
+  height: 1.5rem;
+  flex-shrink: 0;
+}
+.flipd-page .flipd-spec-datumrule {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 78%;
+  height: 2px;
+  transform: translateX(-50%) scaleX(calc(1 + var(--hit, 0) * 0.28));
+  background: repeating-linear-gradient(90deg,
+    var(--flipd-blue) 0 7px, transparent 7px 14px);
+  opacity: calc(0.4 + var(--hit, 0) * 0.6);
+}
+.flipd-page .flipd-spec-tick {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 2px;
+  height: 0.7rem;
+  background: var(--flipd-blue);
+  transform-origin: 50% 0;
+  /* Struck outward from the point of contact, and only there. */
+  transform:
+    translateX(-50%)
+    rotate(var(--a, 0deg))
+    translateY(calc(0.15rem + var(--hit, 0) * 0.55rem))
+    scaleY(var(--hit, 0));
+  opacity: var(--hit, 0);
+}
 
 /* Callouts sit outside the stage on a leader line, alternating sides. */
 .flipd-page .flipd-spec-callout {
@@ -1258,9 +1338,8 @@ summary:focus-visible {
   /* No room for leader lines beside the stage, so the callouts come off and
      the written list below the section carries the same information. The build
      still animates — the diagram is read top to bottom instead of outward. */
-  .flipd-page .flipd-spec { height: 340vh; }
-  .flipd-page .flipd-spec-stage { width: min(100%, 17rem); }
-  .flipd-page .flipd-spec-art svg { max-height: 9vh; }
+  .flipd-page .flipd-spec { height: 200vh; }
+  .flipd-page .flipd-spec-field { --fw: min(15rem, 34vh); }
   .flipd-page .flipd-spec-callout { display: none; }
   .flipd-page .flipd-spec-list { display: block; }
   .flipd-page .flipd-spec-hint { display: none; }
@@ -1275,13 +1354,18 @@ summary:focus-visible {
   .flipd-page .flipd-btn:hover { transform: none; }
   .flipd-page .flipd-spec { height: auto; }
   .flipd-page .flipd-spec-pin { position: static; height: auto; padding-block: 4rem; }
+  /* Built, landed, sitting on the datum — the end state, held still. The
+     flush slots stay flush: reduced motion means no movement, not a different
+     drawing. */
+  .flipd-page .flipd-spec-stage { transform: none; }
   .flipd-page .flipd-spec-part { transform: none; opacity: 1; }
   .flipd-page .flipd-spec-art  { transform: none; }
-  .flipd-page .flipd-spec-part + .flipd-spec-part { margin-top: 0.4rem; }
+  .flipd-page .flipd-spec-datumrule { transform: translateX(-50%); opacity: 0.4; }
+  .flipd-page .flipd-spec-tick { display: none; }
   .flipd-page .flipd-spec-callout { opacity: 1; }
   .flipd-page .flipd-spec-mark { opacity: 0; }
   .flipd-page .flipd-spec-outro { opacity: 1; transform: none; margin-top: 2rem; }
-  .flipd-page .flipd-spec-art svg { max-height: none; }
+  .flipd-page .flipd-spec-field { --fw: 22rem; max-height: none; align-self: center; }
   .flipd-page .flipd-spec-hint { display: none; }
   .flipd-page .flipd-spec-list { display: block; }
 }
