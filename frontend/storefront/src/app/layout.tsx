@@ -67,7 +67,7 @@ export default function StorefrontLayout({ children }: { children: React.ReactNo
         </a>
         <StorefrontNav initialBrandSlug={initialBrandSlug} />
         <main id="main">{children}</main>
-        <StorefrontFooter />
+        <StorefrontFooter initialBrandSlug={initialBrandSlug} />
         <FeedbackWidget />
       </body>
     </html>

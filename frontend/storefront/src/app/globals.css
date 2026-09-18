@@ -1057,6 +1057,18 @@ summary:focus-visible {
    useScrollProgress, and each part's own --t (its 0..1 seating position). No
    JS touches these styles per frame — React renders once and the compositor
    does the rest, which is what keeps it smooth on a phone. */
+/* Brand microsites pin their header, so anything the browser scrolls to — an
+   in-page anchor, or a control it moves focus to — has to stop clear of it or
+   it lands underneath. scroll-padding-top on the scroll container is the one
+   declaration that covers both, rather than a scroll-margin on every target.
+   Scoped with :has() because the scroll container is <html>, while the thing
+   that knows a pinned header exists is the brand wrapper inside it. */
+html:has(.flipd-page),
+html:has(.stackd-page),
+html:has(.simmer-page) {
+  scroll-padding-top: 6.5rem;
+}
+
 .flipd-page .flipd-spec {
   position: relative;
   /* Paced between two failures. At 460vh the build was a slideshow — one part

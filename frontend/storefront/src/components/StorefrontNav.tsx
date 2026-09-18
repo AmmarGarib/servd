@@ -3,7 +3,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useEffect, useState } from 'react'
 import { useCustomerAuth } from '../store/customerAuth'
-import { BRAND_REWRITE_PATHS, resolveBrandSlug } from '../lib/brandDomains'
+import { useOnBrandMicrosite } from '../lib/host'
 
 // Pages that manage their own header (full-screen splashes, brand
 // microsites with their own nav, the per-concept ordering experience).
@@ -25,32 +25,9 @@ export function StorefrontNav({ initialBrandSlug = null }: Props) {
   const pathname = usePathname() ?? '/'
   const token = useCustomerAuth((s) => s.token)
 
-  // Which host are we on — and is THIS path the brand microsite?
-  //
-  // Both halves are needed, and they have to be answered separately, because
-  // each is only knowable in one place:
-  //
-  //   the HOST  only the server knows on the first paint (a brand domain is
-  //             served by an internal rewrite, so the browser's URL says
-  //             nothing about it), and only the client knows thereafter.
-  //   the PATH  changes on every client-side navigation.
-  //
-  // The root layout used to answer the whole question with the server's value
-  // and render this component or not. That froze it: a layout renders once per
-  // document load and never again, so after any client-side navigation the
-  // answer was whatever the FIRST url had been. Landing on flipd.pk and
-  // clicking through to /browse left that page with no header at all; landing
-  // on flipd.pk/browse and clicking home put the servd header back on top of
-  // the brand's — the exact thing it was meant to remove.
-  //
-  // So the server's value seeds the first render (no flash of the wrong
-  // header) and the client takes over from hydration, where window.location is
-  // authoritative and every navigation re-runs this.
-  const [brandSlug, setBrandSlug] = useState<string | null>(initialBrandSlug)
-  useEffect(() => {
-    setBrandSlug(resolveBrandSlug(window.location.hostname))
-  }, [])
-  const onBrandMicrosite = brandSlug !== null && BRAND_REWRITE_PATHS.has(pathname)
+  // Stands down on a brand microsite; see useOnBrandMicrosite for why this
+  // cannot be answered by the path alone, or once in a layout.
+  const onBrandMicrosite = useOnBrandMicrosite(initialBrandSlug)
 
   // On dark-hero pages, the sticky nav is transparent and renders white
   // text. Once the user scrolls past the hero into the white sections,

@@ -1,6 +1,7 @@
 'use client'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
+import { useOnBrandMicrosite } from '../lib/host'
 
 // Live brands only — the long historical list (Strata, Craveman, Garnish
 // Station, Stackd@Padel) lived in the footer when they had no concept rows,
@@ -15,11 +16,19 @@ const BRANDS = [
   { slug: 'flipd',  name: 'Flipd',  accent: '#2092E9' },
 ]
 
-export function StorefrontFooter() {
+export function StorefrontFooter({ initialBrandSlug = null }: { initialBrandSlug?: string | null }) {
   // Brand microsites render their own BrandFooter (via BrandShell); the global
-  // servd footer must hide on /brand/* or those pages show two footers.
+  // servd footer must hide there or those pages show two footers.
+  //
+  // The /brand/* path test alone was not enough. On a brand's OWN domain the
+  // browser's path is "/", so every microsite page was ending with servd's
+  // footer stacked under the brand's — 664px of it on desktop, carrying
+  // servd's own CTA and named links to the two rival sibling brands, on
+  // domains whose entire purpose is to read as an independent restaurant.
+  // Both checks are kept: the path one covers servd.pk/brand/<slug>.
   const pathname = usePathname() ?? '/'
-  if (pathname.startsWith('/brand/')) return null
+  const onBrandMicrosite = useOnBrandMicrosite(initialBrandSlug)
+  if (onBrandMicrosite || pathname.startsWith('/brand/')) return null
   return (
     <footer
       className="surface-ink relative overflow-hidden"

@@ -26,13 +26,31 @@ import { resolveBrandSlug, BRAND_HOST_HEADER, BRAND_REWRITE_PATHS } from './lib/
 // Everything else (cart pages /[concept]/*, /api, /account, /checkout, etc.)
 // passes through untouched so the existing app routing keeps working.
 
+/**
+ * Pass the request through, having removed any inbound copy of our own header.
+ *
+ * The brand-host header is something the middleware TELLS the app; it is not
+ * something a caller gets to assert. Without this, anyone could send
+ * `x-servd-brand-host: flipd` to servd.pk and the app would believe it and
+ * drop the servd header and footer. The damage is only cosmetic and only on
+ * the sender's own screen — nothing security-relevant reads it — but trusting
+ * a client-supplied header is the kind of thing that stops being cosmetic
+ * later, when something else starts reading it.
+ */
+function passThrough(req: NextRequest) {
+  if (!req.headers.has(BRAND_HOST_HEADER)) return NextResponse.next()
+  const headers = new Headers(req.headers)
+  headers.delete(BRAND_HOST_HEADER)
+  return NextResponse.next({ request: { headers } })
+}
+
 export function middleware(req: NextRequest) {
   const host = req.headers.get('host') ?? ''
   const slug = resolveBrandSlug(host)
-  if (!slug) return NextResponse.next()
+  if (!slug) return passThrough(req)
 
   const { pathname } = req.nextUrl
-  if (!BRAND_REWRITE_PATHS.has(pathname)) return NextResponse.next()
+  if (!BRAND_REWRITE_PATHS.has(pathname)) return passThrough(req)
 
   const url = req.nextUrl.clone()
   url.pathname = pathname === '/' ? `/brand/${slug}` : `/brand/${slug}${pathname}`
