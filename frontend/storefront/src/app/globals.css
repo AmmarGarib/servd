@@ -1056,11 +1056,13 @@ summary:focus-visible {
    does the rest, which is what keeps it smooth on a phone. */
 .flipd-page .flipd-spec {
   position: relative;
-  /* Every part gets a fifteenth of the scroll to fall, which at this height is
-     about a flick of the wheel each. An earlier pass ran to 460vh and the
-     build turned into a slideshow: one part per screenful, nothing ever in
-     motion at the same time as anything else. */
-  height: 240vh;
+  /* Paced between two failures. At 460vh the build was a slideshow — one part
+     per screenful, nothing ever moving at the same time as anything else. At
+     240vh it was too quick to follow: a part's whole fall went by in 20vh of
+     travel. Here each part falls over about 40vh and the whole build reads at
+     roughly half the speed it did, with a real pause on the finished burger
+     before the drop. */
+  height: 340vh;
 }
 .flipd-page .flipd-spec-pin {
   position: sticky;
@@ -1383,7 +1385,7 @@ summary:focus-visible {
   }
 }
 @media (max-width: 820px) {
-  .flipd-page .flipd-spec { height: 200vh; }
+  .flipd-page .flipd-spec { height: 280vh; }
   .flipd-page .flipd-spec-field { --fw: min(15rem, 34vh); }
   .flipd-page .flipd-spec-hint { display: none; }
   .flipd-page .flipd-spec-title { gap: 0.6rem; }

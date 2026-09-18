@@ -30,8 +30,9 @@ import { useScrollProgress } from './motionHooks'
  *   - The stack stayed exploded, with air between every layer, so it never
  *     resolved into anything. The slots are flush now: the burger closes.
  *   - It ran over four and a half screens of scroll, which turned a build into
- *     a slideshow. It is roughly half that, and every part is in motion for a
- *     flick of the wheel rather than a page of it.
+ *     a slideshow: one part per screenful, nothing ever moving at the same
+ *     time as anything else. It is 340vh now — cut to 240vh first, which went
+ *     too far the other way and was too quick to follow.
  *
  * The one flourish is earned by the name: at 04 the patty FLIPS as it drops.
  * Once, on one part. The book says "restraint over decoration — if something
@@ -114,18 +115,28 @@ interface Part {
  * book's first value actually describes.
  */
 const PARTS: Part[] = [
-  { no: '05', name: 'Crown', spec: 'Brioche.',                       art: 'crown',   side: 'left',  fire: 0.41, w: 0.884, drop: -0.34 },
-  { no: '04', name: 'Jam',   spec: 'Shroom & onion. House made.',    art: 'lettuce', side: 'right', fire: 0.32, w: 0.957, drop: -0.50 },
-  { no: '03', name: 'Aioli', spec: 'Chimichurri. Roasted garlic.',   art: 'wing',    side: 'left',  fire: 0.23, w: 1.000, drop: -0.61 },
-  { no: '02', name: 'Patty', spec: 'Salt and pepper. Nothing else.', art: 'patty',   side: 'right', fire: 0.14, w: 0.803, drop: -0.68, flip: true },
-  { no: '01', name: 'Heel',  spec: 'Brioche.',                       art: 'heel',    side: 'left',  fire: 0.05, w: 0.861, drop: -0.75 },
+  { no: '05', name: 'Crown', spec: 'Brioche.',                       art: 'crown',   side: 'left',  fire: 0.460, w: 0.884, drop: -0.34 },
+  { no: '04', name: 'Jam',   spec: 'Shroom & onion. House made.',    art: 'lettuce', side: 'right', fire: 0.355, w: 0.957, drop: -0.50 },
+  { no: '03', name: 'Aioli', spec: 'Chimichurri. Roasted garlic.',   art: 'wing',    side: 'left',  fire: 0.250, w: 1.000, drop: -0.61 },
+  { no: '02', name: 'Patty', spec: 'Salt and pepper. Nothing else.', art: 'patty',   side: 'right', fire: 0.145, w: 0.803, drop: -0.68, flip: true },
+  { no: '01', name: 'Heel',  spec: 'Brioche.',                       art: 'heel',    side: 'left',  fire: 0.040, w: 0.861, drop: -0.75 },
 ]
 
 /** The same five in the order they are built, for the written list. */
 const BUILD_ORDER = [...PARTS].reverse()
 
-/** 0..1 for one part: how far through its own seating window the scroll is. */
-const seat = (fire: number, rate = 7) =>
+/**
+ * 0..1 for one part: how far through its own seating window the scroll is.
+ *
+ * The default rate is the pace of the build. A part's fall spans 1/rate of the
+ * scroll, so at rate 6 across a 340vh section each one takes about 40vh of
+ * travel — roughly twice what it did at rate 7 in a 240vh section, which read
+ * as too quick to follow. Successive parts fire 0.105 apart, closer together
+ * than a part's own 0.167 window, so two are in the air at once and the build
+ * never stalls between them. The order still resolves correctly: each part
+ * lands well before the one above it does.
+ */
+const seat = (fire: number, rate = 6) =>
   `max(0, min(1, (var(--scroll-progress, 0) - ${fire}) * ${rate}))`
 
 /** A 0..1..0 pulse: rises over the first window, falls over the second. */
@@ -162,23 +173,35 @@ export function FlipdSpecHero({ brandName, orderHref, menuHref, tagline }: Props
   // liveAt matches the outro's own fade-in point exactly, so `past` flips at
   // the same instant its opacity leaves 0 — the links become reachable and
   // visible together, with no visual change from the switch.
-  const { ref, past } = useScrollProgress<HTMLElement>({ liveAt: 0.70 })
+  const { ref, past } = useScrollProgress<HTMLElement>({ liveAt: 0.82 })
 
   // The assembled burger drops onto the datum line. Squared so it accelerates
   // — the CSS reads --fall and uses t*t, same as the parts.
-  const fall = seat(0.56, 12)
+  // The crown seats at 0.627. The drop does not start until 0.70, which leaves
+  // a deliberate beat — about 17vh of scroll — looking at a finished burger
+  // before it moves. Without that pause the last part seating and the whole
+  // thing dropping run together into one event, and the drop stops reading as
+  // a separate thing that happens to a burger that is already built.
+  const fall = seat(0.70, 12)
   // The hit. The rise is deliberately violent — it goes 0 to 1 over the last
-  // eight thousandths of the scroll, which is the last fifth of the fall —
-  // and it tops out at 0.6433, exactly when the fall completes. Starting it
+  // eight thousandths of the scroll, which is the last fifth of the fall — and
+  // it tops out at 0.7833, exactly when the fall completes. Starting it
   // earlier, which it used to, had the rule flexing and the ticks striking
   // while the burger still had three-quarters of its drop to go. The decay is
   // slow by comparison: a hit, then a settle.
-  const hit = pulse(0.6355, 128, 0.6433, 9)
-  // Lands once the burger has.
-  const built = seat(0.70, 3.6)
+  //
+  // This one window does NOT get slower as the section grows. An impact is
+  // fast or it is not an impact; stretching it just turns the strike into a
+  // slow bloom.
+  const hit = pulse(0.7755, 128, 0.7833, 9)
+  // Lands once the burger has. The rate is set so it reaches full opacity by
+  // the very end of the scroll rather than short of it — at a slower rate the
+  // section runs out first and the CTAs never quite arrive.
+  const built = seat(0.82, 5.6)
   // The wordmark holds the middle of the sheet until parts start arriving on
-  // top of it. It must be gone before the crown seats at ~0.19.
-  const markGone = seat(0.03, 14)
+  // top of it. It must be gone before the heel — the first part to fall —
+  // reaches it.
+  const markGone = seat(0.02, 16)
 
   return (
     <>
@@ -266,7 +289,7 @@ export function FlipdSpecHero({ brandName, orderHref, menuHref, tagline }: Props
           </div>
         </div>
 
-        <span className="flipd-spec-hint" style={{ ['--t' as string]: seat(0.02, 12) }} aria-hidden>
+        <span className="flipd-spec-hint" style={{ ['--t' as string]: seat(0.02, 10) }} aria-hidden>
           Scroll to build it
         </span>
       </div>
