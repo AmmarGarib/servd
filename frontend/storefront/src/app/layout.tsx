@@ -1,9 +1,10 @@
 import type { Metadata, Viewport } from 'next'
+import { headers } from 'next/headers'
 import './globals.css'
 import { StorefrontNav } from '../components/StorefrontNav'
 import { StorefrontFooter } from '../components/StorefrontFooter'
 import { FeedbackWidget } from '../components/feedback/FeedbackWidget'
-import { SERVD_ORIGIN } from '../lib/brandDomains'
+import { SERVD_ORIGIN, BRAND_HOST_HEADER } from '../lib/brandDomains'
 
 export const metadata: Metadata = {
   // Absolute base for og:image / canonical resolution. SERVD_ORIGIN is the one
@@ -36,6 +37,15 @@ export const viewport: Viewport = {
 }
 
 export default function StorefrontLayout({ children }: { children: React.ReactNode }) {
+  // A brand microsite carries its own header — the badge and its nav pill —
+  // and must not also get the servd one stacked on top of it. On /brand/<slug>
+  // the servd header hides itself by path, but on a brand's own domain the
+  // path the client sees is "/", so it cannot. The middleware stamps this
+  // header on exactly the requests it rewrote, and only the server can read
+  // it. Reading it here makes the layout dynamic, which is right for this app:
+  // it is a live ordering storefront, and the brand pages already opt out of
+  // static rendering anyway (see the fetch-caching note in CLAUDE.md).
+  const onBrandMicrosite = Boolean(headers().get(BRAND_HOST_HEADER))
   return (
     <html lang="en">
       <body>
@@ -45,7 +55,7 @@ export default function StorefrontLayout({ children }: { children: React.ReactNo
         >
           Skip to content
         </a>
-        <StorefrontNav />
+        {!onBrandMicrosite && <StorefrontNav />}
         <main id="main">{children}</main>
         <StorefrontFooter />
         <FeedbackWidget />

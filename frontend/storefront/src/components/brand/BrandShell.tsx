@@ -79,6 +79,26 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
   // instead: the hero's checker shows through it, so the floor is one
   // continuous, seamless checker. (With a banner we keep the in-flow band.)
   const flipdOverlay = diner && !concept.announcementBanner
+  // Once it floats, it stays: the badge and the nav pill ride down the page
+  // rather than scrolling away at the top of the hero.
+  //
+  // `fixed` rather than `sticky`, because the overlay is deliberately OUT of
+  // flow — that is what lets the hero's checker run up under it as one
+  // unbroken floor. A sticky element is in flow, so switching to it would push
+  // the hero down by the height of the bar and put the seam back. The hero's
+  // pinned area already pads its top to clear this bar.
+  const flipdFixed = flipdOverlay
+  // Transparent over the hero, then a mustard band once the page has moved:
+  // past the hero the bar would otherwise float over the build sheet with the
+  // drawing running underneath it.
+  const [scrolled, setScrolled] = useState(false)
+  useEffect(() => {
+    if (!flipdFixed) return
+    const onScroll = () => setScrolled(window.scrollY > 48)
+    onScroll()
+    window.addEventListener('scroll', onScroll, { passive: true })
+    return () => window.removeEventListener('scroll', onScroll)
+  }, [flipdFixed])
   const navBg: React.CSSProperties = concept.slug === 'simmer'
     ? {
         backgroundColor: surface.bg,
@@ -158,16 +178,26 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
     <nav
       aria-label={`${formatBrandName(concept.name)} navigation`}
       style={{
-        // Header sits at the TOP of the page and scrolls away with the content
-        // (not sticky) — a top-of-page mark, not a persistent bar. flipd floats
-        // it as a transparent overlay so the hero checker reads through it as
-        // one continuous floor (no seam); other brands paint their own band.
-        position: flipdOverlay ? 'absolute' : 'relative',
-        ...(flipdOverlay ? { top: 0, left: 0, right: 0 } : null),
+        // flipd's bar is FIXED: it floats as a transparent overlay so the hero
+        // checker reads through it as one continuous floor, and it stays there
+        // as the page moves. Every other brand's header sits at the top of the
+        // page and scrolls away with the content — a top-of-page mark, not a
+        // persistent bar — and paints its own band.
+        position: flipdFixed ? 'fixed' : 'relative',
+        ...(flipdFixed ? { top: 0, left: 0, right: 0 } : null),
         zIndex: 50,
         // Simmer carries the blueprint grid into the header (connects to the
         // chiller); other brands use a soft scrim of their own bg (no band).
-        ...(flipdOverlay ? {} : navBg),
+        ...(flipdFixed ? {} : navBg),
+        // Nothing behind it over the hero; a flat mustard band once past it, so
+        // the drawing never runs under the badge and the pill.
+        ...(flipdFixed && scrolled
+          ? {
+              backgroundColor: 'var(--flipd-mustard)',
+              boxShadow: '0 2px 0 var(--flipd-blue)',
+            }
+          : null),
+        transition: 'background-color 160ms linear, box-shadow 160ms linear',
         borderBottom: 'none',
         padding: '0.95rem clamp(1rem, 4vw, 2rem)',
         display: 'flex',

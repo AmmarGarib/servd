@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { resolveBrandSlug } from './lib/brandDomains'
+import { resolveBrandSlug, BRAND_HOST_HEADER } from './lib/brandDomains'
 
 // Host-based brand routing.
 //
@@ -35,7 +35,18 @@ export function middleware(req: NextRequest) {
 
   const url = req.nextUrl.clone()
   url.pathname = pathname === '/' ? `/brand/${slug}` : `/brand/${slug}${pathname}`
-  return NextResponse.rewrite(url)
+  // Tell the render which brand microsite this is.
+  //
+  // A rewrite changes the path the app renders but NOT the path the browser
+  // shows, and usePathname() reports the browser's. So on flipd.pk the servd
+  // header's own "hide on /brand/" rule saw "/" and rendered anyway — the page
+  // came out with two stacked headers, the servd disc and wordmark sitting on
+  // top of the brand's. Only the server knows a rewrite happened, so it has to
+  // say so. Set on the REWRITE branch only: /browse and /login on a brand host
+  // are ordinary servd pages and still want the servd header.
+  const headers = new Headers(req.headers)
+  headers.set(BRAND_HOST_HEADER, slug)
+  return NextResponse.rewrite(url, { request: { headers } })
 }
 
 export const config = {

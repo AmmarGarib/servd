@@ -34,6 +34,18 @@ export const RESERVED_SUBDOMAINS = new Set(['www', 'app', 'admin', 'api', 'cdn',
 // Hostnames that mean "this is the servd canonical domain, not a brand".
 export const SERVD_HOSTS = new Set(['servd.app', 'servd.pk', 'localhost'])
 
+/**
+ * Request header the middleware stamps with the brand slug when it rewrites a
+ * brand host onto /brand/<slug>.
+ *
+ * The rewrite is invisible to the client — the browser's path stays "/" — so
+ * anything that needs to know "this render is a brand microsite" has to read
+ * it on the server. usePathname() cannot tell you, and guessing from
+ * window.location on the client renders the wrong thing first and then
+ * corrects it, which is a visible flash of the wrong header.
+ */
+export const BRAND_HOST_HEADER = 'x-servd-brand-host'
+
 // Resolve a Host header (or window.location.hostname) to a brand slug, or
 // null if it's the servd canonical domain.
 export function resolveBrandSlug(host: string): string | null {
