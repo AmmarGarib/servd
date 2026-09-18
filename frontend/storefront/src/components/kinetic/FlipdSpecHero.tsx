@@ -159,14 +159,21 @@ function PartArt({ part }: { part: Part }) {
 }
 
 export function FlipdSpecHero({ brandName, orderHref, menuHref, tagline }: Props) {
-  const { ref } = useScrollProgress<HTMLElement>()
+  // liveAt matches the outro's own fade-in point exactly, so `past` flips at
+  // the same instant its opacity leaves 0 — the links become reachable and
+  // visible together, with no visual change from the switch.
+  const { ref, past } = useScrollProgress<HTMLElement>({ liveAt: 0.70 })
 
   // The assembled burger drops onto the datum line. Squared so it accelerates
   // — the CSS reads --fall and uses t*t, same as the parts.
   const fall = seat(0.56, 12)
-  // The hit. Peaks as the fall completes (0.643) and decays over about a tenth
-  // of the scroll, which at this section height is a beat, not a wobble.
-  const hit = pulse(0.60, 26, 0.6433, 9)
+  // The hit. The rise is deliberately violent — it goes 0 to 1 over the last
+  // eight thousandths of the scroll, which is the last fifth of the fall —
+  // and it tops out at 0.6433, exactly when the fall completes. Starting it
+  // earlier, which it used to, had the rule flexing and the ticks striking
+  // while the burger still had three-quarters of its drop to go. The decay is
+  // slow by comparison: a hit, then a settle.
+  const hit = pulse(0.6355, 128, 0.6433, 9)
   // Lands once the burger has.
   const built = seat(0.70, 3.6)
   // The wordmark holds the middle of the sheet until parts start arriving on
@@ -245,8 +252,13 @@ export function FlipdSpecHero({ brandName, orderHref, menuHref, tagline }: Props
           </div>
         </div>
 
-        {/* Lands once the burger has. */}
-        <div className="flipd-spec-outro" style={{ ['--t' as string]: built }}>
+        {/* Lands once the burger has. Hidden outright until then, not merely
+            transparent: two full-width buttons that are invisible but still
+            clickable sit across the bottom of the first screen of the hero. */}
+        <div
+          className="flipd-spec-outro"
+          style={{ ['--t' as string]: built, visibility: past ? 'visible' : 'hidden' }}
+        >
           <p className="flipd-spec-tagline">{tagline}</p>
           <div className="flipd-spec-cta">
             <Link href={orderHref} className="flipd-btn">Order now</Link>

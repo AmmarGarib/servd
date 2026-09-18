@@ -762,7 +762,12 @@ summary:focus-visible {
     transform: none;
     width: clamp(11rem, 30vw, 17rem);
   }
-  .stackd-page .stackd-slip-after { opacity: 1; transform: none; margin-top: 2rem; }
+  /* !important because the component hides this inline until he lands — which
+     never happens here, since nothing falls. */
+  .stackd-page .stackd-slip-after {
+    opacity: 1; transform: none; margin-top: 2rem;
+    visibility: visible !important;
+  }
 }
 
 .stackd-page .stackd-sticker:nth-child(4n+1) { --stackd-tilt: -1.6deg; }
@@ -1073,14 +1078,21 @@ summary:focus-visible {
   padding: clamp(4.5rem, 9vh, 6rem) clamp(1rem, 4vw, 2.5rem) clamp(1.25rem, 4vh, 2.25rem);
 }
 
-/* Title block, as any technical drawing carries. */
+/* Title block, as any technical drawing carries.
+   Opaque and above the parts: on a short window the drawing sits high enough
+   that a part's start position is level with this row, and a bun sliding
+   across the title rule looks like a rendering fault. Parts pass behind it
+   instead, which reads as entering the sheet from off the top. */
 .flipd-page .flipd-spec-title {
+  position: relative;
+  z-index: 5;
   width: min(100%, 44rem);
   display: flex;
   align-items: center;
   justify-content: center;
   gap: clamp(0.75rem, 3vw, 1.5rem);
-  padding: 0 clamp(1rem, 5vw, 3rem);
+  padding: 0.75rem clamp(1rem, 5vw, 3rem);
+  background: var(--flipd-mustard);
 }
 .flipd-page .flipd-spec-titleno {
   font-size: 0.62rem;
@@ -1134,8 +1146,14 @@ summary:focus-visible {
   justify-content: center;
   transform-origin: 50% 100%;
   transform:
-    /* Squared, so the burger accelerates into the datum. */
-    translateY(calc(var(--fall, 0) * var(--fall, 0) * 5vh))
+    /* The burger is assembled 5vh ABOVE the datum and falls ONTO it: at
+       --fall 0 this is -5vh, at 1 it is 0, which is flush with the rule
+       because the field stacks the stage directly on top of the datum.
+       Written the other way round — 0 to +5vh — it starts flush and sinks 5vh
+       straight THROUGH the line, which is what it used to do: the rule ended
+       up drawn inside the bottom bun and the impact was struck from a point
+       in the middle of it. Squared, so it accelerates. */
+    translateY(calc((var(--fall, 0) * var(--fall, 0) - 1) * 5vh))
     scaleY(calc(1 - var(--hit, 0) * 0.09))
     scaleX(calc(1 + var(--hit, 0) * 0.05));
   will-change: transform;
@@ -1281,13 +1299,22 @@ summary:focus-visible {
   opacity: calc(1 - var(--t, 0));
 }
 
-/* The accessible copy of the diagram, and the mobile layout. */
+/* The accessible copy of the diagram, and the mobile layout.
+   On desktop it is VISUALLY hidden, not display:none. The callouts beside the
+   drawing are aria-hidden so a screen reader does not read the build twice —
+   which meant that with this list display:none as well, a desktop screen
+   reader got nothing at all from the hero: no parts, no spec, no build. */
 .flipd-page .flipd-spec-list {
-  display: none;              /* desktop reads it off the leader lines */
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
   list-style: none;
   margin: 0 auto;
-  padding: 0 clamp(1.25rem, 6vw, 2rem) clamp(2rem, 6vh, 3rem);
-  width: min(100%, 26rem);
+  padding: 0;
 }
 .flipd-page .flipd-spec-list li {
   display: grid;
@@ -1331,17 +1358,33 @@ summary:focus-visible {
   opacity: calc(1 - var(--t, 0));
 }
 
-/* Narrow screens: no room for leader lines beside a 30rem stage, so the
-   callouts come off and the written list comes on. The build still animates —
-   it is the same diagram, read top to bottom instead of outward. */
+/* Narrow screens: the callouts come off and the written list comes on. The
+   build still animates — it is the same diagram, read top to bottom instead of
+   outward.
+
+   The cut is at 1000px, not 820px. A callout is the drawing's half-width plus
+   a leader line plus a nowrap spec line — about 275px a side — so beside a
+   22rem drawing the layout needs roughly 900px of content box before anything
+   fits, and the pinned area's own padding takes the rest. At 820px the
+   callouts were switched back ON into a window that could not hold them, and
+   every spec line ran off both edges of the screen in the 821-999px band. */
+@media (max-width: 1000px) {
+  .flipd-page .flipd-spec-callout { display: none; }
+  /* Out of the visually-hidden clip and into the flow, as the visible copy. */
+  .flipd-page .flipd-spec-list {
+    position: static;
+    width: min(100%, 26rem);
+    height: auto;
+    overflow: visible;
+    clip: auto;
+    clip-path: none;
+    white-space: normal;
+    padding: 0 clamp(1.25rem, 6vw, 2rem) clamp(2rem, 6vh, 3rem);
+  }
+}
 @media (max-width: 820px) {
-  /* No room for leader lines beside the stage, so the callouts come off and
-     the written list below the section carries the same information. The build
-     still animates — the diagram is read top to bottom instead of outward. */
   .flipd-page .flipd-spec { height: 200vh; }
   .flipd-page .flipd-spec-field { --fw: min(15rem, 34vh); }
-  .flipd-page .flipd-spec-callout { display: none; }
-  .flipd-page .flipd-spec-list { display: block; }
   .flipd-page .flipd-spec-hint { display: none; }
   .flipd-page .flipd-spec-title { gap: 0.6rem; }
   .flipd-page .flipd-spec-titleno { font-size: 0.55rem; letter-spacing: 0.18em; }
@@ -1364,10 +1407,17 @@ summary:focus-visible {
   .flipd-page .flipd-spec-tick { display: none; }
   .flipd-page .flipd-spec-callout { opacity: 1; }
   .flipd-page .flipd-spec-mark { opacity: 0; }
-  .flipd-page .flipd-spec-outro { opacity: 1; transform: none; margin-top: 2rem; }
+  /* !important because the component hides this inline until the burger lands
+     — which never happens here, since there is no scroll to land through. */
+  .flipd-page .flipd-spec-outro {
+    opacity: 1; transform: none; margin-top: 2rem;
+    visibility: visible !important;
+  }
   .flipd-page .flipd-spec-field { --fw: 22rem; max-height: none; align-self: center; }
   .flipd-page .flipd-spec-hint { display: none; }
-  .flipd-page .flipd-spec-list { display: block; }
+  /* The list stays visually hidden here and the width query above decides
+     whether it shows. Forcing it visible printed the five build lines twice on
+     a wide screen: once on the leader lines, once underneath. */
 }
 @media (max-width: 700px) { .flipd-visit-grid { grid-template-columns: 1fr !important; } }
 

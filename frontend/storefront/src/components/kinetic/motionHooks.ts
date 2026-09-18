@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 /**
  * useScrollReveal — attaches .is-revealed to a container once its
@@ -100,14 +100,32 @@ export function useScrollProgress<T extends HTMLElement = HTMLElement>(options?:
   startAt?: number
   /** When to clamp at 1. Default 1 (section bottom hits viewport top). */
   endAt?: number
+  /**
+   * Flip the returned `past` to true once progress crosses this.
+   *
+   * For the one thing CSS cannot express off --scroll-progress: whether the
+   * pinned section's end-of-scroll content is REACHABLE yet. Fading a panel
+   * of links in with `opacity: var(--t)` leaves them clickable and in the tab
+   * order the whole time they are invisible — so a click on empty space at the
+   * top of the hero navigates away, and tabbing lands focus on something that
+   * is not on screen. `past` drives `visibility`, which removes an element
+   * from hit-testing and from the tab order together.
+   *
+   * It is a threshold, not a value, so this costs one re-render each time the
+   * reader crosses it — not one per frame. Everything else still goes through
+   * the CSS variable.
+   */
+  liveAt?: number
 }) {
   const ref = useRef<T | null>(null)
   const progressRef = useRef(0)
+  const [past, setPast] = useState(false)
   useEffect(() => {
     const el = ref.current
     if (!el) return
     const startAt = options?.startAt ?? 0
     const endAt   = options?.endAt   ?? 1
+    const liveAt  = options?.liveAt
 
     let raf = 0
     function update() {
@@ -120,6 +138,11 @@ export function useScrollProgress<T extends HTMLElement = HTMLElement>(options?:
       if (total <= 0) {
         el!.style.setProperty('--scroll-progress', '0')
         progressRef.current = 0
+        // A section shorter than the viewport never pins and never scrolls
+        // through, so its end-of-scroll content has to be reachable from the
+        // start — otherwise reduced-motion readers, where the section
+        // collapses to auto height, get permanently unreachable links.
+        if (liveAt != null) setPast((p) => (p ? p : true))
         return
       }
       const raw = Math.max(0, Math.min(1, -rect.top / total))
@@ -128,6 +151,10 @@ export function useScrollProgress<T extends HTMLElement = HTMLElement>(options?:
       const remap = Math.max(0, Math.min(1, (raw - startAt) / (endAt - startAt)))
       el!.style.setProperty('--scroll-progress', remap.toFixed(4))
       progressRef.current = remap
+      if (liveAt != null) {
+        const now = remap >= liveAt
+        setPast((p) => (p === now ? p : now))
+      }
     }
     function onScroll() {
       if (raf) return
@@ -141,8 +168,8 @@ export function useScrollProgress<T extends HTMLElement = HTMLElement>(options?:
       window.removeEventListener('resize', onScroll)
       if (raf) cancelAnimationFrame(raf)
     }
-  }, [options?.startAt, options?.endAt])
-  return { ref, progressRef }
+  }, [options?.startAt, options?.endAt, options?.liveAt])
+  return { ref, progressRef, past }
 }
 
 /**

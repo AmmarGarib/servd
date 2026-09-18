@@ -85,7 +85,10 @@ function Seal({ size }: { size: number }) {
 export function StackdSlipHero({
   brandName, orderHref, menuHref, mascotAlt, counterLines, customMascotSrc, customMascotDims,
 }: Props) {
-  const { ref } = useScrollProgress<HTMLElement>()
+  // Matches the payoff's own fade-in point, so its links become reachable and
+  // visible at the same instant. Without it the two CTAs are transparent but
+  // still clickable and still in the tab order for the whole fall.
+  const { ref, past } = useScrollProgress<HTMLElement>({ liveAt: 0.58 })
 
   // The slip itself. Eased so the first moment is slow — the wobble — and the
   // rest goes fast, which is how a real slip reads.
@@ -159,8 +162,12 @@ export function StackdSlipHero({
 
         </div>
 
-        {/* Its own grid row, so he can never land on the words. */}
-        <div className="stackd-slip-after" style={{ ['--t' as string]: after }}>
+        {/* Its own grid row, so he can never land on the words. Hidden rather
+            than transparent until it lands — see liveAt above. */}
+        <div
+          className="stackd-slip-after"
+          style={{ ['--t' as string]: after, visibility: past ? 'visible' : 'hidden' }}
+        >
           <p className="stackd-slip-line">we&rsquo;ll make another.</p>
           <p className="stackd-slip-sub">
             everything here is cut, baked and built on site — {counterLines.map((l) => l.replace(/\.$/, '')).join(', ').toLowerCase()}.
