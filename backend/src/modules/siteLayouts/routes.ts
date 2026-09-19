@@ -151,11 +151,11 @@ export async function siteLayoutRoutes(fastify: FastifyInstance) {
         },
       })
 
-      await audit({
+      await audit({ category: 'identity',
         action: before ? 'layout.update' : 'layout.create',
         entity: 'SiteLayout',
         entityId: saved.id,
-        userId: req.staffUser?.id ?? null,
+        userId: req.staffUser?.id ?? null, tenantId: req.staffUser?.tenantId ?? null,
         userEmail: req.staffUser?.email ?? null,
         before: before ? { blockCount: Array.isArray(before.blocks) ? (before.blocks as unknown[]).length : 0 } : null,
         after:  { slug: saved.slug, blockCount: body.blocks.length },
@@ -173,9 +173,9 @@ export async function siteLayoutRoutes(fastify: FastifyInstance) {
       const slug = decodeURIComponent(req.params.slug)
       await assertLayoutSlugOwned(req, slug, 'write')
       await prisma.siteLayout.deleteMany({ where: { slug } })
-      await audit({
+      await audit({ category: 'identity',
         action: 'layout.reset', entity: 'SiteLayout',
-        userId: req.staffUser?.id ?? null, userEmail: req.staffUser?.email ?? null,
+        userId: req.staffUser?.id ?? null, tenantId: req.staffUser?.tenantId ?? null, userEmail: req.staffUser?.email ?? null,
         metadata: { slug },
       })
       return reply.status(204).send()

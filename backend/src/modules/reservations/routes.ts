@@ -303,11 +303,11 @@ export async function reservationRoutes(fastify: FastifyInstance) {
       }),
     )
 
-    await audit({
+    await audit({ category: 'identity',
       action: 'reservation.create',
       entity: 'Reservation',
       entityId: r.id,
-      userId: req.staffUser?.id ?? null,
+      userId: req.staffUser?.id ?? null, tenantId: req.staffUser?.tenantId ?? null,
       userEmail: req.staffUser?.email ?? null,
       after: { partySize: r.partySize, startTime: r.startTime, status: r.status, guestName: r.guestName },
       metadata: { source: r.source, ip: req.ip },
@@ -514,11 +514,11 @@ export async function reservationRoutes(fastify: FastifyInstance) {
         where: { id: r.id },
         data: { status: 'cancelled', cancelledAt: new Date(), cancelReason: body.reason ?? null },
       })
-      await audit({
+      await audit({ category: 'identity',
         action: 'reservation.cancel',
         entity: 'Reservation',
         entityId: r.id,
-        userId: req.staffUser?.id ?? null,
+        userId: req.staffUser?.id ?? null, tenantId: req.staffUser?.tenantId ?? null,
         userEmail: req.staffUser?.email ?? null,
         before: { status: r.status, tableId: r.tableId },
         after:  { status: 'cancelled' },
@@ -1396,9 +1396,9 @@ export async function reservationRoutes(fastify: FastifyInstance) {
       const r = await prisma.reservation.findFirst({ where: { id: req.params.id, concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null } } })
       if (!r) throw new NotFoundError('Reservation', req.params.id)
       await assertConceptAccess(req.staffUser!, r.conceptId)
-      await audit({
+      await audit({ category: 'identity',
         action: 'reservation.deposit_release', entity: 'Reservation', entityId: r.id,
-        userId: req.staffUser?.id ?? null, userEmail: req.staffUser?.email ?? null,
+        userId: req.staffUser?.id ?? null, tenantId: req.staffUser?.tenantId ?? null, userEmail: req.staffUser?.email ?? null,
         before: { depositCents: r.depositCents, depositRef: r.depositRef },
         after:  { depositCents: 0 },
       })

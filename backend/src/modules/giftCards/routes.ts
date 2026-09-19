@@ -117,9 +117,9 @@ export async function giftCardRoutes(fastify: FastifyInstance) {
       postedBy: req.staffUser?.id ?? 'system',
     }).catch((err) => req.log.error({ err: (err as Error).message }, 'gift card JE failed'))
 
-    await audit({
+    await audit({ category: 'identity',
       action: 'giftcard.issue', entity: 'GiftCard', entityId: card.id,
-      userId: req.staffUser?.id ?? null, userEmail: req.staffUser?.email ?? null,
+      userId: req.staffUser?.id ?? null, tenantId: req.staffUser?.tenantId ?? null, userEmail: req.staffUser?.email ?? null,
       after: { code: card.code, amount: card.issuedAmountCents },
     })
 
@@ -220,9 +220,9 @@ export async function giftCardRoutes(fastify: FastifyInstance) {
         where: { id: card.id },
         data: { status: 'voided', voidedAt: new Date(), voidReason: body.reason },
       })
-      await audit({
+      await audit({ category: 'identity',
         action: 'giftcard.void', entity: 'GiftCard', entityId: card.id,
-        userId: req.staffUser?.id ?? null, userEmail: req.staffUser?.email ?? null,
+        userId: req.staffUser?.id ?? null, tenantId: req.staffUser?.tenantId ?? null, userEmail: req.staffUser?.email ?? null,
         before: { status: card.status, balance: card.balanceCents },
         after:  { status: 'voided' },
         metadata: { reason: body.reason },

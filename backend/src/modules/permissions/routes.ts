@@ -10,6 +10,7 @@ import {
   effectivePermissionsForUser,
 } from '../../lib/permissions.js'
 import { DEFAULT_MODULE_ACCESS, isKnownModuleId, invalidateModuleAccessCache } from '../../lib/moduleAccess.js'
+import { audit } from '../../lib/audit.js'
 
 // Keep aligned with the UserRole enum in backend/prisma/schema.prisma and the
 // AppRole list in frontend/admin/src/lib/appRoles.ts. The matrix editor renders
@@ -126,6 +127,13 @@ export async function permissionRoutes(fastify: FastifyInstance) {
       }
     }
 
+    // Read the outgoing allow-list first — "what changed" is the whole value of
+    // this entry, and after the upsert it is gone.
+    const previous = await prisma.roleModuleAccess.findUnique({
+      where: { role: body.role as UserRole },
+      select: { modules: true },
+    })
+
     if (body.modules === null) {
       await prisma.roleModuleAccess.deleteMany({ where: { role: body.role as UserRole } })
     } else {
@@ -136,6 +144,20 @@ export async function permissionRoutes(fastify: FastifyInstance) {
       })
     }
     invalidateModuleAccessCache()
+    // Changing what a ROLE can reach changes what every holder of that role can
+    // reach, without touching a single user record — so it is invisible on the
+    // staff screen and was, until now, invisible everywhere else too.
+    await audit({
+      category: 'identity',
+      action: 'role_modules.update',
+      entity: 'RoleModuleAccess',
+      entityId: body.role,
+      userId: req.staffUser?.id ?? null,
+      userEmail: req.staffUser?.email ?? null,
+      tenantId: req.staffUser?.tenantId ?? null,
+      before: { modules: previous?.modules ?? null },
+      after: { role: body.role, modules: body.modules },
+    })
     return { ok: true, role: body.role, modules: body.modules }
   })
 

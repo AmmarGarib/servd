@@ -812,11 +812,11 @@ export async function setupRoutes(fastify: FastifyInstance) {
         actorId: req.staffUser!.id,
         metadata: { lockedThrough: lock.lockedThrough, originalLockedBy: lock.lockedBy, note: lock.note },
       })
-      await audit({
+      await audit({ category: 'identity',
         action: 'period_lock.removed',
         entity: 'PeriodLock',
         entityId: req.params.id,
-        userId: req.staffUser!.id,
+        userId: req.staffUser!.id, tenantId: req.staffUser?.tenantId ?? null,
         userEmail: req.staffUser!.email,
         before: lock,
       })

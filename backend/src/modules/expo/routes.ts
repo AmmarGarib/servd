@@ -239,7 +239,7 @@ export async function expoRoutes(fastify: FastifyInstance) {
       if (body.note) {
         try {
           const { audit } = await import('../../lib/audit.js')
-          await audit({
+          await audit({ category: 'identity',
             userId:   req.staffUser!.id,
             entity:   'Order',
             entityId: order.id,
@@ -440,7 +440,7 @@ export async function expoRoutes(fastify: FastifyInstance) {
       await updateOrderStatus(req.params.id, 'completed')
       try {
         const { audit } = await import('../../lib/audit.js')
-        await audit({
+        await audit({ category: 'identity',
           userId:   req.staffUser!.id,
           entity:   'Order',
           entityId: order.id,
@@ -473,7 +473,7 @@ export async function expoRoutes(fastify: FastifyInstance) {
       await updateOrderStatus(req.params.id, 'rejected')
       try {
         const { audit } = await import('../../lib/audit.js')
-        await audit({
+        await audit({ category: 'identity',
           userId:   req.staffUser!.id,
           entity:   'Order',
           entityId: order.id,

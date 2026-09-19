@@ -781,7 +781,7 @@ export async function voidOrderItem(input: VoidInput) {
     where: { id: input.orderItemId },
     data: { voidedAt: new Date(), voidReason: input.reason, status: 'voided' },
   })
-  await audit({
+  await audit({ category: 'identity',
     action: 'order_item_void',
     entity: 'OrderItem',
     entityId: input.orderItemId,
@@ -860,7 +860,7 @@ export async function compOrder(input: CompRefundInput) {
     },
   })
 
-  await audit({
+  await audit({ category: 'identity',
     action: 'order_comp',
     entity: 'Order',
     entityId: input.orderId,
@@ -951,7 +951,7 @@ export async function refundOrder(input: CompRefundInput) {
   // File the SRB sales-return (invoiceType 2) for the refunded value.
   const srbReturnInvoiceNo = await submitSrbReturnForRefund(input.orderId, input.amountCents, refundPayment.id)
 
-  await audit({
+  await audit({ category: 'identity',
     action: 'order_refund',
     entity: 'Order',
     entityId: input.orderId,

@@ -9,6 +9,7 @@ import { salesTaxReturn } from './salesTaxReturn.js'
 import { resolveTenantScope } from '../../lib/tenantScope.js'
 import { toCsv, fmtPkr } from './csv.js'
 import { audit } from '../../lib/audit.js'
+import { ACCOUNTING_AUDIT_ROLES } from '../../lib/moduleAccess.js'
 
 const journalEntrySchema = z.object({
   reference: z.string().optional(),
@@ -185,11 +186,11 @@ export async function accountingRoutes(fastify: FastifyInstance) {
       },
       include: { lines: { include: { account: true } } },
     })
-    await audit({
+    await audit({ category: 'accounting',
       action: 'journal.manual',
       entity: 'JournalEntry',
       entityId: entry.id,
-      userId: req.staffUser!.id,
+      userId: req.staffUser!.id, tenantId: req.staffUser?.tenantId ?? null,
       userEmail: req.staffUser!.email,
       after: entry,
       metadata: { ip: req.ip, debits, credits },
@@ -365,13 +366,31 @@ export async function accountingRoutes(fastify: FastifyInstance) {
 
   // ─── Audit log viewer ────────────────────────────────────────────────────
 
+  // The BOOKS' audit trail: period closes, manual journals, wage rates,
+  // tip-pool postings, cost allocations. Its own module and its own role gate —
+  // the CEO and the exec, and nobody else. Co-owners and finance can see the
+  // numbers; this is the record of who MOVED them, which is what you read when
+  // the person you doubt is one of those.
+  //
+  // It is also tenant-scoped. It used to return every company's rows to every
+  // finance-tier role in either company — across a 60/40 JV with an outside
+  // partner — while the sales-tax return twenty lines below was careful to file
+  // for exactly one company.
   fastify.get<{ Querystring: { action?: string; entity?: string; userId?: string; limit?: string; cursor?: string } }>(
     '/audit-log',
-    { preHandler: requireAuth(...FINANCIALS_VIEWERS) },
+    { preHandler: requireAuth(...ACCOUNTING_AUDIT_ROLES) },
     async (req) => {
       const limit = Math.min(parseInt(req.query.limit ?? '100', 10), 500)
+      const scope = await resolveTenantScope(req)
       const rows = await prisma.auditLog.findMany({
         where: {
+          category: 'accounting',
+          // Rows written before the tenant column existed cannot be attributed
+          // — the actor's current company is not necessarily the one they were
+          // acting in. Only the CEO sees those, and only as history.
+          ...(req.staffUser!.role === 'admin'
+            ? { OR: [{ tenantId: { in: scope.tenantIds } }, { tenantId: null }] }
+            : { tenantId: { in: scope.tenantIds } }),
           ...(req.query.action && { action: { startsWith: req.query.action } }),
           ...(req.query.entity && { entity: req.query.entity }),
           ...(req.query.userId && { userId: req.query.userId }),
@@ -465,11 +484,11 @@ export async function accountingRoutes(fastify: FastifyInstance) {
         note: body.note ?? null,
       },
     })
-    await audit({
+    await audit({ category: 'accounting',
       action: 'period.close',
       entity: 'PeriodLock',
       entityId: created.id,
-      userId: req.staffUser!.id,
+      userId: req.staffUser!.id, tenantId: req.staffUser?.tenantId ?? null,
       userEmail: req.staffUser!.email,
       before: existing,
       after: created,

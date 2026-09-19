@@ -182,9 +182,9 @@ export async function tipPoolRoutes(fastify: FastifyInstance) {
         data: { status: 'posted', postedAt: new Date() },
         include: { members: { orderBy: { userName: 'asc' } } },
       })
-      await audit({
+      await audit({ category: 'accounting',
         action: 'tippool.post', entity: 'TipPool', entityId: pool.id,
-        userId: req.staffUser?.id ?? null, userEmail: req.staffUser?.email ?? null,
+        userId: req.staffUser?.id ?? null, tenantId: req.staffUser?.tenantId ?? null, userEmail: req.staffUser?.email ?? null,
         after: { totalCents: pool.totalTipsCents, members: updated.members.length },
       })
 
@@ -192,11 +192,11 @@ export async function tipPoolRoutes(fastify: FastifyInstance) {
       // verifiable. Without this, a manager could quietly give themselves a
       // bigger cut and the pool-level audit log wouldn't show it.
       for (const m of updated.members) {
-        await audit({
+        await audit({ category: 'accounting',
           action: 'tippool.distribute',
           entity: 'TipPoolMember',
           entityId: m.id,
-          userId: req.staffUser?.id ?? null,
+          userId: req.staffUser?.id ?? null, tenantId: req.staffUser?.tenantId ?? null,
           userEmail: req.staffUser?.email ?? null,
           after: { recipient: m.userName, recipientId: m.userId, units: m.shareUnits, cents: m.shareCents },
           metadata: { tipPoolId: pool.id, totalPool: pool.totalTipsCents },

@@ -21,7 +21,7 @@ import { ForbiddenError } from './errors.js'
 
 // ── Module registry (ids must match the frontend's ModuleId union) ──────────
 export const MODULE_IDS = [
-  'ceo_overview', 'business_info', 'role_management', 'role_modules', 'audit_log', 'tenants',
+  'ceo_overview', 'business_info', 'role_management', 'role_modules', 'audit_log', 'accounting_audit', 'tenants',
   'brand_dashboard', 'fnb_dashboard',
   'dashboard', 'ops', 'orders', 'refunds', 'curbside', 'kds_all', 'kds_dashboard', 'expo_station', 'chain',
   'pos', 'reservations', 'reservations_admin', 'scheduling', 'tables', 'dispatch', 'riders',
@@ -37,20 +37,28 @@ const ALL_MODULES = [...MODULE_IDS] as string[]
 // Role defaults — ported from frontend appRoles.ts DEFAULT_MODULE_ACCESS.
 // The legacy 'manager' role mirrors 'management'.
 const MANAGEMENT_MODULES = ALL_MODULES.filter((m) => m !== 'chain')
+// 'manager' mirrors 'management' for everything EXCEPT the accounting trail.
+const MANAGER_MODULES = MANAGEMENT_MODULES.filter((m) => m !== 'accounting_audit')
 // Co-owner: everything the CEO sees — P&L, payroll, projections, investment —
 // EXCEPT the governance surfaces. Withholding role_management/role_modules is
 // what makes the escalation rule real: an owner who could edit roles could
 // grant themselves `admin`. Staff-account admin stays with the CEO for the
 // same reason (creating an admin user is equivalent to self-promotion).
 const OWNER_MODULES = ALL_MODULES.filter(
-  (m) => !['role_management', 'role_modules'].includes(m),
+  (m) => !['role_management', 'role_modules', 'accounting_audit'].includes(m),
 )
+// The books' own audit trail — period closes, manual journals, wage rates,
+// tip-pool postings. Per the owner: the CEO and the exec (management) only.
+// Deliberately withheld from co-owners and from finance, both of whom can SEE
+// the numbers: this trail is the record of who MOVED them, which is the thing
+// you read when you doubt one of those people.
+export const ACCOUNTING_AUDIT_ROLES = ['admin', 'management'] as UserRole[]
 
 export const DEFAULT_MODULE_ACCESS: Record<UserRole, string[]> = {
   admin:      ALL_MODULES,
   owner:      OWNER_MODULES,
   management: MANAGEMENT_MODULES,
-  manager:    MANAGEMENT_MODULES,
+  manager:    MANAGER_MODULES,
   foh_management: [
     'dashboard', 'ops', 'orders', 'refunds', 'curbside', 'kds_all', 'expo_station',
     'pos', 'reservations', 'reservations_admin', 'scheduling', 'tables', 'dispatch', 'riders',

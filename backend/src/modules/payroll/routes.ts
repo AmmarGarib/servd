@@ -60,11 +60,11 @@ export async function payrollRoutes(fastify: FastifyInstance) {
         },
         select: { id: true, name: true, role: true, hourlyRateCents: true, wageAccountCode: true },
       })
-      await audit({
+      await audit({ category: 'accounting',
         action: 'wage.update',
         entity: 'User',
         entityId: req.params.userId,
-        userId: req.staffUser!.id,
+        userId: req.staffUser!.id, tenantId: req.staffUser?.tenantId ?? null,
         userEmail: req.staffUser!.email,
         before, after,
         metadata: { ip: req.ip },

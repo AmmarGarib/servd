@@ -73,7 +73,7 @@ export function roleLabel(role: string | undefined | null): string {
 /** Module IDs — must match the `module` tag on every nav item in AppShell. */
 export type ModuleId =
   // Executive (CEO only by default)
-  | 'ceo_overview' | 'business_info' | 'role_management' | 'role_modules' | 'audit_log' | 'tenants'
+  | 'ceo_overview' | 'business_info' | 'role_management' | 'role_modules' | 'audit_log' | 'accounting_audit' | 'tenants'
   // Management — manager-tier dashboards (Brand Manager, F&B Manager)
   | 'brand_dashboard' | 'fnb_dashboard'
   // Live
@@ -114,6 +114,7 @@ export const MODULES: ModuleMeta[] = [
   { id: 'role_management',    label: 'Roles & Permissions', section: 'Executive' },
   { id: 'role_modules',       label: 'Module Access',       section: 'Executive' },
   { id: 'audit_log',          label: 'Audit Log',           section: 'Executive' },
+  { id: 'accounting_audit',   label: 'Accounting Audit',    section: 'Executive' },
   { id: 'brand_dashboard',    label: 'Brand Dashboard',     section: 'Management' },
   { id: 'fnb_dashboard',      label: 'F&B Dashboard',       section: 'Management' },
   { id: 'tenants',            label: 'Tenants / Brands',    section: 'Executive' },
@@ -200,7 +201,10 @@ export const DEFAULT_MODULE_ACCESS: Record<AppRole, ModuleId[]> = {
   // Co-owner: full CEO-level visibility MINUS the governance surfaces. Kept in
   // sync with OWNER_MODULES in backend/src/lib/moduleAccess.ts — an owner who
   // could edit roles could promote themselves to admin.
-  owner: ALL_MODULE_IDS.filter((m) => !['role_management', 'role_modules'].includes(m)),
+  // accounting_audit is withheld from co-owners for the same reason
+  // role_management is: it is the record of who moved the books, and the
+  // people it exists to hold to account must not control who reads it.
+  owner: ALL_MODULE_IDS.filter((m) => !['role_management', 'role_modules', 'accounting_audit'].includes(m)),
   management: ALL_MODULE_IDS.filter((m) => !['chain'].includes(m)),
 
   foh_management: [

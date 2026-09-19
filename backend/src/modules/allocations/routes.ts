@@ -65,11 +65,11 @@ export async function allocationRoutes(fastify: FastifyInstance) {
       },
       include: { weights: true },
     })
-    await audit({
+    await audit({ category: 'accounting',
       action: before ? 'allocation.update' : 'allocation.create',
       entity: 'CostAllocationRule',
       entityId: rule.id,
-      userId: req.staffUser!.id,
+      userId: req.staffUser!.id, tenantId: req.staffUser?.tenantId ?? null,
       userEmail: req.staffUser!.email,
       before, after: rule,
       metadata: { ip: req.ip },

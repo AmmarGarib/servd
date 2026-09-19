@@ -55,7 +55,7 @@ export async function captureReservationDeposit(args: CaptureArgs): Promise<Depo
     },
   })
 
-  await audit({
+  await audit({ category: 'identity',
     action: 'reservation.deposit_capture',
     entity: 'Reservation',
     entityId: r.id,

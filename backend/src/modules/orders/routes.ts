@@ -320,9 +320,9 @@ export async function orderRoutes(fastify: FastifyInstance) {
         recordedById: req.staffUser?.id,
       })
 
-      await audit({
+      await audit({ category: 'identity',
         action: 'order.cod_unpaid', entity: 'Order', entityId: order.id,
-        userId: req.staffUser?.id ?? null, userEmail: req.staffUser?.email ?? null,
+        userId: req.staffUser?.id ?? null, tenantId: req.staffUser?.tenantId ?? null, userEmail: req.staffUser?.email ?? null,
         metadata: { reason: body.reason, severity, totalCents: order.totalCents },
       })
       return { ok: true, severity }
@@ -369,9 +369,9 @@ export async function orderRoutes(fastify: FastifyInstance) {
         recordedById: req.staffUser?.id,
       })
 
-      await audit({
+      await audit({ category: 'identity',
         action: 'order.refused_at_door', entity: 'Order', entityId: order.id,
-        userId: req.staffUser?.id ?? null, userEmail: req.staffUser?.email ?? null,
+        userId: req.staffUser?.id ?? null, tenantId: req.staffUser?.tenantId ?? null, userEmail: req.staffUser?.email ?? null,
         metadata: { reason: body.reason, severity, totalCents: order.totalCents },
       })
       return { ok: true, severity }
@@ -397,11 +397,11 @@ export async function orderRoutes(fastify: FastifyInstance) {
       const targetStatus = body.mode === 'cancel' ? 'cancelled' : 'refunded'
       const updated = await updateOrderStatus(req.params.id, targetStatus as never)
 
-      await audit({
+      await audit({ category: 'identity',
         action: `order.${body.mode}`,
         entity: 'Order',
         entityId: order.id,
-        userId: req.staffUser!.id,
+        userId: req.staffUser!.id, tenantId: req.staffUser?.tenantId ?? null,
         userEmail: req.staffUser!.email,
         before: { status: order.status, totalCents: order.totalCents },
         after:  { status: targetStatus },

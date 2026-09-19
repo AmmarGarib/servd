@@ -213,11 +213,11 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
       return m
     })
 
-    await audit({
+    await audit({ category: 'identity',
       action: `petty_cash.${body.type}`,
       entity: 'PettyCashMovement',
       entityId: movement.id,
-      userId: req.staffUser!.id,
+      userId: req.staffUser!.id, tenantId: req.staffUser?.tenantId ?? null,
       userEmail: req.staffUser!.email,
       after: { box: box.name, amount: signedAmount, reason: body.reason },
       metadata: { ip: req.ip, approvedById },

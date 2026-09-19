@@ -121,11 +121,11 @@ export async function stockTransferRoutes(fastify: FastifyInstance) {
         toLocation:    { select: { name: true } },
       },
     })
-    await audit({
+    await audit({ category: 'identity',
       action: 'stock-transfer.request',
       entity: 'StockTransfer',
       entityId: transfer.id,
-      userId: req.staffUser?.id ?? null,
+      userId: req.staffUser?.id ?? null, tenantId: req.staffUser?.tenantId ?? null,
       userEmail: req.staffUser?.email ?? null,
       after: { quantity: transfer.quantity, item: transfer.inventoryItem.name, from: transfer.fromLocation.name, to: transfer.toLocation.name },
     })
@@ -169,9 +169,9 @@ export async function stockTransferRoutes(fastify: FastifyInstance) {
         where: { id: t.id },
         data: { status: 'cancelled', cancelledAt: new Date(), cancelledById: req.staffUser!.id, cancelReason: body.reason ?? null },
       })
-      await audit({
+      await audit({ category: 'identity',
         action: 'stock-transfer.cancel', entity: 'StockTransfer', entityId: t.id,
-        userId: req.staffUser?.id ?? null, userEmail: req.staffUser?.email ?? null,
+        userId: req.staffUser?.id ?? null, tenantId: req.staffUser?.tenantId ?? null, userEmail: req.staffUser?.email ?? null,
         before: { status: t.status }, after: { status: 'cancelled' }, metadata: { reason: body.reason },
       })
       return updated
@@ -201,11 +201,11 @@ async function transition(
     where: { id },
     data: { status: next, ...patch },
   })
-  await audit({
+  await audit({ category: 'identity',
     action: `stock-transfer.${next}`,
     entity: 'StockTransfer',
     entityId: id,
-    userId: req.staffUser?.id ?? null,
+    userId: req.staffUser?.id ?? null, tenantId: req.staffUser?.tenantId ?? null,
     userEmail: req.staffUser?.email ?? null,
     before: { status: expected }, after: { status: next },
   })

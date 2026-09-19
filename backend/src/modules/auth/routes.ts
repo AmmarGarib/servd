@@ -18,6 +18,7 @@ import { setAuthCookies, setAccessCookie, clearAuthCookies, readCookie, ACCESS_C
 import { serviceClient as prisma } from '../../lib/prisma.js'
 import { resolveTenantScope, tenantWhere } from '../../lib/tenantScope.js'
 import { AppError, UnauthorizedError } from '../../lib/errors.js'
+import { audit } from '../../lib/audit.js'
 import { isStaffEmail, normaliseStaffEmail, STAFF_EMAIL_MESSAGE } from '../../lib/staffEmail.js'
 import { generateStaffPassword } from '../../lib/generatePassword.js'
 import {
@@ -611,6 +612,18 @@ export async function authRoutes(fastify: FastifyInstance) {
       // is most often triggered BECAUSE a credential is suspect.
       await revokeAllForSubject(target.id)
       req.log.warn({ actor: req.staffUser!.id, target: target.id }, 'password reissued by admin')
+      // Someone other than the account holder now knows a working credential
+      // for it. That belongs in the trail whatever the reason was.
+      await audit({
+        category: 'identity',
+        action: 'user.password_reissue',
+        entity: 'User',
+        entityId: target.id,
+        userId: req.staffUser?.id ?? null,
+        userEmail: req.staffUser?.email ?? null,
+        tenantId: req.staffUser?.tenantId ?? null,
+        after: { targetEmail: target.email },
+      })
 
       return reply.status(200).send({
         id: target.id,
@@ -1180,6 +1193,45 @@ export async function authRoutes(fastify: FastifyInstance) {
   // member of and includes the tenant relation so the frontend can render
   // the indigo brand chip per row. Rows with no tenantId (legacy back-fill
   // gap) come through too, with `tenant: null`.
+  // GET /auth/audit-log — the IDENTITY trail.
+  //
+  // Who exists, what access they hold, and what they did on shift: account
+  // creation, role assignment, enable/disable, credential reissues, permission
+  // changes, plus the operational actions staff take (refunds, voids, comps,
+  // gift cards, stock moves).
+  //
+  // Separate from the accounting trail on purpose. This one answers "who did
+  // that, and who let them"; the accounting one answers "who moved the books",
+  // and only the CEO and exec may read that. A manager needs the first to run a
+  // shift and has no business in the second.
+  fastify.get<{ Querystring: { action?: string; entity?: string; userId?: string; limit?: string; cursor?: string } }>(
+    '/audit-log',
+    { preHandler: requireAuth(...MANAGERS) },
+    async (req) => {
+      const limit = Math.min(parseInt(req.query.limit ?? '100', 10), 500)
+      const scope = await resolveTenantScope(req)
+      const rows = await prisma.auditLog.findMany({
+        where: {
+          category: 'identity',
+          // Same rule as the accounting trail: unattributed legacy rows are the
+          // CEO's to read, nobody else's.
+          ...(req.staffUser!.role === 'admin'
+            ? { OR: [{ tenantId: { in: scope.tenantIds } }, { tenantId: null }] }
+            : { tenantId: { in: scope.tenantIds } }),
+          ...(req.query.action && { action: { startsWith: req.query.action } }),
+          ...(req.query.entity && { entity: req.query.entity }),
+          ...(req.query.userId && { userId: req.query.userId }),
+          ...(req.query.cursor && { id: { lt: req.query.cursor } }),
+        },
+        orderBy: { createdAt: 'desc' },
+        take: limit + 1,
+      })
+      const hasMore = rows.length > limit
+      if (hasMore) rows.pop()
+      return { data: rows, cursor: hasMore ? (rows[rows.length - 1]?.id ?? null) : null, hasMore }
+    },
+  )
+
   fastify.get('/users', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
     const q = z.object({
       role:   z.string().optional(),  // comma-separated list of UserRole values
@@ -1377,6 +1429,18 @@ export async function authRoutes(fastify: FastifyInstance) {
         tenantMemberships: { select: { tenantId: true, tenant: { select: { id: true, name: true, slug: true } } } },
       },
     })
+    // Creating a staff account is the first half of "who can get in"; the role
+    // it is created WITH is the second. Neither was recorded anywhere before.
+    await audit({
+      category: 'identity',
+      action: 'user.create',
+      entity: 'User',
+      entityId: user.id,
+      userId: req.staffUser?.id ?? null,
+      userEmail: req.staffUser?.email ?? null,
+      tenantId: req.staffUser?.tenantId ?? null,
+      after: { name: user.name, email: user.email, role: user.role, tenantId: user.tenantId },
+    })
     return reply.status(201).send({
       ...user,
       // Shown once, then unrecoverable — only the bcrypt hash is stored. The
@@ -1444,7 +1508,10 @@ export async function authRoutes(fastify: FastifyInstance) {
       const scope = await resolveTenantScope(req)
       const existing = await prisma.user.findUnique({
         where: { id: req.params.id },
-        select: { tenantId: true },
+        // role / isActive / email are read for the audit trail's before-state,
+        // not for the tenant check — a role change is only meaningful in the
+        // log if you can see what it moved FROM.
+        select: { tenantId: true, role: true, isActive: true, email: true },
       })
       if (!existing) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'No such staff' } })
       if (!isAdmin && existing.tenantId && scope.tenantIds.length > 0 && !scope.tenantIds.includes(existing.tenantId)) {
@@ -1558,6 +1625,47 @@ export async function authRoutes(fastify: FastifyInstance) {
       // deactivated / demoted / re-PINned user must not keep a live token.
       if (body.isActive === false || body.role != null || body.pin != null) {
         await revokeAllForSubject(req.params.id)
+      }
+      // Role assignment is the most consequential edit on this screen — it is
+      // how someone comes to hold access they did not have. Logged only when
+      // the value actually moved, so the trail is not buried under name and
+      // phone edits.
+      if (body.role != null && existing.role !== body.role) {
+        await audit({
+          category: 'identity',
+          action: 'user.role_change',
+          entity: 'User',
+          entityId: req.params.id,
+          userId: req.staffUser?.id ?? null,
+          userEmail: req.staffUser?.email ?? null,
+          tenantId: req.staffUser?.tenantId ?? null,
+          before: { role: existing.role },
+          after: { role: body.role, targetEmail: existing.email },
+        })
+      }
+      if (body.isActive != null && existing.isActive !== body.isActive) {
+        await audit({
+          category: 'identity',
+          action: body.isActive ? 'user.enable' : 'user.disable',
+          entity: 'User',
+          entityId: req.params.id,
+          userId: req.staffUser?.id ?? null,
+          userEmail: req.staffUser?.email ?? null,
+          tenantId: req.staffUser?.tenantId ?? null,
+          after: { targetEmail: existing.email },
+        })
+      }
+      if (body.pin != null && body.pin !== '') {
+        await audit({
+          category: 'identity',
+          action: 'user.pin_reissue',
+          entity: 'User',
+          entityId: req.params.id,
+          userId: req.staffUser?.id ?? null,
+          userEmail: req.staffUser?.email ?? null,
+          tenantId: req.staffUser?.tenantId ?? null,
+          after: { targetEmail: existing.email },
+        })
       }
       return {
         ...user,

@@ -2687,7 +2687,23 @@ model SiteLayout {
 
 model AuditLog {
   id        String   @id @default(uuid())
-  action    String // dotted-path verb: "period.close", "account.create", "wage.update", …
+  // Which trail this belongs to. Two audiences with different rights:
+  //   identity   — who exists, what access they hold, and what they did on
+  //                shift (refunds, voids, comps, gift cards, stock moves).
+  //                Read by managers.
+  //   accounting — what hit the BOOKS: period closes, manual journals, wage
+  //                rates, tip-pool postings, cost allocations. Read by the CEO
+  //                and exec only, behind its own module.
+  // A String rather than an enum on purpose: this table already types action
+  // and entity that way, and a missing enum value has silently rolled back a
+  // whole transaction in this codebase before.
+  category  String   @default("identity")
+  // Company the actor was working in AT THE TIME. Nullable because rows written
+  // before this column existed cannot be attributed — the actor's CURRENT
+  // company is not necessarily the one they were acting in, and operators here
+  // belong to both and switch. Those legacy rows are shown to the CEO only.
+  tenantId  String?
+  action    String // dotted-path verb: "period.close", "user.role_change", "wage.update", …
   entity    String // e.g. "User", "Account", "PeriodLock", "PayrollRun"
   entityId  String? // primary key of the touched row, when applicable
   userId    String? // who did it; null for system events
@@ -2700,6 +2716,8 @@ model AuditLog {
   @@index([action, createdAt(sort: Desc)])
   @@index([entity, entityId])
   @@index([userId, createdAt(sort: Desc)])
+  // The shape every read uses: one trail, one company, newest first.
+  @@index([category, tenantId, createdAt(sort: Desc)])
   @@map("audit_logs")
 }
 
