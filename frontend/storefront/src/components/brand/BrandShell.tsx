@@ -291,11 +291,17 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
       </Link>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-        {/* Desktop nav links. flipd floats them on a light-blue card with
+        {/* The nav links. flipd floats them on a light-blue card with
             midnight-oil ink so they read over the checker; other brands keep
-            the plain inline row. Hidden on phones (hamburger takes over). */}
+            the plain inline row.
+
+            The carded-nav brands keep the PILL at every width — it is three
+            short words and it fits on a phone. They used to collapse into a
+            hamburger below 640px, which turned a one-tap bar into a tap, a
+            full-screen navy sheet, and then a tap. Brands without the pill
+            still get the hamburger. */}
         <div
-          className="hidden sm:flex"
+          className={pillNav ? 'flex' : 'hidden sm:flex'}
           style={{
             alignItems: 'center',
             gap: pillNav ? '0.1rem' : '0.2rem',
@@ -394,7 +400,7 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
           aria-label="Menu"
           aria-expanded={open}
           onClick={() => setOpen((o) => !o)}
-          className="inline-flex items-center justify-center sm:hidden"
+          className={pillNav ? 'hidden' : 'inline-flex items-center justify-center sm:hidden'}
           style={{ width: '2.75rem', height: '2.75rem', marginLeft: '0.15rem', background: diner ? 'var(--flipd-bone)' : pillNav ? `rgba(${pillTint},0.05)` : 'transparent', border: diner ? '2px solid var(--flipd-blue)' : pillNav ? `1px solid rgba(${pillTint},0.18)` : 'none', borderRadius: pillNav ? '50%' : undefined, boxShadow: diner ? '0 3px 0 var(--flipd-blue)' : undefined, color: diner ? 'var(--flipd-blue)' : surface.text, cursor: 'pointer' }}
         >
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -406,7 +412,7 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
       </div>
 
       {/* Mobile dropdown — full-width sheet below the bar. */}
-      {open && (
+      {open && !pillNav && (
         <div
           className="sm:hidden flex flex-col"
           style={{
@@ -437,13 +443,18 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
               </Link>
             )
           })}
-          <Link
-            href={servdHome}
-            onClick={() => setOpen(false)}
-            style={{ padding: '0.85rem 0.4rem', color: surface.muted, fontSize: '0.85rem', fontWeight: 600, textDecoration: 'none' }}
-          >
-            on servd<span style={{ color: accent }}>.</span>
-          </Link>
+          {/* No servd backlink on a brand microsite. The brand footer already
+              carries one "back to servd" link, which is enough — a customer on
+              flipd.pk is on a burger shop's website, not inside servd. */}
+          {!onBrandHost && (
+            <Link
+              href={servdHome}
+              onClick={() => setOpen(false)}
+              style={{ padding: '0.85rem 0.4rem', color: surface.muted, fontSize: '0.85rem', fontWeight: 600, textDecoration: 'none' }}
+            >
+              on servd<span style={{ color: accent }}>.</span>
+            </Link>
+          )}
         </div>
       )}
     </nav>

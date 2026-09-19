@@ -1179,10 +1179,15 @@ html:has(.simmer-page) {
        Written the other way round — 0 to +5vh — it starts flush and sinks 5vh
        straight THROUGH the line, which is what it used to do: the rule ended
        up drawn inside the bottom bun and the impact was struck from a point
-       in the middle of it. Squared, so it accelerates. */
-    translateY(calc((var(--fall, 0) * var(--fall, 0) - 1) * 5vh))
-    scaleY(calc(1 - var(--hit, 0) * 0.09))
-    scaleX(calc(1 + var(--hit, 0) * 0.05));
+       in the middle of it. Squared, so it accelerates.
+       --bounce then lifts it back off the rule three times, each smaller. */
+    translateY(calc((var(--fall, 0) * var(--fall, 0) - 1) * 5vh - var(--bounce, 0) * 5vh))
+    /* Squash and stretch. It flattens on each contact and elongates while it
+       is off the rule — a bounce without the stretch reads as a rigid hop.
+       Origin is the base, so the squash compresses it ONTO the datum rather
+       than shrinking it about its middle. */
+    scaleY(calc(1 - var(--squash, 0) * 0.13 + var(--stretch, 0) * 0.06))
+    scaleX(calc(1 + var(--squash, 0) * 0.08 - var(--stretch, 0) * 0.035));
   will-change: transform;
 }
 

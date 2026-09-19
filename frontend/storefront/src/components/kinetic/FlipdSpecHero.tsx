@@ -143,6 +143,16 @@ const seat = (fire: number, rate = 6) =>
 const pulse = (up: number, upRate: number, down: number, downRate: number) =>
   `max(0, ${seat(up, upRate)} - ${seat(down, downRate)})`
 
+/**
+ * A smooth 0..1..0 arc across one window — the shape of a thing thrown up and
+ * caught. 4x(1-x) is a parabola peaking at the midpoint, which is exactly the
+ * height curve of a bounce under gravity.
+ */
+const hump = (from: number, to: number) => {
+  const r = `max(0, min(1, (var(--scroll-progress, 0) - ${from}) * ${(1 / (to - from)).toFixed(3)}))`
+  return `(4 * ${r} * (1 - ${r}))`
+}
+
 // The register marks struck at the moment of impact, as angles off the
 // vertical. Six, symmetrical, in the brand's own navy — this is a technical
 // drawing, so the impact is drawn, not rendered.
@@ -173,32 +183,41 @@ export function FlipdSpecHero({ brandName, orderHref, menuHref, tagline }: Props
   // liveAt matches the outro's own fade-in point exactly, so `past` flips at
   // the same instant its opacity leaves 0 — the links become reachable and
   // visible together, with no visual change from the switch.
-  const { ref, past } = useScrollProgress<HTMLElement>({ liveAt: 0.86 })
+  const { ref, past } = useScrollProgress<HTMLElement>({ liveAt: 0.92 })
 
-  // The assembled burger drops onto the datum line. Squared so it accelerates
-  // — the CSS reads --fall and uses t*t, same as the parts.
-  // The crown seats at 0.627. The drop does not start until 0.76, which leaves
-  // a deliberate beat — 0.133 of the scroll, about 2.5 wheel notches — looking
-  // at a finished burger
-  // before it moves. Without that pause the last part seating and the whole
-  // thing dropping run together into one event, and the drop stops reading as
-  // a separate thing that happens to a burger that is already built.
-  const fall = seat(0.76, 12)
-  // The hit. The rise is deliberately violent — it goes 0 to 1 over the last
-  // eight thousandths of the scroll, which is the last fifth of the fall — and
-  // it tops out at 0.8433, exactly when the fall completes. Starting it
-  // earlier, which it used to, had the rule flexing and the ticks striking
-  // while the burger still had three-quarters of its drop to go. The decay is
-  // slow by comparison: a hit, then a settle.
+  // ── THE DROP AND THE BOUNCE ────────────────────────────────────────────
+  // The crown seats at 0.627 and nothing moves until 0.76, which leaves a
+  // deliberate beat of about 2.5 wheel notches looking at a finished burger.
+  // Without it, the last part seating and the whole stack dropping run
+  // together into one event and the drop stops reading as something that
+  // happens to a burger that is already built.
   //
-  // This one window does NOT get slower as the section grows. An impact is
-  // fast or it is not an impact; stretching it just turns the strike into a
-  // slow bloom.
-  const hit = pulse(0.8355, 128, 0.8433, 12)
+  // Then it falls, hits, and BOUNCES — three times, each smaller, each with
+  // its own squash. A single squash on contact read as a thud; a brioche stack
+  // dropped on a counter rebounds. The heights are 38% / 15% / 5.5% of the
+  // drop, which is roughly what a real object with this much give does.
+  const fall = seat(0.76, 15)
+  const b1 = hump(0.8267, 0.868)   // first rebound, the big one
+  const b2 = hump(0.868, 0.898)
+  const b3 = hump(0.898, 0.918)
+  // Height above the datum, as a fraction of the 5vh drop. CSS multiplies it.
+  const bounce = `calc(${b1} * 0.38 + ${b2} * 0.15 + ${b3} * 0.055)`
+  // Airborne stretch: a bouncing thing elongates on the way up and flattens on
+  // contact. Without it the bounce reads as a rigid hop.
+  const stretch = `calc(${b1} * 0.55 + ${b2} * 0.3 + ${b3} * 0.12)`
+  // One squash per contact, sharp on the way in and slower out, each weaker
+  // than the last. The first is the impact; the others are it settling.
+  const squash = `calc(${pulse(0.820, 150, 0.8267, 26)} + ${pulse(0.8635, 220, 0.868, 40)} * 0.45 + ${pulse(0.8955, 400, 0.898, 70)} * 0.18)`
+  // The struck register marks and the flexing datum rule fire on the FIRST
+  // contact only — that is the impact. The rise is deliberately violent and
+  // tops out at 0.8267, exactly when the fall completes. This one window does
+  // not get slower as the section grows: an impact is fast or it is not an
+  // impact, and stretching it turns the strike into a slow bloom.
+  const hit = pulse(0.820, 150, 0.8267, 26)
   // Lands once the burger has. The rate is set so it reaches full opacity by
   // the very end of the scroll rather than short of it — at a slower rate the
   // section runs out first and the CTAs never quite arrive.
-  const built = seat(0.86, 7.15)
+  const built = seat(0.92, 12.5)
   // The wordmark holds the middle of the sheet until parts start arriving on
   // top of it. It must be gone before the heel — the first part to fall —
   // reaches it.
@@ -219,7 +238,13 @@ export function FlipdSpecHero({ brandName, orderHref, menuHref, tagline }: Props
         <div className="flipd-spec-field">
           <div
             className="flipd-spec-stage"
-            style={{ ['--fall' as string]: fall, ['--hit' as string]: hit }}
+            style={{
+              ['--fall' as string]: fall,
+              ['--hit' as string]: hit,
+              ['--bounce' as string]: bounce,
+              ['--stretch' as string]: stretch,
+              ['--squash' as string]: squash,
+            }}
           >
             {PARTS.map((part, i) => (
               <div
