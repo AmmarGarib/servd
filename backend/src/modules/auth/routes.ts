@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify'
 import { randomBytes } from 'crypto'
 import bcrypt from 'bcryptjs'                  // PIN collision check on staff signup
 import { z } from 'zod'
-import { staffLogin, refreshStaffToken, customerRegister, customerLogin, verifyMagicLink, requestMagicLink, hashPassword, hashPin, issueStaffSession } from './service.js'
+import { staffLogin, refreshStaffToken, customerRegister, customerLogin, verifyMagicLink, requestMagicLink, hashPassword, hashPin, issueStaffSession, findOtpLoginStaff } from './service.js'
 import {
   verifyLoginChallenge,
   startEnrolment,
@@ -12,12 +12,12 @@ import {
 } from './twoFactor.js'
 import { requestOtp, verifyOtp, normalisePhone } from './otp.js'
 import { requestPasswordReset, consumeResetToken, checkResetToken, deliveryConfigured } from './passwordReset.js'
-import { requireAuth, requireCustomerAuth, ADMIN_ONLY, MANAGERS, ALL_STAFF } from './middleware.js'
+import { requireAuth, requireCustomerAuth, ADMIN_ONLY, MANAGERS, ALL_STAFF, usesOtpLogin } from './middleware.js'
 import { revokeBearer, revokeAllForSubject } from '../../lib/tokenRevocation.js'
 import { setAuthCookies, setAccessCookie, clearAuthCookies, readCookie, ACCESS_COOKIE, REFRESH_COOKIE } from '../../lib/cookies.js'
 import { serviceClient as prisma } from '../../lib/prisma.js'
 import { resolveTenantScope, tenantWhere } from '../../lib/tenantScope.js'
-import { AppError } from '../../lib/errors.js'
+import { AppError, UnauthorizedError } from '../../lib/errors.js'
 import { isStaffEmail, normaliseStaffEmail, STAFF_EMAIL_MESSAGE } from '../../lib/staffEmail.js'
 import { generateStaffPassword } from '../../lib/generatePassword.js'
 import {
@@ -30,6 +30,7 @@ import {
   MAGIC_LINK_VERIFY_LIMIT,
   PASSWORD_RESET_LIMIT,
   PASSWORD_RESET_USE_LIMIT,
+  STAFF_OTP_PHONE_LIMIT
 } from '../../lib/loginRateLimit.js'
 
 const staffLoginSchema = z.object({
@@ -37,8 +38,15 @@ const staffLoginSchema = z.object({
   password: z.string().min(8),
 })
 
-const pinLoginSchema = z.object({
-  pin: z.string().min(4).max(8),
+// Floor-staff code sign-in. The phone is free-form because it is typed on a
+// till by someone who may write it 0300…, +92300… or 92300… — normalisePhone
+// resolves all three to one key.
+const staffOtpRequestSchema = z.object({
+  phone: z.string().min(7).max(20),
+})
+const staffOtpVerifySchema = z.object({
+  phone: z.string().min(7).max(20),
+  code: z.string().min(4).max(8),
 })
 
 const refreshSchema = z.object({
@@ -207,6 +215,19 @@ export async function authRoutes(fastify: FastifyInstance) {
     let result: Awaited<ReturnType<typeof staffLogin>>
     try {
       result = await staffLogin(body.email, body.password)
+      // Floor roles have no password — they sign in with a WhatsApp code. If a
+      // stale one is still set on the row, it must not be a way in: the whole
+      // point of the split is that a credential which can be shoulder-surfed,
+      // written on a sticker or kept after leaving does not open a till.
+      // Checked AFTER the password so this cannot be used to find out which
+      // addresses are floor staff.
+      if (!result.twoFactorRequired && usesOtpLogin(result.user?.role)) {
+        throw new AppError(
+          'USE_CODE_LOGIN',
+          'This account signs in with a code sent to WhatsApp. Tap "Sign in with a code".',
+          403,
+        )
+      }
       await clearFailures(STAFF_PASSWORD_LIMIT, ip)
       await clearFailures(STAFF_PASSWORD_USER_LIMIT, accountKey)
     } catch (err) {
@@ -228,6 +249,90 @@ export async function authRoutes(fastify: FastifyInstance) {
     // JS). Tablet/mobile ignore these and keep using the body tokens + Bearer.
     setAuthCookies(reply, result.accessToken, result.refreshToken)
     return reply.status(200).send(result)
+  })
+
+  // ── FLOOR-STAFF SIGN-IN: a code, not a password ───────────────────────────
+  //
+  // POST /auth/staff/otp/request — { phone } → a 6-digit code over WhatsApp.
+  //
+  // Unauthenticated, and it makes GS Foods send a message to a number the
+  // CALLER chose, which is the shape of thing that has been abused here before.
+  // Three things bound it: the number must already belong to an active
+  // floor-role staff member (so it can never reach an arbitrary phone), the
+  // per-phone limit is tighter than the per-IP one (an IP limit is the easy
+  // half to get around), and the OTP service's own 30-second resend cooldown
+  // sits underneath both.
+  //
+  // The response is identical whether or not a number matched. Anything else
+  // turns this into a way to ask "is this number a cashier here?".
+  fastify.post('/staff/otp/request', async (req, reply) => {
+    const body = staffOtpRequestSchema.parse(req.body)
+    const phone = normalisePhone(body.phone)
+
+    await checkRateLimit(STAFF_PASSWORD_LIMIT, req.ip ?? 'unknown')
+    await checkRateLimit(STAFF_OTP_PHONE_LIMIT, `phone:${phone}`)
+
+    const staff = await findOtpLoginStaff(phone)
+    if (staff) {
+      try {
+        await requestOtp({ phone, purpose: 'staff_login' })
+      } catch (err) {
+        // A cooldown is the caller's own doing and worth saying out loud —
+        // silence here reads as "my number is wrong" and they try another one.
+        if (err instanceof AppError && err.code === 'OTP_COOLDOWN') throw err
+        // Anything else (WhatsApp down or unconfigured) is ours. Say so plainly
+        // rather than returning the generic success: a cashier standing at a
+        // till needs to know to go and find a manager, not to keep retrying.
+        req.log.error({ err, staffId: staff.id }, 'staff login OTP send failed')
+        throw new AppError(
+          'OTP_UNAVAILABLE',
+          'Sign-in codes cannot be sent right now. Ask a manager to sign you in.',
+          503,
+        )
+      }
+      await recordFailure(STAFF_OTP_PHONE_LIMIT, `phone:${phone}`)
+    }
+
+    // Same body, same timing envelope, whether or not the number is staff.
+    return reply.status(200).send({
+      sent: true,
+      message: 'If that number belongs to a staff account, a code is on its way.',
+    })
+  })
+
+  // POST /auth/staff/otp/verify — { phone, code } → a session.
+  //
+  // Issues exactly the same session a password login would, through the same
+  // issueStaffSession(), so the two paths cannot drift in what they grant.
+  fastify.post('/staff/otp/verify', async (req, reply) => {
+    const body = staffOtpVerifySchema.parse(req.body)
+    const phone = normalisePhone(body.phone)
+    const key = `phone:${phone}`
+
+    await checkRateLimit(STAFF_PASSWORD_LIMIT, req.ip ?? 'unknown')
+    await checkRateLimit(STAFF_OTP_PHONE_LIMIT, key)
+
+    // Re-resolve the account at VERIFY time rather than trusting anything from
+    // the request step. A code alone must not be enough if the account was
+    // suspended, deleted or promoted out of a floor role in the five minutes
+    // since it was sent.
+    const staff = await findOtpLoginStaff(phone)
+    if (!staff) {
+      await recordFailure(STAFF_OTP_PHONE_LIMIT, key)
+      throw new UnauthorizedError('That code is not valid')
+    }
+
+    try {
+      await verifyOtp({ phone, code: body.code, purpose: 'staff_login' })
+    } catch (err) {
+      await recordFailure(STAFF_OTP_PHONE_LIMIT, key)
+      throw err
+    }
+    await clearFailures(STAFF_OTP_PHONE_LIMIT, key)
+
+    const session = issueStaffSession(staff)
+    setAuthCookies(reply, session.accessToken, session.refreshToken)
+    return reply.status(200).send({ twoFactorRequired: false, ...session })
   })
 
   // POST /auth/2fa/verify — trade a login challenge + WhatsApp code for a session.

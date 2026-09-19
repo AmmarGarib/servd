@@ -1,4 +1,6 @@
 import bcrypt from 'bcryptjs'
+import { normalisePhone } from './otp.js'
+import { OTP_LOGIN_ROLES } from './middleware.js'
 import jwt, { type SignOptions } from 'jsonwebtoken'
 import { isTwoFactorEnabled, startLoginChallenge } from './twoFactor.js'
 import { nanoid } from 'nanoid'
@@ -86,6 +88,45 @@ export async function staffLogin(email: string, password: string) {
  * so the 2FA path issues a session on exactly the same terms as the direct one
  * — the two must not drift.
  */
+/**
+ * Find the floor-staff account a sign-in code should go to.
+ *
+ * Deliberately narrow, because this is reached by an UNAUTHENTICATED caller who
+ * chooses the phone number, and the next thing that happens is a WhatsApp
+ * message on GS Foods' account. So it only ever resolves to an existing,
+ * active, floor-role staff member: an attacker cannot use it to send a message
+ * to a number of their choosing, only to re-send a code to a number that is
+ * already a cashier's.
+ *
+ * Returns null rather than throwing — the caller answers identically whether or
+ * not a number matched, so this cannot be used to test which numbers belong to
+ * staff.
+ */
+export async function findOtpLoginStaff(phone: string) {
+  const normalised = normalisePhone(phone)
+  if (normalised.length < 11) return null
+
+  const matches = await prisma.user.findMany({
+    where: {
+      phone: { not: null },
+      isActive: true,
+      deletedAt: null,
+      accountStatus: 'active',
+      role: { in: OTP_LOGIN_ROLES },
+    },
+    select: { id: true, name: true, email: true, role: true, phone: true },
+  })
+  // Compare on the NORMALISED number: the same phone is stored as 03001234567,
+  // +923001234567 and 923001234567 across the admin UI, the signup form and
+  // the importer, and a raw equality check silently matches none of them.
+  const hits = matches.filter((u) => normalisePhone(u.phone ?? '') === normalised)
+
+  // Two staff sharing one number is a data problem, not a login to guess at —
+  // signing in would have to pick one of them arbitrarily.
+  if (hits.length !== 1) return null
+  return hits[0]!
+}
+
 export function issueStaffSession(user: { id: string; name: string; email: string | null; role: UserRole }) {
   const accessToken = jwt.sign(
     { sub: user.id, email: user.email, role: user.role, type: 'access' } satisfies StaffTokenPayload,

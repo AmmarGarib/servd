@@ -236,6 +236,12 @@ export const STAFF_PASSWORD_LIMIT:    Limit = { scope: 'staff-login',      max: 
 // person fumbling their password from a couple of devices isn't locked out
 // before the IP limit would have stopped them.
 export const STAFF_PASSWORD_USER_LIMIT: Limit = { scope: 'staff-login-user', max: 8, lockoutSec: 15 * 60 }
+// Floor-staff code sign-in, capped PER PHONE rather than per IP. This endpoint
+// makes us send a WhatsApp message to a caller-chosen number, so the number is
+// the thing worth limiting: an IP limit is trivially sidestepped with a proxy,
+// and it would also punish a whole restaurant behind one NAT. 6 is a couple of
+// genuine retries plus a fat-fingered code, and no more.
+export const STAFF_OTP_PHONE_LIMIT: Limit = { scope: 'staff-otp-phone', max: 6, lockoutSec: 15 * 60 }
 export const CUSTOMER_PASSWORD_LIMIT: Limit = { scope: 'customer-login',   max: 8, lockoutSec: 15 * 60 }
 export const MAGIC_LINK_VERIFY_LIMIT: Limit = { scope: 'magic-link-verify', max: 30, lockoutSec: 5 * 60 }
 // Password-reset REQUESTS, keyed on the email. Deliberately tight: each one

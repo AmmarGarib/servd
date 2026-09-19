@@ -245,6 +245,34 @@ export const FINANCE_TEAM = [...MANAGERS, 'finance'] as UserRole[]
 // broad: MANAGERS + finance, for non-confidential finance-adjacent endpoints).
 export const FINANCIALS_VIEWERS = ['admin', 'owner', 'management', 'finance', 'fnb_manager'] as UserRole[]
 export const HR_TEAM = [...MANAGERS, 'hr'] as UserRole[]
+/**
+ * HOW EACH ROLE SIGNS IN.
+ *
+ * Floor roles hold a shift, not the business: they take orders, cook them and
+ * take payment. They sign in with a one-time code sent to their WhatsApp when
+ * they ask for it — nothing to remember, nothing to write on a sticker by the
+ * till, and nothing that keeps working after they leave and someone else keeps
+ * using their number. There is no password on these accounts at all.
+ *
+ * Everyone else — every manager tier, plus finance, HR, procurement, marketing
+ * and the owners — reaches money, payroll, cost and company-wide data. Those
+ * sign in with a password, and may add WhatsApp 2FA on top per account.
+ *
+ * The split is deliberately drawn at "holds a shift" vs "holds the business",
+ * because the failure modes are opposite. A floor code that cannot be
+ * delivered stops one person starting one shift. A password-holder who can be
+ * signed in by anyone holding a phone is a different kind of problem — which
+ * is why a manager CANNOT sign in with a code, even though they have a phone
+ * on file. Widening this set weakens the strong side; it does not strengthen
+ * the weak one.
+ */
+export const OTP_LOGIN_ROLES = ['cashier', 'foh', 'boh', 'kitchen', 'expediter'] as UserRole[]
+
+/** True when this role signs in with a WhatsApp code instead of a password. */
+export function usesOtpLogin(role: UserRole | string | null | undefined): boolean {
+  return !!role && (OTP_LOGIN_ROLES as string[]).includes(role)
+}
+
 export const ALL_STAFF = [
   'admin', 'owner', 'manager', 'management', 'foh_management', 'boh_management',
   'foh', 'boh', 'kitchen', 'expediter', 'cashier',

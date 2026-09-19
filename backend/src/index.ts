@@ -41,7 +41,7 @@ import { supplierChatRoutes } from './modules/procurement/chat.js'
 import { startSocialPublishWorker } from './workers/socialPublish.js'
 import { randomBytes } from 'crypto'
 import { getOAuthUrl, exchangeCodeForTokens } from './lib/meta-social.js'
-import { requireAuth, MANAGERS } from './modules/auth/middleware.js'
+import { requireAuth, MANAGERS, OTP_LOGIN_ROLES } from './modules/auth/middleware.js'
 
 // Modules
 import { authRoutes } from './modules/auth/routes.js'
@@ -536,6 +536,42 @@ async function build() {
       details.passwordRecovery = emailConfigured
         ? 'WhatsApp is not configured — reset links go by email only, so an account with no reachable inbox has no way back in.'
         : 'Email (SMTP_USER/SMTP_PASS) is not configured — reset links only reach accounts that have a phone number on file.'
+    }
+
+    // Floor staff have NO password — a WhatsApp code is their whole credential.
+    // So an unset WHATSAPP_API_URL is not an inconvenience for them the way it
+    // is for password recovery: it is the difference between a cashier being
+    // able to open a till at the start of a shift and not. Reported separately
+    // from passwordRecovery, and only as an error once there is somebody it can
+    // actually strand — a count, not a guess.
+    try {
+      const floorStaff = await prisma.user.count({
+        where: { role: { in: OTP_LOGIN_ROLES }, isActive: true, deletedAt: null, accountStatus: 'active' },
+      })
+      if (whatsappConfigured) {
+        checks.staffCodeLogin = 'ok'
+      } else if (floorStaff === 0) {
+        checks.staffCodeLogin = 'warn'
+        details.staffCodeLogin =
+          'WhatsApp is not configured, so code sign-in cannot deliver. No floor-role staff exist yet, so nobody is locked out — but the first cashier created will be.'
+      } else {
+        checks.staffCodeLogin = 'error'
+        details.staffCodeLogin =
+          `WhatsApp (WHATSAPP_API_URL/WHATSAPP_API_KEY) is not configured and ${floorStaff} floor-role staff have no other way in. They cannot sign in at all.`
+      }
+      // A floor account with no phone can never receive a code, whatever the
+      // gateway is doing.
+      const noPhone = await prisma.user.count({
+        where: { role: { in: OTP_LOGIN_ROLES }, isActive: true, deletedAt: null, accountStatus: 'active', phone: null },
+      })
+      if (noPhone > 0) {
+        checks.staffCodeLogin = 'error'
+        details.staffCodeLogin =
+          `${noPhone} floor-role staff have no phone number on file, so no sign-in code can reach them.`
+      }
+    } catch (err) {
+      checks.staffCodeLogin = 'error'
+      details.staffCodeLogin = 'Could not determine floor-staff sign-in readiness.'
     }
 
 

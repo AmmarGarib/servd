@@ -16,6 +16,7 @@ export type OtpPurpose =
   | 'signup'
   | 'phone_verify'
   | 'password_reset'
+  | 'staff_login'      // the ONLY factor for floor staff, who have no password
   | 'staff_2fa'        // second factor on a staff sign-in
   | 'staff_2fa_enrol'  // proving a number before 2FA is switched on for it
 
@@ -54,6 +55,11 @@ function generateCode(): string {
 function messageFor(purpose: OtpPurpose, code: string): string {
   const tail = 'It expires in 5 minutes. Do not share this code with anyone.'
   switch (purpose) {
+    case 'staff_login':
+      // Worded for someone on the floor about to start a shift. It is their
+      // whole credential, not a second factor, so it does not talk about a
+      // password they do not have.
+      return `${code} is your servd sign-in code. ${tail} If you did not just try to sign in, tell your manager.`
     case 'staff_2fa':
       return `${code} is your servd sign-in code. ${tail} If you did not just try to sign in, your password is known to someone else — change it now.`
     case 'staff_2fa_enrol':
