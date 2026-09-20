@@ -538,6 +538,22 @@ async function build() {
         : 'Email (SMTP_USER/SMTP_PASS) is not configured — reset links only reach accounts that have a phone number on file.'
     }
 
+    // CUSTOMER SIGNUP. Every account on the consumer site is created by
+    // verifying a phone with a WhatsApp code — there is no email path and no
+    // skip. So an unset WHATSAPP_API_URL does not degrade signup, it stops it:
+    // POST /auth/customer/request-otp answers 503 OTP_SEND_FAILED to every
+    // visitor who tries.
+    //
+    // Reported on its own rather than folded into passwordRecovery. That check
+    // was already red for the same reason, and because it is named after
+    // password resets nobody reading it knew the storefront could not take a
+    // single new customer.
+    checks.customerSignup = whatsappConfigured ? 'ok' : 'error'
+    if (!whatsappConfigured) {
+      details.customerSignup =
+        'WhatsApp (WHATSAPP_API_URL/WHATSAPP_API_KEY) is not configured. Customer signup is DOWN: the verification code cannot be sent, so nobody can create an account on the storefront.'
+    }
+
     // Floor staff have NO password — a WhatsApp code is their whole credential.
     // So an unset WHATSAPP_API_URL is not an inconvenience for them the way it
     // is for password recovery: it is the difference between a cashier being
