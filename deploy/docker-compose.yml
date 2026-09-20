@@ -45,13 +45,17 @@ services:
       RLS_ENFORCE: "1"
     # Let the image's ENTRYPOINT handle startup. It runs:
     #   1. prisma migrate resolve --applied 0_init (idempotent baseline)
-    #   2. prisma migrate deploy (best effort, doesn't block on failure)
+    #   2. prisma migrate deploy — FATAL. A non-zero exit stops the boot.
     #   3. node dist/src/index.js
     #
-    # The previous `command: sh -c "npx prisma migrate deploy && node …"`
-    # crashed the container whenever migrate-deploy returned non-zero
-    # (e.g. baseline already applied — common after squash). The new
-    # entrypoint logs and continues instead of crashing.
+    # This comment used to say migrate-deploy was best-effort and "logs and
+    # continues". It does not: entrypoint.sh exits 1 on failure, deliberately,
+    # because booting against a stale schema serves wrong data — including
+    # financial totals — mid-service, which is worse than a visibly failed
+    # deploy someone can roll back. Only the `migrate resolve` baseline step
+    # above it is best-effort. Worth being exact about: whether a failed
+    # migration still boots is the difference between "the deploy broke" and
+    # "the books are quietly wrong".
     # No `command:` override here on purpose.
     networks:
       - servd_net
