@@ -153,6 +153,10 @@ export default function ConfigurationHubPage() {
       desc: 'Order receipts, status updates, rider alerts, daily digest.',
       category: 'operations', status: 'incomplete' },
 
+    { href: '/configuration/whatsapp',  icon: '💬', title: 'WhatsApp',
+      desc: 'The gateway that sends signup codes, password resets and staff sign-in codes.',
+      category: 'operations', status: 'unknown' },
+
     // ── Platform ──────────────────────────────────────────────────────────
     { href: '/settings/integrations',  icon: '🔌', title: 'Integrations',
       desc: 'R2 storage, SMTP, Twilio SMS, Sentry, Meta Ads.',

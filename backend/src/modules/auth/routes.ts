@@ -11,6 +11,7 @@ import {
   maskPhone,
 } from './twoFactor.js'
 import { requestOtp, verifyOtp, normalisePhone } from './otp.js'
+import { sendText, invalidateWhatsappConfig, WA_URL_KEY, WA_KEY_KEY } from '../../lib/whatsapp.js'
 import { requestPasswordReset, consumeResetToken, checkResetToken, deliveryConfigured } from './passwordReset.js'
 import { requireAuth, requireCustomerAuth, ADMIN_ONLY, MANAGERS, ALL_STAFF, usesOtpLogin } from './middleware.js'
 import { revokeBearer, revokeAllForSubject } from '../../lib/tokenRevocation.js'
@@ -1193,6 +1194,88 @@ export async function authRoutes(fastify: FastifyInstance) {
   // member of and includes the tenant relation so the frontend can render
   // the indigo brand chip per row. Rows with no tenantId (legacy back-fill
   // gap) come through too, with `tenant: null`.
+  // ── WhatsApp gateway settings ─────────────────────────────────────────────
+  //
+  // These two values are the difference between the storefront taking signups
+  // and not. They lived only in an env file on the production box, which meant
+  // the person who owns them could not set them — and while they were blank,
+  // customer signup, password reset and staff code sign-in were all down.
+  //
+  // CEO only. The key is a live credential: it is never returned, only a masked
+  // tail so the screen can show that something is saved and which one.
+
+  fastify.get('/integrations/whatsapp', { preHandler: requireAuth(...ADMIN_ONLY) }, async () => {
+    const rows = await prisma.setting.findMany({ where: { key: { in: [WA_URL_KEY, WA_KEY_KEY] } } })
+    const url = rows.find((r) => r.key === WA_URL_KEY)?.value ?? ''
+    const key = rows.find((r) => r.key === WA_KEY_KEY)?.value ?? ''
+    // Where the value in force actually comes from — without this the screen
+    // cannot explain why sending works when both fields look empty.
+    const envUrl = (process.env['WHATSAPP_API_URL'] ?? '').trim()
+    const envKey = (process.env['WHATSAPP_API_KEY'] ?? '').trim()
+    return {
+      apiUrl: url,
+      // Never the key itself. Enough to recognise which one is stored.
+      apiKeyHint: key ? `${key.slice(0, 6)}…${key.slice(-4)}` : (envKey ? 'set in environment' : ''),
+      source: url || key ? 'database' : (envUrl || envKey ? 'environment' : 'unset'),
+      configured: Boolean(url || envUrl),
+    }
+  })
+
+  fastify.put('/integrations/whatsapp', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req, reply) => {
+    const body = z.object({
+      // Empty string clears the stored value and falls back to the environment.
+      apiUrl: z.string().max(500),
+      // Optional: omitting it leaves the stored key untouched, so the URL can
+      // be corrected without re-typing a 50-character secret.
+      apiKey: z.string().max(200).optional(),
+    }).parse(req.body)
+
+    const url = body.apiUrl.trim()
+    if (url && !/^https:\/\/\S+$/.test(url)) {
+      throw new AppError('INVALID_URL', 'The endpoint must be a https:// URL, copied from the gateway\'s API Info tab.', 400)
+    }
+
+    await prisma.setting.upsert({
+      where: { key: WA_URL_KEY }, create: { key: WA_URL_KEY, value: url }, update: { value: url },
+    })
+    if (body.apiKey !== undefined) {
+      const key = body.apiKey.trim()
+      await prisma.setting.upsert({
+        where: { key: WA_KEY_KEY }, create: { key: WA_KEY_KEY, value: key }, update: { value: key },
+      })
+    }
+    invalidateWhatsappConfig()
+
+    await audit({
+      category: 'identity',
+      action: 'integrations.whatsapp.update',
+      entity: 'Setting',
+      entityId: WA_URL_KEY,
+      userId: req.staffUser?.id ?? null,
+      userEmail: req.staffUser?.email ?? null,
+      tenantId: req.staffUser?.tenantId ?? null,
+      // The endpoint is not a secret; the key never goes in the log.
+      after: { apiUrl: url, apiKeyChanged: body.apiKey !== undefined },
+    })
+    return reply.status(200).send({ ok: true })
+  })
+
+  // Prove it end to end from the screen, rather than finding out when a
+  // customer cannot sign up.
+  fastify.post('/integrations/whatsapp/test', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req) => {
+    const body = z.object({ phone: z.string().min(7).max(20) }).parse(req.body)
+    const phone = normalisePhone(body.phone)
+    try {
+      await sendText(phone, 'servd: WhatsApp gateway test. If you can read this, signup and sign-in codes will arrive here.')
+      return { ok: true, sentTo: `…${phone.slice(-4)}` }
+    } catch (err) {
+      // The gateway's own message is the useful part — "not ready
+      // (INITIALIZING)" means scan the QR, "Invalid API key" means the key is
+      // wrong. Passing it through saves a round-trip to whoever runs it.
+      return { ok: false, error: (err as Error).message }
+    }
+  })
+
   // GET /auth/audit-log — the IDENTITY trail.
   //
   // Who exists, what access they hold, and what they did on shift: account

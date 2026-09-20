@@ -112,6 +112,7 @@ import { expoRoutes } from './modules/expo/routes.js'
 import { parSheetRoutes } from './modules/par-sheet/routes.js'
 import { ensureChartOfAccounts, REQUIRED_ACCOUNT_CODES } from './lib/chartOfAccounts.js'
 import { isDegraded as loginLimiterDegraded } from './lib/loginRateLimit.js'
+import { whatsappConfigured as isWhatsappConfigured } from './lib/whatsapp.js'
 
 const PORT = parseInt(process.env['PORT'] ?? '3001', 10)
 const HOST = '0.0.0.0'
@@ -522,7 +523,10 @@ async function build() {
     // for a reset link, is told one is on its way, and it never arrives. Say it
     // here instead, where it can be read before that happens.
     const emailConfigured    = Boolean(process.env['SMTP_USER'] && process.env['SMTP_PASS'])
-    const whatsappConfigured = Boolean(process.env['WHATSAPP_API_URL'] && process.env['WHATSAPP_API_KEY'])
+    // Effective config, not just the environment — the gateway can now be set
+    // in admin, and a health check that only looks at env would keep crying
+    // outage after the CEO has fixed it.
+    const whatsappConfigured = await isWhatsappConfigured()
     if (emailConfigured && whatsappConfigured) {
       checks.passwordRecovery = 'ok'
     } else if (!emailConfigured && !whatsappConfigured) {
