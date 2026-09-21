@@ -12,6 +12,8 @@ import {
 } from './twoFactor.js'
 import { requestOtp, verifyOtp, normalisePhone } from './otp.js'
 import { sendText, invalidateWhatsappConfig, WA_URL_KEY, WA_KEY_KEY } from '../../lib/whatsapp.js'
+import { sendEmail, mailConfig, invalidateMailConfig, emailConfigured as isEmailConfigured, SMTP_HOST_KEY, SMTP_PORT_KEY, SMTP_USER_KEY, SMTP_PASS_KEY, SMTP_FROM_KEY } from '../../lib/mailer.js'
+import { runDeliveryWatch, DELIVERY_STATE_KEY } from '../../workers/deliveryWatch.js'
 import { requestPasswordReset, consumeResetToken, checkResetToken, deliveryConfigured } from './passwordReset.js'
 import { requireAuth, requireCustomerAuth, ADMIN_ONLY, MANAGERS, ALL_STAFF, usesOtpLogin } from './middleware.js'
 import { revokeBearer, revokeAllForSubject } from '../../lib/tokenRevocation.js'
@@ -1194,6 +1196,99 @@ export async function authRoutes(fastify: FastifyInstance) {
   // member of and includes the tenant relation so the frontend can render
   // the indigo brand chip per row. Rows with no tenantId (legacy back-fill
   // gap) come through too, with `tenant: null`.
+  // ── Email (SMTP) settings ─────────────────────────────────────────────────
+  //
+  // Same shape as the WhatsApp settings below, for the same reason, and with
+  // the same rule: the password is never returned.
+  //
+  // Email matters here as the SECOND channel. WhatsApp is a linked web session
+  // and those drop; when one does, signup, password reset and staff sign-in
+  // stop together because there is nothing else to reach anyone with.
+
+  fastify.get('/integrations/email', { preHandler: requireAuth(...ADMIN_ONLY) }, async () => {
+    const keys = [SMTP_HOST_KEY, SMTP_PORT_KEY, SMTP_USER_KEY, SMTP_PASS_KEY, SMTP_FROM_KEY]
+    const rows = await prisma.setting.findMany({ where: { key: { in: keys } } })
+    const get = (k: string) => rows.find((r) => r.key === k)?.value ?? ''
+    const cfg = await mailConfig()
+    return {
+      host: get(SMTP_HOST_KEY),
+      port: get(SMTP_PORT_KEY),
+      user: get(SMTP_USER_KEY),
+      from: get(SMTP_FROM_KEY),
+      passSet: Boolean(get(SMTP_PASS_KEY) || (process.env['SMTP_PASS'] ?? '').trim()),
+      // What is actually in force, whatever the fields above show — the values
+      // may be coming from the environment.
+      effective: { host: cfg.host, port: cfg.port, user: cfg.user, from: cfg.from },
+      configured: await isEmailConfigured(),
+    }
+  })
+
+  fastify.put('/integrations/email', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req, reply) => {
+    const body = z.object({
+      host: z.string().max(200),
+      port: z.string().max(6),
+      user: z.string().max(200),
+      // Omit to leave the stored password alone — so the host can be corrected
+      // without re-typing a secret the screen never shows.
+      pass: z.string().max(400).optional(),
+      from: z.string().max(200),
+    }).parse(req.body)
+
+    const pairs: Array<[string, string]> = [
+      [SMTP_HOST_KEY, body.host.trim()],
+      [SMTP_PORT_KEY, body.port.trim()],
+      [SMTP_USER_KEY, body.user.trim()],
+      [SMTP_FROM_KEY, body.from.trim()],
+    ]
+    if (body.pass !== undefined) pairs.push([SMTP_PASS_KEY, body.pass.trim()])
+    for (const [key, value] of pairs) {
+      await prisma.setting.upsert({ where: { key }, create: { key, value }, update: { value } })
+    }
+    invalidateMailConfig()
+
+    await audit({
+      category: 'identity',
+      action: 'integrations.email.update',
+      entity: 'Setting',
+      entityId: SMTP_USER_KEY,
+      userId: req.staffUser?.id ?? null,
+      userEmail: req.staffUser?.email ?? null,
+      tenantId: req.staffUser?.tenantId ?? null,
+      after: { host: body.host, port: body.port, user: body.user, from: body.from, passChanged: body.pass !== undefined },
+    })
+    return reply.status(200).send({ ok: true })
+  })
+
+  fastify.post('/integrations/email/test', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req) => {
+    const body = z.object({ to: z.string().email() }).parse(req.body)
+    try {
+      await sendEmail({
+        to: body.to,
+        subject: 'servd: email is working',
+        html: '<p>If you can read this, servd can send email — so password resets and backup codes will reach inboxes.</p>',
+      })
+      return { ok: true }
+    } catch (err) {
+      // The transport's own words are the diagnosis: bad credentials, wrong
+      // port, blocked connection all read differently.
+      return { ok: false, error: (err as Error).message }
+    }
+  })
+
+  // ── Delivery status ───────────────────────────────────────────────────────
+  // What the watchdog last saw, so the dashboard can say "signup is down and
+  // here is the fix" instead of the operator finding out from a customer.
+  fastify.get('/integrations/delivery-status', { preHandler: requireAuth(...MANAGERS) }, async () => {
+    const row = await prisma.setting.findUnique({ where: { key: DELIVERY_STATE_KEY } })
+    if (!row) return { ok: true, cause: 'ok', detail: 'Not checked yet.', fix: '', checkedAt: null }
+    try { return JSON.parse(row.value) } catch { return { ok: true, cause: 'ok', detail: '', fix: '', checkedAt: null } }
+  })
+
+  // Run the check on demand, for the "check now" button.
+  fastify.post('/integrations/delivery-status/check', { preHandler: requireAuth(...ADMIN_ONLY) }, async () => {
+    return runDeliveryWatch()
+  })
+
   // ── WhatsApp gateway settings ─────────────────────────────────────────────
   //
   // These two values are the difference between the storefront taking signups

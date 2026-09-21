@@ -24,6 +24,7 @@ import { startLoyaltyTriggerWorker } from './workers/loyaltyTriggers.js'
 import { startLoyaltyExpirationWorker } from './workers/loyaltyExpiration.js'
 import { startReservationReminderWorker } from './workers/reservationReminders.js'
 import { startDailyDigestWorker } from './workers/dailyDigest.js'
+import { startDeliveryWatch } from './workers/deliveryWatch.js'
 import { startReviewPromptWorker } from './workers/reviewPrompt.js'
 import { startFbrSubmissionWorker } from './workers/fbrSubmission.js'
 import { startSrbSubmissionWorker } from './workers/srbSubmission.js'
@@ -113,6 +114,7 @@ import { parSheetRoutes } from './modules/par-sheet/routes.js'
 import { ensureChartOfAccounts, REQUIRED_ACCOUNT_CODES } from './lib/chartOfAccounts.js'
 import { isDegraded as loginLimiterDegraded } from './lib/loginRateLimit.js'
 import { whatsappConfigured as isWhatsappConfigured } from './lib/whatsapp.js'
+import { emailConfigured as isEmailConfigured } from './lib/mailer.js'
 
 const PORT = parseInt(process.env['PORT'] ?? '3001', 10)
 const HOST = '0.0.0.0'
@@ -522,7 +524,7 @@ async function build() {
     // SMTP_USER in production has exactly one visible symptom: somebody asks
     // for a reset link, is told one is on its way, and it never arrives. Say it
     // here instead, where it can be read before that happens.
-    const emailConfigured    = Boolean(process.env['SMTP_USER'] && process.env['SMTP_PASS'])
+    const emailConfigured    = await isEmailConfigured()
     // Effective config, not just the environment — the gateway can now be set
     // in admin, and a health check that only looks at env would keep crying
     // outage after the CEO has fixed it.
@@ -753,6 +755,7 @@ async function build() {
     startLoyaltyExpirationWorker()
     startReservationReminderWorker()
     startDailyDigestWorker()
+    startDeliveryWatch()
     startReviewPromptWorker()
     startFbrSubmissionWorker()
     startSrbSubmissionWorker()

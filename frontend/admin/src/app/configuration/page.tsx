@@ -153,6 +153,10 @@ export default function ConfigurationHubPage() {
       desc: 'Order receipts, status updates, rider alerts, daily digest.',
       category: 'operations', status: 'incomplete' },
 
+    { href: '/configuration/email',  icon: '✉️', title: 'Email',
+      desc: 'Backup channel for codes and password resets when WhatsApp is down.',
+      category: 'operations', status: 'unknown' },
+
     { href: '/configuration/whatsapp',  icon: '💬', title: 'WhatsApp',
       desc: 'The gateway that sends signup codes, password resets and staff sign-in codes.',
       category: 'operations', status: 'unknown' },
