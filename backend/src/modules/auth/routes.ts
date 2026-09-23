@@ -10,7 +10,7 @@ import {
   disable as disableTwoFactor,
   maskPhone,
 } from './twoFactor.js'
-import { requestOtp, verifyOtp, normalisePhone, requestEmailOtp, verifyEmailOtp, hasLivePhoneCode, hasLiveEmailCode } from './otp.js'
+import { requestOtp, verifyOtp, normalisePhone, requestEmailOtp, verifyEmailOtp, requestSharedCode, verifySharedCode } from './otp.js'
 import { sendText, invalidateWhatsappConfig, WA_URL_KEY, WA_KEY_KEY } from '../../lib/whatsapp.js'
 import { sendEmail, mailConfig, invalidateMailConfig, emailConfigured as isEmailConfigured, SMTP_HOST_KEY, SMTP_PORT_KEY, SMTP_USER_KEY, SMTP_PASS_KEY, SMTP_FROM_KEY } from '../../lib/mailer.js'
 import { runDeliveryWatch, DELIVERY_STATE_KEY } from '../../workers/deliveryWatch.js'
@@ -279,7 +279,8 @@ export async function authRoutes(fastify: FastifyInstance) {
     const staff = await findOtpLoginStaff(phone)
     if (staff) {
       try {
-        await requestOtp({ phone, purpose: 'staff_login' })
+        // Same code to WhatsApp and the staff member's email; either works.
+        await requestSharedCode({ phone, email: staff.email, purpose: 'staff_login' })
       } catch (err) {
         // A cooldown is the caller's own doing and worth saying out loud —
         // silence here reads as "my number is wrong" and they try another one.
@@ -327,7 +328,7 @@ export async function authRoutes(fastify: FastifyInstance) {
     }
 
     try {
-      await verifyOtp({ phone, code: body.code, purpose: 'staff_login' })
+      await verifySharedCode({ phone, email: staff.email, code: body.code, purpose: 'staff_login' })
     } catch (err) {
       await recordFailure(STAFF_OTP_PHONE_LIMIT, key)
       throw err
@@ -870,8 +871,11 @@ export async function authRoutes(fastify: FastifyInstance) {
       // a code reached. WhatsApp is unofficial and can drop; email is the
       // second channel that keeps signup working when it does.
       phone:     z.string().min(7).max(20),
-      otpCode:   z.string().regex(/^\d{4,6}$/).optional(),   // WhatsApp code
-      emailCode: z.string().regex(/^\d{6}$/).optional(),     // email code
+      // The one code sent to both channels. otpCode / emailCode are the older
+      // field names, still accepted so a page cached before this change works.
+      code:      z.string().regex(/^\d{4,6}$/).optional(),
+      otpCode:   z.string().regex(/^\d{4,6}$/).optional(),
+      emailCode: z.string().regex(/^\d{6}$/).optional(),
       // Optional: 8-char referral code from another customer. If valid, links
       // the two and primes the dual-bonus payout on the new customer's
       // first order.
@@ -881,33 +885,17 @@ export async function authRoutes(fastify: FastifyInstance) {
       deviceFingerprint: z.string().max(120).optional(),
     }).parse(req.body)
 
-    // Verification rule:
-    //   - every channel that holds a live signup code must be verified, so a
-    //     customer who received both codes verifies both;
-    //   - at least one channel must be verified, so nobody signs up unverified;
-    //   - a channel whose code never arrived (send failed, row dropped) is
-    //     simply left unverified, and can be verified later from /account.
-    //
-    // Both codes are CHECKED before either is CONSUMED. Otherwise a right
-    // WhatsApp code with a mistyped email code burns the WhatsApp code, and the
-    // retry fails with "no active code" on the one the customer got right.
-    const phoneOwed = !body.otpCode && await hasLivePhoneCode(body.phone, 'signup')
-    const emailOwed = !body.emailCode && await hasLiveEmailCode(body.email, 'signup')
-    if (phoneOwed) {
-      throw new AppError('PHONE_CODE_REQUIRED', 'Enter the code we sent to your WhatsApp as well.', 400)
+    // One code went to both channels; entering it from either proves the
+    // customer holds at least one of them. Each channel is marked verified if a
+    // copy was delivered there — a channel whose copy never arrived (WhatsApp
+    // down) stays unverified and can be finished later from /account.
+    const code = body.code ?? body.otpCode ?? body.emailCode
+    if (!code) {
+      throw new AppError('VERIFICATION_REQUIRED', 'Enter the code we sent you to create your account.', 400)
     }
-    if (emailOwed) {
-      throw new AppError('EMAIL_CODE_REQUIRED', 'Enter the code we sent to your email as well.', 400)
-    }
-    if (!body.otpCode && !body.emailCode) {
-      throw new AppError('VERIFICATION_REQUIRED', 'Verify your phone or email to create an account.', 400)
-    }
-    if (body.otpCode)   await verifyOtp({ phone: body.phone, code: body.otpCode, purpose: 'signup', consume: false })
-    if (body.emailCode) await verifyEmailOtp({ email: body.email, code: body.emailCode, purpose: 'signup', consume: false })
-    if (body.otpCode)   await verifyOtp({ phone: body.phone, code: body.otpCode, purpose: 'signup' })
-    if (body.emailCode) await verifyEmailOtp({ email: body.email, code: body.emailCode, purpose: 'signup' })
-    const otpVerified = !!body.otpCode
-    const emailVerified = !!body.emailCode
+    const verified = await verifySharedCode({ phone: body.phone, email: body.email, code, purpose: 'signup' })
+    const otpVerified = verified.deliveredToPhone
+    const emailVerified = verified.deliveredToEmail
 
     // Naughty-list gate. Reject signup if the email or device matches an
     // active ban. Throws AppError(403, 'BANNED') which the global error
@@ -972,13 +960,10 @@ export async function authRoutes(fastify: FastifyInstance) {
     return reply.status(200).send({ ok: true })
   })
 
-  // POST /auth/customer/request-signup-codes — one code to WhatsApp, one to
-  // email, sent INDEPENDENTLY. One channel failing never blocks the other;
-  // that is the entire point of having two. Only when neither can be reached
-  // does signup stop.
-  //
-  // Per channel: 'sent' (a code is on its way), 'cooldown' (one was sent in the
-  // last 30s and is still valid — treat as sent), 'failed' (nothing arrived).
+  // POST /auth/customer/request-signup-codes — ONE code, sent to WhatsApp and
+  // email at the same time. One channel failing never blocks the other; that
+  // is the point of having two. Only when neither can be reached does signup
+  // stop. Per channel: 'sent' or 'failed'.
   fastify.post('/customer/request-signup-codes', async (req, reply) => {
     const ip = req.ip ?? 'unknown'
     await checkRateLimit(CUSTOMER_PASSWORD_LIMIT, ip)
@@ -987,27 +972,12 @@ export async function authRoutes(fastify: FastifyInstance) {
       email: z.string().email(),
     }).parse(req.body)
 
-    type ChannelResult = { status: 'sent' | 'cooldown' | 'failed'; message?: string }
-    const attempt = async (fn: () => Promise<unknown>): Promise<ChannelResult> => {
-      try { await fn(); return { status: 'sent' } }
-      catch (err) {
-        if (err instanceof AppError && err.code === 'OTP_COOLDOWN') return { status: 'cooldown' }
-        // Input errors are the customer's to fix, and must say so rather than
-        // masquerading as a delivery failure.
-        if (err instanceof AppError && (err.code === 'INVALID_PHONE' || err.code === 'INVALID_EMAIL')) throw err
-        req.log.warn({ err: (err as Error).message }, 'signup code delivery failed')
-        return { status: 'failed', message: (err as Error).message }
-      }
-    }
-    const [phone, email] = await Promise.all([
-      attempt(() => requestOtp({ phone: body.phone, purpose: 'signup' })),
-      attempt(() => requestEmailOtp({ email: body.email, purpose: 'signup' })),
-    ])
-    if (phone.status === 'failed' && email.status === 'failed') {
-      return reply.status(503).send({
-        error: { code: 'OTP_SEND_FAILED', message: 'We could not send a code to your WhatsApp or your email. Try again in a moment.' },
-      })
-    }
+    // ONE code to both channels (otp.ts requestSharedCode). The customer types
+    // whichever copy arrives first. requestSharedCode throws OTP_SEND_FAILED
+    // only when neither channel could be reached.
+    const sent = await requestSharedCode({ phone: body.phone, email: body.email, purpose: 'signup' })
+    const phone = { status: sent.phone }
+    const email = { status: sent.email }
     // Delivery detail stays server-side; the client only needs the status.
     return reply.status(200).send({
       phone: { status: phone.status },

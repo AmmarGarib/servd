@@ -29,7 +29,7 @@ import jwt from 'jsonwebtoken'
 import bcrypt from 'bcryptjs'
 import { serviceClient as prisma } from '../../lib/prisma.js'
 import { AppError, UnauthorizedError } from '../../lib/errors.js'
-import { requestOtp, verifyOtp, normalisePhone } from './otp.js'
+import { requestOtp, verifyOtp, normalisePhone, requestSharedCode, verifySharedCode } from './otp.js'
 
 const JWT_SECRET = process.env['JWT_SECRET'] ?? ''
 
@@ -43,6 +43,8 @@ export interface MfaChallengePayload {
   type: 'mfa'
   /** The phone the code went to, so verify doesn't have to trust client input. */
   phone: string
+  /** And the email — the same code goes to both (see otp.ts requestSharedCode). */
+  email?: string | null
 }
 
 /** `923001234568` -> `••••4568`. Enough to recognise your own number, not enough to learn someone else's. */
@@ -62,14 +64,21 @@ export function isTwoFactorEnabled(user: { twoFactorEnabledAt: Date | null; twoF
 export async function startLoginChallenge(user: {
   id: string
   twoFactorPhone: string | null
+  email?: string | null
 }): Promise<{ challengeToken: string; phoneHint: string }> {
   const phone = user.twoFactorPhone
   if (!phone) throw new AppError('MFA_NOT_ENROLLED', 'Two-factor is not set up for this account', 400)
 
-  await requestOtp({ phone, purpose: 'staff_2fa' })
+  // The same code to the enrolled phone and the account's email, so a dropped
+  // WhatsApp session does not lock a manager out. This makes the email inbox an
+  // alternative second factor: someone holding BOTH the password and the inbox
+  // could sign in. Staff emails are company mailboxes, which is the trade the
+  // owner chose over being locked out whenever WhatsApp is down.
+  const email = user.email ?? null
+  await requestSharedCode({ phone, email, purpose: 'staff_2fa' })
 
   const challengeToken = jwt.sign(
-    { sub: user.id, type: 'mfa', phone } satisfies MfaChallengePayload,
+    { sub: user.id, type: 'mfa', phone, email } satisfies MfaChallengePayload,
     JWT_SECRET,
     { expiresIn: CHALLENGE_EXPIRY },
   )
@@ -98,7 +107,7 @@ export async function verifyLoginChallenge(challengeToken: string, code: string)
   }
 
   // verifyOtp throws on a wrong/expired/exhausted code.
-  await verifyOtp({ phone: payload.phone, code, purpose: 'staff_2fa' })
+  await verifySharedCode({ phone: payload.phone, email: payload.email ?? null, code, purpose: 'staff_2fa' })
 
   const user = await prisma.user.findFirst({
     where: { id: payload.sub, isActive: true, deletedAt: null, accountStatus: 'active' },

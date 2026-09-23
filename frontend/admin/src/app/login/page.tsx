@@ -6,7 +6,7 @@ import { useAuthStore } from '../../store/auth'
 const API_URL         = process.env['NEXT_PUBLIC_API_URL']         ?? 'http://localhost:3001'
 const STOREFRONT_URL  = process.env['NEXT_PUBLIC_STOREFRONT_URL']  ?? 'http://localhost:3002'
 
-type Mode = 'password' | 'twofactor' | 'changepw' | 'forgot'
+type Mode = 'password' | 'twofactor' | 'changepw' | 'forgot' | 'code'
 
 /**
  * The single staff login page. Email + password, and nothing else.
@@ -59,6 +59,12 @@ export default function StaffLoginPage() {
   // Forgot-password step. `fgDone` is set whatever the API says, because the
   // API deliberately answers the same way for an address that has no account.
   const [fgDone, setFgDone] = useState(false)
+
+  // Code sign-in for floor staff (cashier, server, cook, expediter), who have
+  // no password: phone → one code sent to WhatsApp AND email → session.
+  const [codePhone, setCodePhone] = useState('')
+  const [codeValue, setCodeValue] = useState('')
+  const [codeSent,  setCodeSent]  = useState(false)
 
   const [error,   setError]   = useState('')
   const [loading, setLoading] = useState(false)
@@ -189,6 +195,49 @@ export default function StaffLoginPage() {
   function backToSignIn() {
     setMode('password'); setError(''); setCpDone(false); setFgDone(false)
     setMfaChallenge(''); setMfaCode('')
+    setCodeSent(false); setCodeValue('')
+  }
+
+  async function requestStaffCode(e?: React.FormEvent) {
+    e?.preventDefault()
+    setError(''); setLoading(true)
+    try {
+      const res = await fetch(`${API_URL}/api/v1/auth/staff/otp/request`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone: codePhone.trim() }),
+      })
+      const d = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(d.error?.message ?? 'Could not send a code')
+      // The API answers the same whether or not the number is a staff account,
+      // so this screen does too.
+      setCodeSent(true)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not send a code')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function submitStaffCode(e: React.FormEvent) {
+    e.preventDefault()
+    setError(''); setLoading(true)
+    try {
+      const res = await fetch(`${API_URL}/api/v1/auth/staff/otp/verify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ phone: codePhone.trim(), code: codeValue.trim() }),
+      })
+      const d = await res.json()
+      if (!res.ok) throw new Error(d.error?.message ?? 'That code did not work')
+      setAuth(d.user, d.accessToken, d.refreshToken)
+      router.replace('/modules')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'That code did not work')
+    } finally {
+      setLoading(false)
+    }
   }
 
   return (
@@ -218,17 +267,51 @@ export default function StaffLoginPage() {
             </p>
             <h1 className="text-2xl font-black text-s-text">
               {mode === 'password'  ? 'Sign in'
-                : mode === 'twofactor' ? 'Check WhatsApp'
+                : mode === 'code' ? 'Sign in with a code'
+                : mode === 'twofactor' ? 'Enter your code'
                 : 'Change your password'}
             </h1>
             <p className="text-xs text-s-dim mt-1">
               {mode === 'password'  ? 'Authorized personnel only'
-                : mode === 'twofactor' ? `We sent a 6-digit code to ${mfaHint || 'your number'}`
+                : mode === 'code' ? (codeSent ? 'Same code sent to your WhatsApp and email — use whichever arrives first' : 'For cashiers, servers and kitchen staff')
+                : mode === 'twofactor' ? `We sent the same 6-digit code to your WhatsApp (${mfaHint || 'your number'}) and your email — use whichever arrives first`
                 : 'You need your current password to set a new one'}
             </p>
           </div>
 
-          {mode === 'twofactor' ? (
+          {mode === 'code' ? (
+            !codeSent ? (
+              <form onSubmit={requestStaffCode}>
+                <input type="tel" inputMode="tel" autoComplete="tel" value={codePhone} autoFocus
+                  onChange={(e) => setCodePhone(e.target.value)} placeholder="Your mobile number, e.g. 0300 1234567"
+                  aria-label="Mobile number" className={field} style={fieldStyle} />
+                {error && <p className="text-xs text-red-400 mb-3 text-center">{error}</p>}
+                <button type="submit" disabled={loading || codePhone.replace(/\D/g, '').length < 10} className={cta} style={ctaStyle}>
+                  {loading ? 'Sending…' : 'Send me a code'}
+                </button>
+                <button type="button" onClick={backToSignIn} className="w-full mt-3 text-xs text-s-dim hover:text-s-muted transition-colors">
+                  ← Sign in with a password instead
+                </button>
+              </form>
+            ) : (
+              <form onSubmit={submitStaffCode}>
+                <input type="text" inputMode="numeric" autoComplete="one-time-code" value={codeValue} autoFocus
+                  onChange={(e) => setCodeValue(e.target.value.replace(/\D/g, '').slice(0, 6))} placeholder="000000"
+                  aria-label="Sign-in code"
+                  className="w-full mb-3 rounded-xl px-4 py-3 text-center text-2xl font-black tracking-[0.4em] text-s-text outline-none"
+                  style={fieldStyle} />
+                {error && <p className="text-xs text-red-400 mb-3 text-center">{error}</p>}
+                <button type="submit" disabled={loading || codeValue.length < 6} className={cta} style={ctaStyle}>
+                  {loading ? 'Checking…' : 'Sign in'}
+                </button>
+                <div className="mt-3 flex items-center justify-between text-xs">
+                  <button type="button" onClick={() => { setCodeSent(false); setCodeValue(''); setError('') }} className="text-s-dim hover:text-s-muted">← Change number</button>
+                  <button type="button" disabled={loading} onClick={() => { void requestStaffCode() }} className="text-s-dim hover:text-s-muted">Send again</button>
+                </div>
+              </form>
+            )
+
+          ) : mode === 'twofactor' ? (
             <form onSubmit={submitTwoFactor}>
               <input
                 type="text"
@@ -353,13 +436,21 @@ export default function StaffLoginPage() {
                 disabled={loading || !pwEmail.trim() || pwPassword.length < 8}>
                 {loading ? 'Signing in…' : 'Sign in'}
               </button>
-              <div className="mt-4 flex items-center justify-center gap-4">
+              <div className="mt-4 flex flex-wrap items-center justify-center gap-x-4 gap-y-2">
                 <button
                   type="button"
                   onClick={() => { setMode('forgot'); setError(''); setFgDone(false) }}
                   className="text-xs text-s-dim hover:text-s-muted transition-colors"
                 >
                   Forgot my password
+                </button>
+                <span className="text-xs text-s-dim">&middot;</span>
+                <button
+                  type="button"
+                  onClick={() => { setMode('code'); setError(''); setCodeSent(false) }}
+                  className="text-xs text-s-dim hover:text-s-muted transition-colors"
+                >
+                  Sign in with a code
                 </button>
                 <span className="text-xs text-s-dim">&middot;</span>
                 <button

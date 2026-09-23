@@ -168,13 +168,21 @@ export async function verifyOtp(opts: {
 // runs over email as well, with the same lifetime, attempt limit and cooldown
 // as the phone codes above.
 
-export type EmailOtpPurpose = 'signup' | 'email_verify'
+export type EmailOtpPurpose = 'signup' | 'email_verify' | 'staff_login' | 'staff_2fa' | 'password_reset'
 
 export function normaliseEmail(raw: string): string {
   return raw.trim().toLowerCase()
 }
 
-function emailHtmlFor(code: string): string {
+function emailHtmlFor(code: string, text?: string): string {
+  if (text) {
+    return `
+    <div style="font-family:system-ui,-apple-system,sans-serif;max-width:420px">
+      <p style="font-size:32px;font-weight:800;letter-spacing:6px;margin:8px 0;color:#4E2A4F">${code}</p>
+      <p style="font-size:14px;color:#333">${text.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</p>
+      <p style="font-size:12px;color:#777">You may also get this code on WhatsApp — it is the same code. Use whichever arrives first.</p>
+    </div>`
+  }
   return `
     <div style="font-family:system-ui,-apple-system,sans-serif;max-width:420px">
       <p style="font-size:15px;color:#111">Your servd verification code is</p>
@@ -272,4 +280,135 @@ export async function hasLiveEmailCode(emailRaw: string, purpose: EmailOtpPurpos
     select: { id: true },
   })
   return !!row
+}
+
+// ─── One code, both channels ─────────────────────────────────────────────────
+//
+// The same six digits go to WhatsApp AND email at once, and whichever arrives
+// first can be typed in. The person enters one code; the second channel is a
+// backup for delivery, not a second hoop. WhatsApp here is an unofficial
+// linked-device session, so when it drops, the email copy still gets people in.
+//
+// Stored as one row per channel with the SAME code, so each channel keeps its
+// own cooldown and attempt count, and entering the code consumes both rows —
+// a code that worked cannot be replayed from the other inbox.
+//
+// What entering it proves: control of at least one of the two. When both were
+// delivered we cannot tell which one the person read, so callers that care
+// about a specific channel (referral payouts gate on the phone) should know
+// that `delivered` means "a copy arrived there", not "they read it there".
+
+export type ChannelStatus = 'sent' | 'cooldown' | 'failed' | 'skipped'
+
+export async function requestSharedCode(opts: {
+  phone?: string | null
+  email?: string | null
+  purpose: OtpPurpose & EmailOtpPurpose
+  customerId?: string
+}): Promise<{ phone: ChannelStatus; email: ChannelStatus; expiresAt: Date }> {
+  const phone = opts.phone ? normalisePhone(opts.phone) : null
+  const email = opts.email ? normaliseEmail(opts.email) : null
+  if (!phone && !email) throw new AppError('NO_CONTACT', 'No phone or email to send a code to', 400)
+  if (phone && phone.length < 11) throw new AppError('INVALID_PHONE', 'Phone number looks too short', 400)
+  if (email && !/^\S+@\S+\.\S+$/.test(email)) throw new AppError('INVALID_EMAIL', 'Email address looks invalid', 400)
+
+  // One cooldown across both: a resend within 30s would otherwise issue a
+  // second code while the first is still arriving, and the person types
+  // whichever they see first into a screen expecting the other.
+  const since = new Date(Date.now() - RESEND_COOLDOWN_MS)
+  const [recentPhone, recentEmail] = await Promise.all([
+    phone ? prisma.phoneOtp.findFirst({ where: { phone, purpose: opts.purpose, createdAt: { gt: since } } }) : null,
+    email ? prisma.emailOtp.findFirst({ where: { email, purpose: opts.purpose, createdAt: { gt: since } } }) : null,
+  ])
+  if (recentPhone || recentEmail) {
+    throw new AppError('OTP_COOLDOWN', 'Please wait a few seconds before requesting another code', 429)
+  }
+
+  const code = generateCode()
+  const expiresAt = new Date(Date.now() + OTP_TTL_MS)
+  const text = messageFor(opts.purpose, code)
+
+  const deliver = async (
+    make: () => Promise<{ id: string }>,
+    send: () => Promise<unknown>,
+    drop: (id: string) => Promise<unknown>,
+  ): Promise<ChannelStatus> => {
+    const row = await make()
+    try { await send(); return 'sent' }
+    catch {
+      // Production: an undelivered copy must not stay live. Dev: keep it so the
+      // code can be read from the database.
+      if (process.env['NODE_ENV'] === 'production') await drop(row.id).catch(() => {})
+      return 'failed'
+    }
+  }
+
+  const [phoneStatus, emailStatus] = await Promise.all([
+    phone
+      ? deliver(
+          () => prisma.phoneOtp.create({ data: { phone, code, purpose: opts.purpose, customerId: opts.customerId ?? null, expiresAt } }),
+          () => sendText(phone, text),
+          (id) => prisma.phoneOtp.delete({ where: { id } }),
+        )
+      : Promise.resolve<ChannelStatus>('skipped'),
+    email
+      ? deliver(
+          () => prisma.emailOtp.create({ data: { email, code, purpose: opts.purpose, customerId: opts.customerId ?? null, expiresAt } }),
+          () => sendEmail({ to: email, subject: `${code} is your servd code`, html: emailHtmlFor(code, text) }),
+          (id) => prisma.emailOtp.delete({ where: { id } }),
+        )
+      : Promise.resolve<ChannelStatus>('skipped'),
+  ])
+
+  const anySent = phoneStatus === 'sent' || emailStatus === 'sent'
+  if (!anySent && process.env['NODE_ENV'] === 'production') {
+    throw new AppError('OTP_SEND_FAILED', 'We could not send a code to your WhatsApp or your email. Try again in a moment.', 503)
+  }
+  if (!anySent && process.env['OTP_DEV_ECHO'] === '1') {
+    console.warn(`[otp] shared code delivery failed — dev echo: ${code}`)
+  }
+  return { phone: phoneStatus, email: emailStatus, expiresAt }
+}
+
+/**
+ * Check a shared code against every live copy. Returns which channels a copy
+ * was DELIVERED to (see the note above on what that does and does not prove).
+ * `consume: false` checks without burning it.
+ */
+export async function verifySharedCode(opts: {
+  phone?: string | null
+  email?: string | null
+  code: string
+  purpose: OtpPurpose & EmailOtpPurpose
+  consume?: boolean
+}): Promise<{ deliveredToPhone: boolean; deliveredToEmail: boolean; customerId: string | null }> {
+  const phone = opts.phone ? normalisePhone(opts.phone) : null
+  const email = opts.email ? normaliseEmail(opts.email) : null
+  const now = new Date()
+  const live = { consumedAt: null, expiresAt: { gt: now }, attempts: { lt: MAX_ATTEMPTS } }
+  const [p, e] = await Promise.all([
+    phone ? prisma.phoneOtp.findFirst({ where: { phone, purpose: opts.purpose, ...live }, orderBy: { createdAt: 'desc' } }) : null,
+    email ? prisma.emailOtp.findFirst({ where: { email, purpose: opts.purpose, ...live }, orderBy: { createdAt: 'desc' } }) : null,
+  ])
+  if (!p && !e) throw new AppError('OTP_NOT_FOUND', 'No active code — request a new one', 404)
+
+  const given = opts.code.trim()
+  const ok = (p && codesMatch(p.code, given)) || (e && codesMatch(e.code, given))
+  if (!ok) {
+    await Promise.all([
+      p ? prisma.phoneOtp.update({ where: { id: p.id }, data: { attempts: { increment: 1 } } }) : null,
+      e ? prisma.emailOtp.update({ where: { id: e.id }, data: { attempts: { increment: 1 } } }) : null,
+    ])
+    const used = Math.max(p?.attempts ?? 0, e?.attempts ?? 0) + 1
+    const left = MAX_ATTEMPTS - used
+    throw new AppError('OTP_WRONG', left > 0 ? `Wrong code. ${left} attempts left.` : 'Wrong code — request a new one', 400)
+  }
+
+  if (opts.consume !== false) {
+    await Promise.all([
+      p ? prisma.phoneOtp.update({ where: { id: p.id }, data: { consumedAt: now } }) : null,
+      e ? prisma.emailOtp.update({ where: { id: e.id }, data: { consumedAt: now } }) : null,
+    ])
+  }
+  return { deliveredToPhone: !!p, deliveredToEmail: !!e, customerId: p?.customerId ?? e?.customerId ?? null }
 }

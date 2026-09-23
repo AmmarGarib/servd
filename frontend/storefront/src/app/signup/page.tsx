@@ -10,10 +10,10 @@ import { MagneticButton } from '../../components/ui/MagneticButton'
 
 // /signup — glassmorphism card over the servd-purple WebGL shader.
 //
-// Two steps: details → codes. Step two sends a code to WhatsApp AND to email,
-// independently, and asks for every code that actually arrived. WhatsApp here
-// is an unofficial channel that can drop; when it does, the email code carries
-// the signup on its own and the number is verified later from /account.
+// Two steps: details → code. ONE code is sent to WhatsApp and email at the same
+// time; the customer types whichever copy arrives first. WhatsApp here is an
+// unofficial channel that can drop; when it does, the email copy carries the
+// signup and the number is verified later from /account.
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -32,7 +32,6 @@ export default function SignupPage() {
   const [referralCode, _setReferralCode] = useState((params?.get('ref') ?? '').toUpperCase())
 
   const [otp,             setOtp]             = useState('')   // WhatsApp code
-  const [emailCode,       setEmailCode]       = useState('')
   type ChannelStatus = 'sent' | 'cooldown' | 'failed'
   const [channels,        setChannels]        = useState<{ phone: ChannelStatus; email: ChannelStatus } | null>(null)
   const [resendCooldown,  setResendCooldown]  = useState(0)
@@ -96,8 +95,7 @@ export default function SignupPage() {
   async function handleStep2(e: React.FormEvent) {
     e.preventDefault()
     setError('')
-    if (phoneLive && otp.length < 6) { setError('Enter the 6-digit code from WhatsApp'); return }
-    if (emailLive && emailCode.length < 6) { setError('Enter the 6-digit code from your email'); return }
+    if (otp.length < 6) { setError('Enter the 6-digit code'); return }
     setLoading(true)
     try {
       const res = await fetch(`${API_URL}/api/v1/auth/customer/register`, {
@@ -108,8 +106,7 @@ export default function SignupPage() {
           email:   email.trim(),
           password,
           phone:   phone.trim(),
-          ...(phoneLive && { otpCode: otp.trim() }),
-          ...(emailLive && { emailCode: emailCode.trim() }),
+          code:    otp.trim(),
           ...(referralCode.trim() && { referralCode: referralCode.trim().toUpperCase() }),
         }),
       })
@@ -213,7 +210,7 @@ export default function SignupPage() {
                   inp={inp} inpStyle={inpStyle} onFocus={onFocus} onBlur={onBlur} />
 
                 <p className="text-[11px] leading-snug pt-1 text-white/55">
-                  We&rsquo;ll send a 6-digit code to your WhatsApp and another to your email.
+                  We&rsquo;ll send a 6-digit code to your WhatsApp and your email.
                 </p>
                 <MagneticButton type="submit" disabled={loading}
                   className="w-full rounded-2xl py-3.5 font-black text-[0.95rem] transition-all disabled:opacity-40 active:scale-[0.98] mt-1"
@@ -227,47 +224,44 @@ export default function SignupPage() {
               <h1 className="font-black tracking-tight text-white mb-1" style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(1.9rem, 6vw, 2.3rem)', letterSpacing: '-0.03em' }}>Verify it&rsquo;s you</h1>
               <p className="text-sm mb-6 text-white/60">
                 {phoneLive && emailLive
-                  ? 'Enter both codes — one on WhatsApp, one in your email.'
+                  ? 'We sent one code to your WhatsApp and your email. Enter it below.'
                   : 'Enter the code we sent you.'}
               </p>
 
               {error && <ErrorToast message={error} onDismiss={() => setError('')} />}
 
               <form onSubmit={e => { void handleStep2(e) }} className="space-y-4">
-                {phoneLive && (
-                  <CodeBoxes label="WhatsApp code" sublabel={phone} value={otp} onChange={setOtp}
-                    autoFocus inpStyle={inpStyle} onFocus={onFocus} onBlur={onBlur} />
-                )}
-                {emailLive && (
-                  <CodeBoxes label="Email code" sublabel={email} value={emailCode} onChange={setEmailCode}
-                    autoFocus={!phoneLive} inpStyle={inpStyle} onFocus={onFocus} onBlur={onBlur} />
-                )}
+                <CodeBoxes
+                  label="Your code"
+                  sublabel={[phoneLive && 'WhatsApp', emailLive && 'email'].filter(Boolean).join(' and ') + ' — same code, use whichever arrives first'}
+                  value={otp} onChange={setOtp}
+                  autoFocus inpStyle={inpStyle} onFocus={onFocus} onBlur={onBlur} />
                 {channels?.phone === 'failed' && (
                   <p className="text-[11px] leading-snug text-white/60 rounded-2xl px-3 py-2" style={{ background: 'rgba(255,255,255,0.06)' }}>
-                    WhatsApp isn&rsquo;t reachable right now, so we only sent an email code. You can verify your number later from your account.
+                    WhatsApp isn&rsquo;t reachable right now, so the code went to your email only. You can verify your number later from your account.
                   </p>
                 )}
                 {channels?.email === 'failed' && (
                   <p className="text-[11px] leading-snug text-white/60 rounded-2xl px-3 py-2" style={{ background: 'rgba(255,255,255,0.06)' }}>
-                    We couldn&rsquo;t send an email code just now. You can verify your email later from your account.
+                    The code only reached your WhatsApp just now. You can verify your email later from your account.
                   </p>
                 )}
 
-                <MagneticButton type="submit" disabled={loading || (phoneLive && otp.length < 6) || (emailLive && emailCode.length < 6)}
+                <MagneticButton type="submit" disabled={loading || otp.length < 6}
                   className="w-full rounded-2xl py-3.5 font-black text-[0.95rem] transition-all disabled:opacity-40 active:scale-[0.98] mt-1"
                   style={primaryBtnStyle(loading)}>
                   {loading ? 'Verifying…' : 'Verify & create account'}
                 </MagneticButton>
 
                 <div className="flex items-center justify-between text-xs -mx-2">
-                  <button type="button" onClick={() => { setStep('details'); setOtp(''); setEmailCode(''); setError('') }}
+                  <button type="button" onClick={() => { setStep('details'); setOtp(''); setError('') }}
                     className="inline-flex items-center min-h-[44px] px-2 font-bold text-white/55 hover:text-white transition-colors">
                     ← Change details
                   </button>
                   <button type="button" disabled={resendCooldown > 0 || loading}
                     onClick={() => { void requestCodes() }}
                     className="inline-flex items-center min-h-[44px] px-2 font-bold text-white hover:text-white/80 disabled:opacity-40 transition-colors">
-                    {resendCooldown > 0 ? `Resend in ${resendCooldown}s` : 'Resend codes'}
+                    {resendCooldown > 0 ? `Resend in ${resendCooldown}s` : 'Resend code'}
                   </button>
                 </div>
               </form>
