@@ -1,32 +1,48 @@
 // ─── Module catalogue ─────────────────────────────────────────────────────────
 //
-// Structured to the operator's ERP reference model:
+// ONE list. There used to be two — "A · Universal core" and "B · Restaurant
+// layer" — which sorted modules by whether a non-restaurant business would also
+// need them. That is a true statement about the world and a useless one here:
+// GS Foods runs restaurants, so every module is in scope, and the split only
+// meant that things you do in the same sitting sat in different halves of the
+// page. Cash counting was in A, the shift that produces the cash was in B.
 //
-//   A. Universal core (15)      — any business model needs these
-//   B. Restaurant layer (16)    — specific to running food service
+// Modules were merged where they were verifiably the same thing — same admin
+// route, or same underlying tables — not where they merely sounded related.
+// "Both are financial" was not accepted as an argument. 31 entries became 18.
+// Each module names what it `absorbed` so the old references still resolve.
 //
-// Four of the core modules are PLATFORM INFRASTRUCTURE (identity, master data,
-// stock ledger, approvals). Everything else is CRUD on top of them, so they are
-// flagged and should be built properly once rather than re-implemented per area.
+// ORDER is by what a defect costs you if left alone, not by alphabet or by
+// accounting convention. Money moving wrongly at the till outranks a missing
+// food-safety screen, so POS is first and HACCP is last. Read top-down and you
+// are working in descending order of damage.
 //
-// Every module is always listed on /modules, whatever your role. Two orthogonal
-// dimensions decide what you see:
+// ─── On the `gaps` notes ──────────────────────────────────────────────────────
 //
-//   BUILD STATE  — does this exist in servd yet?
-//     built       some sections are wired up
-//     not-built   nothing exists; the card states the gap
+// These are the register you reconcile from, so they are only worth having if
+// they are true. Every one of the 31 original notes was re-verified against the
+// code in September 2026: 3 described things already fixed, 3 were wrong, and
+// 25 were true but materially incomplete. Not one was accurate as written. They
+// have all been rewritten from what the code actually does.
 //
-//   ACCESS STATE — derived from the permission atoms your role holds
-//     full        you hold every atom in the module
-//     partial     you hold some; the module opens showing ONLY those
-//     locked      you hold none
+// They are deliberately specific — file, endpoint, table, column. A note saying
+// "reporting is incomplete" cannot be actioned; a note saying "GET
+// /reports/menu-engineering returns a bare array while the page reads
+// data.items, so it always shows zero" can be fixed this afternoon. Keep that
+// standard when you edit them, and re-verify rather than assume: a stale gap
+// register sends people chasing things that were fixed months ago.
 //
-// Access is DERIVED, never stored, so the existing role→module map at
-// /configuration/role-modules stays the single source of truth.
+// `build` is what exists TODAY, checked the same way:
+//   built      — real endpoints and UI, in use
+//   partial    — some of it works, some is stubbed or unreachable
+//   not-built  — nothing exists; the card says so rather than pretending
 //
-// `gaps` is the honest note about what is missing or duplicated inside a
-// module. It is written to be read by the operator, not by code — this file
-// doubles as the redundancy/gap register.
+// ACCESS is separate and always derived from the permission atoms your role
+// holds, never stored here — /configuration/role-modules stays the single
+// source of truth:
+//   full     you hold every atom in the module
+//   partial  you hold some; the module opens showing ONLY those
+//   locked   you hold none
 
 import type { ModuleId } from './appRoles'
 
@@ -39,14 +55,22 @@ export interface ModuleSection {
   hint?: string
 }
 
+export type BuildState = 'built' | 'partial' | 'not-built'
+
 export interface AppModule {
   id: string
-  /** Position in the operator's reference list, e.g. "A3" / "B7". */
+  /** Position in the single list. Ordered by cost-of-defect, highest first. */
   ref: string
   name: string
   icon: string
-  category: 'core' | 'restaurant'
+  /** What exists today, verified against the code — not what was planned. */
+  build: BuildState
   blurb: string
+  /**
+   * Old catalogue ids folded into this module, kept so historical references
+   * and anything pointing at the two-category model still resolve.
+   */
+  absorbed?: string[]
   /** Identity, master data, stock ledger, approvals — build once, properly. */
   platform?: boolean
   /** What is missing, duplicated or unreliable here. Shown in the module view. */
@@ -55,171 +79,229 @@ export interface AppModule {
 }
 
 export const MODULE_CATALOG: AppModule[] = [
-  // ═════════════════════ A. UNIVERSAL CORE ═════════════════════
   {
-    id: 'identity', ref: 'A1', name: 'Identity & Access', icon: '🔐',
-    category: 'core', platform: true,
-    blurb: 'Users, roles, permissions and the audit trail.',
-    gaps: 'Sign-in events are still not audited — the trail records account creation, role assignment and permission changes, but not logins, logouts or failed attempts. There is also no retention policy: rows accumulate indefinitely.',
+    id: 'pos', ref: '1', name: 'POS, orders & write-offs', icon: '💳',
+    build: 'built', absorbed: ['pos', 'sales', 'variance'],
+    blurb: 'Taking the order, taking the money, and everything that leaves without being paid for.',
+    gaps: 'Tax is wrong at the till in two directions: the POS never sends the tender, so every sale is taxed at taxRateCash (15%) even on card (should be 8%), and the cart displays GST at the legacy concept.taxRate (17%), so the on-screen total never matches what is charged. Offline orders are lost — sw.js replays to the wrong origin unauthenticated, then deletes them. Two refund engines disagree: /refunds reverses ledger, loyalty and gift cards but writes no Payment row (so the till, Z-report and SRB return never see it) and ignores the caps at /configuration/refund-policy; POS refundOrder() does the reverse. Voids and comps have no admin screen at all. StaffMeal cost never posts to the ledger or deducts stock, so it never reaches COGS. The Orders "Channel" tab calls /reports/sales/by-source, which does not exist, so it reads "No channel data" forever. Split bills (/orders/[id]/split) and the live floor plan (/floorplan) exist but are not linked from here.',
     sections: [
-      { label: 'Staff directory',     href: '/workforce',                       module: 'staff_directory' },
-      { label: 'Roles & permissions', href: '/configuration/roles',             module: 'role_management' },
-      { label: 'Module access',       href: '/configuration/role-modules',      module: 'role_modules' },
-      { label: 'Pending signups',     href: '/configuration/pending-approvals', module: 'role_management' },
-      { label: 'Audit log',           href: '/configuration/audit-log',         module: 'audit_log', hint: 'Accounts, roles, permissions and staff actions' },
+      { label: 'Point of Sale', href: '/pos',              module: 'pos' },
+      { label: 'Waiter mode',   href: '/pos/waiter',       module: 'pos' },
+      { label: 'Floor plan',    href: '/tables',           module: 'tables' },
+      { label: 'Orders',        href: '/orders',           module: 'orders' },
+      { label: 'Refunds',       href: '/refunds',          module: 'refunds', hint: 'Disagrees with the POS refund path — see gaps' },
+      { label: 'Curbside',      href: '/orders/curbside',  module: 'curbside' },
+      { label: 'Waste log',     href: '/inventory',        module: 'inventory', hint: 'A tab inside Inventory, not its own screen' },
+      { label: 'Staff meals',   href: '/staff-meals',      module: 'staff_directory' },
     ],
   },
   {
-    id: 'master-data', ref: 'A2', name: 'Master Data', icon: '🗃',
-    category: 'core', platform: true,
-    blurb: 'Items, vendors, customers, locations, units, tax codes — one source of truth.',
-    gaps: 'No single master-data surface exists. Each entity is edited inside whichever module happens to use it, and there are three unlinked people models (User / Position / KitchenStaff).',
+    id: 'cash', ref: '2', name: 'Cash drawer, drops & matching', icon: '🏦',
+    build: 'partial', absorbed: ['cash', 'shift', 'channels'],
+    blurb: 'The shift, the drawer it produces, and reconciling both against the bank.',
+    gaps: 'Three different expected-cash sums exist: closeShift and the ledger post (accounting/shiftPosting.ts) both ignore drops, payouts and cash refunds, so the books\' drawer variance — and the alert built on it — are wrong on any shift with a drop. Closing a shift from /reconciliation skips postShiftClose entirely, so those sales never reach the ledger at all. Petty cash and deposit drops write no journal entry, so /accounting/cash-flow never sees them, and bank_accounts has no chart-code link. Bank imports auto-match but admin shows only a row count — /bank/imports/:id/lines, /adjust and /ignore have no UI, so unmatched lines cannot be cleared. bank_statement_imports, petty_cash_boxes, deposit_drops and exception_flags carry no tenantId and their list endpoints do not filter, so any manager sees every company\'s rows.',
     sections: [
-      { label: 'Menu items',      href: '/menu',                       module: 'menu' },
-      { label: 'Inventory items', href: '/inventory',                  module: 'inventory' },
-      { label: 'Vendors',         href: '/procurement',                module: 'procurement' },
-      { label: 'Customers',       href: '/customers',                  module: 'crm' },
-      { label: 'Locations',       href: '/configuration/locations',    module: 'business_info' },
-      { label: 'Tax codes',       href: '/configuration/tax',          module: 'accounting' },
-      { label: 'Modifiers',       href: '/configuration/modifiers',    module: 'menu' },
-      { label: 'Dietary tags',    href: '/configuration/dietary-tags', module: 'menu' },
-    ],
-  },
-  {
-    id: 'gl', ref: 'A3', name: 'General Ledger', icon: '📒',
-    category: 'core',
-    blurb: 'Chart of accounts, journals, period close, multi-entity.',
-    gaps: 'Two parallel sets of books: /finance reads FinancialEntry, the ledger reports read JournalLine. Both are written live. Multi-currency is not implemented.',
-    sections: [
-      { label: 'Accounting',        href: '/accounting',                      module: 'accounting' },
-      { label: 'P&L (ledger)',      href: '/accounting/pl-ledger',            module: 'accounting' },
-      { label: 'P&L (entries)',     href: '/finance',                         module: 'finance_pl', hint: 'Second P&L — different source data' },
-      { label: 'Trial balance',     href: '/accounting/trial-balance',        module: 'accounting' },
-      { label: 'Balance sheet',     href: '/accounting/balance-sheet',        module: 'accounting' },
-      { label: 'Period close',      href: '/accounting/period-close',         module: 'accounting' },
-      { label: 'Period locks',      href: '/configuration/period-locks',      module: 'accounting' },
-      { label: 'Chart of accounts', href: '/configuration/chart-of-accounts', module: 'accounting' },
-      { label: 'Accounting audit',  href: '/accounting/audit-log',            module: 'accounting_audit', hint: 'Who moved the books — CEO and exec only' },
-      { label: 'Allocations',       href: '/allocations',                     module: 'accounting' },
-      { label: 'Entities / brands', href: '/settings',                        module: 'tenants' },
-    ],
-  },
-  {
-    id: 'ap', ref: 'A4', name: 'Accounts Payable', icon: '📤',
-    category: 'core',
-    blurb: 'Vendor bills, aging, payment runs, withholding.',
-    gaps: 'Aging exists; there is no payment-run workflow and no withholding-certificate handling.',
-    sections: [
-      { label: 'AP aging',        href: '/accounting/ap-aging',   module: 'accounting' },
-      { label: 'Supplier bills',  href: '/procurement',           module: 'procurement' },
-    ],
-  },
-  {
-    id: 'ar', ref: 'A5', name: 'Accounts Receivable', icon: '📥',
-    category: 'core',
-    blurb: 'Invoicing, receipts, credit limits, aging.',
-    gaps: 'Mostly missing. An invoices API exists with no admin surface; no AR aging, no credit limits. Fine while every sale is settled at the till — needed the moment you invoice corporate accounts.',
-    sections: [],
-  },
-  {
-    id: 'cash', ref: 'A6', name: 'Cash & Bank', icon: '🏦',
-    category: 'core',
-    blurb: 'Bank reconciliation, petty cash, treasury position.',
-    sections: [
-      { label: 'Reconciliation',  href: '/reconciliation',            module: 'reconciliation' },
-      { label: 'Cash flow',       href: '/accounting/cash-flow',      module: 'accounting' },
-      { label: 'Petty cash',      href: '/finance/petty-cash',        module: 'accounting' },
-      { label: 'Deposit drops',   href: '/finance/deposit-drops',     module: 'accounting' },
+      { label: 'Shift / till',    href: '/pos/shift',                   module: 'pos' },
+      { label: 'Reconciliation',  href: '/reconciliation',              module: 'reconciliation' },
+      { label: 'Cash flow',       href: '/accounting/cash-flow',        module: 'accounting' },
+      { label: 'Petty cash',      href: '/finance/petty-cash',          module: 'accounting' },
+      { label: 'Deposit drops',   href: '/finance/deposit-drops',       module: 'accounting' },
       { label: 'Bank accounts',   href: '/configuration/bank-accounts', module: 'accounting' },
-      { label: 'Exceptions',      href: '/exceptions',                module: 'exceptions' },
+      { label: 'Exceptions',      href: '/exceptions',                  module: 'exceptions' },
+      { label: 'Orders by source', href: '/reports',                    module: 'reports', hint: 'The working channel view — the one on /orders is broken' },
     ],
   },
   {
-    id: 'procurement', ref: 'A7', name: 'Procurement', icon: '📦',
-    category: 'core',
-    blurb: 'Requisition → PO → GRN → 3-way match.',
-    gaps: 'Two complete supplier/PO implementations on the same tables (/procurement and the legacy /accounting/vendors). No requisition step, and no true 3-way match.',
+    id: 'crm', ref: '3', name: 'Customers, campaigns & storefront', icon: '🧑‍🤝‍🧑',
+    build: 'built', absorbed: ['crm', 'marketing'],
+    blurb: 'Who buys from you, how you reach them, and the public site they see.',
+    gaps: 'POST /crm/campaigns/:id/send has no company filter — it mails every opted-in customer in the database, because Campaign has no tenantId. That is the most expensive defect in this module. Scheduled campaigns never fire; nothing reads scheduledAt. Loyalty rates and tiers are global (Setting and TierConfig have no tenantId), so all companies share one ladder. /gift-cards/redeem checks neither company nor the card\'s own conceptId. Three parallel segment systems exist (Segment, CustomerSegment, smart-segments) and campaigns can only target the first. Promo attribution works for codes and QR (Order.promoCodeId, promo_code_usages), but POS never sends promo_code_id, so a promo cannot be redeemed at the till, and email/SMS campaigns track opens and clicks with no link to orders.',
     sections: [
-      { label: 'Purchase orders', href: '/procurement',            module: 'procurement' },
-      { label: 'Receiving (GRN)', href: '/procurement/receiving',  module: 'procurement' },
-      { label: 'Supplier chat',   href: '/procurement/chat',       module: 'procurement' },
-      { label: 'Monitor',         href: '/procurement/monitor',    module: 'procurement' },
-      { label: 'Vendors (legacy)', href: '/accounting/vendors',    module: 'procurement', hint: 'Duplicate of this module — candidate for removal' },
-      { label: 'Sourcing sheet',  href: '/sourcing',               module: 'inventory' },
+      { label: 'Customers',          href: '/customers',           module: 'crm' },
+      { label: 'CRM',                href: '/crm',                 module: 'crm' },
+      { label: 'Conversations',      href: '/crm/conversations',   module: 'crm' },
+      { label: 'Segments',           href: '/crm/segments',        module: 'crm', hint: 'One of three segment systems' },
+      { label: 'Loyalty',            href: '/configuration/loyalty', module: 'crm' },
+      { label: 'Gift cards',         href: '/gift-cards',          module: 'gift_cards' },
+      { label: 'Complaints',         href: '/complaints',          module: 'complaints' },
+      { label: 'Reviews',            href: '/reviews',             module: 'reviews' },
+      { label: 'Workspace',          href: '/marketing',           module: 'marketing_workspace' },
+      { label: 'Campaigns',          href: '/crm/campaigns',       module: 'campaigns', hint: 'Sends across every company — see gaps' },
+      { label: 'Promotions',         href: '/promos',              module: 'promos' },
+      { label: 'Discounts',          href: '/discounts',           module: 'promos' },
+      { label: 'QR codes',           href: '/qrcodes',             module: 'promos' },
+      { label: 'Calendar',           href: '/calendar',            module: 'calendar' },
+      { label: 'Activity log',       href: '/marketing/activity',  module: 'marketing_workspace' },
+      { label: 'Brands & storefront', href: '/marketing/brands',   module: 'brands' },
+      { label: 'Visual layout',      href: '/storefront',          module: 'brands' },
+      { label: 'Landing hero',       href: '/storefront-hero',     module: 'brands' },
+      { label: 'Brand footers',      href: '/storefront-footer',   module: 'brands' },
+      { label: 'Content pages',      href: '/content',             module: 'brands' },
     ],
   },
   {
-    id: 'stock', ref: 'A8', name: 'Inventory / Stock Ledger', icon: '📊',
-    category: 'core', platform: true,
-    blurb: 'Movements, valuation, transfers, counts, variance posting.',
-    gaps: 'Valuation is weighted-average on receipt; there is no FIFO option and no formal variance posting from counts back to the GL.',
+    id: 'procurement', ref: '4', name: 'Suppliers, POs & bills', icon: '📦',
+    build: 'built', absorbed: ['procurement', 'ap'],
+    blurb: 'Ordering from suppliers, receiving it, and paying for it.',
+    gaps: 'Two purchase-order systems run on the same Supplier and PurchaseOrder tables: /procurement (with approvals, bills and payments) and the legacy /accounting/vendors, which posts via /recipes/purchase-orders with no approval at all. Receiving is broken in a way that defeats the point of three-way match: the GRN page writes GoodsReceipt but never PurchaseOrderLine.quantityReceived, and its PO picker calls /procurement/pos, which does not exist, so it is always empty — the bill match therefore compares against zero received and only warns, never blocks. Three AP agings disagree: /procurement/ap-aging ages by due date, /procurement/aging returns an object the Aging tab reads as an array (so that tab crashes), and the emailed report ages by bill date. Withholding is deducted and posted but aging still shows gross, so withheld bills never clear. No requisition step, no payment run, no WHT certificate.',
     sections: [
-      { label: 'Inventory',      href: '/inventory',        module: 'inventory' },
-      { label: 'Stock count',    href: '/inventory/count',  module: 'inventory' },
-      { label: 'Low stock',      href: '/inventory/alerts', module: 'inventory' },
-      { label: 'Par sheet',      href: '/par-sheet',        module: 'par_sheet' },
+      { label: 'Purchase orders',  href: '/procurement',            module: 'procurement' },
+      { label: 'Receiving (GRN)',  href: '/procurement/receiving',  module: 'procurement', hint: 'Does not update quantityReceived — see gaps' },
+      { label: 'Supplier chat',    href: '/procurement/chat',       module: 'procurement' },
+      { label: 'Monitor',          href: '/procurement/monitor',    module: 'procurement' },
+      { label: 'Vendors (legacy)', href: '/accounting/vendors',     module: 'procurement', hint: 'Second PO system, no approvals' },
+      { label: 'Sourcing sheet',   href: '/sourcing',               module: 'inventory' },
+      { label: 'AP aging',         href: '/accounting/ap-aging',    module: 'accounting' },
     ],
   },
   {
-    id: 'sales', ref: 'A9', name: 'Sales & Order Management', icon: '🧾',
-    category: 'core',
-    blurb: 'Quote → order → fulfilment → invoice, channel-agnostic.',
-    sections: [
-      { label: 'Orders',   href: '/orders',          module: 'orders' },
-      { label: 'Refunds',  href: '/refunds',         module: 'refunds' },
-      { label: 'Curbside', href: '/orders/curbside', module: 'curbside' },
-    ],
-  },
-  {
-    id: 'tax', ref: 'A10', name: 'Tax & Statutory', icon: '🏛',
-    category: 'core',
-    blurb: 'FBR / SRB filings, sales tax, withholding certificates.',
-    gaps: 'Sales-tax return and FBR submission exist. No withholding certificates.',
-    sections: [
-      { label: 'Sales tax return', href: '/accounting/sales-tax-return', module: 'accounting' },
-      { label: 'Tax settings',     href: '/configuration/tax',           module: 'accounting' },
-    ],
-  },
-  {
-    id: 'hr', ref: 'A11', name: 'HR & Payroll', icon: '👥',
-    category: 'core',
-    blurb: 'Attendance, leave, payroll, statutory deductions.',
-    gaps: 'No leave management. Payroll posts gross rather than net, so deductions never reach the bank leg. Kitchen brigade is a second staff roster with no link to user accounts.',
+    id: 'hr', ref: '5', name: 'Staff, rota & pay', icon: '👥',
+    build: 'partial', absorbed: ['hr', 'labor'],
+    blurb: 'Who works here, when they work, and what they are paid.',
+    gaps: 'PayrollRun has no tenantId, and computeHoursForPeriod reads every company\'s ClockLog while stamping the accrual with the operator\'s active company — so two companies\' wages mix. No leave or time-off model exists anywhere. The kitchen brigade is a full API (KitchenStaff, with EOBI/SESSI in KitchenPayrollRun) with no admin page: /workforce\'s "Open kitchen brigade" link 404s, and the old catalogue pointed at /kds/config, which is stations, not people. Rostering and forecasting never meet: /scheduling costs the rota from User.hourlyRateCents, the demand forecast predicts per-item quantities by day-of-week rather than covers, so there is no cover count to roster against, and rostered hours are never compared to ClockLog actuals. A labour percentage does exist but lives at /payroll and only after a run is posted.',
     sections: [
       { label: 'Staff directory',    href: '/workforce',           module: 'staff_directory' },
       { label: 'Positions (budget)', href: '/workforce/positions', module: 'staff_directory' },
       { label: 'Payroll runs',       href: '/payroll',             module: 'payroll' },
       { label: 'Tip pools',          href: '/tip-pools',           module: 'payroll' },
       { label: 'Time clock',         href: '/time-clock',          module: 'staff_directory' },
-      { label: 'Kitchen brigade',    href: '/kds/config',          module: 'kitchen_staff', hint: 'Separate roster — not linked to user accounts' },
+      { label: 'Scheduling',         href: '/scheduling',          module: 'scheduling' },
+      { label: 'Demand forecast',    href: '/analytics/forecast',  module: 'reports', hint: 'Predicts items, not covers — cannot drive a rota' },
     ],
   },
   {
-    id: 'assets', ref: 'A12', name: 'Fixed Assets', icon: '🏭',
-    category: 'core',
-    blurb: 'Asset register, depreciation schedules, disposals.',
-    gaps: 'Not built. Capex tracks project spend but there is no asset register, no depreciation schedule and no disposals — so the balance sheet carries no depreciating asset base.',
-    sections: [],
+    id: 'gl', ref: '6', name: 'The books', icon: '📒',
+    build: 'partial', absorbed: ['gl', 'multi-outlet'], platform: true,
+    blurb: 'The general ledger, the statements that come out of it, and the entities it splits by.',
+    gaps: 'Two P&Ls disagree, and both are reachable from the menu: /finance sums FinancialEntry, written as each order completes, while /accounting/pl-ledger sums JournalLine, and POS sales only reach the ledger at shift close — so an unclosed till appears on one and not the other. The Transactions tab on /finance calls GET /accounting/entries, which does not exist. Period locks have two write paths that disagree: /accounting/period-close cannot move backwards, /setup/period-locks can delete a lock outright. Outlet-level P&L does not exist: journal_lines carry conceptId only, so the ledger splits by brand and never by outlet. Transfer pricing is absent — StockTransfer moves quantity, has no cost field and posts no journal entry. Allocation rules are company-blind: sourceAccountCode is globally unique and /allocations/rules and /runs leak across companies. No multi-currency.',
+    sections: [
+      { label: 'Accounting',        href: '/accounting',                      module: 'accounting' },
+      { label: 'P&L (ledger)',      href: '/accounting/pl-ledger',            module: 'accounting', hint: 'Disagrees with /finance — see gaps' },
+      { label: 'P&L (entries)',     href: '/finance',                         module: 'finance_pl' },
+      { label: 'Trial balance',     href: '/accounting/trial-balance',        module: 'accounting' },
+      { label: 'Balance sheet',     href: '/accounting/balance-sheet',        module: 'accounting' },
+      { label: 'Period close',      href: '/accounting/period-close',         module: 'accounting' },
+      { label: 'Period locks',      href: '/configuration/period-locks',      module: 'accounting' },
+      { label: 'Chart of accounts', href: '/configuration/chart-of-accounts', module: 'accounting' },
+      { label: 'Accounting audit',  href: '/accounting/audit-log',            module: 'accounting_audit' },
+      { label: 'Allocations',       href: '/allocations',                     module: 'accounting' },
+      { label: 'Entities / brands', href: '/settings',                        module: 'tenants' },
+      { label: 'Chain rollup',      href: '/chain',                           module: 'chain' },
+    ],
   },
   {
-    id: 'approvals', ref: 'A13', name: 'Approvals & Workflow', icon: '✅',
-    category: 'core', platform: true,
-    blurb: 'Thresholds and delegation as one horizontal service.',
-    gaps: 'Exists only as per-area bolt-ons: recipes, purchase orders, payroll and signups each implement their own approval. No thresholds, no delegation, no single queue. This is the platform service that should replace all of them.',
+    id: 'tax', ref: '7', name: 'Tax, invoices & FBR/SRB filing', icon: '🏛',
+    build: 'partial', absorbed: ['tax', 'fiscal', 'ar'],
+    blurb: 'What you owe the revenue authorities, what you file, and what customers owe you.',
+    gaps: 'Online sales are not being filed at all: only POS enqueues to FBR/SRB, so every storefront order goes unreported. srbPosId cannot be set anywhere in admin — it is absent from PATCH /concepts and the Brands form, which carries only fbrPosId — so SRB submission silently skips every brand. The FBR adapter builds item lines at the legacy concept.taxRate (17%) while the till charges 15/8, so line tax will never reconcile to the header. /configuration/tax is a read-only stub, so rates are not editable, and menu-item zero-rated/exempt is saved but never applied (taxRate.ts is dead code). Receivables do not exist in any form: no due date, balance or customer link on TaxInvoice, no "on account" tender, account 1110 never posted to, no aging, credit limits or statements. That is fine while every sale settles at the till and blocking the day you invoice a corporate account.',
+    sections: [
+      { label: 'Sales tax return', href: '/accounting/sales-tax-return', module: 'accounting' },
+      { label: 'Tax settings',     href: '/configuration/tax',           module: 'accounting', hint: 'Read-only stub — rates are not editable' },
+      { label: 'FBR / PRAL setup', href: '/settings/integrations',       module: 'integrations' },
+    ],
+  },
+  {
+    id: 'stock', ref: '8', name: 'Stock on hand & movement', icon: '📊',
+    build: 'partial', absorbed: ['stock', 'perishables', 'commissary'], platform: true,
+    blurb: 'What you hold, what it cost, and what happens to it between delivery and plate.',
+    gaps: 'There is no stock ledger. inventory_items.currentStock is a single mutable number that sales, waste, receipts and counts all overwrite, and no row records the movement — so nothing can be traced or audited after the fact. Everything else here follows from that: counts reset stock to physical and flag shrinkage but post nothing to the GL; a prep batch deducts its inputs and never books the finished item back in, so the value simply vanishes; /stock-transfers only flips a status, moves no quantity, has no UI in any client, and receiving moves no stock. No expiry or batch/lot date exists anywhere in the schema, and cost is weighted-average on receipt with no FIFO. Two unrelated things are called "par" (InventoryItem.parLevel for alerts, ComponentParLevel for the daily sheet). PhysicalCount and PrepBatch have no tenantId and their endpoints do not filter, so counts and batches are shared across brands.',
+    sections: [
+      { label: 'Inventory',   href: '/inventory',        module: 'inventory' },
+      { label: 'Stock count', href: '/inventory/count',  module: 'inventory' },
+      { label: 'Low stock',   href: '/inventory/alerts', module: 'inventory', hint: 'Reads InventoryItem.parLevel, not the par sheet' },
+      { label: 'Par sheet',   href: '/par-sheet',        module: 'par_sheet', hint: 'A different "par" — ComponentParLevel' },
+      { label: 'Prep',        href: '/inventory/prep',   module: 'inventory' },
+    ],
+  },
+  {
+    id: 'master-data', ref: '9', name: 'Master data & reference lists', icon: '🗃',
+    build: 'partial', absorbed: ['master-data'], platform: true,
+    blurb: 'Items, vendors, customers, locations, units and tax codes — meant to be one source of truth.',
+    gaps: 'No master-data screen exists. Six of the eight links below are other modules\' pages; only Locations and Dietary tags belong to this module, which makes it a menu rather than a surface. /configuration/tax is a placeholder, so MenuItem.taxClassification cannot be set in admin at all. Units are free text on InventoryItem with no UOM master, which is what lets the food-cost calculation be wrong by three orders of magnitude on kg and litre items. Dietary tags can be defined but not attached to an item. The old note claimed three unlinked people models; that is now two — Position already links to User via filledByUserId, and only KitchenStaff has no user link.',
+    sections: [
+      { label: 'Menu items',      href: '/menu',                        module: 'menu' },
+      { label: 'Inventory items', href: '/inventory',                   module: 'inventory' },
+      { label: 'Vendors',         href: '/procurement',                 module: 'procurement' },
+      { label: 'Customers',       href: '/customers',                   module: 'crm' },
+      { label: 'Locations',       href: '/configuration/locations',     module: 'business_info' },
+      { label: 'Tax codes',       href: '/configuration/tax',           module: 'accounting', hint: 'Stub — cannot set an item\'s tax class' },
+      { label: 'Modifiers',       href: '/configuration/modifiers',     module: 'menu' },
+      { label: 'Dietary tags',    href: '/configuration/dietary-tags',  module: 'menu', hint: 'Definable, but not attachable to an item' },
+    ],
+  },
+  {
+    id: 'approvals', ref: '10', name: 'Approvals', icon: '✅',
+    build: 'partial', absorbed: ['approvals'], platform: true,
+    blurb: 'Anything that needs a second person before it counts.',
+    gaps: 'Approvals are per-area bolt-ons rather than a service, so there is no single queue and no delegation. The real flows are recipes, purchase orders, stock transfers, staff signups, and PIN-approved waste, petty cash and staff meals — each with its own screen and its own rules. Thresholds exist for exactly one of them: procurement.approvalThresholdCents auto-approves purchase orders under PKR 50,000, and it is configured inside /procurement rather than here. Payroll has no approval step at all; it is only role-gated, so a single operator can post a run unchallenged.',
     sections: [
       { label: 'Recipe approvals', href: '/accounting/recipes/approvals',    module: 'recipes' },
-      { label: 'Pending signups',  href: '/configuration/pending-approvals', module: 'role_management' },
+      { label: 'Pending signups',  href: '/configuration/pending-approvals', module: 'role_management', hint: 'Duplicates what /workforce already does' },
     ],
   },
   {
-    id: 'bi', ref: 'A14', name: 'Reporting & BI', icon: '📈',
-    category: 'core',
-    blurb: 'P&L, balance sheet, cash flow, plus operational dashboards.',
-    gaps: 'Five separate role dashboards (CEO, Brand, F&B, BOH, FOH) plus a live dashboard — heavy for the current headcount.',
+    id: 'recipes', ref: '11', name: 'Recipes, plate cost & menu pricing', icon: '📖',
+    build: 'partial', absorbed: ['menu-eng', 'costing'],
+    blurb: 'What a dish is made of, what it costs to make, and what you charge for it.',
+    gaps: 'Food cost is wrong, not merely incomplete: /recipes/food-cost uses raw InventoryItem.unitCostCents instead of costPerMeasureCents — up to 1000x high on anything priced per kg or litre — skips prep sub-recipes, ignores each recipe\'s Q factor and target, and reports Variance as theoretical minus a hardcoded 30% rather than theoretical versus actual. Its Purchases total ignores quantityReceived. The Sales quadrants page is dead: GET /reports/menu-engineering returns a bare array while the page reads data.items, so it always shows zero, and that report ignores sub-recipe cost, inflating margins on exactly the prep-heavy plates you would want it for. Counts and waste are never compared to theoretical usage. Multi-level BOM and plate pricing themselves are solid. No combos, and one priceCents across all channels.',
+    sections: [
+      { label: 'Menu',              href: '/menu',                        module: 'menu' },
+      { label: 'Pricing workspace', href: '/menu-engineering',            module: 'recipes' },
+      { label: 'Sales quadrants',   href: '/accounting/menu-engineering', module: 'accounting', hint: 'Always shows zero — see gaps' },
+      { label: 'Modifiers',         href: '/configuration/modifiers',     module: 'menu' },
+      { label: 'Recipes',           href: '/accounting/recipes',          module: 'recipes' },
+      { label: 'Food cost',         href: '/accounting/food-cost',        module: 'accounting', hint: 'Unit-cost bug makes this unreliable' },
+    ],
+  },
+  {
+    id: 'identity', ref: '12', name: 'Logins, roles & audit trail', icon: '🔐',
+    build: 'built', absorbed: ['identity'], platform: true,
+    blurb: 'Who can sign in, what they may touch, and a record of what they did.',
+    gaps: 'Sign-in events are still not audited — logins, logouts and failed attempts are never written to audit_logs, which is the one thing an access trail is for. Role-permission changes (PATCH /permissions/matrix) and staff approve/reject are also unaudited. No job ever purges the table, so rows accumulate indefinitely with no retention policy. Separately, role "hr" is granted the staff_directory module but /auth/users, /positions and /payroll are MANAGERS-only, so an HR account gets a 403 on the page its own permission promises. /configuration/pending-approvals duplicates what /workforce already does.',
+    sections: [
+      { label: 'Staff directory',     href: '/workforce',                       module: 'staff_directory' },
+      { label: 'Roles & permissions', href: '/configuration/roles',             module: 'role_management' },
+      { label: 'Module access',       href: '/configuration/role-modules',      module: 'role_modules' },
+      { label: 'Pending signups',     href: '/configuration/pending-approvals', module: 'role_management' },
+      { label: 'Audit log',           href: '/configuration/audit-log',         module: 'audit_log', hint: 'Identity trail — money moves are on the accounting log' },
+    ],
+  },
+  {
+    id: 'reservations', ref: '13', name: 'Reservations & table state', icon: '🍽',
+    build: 'built', absorbed: ['reservations'],
+    blurb: 'Bookings, covers and what each table is doing right now.',
+    gaps: 'Table state drifts from reality because only the reservation flow sets it: cancelling a seated booking never frees the table, nothing ever clears "cleaning", and POS orders never mark a table occupied at all — so a walk-in table shows as free. Table.currentPartySize and currentOrderId are manual entry only. Guest-tag endpoints exist with no admin UI, and the live floor (/floorplan) and kitchen reservation tracker (/kds/reservations) are both built but not linked from here.',
+    sections: [
+      { label: 'Reservations', href: '/reservations',           module: 'reservations' },
+      { label: 'Week view',    href: '/reservations/week',      module: 'reservations' },
+      { label: 'Closures',     href: '/reservations/blockouts', module: 'reservations_admin' },
+      { label: 'Service hours', href: '/reservations/hours',    module: 'reservations_admin' },
+      { label: 'Analytics',    href: '/reservations/analytics', module: 'reservations_admin' },
+      { label: 'Floor plan',   href: '/tables',                 module: 'tables' },
+    ],
+  },
+  {
+    id: 'kds', ref: '14', name: 'Kitchen screens', icon: '🍳',
+    build: 'built', absorbed: ['kds'],
+    blurb: 'What the kitchen sees, in what order, and when it is fired.',
+    gaps: 'The Expo tablet screen is dead — it calls /kds/stations/:id/items and /orders/items/:id/advance, neither of which exists. Bumping in admin runs on /expo/* only, so the /kds queue, fire, bump, recall and metrics endpoints have no caller and station timing is never surfaced anywhere. The course-pacing worker auto-fires items every 30 seconds regardless of expo\'s "Confirm & Fire" gate, so the gate can be bypassed by simply waiting. The old HR entry linked /kds/config as "Kitchen brigade"; that roster is people and lives under Staff, while this is stations.',
+    sections: [
+      { label: 'Kitchen view', href: '/kds',        module: 'kds_dashboard' },
+      { label: 'All orders',   href: '/kds/all',    module: 'kds_all' },
+      { label: 'Expo station', href: '/expo',       module: 'expo_station' },
+      { label: 'KDS config',   href: '/kds/config', module: 'kds_config', hint: 'Stations, not staff' },
+      { label: 'Ops centre',   href: '/ops',        module: 'ops' },
+    ],
+  },
+  {
+    id: 'bi', ref: '15', name: 'Reports & dashboards', icon: '📈',
+    build: 'built', absorbed: ['bi'],
+    blurb: 'The numbers, per role — and where they are estimates rather than facts.',
+    gaps: 'The CEO P&L takes revenue from FinancialEntry but costs from the ledger, then spreads untagged cost by revenue share — so brand margins on the executive overview are estimates presented as figures. /management/brand-pl has no UI at all. Five role dashboards exist (CEO, Brand, F&B, BOH, FOH) but /dashboard is only a chooser and BOH/FOH are not listed here, so they are reachable only through it. The demand forecast defaults its weather lookup to Lahore because WEATHER_LAT is unset.',
     sections: [
       { label: 'Reports',         href: '/reports',            module: 'reports' },
       { label: 'Analytics',       href: '/analytics',          module: 'analytics' },
-      { label: 'CEO overview',    href: '/dashboard/ceo',      module: 'ceo_overview' },
+      { label: 'CEO overview',    href: '/dashboard/ceo',      module: 'ceo_overview', hint: 'Brand margins are estimated — see gaps' },
       { label: 'Live dashboard',  href: '/dashboard',          module: 'dashboard' },
       { label: 'Brand dashboard', href: '/dashboard/brand',    module: 'brand_dashboard' },
       { label: 'F&B dashboard',   href: '/dashboard/fnb',      module: 'fnb_dashboard' },
@@ -228,202 +310,32 @@ export const MODULE_CATALOG: AppModule[] = [
     ],
   },
   {
-    id: 'integration', ref: 'A15', name: 'Integration Layer', icon: '🔌',
-    category: 'core',
-    blurb: 'APIs, webhooks, import/export, document attachments.',
+    id: 'integration', ref: '16', name: 'Integrations, webhooks & backups', icon: '🔌',
+    build: 'partial', absorbed: ['integration'],
+    blurb: 'How servd talks to everything else — and how you get your data out.',
+    gaps: 'Backup is a hardcoded stub: there is no real backup or export behind /configuration/backup, so the answer to "can we get our data out" is currently no. The webhooks UI offers 12 events but only 5 ever fire (order confirmed, dispatched, delivered, refunded, and inventory.low_stock) — shift, payment, reservation and order.placed subscriptions are silently dead, so anyone relying on them is waiting for a call that never comes. Two rival webhook APIs exist: /setup/webhooks is company-scoped, /webhooks/endpoints is not. media_assets and the Meta tokens in settings have no tenantId, so every company shares one media library and one Facebook page.',
     sections: [
-      { label: 'Integrations',  href: '/settings/integrations',   module: 'integrations' },
-      { label: 'Webhooks',      href: '/configuration/webhooks',  module: 'integrations' },
-      { label: 'Notifications', href: '/notifications',           module: 'notifications' },
-      { label: 'Media / files', href: '/media',                   module: 'media' },
-      { label: 'Backup',        href: '/configuration/backup',    module: 'business_info' },
-      { label: 'Domains',       href: '/configuration/domains',   module: 'tenants' },
-    ],
-  },
-
-  // ═════════════════════ B. RESTAURANT LAYER ═════════════════════
-  {
-    id: 'pos', ref: 'B1', name: 'POS / Order Capture', icon: '💳',
-    category: 'restaurant',
-    blurb: 'Dine-in, counter and online capture; tables, split bills, routing.',
-    sections: [
-      { label: 'Point of Sale', href: '/pos',        module: 'pos' },
-      { label: 'Waiter mode',   href: '/pos/waiter', module: 'pos' },
-      { label: 'Floor plan',    href: '/tables',     module: 'tables' },
+      { label: 'Integrations', href: '/settings/integrations',   module: 'integrations' },
+      { label: 'Webhooks',     href: '/configuration/webhooks',  module: 'integrations', hint: '7 of 12 advertised events never fire' },
+      { label: 'Notifications', href: '/notifications',          module: 'notifications' },
+      { label: 'Media / files', href: '/media',                  module: 'media' },
+      { label: 'Backup',       href: '/configuration/backup',    module: 'business_info', hint: 'Stub — no real backup exists' },
+      { label: 'Domains',      href: '/configuration/domains',   module: 'tenants' },
     ],
   },
   {
-    id: 'menu-eng', ref: 'B2', name: 'Menu Engineering', icon: '📖',
-    category: 'restaurant',
-    blurb: 'Recipes as multi-level BOM, modifiers, combos, channel pricing.',
-    gaps: 'Multi-level BOM works (components nest). No combos, and no channel-specific pricing — one price per item across every channel.',
-    sections: [
-      { label: 'Menu',             href: '/menu',                        module: 'menu' },
-      { label: 'Pricing workspace', href: '/menu-engineering',           module: 'recipes' },
-      { label: 'Sales quadrants',  href: '/accounting/menu-engineering', module: 'accounting' },
-      { label: 'Modifiers',        href: '/configuration/modifiers',     module: 'menu' },
-    ],
-  },
-  {
-    id: 'costing', ref: 'B3', name: 'Recipe Costing & Variance', icon: '🎯',
-    category: 'restaurant',
-    blurb: 'Theoretical vs actual cost — the differentiator.',
-    gaps: 'Theoretical costing is solid. Actual-vs-theoretical variance is only approximated against purchases, not against measured stock movements, so the number is indicative rather than trustworthy. Depends on clean master data (A2) and stock ledger (A8).',
-    sections: [
-      { label: 'Recipes',    href: '/accounting/recipes',   module: 'recipes' },
-      { label: 'Food cost',  href: '/accounting/food-cost', module: 'accounting' },
-      { label: 'Plate pricing', href: '/menu-engineering',  module: 'recipes' },
-    ],
-  },
-  {
-    id: 'kds', ref: 'B4', name: 'KDS', icon: '🍳',
-    category: 'restaurant',
-    blurb: 'Ticket routing, fire times, course pacing.',
-    sections: [
-      { label: 'Kitchen view', href: '/kds',         module: 'kds_dashboard' },
-      { label: 'All orders',   href: '/kds/all',     module: 'kds_all' },
-      { label: 'Expo station', href: '/expo',        module: 'expo_station' },
-      { label: 'KDS config',   href: '/kds/config',  module: 'kds_config' },
-      { label: 'Ops centre',   href: '/ops',         module: 'ops' },
-    ],
-  },
-  {
-    id: 'commissary', ref: 'B5', name: 'Commissary / Production', icon: '🏗',
-    category: 'restaurant',
-    blurb: 'Batch prep, yield factors, inter-outlet transfers at cost.',
-    gaps: 'Batch prep and yield factors exist inside recipes. Inter-outlet transfers at cost are not wired to the stock ledger, so a transfer does not move value between brands.',
-    sections: [
-      { label: 'Prep',      href: '/inventory/prep', module: 'inventory' },
-      { label: 'Par sheet', href: '/par-sheet',      module: 'par_sheet' },
-    ],
-  },
-  {
-    id: 'perishables', ref: 'B6', name: 'Perishable Controls', icon: '🧊',
-    category: 'restaurant',
-    blurb: 'Par levels, daily indent, expiry / FIFO, spot counts by station.',
-    gaps: 'Par levels and counts exist. No expiry tracking, no FIFO, and counts are not station-scoped.',
-    sections: [
-      { label: 'Par sheet',   href: '/par-sheet',        module: 'par_sheet' },
-      { label: 'Stock count', href: '/inventory/count',  module: 'inventory' },
-      { label: 'Low stock',   href: '/inventory/alerts', module: 'inventory' },
-    ],
-  },
-  {
-    id: 'variance', ref: 'B7', name: 'Waste, Void, Comp & Staff Meals', icon: '🗑',
-    category: 'restaurant',
-    blurb: 'The four buckets that explain most of your variance.',
-    gaps: 'All four are captured but in four different places, with no combined variance view. Voids and comps live inside orders and are only visible via the Z-report, which currently signs refunds the wrong way.',
-    sections: [
-      { label: 'Waste log',   href: '/inventory',   module: 'inventory' },
-      { label: 'Staff meals', href: '/staff-meals', module: 'staff_directory' },
-      { label: 'Refunds / voids', href: '/refunds', module: 'refunds' },
-    ],
-  },
-  {
-    id: 'shift', ref: 'B8', name: 'Shift Management', icon: '🕗',
-    category: 'restaurant',
-    blurb: 'Cash-up, drawer variance, Z-reads, handover.',
-    gaps: 'The Z-report subtracts refunds that are already stored negative, overstating net revenue and showing a false cash shortage.',
-    sections: [
-      { label: 'Shift / till',   href: '/pos/shift',             module: 'pos' },
-      { label: 'Deposit drops',  href: '/finance/deposit-drops', module: 'accounting' },
-      { label: 'Reconciliation', href: '/reconciliation',        module: 'reconciliation' },
-    ],
-  },
-  {
-    id: 'labor', ref: 'B9', name: 'Labour vs Forecast', icon: '📅',
-    category: 'restaurant',
-    blurb: 'Rostering against hourly covers, live labour-cost %.',
-    gaps: 'Scheduling and demand forecast both exist but are not joined — you cannot roster against forecast covers or see a live labour-cost % against sales.',
-    sections: [
-      { label: 'Scheduling',      href: '/scheduling',         module: 'scheduling' },
-      { label: 'Demand forecast', href: '/analytics/forecast', module: 'reports' },
-    ],
-  },
-  {
-    id: 'fiscal', ref: 'B10', name: 'Fiscal / SRB SDC', icon: '🧾',
-    category: 'restaurant',
-    blurb: 'Real-time invoice reporting to the revenue authority.',
-    sections: [
-      { label: 'FBR / PRAL setup', href: '/settings/integrations',       module: 'integrations' },
-      { label: 'Sales tax return', href: '/accounting/sales-tax-return', module: 'accounting' },
-    ],
-  },
-  {
-    id: 'channels', ref: 'B11', name: 'Channel Reconciliation', icon: '🔀',
-    category: 'restaurant',
-    blurb: 'Payout vs order-level revenue across your own channels.',
-    gaps: 'Third-party aggregators are excluded by standing policy — GS Foods runs its own fleet — so this covers storefront, POS and app only. Per-channel payout reconciliation is not built.',
-    sections: [
-      { label: 'Orders by source', href: '/reports',        module: 'reports' },
-      { label: 'Reconciliation',   href: '/reconciliation', module: 'reconciliation' },
-    ],
-  },
-  {
-    id: 'crm', ref: 'B12', name: 'CRM & Loyalty', icon: '🧑‍🤝‍🧑',
-    category: 'restaurant',
-    blurb: 'Customer identity across counter, app and web.',
-    sections: [
-      { label: 'Customers',     href: '/customers',             module: 'crm' },
-      { label: 'CRM',           href: '/crm',                   module: 'crm' },
-      { label: 'Conversations', href: '/crm/conversations',     module: 'crm' },
-      { label: 'Segments',      href: '/crm/segments',          module: 'crm' },
-      { label: 'Loyalty',       href: '/configuration/loyalty', module: 'crm' },
-      { label: 'Gift cards',    href: '/gift-cards',            module: 'gift_cards' },
-      { label: 'Complaints',    href: '/complaints',            module: 'complaints' },
-      { label: 'Reviews',       href: '/reviews',               module: 'reviews' },
-    ],
-  },
-  {
-    id: 'reservations', ref: 'B13', name: 'Reservations & Table State', icon: '🍽',
-    category: 'restaurant',
-    blurb: 'Bookings and live table state — relevant to Simmer, not to counter formats.',
-    sections: [
-      { label: 'Reservations',  href: '/reservations',            module: 'reservations' },
-      { label: 'Week view',     href: '/reservations/week',       module: 'reservations' },
-      { label: 'Closures',      href: '/reservations/blockouts',  module: 'reservations_admin' },
-      { label: 'Service hours', href: '/reservations/hours',      module: 'reservations_admin' },
-      { label: 'Analytics',     href: '/reservations/analytics',  module: 'reservations_admin' },
-      { label: 'Floor plan',    href: '/tables',                  module: 'tables' },
-    ],
-  },
-  {
-    id: 'haccp', ref: 'B14', name: 'Food Safety / HACCP', icon: '🌡',
-    category: 'restaurant',
-    blurb: 'Temperature logs, cleaning schedules, expiry checks.',
-    gaps: 'Not built. No temperature logs, cleaning schedules or corrective-action records — the usual first request in a health inspection.',
+    id: 'assets', ref: '17', name: 'Equipment & fixed assets', icon: '🏭',
+    build: 'not-built', absorbed: ['assets'],
+    blurb: 'Ovens, fit-outs and vehicles — what you own and what it is worth now.',
+    gaps: 'Nothing is built: no asset table, no /assets route, no screen. Equipment is captured only as project spend in the CapEx tracker (/finance/capex) — vendor, delivery and warranty, but no asset tag, useful life, depreciation or disposal — and that never posts a journal entry. The consequence is on the balance sheet: the fixed-asset accounts in chartOfAccounts.ts (1510/1520/1530, 1590 Accumulated Depreciation, 6150 Depreciation Expense) sit at zero forever, so there is no asset base and no investing line in cash flow.',
     sections: [],
   },
   {
-    id: 'multi-outlet', ref: 'B15', name: 'Multi-outlet / Franchise', icon: '🏢',
-    category: 'restaurant',
-    blurb: 'Outlet P&L, transfer pricing, central-vs-outlet permissions.',
-    gaps: 'Per-brand P&L and tenant scoping work. Transfer pricing between outlets is not implemented, and the ledger-based reports are group-wide with no per-entity split.',
-    sections: [
-      { label: 'Tenants & brands', href: '/settings',     module: 'tenants' },
-      { label: 'Chain rollup',     href: '/chain',        module: 'chain' },
-      { label: 'Allocations',      href: '/allocations',  module: 'accounting' },
-    ],
-  },
-  {
-    id: 'marketing', ref: 'B16', name: 'Marketing & Attribution', icon: '📣',
-    category: 'restaurant',
-    blurb: 'Campaigns, promos, content, and what they actually drove.',
-    gaps: 'Campaign and promo execution is built; attribution back to revenue is not — you cannot yet say which campaign produced which orders.',
-    sections: [
-      { label: 'Workspace',    href: '/marketing',          module: 'marketing_workspace' },
-      { label: 'Campaigns',    href: '/crm/campaigns',      module: 'campaigns' },
-      { label: 'Promotions',   href: '/promos',             module: 'promos' },
-      { label: 'Discounts',    href: '/discounts',          module: 'promos' },
-      { label: 'QR codes',     href: '/qrcodes',            module: 'promos' },
-      { label: 'Calendar',     href: '/calendar',           module: 'calendar' },
-      { label: 'Activity log', href: '/marketing/activity', module: 'marketing_workspace' },
-      { label: 'Brands & storefront', href: '/marketing/brands', module: 'brands' },
-      { label: 'Visual layout',   href: '/storefront',        module: 'brands' },
-      { label: 'Landing hero',    href: '/storefront-hero',   module: 'brands' },
-      { label: 'Brand footers',   href: '/storefront-footer', module: 'brands' },
-      { label: 'Content pages',   href: '/content',           module: 'brands' },
-    ],
+    id: 'haccp', ref: '18', name: 'Food safety logs', icon: '🌡',
+    build: 'not-built', absorbed: ['haccp'],
+    blurb: 'Temperature checks, cleaning schedules and corrective actions.',
+    gaps: 'Nothing exists — no model, no route, no page, and no sections on this card, so there is nowhere to click. Temperature logs, cleaning schedules and corrective actions are all absent. The only scaffolding is WasteLog.reason="expired", which records a loss after it has happened, and Component.shelfLifeHours, which is captured and never checked. Expiry tracking is claimed both here and by stock control; build it once, in the stock ledger, rather than twice.',
+    sections: [],
   },
 ]
 

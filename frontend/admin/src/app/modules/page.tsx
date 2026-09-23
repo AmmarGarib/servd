@@ -34,16 +34,15 @@ export default function ModuleHubPage() {
     return new Set(modulesForRole((me.role ?? 'cashier') as AppRole, overrides))
   }, [me, overrides])
 
-  const groups = useMemo(() => {
-    const withAccess = MODULE_CATALOG.map((m) => ({ mod: m, access: moduleAccessFor(m, allowed) }))
-    return {
-      core: withAccess.filter((x) => x.mod.category === 'core'),
-      ours: withAccess.filter((x) => x.mod.category === 'restaurant'),
-    }
-  }, [allowed])
-
-  const all = [...groups.core, ...groups.ours]
-  const notBuilt = all.filter((x) => x.access.state === 'not-built').length
+  // One list, in catalogue order. The catalogue is ordered by what a defect
+  // costs you if left alone, so reading top-down is working in descending order
+  // of damage — which is the whole point of collapsing the old A/B split.
+  const all = useMemo(
+    () => MODULE_CATALOG.map((m) => ({ mod: m, access: moduleAccessFor(m, allowed) })),
+    [allowed],
+  )
+  const notBuilt = all.filter((x) => x.mod.build === 'not-built').length
+  const partial  = all.filter((x) => x.mod.build === 'partial').length
   const withGaps = all.filter((x) => x.mod.gaps).length
 
   return (
@@ -54,41 +53,32 @@ export default function ModuleHubPage() {
         </p>
         <h1 className="text-3xl font-black text-s-text mt-1">Modules</h1>
         <p className="text-sm text-s-muted mt-1.5 max-w-2xl">
-          {MODULE_CATALOG.length} modules against the reference model.{' '}
+          {MODULE_CATALOG.length} modules, ordered by what a defect costs you.{' '}
           {isExecutive(me?.role)
-            ? `${notBuilt} not built yet · ${withGaps} carry known gaps or duplication.`
+            ? `${notBuilt} not built · ${partial} partly built · ${withGaps} carry known gaps.`
             : 'Locked modules still show what they cover.'}
         </p>
       </header>
 
-      <main className="px-6 pb-16 max-w-6xl mx-auto space-y-10">
-        <ModuleGroup
-          title="A · Universal core"
-          subtitle="Any business model needs these"
-          items={groups.core}
-        />
-        <ModuleGroup
-          title="B · Restaurant layer"
-          subtitle="Specific to running food service"
-          items={groups.ours}
-        />
+      <main className="px-6 pb-16 max-w-6xl mx-auto">
+        <ModuleGrid items={all} />
       </main>
     </div>
   )
 }
 
-function ModuleGroup({ title, subtitle, items }: {
-  title: string
-  subtitle: string
+const BUILD_META: Record<string, { label: string; color: string }> = {
+  built:       { label: 'Built',     color: 'rgba(255,255,255,0.30)' },
+  partial:     { label: 'Partial',   color: '#F59E0B' },
+  'not-built': { label: 'Not built', color: '#A78BFA' },
+}
+
+function ModuleGrid({ items }: {
   items: Array<{ mod: (typeof MODULE_CATALOG)[number]; access: ReturnType<typeof moduleAccessFor> }>
 }) {
   if (items.length === 0) return null
   return (
     <section>
-      <div className="flex items-baseline gap-3 mb-3">
-        <h2 className="text-lg font-black text-s-text">{title}</h2>
-        <span className="text-xs text-s-dim">{subtitle}</span>
-      </div>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {items.map(({ mod, access }) => {
           const meta = STATE_META[access.state]
@@ -116,6 +106,11 @@ function ModuleGroup({ title, subtitle, items }: {
               </div>
               <div className="flex items-center gap-1.5 mt-2.5">
                 <span className="text-[9px] font-black tracking-wider text-s-dim">{mod.ref}</span>
+                {mod.build !== 'built' && (
+                  <span className="text-[8px] font-black uppercase tracking-wider px-1.5 py-px rounded"
+                    style={{ background: 'rgba(255,255,255,0.05)', color: BUILD_META[mod.build]!.color }}
+                    title="What exists today, independent of your access">{BUILD_META[mod.build]!.label}</span>
+                )}
                 {mod.platform && (
                   <span className="text-[8px] font-black uppercase tracking-wider px-1.5 py-px rounded"
                     style={{ background: 'rgba(99,102,241,0.14)', color: '#818CF8' }}
