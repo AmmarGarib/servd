@@ -1055,6 +1055,11 @@ model Customer {
   email              String?   @unique
   phone              String?   @unique
   marketingOptIn     Boolean   @default(false)
+  // Campaigns are OPT-OUT: everyone we hold contact details for is reachable
+  // unless this is set. marketingOptIn above was never set by anything, so
+  // under the old opt-in rule every campaign reached nobody. Set by the
+  // unsubscribe link carried on every campaign message.
+  marketingOptOutAt  DateTime?
   ntn                String? // National Tax Number (for FBR invoice BuyerNTN field)
   cnic               String? // CNIC (for FBR invoice BuyerCNIC field)
   birthdayMmDd       String? // MM-DD format, e.g. "04-23"
@@ -2816,6 +2821,9 @@ model Segment {
 model Campaign {
   id             String          @id @default(uuid())
   segmentId      String?
+  // Brand audience. Empty = every customer we can reach, across all brands.
+  // Otherwise customers who ordered from, or prefer, any of these brands.
+  conceptIds     String[]        @default([])
   name           String
   channel        String // email|sms|whatsapp
   subject        String?

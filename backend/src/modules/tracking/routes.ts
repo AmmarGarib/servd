@@ -15,7 +15,9 @@ import type { FastifyInstance } from 'fastify'
 import { prisma } from '../../lib/prisma.js'
 
 const SAFE_DEFAULT = process.env['STOREFRONT_URL'] ?? 'https://servd-app.garibsons.app'
-const ALLOWED_SUFFIXES = ['garibsons.app']
+// servd.pk is the live storefront; links to it were being bounced to the
+// fallback because only garibsons.app was listed.
+const ALLOWED_SUFFIXES = ['garibsons.app', 'servd.pk', 'gsfoods.pk']
 
 function safeTarget(u: string | undefined): string {
   if (!u) return SAFE_DEFAULT
@@ -47,6 +49,36 @@ export async function trackingRoutes(fastify: FastifyInstance) {
     return reply.redirect(target)
   })
 
+  // Unsubscribe. GET shows a page with a button; only the POST acts.
+  //
+  // A bare GET that unsubscribed would be triggered by link scanners — the
+  // security gateways many workplaces run fetch every link in an incoming
+  // email — and people would be silently dropped without ever clicking.
+  fastify.get<{ Params: { id: string } }>('/u/:id', async (req, reply) => {
+    const id = req.params.id.replace(/[^a-zA-Z0-9-]/g, '')
+    return reply.header('Content-Type', 'text/html; charset=utf-8').send(page(
+      'Stop marketing messages?',
+      `<p>You'll stop getting offers and news from us. Order updates and sign-in codes are not affected.</p>
+       <form method="POST" action="/api/v1/t/u/${id}"><button type="submit">Unsubscribe</button></form>`,
+    ))
+  })
+
+  fastify.post<{ Params: { id: string } }>('/u/:id', async (req, reply) => {
+    try {
+      const send = await prisma.campaignSend.findUnique({ where: { id: req.params.id }, select: { customerId: true } })
+      if (send) {
+        await prisma.customer.updateMany({
+          where: { id: send.customerId, marketingOptOutAt: null },
+          data: { marketingOptOutAt: new Date(), marketingOptIn: false },
+        })
+      }
+    } catch { /* same answer either way — never reveal whether an id exists */ }
+    return reply.header('Content-Type', 'text/html; charset=utf-8').send(page(
+      "You're unsubscribed",
+      "<p>You won't get marketing messages from us any more. Order updates and sign-in codes will still reach you.</p>",
+    ))
+  })
+
   // Open pixel
   fastify.get<{ Params: { id: string } }>('/o/:id', async (req, reply) => {
     try {
@@ -58,4 +90,13 @@ export async function trackingRoutes(fastify: FastifyInstance) {
       .header('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate')
       .send(PIXEL)
   })
+}
+
+function page(title: string, body: string): string {
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${title}</title>
+<style>body{font-family:system-ui,-apple-system,sans-serif;background:#2D1E2F;color:#fff;display:flex;min-height:100vh;align-items:center;justify-content:center;margin:0;padding:24px}
+main{max-width:380px}h1{font-size:22px;margin:0 0 8px}p{color:rgba(255,255,255,.75);font-size:14px;line-height:1.5}
+button{margin-top:12px;background:#fff;color:#4E2A4F;border:0;border-radius:12px;padding:12px 20px;font-weight:800;font-size:14px;cursor:pointer}</style>
+</head><body><main><h1>${title}</h1>${body}</main></body></html>`
 }

@@ -51,7 +51,7 @@ async function runBirthdayTriggers() {
   const dd = String(today.getDate()).padStart(2, '0')
 
   const customers = await prisma.customer.findMany({
-    where: { birthdayMmDd: `${mm}-${dd}`, marketingOptIn: true, deletedAt: null },
+    where: { birthdayMmDd: `${mm}-${dd}`, marketingOptOutAt: null, deletedAt: null },
     select: { id: true, name: true, email: true, phone: true },
   })
 
@@ -89,7 +89,7 @@ async function runWinBackTriggers() {
   const cutoff = new Date(Date.now() - 30 * 86_400_000)
 
   const customers = await prisma.customer.findMany({
-    where: { marketingOptIn: true, deletedAt: null, lastOrderAt: { lt: cutoff }, orders: { some: {} } },
+    where: { marketingOptOutAt: null, deletedAt: null, lastOrderAt: { lt: cutoff }, orders: { some: {} } },
     select: { id: true, name: true, email: true, phone: true },
     take: 100,
   })
@@ -115,7 +115,7 @@ async function runActivateUsersTrigger() {
 
   const customers = await prisma.customer.findMany({
     where: {
-      marketingOptIn: true,
+      marketingOptOutAt: null,
       deletedAt: null,
       createdAt: { gte: threeDaysAgo, lte: oneDayAgo },
       firstOrderAt: null,
@@ -145,7 +145,7 @@ async function runEncourageSecondOrderTrigger() {
   const singleOrderCustomers = await prisma.$queryRaw<Array<{ id: string; name: string; email: string | null; phone: string | null }>>`
     SELECT c.id, c.name, c.email, c.phone
     FROM customers c
-    WHERE c."marketingOptIn" = true
+    WHERE c."marketingOptOutAt" IS NULL
       AND c."deletedAt" IS NULL
       AND c."firstOrderAt" < ${fifteenDaysAgo}
       AND (SELECT COUNT(*) FROM orders o WHERE o."customerId" = c.id AND o."deletedAt" IS NULL) = 1
@@ -178,7 +178,7 @@ async function runFirstOrderWelcomeTrigger() {
       deletedAt: null,
       firstOrderAt: { gte: sixHoursAgo, lte: oneHourAgo },
     },
-    select: { id: true, name: true, email: true, phone: true, marketingOptIn: true },
+    select: { id: true, name: true, email: true, phone: true, marketingOptOutAt: true },
     take: 100,
   })
 
@@ -196,7 +196,7 @@ async function runFirstOrderWelcomeTrigger() {
       <p>Cooking with care,<br/>The servd team</p>`
 
     if (c.email) await sendEmail(c.email, 'Thanks for your first order 🍽', html).catch(() => {})
-    else if (c.phone && c.marketingOptIn) await sendSms(c.phone, sms).catch(() => {})
+    else if (c.phone && !c.marketingOptOutAt) await sendSms(c.phone, sms).catch(() => {})
 
     await prisma.triggerLog.create({ data: { customerId: c.id, triggerType: 'welcome' } })
   }
@@ -276,7 +276,7 @@ async function runSpendMilestoneTrigger() {
         totalSpentCents: { gte: m.threshold },
       },
       select: {
-        id: true, name: true, email: true, phone: true, marketingOptIn: true,
+        id: true, name: true, email: true, phone: true, marketingOptOutAt: true,
         loyaltyAccount: { select: { id: true } },
       },
       take: 100,
@@ -298,7 +298,7 @@ async function runSpendMilestoneTrigger() {
         <p>Genuinely,<br/>The servd team</p>`
 
       if (c.email) await sendEmail(c.email, `Thanks for ${m.label}`, html).catch(() => {})
-      else if (c.phone && c.marketingOptIn) await sendSms(c.phone, msg).catch(() => {})
+      else if (c.phone && !c.marketingOptOutAt) await sendSms(c.phone, msg).catch(() => {})
 
       // Credit the bonus, if they have an account.
       if (c.loyaltyAccount) {
@@ -370,7 +370,7 @@ export async function runReferralRewardTrigger() {
     select: {
       id: true, name: true, phoneVerifiedAt: true,
       loyaltyAccount: { select: { id: true } },
-      referredBy: { select: { id: true, name: true, email: true, phone: true, marketingOptIn: true, loyaltyAccount: { select: { id: true } } } },
+      referredBy: { select: { id: true, name: true, email: true, phone: true, marketingOptOutAt: true, loyaltyAccount: { select: { id: true } } } },
     },
     take: 100,
   })
@@ -461,7 +461,7 @@ export async function runReferralRewardTrigger() {
     // Notify the referrer.
     const msg = `🎉 ${referee.name ?? 'Your friend'} just placed their first order using your code — you've got ${REFERRER_BONUS} loyalty points (PKR ${REFERRER_BONUS} off your next order). Thanks for the love.`
     if (referrer.email) await sendEmail(referrer.email, `Your friend ordered — points credited`, `<p>${msg}</p>`).catch(() => {})
-    else if (referrer.phone && referrer.marketingOptIn) await sendSms(referrer.phone, msg).catch(() => {})
+    else if (referrer.phone && !referrer.marketingOptOutAt) await sendSms(referrer.phone, msg).catch(() => {})
   }
 }
 

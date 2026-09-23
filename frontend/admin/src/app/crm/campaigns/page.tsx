@@ -16,9 +16,12 @@ interface Campaign {
   sentAt: string | null
   createdAt: string
   segment: { name: string } | null
+  conceptIds?: string[]
+  recipientCount?: number | null
 }
 
 interface Segment { id: string; name: string }
+interface Concept { id: string; name: string }
 
 const inp = 'rounded-lg border border-kds-border bg-kds-bg px-3 py-2 text-sm text-kds-text focus:border-kds-green focus:outline-none w-full'
 
@@ -37,6 +40,9 @@ export default function CampaignsPage() {
     name: '', channel: 'sms' as 'email' | 'sms' | 'whatsapp',
     subject: '', body: '', segmentId: '', scheduledAt: '',
   })
+  // Empty = every brand. Campaigns reach everyone we hold contact details for
+  // unless they unsubscribed; brands narrow that down when you want them to.
+  const [brandIds, setBrandIds] = useState<string[]>([])
 
   const { data: campaigns = [], isLoading } = useQuery({
     queryKey: ['campaigns'],
@@ -48,12 +54,30 @@ export default function CampaignsPage() {
     queryFn: () => api.get<Segment[]>('/crm/segments'),
   })
 
+  const { data: concepts = [] } = useQuery({
+    queryKey: ['concepts'],
+    queryFn: () => api.get<Concept[]>('/concepts'),
+  })
+  const conceptName = (id: string) => concepts.find((c) => c.id === id)?.name ?? 'brand'
+
+  // The number shown is the number the send will use — same filter server-side.
+  const { data: audience } = useQuery({
+    queryKey: ['campaign-audience', brandIds.join(','), form.segmentId, form.channel],
+    queryFn: () => api.get<{ total: number; optedOut: number }>(
+      `/crm/campaigns/audience?channel=${form.channel}` +
+      (brandIds.length ? `&conceptIds=${brandIds.join(',')}` : '') +
+      (form.segmentId ? `&segmentId=${form.segmentId}` : ''),
+    ),
+    enabled: showForm,
+  })
+
   const create = useMutation({
     mutationFn: (body: Record<string, unknown>) => api.post('/crm/campaigns', body),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['campaigns'] })
       setShowForm(false)
       setForm({ name: '', channel: 'sms', subject: '', body: '', segmentId: '', scheduledAt: '' })
+      setBrandIds([])
     },
   })
 
@@ -70,6 +94,7 @@ export default function CampaignsPage() {
       subject: form.subject || undefined,
       body: form.body,
       segmentId: form.segmentId || null,
+      conceptIds: brandIds,
       scheduledAt: form.scheduledAt ? new Date(form.scheduledAt).toISOString() : undefined,
     })
   }
@@ -120,10 +145,36 @@ export default function CampaignsPage() {
                   placeholder="Hi {name}, here's your exclusive offer…" required rows={3}
                   className={`${inp} resize-none`} />
               </div>
+              <div className="col-span-2">
+                <label className="text-xs text-kds-subtext mb-1 block">Brands</label>
+                <div className="flex flex-wrap gap-2">
+                  <button type="button" onClick={() => setBrandIds([])}
+                    className={`rounded-full px-3 py-1 text-xs font-bold border ${brandIds.length === 0 ? 'bg-kds-green text-black border-kds-green' : 'border-kds-border text-kds-subtext'}`}>
+                    All brands
+                  </button>
+                  {concepts.map((c) => {
+                    const on = brandIds.includes(c.id)
+                    return (
+                      <button type="button" key={c.id}
+                        onClick={() => setBrandIds(on ? brandIds.filter((x) => x !== c.id) : [...brandIds, c.id])}
+                        className={`rounded-full px-3 py-1 text-xs font-bold border ${on ? 'bg-kds-green text-black border-kds-green' : 'border-kds-border text-kds-subtext'}`}>
+                        {c.name}
+                      </button>
+                    )
+                  })}
+                </div>
+                <p className="text-xs text-kds-subtext mt-2">
+                  {audience
+                    ? <>Reaches <strong className="text-kds-text">{audience.total.toLocaleString()}</strong> customer{audience.total === 1 ? '' : 's'} with {form.channel === 'email' ? 'an email' : 'a phone number'}
+                        {audience.optedOut > 0 && <> · {audience.optedOut.toLocaleString()} unsubscribed and excluded</>}</>
+                    : 'Counting…'}
+                  {' '}Every message carries an unsubscribe link.
+                </p>
+              </div>
               <div>
                 <label className="text-xs text-kds-subtext mb-1 block">Segment (optional)</label>
                 <select value={form.segmentId} onChange={(e) => setForm({ ...form, segmentId: e.target.value })} className={inp}>
-                  <option value="">All opted-in customers</option>
+                  <option value="">Everyone in the brands above</option>
                   {segments.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
                 </select>
               </div>
@@ -166,6 +217,9 @@ export default function CampaignsPage() {
                       <span className={`rounded-full px-2.5 py-0.5 text-xs font-bold ${STATUS_COLORS[c.status] ?? ''}`}>
                         {c.status}
                       </span>
+                      <span className="rounded bg-kds-bg border border-kds-border px-2 py-0.5 text-xs text-kds-subtext">
+                        {c.conceptIds && c.conceptIds.length > 0 ? c.conceptIds.map(conceptName).join(', ') : 'All brands'}
+                      </span>
                       {c.segment && (
                         <span className="rounded bg-kds-bg border border-kds-border px-2 py-0.5 text-xs text-kds-subtext">
                           {c.segment.name}
@@ -176,6 +230,7 @@ export default function CampaignsPage() {
                     <p className="text-xs text-kds-subtext/60 mt-1">
                       Created {formatDistanceToNowStrict(new Date(c.createdAt))} ago
                       {c.sentAt && ` · Sent ${formatDistanceToNowStrict(new Date(c.sentAt))} ago`}
+                      {c.sentAt && c.recipientCount != null && ` to ${c.recipientCount.toLocaleString()}`}
                       {c.scheduledAt && c.status === 'scheduled' && ` · Scheduled for ${new Date(c.scheduledAt).toLocaleString()}`}
                     </p>
                   </div>

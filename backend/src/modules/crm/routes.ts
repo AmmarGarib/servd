@@ -1,9 +1,12 @@
 import type { FastifyInstance } from 'fastify'
+import type { Prisma } from '@prisma/client'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, MANAGERS, ALL_STAFF } from '../auth/middleware.js'
 import { NotFoundError } from '../../lib/errors.js'
 import { sendEmail, sendSms } from '../../lib/notify.js'
+import { sendText } from '../../lib/whatsapp.js'
+import { reachableCustomer, brandAudience, unsubscribeUrl } from '../../lib/marketingAudience.js'
 import { computeAllSegments, getSegmentsWithMembers } from './segmentComputation.js'
 import { deliverToCustomer } from '../../lib/customer-channels.js'
 
@@ -51,6 +54,8 @@ const createCampaignSchema = z
     subject: z.string().optional(),
     body: z.string().min(1),
     scheduledAt: z.string().datetime().optional(),
+    // Empty or omitted = every brand.
+    conceptIds: z.array(z.string().uuid()).max(50).optional(),
   })
   .refine((d) => d.channel !== 'email' || (d.subject && d.subject.length > 0), {
     message: 'subject is required for email campaigns',
@@ -65,6 +70,48 @@ const safeCustomerSelect = {
   isBlacklisted: true, blacklistReason: true,
   preferredConceptId: true, createdAt: true, updatedAt: true,
 } as const
+
+type SegmentFilters = {
+  minSpendCents?: number
+  maxSpendCents?: number
+  minOrders?: number
+  daysSinceLastOrder?: number
+  preferredConceptId?: string
+}
+
+/**
+ * The recipient filter for a campaign: reachable (opt-out model) ∩ brand
+ * audience ∩ segment filters ∩ has a contact for the channel. Shared by the
+ * audience preview and the real send so the number shown is the number sent.
+ */
+async function campaignAudienceWhere(c: {
+  conceptIds?: string[] | null
+  segment?: { filters: unknown } | null
+  channel?: string | null
+}): Promise<Prisma.CustomerWhereInput> {
+  const f = (c.segment?.filters ?? null) as SegmentFilters | null
+  const and: Prisma.CustomerWhereInput[] = [reachableCustomer, brandAudience(c.conceptIds)]
+  if (c.channel === 'email') and.push({ email: { not: null } })
+  if (c.channel === 'sms' || c.channel === 'whatsapp') and.push({ phone: { not: null } })
+  if (f?.minSpendCents !== undefined) and.push({ totalSpentCents: { gte: f.minSpendCents } })
+  if (f?.maxSpendCents !== undefined) and.push({ totalSpentCents: { lte: f.maxSpendCents } })
+  if (f?.daysSinceLastOrder !== undefined) {
+    and.push({ lastOrderAt: { lt: new Date(Date.now() - f.daysSinceLastOrder * 86_400_000) } })
+  }
+  if (f?.preferredConceptId) and.push({ preferredConceptId: f.preferredConceptId })
+  if (f?.minOrders !== undefined && f.minOrders > 0) {
+    // Resolved to ids up front: Prisma cannot filter on a relation count, and
+    // the old post-query filter ran after the (now removed) 2,000 cap.
+    const rows = await prisma.order.groupBy({
+      by: ['customerId'],
+      where: { customerId: { not: null }, deletedAt: null },
+      _count: { _all: true },
+      having: { customerId: { _count: { gte: f.minOrders } } },
+    })
+    and.push({ id: { in: rows.map((r) => r.customerId!).filter(Boolean) } })
+  }
+  return { AND: and }
+}
 
 export async function crmRoutes(fastify: FastifyInstance) {
   // GET /crm/customers
@@ -441,82 +488,65 @@ export async function crmRoutes(fastify: FastifyInstance) {
       })
       if (!campaign) throw new NotFoundError('Campaign', req.params.id)
 
-      // Build recipient list: apply segment JSON filters if a segment is attached
-      const segmentFilters = campaign.segment?.filters as {
-        minSpendCents?: number
-        maxSpendCents?: number
-        minOrders?: number
-        daysSinceLastOrder?: number
-        preferredConceptId?: string
-      } | null | undefined
-
-      const customers = await prisma.customer.findMany({
-        where: {
-          marketingOptIn: true,
-          deletedAt: null,
-          ...(segmentFilters?.minSpendCents !== undefined && {
-            totalSpentCents: { gte: segmentFilters.minSpendCents },
-          }),
-          ...(segmentFilters?.maxSpendCents !== undefined && {
-            totalSpentCents: { lte: segmentFilters.maxSpendCents },
-          }),
-          ...(segmentFilters?.daysSinceLastOrder !== undefined && {
-            lastOrderAt: {
-              lt: new Date(Date.now() - segmentFilters.daysSinceLastOrder * 86_400_000),
-            },
-          }),
-          ...(segmentFilters?.preferredConceptId && {
-            preferredConceptId: segmentFilters.preferredConceptId,
-          }),
-          ...(segmentFilters?.minOrders !== undefined && {
-            orders: { some: {} }, // refined below via having-count if needed
-          }),
-        },
-        select: { id: true, name: true, email: true, phone: true, _count: { select: { orders: true } } },
-        take: 2000,
-      }).then((rows) =>
-        segmentFilters?.minOrders !== undefined
-          ? rows.filter((r) => r._count.orders >= segmentFilters.minOrders!)
-          : rows,
-      )
-
+      const where = await campaignAudienceWhere(campaign)
+      const recipientCount = await prisma.customer.count({ where })
       const campaignId = req.params.id
-      const recipientCount = customers.length
       const apiBase = process.env['API_URL'] ?? 'http://localhost:3001'
 
-      // Fire-and-forget — don't block the HTTP response (2000 sends at 100ms each = 200s)
+      // Fire-and-forget — don't block the HTTP response. Walks the audience in
+      // pages rather than loading it whole; there used to be a hard 2,000 cap
+      // here that silently dropped everyone after the 2,000th customer.
       void (async () => {
         let sent = 0
-        for (const c of customers) {
-          // One CampaignSend per recipient — the unit click/open tracking
-          // attributes to. Created first so its id can be baked into the links.
-          let send: { id: string }
-          try {
-            send = await prisma.campaignSend.create({
-              data: { campaignId, customerId: c.id, status: 'queued' },
-              select: { id: true },
-            })
-          } catch (err) {
-            fastify.log.warn({ customerId: c.id, err }, 'CampaignSend row create failed')
-            continue
-          }
-          try {
-            if (campaign.channel === 'email' && c.email) {
-              await sendEmail(c.email, campaign.subject ?? campaign.name, trackedHtml(campaign.body, send.id, apiBase))
-              sent++
-            } else if ((campaign.channel === 'sms' || campaign.channel === 'whatsapp') && c.phone) {
-              await sendSms(c.phone, trackedText(campaign.body, send.id, apiBase))
-              sent++
-            } else {
-              await prisma.campaignSend.update({ where: { id: send.id }, data: { status: 'failed', errorMsg: 'no contact for channel' } })
+        let cursor: string | undefined
+        for (;;) {
+          const page = await prisma.customer.findMany({
+            where,
+            select: { id: true, name: true, email: true, phone: true },
+            orderBy: { id: 'asc' },
+            take: 500,
+            ...(cursor && { cursor: { id: cursor }, skip: 1 }),
+          })
+          if (page.length === 0) break
+          cursor = page[page.length - 1]!.id
+          for (const c of page) {
+            // One CampaignSend per recipient — the unit click/open tracking and
+            // unsubscribe attribute to. Created first so its id can be baked in.
+            let send: { id: string }
+            try {
+              send = await prisma.campaignSend.create({
+                data: { campaignId, customerId: c.id, status: 'queued' },
+                select: { id: true },
+              })
+            } catch (err) {
+              fastify.log.warn({ customerId: c.id, err }, 'CampaignSend row create failed')
               continue
             }
-            await prisma.campaignSend.update({ where: { id: send.id }, data: { status: 'sent', sentAt: new Date() } })
-          } catch (err) {
-            await prisma.campaignSend
-              .update({ where: { id: send.id }, data: { status: 'failed', errorMsg: String((err as Error).message).slice(0, 280) } })
-              .catch(() => { /* ignore */ })
-            fastify.log.warn({ customerId: c.id, err }, 'Campaign send failed for customer')
+            const stop = unsubscribeUrl(send.id)
+            try {
+              if (campaign.channel === 'email' && c.email) {
+                const html = trackedHtml(campaign.body, send.id, apiBase) +
+                  `<p style="font-size:11px;color:#888;margin-top:24px">Don't want these? <a href="${stop}">Unsubscribe</a>.</p>`
+                await sendEmail(c.email, campaign.subject ?? campaign.name, html)
+              } else if (campaign.channel === 'whatsapp' && c.phone) {
+                // Through the configured WhatsApp gateway. This used to call
+                // sendSms (Twilio), which is not configured, so every WhatsApp
+                // campaign failed one recipient at a time.
+                await sendText(c.phone, `${trackedText(campaign.body, send.id, apiBase)}\n\nStop these messages: ${stop}`)
+              } else if (campaign.channel === 'sms' && c.phone) {
+                await sendSms(c.phone, `${trackedText(campaign.body, send.id, apiBase)} Stop: ${stop}`)
+              } else {
+                await prisma.campaignSend.update({ where: { id: send.id }, data: { status: 'failed', errorMsg: 'no contact for channel' } })
+                continue
+              }
+              sent++
+              await prisma.campaignSend.update({ where: { id: send.id }, data: { status: 'sent', sentAt: new Date() } })
+            } catch (err) {
+              await prisma.campaignSend
+                .update({ where: { id: send.id }, data: { status: 'failed', errorMsg: String((err as Error).message).slice(0, 280) } })
+                .catch(() => { /* ignore */ })
+              fastify.log.warn({ customerId: c.id, err }, 'Campaign send failed for customer')
+            }
           }
         }
         await prisma.campaign.update({
@@ -527,6 +557,25 @@ export async function crmRoutes(fastify: FastifyInstance) {
       })()
 
       return { message: 'Campaign broadcast started', campaignId, recipientCount }
+    },
+  )
+
+  // GET /crm/campaigns/audience — how many people a campaign would reach, so
+  // the operator sees the number before pressing send rather than after.
+  fastify.get<{ Querystring: { conceptIds?: string; segmentId?: string; channel?: string } }>(
+    '/campaigns/audience',
+    { preHandler: requireAuth(...MANAGERS) },
+    async (req) => {
+      const conceptIds = (req.query.conceptIds ?? '').split(',').filter(Boolean)
+      const segment = req.query.segmentId
+        ? await prisma.segment.findUnique({ where: { id: req.query.segmentId } })
+        : null
+      const where = await campaignAudienceWhere({ conceptIds, segment, channel: req.query.channel ?? null })
+      const [total, optedOut] = await Promise.all([
+        prisma.customer.count({ where }),
+        prisma.customer.count({ where: { deletedAt: null, marketingOptOutAt: { not: null } } }),
+      ])
+      return { total, optedOut }
     },
   )
 
