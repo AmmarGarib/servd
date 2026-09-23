@@ -5,6 +5,7 @@ import { useState } from 'react'
 import Link from 'next/link'
 import { api } from '../../../lib/api'
 import { todayPktIso, startOfMonthPktIso } from '../../../lib/money'
+import { useBrandFilter } from '../../../store/brandFilter'
 
 interface Concept { id: string; name: string }
 interface Analytics {
@@ -15,7 +16,7 @@ interface Analytics {
 }
 
 export default function ReservationAnalyticsPage() {
-  const [conceptId, setConceptId] = useState('')
+  const [conceptId, setConceptId] = useState<string>(() => useBrandFilter.getState().brandId ?? '')
   const [from, setFrom] = useState(startOfMonthPktIso())
   const [to,   setTo]   = useState(todayPktIso())
 

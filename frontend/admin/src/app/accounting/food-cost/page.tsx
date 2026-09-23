@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../../../lib/api'
 import Link from 'next/link'
+import { useBrandFilter } from '../../../store/brandFilter'
 
 function fmt(cents: number) {
   return `PKR ${Math.round(cents / 100).toLocaleString()}`
@@ -48,7 +49,7 @@ export default function FoodCostPage() {
   const today = new Date()
   const [dateFrom, setDateFrom] = useState(toDateInput(new Date(today.getFullYear(), today.getMonth(), 1)))
   const [dateTo,   setDateTo]   = useState(toDateInput(today))
-  const [conceptId, setConceptId] = useState('')
+  const [conceptId, setConceptId] = useState<string>(() => useBrandFilter.getState().brandId ?? '')
   const [sortKey, setSortKey] = useState<'totalCost' | 'foodCostPct' | 'qtySold'>('totalCost')
 
   const { data: concepts } = useQuery({

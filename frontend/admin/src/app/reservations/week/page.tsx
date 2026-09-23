@@ -9,6 +9,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { api } from '../../../lib/api'
 import { todayPktIso } from '../../../lib/money'
+import { useBrandFilter } from '../../../store/brandFilter'
 
 interface Concept { id: string; name: string }
 interface Reservation {
@@ -36,7 +37,7 @@ const STATUS_DOT: Record<string, string> = {
 
 export default function ReservationsWeekPage() {
   const router = useRouter()
-  const [conceptId, setConceptId] = useState('')
+  const [conceptId, setConceptId] = useState<string>(() => useBrandFilter.getState().brandId ?? '')
   const [anchor,    setAnchor]    = useState(todayPktIso())
 
   const concepts = useQuery({ queryKey: ['concepts'], queryFn: () => api.get<Concept[]>('/concepts') })

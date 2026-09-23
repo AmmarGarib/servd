@@ -12,6 +12,7 @@
 import type { FastifyRequest } from 'fastify'
 import { prisma } from './prisma.js'
 import { NotFoundError } from './errors.js'
+import { requestedBrand, markBrandApplied } from './brandScope.js'
 
 export interface TenantScope {
   /** True when the operator has portfolio mode engaged. */
@@ -134,7 +135,18 @@ export async function conceptIdsInScope(req: FastifyRequest, mode: ScopeMode = '
     where: { deletedAt: null, ...(await scopeTenantWhere(req, mode)) },
     select: { id: true },
   })
-  return rows.map((r) => r.id)
+  const ids = rows.map((r) => r.id)
+  // Global brand filter (lib/brandScope.ts): on reads, narrow to the picked
+  // brand — but only if it is actually in scope. A brand left over from
+  // another company is ignored rather than turning every page empty.
+  if (mode === 'read') {
+    const brand = requestedBrand(req)
+    if (brand && ids.includes(brand)) {
+      markBrandApplied(req)
+      return [brand]
+    }
+  }
+  return ids
 }
 
 /**

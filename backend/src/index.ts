@@ -118,6 +118,7 @@ import { ensureChartOfAccounts, REQUIRED_ACCOUNT_CODES } from './lib/chartOfAcco
 import { isDegraded as loginLimiterDegraded } from './lib/loginRateLimit.js'
 import { whatsappConfigured as isWhatsappConfigured } from './lib/whatsapp.js'
 import { emailConfigured as isEmailConfigured } from './lib/mailer.js'
+import { registerBrandScope } from './lib/brandScope.js'
 
 const PORT = parseInt(process.env['PORT'] ?? '3001', 10)
 const HOST = '0.0.0.0'
@@ -196,6 +197,9 @@ async function build() {
   // servd hosts AND each brand's custom domain (eatstax.com, bukharirice.com,
   // etc.) AND the *.localhost / *.servd.{app,pk} wildcard patterns. New brand
   // domains: edit BRAND_HOSTS env (comma-separated), no code change needed.
+  // Global brand filter — must be registered before the routes it applies to.
+  registerBrandScope(fastify)
+
   const { isAllowedOrigin, describeAllowlist } = await import('./lib/corsAllowlist.js')
   fastify.log.info(describeAllowlist())
   await fastify.register(cors, {
@@ -212,6 +216,8 @@ async function build() {
     // send the PUT and the admin reported "Backend unreachable". Never rely on
     // this default — the whole admin is PUT/PATCH/DELETE.
     methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    // Readable by the admin so it can say when the brand filter did NOT apply.
+    exposedHeaders: ['x-servd-brand-applied'],
     credentials: true,
     maxAge: 3600,
   })

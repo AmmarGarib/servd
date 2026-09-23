@@ -9,6 +9,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { api } from '../../../lib/api'
+import { useBrandFilter } from '../../../store/brandFilter'
 
 interface Concept { id: string; name: string }
 interface Window { dayOfWeek: number; openMin: number; closeMin: number; isReservable: boolean }
@@ -26,7 +27,7 @@ function timeToMin(t: string): number {
 
 export default function ServiceHoursPage() {
   const qc = useQueryClient()
-  const [conceptId, setConceptId] = useState('')
+  const [conceptId, setConceptId] = useState<string>(() => useBrandFilter.getState().brandId ?? '')
   const [draft, setDraft] = useState<Window[]>([])
   const [feedback, setFeedback] = useState<string | null>(null)
 

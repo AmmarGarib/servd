@@ -16,6 +16,7 @@ import { useRouter } from 'next/navigation'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../lib/api'
 import { recipeStatusMeta } from '../accounting/recipes/RecipeForm'
+import { useBrandFilter } from '../../store/brandFilter'
 
 interface Concept { id: string; name: string }
 interface EngRecipe {
@@ -46,7 +47,7 @@ function fcColor(pct: number | null) {
 export default function MenuEngineeringPage() {
   const qc = useQueryClient()
   const router = useRouter()
-  const [conceptFilter, setConceptFilter] = useState('')
+  const [conceptFilter, setConceptFilter] = useState<string>(() => useBrandFilter.getState().brandId ?? '')
   const [search, setSearch] = useState('')
   // Local edit buffer: recipeId → price string being typed. Committed on blur/Enter.
   const [draftPrice, setDraftPrice] = useState<Record<string, string>>({})

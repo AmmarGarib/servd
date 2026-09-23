@@ -2,6 +2,7 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../../../lib/api'
+import { useBrandFilter } from '../../../store/brandFilter'
 
 interface Concept { id: string; name: string }
 interface MenuEngineeringItem {
@@ -34,7 +35,7 @@ export default function MenuEngineeringPage() {
   const today = new Date()
   const [dateFrom, setDateFrom] = useState(toDateInput(new Date(today.getFullYear(), today.getMonth(), 1)))
   const [dateTo,   setDateTo]   = useState(toDateInput(today))
-  const [conceptId, setConceptId] = useState('')
+  const [conceptId, setConceptId] = useState<string>(() => useBrandFilter.getState().brandId ?? '')
   const [activeQ, setActiveQ] = useState<string | null>(null)
 
   const { data: concepts } = useQuery({

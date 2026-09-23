@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api } from '../../../lib/api'
+import { useBrandFilter } from '../../../store/brandFilter'
 
 interface Concept { id: string; name: string; slug: string }
 interface ServiceHour {
@@ -30,7 +31,7 @@ const DEFAULT_CLOSE = 23 * 60
 export default function HoursPage() {
   const qc = useQueryClient()
   const { data: concepts = [] } = useQuery<Concept[]>({ queryKey: ['concepts'], queryFn: () => api.get('/concepts') })
-  const [conceptId, setConceptId] = useState<string>('')
+  const [conceptId, setConceptId] = useState<string>(() => useBrandFilter.getState().brandId ?? '')
   useEffect(() => { if (!conceptId && concepts.length > 0) setConceptId(concepts[0]!.id) }, [concepts, conceptId])
 
   const { data: hours = [], isLoading } = useQuery<ServiceHour[]>({

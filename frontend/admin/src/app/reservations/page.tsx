@@ -17,6 +17,7 @@ import { api } from '../../lib/api'
 import { todayPktIso } from '../../lib/money'
 import { useReservationSocket } from '../../hooks/useReservationSocket'
 import { CustomerContextSidebar } from '../../components/customer/CustomerContextSidebar'
+import { useBrandFilter } from '../../store/brandFilter'
 
 interface Concept { id: string; name: string }
 
@@ -50,7 +51,7 @@ const STATUS_BADGE: Record<string, { bg: string; text: string; label: string }> 
 
 export default function ReservationsPage() {
   const qc = useQueryClient()
-  const [conceptId, setConceptId] = useState('')
+  const [conceptId, setConceptId] = useState<string>(() => useBrandFilter.getState().brandId ?? '')
   const [date,      setDate]      = useState(todayPktIso())
   const [showNew,   setShowNew]   = useState(false)
   // Customer context drawer: when set, the right-side drawer shows that

@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api } from '../../../lib/api'
 import { MapPin } from '../../../components/ui/MapPin'
+import { useBrandFilter } from '../../../store/brandFilter'
 
 interface Concept {
   id: string
@@ -22,7 +23,7 @@ interface Concept {
 export default function BrandIdentityPage() {
   const qc = useQueryClient()
   const { data: concepts = [] } = useQuery<Concept[]>({ queryKey: ['concepts'], queryFn: () => api.get('/concepts') })
-  const [conceptId, setConceptId] = useState<string>('')
+  const [conceptId, setConceptId] = useState<string>(() => useBrandFilter.getState().brandId ?? '')
   useEffect(() => { if (!conceptId && concepts.length > 0) setConceptId(concepts[0]!.id) }, [concepts, conceptId])
 
   const concept = concepts.find((c) => c.id === conceptId)

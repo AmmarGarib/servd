@@ -7,6 +7,7 @@
 // `servd-auth`.
 
 import { useAuthStore } from '../store/auth'
+import { useBrandFilter } from '../store/brandFilter'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -176,6 +177,12 @@ async function request<T>(path: string, options: RequestInit = {}, retry = true,
     && localStorage.getItem('servd_view_all_tenants') === '1'
     && ['GET', 'HEAD'].includes(method)
 
+  // Global brand filter (store/brandFilter.ts) — reads only. A write must
+  // never be narrowed by a view filter.
+  const brand = typeof window !== 'undefined' && ['GET', 'HEAD'].includes(method)
+    ? useBrandFilter.getState().brandId
+    : null
+
   const res = await fetch(`${API_URL}/api/v1${path}`, {
     ...options,
     // Send the httpOnly session cookie. Bearer is still attached when an
@@ -186,6 +193,7 @@ async function request<T>(path: string, options: RequestInit = {}, retry = true,
       'Content-Type': 'application/json',
       ...(token && { Authorization: `Bearer ${token}` }),
       ...(portfolio && { 'x-servd-portfolio': '1' }),
+      ...(brand && { 'x-servd-brand': brand }),
       ...(resolvedTenantId && { 'x-servd-active-tenant': resolvedTenantId }),
       ...options.headers,
     },
@@ -205,6 +213,10 @@ async function request<T>(path: string, options: RequestInit = {}, retry = true,
   if (!res.ok) {
     const data = (await res.json()) as { error: { code: string; message: string } }
     throw new ApiError(res.status, data.error.code, data.error.message)
+  }
+
+  if (brand && typeof window !== 'undefined') {
+    useBrandFilter.getState().record(window.location.pathname, res.headers.get('x-servd-brand-applied') === '1')
   }
 
   if (res.status === 204) return undefined as T

@@ -9,6 +9,7 @@ import { TenantChip, useMyTenants } from '../../../components/ui/TenantPicker'
 import { recipeStatusMeta } from './RecipeForm'
 import { usePermissions } from '../../../hooks/useCan'
 import { isExecutive } from '../../../lib/appRoles'
+import { useBrandFilter } from '../../../store/brandFilter'
 
 const Q_FACTOR = 0.05
 
@@ -110,7 +111,7 @@ export default function RecipesPage() {
   // Executive tier: the CEO and co-owners can both act on approvals. The
   // backend still blocks an owner from approving their OWN submission.
   const isCeo = isExecutive(me?.role)
-  const [conceptFilter, setConceptFilter] = useState('')
+  const [conceptFilter, setConceptFilter] = useState<string>(() => useBrandFilter.getState().brandId ?? '')
   const [kindFilter,    setKindFilter]    = useState<'' | 'plate' | 'component'>('')
   const [search,        setSearch]        = useState('')
   const [expanded,      setExpanded]      = useState<string | null>(null)

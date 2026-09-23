@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../lib/api'
 import Link from 'next/link'
+import { useBrandFilter } from '../../store/brandFilter'
 
 interface QrCode {
   id: string
@@ -24,7 +25,7 @@ const inp = 'rounded-lg border border-kds-border bg-kds-bg px-3 py-2 text-sm tex
 export default function QrCodesPage() {
   const qc = useQueryClient()
   const [showForm, setShowForm] = useState(false)
-  const [conceptFilter, setConceptFilter] = useState('')
+  const [conceptFilter, setConceptFilter] = useState<string>(() => useBrandFilter.getState().brandId ?? '')
   const [form, setForm] = useState({ conceptId: '', tableId: '', orderType: 'dine-in' as 'dine-in' | 'pickup', label: '' })
 
   const { data: qrCodes = [], isLoading } = useQuery({

@@ -10,6 +10,7 @@ import { useRoleModules, modulesForRole, useSyncRoleModules } from '../../store/
 import { usePermissions } from '../../hooks/useCan'
 import { APP_ROLES, roleLabel, isExecutive, type AppRole, type ModuleId } from '../../lib/appRoles'
 import { TenantSwitcher, useViewAllTenants } from './TenantSwitcher'
+import { BrandPicker } from './BrandPicker'
 import { moduleForPath } from '../../lib/moduleCatalog'
 import { PortfolioWriteGuardModal } from './PortfolioWriteGuardModal'
 
@@ -872,6 +873,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </div>
 
         <TenantSwitcher collapsed={false} />
+        <BrandPicker collapsed={false} />
         <NavLinks pathname={pathname} collapsed={false} onNavigate={() => setMobileOpen(false)} />
         <UserFooter collapsed={false} />
       </aside>
@@ -925,6 +927,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         )}
 
         <TenantSwitcher collapsed={collapsed} />
+        <BrandPicker collapsed={collapsed} />
         <NavLinks pathname={pathname} collapsed={collapsed} />
         <UserFooter collapsed={collapsed} />
       </aside>

@@ -8,6 +8,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import Link from 'next/link'
 import { api } from '../../../lib/api'
+import { useBrandFilter } from '../../../store/brandFilter'
 
 interface Concept { id: string; name: string }
 interface Blockout {
@@ -17,7 +18,7 @@ interface Blockout {
 
 export default function BlockoutsPage() {
   const qc = useQueryClient()
-  const [conceptId, setConceptId] = useState('')
+  const [conceptId, setConceptId] = useState<string>(() => useBrandFilter.getState().brandId ?? '')
   const [showNew, setShowNew] = useState(false)
 
   const concepts = useQuery({ queryKey: ['concepts'], queryFn: () => api.get<Concept[]>('/concepts') })

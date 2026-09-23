@@ -12,6 +12,7 @@ import { FloorPlanEditor } from '../../components/floorplan/FloorPlanEditor'
 import type { FloorTable } from '../../components/floorplan/FloorCanvas'
 import { LiveFloor } from './LiveFloor'
 import { LayoutsGallery } from '../../components/floorplan/LayoutsGallery'
+import { useBrandFilter } from '../../store/brandFilter'
 
 interface Concept { id: string; name: string; slug: string }
 
@@ -27,7 +28,7 @@ interface Floor {
 
 export default function FloorplanPage() {
   const qc = useQueryClient()
-  const [conceptId, setConceptId] = useState<string>('')
+  const [conceptId, setConceptId] = useState<string>(() => useBrandFilter.getState().brandId ?? '')
   const [floorId,   setFloorId]   = useState<string>('')
   const [mode,      setMode]      = useState<'edit' | 'live'>('live')
   const [showNewFloor, setShowNewFloor] = useState(false)

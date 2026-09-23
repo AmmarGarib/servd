@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api } from '../../../lib/api'
+import { useBrandFilter } from '../../../store/brandFilter'
 
 interface DnsRecord {
   type: string
@@ -301,7 +302,7 @@ function AddDomainModal({ concepts, onClose, onCreated }: {
   onCreated: (id: string) => void
 }) {
   const [hostname, setHostname] = useState('')
-  const [conceptId, setConceptId] = useState('')
+  const [conceptId, setConceptId] = useState<string>(() => useBrandFilter.getState().brandId ?? '')
   const [purpose, setPurpose] = useState<'order' | 'brand_microsite'>('order')
   const [error, setError] = useState<string | null>(null)
 

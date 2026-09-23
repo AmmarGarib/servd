@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../lib/api'
+import { useBrandFilter } from '../../store/brandFilter'
 
 interface Concept { id: string; name: string }
 interface StaffMember { id: string; name: string; role: string }
@@ -60,7 +61,7 @@ function fmtPKR(cents: number) {
 export default function SchedulingPage() {
   const today = getMondayOfWeek(new Date())
   const [weekStart, setWeekStart] = useState(toDateStr(today))
-  const [conceptId, setConceptId] = useState('')
+  const [conceptId, setConceptId] = useState<string>(() => useBrandFilter.getState().brandId ?? '')
   const [showModal, setShowModal] = useState(false)
   const [editShift, setEditShift] = useState<ScheduledShift | null>(null)
   const [form, setForm] = useState({ userId: '', date: '', startTime: '09:00', endTime: '17:00', role: '', notes: '' })

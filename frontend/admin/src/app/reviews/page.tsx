@@ -5,6 +5,7 @@ import { api } from '../../lib/api'
 import Link from 'next/link'
 import { ReachOutModal } from '../../components/crm/ReachOutModal'
 import { TenantChip, useMyTenants } from '../../components/ui/TenantPicker'
+import { useBrandFilter } from '../../store/brandFilter'
 
 interface Review {
   id: string
@@ -48,7 +49,7 @@ function StarRating({ rating }: { rating: number }) {
 export default function ReviewsPage() {
   const qc = useQueryClient()
   const { data: tenants = [] } = useMyTenants()
-  const [conceptId, setConceptId] = useState('')
+  const [conceptId, setConceptId] = useState<string>(() => useBrandFilter.getState().brandId ?? '')
   const [ratingFilter, setRatingFilter] = useState('')
   const [showManual, setShowManual] = useState(false)
   const [manualForm, setManualForm] = useState({ conceptId: '', rating: 5, comment: '', source: 'manual' })
