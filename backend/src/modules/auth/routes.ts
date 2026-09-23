@@ -492,7 +492,7 @@ export async function authRoutes(fastify: FastifyInstance) {
     // Say so rather than promising a link that physically cannot be sent.
     // This is a fact about the server, not about the account, so it gives away
     // nothing — and the alternative is someone refreshing an inbox forever.
-    if (!deliveryConfigured()) {
+    if (!(await deliveryConfigured())) {
       req.log.error('password reset requested but no delivery channel is configured')
       throw new AppError(
         'RESET_UNAVAILABLE',

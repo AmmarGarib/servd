@@ -9,6 +9,7 @@
 import type { Customer, CustomerConversation } from '@prisma/client'
 import { prisma } from './prisma.js'
 import { sendText as sendWhatsApp } from './whatsapp.js'
+import { sendEmail, emailConfigured } from './mailer.js'
 
 // ─── Outbound fan-out ─────────────────────────────────────────────────────────
 
@@ -183,21 +184,14 @@ export async function hasOpenCustomerConversation(customerId: string): Promise<b
 // ─── Helpers (kept local — small enough to not warrant a shared module) ──────
 
 async function sendEmailWithReplyTo(to: string, subject: string, html: string, replyTo: string | null): Promise<void> {
-  if (!process.env['SMTP_USER'] || !process.env['SMTP_PASS']) {
-    console.log(`[customer-channels] EMAIL (no SMTP) to ${to}: ${subject}${replyTo ? ` (Reply-To: ${replyTo})` : ''}`)
+  // Was a second, independent transport built from process.env. One mail
+  // configuration, one place to change it — otherwise setting the credentials
+  // in admin fixes some emails and silently not others.
+  if (!(await emailConfigured())) {
+    console.log(`[customer-channels] EMAIL (not configured) to ${to}: ${subject}${replyTo ? ` (Reply-To: ${replyTo})` : ''}`)
     return
   }
-  const nodemailer = await import('nodemailer')
-  const transporter = nodemailer.default.createTransport({
-    host: process.env['SMTP_HOST'] ?? 'email-smtp.eu-north-1.amazonaws.com',
-    port: parseInt(process.env['SMTP_PORT'] ?? '587', 10),
-    secure: false,
-    auth: { user: process.env['SMTP_USER'] ?? '', pass: process.env['SMTP_PASS'] ?? '' },
-  })
-  await transporter.sendMail({
-    from: `servd <${process.env['SMTP_FROM'] ?? 'noreply@servd.app'}>`,
-    to, subject, html, ...(replyTo ? { replyTo } : {}),
-  })
+  await sendEmail({ to, subject, html, replyTo })
 }
 
 function renderChatEmailHtml(opts: {

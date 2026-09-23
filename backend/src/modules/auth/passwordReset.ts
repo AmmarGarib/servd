@@ -30,6 +30,8 @@
 import crypto from 'crypto'
 import { serviceClient as prisma } from '../../lib/prisma.js'
 import { sendEmail } from '../../lib/notify.js'
+import { emailConfigured } from '../../lib/mailer.js'
+import { whatsappConfigured } from '../../lib/whatsapp.js'
 import { sendText as sendWhatsApp } from '../../lib/whatsapp.js'
 import { normalisePhone } from './otp.js'
 
@@ -59,9 +61,13 @@ export function hashToken(token: string): string {
  * still answered "a link is on its way" would leave someone refreshing an
  * inbox that is never going to receive anything.
  */
-export function deliveryConfigured(): boolean {
-  const email    = Boolean(process.env['SMTP_USER'] && process.env['SMTP_PASS'])
-  const whatsapp = Boolean(process.env['WHATSAPP_API_URL'] && process.env['WHATSAPP_API_KEY'])
+export async function deliveryConfigured(): Promise<boolean> {
+  // Both channels resolve from the settings table first and the environment
+  // second, so this must ask the resolvers rather than read process.env. When
+  // it read env directly, configuring the credentials in admin left this
+  // returning false: /forgot went on refusing to send while /health, asking the
+  // resolvers, reported email as fine.
+  const [email, whatsapp] = await Promise.all([emailConfigured(), whatsappConfigured()])
   return email || whatsapp
 }
 

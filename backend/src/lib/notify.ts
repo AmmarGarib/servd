@@ -1,6 +1,6 @@
-import nodemailer from 'nodemailer'
 import twilio from 'twilio'
 import { AppError } from './errors.js'
+import { sendEmail as sendMail, emailConfigured } from './mailer.js'
 
 const isProd = process.env['NODE_ENV'] === 'production'
 
@@ -9,11 +9,13 @@ const isProd = process.env['NODE_ENV'] === 'production'
 // this, prod silently swallows every customer email/SMS and you only find out
 // when a customer asks where their order receipt went.
 {
+  // Env only — the database may well carry credentials this early check cannot
+  // see, so the wording below says "check admin" rather than asserting an outage.
   const emailMissing = !process.env['SMTP_USER'] || !process.env['SMTP_PASS']
   const smsMissing = !process.env['TWILIO_SID'] || !process.env['TWILIO_TOKEN']
   if (emailMissing) {
-    const msg = '[notify] EMAIL DISABLED — SMTP_USER/SMTP_PASS not set; sendEmail() is a no-op'
-    if (isProd) console.error(msg + ' (THIS IS PRODUCTION — customers will not get receipts)')
+    const msg = '[notify] no SMTP_* in the environment — email will work only if it is configured in admin → Configuration → Email'
+    if (isProd) console.error(msg + ' (production — verify at /health that email is configured)')
     else console.warn(msg)
   }
   if (smsMissing) {
@@ -25,31 +27,25 @@ const isProd = process.env['NODE_ENV'] === 'production'
 
 // ─── Email ────────────────────────────────────────────────────────────────────
 
-const transporter = nodemailer.createTransport({
-  host: process.env['SMTP_HOST'] ?? 'email-smtp.eu-north-1.amazonaws.com',
-  port: parseInt(process.env['SMTP_PORT'] ?? '587', 10),
-  secure: false,
-  auth: {
-    user: process.env['SMTP_USER'] ?? '',
-    pass: process.env['SMTP_PASS'] ?? '',
-  },
-})
-
+// Delivery goes through lib/mailer.ts, which resolves credentials from the
+// settings table first and the environment second.
+//
+// This used to build its own transporter from process.env at MODULE LOAD, which
+// had two consequences worth remembering. The transport was frozen at boot, so
+// changing the credentials meant restarting the API; and once the settings moved
+// into the database, this path kept reading env and silently skipped email while
+// /health — reading the new resolver — reported everything fine. A health check
+// that disagrees with the code it is reporting on is worse than no health check.
 export async function sendEmail(to: string, subject: string, html: string): Promise<void> {
-  if (!process.env['SMTP_USER'] || !process.env['SMTP_PASS']) {
+  if (!(await emailConfigured())) {
     if (isProd) {
       // In production a missing transport is an outage, not a benign skip.
-      throw new AppError('NOTIFY_NOT_CONFIGURED', 'Email transport is not configured (SMTP_USER/SMTP_PASS)', 503)
+      throw new AppError('NOTIFY_NOT_CONFIGURED', 'Email is not configured (set it in admin → Configuration → Email)', 503)
     }
     console.log(`[notify] EMAIL (no SMTP configured) to ${to}: ${subject}`)
     return
   }
-  await transporter.sendMail({
-    from: `servd <${process.env['SMTP_FROM'] ?? 'noreply@servd.app'}>`,
-    to,
-    subject,
-    html,
-  })
+  await sendMail({ to, subject, html })
 }
 
 // ─── SMS ──────────────────────────────────────────────────────────────────────
