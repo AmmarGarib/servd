@@ -81,7 +81,7 @@ export type ModuleId =
   // Service
   | 'pos' | 'reservations' | 'reservations_admin' | 'scheduling' | 'tables' | 'dispatch' | 'riders'
   // Kitchen
-  | 'menu' | 'components' | 'recipes' | 'inventory' | 'kds_config' | 'par_sheet'
+  | 'menu' | 'components' | 'recipes' | 'inventory' | 'kds_config' | 'par_sheet' | 'food_safety'
   // Marketing
   | 'marketing_workspace' | 'crm' | 'campaigns' | 'complaints' | 'reviews' | 'calendar' | 'media' | 'promos' | 'brands' | 'analytics'
   // Finance
@@ -143,6 +143,7 @@ export const MODULES: ModuleMeta[] = [
   { id: 'inventory',          label: 'Inventory',           section: 'Kitchen' },
   { id: 'par_sheet',          label: 'Par Sheet',           section: 'Kitchen' },
   { id: 'kds_config',         label: 'KDS Config',          section: 'Kitchen' },
+  { id: 'food_safety',        label: 'Food Safety Logs',    section: 'Kitchen' },
 
   { id: 'marketing_workspace', label: 'Marketing Workspace', section: 'Marketing' },
   { id: 'crm',                label: 'CRM',                 section: 'Marketing' },
@@ -217,7 +218,7 @@ export const DEFAULT_MODULE_ACCESS: Record<AppRole, ModuleId[]> = {
   ],
   boh_management: [
     'dashboard', 'ops', 'orders', 'kds_all', 'kds_dashboard', 'expo_station',
-    'menu', 'components', 'recipes', 'par_sheet', 'inventory', 'kds_config',
+    'menu', 'components', 'recipes', 'par_sheet', 'inventory', 'kds_config', 'food_safety',
     'procurement', 'staff_directory', 'staff_boh', 'staff_procurement', 'kitchen_staff',
     'reports',
   ],
@@ -225,15 +226,15 @@ export const DEFAULT_MODULE_ACCESS: Record<AppRole, ModuleId[]> = {
     'pos', 'reservations', 'tables', 'dispatch', 'orders', 'curbside',
   ],
   boh: [
-    'kds_all', 'kds_dashboard', 'inventory', 'recipes', 'par_sheet',
+    'kds_all', 'kds_dashboard', 'inventory', 'recipes', 'par_sheet', 'food_safety',
   ],
   // Line cook's surface: the Kitchen view dashboard + Par sheet. They do NOT
   // get the Expo Station (that's the expediter's pass-station overview) and
   // they do NOT get KDS Config (admin-only station CRUD). 2026-05-14: dropped
   // kds_all so the per-station injections + Expo Station vanish from the cook's
   // sidebar — /kds is now the single entry point.
-  kitchen:   ['kds_dashboard', 'par_sheet'],
-  expediter: ['kds_all', 'expo_station', 'orders', 'par_sheet'],
+  kitchen:   ['kds_dashboard', 'par_sheet', 'food_safety'],
+  expediter: ['kds_all', 'expo_station', 'orders', 'par_sheet', 'food_safety'],
   cashier:   ['dashboard', 'pos', 'orders', 'curbside', 'tables'],
 
   procurement: ['procurement', 'inventory', 'reports'],
@@ -258,7 +259,7 @@ export const DEFAULT_MODULE_ACCESS: Record<AppRole, ModuleId[]> = {
     'fnb_dashboard',
     'dashboard', 'ops', 'orders', 'refunds', 'curbside',
     'kds_all', 'kds_dashboard', 'expo_station',
-    'menu', 'components', 'recipes', 'par_sheet', 'inventory', 'kds_config',
+    'menu', 'components', 'recipes', 'par_sheet', 'inventory', 'kds_config', 'food_safety',
     'pos', 'reservations', 'reservations_admin', 'scheduling', 'tables', 'dispatch', 'riders',
     'complaints', 'reviews',
     'staff_directory', 'staff_foh', 'staff_boh', 'kitchen_staff',

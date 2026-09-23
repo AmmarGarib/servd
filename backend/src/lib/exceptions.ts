@@ -30,6 +30,7 @@ export type ExceptionKind =
   | 'manual_journal'        // manual JE entry posted (every one is reviewable)
   | 'period_reopened'       // period lock removed
   | 'wage_change'           // wage rate edited
+  | 'food_safety_temperature' // a temperature check outside its limit
 
 export interface FlagInput {
   kind:        ExceptionKind

@@ -45,6 +45,8 @@ export const CHART_OF_ACCOUNTS: AccountTemplate[] = [
   { code: '1510', name: 'Kitchen Equipment',                  type: 'asset' },
   { code: '1520', name: 'Furniture & Fixtures',               type: 'asset' },
   { code: '1530', name: 'IT Equipment',                       type: 'asset' },
+  { code: '1540', name: 'Vehicles',                           type: 'asset' },
+  { code: '1550', name: 'Leasehold Improvements',             type: 'asset',     description: 'Fit-out of rented premises' },
   { code: '1590', name: 'Accumulated Depreciation',           type: 'asset',     description: 'Contra-asset' },
 
   // ── Liabilities ───────────────────────────────────────────────────────
@@ -119,6 +121,7 @@ export const CHART_OF_ACCOUNTS: AccountTemplate[] = [
   // ── Other ─────────────────────────────────────────────────────────────
   { code: '8010', name: 'Cash Variance (Over / Short)',       type: 'expense' },
   { code: '8020', name: 'Foreign Exchange Gain / Loss',       type: 'expense' },
+  { code: '8030', name: 'Gain / Loss on Asset Disposal',      type: 'expense',   description: 'Proceeds less book value when equipment is sold or scrapped' },
 ]
 
 /** Codes the posting engine cannot run without — checked by /health. */

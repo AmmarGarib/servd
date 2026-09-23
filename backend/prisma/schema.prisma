@@ -5221,3 +5221,191 @@ model Position {
   @@index([departmentId])
   @@map("positions")
 }
+
+// ════════════════════════════════════════════════════════════════════════════
+// Fixed assets — base layer (2026-09-23)
+//
+// A register of owned equipment and fit-out, with straight-line depreciation
+// posted monthly to the ledger. Before this existed the fixed-asset accounts
+// (1510–1590, 6150) sat at zero forever: no asset base on the balance sheet and
+// no depreciation in the P&L.
+// ════════════════════════════════════════════════════════════════════════════
+
+model FixedAsset {
+  id                    String    @id @default(uuid())
+  tenantId              String
+  conceptId             String? // brand it serves; null = shared across brands
+  locationId            String?
+  name                  String
+  // kitchen_equipment | furniture_fixtures | it_equipment | vehicles | leasehold
+  category              String
+  assetTag              String?
+  serialNumber          String?
+  supplier              String?
+  acquiredAt            DateTime
+  costCents             Int
+  salvageCents          Int       @default(0)
+  usefulLifeMonths      Int
+  // Credit side of the acquisition entry: 1020 bank, 1010 cash, 2010 payable.
+  // Always set: every asset is capitalised (3010 for equipment already owned).
+  acquisitionCreditCode String?
+  status                String    @default("active") // active | disposed
+  disposedAt            DateTime?
+  disposalProceedsCents Int?
+  notes                 String?
+  createdById           String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  depreciation FixedAssetDepreciation[]
+
+  @@index([tenantId, status])
+  @@map("fixed_assets")
+}
+
+model FixedAssetDepreciation {
+  id          String   @id @default(uuid())
+  tenantId    String
+  assetId     String
+  period      String // 'YYYY-MM'
+  amountCents Int
+  postedAt    DateTime @default(now())
+
+  asset FixedAsset @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  // One charge per asset per month, whatever happens — reruns are no-ops.
+  @@unique([assetId, period])
+  @@index([tenantId, period])
+  @@map("fixed_asset_depreciation")
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Receivables — base layer (2026-09-23)
+//
+// Invoices raised to a customer who pays later (corporate catering, events,
+// accounts). Before this nothing receivable was tracked at all and account
+// 1110 was never posted to. Till sales settle immediately and never come here.
+// ════════════════════════════════════════════════════════════════════════════
+
+model ReceivableInvoice {
+  id                 String    @id @default(uuid())
+  tenantId           String
+  conceptId          String?
+  number             String
+  customerName       String
+  customerEmail      String?
+  customerPhone      String?
+  customerNtn        String?
+  customerId         String? // linked servd customer, when there is one
+  issueDate          DateTime
+  dueDate            DateTime
+  description        String
+  amountCents        Int // before tax
+  taxCents           Int       @default(0)
+  paidCents          Int       @default(0)
+  status             String    @default("open") // open | partial | paid | void
+  revenueAccountCode String    @default("4090")
+  notes              String?
+  createdById        String?
+  voidedAt           DateTime?
+  voidReason         String?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  payments ReceivablePayment[]
+
+  @@unique([tenantId, number])
+  @@index([tenantId, status, dueDate])
+  @@map("receivable_invoices")
+}
+
+model ReceivablePayment {
+  id          String   @id @default(uuid())
+  tenantId    String
+  invoiceId   String
+  amountCents Int
+  receivedAt  DateTime
+  method      String // bank | cash | cheque | card
+  reference   String?
+  createdById String?
+  createdAt   DateTime @default(now())
+
+  invoice ReceivableInvoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@index([invoiceId])
+  @@map("receivable_payments")
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Food safety — base layer (2026-09-23)
+//
+// Temperature checks against limits, cleaning schedules, and corrective action
+// whenever a reading is out of range. Nothing of the kind existed before.
+// ════════════════════════════════════════════════════════════════════════════
+
+model FoodSafetyUnit {
+  id         String   @id @default(uuid())
+  tenantId   String
+  locationId String?
+  name       String // "Walk-in chiller", "Bain-marie"
+  kind       String // fridge | freezer | hot_hold | cooking | delivery | other
+  minC       Float? // null = no lower limit
+  maxC       Float? // null = no upper limit
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+
+  logs TemperatureLog[]
+
+  @@index([tenantId, isActive])
+  @@map("food_safety_units")
+}
+
+model TemperatureLog {
+  id               String   @id @default(uuid())
+  tenantId         String
+  unitId           String
+  readingC         Float
+  withinRange      Boolean
+  // Required whenever withinRange is false — an out-of-range reading with no
+  // action recorded is the thing an inspector asks about first.
+  correctiveAction String?
+  note             String?
+  takenById        String?
+  takenAt          DateTime @default(now())
+
+  unit FoodSafetyUnit @relation(fields: [unitId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, takenAt])
+  @@index([unitId, takenAt])
+  @@map("temperature_logs")
+}
+
+model CleaningTask {
+  id         String   @id @default(uuid())
+  tenantId   String
+  locationId String?
+  name       String
+  area       String?
+  frequency  String // daily | weekly | monthly
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+
+  logs CleaningLog[]
+
+  @@index([tenantId, isActive])
+  @@map("cleaning_tasks")
+}
+
+model CleaningLog {
+  id       String   @id @default(uuid())
+  tenantId String
+  taskId   String
+  doneById String?
+  doneAt   DateTime @default(now())
+  note     String?
+
+  task CleaningTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@index([taskId, doneAt])
+  @@map("cleaning_logs")
+}

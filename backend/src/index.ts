@@ -58,6 +58,9 @@ import { managementRoutes } from './modules/management/routes.js'
 import { trackingRoutes } from './modules/tracking/routes.js'
 import { accountingRoutes } from './modules/accounting/routes.js'
 import { crmRoutes } from './modules/crm/routes.js'
+import { fixedAssetRoutes } from './modules/fixedAssets/routes.js'
+import { receivableRoutes } from './modules/receivables/routes.js'
+import { foodSafetyRoutes } from './modules/foodSafety/routes.js'
 import { loyaltyRoutes } from './modules/loyalty/routes.js'
 import { storefrontRoutes } from './modules/storefront/routes.js'
 import { webhookRoutes, webhookManagementRoutes } from './modules/webhooks/routes.js'
@@ -306,6 +309,11 @@ async function build() {
       await api.register(reportRoutes, { prefix: '/reports' })
       await api.register(managementRoutes, { prefix: '/management' })
       await api.register(accountingRoutes, { prefix: '/accounting' })
+      // Base layers (2026-09-23). Under /accounting so the accounting module
+      // permission gates them like the rest of the books.
+      await api.register(fixedAssetRoutes, { prefix: '/accounting/fixed-assets' })
+      await api.register(receivableRoutes, { prefix: '/accounting/receivables' })
+      await api.register(foodSafetyRoutes, { prefix: '/food-safety' })
       await api.register(financeRoutes, { prefix: '/finance' })
       await api.register(crmRoutes, { prefix: '/crm' })
       await api.register(loyaltyRoutes, { prefix: '/loyalty' })

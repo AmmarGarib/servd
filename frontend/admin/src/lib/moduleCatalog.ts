@@ -115,7 +115,7 @@ export const MODULE_CATALOG: AppModule[] = [
     id: 'crm', ref: '3', name: 'Customers, campaigns & storefront', icon: '🧑‍🤝‍🧑',
     build: 'built', absorbed: ['crm', 'marketing'],
     blurb: 'Who buys from you, how you reach them, and the public site they see.',
-    gaps: 'POST /crm/campaigns/:id/send has no company filter — it mails every opted-in customer in the database, because Campaign has no tenantId. That is the most expensive defect in this module. Scheduled campaigns never fire; nothing reads scheduledAt. Loyalty rates and tiers are global (Setting and TierConfig have no tenantId), so all companies share one ladder. /gift-cards/redeem checks neither company nor the card\'s own conceptId. Three parallel segment systems exist (Segment, CustomerSegment, smart-segments) and campaigns can only target the first. Promo attribution works for codes and QR (Order.promoCodeId, promo_code_usages), but POS never sends promo_code_id, so a promo cannot be redeemed at the till, and email/SMS campaigns track opens and clicks with no link to orders.',
+    gaps: 'Campaigns reach every customer we hold contact details for, across all companies, unless they unsubscribed — intended. Brand targeting is optional per campaign, and every message carries an unsubscribe link. Scheduled campaigns still never fire; nothing reads scheduledAt. Loyalty rates and tiers are global (Setting and TierConfig have no tenantId), so all companies share one ladder. /gift-cards/redeem checks neither company nor the card\'s own conceptId. Three parallel segment systems exist (Segment, CustomerSegment, smart-segments) and campaigns can only target the first. Promo attribution works for codes and QR (Order.promoCodeId, promo_code_usages), but POS never sends promo_code_id, so a promo cannot be redeemed at the till, and email/SMS campaigns track opens and clicks with no link to orders.',
     sections: [
       { label: 'Customers',          href: '/customers',           module: 'crm' },
       { label: 'CRM',                href: '/crm',                 module: 'crm' },
@@ -126,7 +126,7 @@ export const MODULE_CATALOG: AppModule[] = [
       { label: 'Complaints',         href: '/complaints',          module: 'complaints' },
       { label: 'Reviews',            href: '/reviews',             module: 'reviews' },
       { label: 'Workspace',          href: '/marketing',           module: 'marketing_workspace' },
-      { label: 'Campaigns',          href: '/crm/campaigns',       module: 'campaigns', hint: 'Sends across every company — see gaps' },
+      { label: 'Campaigns',          href: '/crm/campaigns',       module: 'campaigns', hint: 'All customers, or by brand' },
       { label: 'Promotions',         href: '/promos',              module: 'promos' },
       { label: 'Discounts',          href: '/discounts',           module: 'promos' },
       { label: 'QR codes',           href: '/qrcodes',             module: 'promos' },
@@ -193,11 +193,12 @@ export const MODULE_CATALOG: AppModule[] = [
     id: 'tax', ref: '7', name: 'Tax, invoices & FBR/SRB filing', icon: '🏛',
     build: 'partial', absorbed: ['tax', 'fiscal', 'ar'],
     blurb: 'What you owe the revenue authorities, what you file, and what customers owe you.',
-    gaps: 'Online sales are not being filed at all: only POS enqueues to FBR/SRB, so every storefront order goes unreported. srbPosId cannot be set anywhere in admin — it is absent from PATCH /concepts and the Brands form, which carries only fbrPosId — so SRB submission silently skips every brand. The FBR adapter builds item lines at the legacy concept.taxRate (17%) while the till charges 15/8, so line tax will never reconcile to the header. /configuration/tax is a read-only stub, so rates are not editable, and menu-item zero-rated/exempt is saved but never applied (taxRate.ts is dead code). Receivables do not exist in any form: no due date, balance or customer link on TaxInvoice, no "on account" tender, account 1110 never posted to, no aging, credit limits or statements. That is fine while every sale settles at the till and blocking the day you invoice a corporate account.',
+    gaps: 'Online sales are not being filed at all: only POS enqueues to FBR/SRB, so every storefront order goes unreported. srbPosId cannot be set anywhere in admin — it is absent from PATCH /concepts and the Brands form, which carries only fbrPosId — so SRB submission silently skips every brand. The FBR adapter builds item lines at the legacy concept.taxRate (17%) while the till charges 15/8, so line tax will never reconcile to the header. /configuration/tax is a read-only stub, so rates are not editable, and menu-item zero-rated/exempt is saved but never applied (taxRate.ts is dead code). Receivables now have a base layer at /accounting/receivables: invoices post to 1110 (with GST to 2030), payments clear to bank or cash, partial payments and overpayment protection, void-while-unpaid, and aging by days past due. Still missing there: credit notes (a paid invoice cannot be corrected), statements and reminders to the customer, credit limits, an "on account" tender at the POS, and FBR submission of these invoices.',
     sections: [
       { label: 'Sales tax return', href: '/accounting/sales-tax-return', module: 'accounting' },
       { label: 'Tax settings',     href: '/configuration/tax',           module: 'accounting', hint: 'Read-only stub — rates are not editable' },
       { label: 'FBR / PRAL setup', href: '/settings/integrations',       module: 'integrations' },
+      { label: 'Receivables',      href: '/accounting/receivables',      module: 'accounting', hint: 'Invoices customers pay later — base layer' },
     ],
   },
   {
@@ -325,17 +326,22 @@ export const MODULE_CATALOG: AppModule[] = [
   },
   {
     id: 'assets', ref: '17', name: 'Equipment & fixed assets', icon: '🏭',
-    build: 'not-built', absorbed: ['assets'],
+    build: 'partial', absorbed: ['assets'],
     blurb: 'Ovens, fit-outs and vehicles — what you own and what it is worth now.',
-    gaps: 'Nothing is built: no asset table, no /assets route, no screen. Equipment is captured only as project spend in the CapEx tracker (/finance/capex) — vendor, delivery and warranty, but no asset tag, useful life, depreciation or disposal — and that never posts a journal entry. The consequence is on the balance sheet: the fixed-asset accounts in chartOfAccounts.ts (1510/1520/1530, 1590 Accumulated Depreciation, 6150 Depreciation Expense) sit at zero forever, so there is no asset base and no investing line in cash flow.',
-    sections: [],
+    gaps: 'Base layer built (Sept 2026): a register at /accounting/fixed-assets that capitalises each asset (Dr 1510–1550, Cr bank, cash, supplier payable or owner’s capital for equipment already owned), charges straight-line depreciation monthly (Dr 6150 / Cr 1590, one entry per asset per month, safe to re-run), and books disposals with the gain or loss to 8030. Still missing: depreciation is charged by pressing “Charge month”, not on a schedule; only straight-line exists (no reducing balance); the CapEx tracker (/finance/capex) is not linked, so a project’s spend is not turned into assets automatically; no maintenance or warranty reminders; cost, life and dates cannot be edited once posted (by design — a correction needs a reversal, which has no screen yet).',
+    sections: [
+      { label: 'Asset register', href: '/accounting/fixed-assets', module: 'accounting' },
+      { label: 'CapEx tracker',  href: '/finance/capex',           module: 'capital', hint: 'Project spend — not yet linked to the register' },
+    ],
   },
   {
     id: 'haccp', ref: '18', name: 'Food safety logs', icon: '🌡',
-    build: 'not-built', absorbed: ['haccp'],
+    build: 'partial', absorbed: ['haccp'],
     blurb: 'Temperature checks, cleaning schedules and corrective actions.',
-    gaps: 'Nothing exists — no model, no route, no page, and no sections on this card, so there is nowhere to click. Temperature logs, cleaning schedules and corrective actions are all absent. The only scaffolding is WasteLog.reason="expired", which records a loss after it has happened, and Component.shelfLifeHours, which is captured and never checked. Expiry tracking is claimed both here and by stock control; build it once, in the stock ledger, rather than twice.',
-    sections: [],
+    gaps: 'Base layer built (Sept 2026) at /food-safety: temperature units with limits, a standard starting set (chillers 0–5°C, freezer ≤ −18°C, hot hold ≥ 63°C, cooking core ≥ 75°C, chilled deliveries ≤ 8°C), readings that cannot be saved out of range without a corrective action and raise a high-severity exception, and daily/weekly/monthly cleaning tasks with a due list. Still missing: no printable inspection report or export; units and tasks are per company, not yet per outlet in the UI (locationId exists but is not set); no reminders when a check is overdue; nothing yet for allergens, supplier approval, pest control or staff training records; expiry tracking still belongs in the stock ledger, which does not exist.',
+    sections: [
+      { label: 'Temperatures & cleaning', href: '/food-safety', module: 'food_safety' },
+    ],
   },
 ]
 
