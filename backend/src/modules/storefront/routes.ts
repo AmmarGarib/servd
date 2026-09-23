@@ -1049,6 +1049,7 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
       where: { id: req.customer!.id },
       select: {
         id: true, name: true, email: true, phone: true,
+        phoneVerifiedAt: true, emailVerifiedAt: true,
         marketingOptIn: true, birthdayMmDd: true,
         firstOrderAt: true, lastOrderAt: true,
         totalSpentCents: true, walletBalance: true,

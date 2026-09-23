@@ -24,6 +24,7 @@ interface LoyaltyTransaction {
 }
 interface CustomerProfile {
   name: string | null; email: string | null; phone: string | null
+  phoneVerifiedAt?: string | null; emailVerifiedAt?: string | null
   referralCode?: string | null
   loyaltyAccount: LoyaltyAccount | null; orders: Order[]
 }
@@ -201,6 +202,11 @@ export default function AccountPage() {
             {firstName ? `Hi, ${firstName}.` : 'Welcome back.'}
           </h1>
         </div>
+
+        {/* ── Unverified contact — the second channel for when WhatsApp drops ── */}
+        {token && (
+          <VerifyContactBanner token={token} profile={profile} onVerified={fetchAccount} />
+        )}
 
         {/* ── Bento top row: profile + loyalty side by side ── */}
         <div className="flex gap-3 mb-3">
@@ -1173,6 +1179,84 @@ function SupportSection({ orders }: { orders: Order[] }) {
           </button>
         </div>
       )}
+    </div>
+  )
+}
+
+// ─── Verify-later ────────────────────────────────────────────────────────────
+// Signup verifies every channel a code reached. If WhatsApp (or email) was down
+// at the time, that channel is left unverified — this is how it gets finished.
+// One channel at a time, so the customer is never juggling two codes here.
+function VerifyContactBanner({ token, profile, onVerified }: {
+  token: string
+  profile: CustomerProfile
+  onVerified: () => void
+}) {
+  const pending: Array<'phone' | 'email'> = []
+  if (profile.phone && !profile.phoneVerifiedAt) pending.push('phone')
+  if (profile.email && !profile.emailVerifiedAt) pending.push('email')
+  const [active, setActive] = useState<'phone' | 'email' | null>(null)
+  const [code, setCode] = useState('')
+  const [msg, setMsg] = useState('')
+  const [busy, setBusy] = useState(false)
+  if (pending.length === 0) return null
+
+  const call = async (path: string, body: object) => {
+    const res = await fetch(`${API_URL}/api/v1/auth/customer/contact/${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify(body),
+    })
+    const data = await res.json().catch(() => ({})) as { error?: { message?: string } }
+    if (!res.ok) throw new Error(data.error?.message ?? 'Something went wrong')
+    return data
+  }
+
+  const send = async (channel: 'phone' | 'email') => {
+    setBusy(true); setMsg('')
+    try { await call('request', { channel }); setActive(channel); setCode('') }
+    catch (e) { setMsg((e as Error).message) }
+    finally { setBusy(false) }
+  }
+  const confirm = async () => {
+    if (!active) return
+    setBusy(true); setMsg('')
+    try { await call('confirm', { channel: active, code }); setActive(null); setCode(''); onVerified() }
+    catch (e) { setMsg((e as Error).message) }
+    finally { setBusy(false) }
+  }
+
+  const labelFor = (c: 'phone' | 'email') => c === 'phone' ? `WhatsApp (${profile.phone})` : `email (${profile.email})`
+  return (
+    <div className="mb-4 rounded-2xl p-4" style={{ background: '#fff', border: '1px solid rgba(0,0,0,0.08)' }}>
+      <p className="font-black text-sm" style={{ color: 'var(--servd-ink)' }}>Finish verifying your account</p>
+      <p className="text-xs mt-1" style={{ color: 'var(--servd-mute)' }}>
+        We keep two ways to reach you, so order updates and sign-in codes still arrive if one is down.
+      </p>
+      {active === null ? (
+        <div className="flex flex-wrap gap-2 mt-3">
+          {pending.map((c) => (
+            <button key={c} disabled={busy} onClick={() => { void send(c) }}
+              className="text-xs font-bold px-3 py-2 rounded-xl disabled:opacity-50"
+              style={{ background: 'var(--servd-green)', color: '#fff' }}>
+              Verify {labelFor(c)}
+            </button>
+          ))}
+        </div>
+      ) : (
+        <div className="flex gap-2 mt-3">
+          <input value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+            inputMode="numeric" autoComplete="one-time-code" placeholder={`Code from ${active === 'phone' ? 'WhatsApp' : 'email'}`}
+            aria-label="Verification code"
+            className="flex-1 min-w-0 px-3 py-2 rounded-xl text-sm" style={{ border: '1px solid rgba(0,0,0,0.15)' }} />
+          <button disabled={busy || code.length < 6} onClick={() => { void confirm() }}
+            className="text-xs font-bold px-3 py-2 rounded-xl disabled:opacity-50"
+            style={{ background: 'var(--servd-green)', color: '#fff' }}>
+            Verify
+          </button>
+        </div>
+      )}
+      {msg && <p className="text-xs mt-2" style={{ color: '#dc2626' }}>{msg}</p>}
     </div>
   )
 }

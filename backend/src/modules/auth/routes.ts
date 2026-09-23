@@ -10,7 +10,7 @@ import {
   disable as disableTwoFactor,
   maskPhone,
 } from './twoFactor.js'
-import { requestOtp, verifyOtp, normalisePhone } from './otp.js'
+import { requestOtp, verifyOtp, normalisePhone, requestEmailOtp, verifyEmailOtp, hasLivePhoneCode, hasLiveEmailCode } from './otp.js'
 import { sendText, invalidateWhatsappConfig, WA_URL_KEY, WA_KEY_KEY } from '../../lib/whatsapp.js'
 import { sendEmail, mailConfig, invalidateMailConfig, emailConfigured as isEmailConfigured, SMTP_HOST_KEY, SMTP_PORT_KEY, SMTP_USER_KEY, SMTP_PASS_KEY, SMTP_FROM_KEY } from '../../lib/mailer.js'
 import { runDeliveryWatch, DELIVERY_STATE_KEY } from '../../workers/deliveryWatch.js'
@@ -20,7 +20,7 @@ import { revokeBearer, revokeAllForSubject } from '../../lib/tokenRevocation.js'
 import { setAuthCookies, setAccessCookie, clearAuthCookies, readCookie, ACCESS_COOKIE, REFRESH_COOKIE } from '../../lib/cookies.js'
 import { serviceClient as prisma } from '../../lib/prisma.js'
 import { resolveTenantScope, tenantWhere } from '../../lib/tenantScope.js'
-import { AppError, UnauthorizedError } from '../../lib/errors.js'
+import { AppError, UnauthorizedError, NotFoundError } from '../../lib/errors.js'
 import { audit } from '../../lib/audit.js'
 import { isStaffEmail, normaliseStaffEmail, STAFF_EMAIL_MESSAGE } from '../../lib/staffEmail.js'
 import { generateStaffPassword } from '../../lib/generatePassword.js'
@@ -866,11 +866,12 @@ export async function authRoutes(fastify: FastifyInstance) {
         .min(8, 'Password must be at least 8 characters')
         .regex(/[a-zA-Z]/, 'Password must contain a letter')
         .regex(/[0-9]/, 'Password must contain a number'),
-      // F19: phone + OTP. Both optional today because legacy clients won't
-      // send them, but new web/storefront flows always do. Server validates
-      // the OTP one more time before stamping phoneVerifiedAt.
-      phone:    z.string().min(7).max(20).optional(),
-      otpCode:  z.string().regex(/^\d{4,6}$/).optional(),
+      // Every account carries BOTH a phone and an email, and verifies each one
+      // a code reached. WhatsApp is unofficial and can drop; email is the
+      // second channel that keeps signup working when it does.
+      phone:     z.string().min(7).max(20),
+      otpCode:   z.string().regex(/^\d{4,6}$/).optional(),   // WhatsApp code
+      emailCode: z.string().regex(/^\d{6}$/).optional(),     // email code
       // Optional: 8-char referral code from another customer. If valid, links
       // the two and primes the dual-bonus payout on the new customer's
       // first order.
@@ -880,14 +881,33 @@ export async function authRoutes(fastify: FastifyInstance) {
       deviceFingerprint: z.string().max(120).optional(),
     }).parse(req.body)
 
-    // If phone + OTP supplied, verify the code now so phoneVerifiedAt can be
-    // stamped inside customerRegister. A bad OTP throws before we touch the
-    // customer table.
-    let otpVerified = false
-    if (body.phone && body.otpCode) {
-      await verifyOtp({ phone: body.phone, code: body.otpCode, purpose: 'signup' })
-      otpVerified = true
+    // Verification rule:
+    //   - every channel that holds a live signup code must be verified, so a
+    //     customer who received both codes verifies both;
+    //   - at least one channel must be verified, so nobody signs up unverified;
+    //   - a channel whose code never arrived (send failed, row dropped) is
+    //     simply left unverified, and can be verified later from /account.
+    //
+    // Both codes are CHECKED before either is CONSUMED. Otherwise a right
+    // WhatsApp code with a mistyped email code burns the WhatsApp code, and the
+    // retry fails with "no active code" on the one the customer got right.
+    const phoneOwed = !body.otpCode && await hasLivePhoneCode(body.phone, 'signup')
+    const emailOwed = !body.emailCode && await hasLiveEmailCode(body.email, 'signup')
+    if (phoneOwed) {
+      throw new AppError('PHONE_CODE_REQUIRED', 'Enter the code we sent to your WhatsApp as well.', 400)
     }
+    if (emailOwed) {
+      throw new AppError('EMAIL_CODE_REQUIRED', 'Enter the code we sent to your email as well.', 400)
+    }
+    if (!body.otpCode && !body.emailCode) {
+      throw new AppError('VERIFICATION_REQUIRED', 'Verify your phone or email to create an account.', 400)
+    }
+    if (body.otpCode)   await verifyOtp({ phone: body.phone, code: body.otpCode, purpose: 'signup', consume: false })
+    if (body.emailCode) await verifyEmailOtp({ email: body.email, code: body.emailCode, purpose: 'signup', consume: false })
+    if (body.otpCode)   await verifyOtp({ phone: body.phone, code: body.otpCode, purpose: 'signup' })
+    if (body.emailCode) await verifyEmailOtp({ email: body.email, code: body.emailCode, purpose: 'signup' })
+    const otpVerified = !!body.otpCode
+    const emailVerified = !!body.emailCode
 
     // Naughty-list gate. Reject signup if the email or device matches an
     // active ban. Throws AppError(403, 'BANNED') which the global error
@@ -903,9 +923,10 @@ export async function authRoutes(fastify: FastifyInstance) {
     try {
       const result = await customerRegister(
         body.name, body.email, body.password,
-        body.phone ? normalisePhone(body.phone) : undefined,
+        normalisePhone(body.phone),
         otpVerified,
         body.referralCode,
+        emailVerified,
       )
       await clearFailures(CUSTOMER_PASSWORD_LIMIT, ip)
       return reply.status(201).send(result)
@@ -949,6 +970,93 @@ export async function authRoutes(fastify: FastifyInstance) {
     }).parse(req.body)
     await verifyOtp({ phone: body.phone, code: body.code, purpose: body.purpose })
     return reply.status(200).send({ ok: true })
+  })
+
+  // POST /auth/customer/request-signup-codes — one code to WhatsApp, one to
+  // email, sent INDEPENDENTLY. One channel failing never blocks the other;
+  // that is the entire point of having two. Only when neither can be reached
+  // does signup stop.
+  //
+  // Per channel: 'sent' (a code is on its way), 'cooldown' (one was sent in the
+  // last 30s and is still valid — treat as sent), 'failed' (nothing arrived).
+  fastify.post('/customer/request-signup-codes', async (req, reply) => {
+    const ip = req.ip ?? 'unknown'
+    await checkRateLimit(CUSTOMER_PASSWORD_LIMIT, ip)
+    const body = z.object({
+      phone: z.string().min(7).max(20),
+      email: z.string().email(),
+    }).parse(req.body)
+
+    type ChannelResult = { status: 'sent' | 'cooldown' | 'failed'; message?: string }
+    const attempt = async (fn: () => Promise<unknown>): Promise<ChannelResult> => {
+      try { await fn(); return { status: 'sent' } }
+      catch (err) {
+        if (err instanceof AppError && err.code === 'OTP_COOLDOWN') return { status: 'cooldown' }
+        // Input errors are the customer's to fix, and must say so rather than
+        // masquerading as a delivery failure.
+        if (err instanceof AppError && (err.code === 'INVALID_PHONE' || err.code === 'INVALID_EMAIL')) throw err
+        req.log.warn({ err: (err as Error).message }, 'signup code delivery failed')
+        return { status: 'failed', message: (err as Error).message }
+      }
+    }
+    const [phone, email] = await Promise.all([
+      attempt(() => requestOtp({ phone: body.phone, purpose: 'signup' })),
+      attempt(() => requestEmailOtp({ email: body.email, purpose: 'signup' })),
+    ])
+    if (phone.status === 'failed' && email.status === 'failed') {
+      return reply.status(503).send({
+        error: { code: 'OTP_SEND_FAILED', message: 'We could not send a code to your WhatsApp or your email. Try again in a moment.' },
+      })
+    }
+    // Delivery detail stays server-side; the client only needs the status.
+    return reply.status(200).send({
+      phone: { status: phone.status },
+      email: { status: email.status },
+    })
+  })
+
+  // Verify-later, for whichever channel signup could not reach (or accounts
+  // created before email verification existed). Uses the contact details on
+  // file — the customer cannot point a code at an address that is not theirs.
+  fastify.post('/customer/contact/request', { preHandler: requireCustomerAuth }, async (req, reply) => {
+    const body = z.object({ channel: z.enum(['phone', 'email']) }).parse(req.body)
+    const c = await prisma.customer.findUnique({
+      where: { id: req.customer!.id },
+      select: { phone: true, email: true, phoneVerifiedAt: true, emailVerifiedAt: true },
+    })
+    if (!c) throw new NotFoundError('Customer')
+    if (body.channel === 'phone') {
+      if (!c.phone) throw new AppError('NO_PHONE', 'Add a phone number to your account first.', 400)
+      if (c.phoneVerifiedAt) return reply.status(200).send({ alreadyVerified: true })
+      await requestOtp({ phone: c.phone, purpose: 'phone_verify', customerId: req.customer!.id })
+    } else {
+      if (!c.email) throw new AppError('NO_EMAIL', 'Add an email to your account first.', 400)
+      if (c.emailVerifiedAt) return reply.status(200).send({ alreadyVerified: true })
+      await requestEmailOtp({ email: c.email, purpose: 'email_verify', customerId: req.customer!.id })
+    }
+    return reply.status(200).send({ sent: true })
+  })
+
+  fastify.post('/customer/contact/confirm', { preHandler: requireCustomerAuth }, async (req, reply) => {
+    const body = z.object({
+      channel: z.enum(['phone', 'email']),
+      code: z.string().regex(/^\d{6}$/),
+    }).parse(req.body)
+    const c = await prisma.customer.findUnique({
+      where: { id: req.customer!.id },
+      select: { phone: true, email: true },
+    })
+    if (!c) throw new NotFoundError('Customer')
+    if (body.channel === 'phone') {
+      if (!c.phone) throw new AppError('NO_PHONE', 'No phone number on this account.', 400)
+      await verifyOtp({ phone: c.phone, code: body.code, purpose: 'phone_verify' })
+      await prisma.customer.update({ where: { id: req.customer!.id }, data: { phoneVerifiedAt: new Date() } })
+    } else {
+      if (!c.email) throw new AppError('NO_EMAIL', 'No email on this account.', 400)
+      await verifyEmailOtp({ email: c.email, code: body.code, purpose: 'email_verify' })
+      await prisma.customer.update({ where: { id: req.customer!.id }, data: { emailVerifiedAt: new Date() } })
+    }
+    return reply.status(200).send({ verified: true })
   })
 
   // ── Staff self-signup + CEO approval ───────────────────────────────────────

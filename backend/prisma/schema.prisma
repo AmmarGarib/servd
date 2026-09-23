@@ -1078,6 +1078,12 @@ model Customer {
   // WhatsApp OTP (cheaper than Twilio SMS). phoneVerifiedAt stays null until
   // the customer enters the right 6-digit code.
   phoneVerifiedAt          DateTime?
+  // Set when the customer proves control of the email address — a signup code
+  // sent to it, the verify-later flow on /account, or a magic link that was
+  // emailed to them. WhatsApp is not an official channel and can drop, so
+  // every account is verified on BOTH where both can be delivered; either one
+  // alone is enough to create the account, and the other can be verified later.
+  emailVerifiedAt          DateTime?
   isBlacklisted            Boolean   @default(false)
   blacklistReason          String?
 
@@ -1390,6 +1396,10 @@ model MagicLink {
   token      String    @unique
   expiresAt  DateTime
   usedAt     DateTime?
+  // Where the link was sent. Following it proves control of that address, so
+  // verify stamps emailVerifiedAt / phoneVerifiedAt accordingly. Null on links
+  // issued before this column existed — those verify nothing.
+  channel    String? // 'email' | 'phone'
   createdAt  DateTime  @default(now())
 
   customer Customer @relation(fields: [customerId], references: [id])
@@ -1431,6 +1441,24 @@ model PhoneOtp {
 
   @@index([phone, purpose, createdAt])
   @@map("phone_otps")
+}
+
+// Email counterpart of PhoneOtp. Same lifetime, attempt limit and cooldown,
+// kept as its own table rather than a `channel` column so neither existing
+// query on phone_otps changes shape.
+model EmailOtp {
+  id         String    @id @default(uuid())
+  email      String // lowercased
+  code       String // 6-digit numeric
+  purpose    String // 'signup' | 'email_verify'
+  customerId String?
+  attempts   Int       @default(0)
+  consumedAt DateTime?
+  expiresAt  DateTime
+  createdAt  DateTime  @default(now())
+
+  @@index([email, purpose, createdAt])
+  @@map("email_otps")
 }
 
 // ─── StaffPasswordReset ───────────────────────────────────────────────────────

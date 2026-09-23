@@ -219,6 +219,7 @@ export async function customerRegister(
   phone: string | undefined,
   otpVerified: boolean,                            // set true only after verifyOtp succeeded for this phone
   referredByCode?: string,
+  emailVerified = false,                           // set true only after verifyEmailOtp succeeded for this email
 ) {
   const normalisedPhone = phone?.trim() || undefined
   const existing = await prisma.customer.findFirst({
@@ -251,7 +252,11 @@ export async function customerRegister(
     const provedPhone =
       otpVerified && !!normalisedPhone &&
       (!existing.phone || existing.phone === normalisedPhone)
-    if (!provedPhone) {
+    // A verified signup email proves control of this exact account — it was
+    // found BY that email — so it is as good a claim as the phone.
+    const provedEmail =
+      emailVerified && existing.email?.toLowerCase() === email.toLowerCase()
+    if (!provedPhone && !provedEmail) {
       throw new AppError(
         'ACCOUNT_NEEDS_VERIFICATION',
         'An account already exists for this email. Sign in with the emailed link (or verify your phone) to set a password.',
@@ -266,6 +271,7 @@ export async function customerRegister(
         password: hashed,
         ...(normalisedPhone && { phone: normalisedPhone }),
         ...(otpVerified && normalisedPhone && { phoneVerifiedAt: new Date() }),
+        ...(emailVerified && { emailVerifiedAt: new Date() }),
         // Claim the referral too if the orphaned account hasn't been claimed yet.
         ...(referredById && !existing.referredById && {
           referredById,
@@ -303,6 +309,7 @@ export async function customerRegister(
       // delivery + WhatsApp marketing flows can rely on it.
       ...(normalisedPhone && { phone: normalisedPhone }),
       ...(otpVerified && normalisedPhone && { phoneVerifiedAt: new Date() }),
+      ...(emailVerified && { emailVerifiedAt: new Date() }),
       referralCode: await generateReferralCode(),
       ...(referredById && { referredById, referredAt: new Date() }),
     },
@@ -372,7 +379,7 @@ export async function requestMagicLink(emailOrPhone: string, name?: string) {
   const expiresAt = new Date(Date.now() + MAGIC_LINK_EXPIRY_MINUTES * 60 * 1000)
 
   await prisma.magicLink.create({
-    data: { customerId: customer.id, token, expiresAt },
+    data: { customerId: customer.id, token, expiresAt, channel: isEmail ? 'email' : 'phone' },
   })
 
   try {
@@ -395,6 +402,14 @@ export async function verifyMagicLink(token: string) {
   if (link.expiresAt < new Date()) throw new AppError('TOKEN_EXPIRED', 'This link has expired', 401)
 
   await prisma.magicLink.update({ where: { id: link.id }, data: { usedAt: new Date() } })
+
+  // Following the link proves control of wherever it was sent. Links issued
+  // before `channel` existed carry null and verify nothing.
+  if (link.channel === 'email' && !link.customer.emailVerifiedAt && link.customer.email) {
+    await prisma.customer.update({ where: { id: link.customer.id }, data: { emailVerifiedAt: new Date() } })
+  } else if (link.channel === 'phone' && !link.customer.phoneVerifiedAt && link.customer.phone) {
+    await prisma.customer.update({ where: { id: link.customer.id }, data: { phoneVerifiedAt: new Date() } })
+  }
 
   const customerToken = jwt.sign(
     { sub: link.customer.id, type: 'customer' } satisfies CustomerTokenPayload,

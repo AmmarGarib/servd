@@ -6,6 +6,7 @@
 import crypto from 'crypto'
 import { serviceClient as prisma } from '../../lib/prisma.js'
 import { sendText } from '../../lib/whatsapp.js'
+import { sendEmail } from '../../lib/mailer.js'
 import { AppError } from '../../lib/errors.js'
 
 const OTP_TTL_MS = 5 * 60_000
@@ -92,7 +93,7 @@ export async function requestOtp(opts: {
   const code = generateCode()
   const expiresAt = new Date(Date.now() + OTP_TTL_MS)
 
-  await prisma.phoneOtp.create({
+  const created = await prisma.phoneOtp.create({
     data: {
       phone, code, purpose: opts.purpose,
       customerId: opts.customerId ?? null,
@@ -108,6 +109,11 @@ export async function requestOtp(opts: {
     // Don't leak the WA error to the client — surface a generic message. The
     // dev-only fallback below lets us continue testing locally without WA.
     if (process.env['NODE_ENV'] === 'production') {
+      // Drop the undelivered code. Signup requires verifying every channel
+      // that holds a live code, so leaving this row would demand a WhatsApp
+      // code the customer never received — exactly when WhatsApp is down and
+      // email is meant to carry them through.
+      await prisma.phoneOtp.delete({ where: { id: created.id } }).catch(() => {})
       throw new AppError('OTP_SEND_FAILED', 'Could not send verification code. Try again in a moment.', 503)
     }
     // Never print the OTP (or full phone) into logs by default — container/CI
@@ -130,6 +136,8 @@ export async function verifyOtp(opts: {
   phone: string
   code: string
   purpose: OtpPurpose
+  /** false = check only; the code stays usable. Wrong attempts still count. */
+  consume?: boolean
 }): Promise<{ customerId: string | null }> {
   const phone = normalisePhone(opts.phone)
   const row = await prisma.phoneOtp.findFirst({
@@ -147,6 +155,121 @@ export async function verifyOtp(opts: {
     const left = MAX_ATTEMPTS - (row.attempts + 1)
     throw new AppError('OTP_WRONG', left > 0 ? `Wrong code. ${left} attempts left.` : 'Wrong code — request a new one', 400)
   }
-  await prisma.phoneOtp.update({ where: { id: row.id }, data: { consumedAt: new Date() } })
+  if (opts.consume !== false) {
+    await prisma.phoneOtp.update({ where: { id: row.id }, data: { consumedAt: new Date() } })
+  }
   return { customerId: row.customerId }
+}
+
+// ─── Email codes ─────────────────────────────────────────────────────────────
+//
+// The second channel. WhatsApp here is an unofficial linked-device session, and
+// when it drops every WhatsApp code stops at once — so customer verification
+// runs over email as well, with the same lifetime, attempt limit and cooldown
+// as the phone codes above.
+
+export type EmailOtpPurpose = 'signup' | 'email_verify'
+
+export function normaliseEmail(raw: string): string {
+  return raw.trim().toLowerCase()
+}
+
+function emailHtmlFor(code: string): string {
+  return `
+    <div style="font-family:system-ui,-apple-system,sans-serif;max-width:420px">
+      <p style="font-size:15px;color:#111">Your servd verification code is</p>
+      <p style="font-size:32px;font-weight:800;letter-spacing:6px;margin:8px 0;color:#4E2A4F">${code}</p>
+      <p style="font-size:13px;color:#555">It expires in 5 minutes. Do not share this code with anyone.
+      If you did not just create a servd account, you can ignore this email.</p>
+    </div>`
+}
+
+export async function requestEmailOtp(opts: {
+  email: string
+  purpose: EmailOtpPurpose
+  customerId?: string
+}): Promise<{ email: string; expiresAt: Date }> {
+  const email = normaliseEmail(opts.email)
+  if (!/^\S+@\S+\.\S+$/.test(email)) throw new AppError('INVALID_EMAIL', 'Email address looks invalid', 400)
+
+  const recent = await prisma.emailOtp.findFirst({
+    where: { email, purpose: opts.purpose, createdAt: { gt: new Date(Date.now() - RESEND_COOLDOWN_MS) } },
+    orderBy: { createdAt: 'desc' },
+  })
+  if (recent) throw new AppError('OTP_COOLDOWN', 'Please wait a few seconds before requesting another code', 429)
+
+  const code = generateCode()
+  const expiresAt = new Date(Date.now() + OTP_TTL_MS)
+  const row = await prisma.emailOtp.create({
+    data: { email, code, purpose: opts.purpose, customerId: opts.customerId ?? null, expiresAt },
+  })
+
+  try {
+    await sendEmail({ to: email, subject: `${code} is your servd code`, html: emailHtmlFor(code) })
+  } catch {
+    if (process.env['NODE_ENV'] === 'production') {
+      // Same rule as the WhatsApp path: an undelivered code must not stay live,
+      // or signup would demand a code that never arrived.
+      await prisma.emailOtp.delete({ where: { id: row.id } }).catch(() => {})
+      throw new AppError('OTP_SEND_FAILED', 'Could not send the email code. Try again in a moment.', 503)
+    }
+    // Local dev without SMTP: keep the row so the code can be read, as the
+    // WhatsApp path does.
+    if (process.env['OTP_DEV_ECHO'] === '1') {
+      console.warn(`[otp] email send failed — dev echo: ${code} (${email})`)
+    } else {
+      console.warn('[otp] email send failed — set OTP_DEV_ECHO=1 to echo codes in local dev')
+    }
+  }
+  return { email, expiresAt }
+}
+
+export async function verifyEmailOtp(opts: {
+  email: string
+  code: string
+  purpose: EmailOtpPurpose
+  consume?: boolean
+}): Promise<{ customerId: string | null }> {
+  const email = normaliseEmail(opts.email)
+  const row = await prisma.emailOtp.findFirst({
+    where: { email, purpose: opts.purpose, consumedAt: null },
+    orderBy: { createdAt: 'desc' },
+  })
+  if (!row) throw new AppError('EMAIL_OTP_NOT_FOUND', 'No active email code — request a new one', 404)
+  if (row.expiresAt < new Date()) throw new AppError('EMAIL_OTP_EXPIRED', 'Email code has expired — request a new one', 410)
+  if (row.attempts >= MAX_ATTEMPTS) {
+    throw new AppError('EMAIL_OTP_LOCKED', 'Too many wrong attempts — request a new email code', 429)
+  }
+  if (!codesMatch(row.code, opts.code.trim())) {
+    await prisma.emailOtp.update({ where: { id: row.id }, data: { attempts: { increment: 1 } } })
+    const left = MAX_ATTEMPTS - (row.attempts + 1)
+    throw new AppError('EMAIL_OTP_WRONG', left > 0 ? `Wrong email code. ${left} attempts left.` : 'Wrong email code — request a new one', 400)
+  }
+  if (opts.consume !== false) {
+    await prisma.emailOtp.update({ where: { id: row.id }, data: { consumedAt: new Date() } })
+  }
+  return { customerId: row.customerId }
+}
+
+/**
+ * Is there a live, unused signup code on this channel? Used to enforce that a
+ * customer verifies EVERY channel a code actually reached — not just the one
+ * they find easiest.
+ */
+export async function hasLivePhoneCode(phoneRaw: string, purpose: OtpPurpose): Promise<boolean> {
+  const phone = normalisePhone(phoneRaw)
+  const row = await prisma.phoneOtp.findFirst({
+    where: { phone, purpose, consumedAt: null, expiresAt: { gt: new Date() }, attempts: { lt: MAX_ATTEMPTS } },
+    select: { id: true },
+  })
+  return !!row
+}
+
+export async function hasLiveEmailCode(emailRaw: string, purpose: EmailOtpPurpose): Promise<boolean> {
+  const email = normaliseEmail(emailRaw)
+  const row = await prisma.emailOtp.findFirst({
+    where: { email, purpose, consumedAt: null, expiresAt: { gt: new Date() }, attempts: { lt: MAX_ATTEMPTS } },
+    select: { id: true },
+  })
+  return !!row
 }

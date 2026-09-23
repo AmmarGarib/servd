@@ -8,9 +8,12 @@ import { ErrorToast } from '../../components/ui/ErrorToast'
 import { SmokeyBackground } from '../../components/ui/SmokeyBackground'
 import { MagneticButton } from '../../components/ui/MagneticButton'
 
-// /signup — glassmorphism card over the servd-purple WebGL shader. The two-step
-// WhatsApp-OTP flow (details → request-otp → register) is unchanged; only the
-// presentation is new.
+// /signup — glassmorphism card over the servd-purple WebGL shader.
+//
+// Two steps: details → codes. Step two sends a code to WhatsApp AND to email,
+// independently, and asks for every code that actually arrived. WhatsApp here
+// is an unofficial channel that can drop; when it does, the email code carries
+// the signup on its own and the number is verified later from /account.
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -28,9 +31,13 @@ export default function SignupPage() {
   const [confirm,  setConfirm]  = useState('')
   const [referralCode, _setReferralCode] = useState((params?.get('ref') ?? '').toUpperCase())
 
-  const [otp,             setOtp]             = useState('')
-  const [_otpSentAt,      setOtpSentAt]       = useState<number | null>(null)
+  const [otp,             setOtp]             = useState('')   // WhatsApp code
+  const [emailCode,       setEmailCode]       = useState('')
+  type ChannelStatus = 'sent' | 'cooldown' | 'failed'
+  const [channels,        setChannels]        = useState<{ phone: ChannelStatus; email: ChannelStatus } | null>(null)
   const [resendCooldown,  setResendCooldown]  = useState(0)
+  const phoneLive = channels?.phone === 'sent' || channels?.phone === 'cooldown'
+  const emailLive = channels?.email === 'sent' || channels?.email === 'cooldown'
 
   const [loading,  setLoading]  = useState(false)
   const [error,    setError]    = useState('')
@@ -41,56 +48,32 @@ export default function SignupPage() {
   const setFieldError = (k: string, msg: string) => setFieldErrors((m) => ({ ...m, [k]: msg }))
   const clearFieldError = (k: string) => setFieldErrors((m) => { const n = { ...m }; delete n[k]; return n })
 
-  const otpRefs = useRef<Array<HTMLInputElement | null>>([])
-  const handleOtpChange = (idx: number, raw: string) => {
-    const digits = raw.replace(/\D/g, '')
-    if (!digits) {
-      const next = otp.split('')
-      next[idx] = ''
-      setOtp(next.join(''))
-      return
-    }
-    if (digits.length > 1) {
-      const merged = (otp.slice(0, idx) + digits).slice(0, 6).padEnd(6, '').trim()
-      setOtp(merged)
-      const lastFilled = Math.min(idx + digits.length, 5)
-      otpRefs.current[lastFilled]?.focus()
-      return
-    }
-    const next = otp.padEnd(6, ' ').split('')
-    next[idx] = digits
-    setOtp(next.join('').trim())
-    if (idx < 5) otpRefs.current[idx + 1]?.focus()
-  }
-  const handleOtpKeyDown = (idx: number, e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Backspace' && !otp[idx] && idx > 0) otpRefs.current[idx - 1]?.focus()
-    if (e.key === 'ArrowLeft' && idx > 0) otpRefs.current[idx - 1]?.focus()
-    if (e.key === 'ArrowRight' && idx < 5) otpRefs.current[idx + 1]?.focus()
-  }
-
   useEffect(() => {
     if (resendCooldown <= 0) return
     const t = setTimeout(() => setResendCooldown((c) => c - 1), 1000)
     return () => clearTimeout(t)
   }, [resendCooldown])
 
-  async function requestOtp(): Promise<boolean> {
+  async function requestCodes(): Promise<boolean> {
     try {
-      const res = await fetch(`${API_URL}/api/v1/auth/customer/request-otp`, {
+      const res = await fetch(`${API_URL}/api/v1/auth/customer/request-signup-codes`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone: phone.trim(), purpose: 'signup' }),
+        body: JSON.stringify({ phone: phone.trim(), email: email.trim() }),
       })
-      const data = await res.json() as { error?: { message?: string; code?: string } }
+      const data = await res.json() as {
+        phone?: { status: ChannelStatus }; email?: { status: ChannelStatus }
+        error?: { message?: string; code?: string }
+      }
       if (!res.ok) {
-        setError(data.error?.message ?? 'Could not send code — please check the number')
+        setError(data.error?.message ?? 'Could not send codes — please check your details')
         return false
       }
-      setOtpSentAt(Date.now())
+      setChannels({ phone: data.phone!.status, email: data.email!.status })
       setResendCooldown(30)
       return true
     } catch {
-      setError('Could not reach the server. Make sure the API is running.')
+      setError('Could not reach the server. Please try again.')
       return false
     }
   }
@@ -103,8 +86,9 @@ export default function SignupPage() {
     if (password !== confirm) { setError('Passwords do not match'); return }
     const digits = phone.replace(/\D/g, '')
     if (digits.length < 10) { setError('Enter a valid mobile number'); return }
+    if (!/\S+@\S+\.\S+/.test(email.trim())) { setError('Enter a valid email'); return }
     setLoading(true)
-    const sent = await requestOtp()
+    const sent = await requestCodes()
     setLoading(false)
     if (sent) setStep('otp')
   }
@@ -112,7 +96,8 @@ export default function SignupPage() {
   async function handleStep2(e: React.FormEvent) {
     e.preventDefault()
     setError('')
-    if (otp.length < 4) { setError('Enter the 6-digit code'); return }
+    if (phoneLive && otp.length < 6) { setError('Enter the 6-digit code from WhatsApp'); return }
+    if (emailLive && emailCode.length < 6) { setError('Enter the 6-digit code from your email'); return }
     setLoading(true)
     try {
       const res = await fetch(`${API_URL}/api/v1/auth/customer/register`, {
@@ -123,7 +108,8 @@ export default function SignupPage() {
           email:   email.trim(),
           password,
           phone:   phone.trim(),
-          otpCode: otp.trim(),
+          ...(phoneLive && { otpCode: otp.trim() }),
+          ...(emailLive && { emailCode: emailCode.trim() }),
           ...(referralCode.trim() && { referralCode: referralCode.trim().toUpperCase() }),
         }),
       })
@@ -133,7 +119,7 @@ export default function SignupPage() {
           setEmailTaken(true)
           setError('An account with this email already exists.')
           setStep('details')
-        } else if (data.error?.code === 'OTP_WRONG' || data.error?.code === 'OTP_EXPIRED' || data.error?.code === 'OTP_NOT_FOUND') {
+        } else if (data.error?.code?.includes('OTP') || data.error?.code?.endsWith('CODE_REQUIRED')) {
           setError(data.error?.message ?? 'Invalid or expired code')
         } else {
           setError(data.error?.message ?? 'Registration failed. Please try again.')
@@ -227,7 +213,7 @@ export default function SignupPage() {
                   inp={inp} inpStyle={inpStyle} onFocus={onFocus} onBlur={onBlur} />
 
                 <p className="text-[11px] leading-snug pt-1 text-white/55">
-                  We&rsquo;ll send a 6-digit code to your WhatsApp to verify the number.
+                  We&rsquo;ll send a 6-digit code to your WhatsApp and another to your email.
                 </p>
                 <MagneticButton type="submit" disabled={loading}
                   className="w-full rounded-2xl py-3.5 font-black text-[0.95rem] transition-all disabled:opacity-40 active:scale-[0.98] mt-1"
@@ -238,65 +224,50 @@ export default function SignupPage() {
             </>
           ) : (
             <>
-              <h1 className="font-black tracking-tight text-white mb-1" style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(1.9rem, 6vw, 2.3rem)', letterSpacing: '-0.03em' }}>Verify your number</h1>
+              <h1 className="font-black tracking-tight text-white mb-1" style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(1.9rem, 6vw, 2.3rem)', letterSpacing: '-0.03em' }}>Verify it&rsquo;s you</h1>
               <p className="text-sm mb-6 text-white/60">
-                We sent a code to <span className="font-semibold text-white">{phone}</span>
+                {phoneLive && emailLive
+                  ? 'Enter both codes — one on WhatsApp, one in your email.'
+                  : 'Enter the code we sent you.'}
               </p>
 
               {error && <ErrorToast message={error} onDismiss={() => setError('')} />}
 
-              <form onSubmit={e => { void handleStep2(e) }} className="space-y-3">
-                <div>
-                  <label className="block text-[10px] font-black uppercase tracking-[0.22em] mb-1.5 text-white/55">6-digit code</label>
-                  <input type="text" inputMode="numeric" autoComplete="one-time-code"
-                    pattern="[0-9]*" maxLength={6} value={otp}
-                    onChange={e => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                    style={{ position: 'absolute', width: 1, height: 1, opacity: 0, pointerEvents: 'none' }}
-                    tabIndex={-1} aria-hidden="true" />
-                  <div className="flex gap-1.5 sm:gap-2">
-                    {Array.from({ length: 6 }).map((_, i) => (
-                      <input
-                        key={i}
-                        ref={(el) => { otpRefs.current[i] = el }}
-                        type="text" inputMode="numeric" pattern="[0-9]*" maxLength={1}
-                        value={otp[i] ?? ''}
-                        onChange={(e) => handleOtpChange(i, e.target.value)}
-                        onKeyDown={(e) => handleOtpKeyDown(i, e)}
-                        onPaste={(e) => {
-                          e.preventDefault()
-                          const pasted = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, 6)
-                          if (pasted) {
-                            setOtp(pasted.padEnd(6, '').trim())
-                            const target = Math.min(pasted.length, 5)
-                            setTimeout(() => otpRefs.current[target]?.focus(), 0)
-                          }
-                        }}
-                        autoFocus={i === 0}
-                        aria-label={`Digit ${i + 1} of 6`}
-                        className="flex-1 min-w-0 max-w-[2.75rem] h-14 text-center text-xl font-black rounded-xl focus:outline-none transition-all text-white"
-                        style={inpStyle}
-                        onFocus={onFocus}
-                        onBlur={onBlur}
-                      />
-                    ))}
-                  </div>
-                </div>
+              <form onSubmit={e => { void handleStep2(e) }} className="space-y-4">
+                {phoneLive && (
+                  <CodeBoxes label="WhatsApp code" sublabel={phone} value={otp} onChange={setOtp}
+                    autoFocus inpStyle={inpStyle} onFocus={onFocus} onBlur={onBlur} />
+                )}
+                {emailLive && (
+                  <CodeBoxes label="Email code" sublabel={email} value={emailCode} onChange={setEmailCode}
+                    autoFocus={!phoneLive} inpStyle={inpStyle} onFocus={onFocus} onBlur={onBlur} />
+                )}
+                {channels?.phone === 'failed' && (
+                  <p className="text-[11px] leading-snug text-white/60 rounded-2xl px-3 py-2" style={{ background: 'rgba(255,255,255,0.06)' }}>
+                    WhatsApp isn&rsquo;t reachable right now, so we only sent an email code. You can verify your number later from your account.
+                  </p>
+                )}
+                {channels?.email === 'failed' && (
+                  <p className="text-[11px] leading-snug text-white/60 rounded-2xl px-3 py-2" style={{ background: 'rgba(255,255,255,0.06)' }}>
+                    We couldn&rsquo;t send an email code just now. You can verify your email later from your account.
+                  </p>
+                )}
 
-                <MagneticButton type="submit" disabled={loading || otp.length < 4}
+                <MagneticButton type="submit" disabled={loading || (phoneLive && otp.length < 6) || (emailLive && emailCode.length < 6)}
                   className="w-full rounded-2xl py-3.5 font-black text-[0.95rem] transition-all disabled:opacity-40 active:scale-[0.98] mt-1"
                   style={primaryBtnStyle(loading)}>
                   {loading ? 'Verifying…' : 'Verify & create account'}
                 </MagneticButton>
 
                 <div className="flex items-center justify-between text-xs -mx-2">
-                  <button type="button" onClick={() => { setStep('details'); setOtp(''); setError('') }}
+                  <button type="button" onClick={() => { setStep('details'); setOtp(''); setEmailCode(''); setError('') }}
                     className="inline-flex items-center min-h-[44px] px-2 font-bold text-white/55 hover:text-white transition-colors">
-                    ← Change number
+                    ← Change details
                   </button>
                   <button type="button" disabled={resendCooldown > 0 || loading}
-                    onClick={() => { void requestOtp() }}
+                    onClick={() => { void requestCodes() }}
                     className="inline-flex items-center min-h-[44px] px-2 font-bold text-white hover:text-white/80 disabled:opacity-40 transition-colors">
-                    {resendCooldown > 0 ? `Resend in ${resendCooldown}s` : 'Resend code'}
+                    {resendCooldown > 0 ? `Resend in ${resendCooldown}s` : 'Resend codes'}
                   </button>
                 </div>
               </form>
@@ -332,6 +303,69 @@ export default function SignupPage() {
         </Link>
       </div>
     </main>
+  )
+}
+
+// ─── Six-box code input ────────────────────────────────────────────────────
+// One per channel. Own refs, so two of them on the page don't fight over focus.
+function CodeBoxes(p: {
+  label: string
+  sublabel: string
+  value: string
+  onChange: (v: string) => void
+  autoFocus?: boolean
+  inpStyle: React.CSSProperties
+  onFocus: (e: React.FocusEvent<HTMLInputElement>) => void
+  onBlur: (e: React.FocusEvent<HTMLInputElement>) => void
+}) {
+  const refs = useRef<Array<HTMLInputElement | null>>([])
+  const set = (idx: number, raw: string) => {
+    const digits = raw.replace(/\D/g, '')
+    const cur = p.value.padEnd(6, ' ').split('')
+    if (!digits) { cur[idx] = ' '; p.onChange(cur.join('').trimEnd()); return }
+    if (digits.length > 1) {
+      const merged = (p.value.slice(0, idx) + digits).slice(0, 6)
+      p.onChange(merged)
+      refs.current[Math.min(merged.length, 5)]?.focus()
+      return
+    }
+    cur[idx] = digits
+    p.onChange(cur.join('').replace(/ /g, '').slice(0, 6))
+    if (idx < 5) refs.current[idx + 1]?.focus()
+  }
+  return (
+    <div>
+      <label className="block text-[10px] font-black uppercase tracking-[0.22em] mb-0.5 text-white/55">{p.label}</label>
+      <p className="text-[11px] mb-1.5 text-white/45 truncate">{p.sublabel}</p>
+      <div className="flex gap-1.5 sm:gap-2">
+        {Array.from({ length: 6 }).map((_, i) => (
+          <input
+            key={i}
+            ref={(el) => { refs.current[i] = el }}
+            type="text" inputMode="numeric" pattern="[0-9]*" maxLength={1}
+            autoComplete={i === 0 ? 'one-time-code' : 'off'}
+            value={p.value[i] ?? ''}
+            onChange={(e) => set(i, e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Backspace' && !p.value[i] && i > 0) refs.current[i - 1]?.focus()
+              if (e.key === 'ArrowLeft' && i > 0) refs.current[i - 1]?.focus()
+              if (e.key === 'ArrowRight' && i < 5) refs.current[i + 1]?.focus()
+            }}
+            onPaste={(e) => {
+              e.preventDefault()
+              const pasted = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, 6)
+              if (pasted) { p.onChange(pasted); setTimeout(() => refs.current[Math.min(pasted.length, 5)]?.focus(), 0) }
+            }}
+            autoFocus={p.autoFocus && i === 0}
+            aria-label={`${p.label}, digit ${i + 1} of 6`}
+            className="flex-1 min-w-0 max-w-[2.75rem] h-14 text-center text-xl font-black rounded-xl focus:outline-none transition-all text-white"
+            style={p.inpStyle}
+            onFocus={p.onFocus}
+            onBlur={p.onBlur}
+          />
+        ))}
+      </div>
+    </div>
   )
 }
 
