@@ -16,6 +16,9 @@ export interface HrSettings {
    *  establishments law pays overtime at twice the ordinary rate — confirm. */
   otMultiplier: number
   eobi: {
+    /** EOBI is compulsory from 10 employees; a smaller company can leave it
+     *  off and payroll runs without it. */
+    enabled: boolean
     employeePct: number   // spec: 1%
     employerPct: number   // spec: 5%
     /** What the percentages apply to. EOBI contributions are normally on the
@@ -39,7 +42,7 @@ export const DEFAULT_HR_SETTINGS: HrSettings = {
   workingDaysPerMonth: 26,
   hoursPerDay: 8,
   otMultiplier: 2,
-  eobi: { employeePct: 1, employerPct: 5, base: 'fixed', fixedWageCents: null },
+  eobi: { enabled: false, employeePct: 1, employerPct: 5, base: 'fixed', fixedWageCents: null },
   sessi: { employerPct: 0, wageCeilingCents: null },
   latesPerDeductionDay: 0,
   lateGraceMinutes: 15,
@@ -89,6 +92,7 @@ export const EOBI_NOT_CALCULATED = 'Set the EOBI wage base in HR settings — EO
 /** `grossCents` is the salary actually earned in the month — prorated for a
  *  joiner or leaver — and is only used when the base is `gross`. */
 export function eobiContribution(grossCents: number, s: HrSettings): EobiResult {
+  if (!s.eobi.enabled) return { employeeCents: 0, employerCents: 0 }
   const base = s.eobi.base === 'gross' ? grossCents : s.eobi.fixedWageCents
   if (base == null) {
     // Refuse to guess. A wrong base is wrong on every payslip and every challan.

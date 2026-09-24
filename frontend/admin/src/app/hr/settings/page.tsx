@@ -12,7 +12,7 @@ interface HrSettings {
   workingDaysPerMonth: number
   hoursPerDay: number
   otMultiplier: number
-  eobi: { employeePct: number; employerPct: number; base: 'fixed' | 'gross'; fixedWageCents: number | null }
+  eobi: { enabled: boolean; employeePct: number; employerPct: number; base: 'fixed' | 'gross'; fixedWageCents: number | null }
   sessi: { employerPct: number; wageCeilingCents: number | null }
   latesPerDeductionDay: number
   lateGraceMinutes: number
@@ -50,6 +50,9 @@ export default function HrSettingsPage() {
           </Panel>
 
           <Panel title="EOBI">
+            <Check label="Deduct EOBI in payroll" v={s.eobi.enabled} onSet={(v) => setS({ ...s, eobi: { ...s.eobi, enabled: v } })} />
+            <p className="text-[10px] text-white/35 -mt-1">Compulsory once the company has 10 or more employees. Off, payroll runs without EOBI.</p>
+            {s.eobi.enabled && <>
             <Num label="Employee share %" v={s.eobi.employeePct} step="0.1" onSet={(v) => setS({ ...s, eobi: { ...s.eobi, employeePct: v } })} />
             <Num label="Employer share %" v={s.eobi.employerPct} step="0.1" onSet={(v) => setS({ ...s, eobi: { ...s.eobi, employerPct: v } })} />
             <label className="block">
@@ -64,6 +67,7 @@ export default function HrSettingsPage() {
                 help={s.eobi.fixedWageCents == null ? 'Not set — payroll will refuse to run until it is. Enter the currently notified minimum wage.' : 'EOBI is a % of this for everyone, not of their salary.'}
                 warn={s.eobi.fixedWageCents == null} />
             )}
+            </>}
           </Panel>
 
           <Panel title="SESSI">

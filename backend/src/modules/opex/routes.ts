@@ -2,7 +2,7 @@
 // Categories (Rent, Payroll, Utilities, etc.) â†’ Lines (specific vendors /
 // items) â†’ Payments (per-period actuals). Variance vs budget fires flags.
 //
-// Special: the Payroll category pulls live from PayrollRun + ClockLog data
+// Special: the Payroll category pulls live from HR payroll runs
 // rather than manual entry â€” that's wired in the GET /opex endpoint.
 
 import type { FastifyInstance } from 'fastify'
@@ -247,14 +247,21 @@ export async function opexRoutes(fastify: FastifyInstance) {
   // â”€â”€â”€ Live data: payroll snapshot for the Payroll category â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   fastify.get('/payroll-snapshot', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
-    // Return last 6 months of posted payroll runs; UI renders as a "live" line
-    // under the Payroll category instead of manual entry.
+    // Last 6 months of HR payroll runs for the companies in view; the UI
+    // renders them as a "live" line under the Payroll category instead of
+    // manual entry.
     const sixMonthsAgo = new Date(); sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6)
-    const runs = await prisma.payrollRun.findMany({
-      where: { periodStart: { gte: sixMonthsAgo } },
-      orderBy: { periodStart: 'desc' },
-      include: { _count: { select: { lines: true } } },
+    const runTenants = req.staffUser!.tenantFilter ?? { in: [] as string[] }
+    const hrRuns = await prisma.hrPayrollRun.findMany({
+      where: { tenantId: runTenants, period: { gte: sixMonthsAgo.toISOString().slice(0, 7) } },
+      orderBy: { period: 'desc' },
+      include: { _count: { select: { payslips: true } } },
       take: 12,
+    })
+    const runs = hrRuns.map((r) => {
+      const [y, m] = r.period.split('-').map(Number) as [number, number]
+      const totals = (r.totals ?? {}) as { earningsCents?: number }
+      return { id: r.id, periodStart: new Date(Date.UTC(y, m - 1, 1)), periodEnd: new Date(Date.UTC(y, m, 0)), status: r.status, totalGrossCents: totals.earningsCents ?? 0, lineCount: r._count.payslips }
     })
 
     // Also project this month — sum unposted clock logs × wage rates
@@ -315,14 +322,7 @@ export async function opexRoutes(fastify: FastifyInstance) {
     const netMonthly = budgetedMonthly + outgoingMonthly - incomingMonthly
 
     return {
-      runs: runs.map((r) => ({
-        id: r.id,
-        periodStart: r.periodStart,
-        periodEnd: r.periodEnd,
-        status: r.status,
-        totalGrossCents: r.totalGrossCents,
-        lineCount: r._count.lines,
-      })),
+      runs,
       currentMonth: { start: monthStart, end: monthEnd },
       // Live position-based budget. UI surfaces this above the run history
       // so the operator sees what they're COMMITTED to before they see

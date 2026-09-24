@@ -14,6 +14,8 @@ import bcrypt from 'bcryptjs'
 import { serviceClient as prisma } from '../src/lib/prisma.js'
 import { issueStaffSession } from '../src/modules/auth/service.js'
 import { AppError } from '../src/lib/errors.js'
+import { ensureChartOfAccounts } from '../src/lib/chartOfAccounts.js'
+import { wageAccountFor } from '../src/modules/hr/ledger.js'
 import { hrRoutes, csv } from '../src/modules/hr/routes.js'
 import {
   DEFAULT_HR_SETTINGS, mergeSettings, eobiContribution, overtimeCents, computePayslip, EMPTY_INPUTS,
@@ -30,18 +32,31 @@ const RS = (r: number) => r * 100 // rupees → paisa
 
 // ─── pure logic ─────────────────────────────────────────────────────────────
 
+describe('payroll ledger', () => {
+  it('books pay to the wages account of the department', () => {
+    expect(wageAccountFor('Kitchen')).toBe('6030')
+    expect(wageAccountFor('Delivery riders')).toBe('6035')
+    expect(wageAccountFor('Finance')).toBe('6032')
+    expect(wageAccountFor('Service')).toBe('6031')
+    expect(wageAccountFor(null)).toBe('6031')
+  })
+})
+
 describe('EOBI', () => {
-  it('refuses to guess when no wage base is set', () => {
-    const r = eobiContribution(RS(60000), DEFAULT_HR_SETTINGS)
+  it('is off by default — companies under 10 employees run payroll without it', () => {
+    expect(eobiContribution(RS(60000), DEFAULT_HR_SETTINGS)).toEqual({ employeeCents: 0, employerCents: 0 })
+  })
+  it('refuses to guess when switched on with no wage base', () => {
+    const r = eobiContribution(RS(60000), mergeSettings({ eobi: { ...DEFAULT_HR_SETTINGS.eobi, enabled: true } }))
     expect(r.employeeCents).toBe(0)
     expect(r.problem).toMatch(/EOBI wage base/)
   })
   it('is 1% / 5% of the fixed base, not the salary', () => {
-    const s = mergeSettings({ eobi: { employeePct: 1, employerPct: 5, base: 'fixed', fixedWageCents: RS(40000) } })
+    const s = mergeSettings({ eobi: { enabled: true, employeePct: 1, employerPct: 5, base: 'fixed', fixedWageCents: RS(40000) } })
     expect(eobiContribution(RS(90000), s)).toEqual({ employeeCents: RS(400), employerCents: RS(2000) })
   })
   it('can be set to use gross instead', () => {
-    const s = mergeSettings({ eobi: { employeePct: 1, employerPct: 5, base: 'gross', fixedWageCents: null } })
+    const s = mergeSettings({ eobi: { enabled: true, employeePct: 1, employerPct: 5, base: 'gross', fixedWageCents: null } })
     expect(eobiContribution(RS(50000), s)).toEqual({ employeeCents: RS(500), employerCents: RS(2500) })
   })
 })
@@ -64,7 +79,7 @@ describe('overtime', () => {
 })
 
 describe('payslip', () => {
-  const s = mergeSettings({ eobi: { employeePct: 1, employerPct: 5, base: 'fixed', fixedWageCents: RS(40000) }, latesPerDeductionDay: 3 })
+  const s = mergeSettings({ eobi: { enabled: true, employeePct: 1, employerPct: 5, base: 'fixed', fixedWageCents: RS(40000) }, latesPerDeductionDay: 3 })
   const emp = { grossSalaryCents: RS(52000), monthlyTaxCents: RS(1000), joiningDate: null, lastWorkingDay: null }
 
   it('adds and deducts every line, and nets to the paisa', () => {
@@ -90,7 +105,7 @@ describe('payslip', () => {
   })
 
   it('charges EOBI on a gross base, and SESSI, on what a joiner earned — not the full month', () => {
-    const g = mergeSettings({ eobi: { employeePct: 1, employerPct: 5, base: 'gross', fixedWageCents: null }, sessi: { employerPct: 6, wageCeilingCents: null } })
+    const g = mergeSettings({ eobi: { enabled: true, employeePct: 1, employerPct: 5, base: 'gross', fixedWageCents: null }, sessi: { employerPct: 6, wageCeilingCents: null } })
     // Rs 40,000, joins 16 Sep: earns Rs 20,000
     const r = computePayslip({ ...emp, grossSalaryCents: RS(40000), monthlyTaxCents: 0, joiningDate: new Date('2026-09-16') }, '2026-09', EMPTY_INPUTS, g)
     expect(r.grossCents).toBe(RS(20000))
@@ -520,6 +535,7 @@ const call = (who: string, method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE', 
 
 beforeAll(async () => {
   tenantId = (await prisma.tenant.create({ data: { name: 'HR Test Co', slug: 'hr-test-co' } })).id
+  await ensureChartOfAccounts(tenantId)
   await mkUser('ceo', 'admin')
   await mkUser('hr', 'hr')
   await mkUser('boss', 'manager')
@@ -602,7 +618,7 @@ describe('HR through the API', () => {
 
   it('runs a payroll month with OT and a loan, then recovers the loan on lock', async () => {
     await call('hr', 'PUT', '/settings', {
-      ...DEFAULT_HR_SETTINGS, eobi: { employeePct: 1, employerPct: 5, base: 'fixed', fixedWageCents: RS(40000) },
+      ...DEFAULT_HR_SETTINGS, eobi: { enabled: true, employeePct: 1, employerPct: 5, base: 'fixed', fixedWageCents: RS(40000) },
     })
     const ot = (await call('cook', 'POST', '/me/records/overtime', { data: { date: '2026-09-10', otHours: 3 } })).json()
     await call('boss', 'POST', `/records/overtime/${ot.id}/decide`, { decision: 'approved' })
@@ -624,6 +640,26 @@ describe('HR through the API', () => {
     expect((await call('hr', 'POST', `/payroll/runs/${run.id}/approve`)).statusCode).toBe(403)
     expect((await call('ceo', 'POST', `/payroll/runs/${run.id}/approve`)).statusCode).toBe(200)
     expect((await call('ceo', 'POST', `/payroll/runs/${run.id}/lock`)).statusCode).toBe(200)
+
+    // The books: the loan went out on approval, the month accrued on lock, and
+    // marking it paid clears wages payable — every entry balanced.
+    const entries = await prisma.journalEntry.findMany({
+      where: { tenantId, reference: { in: [`hr.loan.disbursement:${loan.id}`, `hr.payroll.accrual:${run.id}`] } },
+      include: { lines: { include: { account: { select: { code: true } } } } },
+    })
+    expect(entries).toHaveLength(2)
+    for (const e of entries) {
+      const dr = e.lines.filter((l) => l.type === 'debit').reduce((a, l) => a + l.amountCents, 0)
+      expect(dr).toBe(e.lines.filter((l) => l.type === 'credit').reduce((a, l) => a + l.amountCents, 0))
+    }
+    const accrual = entries.find((e) => e.reference === `hr.payroll.accrual:${run.id}`)!
+    const byCode = (code: string, type: string) => accrual.lines.filter((l) => l.account.code === code && l.type === type).reduce((a, l) => a + l.amountCents, 0)
+    expect(byCode('1350', 'credit')).toBe(333333)
+    expect(byCode('2020', 'credit')).toBe(detail.payslips.reduce((a: number, p: { netCents: number }) => a + p.netCents, 0))
+    expect((await call('hr', 'POST', `/payroll/runs/${run.id}/paid`, { from: 'bank' })).statusCode).toBe(403)
+    expect((await call('ceo', 'POST', `/payroll/runs/${run.id}/paid`, { from: 'bank' })).statusCode).toBe(200)
+    expect((await call('ceo', 'POST', `/payroll/runs/${run.id}/paid`, { from: 'bank' })).statusCode).toBe(409)
+    expect(await prisma.journalEntry.count({ where: { tenantId, reference: `hr.payroll.payment:${run.id}` } })).toBe(1)
 
     const loans = (await call('hr', 'GET', `/employees/${cookEmp}`)).json().loans
     expect(loans[0].recoveredCents).toBe(333333)
@@ -912,7 +948,7 @@ describe('HR through the API', () => {
 
   it('feeds payroll only standing attendance, once a day, net of leave and the late grace', async () => {
     await call('hr', 'PUT', '/settings', {
-      ...DEFAULT_HR_SETTINGS, eobi: { employeePct: 1, employerPct: 5, base: 'fixed', fixedWageCents: RS(40000) }, latesPerDeductionDay: 3, lateGraceMinutes: 15,
+      ...DEFAULT_HR_SETTINGS, eobi: { enabled: true, employeePct: 1, employerPct: 5, base: 'fixed', fixedWageCents: RS(40000) }, latesPerDeductionDay: 3, lateGraceMinutes: 15,
     })
     const w = (await call('hr', 'POST', '/employees', { data: { fullName: 'Dish Washer', grossSalaryCents: RS(52000), joiningDate: '2025-01-01', employmentType: 'permanent' } })).json().id
     const unpaidType = (await call('hr', 'POST', '/records/leave_type', { data: { name: 'Unpaid', entitlementDays: 0, pay: 'unpaid' } })).json().id
@@ -1053,7 +1089,7 @@ describe('HR through the API', () => {
   })
 
   it('will not approve or lock a payroll with EOBI uncalculated, and an edit does not hide the warning', async () => {
-    const good = { ...DEFAULT_HR_SETTINGS, eobi: { employeePct: 1, employerPct: 5, base: 'fixed', fixedWageCents: RS(40000) } }
+    const good = { ...DEFAULT_HR_SETTINGS, eobi: { enabled: true, employeePct: 1, employerPct: 5, base: 'fixed', fixedWageCents: RS(40000) } }
     await call('hr', 'PUT', '/settings', { ...good, eobi: { ...good.eobi, fixedWageCents: null } })
     try {
       const run = (await call('hr', 'POST', '/payroll/runs', { period: '2027-05' })).json()

@@ -17,7 +17,7 @@ interface Slip {
   inputs: Record<string, number | boolean | string[] | unknown>
   lines: Line[]; grossCents: number; earningsCents: number; deductionsCents: number; eobiEmployeeCents: number; eobiEmployerCents: number; netCents: number
 }
-interface Detail { run: { id: string; period: string; status: string; createdById: string | null; preparedByIds: string[]; totals: Record<string, number | string[]> }; payslips: Slip[] }
+interface Detail { run: { id: string; period: string; status: string; paidAt: string | null; createdById: string | null; preparedByIds: string[]; totals: Record<string, number | string[]> }; payslips: Slip[] }
 
 const INPUTS: Array<[string, string, boolean]> = [
   ['absentDays', 'Absent days', false], ['unpaidLeaveDays', 'Unpaid leave days', false], ['lateCount', 'Lates', false],
@@ -34,8 +34,10 @@ export default function PayrollRunPage() {
   const { userId, role, isPayrollApprover } = useHrAccess()
   const { data } = useQuery({ queryKey: ['hr-payroll', id], queryFn: () => api.get<Detail>(`/hr/payroll/runs/${id}`) })
   const act = useMutation({
-    mutationFn: (what: 'recalculate' | 'approve' | 'reopen' | 'lock' | 'delete') =>
-      what === 'delete' ? api.delete(`/hr/payroll/runs/${id}`) : api.post(`/hr/payroll/runs/${id}/${what}`, {}),
+    mutationFn: (what: 'recalculate' | 'approve' | 'reopen' | 'lock' | 'delete' | 'paid-bank' | 'paid-cash') =>
+      what === 'delete' ? api.delete(`/hr/payroll/runs/${id}`)
+      : what.startsWith('paid-') ? api.post(`/hr/payroll/runs/${id}/paid`, { from: what.slice(5) })
+      : api.post(`/hr/payroll/runs/${id}/${what}`, {}),
     onSuccess: (_r, what) => { setErr(''); if (what === 'delete') router.push('/hr/payroll'); else void qc.invalidateQueries() },
     onError: (e: Error) => setErr(e.message),
   })
@@ -75,8 +77,13 @@ export default function PayrollRunPage() {
             </>}
             {run.status === 'approved' && isPayrollApprover && <>
               <button className={btnGhost} disabled={act.isPending} onClick={() => act.mutate('reopen')}>Reopen</button>
-              <button className={btn} disabled={act.isPending} onClick={() => { if (confirm('Lock payroll? It cannot be changed afterwards.')) act.mutate('lock') }}>Lock</button>
+              <button className={btn} disabled={act.isPending} onClick={() => { if (confirm('Lock payroll? It cannot be changed afterwards, and it is posted to the books.')) act.mutate('lock') }}>Lock</button>
             </>}
+            {run.status === 'locked' && !run.paidAt && isPayrollApprover && <>
+              <button className={btn} disabled={act.isPending} onClick={() => { if (confirm('Mark wages paid by bank transfer?')) act.mutate('paid-bank') }}>Mark paid (bank)</button>
+              <button className={btnGhost} disabled={act.isPending} onClick={() => { if (confirm('Mark wages paid in cash?')) act.mutate('paid-cash') }}>Paid in cash</button>
+            </>}
+            {run.paidAt && <span className="text-xs text-emerald-400">Paid {new Date(run.paidAt).toLocaleDateString('en-GB')}</span>}
             <span className="ml-auto flex flex-wrap gap-2">
               <button className={btnGhost} onClick={() => dl('register')}>Payroll register</button>
               <button className={btnGhost} onClick={() => dl('bank')}>Bank transfer sheet</button>

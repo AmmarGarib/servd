@@ -153,8 +153,6 @@ const CATEGORIES: Category[] = [
     emoji: '🍳',
     blurb: 'Line cooks, expediters, KDS station operators.',
     roles: ['boh', 'kitchen', 'expediter'],
-    specialistHref: '/kitchen-staff',
-    specialistLabel: 'Open kitchen brigade ›',
   },
   {
     key: 'procurement',

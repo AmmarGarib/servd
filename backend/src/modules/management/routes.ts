@@ -14,7 +14,7 @@ import type { Prisma } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, FINANCIALS_VIEWERS, MARKETING_TEAM } from '../auth/middleware.js'
 import { profitAndLoss, cashFlow, pnlByConcept } from '../accounting/reports.js'
-import { labourPctReport } from '../payroll/service.js'
+import { labourPctReport } from '../../lib/labour.js'
 import { resolveTenantScope } from '../../lib/tenantScope.js'
 
 // ── Per-brand P&L (revenue-share allocation) ──────────────────────────────────

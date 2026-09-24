@@ -147,7 +147,6 @@ const GATED_PREFIXES: Array<{ prefix: string; anyOf: string[] }> = [
   { prefix: '/accounting',    anyOf: ['accounting'] },
   { prefix: '/reports',       anyOf: ['reports'] },
   { prefix: '/management',    anyOf: ['brand_dashboard', 'fnb_dashboard'] },
-  { prefix: '/payroll',       anyOf: ['payroll'] },
   { prefix: '/procurement',   anyOf: ['procurement'] },
   { prefix: '/reconciliation', anyOf: ['reconciliation'] },
   { prefix: '/gift-cards',    anyOf: ['gift_cards'] },

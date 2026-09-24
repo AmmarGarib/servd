@@ -602,14 +602,11 @@ export async function recipeRoutes(fastify: FastifyInstance) {
 
         if (tenantId) {
           const since = new Date(Date.now() - 90 * 24 * 3600 * 1000)
-          const payrollLines = await prisma.payrollRunLine.findMany({
-            where: {
-              payrollRun: { status: { in: ['posted', 'paid'] }, periodEnd: { gte: since } },
-              user: { tenantId },
-            },
-            select: { grossCents: true },
-          })
-          payrollTenantMonthlyCents = Math.round(payrollLines.reduce((s, l) => s + l.grossCents, 0) / 3)
+          // Locked HR payroll months in the last 90 days, averaged per month.
+          const sincePeriod = since.toISOString().slice(0, 7)
+          const hrRuns = await prisma.hrPayrollRun.findMany({ where: { tenantId, status: 'locked', period: { gte: sincePeriod } }, select: { totals: true } })
+          const paid = hrRuns.reduce((s, r) => s + (((r.totals ?? {}) as { earningsCents?: number }).earningsCents ?? 0), 0)
+          payrollTenantMonthlyCents = hrRuns.length ? Math.round(paid / hrRuns.length) : 0
           // Allocate company payroll to this brand by forecast-portion share.
           const siblings = await prisma.concept.findMany({
             where: { tenantId, deletedAt: null, isActive: true },

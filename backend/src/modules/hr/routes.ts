@@ -30,6 +30,8 @@ import {
 } from './logic.js'
 import { DEFAULT_LETTERS, renderLetter, placeholdersIn, sanitizeLetterHtml } from './letters.js'
 import { REPORTS, buildReport, resolver, type ReportQuery } from './reports.js'
+import { postPayrollAccrual, postPayrollPayment, postLoanDisbursement } from './ledger.js'
+import { reverseJournalEntry, ACCT } from '../accounting/journal.js'
 
 const HR_ADMIN = ['admin', 'owner', 'management', 'hr'] as UserRole[]
 const PAYROLL_APPROVERS = ['admin', 'owner', 'management'] as UserRole[]
@@ -253,6 +255,12 @@ async function finalApproval(tx: Tx, rec: HrRecord, extra: { approvedHours?: num
   const s = await getSettings(rec.tenantId)
   const emp = rec.employeeId ? await tx.hrEmployee.findFirst({ where: { id: rec.employeeId, tenantId: rec.tenantId } }) : null
   await onFinalApproval(tx, { ...rec, status: 'approved' }, emp, s, extra)
+  // A loan is paid out when it is approved: it goes on the books as owed by
+  // the employee, and payroll recovers it.
+  if (rec.section === 'loan') {
+    const approvers = rec.approvals as unknown as ApprovalEntry[]
+    await postLoanDisbursement(tx, rec, approvers[approvers.length - 1]?.byUserId ?? rec.createdById ?? 'system')
+  }
 }
 
 export function csv(rows: Array<Array<unknown>>): string {
@@ -427,6 +435,7 @@ export async function hrRoutes(fastify: FastifyInstance) {
       hoursPerDay: z.number().min(1).max(24),
       otMultiplier: z.number().min(1).max(5),
       eobi: z.object({
+        enabled: z.boolean(),
         employeePct: z.number().min(0).max(100), employerPct: z.number().min(0).max(100),
         base: z.enum(['fixed', 'gross']), fixedWageCents: z.number().int().min(0).nullable(),
       }),
@@ -878,11 +887,18 @@ export async function hrRoutes(fastify: FastifyInstance) {
     }
     // Claim: an approval or an effect landing between the read and here must
     // not end up on a record that also says cancelled.
-    const claimed = await prisma.hrRecord.updateMany({
-      where: { id: rec.id, status: rec.status, currentStep: rec.currentStep, appliedAt: null },
-      data: { status: 'cancelled' },
+    await prisma.$transaction(async (tx) => {
+      const claimed = await tx.hrRecord.updateMany({
+        where: { id: rec.id, status: rec.status, currentStep: rec.currentStep, appliedAt: null },
+        data: { status: 'cancelled' },
+      })
+      if (claimed.count === 0) throw new AppError('CONFLICT', 'This record changed while you were cancelling it — reload', 409)
+      // An approved loan was paid out on the books; cancelling takes it back.
+      if (rec.section === 'loan' && rec.status === 'approved') {
+        const posted = await tx.journalEntry.findFirst({ where: { tenantId: rec.tenantId, reference: `hr.loan.disbursement:${rec.id}` }, select: { id: true } })
+        if (posted) await reverseJournalEntry(rec.tenantId, 'hr.loan.disbursement', rec.id, 'Loan cancelled', { tx, postedBy: req.staffUser!.id })
+      }
     })
-    if (claimed.count === 0) throw new AppError('CONFLICT', 'This record changed while you were cancelling it — reload', 409)
     await audit({
       category: 'identity', action: `hr.${rec.section}.cancel`, entity: 'HrRecord', entityId: rec.id,
       userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: rec.tenantId, before: { status: rec.status }, after: { status: 'cancelled' },
@@ -1059,9 +1075,24 @@ export async function hrRoutes(fastify: FastifyInstance) {
     if (!run) throw new NotFoundError('Payroll', req.params.id)
     const blocker = await runBlocker(run.id)
     if (blocker) throw new AppError('RUN_INCOMPLETE', blocker, 409)
-    const n = await prisma.hrPayrollRun.updateMany({ where: { id: run.id, status: 'approved' }, data: { status: 'locked', lockedAt: new Date() } })
-    if (n.count === 0) throw new AppError('NOT_APPROVED', 'Approve the payroll before locking it', 409)
+    // Locking posts the month's payroll to the books, in the same transaction:
+    // a payroll is never locked without its accrual, nor posted twice.
+    await prisma.$transaction(async (tx) => {
+      const n = await tx.hrPayrollRun.updateMany({ where: { id: run.id, status: 'approved' }, data: { status: 'locked', lockedAt: new Date() } })
+      if (n.count === 0) throw new AppError('NOT_APPROVED', 'Approve the payroll before locking it', 409)
+      await postPayrollAccrual(tx, run.id, req.staffUser!.id)
+    })
     await audit({ category: 'identity', action: 'hr.payroll.lock', entity: 'HrPayrollRun', entityId: run.id, userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: run.tenantId, after: { period: run.period } })
+    return prisma.hrPayrollRun.findUnique({ where: { id: run.id } })
+  })
+
+  // Wages paid out: clears wages payable against the bank or the safe.
+  fastify.post<{ Params: { id: string } }>('/payroll/runs/:id/paid', { preHandler: requireAuth(...PAYROLL_APPROVERS) }, async (req) => {
+    const body = z.object({ from: z.enum(['bank', 'cash']).default('bank') }).parse(req.body ?? {})
+    const run = await prisma.hrPayrollRun.findFirst({ where: { id: req.params.id, ...writeTenants(req) } })
+    if (!run) throw new NotFoundError('Payroll', req.params.id)
+    await postPayrollPayment(run.id, req.staffUser!.id, body.from === 'cash' ? ACCT.CASH_ON_HAND : ACCT.BANK)
+    await audit({ category: 'identity', action: 'hr.payroll.paid', entity: 'HrPayrollRun', entityId: run.id, userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: run.tenantId, after: { period: run.period, from: body.from } })
     return prisma.hrPayrollRun.findUnique({ where: { id: run.id } })
   })
 

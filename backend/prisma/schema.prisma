@@ -5598,6 +5598,8 @@ model HrPayrollRun {
   approvedById String?
   approvedAt   DateTime?
   lockedAt     DateTime?
+  // Marked paid: the wages-payable clearance is posted then.
+  paidAt       DateTime?
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 

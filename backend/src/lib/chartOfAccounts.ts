@@ -42,6 +42,7 @@ export const CHART_OF_ACCOUNTS: AccountTemplate[] = [
   { code: '1324', name: 'BRA Sales Tax Input',                type: 'asset',     description: 'Balochistan Revenue Authority sales tax — Balochistan outlets only' },
   { code: '1330', name: 'Income Tax (WHT) Receivable',        type: 'asset',     description: 'Income tax withheld at source by clients/platforms' },
   { code: '1340', name: 'Advances to Suppliers',              type: 'asset',     description: 'Payments made before goods received' },
+  { code: '1350', name: 'Staff Loans & Advances',             type: 'asset',     description: 'HR loans paid to employees, recovered through payroll' },
   { code: '1510', name: 'Kitchen Equipment',                  type: 'asset' },
   { code: '1520', name: 'Furniture & Fixtures',               type: 'asset' },
   { code: '1530', name: 'IT Equipment',                       type: 'asset' },

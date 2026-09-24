@@ -169,7 +169,7 @@ export default function AccountingHubPage() {
             <Link href="/accounting/ap-aging"          className="s-card-hover p-3 rounded border border-s-border text-s-text">AP Aging</Link>
             <Link href="/accounting/sales-tax-return"  className="s-card-hover p-3 rounded border border-s-border text-s-text">Sales Tax Return</Link>
             <Link href="/accounting/audit-log"         className="s-card-hover p-3 rounded border border-s-border text-s-text">Audit Log</Link>
-            <Link href="/payroll"                   className="s-card-hover p-3 rounded border border-s-border text-s-text">Payroll</Link>
+            <Link href="/hr/payroll"                   className="s-card-hover p-3 rounded border border-s-border text-s-text">Payroll</Link>
             <Link href="/allocations"               className="s-card-hover p-3 rounded border border-s-border text-s-text">Cost Allocation</Link>
             <Link href="/reconciliation"            className="s-card-hover p-3 rounded border border-s-border text-s-text col-span-2 sm:col-span-1">Reconciliation</Link>
           </div>

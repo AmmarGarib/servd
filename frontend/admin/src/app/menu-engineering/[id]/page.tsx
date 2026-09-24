@@ -210,7 +210,7 @@ export default function PlatePricingPage() {
             {cost.payrollTenantMonthlyCents === 0 && (
               <p className="text-[10px] text-s-dim mt-2">
                 No posted payroll runs in the last 90 days — run payroll in{' '}
-                <Link href="/payroll" className="text-s-teal hover:underline">Workforce → Payroll</Link> and this fills in automatically.
+                <Link href="/hr/payroll" className="text-s-teal hover:underline">HR → Payroll</Link> and this fills in automatically.
               </p>
             )}
             {cost.brandForecastPortions === 0 && (

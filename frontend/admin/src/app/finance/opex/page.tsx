@@ -3,7 +3,7 @@
 // to /finance/capex but the model is fundamentally different: monthly
 // commitments, no quote-shopping, watch trends + variances against budget.
 //
-// Payroll category links to /payroll-snapshot — pulls live from PayrollRun
+// Payroll category links to /payroll-snapshot — pulls live from HR payroll runs
 // data instead of manual entry. License renewals + subscriptions tracked
 // the same way (just with cadence='annual' or 'quarterly').
 
@@ -430,7 +430,7 @@ function CategoryCard({ category, payrollSnap, positionsSummary, jvPartners, onE
           style={{ background: 'rgba(99,102,241,0.04)' }}>
           <div className="flex items-center justify-between mb-2">
             <p className="text-[10px] font-black uppercase tracking-wider text-[#A5B4FC]">Posted runs · last 6 months</p>
-            <Link href="/payroll" className="text-[11px] text-[#A5B4FC] hover:underline">Open payroll →</Link>
+            <Link href="/hr/payroll" className="text-[11px] text-[#A5B4FC] hover:underline">Open payroll →</Link>
           </div>
           <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
             {payrollSnap.runs.slice(0, 6).map((r) => (
@@ -446,7 +446,7 @@ function CategoryCard({ category, payrollSnap, positionsSummary, jvPartners, onE
       {isPayroll && (!payrollSnap || payrollSnap.runs.length === 0) && (
         <div className="px-5 py-3 border-b border-white/[0.04]" style={{ background: 'rgba(99,102,241,0.04)' }}>
           <p className="text-xs text-white/55">
-            No payroll runs yet. <Link href="/payroll" className="text-[#A5B4FC] hover:underline">Run payroll</Link> to see actuals here, or
+            No payroll runs yet. <Link href="/hr/payroll" className="text-[#A5B4FC] hover:underline">Run payroll</Link> to see actuals here, or
             <Link href="/settings" className="text-[#A5B4FC] hover:underline ml-1">add staff</Link> to start tracking hours.
           </p>
         </div>

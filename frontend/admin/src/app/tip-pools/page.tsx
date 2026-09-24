@@ -53,7 +53,7 @@ export default function TipPoolsPage() {
     <div className="min-h-screen bg-s-bg">
       <header className="sticky top-0 z-10 bg-s-bg/80 backdrop-blur border-b border-s-border px-6 py-4 flex items-center justify-between">
         <div>
-          <Link href="/payroll" className="text-xs text-s-muted hover:text-s-text">← Payroll</Link>
+          <Link href="/hr/payroll" className="text-xs text-s-muted hover:text-s-text">← Payroll</Link>
           <h1 className="text-xl font-bold text-s-text">Tip pools</h1>
           <p className="text-xs text-s-muted">Pool customer tips, distribute by hours × role weight, pay out staff.</p>
         </div>

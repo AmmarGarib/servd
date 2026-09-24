@@ -126,7 +126,7 @@ const NAV: NavSection[] = [
       // right roles. Workforce *admin* — staff allowances, categories,
       // onboarding — stays CEO-only up in Executive.
       { href: '/scheduling', label: 'Scheduling',  icon: '📅', module: 'scheduling' },
-      { href: '/payroll',    label: 'Payroll runs', icon: '🧾', module: 'payroll', children: [
+      { href: '/hr/payroll', label: 'Payroll',     icon: '🧾', module: 'staff_hr', children: [
         { href: '/tip-pools', label: 'Tip pools', module: 'payroll' },
       ]},
     ],
