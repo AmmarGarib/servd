@@ -64,6 +64,7 @@ const NAV: NavSection[] = [
       // Single link — the category/tab shortcuts that used to nest here were
       // noise at this team size; filtering lives inside the page itself.
       { href: '/workforce',                     label: 'Workforce',           icon: '👥', module: 'staff_directory' },
+      { href: '/hr',                            label: 'HR',                  icon: '🪪', module: 'staff_hr' },
       // Project Tracker — capital projects, run-rate opex, and forward
       // projections. Moved up from its own standalone section (CEO surface).
       { href: '/finance/capex', label: 'Project Tracker', icon: '🏗', module: 'capital', children: [

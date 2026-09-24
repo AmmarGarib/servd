@@ -223,7 +223,30 @@ async function request<T>(path: string, options: RequestInit = {}, retry = true,
   return res.json() as Promise<T>
 }
 
+/** Download a file the API generates (CSV exports), with the session attached. */
+async function download(path: string, filename: string): Promise<void> {
+  const token = getToken()
+  const res = await fetch(`${API_URL}/api/v1${path}`, {
+    credentials: 'include',
+    // Same view as the screen it was downloaded from: portfolio spans companies.
+    headers: {
+      ...(token && { Authorization: `Bearer ${token}` }),
+      ...(localStorage.getItem('servd_view_all_tenants') === '1' && { 'x-servd-portfolio': '1' }),
+    },
+  })
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({ error: { code: 'DOWNLOAD_FAILED', message: 'Download failed' } })) as { error: { code: string; message: string } }
+    throw new ApiError(res.status, data.error.code, data.error.message)
+  }
+  const url = URL.createObjectURL(await res.blob())
+  const a = document.createElement('a')
+  a.href = url; a.download = filename
+  document.body.appendChild(a); a.click(); a.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
+
 export const api = {
+  download,
   get:    <T>(path: string) => request<T>(path),
   // Mutations accept an optional second arg shape: either the body alone
   // (legacy callers) or `{ tenantId }` to pin the write to a specific company

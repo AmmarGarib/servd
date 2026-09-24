@@ -282,4 +282,24 @@ describe('HR through the API', () => {
     expect(broken.statusCode).toBe(400)
     expect(broken.json().error.message).toMatch(/quantity/)
   })
+
+  it('builds every §30 report, as a preview and as CSV, for HR only', async () => {
+    const list = (await call('hr', 'GET', '/reports')).json() as Array<{ key: string }>
+    expect(list).toHaveLength(25)
+    for (const r of list) {
+      const q = '?from=2026-01-01&to=2026-12-31&period=2026-09&days=365'
+      const preview = await call('hr', 'GET', `/reports/${r.key}${q}`)
+      expect(preview.statusCode, r.key).toBe(200)
+      expect(Array.isArray(preview.json().header), r.key).toBe(true)
+      const file = await call('hr', 'GET', `/reports/${r.key}.csv${q}`)
+      expect(file.statusCode, r.key).toBe(200)
+      expect(file.headers['content-type']).toMatch(/text\/csv/)
+    }
+    const eobi = (await call('hr', 'GET', '/reports/eobi?period=2026-09')).json()
+    expect(eobi.rows.length).toBeGreaterThan(0)
+    const joiners = (await call('hr', 'GET', '/reports/new_joiners?from=2020-01-01&to=2030-12-31')).json()
+    expect(joiners.rows.length).toBeGreaterThan(0)
+    expect((await call('cook', 'GET', '/reports/salary')).statusCode).toBe(403)
+    expect((await call('hr', 'GET', '/reports/nope')).statusCode).toBe(404)
+  })
 })

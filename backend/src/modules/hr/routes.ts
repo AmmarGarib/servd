@@ -7,7 +7,7 @@
 //   /hr/approvals  requests waiting on THEM, as a reporting manager
 // Neither can read anyone else's salary.
 
-import type { FastifyInstance, FastifyRequest } from 'fastify'
+import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify'
 import type { Prisma, UserRole, HrEmployee, HrRecord } from '@prisma/client'
 import { z } from 'zod'
 import { serviceClient as prisma } from '../../lib/prisma.js'
@@ -28,6 +28,7 @@ import {
   type ApprovalEntry, type HrSettings,
 } from './logic.js'
 import { DEFAULT_LETTERS, renderLetter, placeholdersIn } from './letters.js'
+import { REPORTS, buildReport, type ReportQuery } from './reports.js'
 
 const HR_ADMIN = ['admin', 'owner', 'management', 'hr'] as UserRole[]
 const PAYROLL_APPROVERS = ['admin', 'owner', 'management'] as UserRole[]
@@ -677,10 +678,14 @@ export async function hrRoutes(fastify: FastifyInstance) {
     return prisma.hrRecord.update({ where: { id: rec.id }, data: { status: 'cancelled' } })
   })
 
-  fastify.get<{ Params: { section: string } }>('/records/:section/export.csv', { preHandler: requireAuth(...HR_ADMIN) }, async (req, reply) => {
+  fastify.get<{ Params: { section: string }; Querystring: { status?: string; from?: string; to?: string } }>('/records/:section/export.csv', { preHandler: requireAuth(...HR_ADMIN) }, async (req, reply) => {
     const sec = recordSection(req.params.section)
     const fmt = await getFormat(activeTenant(req), sec.key)
-    const rows = await prisma.hrRecord.findMany({ where: { ...inTenants(req), section: sec.key }, include: { employee: { select: { fullName: true, employeeCode: true } } }, orderBy: { createdAt: 'asc' } })
+    const { status, from, to } = req.query
+    const rows = await prisma.hrRecord.findMany({ where: {
+      ...inTenants(req), section: sec.key, ...(status && { status }),
+      ...((from || to) && { startDate: { ...(from && { gte: new Date(from) }), ...(to && { lte: new Date(to) }) } }),
+    }, include: { employee: { select: { fullName: true, employeeCode: true } } }, orderBy: { createdAt: 'asc' } })
     const cols = fmt.fields.filter((f) => f.type !== 'table')
     const out = csv([
       ['Record', 'Status', 'Stage', 'Employee ID', 'Employee', ...cols.map((c) => c.label), 'Created'],
@@ -873,6 +878,12 @@ export async function hrRoutes(fastify: FastifyInstance) {
     })
   })
 
+  // Back to the built-in default: the company's own version is removed.
+  fastify.delete<{ Params: { key: string } }>('/letters/:key', { preHandler: requireAuth(...HR_ADMIN) }, async (req, reply) => {
+    await prisma.hrLetterTemplate.deleteMany({ where: { tenantId: activeTenant(req), key: req.params.key } })
+    return reply.status(204).send()
+  })
+
   fastify.post('/letters/render', { preHandler: requireAuth(...HR_ADMIN) }, async (req) => {
     const body = z.object({ key: z.string(), employeeId: z.string().uuid().optional(), recordId: z.string().uuid().optional() }).parse(req.body)
     const tenantId = activeTenant(req)
@@ -900,22 +911,24 @@ export async function hrRoutes(fastify: FastifyInstance) {
   fastify.get<{ Querystring: { days?: string } }>('/due', { preHandler: requireAuth(...HR_ADMIN) }, async (req) =>
     dueList(readTenants(req), Math.min(365, parseInt(req.query.days ?? '30', 10) || 30)))
 
-  fastify.get('/reports/employees.csv', { preHandler: requireAuth(...HR_ADMIN) }, async (req, reply) => {
-    const rows = await prisma.hrEmployee.findMany({ where: inTenants(req), orderBy: { employeeCode: 'asc' } })
-    const label = await employeeLabels(activeTenant(req), rows)
-    const out = csv([
-      ['Employee ID', 'Name', 'Father/Husband', 'CNIC', 'CNIC expiry', 'Phone', 'Department', 'Designation', 'Branch', 'Manager', 'Type', 'Status', 'Joined', 'Probation end', 'Confirmed', 'Contract end', 'Last day', 'Basic', 'Gross', 'EOBI', 'SESSI', 'NTN', 'Bank', 'IBAN'],
-      ...rows.map((e) => [e.employeeCode, e.fullName, e.fatherHusbandName, e.cnic, e.cnicExpiry, e.phone, label(e.departmentId), label(e.designationId), label(e.locationId), label(e.managerId), e.employmentType, e.status, e.joiningDate, e.probationEnd, e.confirmationDate, e.contractEnd, e.lastWorkingDay, (e.basicSalaryCents / 100).toFixed(2), (e.grossSalaryCents / 100).toFixed(2), e.eobiNo, e.sessiNo, e.ntn, e.bankName, e.iban]),
-    ])
-    return reply.header('Content-Type', 'text/csv; charset=utf-8').header('Content-Disposition', 'attachment; filename="hr-employee-master.csv"').send(out)
-  })
+  // Reports (§30). The two original CSV paths stay as aliases.
+  fastify.get('/reports', { preHandler: requireAuth(...HR_ADMIN) }, async () => REPORTS)
 
-  fastify.get('/reports/leave-balances.csv', { preHandler: requireAuth(...HR_ADMIN) }, async (req, reply) => {
-    const tenantId = activeTenant(req)
-    const emps = await prisma.hrEmployee.findMany({ where: { tenantId, status: { in: ['active', 'on_leave'] } }, orderBy: { employeeCode: 'asc' } })
-    const rows: unknown[][] = [['Employee ID', 'Name', 'Leave type', 'Entitlement', 'Adjustments', 'Taken', 'Pending', 'Balance']]
-    for (const e of emps) for (const b of await leaveBalancesFor(tenantId, e.id)) rows.push([e.employeeCode, e.fullName, b.name, b.entitlement, b.adjustments, b.taken, b.pending, b.balance])
-    return reply.header('Content-Type', 'text/csv; charset=utf-8').header('Content-Disposition', 'attachment; filename="hr-leave-balances.csv"').send(csv(rows))
+  const sendReport = async (req: FastifyRequest, reply: FastifyReply, key: string, q: ReportQuery) => {
+    const t = await buildReport(key, readTenants(req), activeTenant(req), q)
+    return reply.header('Content-Type', 'text/csv; charset=utf-8')
+      .header('Content-Disposition', `attachment; filename="hr-${key.replace(/_/g, '-')}.csv"`)
+      .send(csv([t.header, ...t.rows]))
+  }
+  fastify.get('/reports/employees.csv', { preHandler: requireAuth(...HR_ADMIN) }, async (req, reply) => sendReport(req, reply, 'employee_master', {}))
+  fastify.get('/reports/leave-balances.csv', { preHandler: requireAuth(...HR_ADMIN) }, async (req, reply) => sendReport(req, reply, 'leave_balance', {}))
+
+  fastify.get<{ Params: { key: string }; Querystring: ReportQuery }>('/reports/:key', { preHandler: requireAuth(...HR_ADMIN) }, async (req, reply) => {
+    const m = /^(.+)\.csv$/.exec(req.params.key)
+    if (m) return sendReport(req, reply, m[1]!, req.query)
+    // On-screen preview: first 500 rows, with the full count.
+    const t = await buildReport(req.params.key, readTenants(req), activeTenant(req), req.query)
+    return { ...t, total: t.rows.length, rows: t.rows.slice(0, 500) }
   })
 
   // ── Manager / HOD portal ──────────────────────────────────────────────────
