@@ -27,6 +27,10 @@ export interface HrField {
   group?: string
   help?: string
   columns?: HrField[]
+  /** number / percent: the smallest value accepted. */
+  min?: number
+  /** number / percent: whole numbers only. */
+  integer?: boolean
   readOnly?: boolean
   system?: boolean
 }
@@ -77,6 +81,7 @@ export interface HrRecord {
   approvals: Approval[]
   data: Record<string, unknown>
   appliedAt: string | null
+  createdById: string | null
   createdAt: string
   label?: string
 }
@@ -108,6 +113,51 @@ export const STATUS_COLOR: Record<string, string> = {
 }
 
 export const ROLE_LABEL: Record<string, string> = { hod: 'Reporting manager', hr: 'HR', management: 'Management' }
+
+// The API's role gates (backend/src/modules/hr/routes.ts HR_ADMIN and
+// PAYROLL_APPROVERS). Screens use them only to hide what would be refused.
+export const HR_ADMIN_ROLES = ['admin', 'owner', 'management', 'hr']
+export const PAYROLL_APPROVER_ROLES = ['admin', 'owner', 'management']
+
+/** Today in the browser's own calendar, YYYY-MM-DD — not the UTC date, which
+ *  is still yesterday in Karachi until 05:00. */
+export function localDate(d = new Date()): string {
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+}
+
+const inclusiveDays = (from: unknown, to: unknown): number | null => {
+  if (typeof from !== 'string' || typeof to !== 'string' || !from || !to) return null
+  const a = Date.parse(from.slice(0, 10)), b = Date.parse(to.slice(0, 10))
+  if (Number.isNaN(a) || Number.isNaN(b) || b < a) return null
+  return Math.round((b - a) / 86_400_000) + 1
+}
+
+/**
+ * Leave: the days are the dates' span, worked out as they are picked — the
+ * server counts them the same way whatever is sent. Only a single day may be
+ * changed by hand, to a half day (0.5). Run on every change of a leave form's
+ * value; returns it with the days filled in.
+ */
+export function withLeaveDays(section: string, fields: HrField[], prev: Record<string, unknown>, next: Record<string, unknown>): Record<string, unknown> {
+  if (section !== 'leave') return next
+  const key = (bind: string) => fields.find((f) => f.bind === bind)?.key
+  const [from, to, days] = [key('startDate'), key('endDate'), key('quantity')]
+  if (!from || !to || !days) return next
+  const span = inclusiveDays(next[from], next[to])
+  const datesChanged = next[from] !== prev[from] || next[to] !== prev[to]
+  if (span === 1 && !datesChanged && next[days] != null) return next
+  return { ...next, [days]: span }
+}
+
+/** A leave form's fields, with the days shown as calculated unless the
+ *  dates are a single day (which may be a half day). */
+export function leaveFields(section: string, fields: HrField[], value: Record<string, unknown>): HrField[] {
+  if (section !== 'leave') return fields
+  const key = (bind: string) => fields.find((f) => f.bind === bind)?.key ?? ''
+  const single = inclusiveDays(value[key('startDate')], value[key('endDate')]) === 1
+  return fields.map((f) => (f.bind === 'quantity' && !single ? { ...f, readOnly: true } : f))
+}
 
 // Shared dark styling, matching the other finance / ops pages.
 export const card = { background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' } as const

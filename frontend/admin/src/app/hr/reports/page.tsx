@@ -6,20 +6,22 @@
 import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../../../lib/api'
-import { card, inp, btn, btnGhost } from '../../../lib/hr'
+import { card, inp, btn, btnGhost, localDate } from '../../../lib/hr'
 import { HrShell } from '../../../components/hr/HrShell'
 
 type Param = 'range' | 'asOf' | 'days' | 'period'
 interface ReportDef { key: string; title: string; group: string; description: string; params: Param[] }
 interface ReportTable { title: string; header: string[]; rows: unknown[][]; total: number; note?: string }
 
-const today = () => new Date().toISOString().slice(0, 10)
-const monthStart = () => `${new Date().toISOString().slice(0, 7)}-01`
+// Defaults in the local calendar — the UTC date is still yesterday (or last
+// month) in Karachi until 05:00.
+const today = () => localDate()
+const monthStart = () => `${localDate().slice(0, 7)}-01`
 
 export default function HrReportsPage() {
   const { data: reports = [], error } = useQuery({ queryKey: ['hr-reports'], queryFn: () => api.get<ReportDef[]>('/hr/reports') })
   const [key, setKey] = useState<string | null>(null)
-  const [q, setQ] = useState({ from: monthStart(), to: today(), asOf: today(), days: '30', period: new Date().toISOString().slice(0, 7) })
+  const [q, setQ] = useState({ from: monthStart(), to: today(), asOf: today(), days: '30', period: localDate().slice(0, 7) })
   const def = reports.find((r) => r.key === key) ?? null
 
   const groups = useMemo(() => {

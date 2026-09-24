@@ -131,14 +131,21 @@ export default function FormatEditorPage() {
                       <td className="px-1 py-1.5 min-w-[160px]"><input className={inp} value={f.label} onChange={(e) => upd(i, { label: e.target.value })} aria-label="Label" /></td>
                       <td className="px-1 py-1.5 min-w-[120px]"><input className={`${inp} font-mono`} value={f.key} disabled={sys} onChange={(e) => upd(i, { key: e.target.value })} aria-label="Key" /></td>
                       <td className="px-1 py-1.5">
-                        <select className={inp} value={f.type} disabled={sys} onChange={(e) => upd(i, { type: e.target.value as HrField['type'] })} aria-label="Type">
+                        {/* An org-list field must say which list; it starts on the first. */}
+                        <select className={inp} value={f.type} disabled={sys} aria-label="Type"
+                          onChange={(e) => { const type = e.target.value as HrField['type']; upd(i, { type, ...(type === 'orgunit' && !f.ref && org?.kinds[0] && { ref: org.kinds[0] }) }) }}>
                           {FIELD_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
                         </select>
                       </td>
                       <td className="px-1 py-1.5 text-center"><input type="checkbox" checked={!!f.required} onChange={(e) => upd(i, { required: e.target.checked })} className="accent-[#00D4B1]" aria-label="Required" /></td>
                       <td className="px-1 py-1.5 min-w-[180px]">
-                        {(f.type === 'select' || f.type === 'multiselect') && <input className={inp} placeholder="comma, separated" value={(f.options ?? []).join(', ')} onChange={(e) => upd(i, { options: e.target.value.split(',').map((x) => x.trim()).filter(Boolean) })} aria-label="Options" />}
-                        {f.type === 'orgunit' && <select className={inp} value={f.ref ?? ''} onChange={(e) => upd(i, { ref: e.target.value })} aria-label="Org list">{(org?.kinds ?? []).map((k) => <option key={k} value={k}>{human(k)}</option>)}</select>}
+                        {(f.type === 'select' || f.type === 'multiselect') && <OptionsInput options={f.options ?? []} onSet={(options) => upd(i, { options })} />}
+                        {f.type === 'orgunit' && (
+                          <select className={inp} value={f.ref ?? ''} onChange={(e) => upd(i, { ref: e.target.value || undefined })} aria-label="Org list">
+                            {!f.ref && <option value="">Choose a list…</option>}
+                            {(org?.kinds ?? []).map((k) => <option key={k} value={k}>{human(k)}</option>)}
+                          </select>
+                        )}
                         {f.type === 'record' && <input className={inp} placeholder="section key, e.g. leave_type" value={f.ref ?? ''} onChange={(e) => upd(i, { ref: e.target.value })} aria-label="Points to section" />}
                         {f.type === 'table' && <span className="text-white/40">{f.columns?.length ?? 0} columns (edit in JSON)</span>}
                       </td>
@@ -188,7 +195,7 @@ export default function FormatEditorPage() {
                   <button onClick={() => { setWorkflow(workflow.filter((_, j) => j !== i)); setDirty(true) }} className="text-white/35 hover:text-red-400 px-1" aria-label="Remove step">✕</button>
                 </div>
               ))}
-              {workflow.length < 6 && <button className="text-xs font-bold text-white/50 hover:text-white" onClick={() => { setWorkflow([...workflow, { key: `step${workflow.length + 1}`, label: 'HR approval', role: 'hr' }]); setDirty(true) }}>+ Add step</button>}
+              {workflow.length < 6 && <button className="text-xs font-bold text-white/50 hover:text-white" onClick={() => { setWorkflow([...workflow, { key: nextStepKey(workflow), label: 'HR approval', role: 'hr' }]); setDirty(true) }}>+ Add step</button>}
             </div>
           )}
           {(info.current.stages.length > 0 || stages) && (
@@ -226,6 +233,32 @@ export default function FormatEditorPage() {
       )}
     </HrShell>
   )
+}
+
+/** Approvals are matched to steps by key, so a new step never reuses one —
+ *  not even after a step in the middle was removed. */
+function nextStepKey(workflow: WorkflowStep[]): string {
+  const used = new Set(workflow.map((w) => w.key))
+  let n = workflow.length + 1
+  while (used.has(`step${n}`)) n++
+  return `step${n}`
+}
+
+const splitOptions = (t: string) => t.split(',').map((x) => x.trim()).filter(Boolean)
+
+/** Choices as comma-separated text. What is typed stays as typed — a
+ *  trailing comma or space is the start of the next choice, not noise — and
+ *  the list is taken from it on every change; it is tidied on blur. */
+function OptionsInput({ options, onSet }: { options: string[]; onSet: (o: string[]) => void }) {
+  const [text, setText] = useState(options.join(', '))
+  const [seen, setSeen] = useState(options.join('\n'))
+  if (options.join('\n') !== seen) {
+    setSeen(options.join('\n'))
+    if (splitOptions(text).join('\n') !== options.join('\n')) setText(options.join(', '))
+  }
+  return <input className={inp} placeholder="comma, separated" value={text} aria-label="Options"
+    onChange={(e) => { setText(e.target.value); onSet(splitOptions(e.target.value)) }}
+    onBlur={() => setText(splitOptions(text).join(', '))} />
 }
 
 function PreviewForm({ fields }: { fields: HrField[] }) {

@@ -8,7 +8,7 @@ import Link from 'next/link'
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../../../lib/api'
-import { card, btn, btnGhost, displayValue, human, STATUS_COLOR, type HrFormat, type HrRecord } from '../../../../lib/hr'
+import { card, btn, btnGhost, displayValue, human, withLeaveDays, leaveFields, STATUS_COLOR, type HrFormat, type HrRecord } from '../../../../lib/hr'
 import { HrShell, Modal, useHrLookups, useHrOrg, useHrSections } from '../../../../components/hr/HrShell'
 import { FormRenderer } from '../../../../components/hr/FormRenderer'
 import { RecordDetail } from '../../../../components/hr/RecordDetail'
@@ -20,13 +20,14 @@ export default function HrSectionPage() {
   const [stageFilter, setStageFilter] = useState('')
   const [creating, setCreating] = useState(false)
   const [openId, setOpenId] = useState<string | null>(null)
+  const [csvErr, setCsvErr] = useState('')
   const { data: sections } = useHrSections()
   const info = sections?.find((s) => s.key === section)
   const { data: lookups } = useHrLookups()
   const { data: org } = useHrOrg()
   const { data, error } = useQuery({
     queryKey: ['hr-records', section, status, stageFilter],
-    queryFn: () => api.get<{ format: HrFormat; records: HrRecord[] }>(`/hr/records/${section}?${new URLSearchParams({ ...(status && { status }), ...(stageFilter && { stage: stageFilter }) })}`),
+    queryFn: () => api.get<{ format: HrFormat; formatTenantId: string; records: HrRecord[] }>(`/hr/records/${section}?${new URLSearchParams({ ...(status && { status }), ...(stageFilter && { stage: stageFilter }) })}`),
   })
   const fmt = data?.format
   const open = data?.records.find((r) => r.id === openId) ?? null
@@ -39,12 +40,13 @@ export default function HrSectionPage() {
       title={info?.title ?? human(section)}
       subtitle={[info ? `Spec §${info.specNo}.` : '', info?.effect ?? ''].filter(Boolean).join(' ')}
       actions={<>
-        <button className={btnGhost} onClick={() => { void api.download(`/hr/records/${section}/export.csv`, `hr-${section}.csv`) }}>Export CSV</button>
+        <button className={btnGhost} onClick={() => { setCsvErr(''); api.download(`/hr/records/${section}/export.csv`, `hr-${section}.csv`).catch((e: Error) => setCsvErr(e.message)) }}>Export CSV</button>
         <Link href={`/hr/formats/${section}`} className={btnGhost}>Edit format</Link>
         <button className={btn} onClick={() => setCreating(true)}>+ New</button>
       </>}
     >
       {error && <p className="text-sm text-red-400 mb-4">{(error as Error).message}</p>}
+      {csvErr && <p className="text-sm text-red-400 mb-4">Export failed: {csvErr}</p>}
       <div className="flex flex-wrap gap-2 mb-4">
         {['', 'draft', 'submitted', 'approved', 'rejected', 'cancelled'].map((s) => (
           <button key={s || 'all'} onClick={() => setStatus(s)}
@@ -95,12 +97,36 @@ export default function HrSectionPage() {
       {creating && fmt && (
         <NewRecord section={section} format={fmt} onClose={() => setCreating(false)} onSaved={() => { setCreating(false); void qc.invalidateQueries() }} />
       )}
-      {open && fmt && (
+      {open && data && (
         <Modal title={open.label ?? info?.title ?? 'Record'} wide onClose={() => setOpenId(null)}>
-          <RecordDetail record={open} format={fmt} lookups={lookups} org={org} admin onChanged={() => { void qc.invalidateQueries({ queryKey: ['hr-records', section] }) }} />
+          <OpenRecord record={open} listFormat={data.format} listTenantId={data.formatTenantId}
+            onChanged={() => { void qc.invalidateQueries({ queryKey: ['hr-records', section] }) }} />
         </Modal>
       )}
     </HrShell>
+  )
+}
+
+/** A record shown, edited and approved against the format it was saved under
+ *  — its own version, and its own company's in portfolio view — with that
+ *  company's pickers. The list's format is used only when it is that one. */
+function OpenRecord({ record, listFormat, listTenantId, onChanged }: { record: HrRecord; listFormat: HrFormat; listTenantId: string; onChanged: () => void }) {
+  const same = record.tenantId === listTenantId && record.formVersion === listFormat.version
+  const { data: own, error } = useQuery({
+    queryKey: ['hr-record', record.section, record.id],
+    queryFn: () => api.get<{ record: HrRecord; format: HrFormat }>(`/hr/records/${record.section}/${record.id}`),
+    enabled: !same,
+  })
+  const { data: lookups } = useHrLookups(record.tenantId)
+  const { data: org } = useHrOrg(record.tenantId)
+  const format = same ? listFormat : own?.format
+  if (error) return <p className="text-sm text-red-400">{(error as Error).message}</p>
+  if (!format) return <p className="text-sm text-white/40">Loading its format…</p>
+  return (
+    <>
+      {!same && <p className="text-[11px] text-white/40 mb-3">Saved under format v{format.version}{record.tenantId !== listTenantId ? ' of its own company' : ''} — shown and checked against that.</p>}
+      <RecordDetail key={format.version} record={record} format={format} lookups={lookups} org={org} admin onChanged={onChanged} />
+    </>
   )
 }
 
@@ -117,7 +143,8 @@ function NewRecord({ section, format, onClose, onSaved }: { section: string; for
   const hasWorkflow = format.workflow.length > 0
   return (
     <Modal title={`New — ${format.title}`} wide onClose={onClose}>
-      <FormRenderer fields={format.fields} value={value} onChange={setValue} ctx={{ lookups, org }} />
+      <FormRenderer fields={leaveFields(section, format.fields, value)} value={value}
+        onChange={(x) => setValue(withLeaveDays(section, format.fields, value, x))} ctx={{ lookups, org }} />
       {err && <p className="text-xs text-red-400 mt-3">{err}</p>}
       <div className="flex gap-2 mt-5">
         <button className={btn} disabled={save.isPending} onClick={() => save.mutate(true)}>{hasWorkflow ? 'Submit for approval' : 'Save'}</button>

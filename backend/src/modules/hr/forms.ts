@@ -47,6 +47,10 @@ export interface HrField {
   group?: string
   help?: string
   columns?: HrField[]
+  /** number / percent: the smallest value accepted. */
+  min?: number
+  /** number / percent: whole numbers only. */
+  integer?: boolean
   /** Computed by logic — shown, not typed. */
   readOnly?: boolean
   /** Logic reads or writes this key. Relabel freely; the key and type are fixed. */
@@ -285,7 +289,7 @@ export const HR_SECTIONS: HrSection[] = [
     ] },
 
   { key: 'attendance_correction', specNo: 9, title: 'Attendance corrections', group: 'Time', kind: 'record',
-    workflow: [HOD, HR],
+    workflow: [HOD, HR], requires: ['employeeId'],
     fields: [
       emp(),
       f('date', 'Date', 'date', { required: true, bind: 'startDate' }),
@@ -352,8 +356,8 @@ export const HR_SECTIONS: HrSection[] = [
       t('code', 'Code'),
       f('entitlementDays', 'Entitlement (days per year)', 'number', { required: true, bind: 'quantity' }),
       sel('pay', 'Paid or unpaid', ['paid', 'unpaid'], { required: true, bind: 'category' }),
-      f('carryForward', 'Carry forward', 'boolean'),
-      f('maxCarryForward', 'Max carry forward (days)', 'number'),
+      f('carryForward', 'Carry forward', 'boolean', { system: true, help: 'Unused days roll into the next leave year' }),
+      f('maxCarryForward', 'Max carry forward (days)', 'number', { system: true, help: 'Blank = no cap' }),
     ] },
 
   { key: 'leave', specNo: 12, title: 'Leave applications', group: 'Time', kind: 'record',
@@ -364,7 +368,7 @@ export const HR_SECTIONS: HrSection[] = [
       f('leaveType', 'Leave type', 'record', { ref: 'leave_type', required: true, bind: 'refId' }),
       f('from', 'From', 'date', { required: true, bind: 'startDate' }),
       f('to', 'To', 'date', { required: true, bind: 'endDate' }),
-      f('days', 'Days', 'number', { bind: 'quantity', help: 'Calculated from the dates if left blank' }),
+      f('days', 'Days', 'number', { bind: 'quantity', help: 'Calculated from the dates. For a half day, pick one date and enter 0.5' }),
       f('reason', 'Reason', 'textarea'),
       f('handoverTo', 'Handover to', 'employee'),
     ] },
@@ -447,7 +451,7 @@ export const HR_SECTIONS: HrSection[] = [
     ] },
 
   { key: 'training_request', specNo: 18, title: 'Training needs', group: 'People', kind: 'record',
-    workflow: [HOD, HR],
+    workflow: [HOD, HR], requires: ['employeeId'],
     fields: [
       emp(),
       t('need', 'Training need', { required: true }),
@@ -537,7 +541,7 @@ export const HR_SECTIONS: HrSection[] = [
       sel('type', 'Type', ['advance', 'loan'], { required: true, bind: 'category' }),
       f('amount', 'Amount', 'money', { required: true, bind: 'amountCents' }),
       f('date', 'Date', 'date', { bind: 'startDate' }),
-      f('installments', 'Number of installments', 'number', { required: true, bind: 'quantity' }),
+      f('installments', 'Number of installments', 'number', { required: true, bind: 'quantity', integer: true, min: 1 }),
       f('firstDeduction', 'First deduction month', 'date', { required: true, bind: 'effectiveDate' }),
       f('reason', 'Reason', 'textarea'),
     ] },
@@ -629,6 +633,9 @@ export function sectionByKey(key: string): HrSection | undefined {
 
 export const RECORD_SECTIONS = HR_SECTIONS.filter((s) => s.kind === 'record')
 
+/** What an employee may raise for themselves through self-service. */
+export const ESS_SECTIONS = ['leave', 'overtime', 'attendance_correction', 'training_request', 'resignation', 'loan']
+
 // ─── Validation ──────────────────────────────────────────────────────────────
 
 export interface ValidatedRecord {
@@ -640,12 +647,35 @@ export interface ValidatedRecord {
 
 const isEmpty = (v: unknown) => v === undefined || v === null || v === '' || (Array.isArray(v) && v.length === 0)
 
+const DATE_RE = /^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d{1,3})?)?(Z|[+-]\d{2}:\d{2})?)?$/
+
+/**
+ * A date as HR means it: YYYY-MM-DD, or a full ISO timestamp. Strict, because
+ * `new Date()` is not — it rolls 31 June into 1 July, reads '1' as 2001 and
+ * 'June 5' as a date in 2001. The day must exist in its month.
+ */
+export function parseHrDate(raw: unknown): Date | null {
+  const s = String(raw).trim()
+  const m = DATE_RE.exec(s)
+  if (!m) return null
+  const y = Number(m[1]), mo = Number(m[2]), d = Number(m[3])
+  if (y < 1900 || y > 2999 || mo < 1 || mo > 12 || d < 1 || d > new Date(Date.UTC(y, mo, 0)).getUTCDate()) return null
+  if (m[4] !== undefined && (Number(m[4]) > 23 || Number(m[5]) > 59 || Number(m[6] ?? 0) > 59)) return null
+  const out = new Date(s)
+  return Number.isNaN(out.getTime()) ? null : out
+}
+
+const TIME_RE = /^([01]?\d|2[0-3]):([0-5]\d)$/
+
 function coerce(field: HrField, raw: unknown): { value: unknown; error?: string } {
   if (isEmpty(raw)) return { value: null }
   switch (field.type) {
     case 'number': case 'percent': {
       const n = typeof raw === 'number' ? raw : Number(raw)
-      return Number.isFinite(n) ? { value: n } : { value: null, error: 'must be a number' }
+      if (!Number.isFinite(n)) return { value: null, error: 'must be a number' }
+      if (field.integer && !Number.isInteger(n)) return { value: null, error: 'must be a whole number' }
+      if (field.min !== undefined && n < field.min) return { value: null, error: `must be at least ${field.min}` }
+      return { value: n }
     }
     case 'money': {
       // Money is integer paisa everywhere in servd. The admin converts rupees.
@@ -654,11 +684,13 @@ function coerce(field: HrField, raw: unknown): { value: unknown; error?: string 
       return { value: Math.round(n) }
     }
     case 'date': case 'datetime': {
-      const d = new Date(String(raw))
-      return Number.isNaN(d.getTime()) ? { value: null, error: 'must be a date' } : { value: d.toISOString() }
+      const d = parseHrDate(raw)
+      return d ? { value: d.toISOString() } : { value: null, error: 'must be a real date (YYYY-MM-DD)' }
     }
-    case 'time':
-      return /^\d{1,2}:\d{2}$/.test(String(raw)) ? { value: String(raw) } : { value: null, error: 'must be HH:MM' }
+    case 'time': {
+      const m = TIME_RE.exec(String(raw).trim())
+      return m ? { value: `${m[1]!.padStart(2, '0')}:${m[2]}` } : { value: null, error: 'must be a time between 00:00 and 23:59' }
+    }
     case 'boolean':
       return { value: raw === true || raw === 'true' || raw === 1 || raw === 'yes' }
     case 'select':
@@ -675,24 +707,38 @@ function coerce(field: HrField, raw: unknown): { value: unknown; error?: string 
     case 'email':
       return /^\S+@\S+\.\S+$/.test(String(raw)) ? { value: String(raw).trim() } : { value: null, error: 'must be an email address' }
     case 'table': {
+      // Each row is checked like a small form: a bad cell is an error, never
+      // quietly saved as blank.
       if (!Array.isArray(raw)) return { value: null, error: 'must be a list' }
-      const rows = raw.map((row) => {
-        const out: Record<string, unknown> = {}
-        for (const col of field.columns ?? []) out[col.key] = coerce(col, (row as Record<string, unknown>)?.[col.key]).value
-        return out
+      const rows: Array<Record<string, unknown>> = []
+      const errors: string[] = []
+      raw.forEach((row, i) => {
+        if (!row || typeof row !== 'object' || Array.isArray(row)) { errors.push(`row ${i + 1} is not a row`); return }
+        const v = validateAgainst(field.columns ?? [], row as Record<string, unknown>)
+        for (const e of v.errors) errors.push(`row ${i + 1}: ${e.message}`)
+        rows.push(v.data)
       })
-      return { value: rows }
+      return errors.length ? { value: null, error: errors.join(', ') } : { value: rows }
     }
     default:
       return { value: typeof raw === 'string' ? raw.trim() : raw }
   }
 }
 
-/** Coerce submitted values against a format, and pull out the bound slots. */
-export function validateAgainst(fields: HrField[], input: Record<string, unknown>, opts: { partial?: boolean } = {}): ValidatedRecord {
+/**
+ * Coerce submitted values against a format, and pull out the bound slots.
+ *
+ * A readOnly field is computed by logic, so it is never taken from the input —
+ * whatever the client sends for it is ignored. An edit passes `stored` (the
+ * record's current data) and keeps the stored value.
+ */
+export function validateAgainst(fields: HrField[], input: Record<string, unknown>, opts: { partial?: boolean; stored?: Record<string, unknown> } = {}): ValidatedRecord {
   const out: ValidatedRecord = { data: {}, slots: {}, employee: {}, errors: [] }
   for (const field of fields) {
-    if (field.readOnly && !(field.key in input)) continue
+    if (field.readOnly) {
+      if (opts.stored && field.key in opts.stored) out.data[field.key] = opts.stored[field.key]
+      continue
+    }
     const has = field.key in input
     if (!has && opts.partial) continue
     const { value, error } = coerce(field, input[field.key])
@@ -708,38 +754,161 @@ export function validateAgainst(fields: HrField[], input: Record<string, unknown
   return out
 }
 
+// What kind of field may fill each slot. Logic reads a slot as typed data —
+// an employee id, a date, paisa — so the field bound to it must produce that:
+// a text field on employeeId would skip the company check on references, and
+// a plain number on amountCents would skip the rupee-to-paisa conversion.
+const DATE_TYPES: FieldType[] = ['date', 'datetime']
+const SLOT_TYPES: Record<RecordSlot, FieldType[]> = {
+  employeeId: ['employee'],
+  startDate: DATE_TYPES, endDate: DATE_TYPES, effectiveDate: DATE_TYPES,
+  quantity: ['number', 'percent'],
+  amountCents: ['money'],
+  refId: ['record', 'orgunit', 'location', 'department', 'employee'],
+  category: ['select'],
+}
+
+/** The same for Employee Master columns. A column holding an id is filled
+ *  only by the matching reference field (and org unit kind), never by text.
+ *  Columns not listed hold text. */
+export const EMPLOYEE_COLUMN_TYPES: Record<string, { types: FieldType[]; ref?: string }> = {
+  departmentId: { types: ['department'] },
+  designationId: { types: ['orgunit'], ref: 'designation' },
+  gradeId: { types: ['orgunit'], ref: 'grade' },
+  locationId: { types: ['location'] },
+  managerId: { types: ['employee'] },
+  cnicExpiry: { types: DATE_TYPES }, dateOfBirth: { types: DATE_TYPES }, joiningDate: { types: DATE_TYPES },
+  probationEnd: { types: DATE_TYPES }, confirmationDate: { types: DATE_TYPES }, contractEnd: { types: DATE_TYPES },
+  lastWorkingDay: { types: DATE_TYPES },
+  noticePeriodDays: { types: ['number'] },
+  basicSalaryCents: { types: ['money'] }, grossSalaryCents: { types: ['money'] }, monthlyTaxCents: { types: ['money'] },
+  employmentType: { types: ['select'] }, status: { types: ['select'] },
+}
+const TEXT_COLUMN_TYPES: FieldType[] = ['text', 'textarea', 'email', 'phone', 'select', 'file']
+
+/**
+ * Choice values logic compares literally, by section and binding. A format
+ * must keep every value in `keep` — HR relabels what a value is called in the
+ * label, not the value. Where `closed` is set, HR may drop the other values
+ * but add none: logic would put an unknown value in a branch that pays wrongly.
+ * Without `closed`, an added value falls into the harmless default noted.
+ */
+export const SYSTEM_OPTIONS: Record<string, Array<{ bind: string; keep: string[]; closed?: string[] }>> = {
+  // Payroll deducts 'deduction' and 'other_deduction' and pays everything else
+  // as an earning — a new "fine" would be paid out, so no new kinds.
+  payroll_adjustment: [{ bind: 'category', keep: ['deduction', 'other_deduction'], closed: ['bonus', 'incentive', 'allowance', 'arrears', 'deduction', 'other_deduction'] }],
+  // Anything but 'unpaid' is paid leave off the balance, so no third kind.
+  leave_type: [{ bind: 'category', keep: ['paid', 'unpaid'], closed: ['paid', 'unpaid'] }],
+  // Payroll docks absent, half_day and late; the dashboard counts present. A
+  // status HR adds docks nothing, like present — a payslip edit covers the rest.
+  attendance: [{ bind: 'category', keep: ['present', 'absent', 'late', 'half_day'] }],
+  // confirm and extend write to the employee. Any other outcome (terminate, or
+  // one HR adds) writes nothing — a termination has its own approval.
+  probation_review: [{ bind: 'category', keep: ['confirm', 'extend'] }],
+  employees: [
+    // Approvals write resigned/terminated, payroll leaves out separated, and
+    // active/on_leave are the current staff. A status HR adds is simply not
+    // current; the person is still paid for the days they were employed.
+    { bind: 'employee.status', keep: EMPLOYEE_STATUSES },
+    // Probation and contract end dates are tracked; confirmation writes
+    // permanent. Another type gets no reminders.
+    { bind: 'employee.employmentType', keep: ['permanent', 'probation', 'contract'] },
+  ],
+}
+
+const FIELD_TYPES: FieldType[] = ['text', 'textarea', 'number', 'money', 'percent', 'date', 'time', 'datetime', 'select', 'multiselect', 'boolean', 'email', 'phone', 'file', 'employee', 'employees', 'location', 'department', 'orgunit', 'record', 'table']
+
+/** Problems with one field on its own — also run on a table's columns. */
+function fieldProblems(fl: HrField): string[] {
+  const problems: string[] = []
+  if (!fl.key || !/^[a-zA-Z][a-zA-Z0-9_]*$/.test(fl.key)) problems.push(`"${fl.label || fl.key}" needs a key made of letters, digits and underscores`)
+  if (!fl.label) problems.push(`Field "${fl.key}" has no label`)
+  if (!FIELD_TYPES.includes(fl.type)) problems.push(`Field "${fl.key}" has an unknown type "${fl.type}"`)
+  if ((fl.type === 'select' || fl.type === 'multiselect') && !(fl.options?.length)) problems.push(`"${fl.label}" is a choice field with no options`)
+  if ((fl.type === 'record' || fl.type === 'orgunit') && !fl.ref) problems.push(`"${fl.label}" must say what it points to`)
+  if (fl.type === 'record' && fl.ref && !RECORD_SECTIONS.some((s) => s.key === fl.ref)) problems.push(`"${fl.label}" points to "${fl.ref}", which is not an HR record section`)
+  if (fl.type === 'orgunit' && fl.ref && !(ORG_UNIT_KINDS as readonly string[]).includes(fl.ref)) problems.push(`"${fl.label}" points to "${fl.ref}", which is not an org unit kind`)
+  return problems
+}
+
+/** Which field types may bind `bind`, and the org unit kind or record section they must point at. */
+function bindTypes(bind: string): { types: FieldType[]; ref?: string } {
+  if (bind.startsWith('employee.')) return EMPLOYEE_COLUMN_TYPES[bind.slice('employee.'.length)] ?? { types: TEXT_COLUMN_TYPES }
+  return { types: SLOT_TYPES[bind as RecordSlot] ?? [] }
+}
+
 /**
  * Check a format a person is trying to save. Refuses one that would silently
- * break the section: a missing binding logic depends on, duplicate keys, a
- * select with no options, a reference with nowhere to point.
+ * break the section: a missing binding logic depends on, a field whose type
+ * doesn't fit what it is bound to, a choice value logic compares against,
+ * duplicate keys, a select with no options, a reference with nowhere to point.
+ *
+ * A section employees raise for themselves must keep an approval step (or a
+ * request would approve itself) and its employee field (or the request would
+ * belong to nobody, and nobody would be its "own" requester).
  */
-export function checkFormat(section: HrSection, fields: HrField[]): string[] {
+export function checkFormat(section: HrSection, fields: HrField[], workflow?: WorkflowStep[]): string[] {
   const problems: string[] = []
   const seen = new Set<string>()
-  const TYPES: FieldType[] = ['text', 'textarea', 'number', 'money', 'percent', 'date', 'time', 'datetime', 'select', 'multiselect', 'boolean', 'email', 'phone', 'file', 'employee', 'employees', 'location', 'department', 'orgunit', 'record', 'table']
   const bound = new Set<string>()
   for (const fl of fields) {
-    if (!fl.key || !/^[a-zA-Z][a-zA-Z0-9_]*$/.test(fl.key)) problems.push(`"${fl.label || fl.key}" needs a key made of letters, digits and underscores`)
+    problems.push(...fieldProblems(fl))
     if (seen.has(fl.key)) problems.push(`Two fields use the key "${fl.key}"`)
     seen.add(fl.key)
-    if (!fl.label) problems.push(`Field "${fl.key}" has no label`)
-    if (!TYPES.includes(fl.type)) problems.push(`Field "${fl.key}" has an unknown type "${fl.type}"`)
-    if ((fl.type === 'select' || fl.type === 'multiselect') && !(fl.options?.length)) problems.push(`"${fl.label}" is a choice field with no options`)
-    if ((fl.type === 'record' || fl.type === 'orgunit') && !fl.ref) problems.push(`"${fl.label}" must say what it points to`)
-    if (fl.type === 'table' && !(fl.columns?.length)) problems.push(`"${fl.label}" is a table with no columns`)
+    if (fl.type === 'table') {
+      if (!(fl.columns?.length)) problems.push(`"${fl.label}" is a table with no columns`)
+      for (const col of fl.columns ?? []) {
+        problems.push(...fieldProblems(col).map((p) => `${fl.label}: ${p}`))
+        if (col.type === 'table') problems.push(`${fl.label}: "${col.label}" — a table cannot hold another table`)
+        if (col.bind) problems.push(`${fl.label}: "${col.label}" — a table column cannot be bound`)
+      }
+    }
     if (fl.bind) {
       if (bound.has(fl.bind)) problems.push(`Two fields are bound to ${fl.bind}`)
       bound.add(fl.bind)
+      const want = bindTypes(fl.bind)
+      if (!want.types.includes(fl.type)) problems.push(`"${fl.label}" is bound to ${fl.bind}, which takes a ${want.types.join(' or ')} field — not ${fl.type}`)
+      else if (want.ref && fl.ref !== want.ref) problems.push(`"${fl.label}" is bound to ${fl.bind}, so it must point to ${want.ref}`)
     }
   }
-  for (const sys of (section.fields ?? []).filter((x) => x.system)) {
+  const defaults = section.fields ?? []
+  for (const sys of defaults.filter((x) => x.system)) {
     const kept = fields.find((x) => x.key === sys.key)
     if (!kept) problems.push(`"${sys.label}" (${sys.key}) is used by this section's calculations and cannot be removed — relabel it instead`)
     else if (kept.type !== sys.type) problems.push(`"${sys.label}" must stay a ${sys.type} field`)
   }
   for (const slot of section.requires ?? []) {
-    if (!bound.has(slot)) {
+    const kept = fields.find((x) => x.bind === slot)
+    if (!kept) {
       problems.push(`This section's calculations need a field bound to "${slot}" — keep one, or bind a new field to it`)
+      continue
+    }
+    // Logic reads the reference as a particular thing (a leave's refId is its
+    // leave type), so it must keep pointing at it.
+    const was = defaults.find((x) => x.bind === slot)
+    if (was?.ref && (kept.type !== was.type || kept.ref !== was.ref)) problems.push(`"${kept.label}" is bound to ${slot}, so it must point to ${was.ref}`)
+  }
+  for (const rule of SYSTEM_OPTIONS[section.key] ?? []) {
+    const fl = fields.find((x) => x.bind === rule.bind)
+    if (!fl || fl.type !== 'select') continue
+    const missing = rule.keep.filter((o) => !(fl.options ?? []).includes(o))
+    if (missing.length) problems.push(`"${fl.label}" must keep the choice${missing.length > 1 ? 's' : ''} ${missing.join(', ')} — the calculations look for ${missing.length > 1 ? 'them' : 'it'}`)
+    const extra = rule.closed ? (fl.options ?? []).filter((o) => !rule.closed!.includes(o)) : []
+    if (extra.length) problems.push(`"${fl.label}" cannot have new choices (${extra.join(', ')}) — the calculations would not know what to do with them. It may use: ${rule.closed!.join(', ')}`)
+  }
+  // An approval is recorded against its step's key, so two steps sharing one
+  // would both read as decided when only the first was.
+  const stepKeys = new Set<string>()
+  for (const w of workflow ?? []) {
+    if (stepKeys.has(w.key)) problems.push(`Two approval steps use the key "${w.key}"`)
+    stepKeys.add(w.key)
+  }
+  if (ESS_SECTIONS.includes(section.key)) {
+    if (!bound.has('employeeId') && !(section.requires ?? []).includes('employeeId')) {
+      problems.push('Employees raise this for themselves, so it needs a field bound to "employeeId"')
+    }
+    if (workflow && workflow.length === 0) {
+      problems.push('Employees raise this for themselves, so it needs at least one approval step')
     }
   }
   return problems

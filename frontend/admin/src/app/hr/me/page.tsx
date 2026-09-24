@@ -5,11 +5,12 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../../lib/api'
-import { card, btn, btnGhost, rs, day, human, STATUS_COLOR, type HrFormat, type HrRecord } from '../../../lib/hr'
+import { card, btn, btnGhost, rs, day, human, withLeaveDays, leaveFields, STATUS_COLOR, type HrFormat, type HrRecord } from '../../../lib/hr'
 import { HrShell, Modal, Stat, useHrLookups, useHrOrg } from '../../../components/hr/HrShell'
 import { FormRenderer } from '../../../components/hr/FormRenderer'
 
 interface Me {
+  tenantId: string
   profile: Record<string, string | null>
   leaveBalances: Array<{ leaveTypeId: string; name: string; paid: boolean; balance: number; taken: number; pending: number; entitlement: number }>
   records: HrRecord[]
@@ -82,17 +83,19 @@ export default function MyHrPage() {
           </div>
         </div>
       )}
-      {requesting && <RequestForm section={requesting} onClose={() => setRequesting(null)} />}
+      {requesting && me && <RequestForm section={requesting} tenantId={me.tenantId} onClose={() => setRequesting(null)} />}
       {slipId && <MySlip id={slipId} onClose={() => setSlipId(null)} />}
     </HrShell>
   )
 }
 
-function RequestForm({ section, onClose }: { section: string; onClose: () => void }) {
+function RequestForm({ section, tenantId, onClose }: { section: string; tenantId: string; onClose: () => void }) {
   const qc = useQueryClient()
   const { data: fmt } = useQuery({ queryKey: ['hr-me-form', section], queryFn: () => api.get<HrFormat>(`/hr/me/forms/${section}`) })
-  const { data: lookups } = useHrLookups()
-  const { data: org } = useHrOrg()
+  // The request is filed in the employee's own company, so its leave types
+  // and people come from there — not from whichever company the login has open.
+  const { data: lookups } = useHrLookups(tenantId)
+  const { data: org } = useHrOrg(tenantId)
   const [value, setValue] = useState<Record<string, unknown>>({})
   const [err, setErr] = useState('')
   const save = useMutation({
@@ -102,7 +105,8 @@ function RequestForm({ section, onClose }: { section: string; onClose: () => voi
   })
   return (
     <Modal title={REQUEST_LABEL[section] ?? human(section)} wide onClose={onClose}>
-      {fmt ? <FormRenderer fields={fmt.fields} value={value} onChange={setValue} ctx={{ lookups, org }} /> : <p className="text-sm text-white/40">Loading…</p>}
+      {fmt ? <FormRenderer fields={leaveFields(section, fmt.fields, value)} value={value}
+        onChange={(x) => setValue(withLeaveDays(section, fmt.fields, value, x))} ctx={{ lookups, org }} /> : <p className="text-sm text-white/40">Loading…</p>}
       {err && <p className="text-xs text-red-400 mt-3">{err}</p>}
       <div className="flex gap-2 mt-5">
         <button className={btn} disabled={save.isPending} onClick={() => save.mutate()}>{save.isPending ? 'Sending…' : 'Submit'}</button>

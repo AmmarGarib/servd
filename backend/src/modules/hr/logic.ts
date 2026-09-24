@@ -69,6 +69,13 @@ export function hourlyRateCents(grossCents: number, s: HrSettings): number {
   return s.hoursPerDay > 0 ? dailyRateCents(grossCents, s) / s.hoursPerDay : 0
 }
 
+/** The OT multiplier a record is paid at: the one HR set on it, held to the
+ *  same 1–5 range as the setting, or the HR setting when none was set. */
+export function otMultiplierFor(recordValue: unknown, s: HrSettings): number {
+  if (typeof recordValue !== 'number' || !(recordValue > 0)) return s.otMultiplier
+  return Math.min(5, Math.max(1, recordValue))
+}
+
 export function overtimeCents(hours: number, grossCents: number, s: HrSettings, multiplier?: number | null): number {
   if (!(hours > 0)) return 0
   return Math.round(hours * hourlyRateCents(grossCents, s) * (multiplier ?? s.otMultiplier))
@@ -76,11 +83,16 @@ export function overtimeCents(hours: number, grossCents: number, s: HrSettings, 
 
 export interface EobiResult { employeeCents: number; employerCents: number; problem?: string }
 
+/** The payslip warning that stops a payroll being approved or locked. */
+export const EOBI_NOT_CALCULATED = 'Set the EOBI wage base in HR settings — EOBI is not being calculated'
+
+/** `grossCents` is the salary actually earned in the month — prorated for a
+ *  joiner or leaver — and is only used when the base is `gross`. */
 export function eobiContribution(grossCents: number, s: HrSettings): EobiResult {
   const base = s.eobi.base === 'gross' ? grossCents : s.eobi.fixedWageCents
   if (base == null) {
     // Refuse to guess. A wrong base is wrong on every payslip and every challan.
-    return { employeeCents: 0, employerCents: 0, problem: 'Set the EOBI wage base in HR settings — EOBI is not being calculated' }
+    return { employeeCents: 0, employerCents: 0, problem: EOBI_NOT_CALCULATED }
   }
   return {
     employeeCents: Math.round(base * s.eobi.employeePct / 100),
@@ -95,6 +107,16 @@ export function sessiEmployerCents(grossCents: number, s: HrSettings): number {
 }
 
 // ─── Periods & days ─────────────────────────────────────────────────────────
+
+/**
+ * Today's calendar date in Karachi (UTC+5, no DST), as the UTC midnight HR
+ * stores dates at. Between 00:00 and 05:00 PKT the UTC date is still
+ * yesterday, so "today", "this month" and the leave year come from here.
+ */
+export function pktToday(now = new Date()): Date {
+  const k = new Date(now.getTime() + 5 * 3_600_000)
+  return new Date(Date.UTC(k.getUTCFullYear(), k.getUTCMonth(), k.getUTCDate()))
+}
 
 export function periodOf(d: Date): string {
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`
@@ -137,6 +159,56 @@ export function employedFraction(period: string, joiningDate: Date | null, lastW
   return inclusiveDays(from, to) / daysInPeriod(period)
 }
 
+/** Salary for the days [from, to], month by month on the same calendar-day
+ *  basis as a payslip — so paying the tail of a month here and the rest on a
+ *  payroll adds up to the month's salary. */
+export function salaryForDays(grossCents: number, from: Date, to: Date): number {
+  if (to < from) return 0
+  let total = 0
+  for (let p = periodOf(from); periodIndex(p) <= periodIndex(periodOf(to)); p = nextPeriod(p)) {
+    total += Math.round(grossCents * employedFraction(p, from, to))
+  }
+  return total
+}
+
+export function nextPeriod(period: string): string {
+  const [y, m] = period.split('-').map(Number)
+  return m === 12 ? `${y! + 1}-01` : `${y}-${String(m! + 1).padStart(2, '0')}`
+}
+
+// ─── Salary history ─────────────────────────────────────────────────────────
+
+/**
+ * An approved salary revision or promotion, as payroll sees it. `applied` =
+ * already written to the employee master; `wroteGross` = that write set the
+ * gross (a backdated one approved after a newer one did not); `beforeCents` =
+ * the gross it replaced, null when it was applied before that was recorded.
+ */
+export interface SalaryChange { effectiveDate: Date; grossCents: number; applied: boolean; wroteGross: boolean; beforeCents: number | null }
+
+/**
+ * The gross salary in force on `on`. Starts from the employee master and
+ * undoes what was applied with a later effective date; then an approved
+ * change dated on or before `on` that is newer than what the master reflects —
+ * one not applied yet, or a backdated one that did not overwrite a newer
+ * revision — sets it. Nothing here writes to the master: payroll for a future
+ * month must not bring a revision forward.
+ */
+export function salaryInForce(currentCents: number, changes: SalaryChange[], on: Date): number {
+  const byDate = [...changes].sort((a, b) => a.effectiveDate.getTime() - b.effectiveDate.getTime())
+  let salary = currentCents
+  const undo = byDate.find((c) => c.applied && c.wroteGross && c.effectiveDate > on)
+  if (undo) {
+    // Applied before the history was kept: the gross it replaced is unknown.
+    if (undo.beforeCents == null) return currentCents
+    salary = undo.beforeCents
+  }
+  const reflected = byDate.filter((c) => c.applied && c.wroteGross && c.effectiveDate <= on).pop()
+  const newer = byDate.filter((c) => c.effectiveDate <= on && !(c.applied && c.wroteGross) && c.grossCents > 0
+    && (!reflected || c.effectiveDate > reflected.effectiveDate)).pop()
+  return newer ? newer.grossCents : salary
+}
+
 // ─── Leave ──────────────────────────────────────────────────────────────────
 
 /** The leave year containing `on`, as [start, end]. */
@@ -146,16 +218,156 @@ export function leaveYear(on: Date, startMonth: number): [Date, Date] {
   return [new Date(Date.UTC(y, startMonth - 1, 1)), new Date(Date.UTC(y + 1, startMonth - 1, 0, 23, 59, 59, 999))]
 }
 
-export interface LeaveBalance { entitlement: number; adjustments: number; taken: number; pending: number; balance: number }
+export interface LeaveBalance { entitlement: number; carriedForward: number; adjustments: number; taken: number; pending: number; balance: number }
 
-export function leaveBalance(entitlementDays: number, approvedTaken: number, adjustments: number, pending = 0): LeaveBalance {
+/**
+ * The paid leave an employee leaving on `lastWorkingDay` has earned and not
+ * taken: the year's entitlement accrues month by month — for the part of the
+ * leave year they were employed — plus what they carried in and were
+ * adjusted, less what they took. Never below zero.
+ */
+export function accruedLeaveDays(
+  b: { entitlement: number; carriedForward: number; adjustments: number; taken: number },
+  yearFrom: Date, joiningDate: Date | null, lastWorkingDay: Date,
+): number {
+  const from = joiningDate && joiningDate > yearFrom ? joiningDate : yearFrom
+  let months = 0
+  if (from <= lastWorkingDay) {
+    for (let p = periodOf(from); periodIndex(p) <= periodIndex(periodOf(lastWorkingDay)); p = nextPeriod(p)) {
+      months += employedFraction(p, from, lastWorkingDay)
+    }
+  }
+  const accrued = b.entitlement * Math.min(12, months) / 12
+  return Math.max(0, days2(accrued + b.carriedForward + b.adjustments - b.taken))
+}
+
+export function leaveBalance(entitlementDays: number, approvedTaken: number, adjustments: number, pending = 0, carriedForward = 0): LeaveBalance {
   return {
     entitlement: entitlementDays,
+    carriedForward,
     adjustments,
     taken: approvedTaken,
     pending,
-    balance: entitlementDays + adjustments - approvedTaken,
+    balance: entitlementDays + carriedForward + adjustments - approvedTaken,
   }
+}
+
+/** Days to two decimals, so a sum of shares doesn't read 4.9999…. */
+const days2 = (n: number) => Math.round(n * 100) / 100
+
+/** Calendar days two inclusive date ranges share. */
+export function overlapDays(aFrom: Date, aTo: Date, bFrom: Date, bTo: Date): number {
+  const from = aFrom > bFrom ? aFrom : bFrom
+  const to = aTo < bTo ? aTo : bTo
+  return to < from ? 0 : inclusiveDays(from, to)
+}
+
+/**
+ * How many days a leave application counts for. Always the inclusive calendar
+ * days of its dates — the rest of the module (balances, payroll) counts
+ * calendar days — never the number the applicant typed. The one exception is
+ * a half day: a single-day leave may ask for 0.5.
+ */
+export function leaveQuantity(start: Date, end: Date, requested: number | null | undefined): number {
+  const span = inclusiveDays(start, end)
+  if (span === 1 && requested === 0.5) return 0.5
+  return span
+}
+
+/**
+ * The part of a leave that falls inside [from, to]. A leave's quantity is
+ * spread evenly over its dates, so a leave across a leave-year (or payroll
+ * month) boundary is charged to each side for the days on that side, and a
+ * half day stays a half day.
+ */
+export function leaveDaysWithin(l: { startDate: Date; endDate: Date; quantity: number | null }, from: Date, to: Date): number {
+  const span = inclusiveDays(l.startDate, l.endDate)
+  if (span === 0) return 0
+  const inside = overlapDays(l.startDate, l.endDate, from, to)
+  if (inside === 0) return 0
+  const qty = l.quantity != null && l.quantity >= 0 ? l.quantity : span
+  return days2(qty * inside / span)
+}
+
+/**
+ * Days carried into a leave year. `priorYears` is every earlier leave year in
+ * order (oldest first) with what was adjusted and taken in it; each year's
+ * unused balance — entitlement + what it carried in + adjustments − taken —
+ * carries into the next, capped at `max` (null = no cap). A year that ended
+ * overdrawn carries nothing, and does not claw back the next year's entitlement.
+ */
+export function carriedForwardDays(entitlementDays: number, priorYears: Array<{ adjustments: number; taken: number }>, max: number | null): number {
+  let carry = 0
+  for (const y of priorYears) {
+    const closing = Math.max(0, entitlementDays + carry + y.adjustments - y.taken)
+    carry = max != null ? Math.min(closing, Math.max(0, max)) : closing
+  }
+  return days2(carry)
+}
+
+/** The leave years from the one containing `first` up to (not including) the one starting at `before`. */
+export function leaveYearsBetween(first: Date, before: Date, startMonth: number): Array<[Date, Date]> {
+  const out: Array<[Date, Date]> = []
+  let y = leaveYear(first, startMonth)
+  while (y[0] < before && out.length < 100) {
+    out.push(y)
+    y = leaveYear(new Date(y[1].getTime() + 1), startMonth)
+  }
+  return out
+}
+
+// ─── Attendance → payroll ───────────────────────────────────────────────────
+
+export interface AttendanceEntry { date: Date; status: string | null; lateMinutes: number | null; createdAt: Date }
+export interface LeaveSpan { startDate: Date; endDate: Date; quantity: number | null; unpaid: boolean }
+
+/**
+ * The attendance part of a month's payroll inputs, over [from, to] — the
+ * payroll month already clipped to the employee's employment.
+ *
+ *  - One entry per day: when a day was recorded more than once, the latest
+ *    entry is the one that stands (a correction replaces, it doesn't add).
+ *  - A day covered by approved leave is not an absence or a late — the leave
+ *    already accounts for it.
+ *  - A late within the grace minutes is not a late.
+ *  - Unpaid leave is the approved quantity, spread over its dates and counted
+ *    for the days inside the window; two leaves on one day charge it once.
+ *
+ * Callers pass only entries that stand (not cancelled, rejected or draft) and
+ * only approved leave.
+ */
+export function attendanceInputs(from: Date, to: Date, attendance: AttendanceEntry[], leaves: LeaveSpan[], s: HrSettings): { absentDays: number; lateCount: number; unpaidLeaveDays: number } {
+  const lo = dayUTC(from)
+  const hi = dayUTC(to)
+  const covered = new Set<number>()
+  const unpaidByDay = new Map<number, number>()
+  for (const l of leaves) {
+    const span = inclusiveDays(l.startDate, l.endDate)
+    if (span === 0) continue
+    const perDay = Math.min(1, (l.quantity != null && l.quantity >= 0 ? l.quantity : span) / span)
+    for (let d = Math.max(dayUTC(l.startDate), lo); d <= Math.min(dayUTC(l.endDate), hi); d += 86_400_000) {
+      covered.add(d)
+      if (l.unpaid) unpaidByDay.set(d, Math.max(unpaidByDay.get(d) ?? 0, perDay))
+    }
+  }
+  const latest = new Map<number, AttendanceEntry>()
+  for (const a of attendance) {
+    const d = dayUTC(a.date)
+    if (d < lo || d > hi) continue
+    const cur = latest.get(d)
+    if (!cur || a.createdAt > cur.createdAt) latest.set(d, a)
+  }
+  let absentDays = 0
+  let lateCount = 0
+  for (const [d, a] of latest) {
+    if (covered.has(d)) continue
+    if (a.status === 'absent') absentDays += 1
+    else if (a.status === 'half_day') absentDays += 0.5
+    else if (a.status === 'late' && (a.lateMinutes ?? Infinity) > s.lateGraceMinutes) lateCount += 1
+  }
+  let unpaid = 0
+  for (const v of unpaidByDay.values()) unpaid += v
+  return { absentDays, lateCount, unpaidLeaveDays: days2(unpaid) }
 }
 
 // ─── Loans ──────────────────────────────────────────────────────────────────
@@ -171,12 +383,31 @@ export function loanInstallmentCents(
   recoveredCents: number,
 ): number {
   const outstanding = loan.amountCents - recoveredCents
-  if (outstanding <= 0 || loan.installments <= 0) return 0
+  if (outstanding <= 0) return 0
   if (periodIndex(period) < periodIndex(loan.firstPeriod)) return 0
-  const per = Math.floor(loan.amountCents / loan.installments)
+  // Whole installments, at least one: a loan saved with none, a negative or a
+  // part installment is still recovered — never silently left unpaid.
+  const installments = Number.isFinite(loan.installments) ? Math.max(1, Math.floor(loan.installments)) : 1
+  const per = Math.floor(loan.amountCents / installments)
   const n = periodIndex(period) - periodIndex(loan.firstPeriod) + 1
-  if (n >= loan.installments) return outstanding // last (or overdue) installment clears it
+  if (n >= installments) return outstanding // last (or overdue) installment clears it
   return Math.min(per, outstanding)
+}
+
+/**
+ * Split a loan deduction HR typed on a payslip across the employee's loans,
+ * oldest first, never more than a loan still owes. Null when the amount is
+ * more than they owe in all — it would be deducted and credited to nothing.
+ */
+export function allocateLoanCents(loans: Array<{ loanId: string; outstandingCents: number }>, totalCents: number): Array<{ loanId: string; cents: number }> | null {
+  let left = totalCents
+  const out: Array<{ loanId: string; cents: number }> = []
+  for (const l of loans) {
+    if (left <= 0) break
+    const c = Math.min(left, Math.max(0, l.outstandingCents))
+    if (c > 0) { out.push({ loanId: l.loanId, cents: c }); left -= c }
+  }
+  return left > 0 ? null : out
 }
 
 // ─── Payroll ────────────────────────────────────────────────────────────────
@@ -221,6 +452,15 @@ export function computePayslip(
   const fraction = employedFraction(period, emp.joiningDate, emp.lastWorkingDay)
   const gross = Math.round(emp.grossSalaryCents * fraction)
   const daily = dailyRateCents(emp.grossSalaryCents, s)
+  // Days docked can't be more than the days employed, and together they can
+  // take the salary to nothing but not below it: the working-day rate is
+  // higher than the calendar-day one, so a month of unpaid leave priced at it
+  // would otherwise cost more than the month pays.
+  const employedDays = Math.round(fraction * daysInPeriod(period) * 100) / 100
+  let docked = 0
+  const dock = (cents: number) => { const c = Math.min(Math.round(cents), Math.max(0, gross - docked)); docked += c; return c }
+  const absentDays = s.deductAbsences ? Math.min(inputs.absentDays, employedDays) : 0
+  const unpaidDays = Math.min(inputs.unpaidLeaveDays, Math.max(0, employedDays - absentDays))
 
   lines.push({
     kind: 'earning', code: 'salary',
@@ -230,18 +470,20 @@ export function computePayslip(
   if (inputs.otCents > 0) lines.push({ kind: 'earning', code: 'overtime', label: `Overtime (${inputs.otHours} h)`, amountCents: inputs.otCents })
   if (inputs.earningAdjustmentsCents > 0) lines.push({ kind: 'earning', code: 'adjustments', label: 'Bonuses, incentives & allowances', amountCents: inputs.earningAdjustmentsCents })
 
-  if (s.deductAbsences && inputs.absentDays > 0) {
-    lines.push({ kind: 'deduction', code: 'absence', label: `Absence (${inputs.absentDays} days)`, amountCents: Math.round(inputs.absentDays * daily) })
+  if (absentDays > 0) {
+    lines.push({ kind: 'deduction', code: 'absence', label: `Absence (${absentDays} days)`, amountCents: dock(absentDays * daily) })
   }
-  if (inputs.unpaidLeaveDays > 0) {
-    lines.push({ kind: 'deduction', code: 'unpaid_leave', label: `Unpaid leave (${inputs.unpaidLeaveDays} days)`, amountCents: Math.round(inputs.unpaidLeaveDays * daily) })
+  if (unpaidDays > 0) {
+    lines.push({ kind: 'deduction', code: 'unpaid_leave', label: `Unpaid leave (${unpaidDays} days)`, amountCents: dock(unpaidDays * daily) })
   }
   if (s.latesPerDeductionDay > 0 && inputs.lateCount >= s.latesPerDeductionDay) {
     const days = Math.floor(inputs.lateCount / s.latesPerDeductionDay)
-    lines.push({ kind: 'deduction', code: 'late', label: `Late coming (${inputs.lateCount} lates = ${days} day${days === 1 ? '' : 's'})`, amountCents: Math.round(days * daily) })
+    lines.push({ kind: 'deduction', code: 'late', label: `Late coming (${inputs.lateCount} lates = ${days} day${days === 1 ? '' : 's'})`, amountCents: dock(days * daily) })
   }
 
-  const eobi = gross > 0 ? eobiContribution(emp.grossSalaryCents, s) : { employeeCents: 0, employerCents: 0 }
+  // Contributions on a gross base are on what was earned this month, not the
+  // full monthly salary a joiner or leaver was never paid.
+  const eobi = gross > 0 ? eobiContribution(gross, s) : { employeeCents: 0, employerCents: 0 }
   if (eobi.problem) warnings.push(eobi.problem)
   if (eobi.employeeCents > 0) lines.push({ kind: 'deduction', code: 'eobi_employee', label: `EOBI employee (${s.eobi.employeePct}%)`, amountCents: eobi.employeeCents })
   if (emp.monthlyTaxCents > 0 && gross > 0) lines.push({ kind: 'deduction', code: 'tax', label: 'Income tax', amountCents: emp.monthlyTaxCents })
@@ -249,7 +491,7 @@ export function computePayslip(
   if (inputs.deductionAdjustmentsCents > 0) lines.push({ kind: 'deduction', code: 'other', label: 'Other deductions', amountCents: inputs.deductionAdjustmentsCents })
 
   if (eobi.employerCents > 0) lines.push({ kind: 'employer', code: 'eobi_employer', label: `EOBI employer (${s.eobi.employerPct}%)`, amountCents: eobi.employerCents })
-  const sessi = gross > 0 ? sessiEmployerCents(emp.grossSalaryCents, s) : 0
+  const sessi = gross > 0 ? sessiEmployerCents(gross, s) : 0
   if (sessi > 0) lines.push({ kind: 'employer', code: 'sessi_employer', label: `SESSI employer (${s.sessi.employerPct}%)`, amountCents: sessi })
 
   const earnings = lines.filter((l) => l.kind === 'earning').reduce((a, l) => a + l.amountCents, 0)
@@ -267,9 +509,10 @@ export function computePayslip(
 // ─── Full & final ───────────────────────────────────────────────────────────
 
 export interface SettlementInputs {
-  unpaidMonthSalary: boolean      // is the final month's salary still owed?
+  /** First day whose salary no payroll has paid; null = nothing owed. */
+  salaryFrom: Date | null
   otPayableCents: number
-  leaveBalanceDays: number        // paid leave remaining
+  leaveBalanceDays: number        // paid leave earned and not taken
   loanOutstandingCents: number
   deductionsCents: number
   otherAdjustmentsCents: number
@@ -281,10 +524,8 @@ export function finalSettlement(
   inp: SettlementInputs,
   s: HrSettings,
 ) {
-  const period = periodOf(lastWorkingDay)
-  const salaryPayable = inp.unpaidMonthSalary
-    ? Math.round(emp.grossSalaryCents * employedFraction(period, emp.joiningDate, lastWorkingDay))
-    : 0
+  const from = inp.salaryFrom && emp.joiningDate && emp.joiningDate > inp.salaryFrom ? emp.joiningDate : inp.salaryFrom
+  const salaryPayable = from ? salaryForDays(emp.grossSalaryCents, from, lastWorkingDay) : 0
   const leaveEncashment = s.encashLeaveOnExit && inp.leaveBalanceDays > 0
     ? Math.round(inp.leaveBalanceDays * dailyRateCents(emp.grossSalaryCents, s))
     : 0
@@ -319,15 +560,21 @@ const MGMT_APPROVERS = ['admin', 'owner', 'management']
  * login, HR can act for the HOD so records never get stuck. The CEO (admin)
  * can act on any step, and it is recorded as an override.
  *
- * Nobody approves their own request.
+ * Separation of duties: nobody decides a step on a request they raised or
+ * that is about themselves, and nobody signs off more than one step of the
+ * same request — HOD → HR → Management are separate people. The CEO may
+ * still do either, and that too is recorded as an override.
  */
 export function canActOnStep(
   role: 'hod' | 'hr' | 'management',
   actor: { id: string; role: string },
-  subject: { employeeUserId: string | null; managerUserId: string | null },
+  subject: { employeeUserId: string | null; managerUserId: string | null; createdById?: string | null; priorApproverIds?: string[] },
 ): { ok: boolean; override: boolean; reason?: string } {
-  if (subject.employeeUserId && subject.employeeUserId === actor.id) {
-    return { ok: false, override: false, reason: 'You cannot approve your own request' }
+  const own = (subject.employeeUserId && subject.employeeUserId === actor.id) || (subject.createdById && subject.createdById === actor.id)
+  const again = (subject.priorApproverIds ?? []).includes(actor.id)
+  if (own || again) {
+    if (actor.role === 'admin') return { ok: true, override: true }
+    return { ok: false, override: false, reason: own ? 'You cannot approve your own request' : 'You have already signed off an earlier step of this request — another approver must take this one' }
   }
   if (role === 'hod') {
     if (subject.managerUserId && subject.managerUserId === actor.id) return { ok: true, override: false }
@@ -337,6 +584,36 @@ export function canActOnStep(
   if (role === 'management' && MGMT_APPROVERS.includes(actor.role)) return { ok: true, override: false }
   if (actor.role === 'admin') return { ok: true, override: true }
   return { ok: false, override: false, reason: `This step needs ${role === 'hod' ? 'the reporting manager' : role === 'hr' ? 'HR' : 'management'}` }
+}
+
+// ─── Headcount ──────────────────────────────────────────────────────────────
+
+export interface Tenure { status: string; joiningDate: Date | null; lastWorkingDay: Date | null; updatedAt: Date }
+
+/**
+ * The day someone stopped working: the last working day, else — for someone
+ * resigned, terminated or separated without one — the approved exit record's
+ * date, else the day their status was last changed.
+ */
+export function exitDay(e: Tenure, exitRecordDate?: Date | null): Date | null {
+  if (e.lastWorkingDay) return e.lastWorkingDay
+  if (['active', 'on_leave'].includes(e.status)) return null
+  const d = exitRecordDate ?? e.updatedAt
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()))
+}
+
+/** On the books at an instant: joined by then and not gone before it. Dates
+ *  are that day's UTC midnight, so the last working day counts until it starts. */
+export function onBooksAt(e: Tenure, at: Date, exitRecordDate?: Date | null): boolean {
+  if (e.joiningDate && e.joiningDate > at) return false
+  if (!e.joiningDate && !['active', 'on_leave'].includes(e.status)) return false
+  const gone = exitDay(e, exitRecordDate)
+  return !(gone && gone < at)
+}
+
+/** Employed on a calendar date — including someone whose last working day it is. */
+export function employedOn(e: Tenure, on: Date, exitRecordDate?: Date | null): boolean {
+  return onBooksAt(e, new Date(Date.UTC(on.getUTCFullYear(), on.getUTCMonth(), on.getUTCDate())), exitRecordDate)
 }
 
 // ─── Due lists ──────────────────────────────────────────────────────────────

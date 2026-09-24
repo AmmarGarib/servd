@@ -5,25 +5,36 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../../lib/api'
-import type { HrSectionInfo, Lookups, OrgData } from '../../lib/hr'
+import { useAuthStore } from '../../store/auth'
+import { HR_ADMIN_ROLES, PAYROLL_APPROVER_ROLES, type HrFormat, type HrSectionInfo, type Lookups, type OrgData } from '../../lib/hr'
 
-const NAV: Array<{ href: string; label: string }> = [
+// `staff` tabs are open to every login (the API only shows them their own
+// requests and the ones waiting on them); the rest are HR's and would only 403.
+const NAV: Array<{ href: string; label: string; staff?: boolean }> = [
   { href: '/hr', label: 'Dashboard' },
   { href: '/hr/employees', label: 'Employees' },
   { href: '/hr/sections', label: 'All sections' },
   { href: '/hr/documents', label: 'Documents' },
   { href: '/hr/payroll', label: 'Payroll' },
-  { href: '/hr/approvals', label: 'Approvals' },
+  { href: '/hr/approvals', label: 'Approvals', staff: true },
   { href: '/hr/letters', label: 'Letters' },
   { href: '/hr/reports', label: 'Reports' },
   { href: '/hr/formats', label: 'Formats' },
   { href: '/hr/org', label: 'Org setup' },
   { href: '/hr/settings', label: 'Settings' },
-  { href: '/hr/me', label: 'My HR' },
+  { href: '/hr/me', label: 'My HR', staff: true },
 ]
+
+/** What the signed-in user may do in HR — mirrors the API's role gates. */
+export function useHrAccess() {
+  const user = useAuthStore((s) => s.user)
+  const role = user?.role ?? ''
+  return { userId: user?.id ?? null, role, isHrAdmin: HR_ADMIN_ROLES.includes(role), isPayrollApprover: PAYROLL_APPROVER_ROLES.includes(role) }
+}
 
 export function HrShell({ title, subtitle, actions, children }: { title: string; subtitle?: string; actions?: React.ReactNode; children: React.ReactNode }) {
   const path = usePathname() ?? ''
+  const { isHrAdmin } = useHrAccess()
   return (
     <div className="min-h-screen" style={{ background: '#090a0e' }}>
       <header className="px-6 pt-5 border-b border-white/[0.05]">
@@ -36,7 +47,7 @@ export function HrShell({ title, subtitle, actions, children }: { title: string;
           {actions && <div className="flex gap-2 shrink-0">{actions}</div>}
         </div>
         <nav className="flex gap-1 overflow-x-auto mt-4 -mb-px">
-          {NAV.map((n) => {
+          {NAV.filter((n) => isHrAdmin || n.staff).map((n) => {
             const on = n.href === '/hr' ? path === '/hr' : path.startsWith(n.href)
             return (
               <Link key={n.href} href={n.href}
@@ -53,11 +64,17 @@ export function HrShell({ title, subtitle, actions, children }: { title: string;
   )
 }
 
-export function useHrLookups() {
-  return useQuery({ queryKey: ['hr-lookups'], queryFn: () => api.get<Lookups>('/hr/lookups'), staleTime: 30_000 })
+// Pickers for one company: pass the company a record or employee belongs to
+// (self-service: the employee's own) — left out, the active company's.
+const forTenant = (tenantId?: string | null) => (tenantId ? `?${new URLSearchParams({ tenantId })}` : '')
+export function useHrLookups(tenantId?: string | null) {
+  return useQuery({ queryKey: ['hr-lookups', tenantId ?? null], queryFn: () => api.get<Lookups>(`/hr/lookups${forTenant(tenantId)}`), staleTime: 30_000 })
 }
-export function useHrOrg() {
-  return useQuery({ queryKey: ['hr-org'], queryFn: () => api.get<OrgData>('/hr/org'), staleTime: 60_000 })
+export function useHrOrg(tenantId?: string | null) {
+  return useQuery({ queryKey: ['hr-org', tenantId ?? null], queryFn: () => api.get<OrgData>(`/hr/org${forTenant(tenantId)}`), staleTime: 60_000 })
+}
+export function useHrForm(section: string, tenantId?: string | null) {
+  return useQuery({ queryKey: ['hr-form', section, tenantId ?? null], queryFn: () => api.get<{ current: HrFormat }>(`/hr/forms/${section}${forTenant(tenantId)}`) })
 }
 export function useHrSections() {
   return useQuery({ queryKey: ['hr-sections'], queryFn: () => api.get<HrSectionInfo[]>('/hr/sections'), staleTime: 30_000 })

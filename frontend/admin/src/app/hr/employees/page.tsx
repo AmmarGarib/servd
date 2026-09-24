@@ -6,8 +6,8 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useRouter } from 'next/navigation'
 import { api } from '../../../lib/api'
-import { card, btn, btnGhost, rs, day, human, STATUS_COLOR, type HrFormat } from '../../../lib/hr'
-import { HrShell, Modal, useHrLookups, useHrOrg } from '../../../components/hr/HrShell'
+import { card, btn, btnGhost, rs, day, human, STATUS_COLOR, type HrField } from '../../../lib/hr'
+import { HrShell, Modal, useHrForm, useHrLookups, useHrOrg } from '../../../components/hr/HrShell'
 import { FormRenderer } from '../../../components/hr/FormRenderer'
 
 interface Row {
@@ -19,6 +19,7 @@ export default function EmployeesPage() {
   const [q, setQ] = useState('')
   const [status, setStatus] = useState('current')
   const [adding, setAdding] = useState(false)
+  const [csvErr, setCsvErr] = useState('')
   const { data: rows = [], error } = useQuery({
     queryKey: ['hr-employees', q, status],
     queryFn: () => api.get<Row[]>(`/hr/employees?${new URLSearchParams({ ...(q && { q }), ...(status && { status }) })}`),
@@ -26,7 +27,7 @@ export default function EmployeesPage() {
   return (
     <HrShell title="Employees" subtitle="The central HR database. Everyone employed — with or without a servd login."
       actions={<>
-        <button className={btnGhost} onClick={() => { void api.download('/hr/reports/employees.csv', 'hr-employee-master.csv') }}>Export CSV</button>
+        <button className={btnGhost} onClick={() => { setCsvErr(''); api.download('/hr/reports/employees.csv', 'hr-employee-master.csv').catch((e: Error) => setCsvErr(e.message)) }}>Export CSV</button>
         <button className={btn} onClick={() => setAdding(true)}>+ Add employee</button>
       </>}>
       <div className="flex flex-wrap gap-2 mb-4">
@@ -37,6 +38,7 @@ export default function EmployeesPage() {
         ))}
       </div>
       {error && <p className="text-sm text-red-400 mb-3">{(error as Error).message}</p>}
+      {csvErr && <p className="text-sm text-red-400 mb-3">Export failed: {csvErr}</p>}
       <div className="rounded-2xl overflow-x-auto" style={card}>
         <table className="w-full text-sm">
           <thead><tr className="text-left text-[10px] uppercase tracking-wider text-white/40">
@@ -70,22 +72,35 @@ function AddEmployee({ onClose }: { onClose: () => void }) {
   const router = useRouter()
   const { data: lookups } = useHrLookups()
   const { data: org } = useHrOrg()
-  const { data: form } = useQuery({ queryKey: ['hr-form', 'employees'], queryFn: () => api.get<{ current: HrFormat }>('/hr/forms/employees') })
-  const [value, setValue] = useState<Record<string, unknown>>({ status: 'active', employmentType: 'probation' })
+  const { data: form } = useHrForm('employees')
+  const fields = form?.current.fields ?? []
+  // HR may rename any field's key, so the name and the defaults are found by
+  // the column they fill, not by key.
+  const [value, setValue] = useState<Record<string, unknown> | null>(null)
+  const v = value ?? masterDefaults(fields)
+  const nameKey = fields.find((f) => f.bind === 'employee.fullName')?.key
+  const named = !!nameKey && typeof v[nameKey] === 'string' && !!(v[nameKey] as string).trim()
   const [err, setErr] = useState('')
   const save = useMutation({
-    mutationFn: () => api.post<{ id: string }>('/hr/employees', { data: value }),
+    mutationFn: () => api.post<{ id: string }>('/hr/employees', { data: v }),
     onSuccess: (e) => { void qc.invalidateQueries(); router.push(`/hr/employees/${e.id}`) },
     onError: (e: Error) => setErr(e.message),
   })
   return (
     <Modal title="Add employee" wide onClose={onClose}>
-      {form ? <FormRenderer fields={form.current.fields} value={value} onChange={setValue} ctx={{ lookups, org }} /> : <p className="text-sm text-white/40">Loading format…</p>}
+      {form ? <FormRenderer fields={fields} value={v} onChange={setValue} ctx={{ lookups, org }} /> : <p className="text-sm text-white/40">Loading format…</p>}
       {err && <p className="text-xs text-red-400 mt-3">{err}</p>}
       <div className="flex gap-2 mt-5">
-        <button className={btn} disabled={save.isPending || !value['fullName']} onClick={() => save.mutate()}>{save.isPending ? 'Saving…' : 'Add employee'}</button>
+        <button className={btn} disabled={save.isPending || !named} onClick={() => save.mutate()}>{save.isPending ? 'Saving…' : 'Add employee'}</button>
         <button className={btnGhost} onClick={onClose}>Cancel</button>
       </div>
     </Modal>
   )
+}
+
+const MASTER_DEFAULTS: Record<string, unknown> = { 'employee.status': 'active', 'employee.employmentType': 'probation' }
+function masterDefaults(fields: HrField[]): Record<string, unknown> {
+  const v: Record<string, unknown> = {}
+  for (const f of fields) if (f.bind && f.bind in MASTER_DEFAULTS) v[f.key] = MASTER_DEFAULTS[f.bind]
+  return v
 }

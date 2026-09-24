@@ -9,7 +9,8 @@
 import type { HrEmployee, HrRecord, Prisma } from '@prisma/client'
 import { serviceClient as prisma } from '../../lib/prisma.js'
 import { AppError } from '../../lib/errors.js'
-import { getFormat, employeeLabels, leaveBalancesFor } from './service.js'
+import { getFormat, employeeLabelsAcross, leaveBalancesFor, STANDING_ATTENDANCE } from './service.js'
+import { employedOn, onBooksAt, exitDay, pktToday, periodOf } from './logic.js'
 import type { HrField } from './forms.js'
 
 export type ReportParam = 'range' | 'asOf' | 'days' | 'period'
@@ -57,7 +58,7 @@ export const REPORTS: ReportDef[] = [
 export interface ReportQuery { from?: string; to?: string; asOf?: string; days?: string; period?: string }
 export interface ReportTable { title: string; header: string[]; rows: unknown[][]; note?: string }
 
-const rupees = (c: number | null | undefined) => (c == null ? null : (c / 100).toFixed(2))
+export const rupees = (c: number | null | undefined) => (c == null ? null : (c / 100).toFixed(2))
 const d10 = (d: Date | null | undefined) => (d ? d.toISOString().slice(0, 10) : null)
 
 function parseDate(s: string | undefined, fallback: Date): Date {
@@ -68,9 +69,9 @@ function parseDate(s: string | undefined, fallback: Date): Date {
 }
 
 function range(q: ReportQuery): [Date, Date] {
-  const now = new Date()
-  const from = parseDate(q.from, new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)))
-  const to = parseDate(q.to, now)
+  const today = pktToday()
+  const from = parseDate(q.from, new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 1)))
+  const to = parseDate(q.to, today)
   to.setUTCHours(23, 59, 59, 999)
   if (from > to) throw new AppError('BAD_RANGE', 'The start date is after the end date', 400)
   return [from, to]
@@ -81,12 +82,18 @@ function days(q: ReportQuery) {
   return Number.isFinite(n) ? Math.min(Math.max(n, 0), 730) : 30
 }
 
-/** Employed on a date: joined on or before it and not gone before it. */
-function employedOn(e: HrEmployee, on: Date) {
-  if (e.joiningDate && e.joiningDate > on) return false
-  if (e.lastWorkingDay && e.lastWorkingDay < on) return false
-  if (!e.joiningDate && !['active', 'on_leave'].includes(e.status)) return false
-  return true
+/** For people marked gone with no last working day: when their approved
+ *  resignation or termination said they left. */
+async function exitDates(emps: HrEmployee[]): Promise<Map<string, Date>> {
+  const ids = emps.filter((e) => !e.lastWorkingDay && !['active', 'on_leave'].includes(e.status)).map((e) => e.id)
+  const out = new Map<string, Date>()
+  if (!ids.length) return out
+  const exits = await prisma.hrRecord.findMany({ where: { employeeId: { in: ids }, section: { in: ['resignation', 'termination'] }, status: 'approved' }, orderBy: { createdAt: 'asc' } })
+  for (const x of exits) {
+    const d = x.endDate ?? x.effectiveDate
+    if (x.employeeId && d) out.set(x.employeeId, d)
+  }
+  return out
 }
 
 /** A record's date for reporting: its start date, else its effective date, else when it was raised. */
@@ -102,7 +109,7 @@ function inRangeWhere(from: Date, to: Date): Prisma.HrRecordWhereInput {
 }
 
 // Record values printed the way their field reads: rupees, names for references.
-async function resolver(records: Array<Pick<HrRecord, 'data'>>, fields: HrField[]) {
+export async function resolver(records: Array<Pick<HrRecord, 'data'>>, fields: HrField[]) {
   const ids = new Set<string>()
   for (const r of records) {
     const data = r.data as Record<string, unknown>
@@ -169,7 +176,7 @@ function inputCols(inputs: unknown) {
 }
 
 async function payrollRuns(tenantIds: string[], q: ReportQuery) {
-  const period = q.period ?? new Date().toISOString().slice(0, 7)
+  const period = q.period ?? periodOf(pktToday())
   if (!/^\d{4}-\d{2}$/.test(period)) throw new AppError('BAD_PERIOD', 'Month must be YYYY-MM', 400)
   const runs = await prisma.hrPayrollRun.findMany({ where: { tenantId: { in: tenantIds }, period }, select: { id: true, status: true } })
   const slips = runs.length ? await prisma.hrPayslip.findMany({
@@ -190,7 +197,7 @@ export async function buildReport(key: string, tenantIds: string[], activeTenant
   switch (key) {
     case 'employee_master': {
       const rows = await prisma.hrEmployee.findMany({ where: T, orderBy: { employeeCode: 'asc' } })
-      const label = await employeeLabels(activeTenantId, rows)
+      const label = await employeeLabelsAcross(rows)
       return {
         title: def.title,
         header: ['Employee ID', 'Name', 'Father/Husband', 'CNIC', 'CNIC expiry', 'Phone', 'Department', 'Designation', 'Branch', 'Manager', 'Type', 'Status', 'Joined', 'Probation end', 'Confirmed', 'Contract end', 'Last day', 'Basic', 'Gross', 'EOBI', 'SESSI', 'NTN', 'Bank', 'IBAN'],
@@ -199,10 +206,11 @@ export async function buildReport(key: string, tenantIds: string[], activeTenant
     }
 
     case 'headcount': case 'branch_headcount': case 'department_headcount': {
-      const on = parseDate(q.asOf, now)
+      const on = parseDate(q.asOf, pktToday())
       const all = await prisma.hrEmployee.findMany({ where: T })
-      const emps = all.filter((e) => employedOn(e, on))
-      const label = await employeeLabels(activeTenantId, emps)
+      const exits = await exitDates(all)
+      const emps = all.filter((e) => employedOn(e, on, exits.get(e.id)))
+      const label = await employeeLabelsAcross(emps)
       const keyOf = (e: HrEmployee) =>
         key === 'branch_headcount' ? [label(e.locationId) ?? 'Unassigned']
         : key === 'department_headcount' ? [label(e.departmentId) ?? 'Unassigned']
@@ -225,7 +233,7 @@ export async function buildReport(key: string, tenantIds: string[], activeTenant
       const [from, to] = range(q)
       const col = key === 'new_joiners' ? 'joiningDate' : 'lastWorkingDay'
       const emps = await prisma.hrEmployee.findMany({ where: { ...T, [col]: { gte: from, lte: to } }, orderBy: { [col]: 'asc' } })
-      const label = await employeeLabels(activeTenantId, emps)
+      const label = await employeeLabelsAcross(emps)
       if (key === 'new_joiners') {
         return {
           title: def.title,
@@ -249,16 +257,20 @@ export async function buildReport(key: string, tenantIds: string[], activeTenant
     case 'turnover': {
       const [from, to] = range(q)
       const emps = await prisma.hrEmployee.findMany({ where: T })
+      const exits = await exitDates(emps)
+      const gone = (e: HrEmployee) => exitDay(e, exits.get(e.id))
       const rows: unknown[][] = []
       let cursor = new Date(Date.UTC(from.getUTCFullYear(), from.getUTCMonth(), 1))
       let guard = 0
       while (cursor <= to && guard++ < 60) {
         const monthStart = cursor
         const monthEnd = new Date(Date.UTC(cursor.getUTCFullYear(), cursor.getUTCMonth() + 1, 0, 23, 59, 59, 999))
-        const opening = emps.filter((e) => employedOn(e, new Date(monthStart.getTime() - 1))).length
-        const closing = emps.filter((e) => employedOn(e, monthEnd)).length
+        // Opening is who was on the books as the month began, closing who still
+        // was once it ended — so someone leaving on the 31st is a leaver, not closing.
+        const opening = emps.filter((e) => onBooksAt(e, new Date(monthStart.getTime() - 1), exits.get(e.id))).length
+        const closing = emps.filter((e) => onBooksAt(e, monthEnd, exits.get(e.id))).length
         const joiners = emps.filter((e) => e.joiningDate && e.joiningDate >= monthStart && e.joiningDate <= monthEnd).length
-        const leavers = emps.filter((e) => e.lastWorkingDay && e.lastWorkingDay >= monthStart && e.lastWorkingDay <= monthEnd).length
+        const leavers = emps.filter((e) => { const g = gone(e); return g && g >= monthStart && g <= monthEnd }).length
         const avg = (opening + closing) / 2
         rows.push([monthStart.toISOString().slice(0, 7), opening, joiners, leavers, closing, avg > 0 ? `${((leavers / avg) * 100).toFixed(1)}%` : '—'])
         cursor = new Date(Date.UTC(cursor.getUTCFullYear(), cursor.getUTCMonth() + 1, 1))
@@ -276,7 +288,7 @@ export async function buildReport(key: string, tenantIds: string[], activeTenant
       const [from, to] = range(q)
       const cats = key === 'absenteeism' ? ['absent', 'half_day'] : ['late']
       const recs = await prisma.hrRecord.findMany({
-        where: { ...T, section: 'attendance', category: { in: cats }, startDate: { gte: from, lte: to } },
+        where: { ...T, section: 'attendance', status: STANDING_ATTENDANCE, category: { in: cats }, startDate: { gte: from, lte: to } },
         include: { employee: { select: { employeeCode: true, fullName: true } } },
       })
       const by = new Map<string, { code: string; name: string; a: number; b: number; mins: number; dates: string[] }>()
@@ -304,8 +316,8 @@ export async function buildReport(key: string, tenantIds: string[], activeTenant
     case 'leave_balance': {
       const emps = await prisma.hrEmployee.findMany({ where: { ...T, status: { in: ['active', 'on_leave'] } }, orderBy: { employeeCode: 'asc' } })
       const rows: unknown[][] = []
-      for (const e of emps) for (const b of await leaveBalancesFor(e.tenantId, e.id)) rows.push([e.employeeCode, e.fullName, b.name, b.entitlement, b.adjustments, b.taken, b.pending, b.balance])
-      return { title: def.title, header: ['Employee ID', 'Name', 'Leave type', 'Entitlement', 'Adjustments', 'Taken', 'Pending', 'Balance'], rows }
+      for (const e of emps) for (const b of await leaveBalancesFor(e.tenantId, e.id)) rows.push([e.employeeCode, e.fullName, b.name, b.entitlement, b.carriedForward, b.adjustments, b.taken, b.pending, b.balance])
+      return { title: def.title, header: ['Employee ID', 'Name', 'Leave type', 'Entitlement', 'Carried forward', 'Adjustments', 'Taken', 'Pending', 'Balance'], rows }
     }
 
     case 'payroll': {
@@ -319,7 +331,7 @@ export async function buildReport(key: string, tenantIds: string[], activeTenant
 
     case 'salary': {
       const emps = await prisma.hrEmployee.findMany({ where: { ...T, status: { in: ['active', 'on_leave'] } }, orderBy: { employeeCode: 'asc' } })
-      const label = await employeeLabels(activeTenantId, emps)
+      const label = await employeeLabelsAcross(emps)
       return {
         title: def.title,
         header: ['Employee ID', 'Name', 'Department', 'Designation', 'Grade', 'Basic', 'Gross', 'Monthly tax', 'Payment', 'Bank', 'IBAN'],
@@ -355,7 +367,7 @@ export async function buildReport(key: string, tenantIds: string[], activeTenant
         : { employmentType: 'contract', contractEnd: { not: null, lte: until } }
       const col = key === 'contract_expiry' ? 'contractEnd' : 'probationEnd'
       const emps = await prisma.hrEmployee.findMany({ where: { ...T, status: { in: ['active', 'on_leave'] }, ...where }, orderBy: { [col]: 'asc' } })
-      const label = await employeeLabels(activeTenantId, emps)
+      const label = await employeeLabelsAcross(emps)
       return {
         title: def.title,
         header: ['Employee ID', 'Name', 'Department', 'Designation', 'Manager', 'Joined', key === 'contract_expiry' ? 'Contract ends' : 'Probation ends', 'Days left'],

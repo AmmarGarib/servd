@@ -15,25 +15,36 @@ import { requireAuth, ALL_STAFF } from '../auth/middleware.js'
 import { AppError, NotFoundError, ForbiddenError } from '../../lib/errors.js'
 import { audit } from '../../lib/audit.js'
 import {
-  HR_SECTIONS, RECORD_SECTIONS, sectionByKey, validateAgainst, checkFormat, ORG_UNIT_KINDS, DOCUMENT_TYPES,
-  type HrField, type WorkflowStep, type RecordSlot,
+  HR_SECTIONS, RECORD_SECTIONS, ESS_SECTIONS, sectionByKey, validateAgainst, checkFormat, ORG_UNIT_KINDS, DOCUMENT_TYPES,
+  EMPLOYEE_COLUMN_TYPES, type HrField, type HrSection, type WorkflowStep, type RecordSlot,
 } from './forms.js'
 import {
-  getSettings, saveSettings, getFormat, getAllFormats, defaultFormat, employeeLabels,
-  applyDueEffects, onFinalApproval, leaveBalancesFor, checkLeave, loansFor,
+  getSettings, saveSettings, getFormat, getAllFormats, defaultFormat, employeeLabels, employeeLabelsAcross,
+  applyDueEffects, onFinalApproval, leaveBalancesFor, checkLeave, lockEmployeeLeave, loansFor,
   calculateRun, recalcPayslip, dashboard, dueList, letterContext, payableEmployees,
+  salaryForPeriod, unpaidOvertime, firstPayrollStart, runBlocker,
 } from './service.js'
 import {
-  mergeSettings, canActOnStep, finalSettlement, nextEmployeeCode, periodOf, periodStart, periodEnd,
+  mergeSettings, canActOnStep, finalSettlement, accruedLeaveDays, nextEmployeeCode, periodOf, periodStart, periodEnd, pktToday,
   type ApprovalEntry, type HrSettings,
 } from './logic.js'
-import { DEFAULT_LETTERS, renderLetter, placeholdersIn } from './letters.js'
-import { REPORTS, buildReport, type ReportQuery } from './reports.js'
+import { DEFAULT_LETTERS, renderLetter, placeholdersIn, sanitizeLetterHtml } from './letters.js'
+import { REPORTS, buildReport, resolver, type ReportQuery } from './reports.js'
 
 const HR_ADMIN = ['admin', 'owner', 'management', 'hr'] as UserRole[]
 const PAYROLL_APPROVERS = ['admin', 'owner', 'management'] as UserRole[]
-/** What an employee may raise for themselves through self-service. */
-const ESS_SECTIONS = ['leave', 'overtime', 'attendance_correction', 'training_request', 'resignation', 'loan']
+/** Who may edit the Employee Master record linked to their own login. */
+const SELF_EDITORS = ['admin', 'owner'] as UserRole[]
+
+/** Values only logic or an approver writes. Never taken from a create or an
+ *  edit, whatever the format says: approved OT hours come from /decide, the
+ *  rate and amount from final approval. */
+const SERVER_OWNED: Record<string, string[]> = { overtime: ['approvedHours', 'otRate', 'otAmount'] }
+/** Values on a self-service request that drive pay and are HR's to set, not
+ *  the employee's. Hidden from the self-service form and dropped on the way in. */
+const ESS_HIDDEN: Record<string, string[]> = { overtime: ['multiplier'] }
+
+type Tx = Prisma.TransactionClient
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
@@ -50,6 +61,19 @@ function readTenants(req: FastifyRequest): string[] {
   return su.tenantId ? [su.tenantId] : []
 }
 const inTenants = (req: FastifyRequest) => ({ tenantId: { in: readTenants(req) } })
+/** The company a picker list or a format is read for. ?tenantId= asks for a
+ *  particular one — an employee of another company opened in portfolio view,
+ *  or a self-service form, which belongs to the employee's own company — and
+ *  is honoured only for a company the caller belongs to, or the one their own
+ *  employee record is in. Otherwise the active company. */
+async function pickerTenant(req: FastifyRequest): Promise<string> {
+  const want = (req.query as { tenantId?: string } | undefined)?.tenantId
+  if (!want) return activeTenant(req)
+  if (req.staffUser!.memberTenantIds.includes(want)) return want
+  const own = await prisma.hrEmployee.findFirst({ where: { userId: req.staffUser!.id, tenantId: want }, select: { id: true } })
+  if (own) return want
+  throw new ForbiddenError('You do not belong to that company')
+}
 const writeTenants = (req: FastifyRequest) => ({ tenantId: { in: req.staffUser!.memberTenantIds.length ? req.staffUser!.memberTenantIds : [activeTenant(req)] } })
 
 function recordSection(key: string) {
@@ -96,39 +120,90 @@ function slotColumns(slots: Partial<Record<RecordSlot, unknown>>) {
   }
 }
 
+const omitKeys = (o: Record<string, unknown>, keys: string[]) => Object.fromEntries(Object.entries(o).filter(([k]) => !keys.includes(k)))
+
 function formErrors(errors: Array<{ field: string; message: string }>) {
   return new AppError('VALIDATION_ERROR', errors.map((e) => e.message).join('; '), 400)
 }
 
-/** Every id a record's data points at must belong to the same company. A
- *  format is data, so a reference field is not trusted to point anywhere safe. */
+const RECORD_SLOTS = ['employeeId', 'startDate', 'endDate', 'effectiveDate', 'quantity', 'amountCents', 'refId', 'category']
+
+/** Why a format can't be used for a section — empty when it can. Run when one
+ *  is saved and again when an older version is made live. */
+function formatProblems(sec: HrSection, fields: HrField[], workflow: WorkflowStep[]): string[] {
+  const problems: string[] = []
+  // Bindings may only point at real slots, and employee bindings only exist
+  // on the Employee Master.
+  for (const fl of fields) {
+    if (!fl.bind) continue
+    const ok = sec.key === 'employees' ? fl.bind.startsWith('employee.') && EMP_COLS.has(fl.bind.slice(9)) : RECORD_SLOTS.includes(fl.bind)
+    if (!ok) problems.push(`"${fl.label}" is bound to "${fl.bind}", which this section does not have`)
+  }
+  if (sec.key === 'employees' && !fields.some((f) => f.bind === 'employee.fullName')) problems.push('The Employee Master needs a field bound to the employee name')
+  return [...problems, ...checkFormat({ ...sec, fields: sec.key === 'employees' ? [] : sec.fields }, fields, workflow)]
+}
+
+type RefKind = 'employee' | 'orgunit' | 'department' | 'location' | 'record'
+
+/** What an id-holding field points at. Its type says — or, for a format saved
+ *  before a field's type had to match its binding, what it is bound to: an id
+ *  column is checked whatever kind of field fills it. */
+function refTarget(fl: HrField): { kind: RefKind; ref?: string } | null {
+  switch (fl.type) {
+    case 'employee': case 'employees': return { kind: 'employee' }
+    case 'orgunit': case 'department': case 'location': case 'record': return { kind: fl.type, ref: fl.ref }
+  }
+  if (fl.bind === 'employeeId') return { kind: 'employee' }
+  if (fl.bind === 'refId') return { kind: 'record' }
+  const col = fl.bind?.startsWith('employee.') ? EMPLOYEE_COLUMN_TYPES[fl.bind.slice('employee.'.length)] : undefined
+  const kind = col?.types[0]
+  if (kind === 'employee' || kind === 'orgunit' || kind === 'department' || kind === 'location') return { kind, ref: col!.ref }
+  return null
+}
+
+/** Every id a record's data points at — table cells included — must belong to
+ *  the same company. A format is data, so a reference field is not trusted to
+ *  point anywhere safe. A foreign id is refused (422). */
 async function checkReferences(tenantId: string, fields: HrField[], data: Record<string, unknown>) {
+  const wanted: Array<{ fl: HrField; target: { kind: RefKind; ref?: string }; ids: string[] }> = []
+  const collect = (fl: HrField, v: unknown) => {
+    const target = refTarget(fl)
+    if (!target || v == null || v === '') return
+    const ids = Array.isArray(v) ? v.map(String) : [String(v)]
+    if (ids.length) wanted.push({ fl, target, ids })
+  }
   for (const fl of fields) {
     const v = data[fl.key]
-    if (v == null || v === '') continue
-    const ids = Array.isArray(v) ? v.map(String) : [String(v)]
+    if (fl.type === 'table' && Array.isArray(v)) {
+      for (const col of fl.columns ?? []) for (const row of v) collect(col, (row as Record<string, unknown> | null)?.[col.key])
+    } else collect(fl, v)
+  }
+  for (const { fl, target, ids } of wanted) {
+    const uniq = Array.from(new Set(ids))
     let n = 0
-    switch (fl.type) {
-      case 'employee': case 'employees': n = await prisma.hrEmployee.count({ where: { tenantId, id: { in: ids } } }); break
-      case 'orgunit': n = await prisma.hrOrgUnit.count({ where: { tenantId, id: { in: ids }, ...(fl.ref && { kind: fl.ref }) } }); break
-      case 'department': n = await prisma.department.count({ where: { id: { in: ids }, OR: [{ tenantId }, { tenantId: null }] } }); break
-      case 'location': n = await prisma.location.count({ where: { id: { in: ids }, tenantId } }); break
-      case 'record': n = await prisma.hrRecord.count({ where: { tenantId, id: { in: ids }, ...(fl.ref && { section: fl.ref }) } }); break
-      default: continue
+    switch (target.kind) {
+      case 'employee': n = await prisma.hrEmployee.count({ where: { tenantId, id: { in: uniq } } }); break
+      case 'orgunit': n = await prisma.hrOrgUnit.count({ where: { tenantId, id: { in: uniq }, ...(target.ref && { kind: target.ref }) } }); break
+      case 'department': n = await prisma.department.count({ where: { id: { in: uniq }, OR: [{ tenantId }, { tenantId: null }] } }); break
+      case 'location': n = await prisma.location.count({ where: { id: { in: uniq }, tenantId } }); break
+      case 'record': n = await prisma.hrRecord.count({ where: { tenantId, id: { in: uniq }, ...(target.ref && { section: target.ref }) } }); break
     }
-    if (n !== ids.length) throw new AppError('BAD_REFERENCE', `${fl.label}: not found in this company`, 400)
+    if (n !== uniq.length) throw new AppError('BAD_REFERENCE', `${fl.label}: not found in this company`, 422)
   }
 }
 
-/** Section-specific work before a record is saved. */
-async function prepareRecord(tenantId: string, section: string, cols: ReturnType<typeof slotColumns>, data: Record<string, unknown>, id?: string) {
+/** Section-specific work before a record is saved. Runs inside the saving
+ *  transaction: leave takes the employee's booking lock here, so its balance
+ *  check and the write that follows are one step. */
+async function prepareRecord(tx: Tx, tenantId: string, section: string, fields: HrField[], cols: ReturnType<typeof slotColumns>, data: Record<string, unknown>, id?: string) {
   if (section === 'leave') {
-    const r = await checkLeave(tenantId, { id, employeeId: cols.employeeId ?? null, refId: cols.refId ?? null, startDate: cols.startDate ?? null, endDate: cols.endDate ?? null, quantity: cols.quantity ?? null })
+    if (cols.employeeId) await lockEmployeeLeave(tx, cols.employeeId)
+    const r = await checkLeave(tenantId, { id, employeeId: cols.employeeId ?? null, refId: cols.refId ?? null, startDate: cols.startDate ?? null, endDate: cols.endDate ?? null, quantity: cols.quantity ?? null }, tx)
     cols.quantity = r.quantity ?? null
-    data['days'] = r.quantity
+    data[fields.find((f) => f.bind === 'quantity')?.key ?? 'days'] = r.quantity
   }
   if (section === 'salary_revision' && cols.employeeId && cols.amountCents) {
-    const emp = await prisma.hrEmployee.findUnique({ where: { id: cols.employeeId }, select: { grossSalaryCents: true } })
+    const emp = await prisma.hrEmployee.findFirst({ where: { id: cols.employeeId, tenantId }, select: { grossSalaryCents: true } })
     if (emp) {
       data['increaseAmount'] = cols.amountCents - emp.grossSalaryCents
       data['increasePct'] = emp.grossSalaryCents > 0 ? Math.round(((cols.amountCents - emp.grossSalaryCents) / emp.grossSalaryCents) * 10000) / 100 : null
@@ -140,6 +215,14 @@ async function prepareRecord(tenantId: string, section: string, cols: ReturnType
     const net = n('salaryPayable') + n('otPayable') + n('leaveEncashment') - n('deductions') - n('loanRecovery') + n('otherAdjustments')
     data['netAmount'] = net
     cols.amountCents = net
+  }
+  // A loan is recovered one installment a payroll; zero, negative or part
+  // installments would never recover it. Checked here whatever the format says.
+  if (section === 'loan') {
+    if (cols.quantity != null && !(Number.isInteger(cols.quantity) && cols.quantity >= 1)) {
+      throw new AppError('BAD_INSTALLMENTS', 'The number of installments must be a whole number, 1 or more', 400)
+    }
+    if (cols.amountCents != null && cols.amountCents <= 0) throw new AppError('BAD_AMOUNT', 'The loan amount must be more than zero', 400)
   }
   if (section === 'overtime' && cols.quantity != null && cols.quantity <= 0) {
     throw new AppError('BAD_HOURS', 'OT hours must be more than zero', 400)
@@ -153,19 +236,33 @@ function recordLabel(rec: HrRecord & { employee?: { fullName: string } | null },
   return bits.join(' · ') || rec.id.slice(0, 8)
 }
 
+/** Who a record is about and who has already had a hand in it — everything
+ *  canActOnStep needs to keep requester and approvers apart. */
 async function approvalSubject(rec: HrRecord) {
-  if (!rec.employeeId) return { employeeUserId: null, managerUserId: null }
-  const emp = await prisma.hrEmployee.findUnique({ where: { id: rec.employeeId }, select: { userId: true, managerId: true } })
-  const mgr = emp?.managerId ? await prisma.hrEmployee.findUnique({ where: { id: emp.managerId }, select: { userId: true } }) : null
-  return { employeeUserId: emp?.userId ?? null, managerUserId: mgr?.userId ?? null }
+  const done = { createdById: rec.createdById, priorApproverIds: (rec.approvals as unknown as ApprovalEntry[]).map((a) => a.byUserId) }
+  if (!rec.employeeId) return { employeeUserId: null, managerUserId: null, ...done }
+  const emp = await prisma.hrEmployee.findFirst({ where: { id: rec.employeeId, tenantId: rec.tenantId }, select: { userId: true, managerId: true } })
+  const mgr = emp?.managerId ? await prisma.hrEmployee.findFirst({ where: { id: emp.managerId, tenantId: rec.tenantId }, select: { userId: true } }) : null
+  return { employeeUserId: emp?.userId ?? null, managerUserId: mgr?.userId ?? null, ...done }
 }
 
-function csv(rows: Array<Array<unknown>>): string {
+/** Everything that happens when a record reaches 'approved' — whether the last
+ *  approver got it there or its format has no approval steps at all. Effects
+ *  (applyDueEffects) follow once the transaction commits. */
+async function finalApproval(tx: Tx, rec: HrRecord, extra: { approvedHours?: number | null } = {}) {
+  const s = await getSettings(rec.tenantId)
+  const emp = rec.employeeId ? await tx.hrEmployee.findFirst({ where: { id: rec.employeeId, tenantId: rec.tenantId } }) : null
+  await onFinalApproval(tx, { ...rec, status: 'approved' }, emp, s, extra)
+}
+
+export function csv(rows: Array<Array<unknown>>): string {
   const cell = (v: unknown) => {
     const s = v == null ? '' : Array.isArray(v) ? v.join('; ') : v instanceof Date ? v.toISOString().slice(0, 10) : String(v)
-    // Guard against formula injection when the file is opened in Excel.
-    const safe = /^[=+\-@]/.test(s) ? `'${s}` : s
-    return /[",\n]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe
+    // Guard against formula injection when the file is opened in Excel — but
+    // not a plain number: a negative amount must stay a number a total adds up.
+    const numeric = typeof v === 'number' || /^-?\d+(\.\d+)?$/.test(s)
+    const safe = !numeric && /^[=+\-@\t\r]/.test(s) ? `'${s}` : s
+    return /[",\n\r]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe
   }
   return rows.map((r) => r.map(cell).join(',')).join('\n')
 }
@@ -173,22 +270,39 @@ function csv(rows: Array<Array<unknown>>): string {
 async function createRecord(req: FastifyRequest, tenantId: string, section: string, input: Record<string, unknown>, opts: { submit: boolean; forEmployeeId?: string }) {
   const sec = recordSection(section)
   const fmt = await getFormat(tenantId, section)
-  const payload = opts.forEmployeeId ? { ...input, ...Object.fromEntries(fmt.fields.filter((f) => f.bind === 'employeeId').map((f) => [f.key, opts.forEmployeeId])) } : input
+  const selfService = !!opts.forEmployeeId
+  if (selfService) {
+    // A self-service request must belong to the employee and wait for someone
+    // else to approve it. checkFormat refuses a format that breaks either;
+    // this holds for one saved before it did.
+    if (!fmt.fields.some((f) => f.bind === 'employeeId')) throw new AppError('BAD_FORMAT', 'This request type has no employee field — ask HR to fix its format', 422)
+    if (fmt.workflow.length === 0) throw new AppError('NO_WORKFLOW', 'This request type has no approval steps — ask HR to fix its format', 422)
+  }
+  const clean = omitKeys(input, [...(SERVER_OWNED[section] ?? []), ...(selfService ? ESS_HIDDEN[section] ?? [] : [])])
+  const payload = selfService ? { ...clean, ...Object.fromEntries(fmt.fields.filter((f) => f.bind === 'employeeId').map((f) => [f.key, opts.forEmployeeId])) } : clean
   const v = validateAgainst(fmt.fields, payload)
   if (v.errors.length) throw formErrors(v.errors)
   await checkReferences(tenantId, fmt.fields, v.data)
   const cols = slotColumns(v.slots)
-  await prepareRecord(tenantId, section, cols, v.data)
   const hasWorkflow = fmt.workflow.length > 0
-  const rec = await prisma.hrRecord.create({
-    data: {
-      tenantId, section, formVersion: fmt.version, ...cols,
-      status: hasWorkflow ? (opts.submit ? 'submitted' : 'draft') : 'approved',
-      stage: fmt.stages[0] ?? null,
-      data: v.data as Prisma.InputJsonValue,
-      createdById: req.staffUser!.id,
-    },
+  const created = await prisma.$transaction(async (tx) => {
+    await prepareRecord(tx, tenantId, section, fmt.fields, cols, v.data)
+    const r = await tx.hrRecord.create({
+      data: {
+        tenantId, section, formVersion: fmt.version, ...cols,
+        status: hasWorkflow ? (opts.submit ? 'submitted' : 'draft') : 'approved',
+        stage: fmt.stages[0] ?? null,
+        data: v.data as Prisma.InputJsonValue,
+        createdById: req.staffUser!.id,
+      },
+    })
+    // No approval steps: approved on creation, through the same final-approval
+    // path as a decided record — OT is priced here, not taken from the input.
+    if (!hasWorkflow) await finalApproval(tx, r)
+    return r
   })
+  if (!hasWorkflow) await applyDueEffects(tenantId)
+  const rec = await prisma.hrRecord.findUniqueOrThrow({ where: { id: created.id } })
   await audit({
     category: 'identity', action: `hr.${section}.create`, entity: 'HrRecord', entityId: rec.id,
     userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId, after: { section, status: rec.status },
@@ -210,8 +324,8 @@ export async function hrRoutes(fastify: FastifyInstance) {
     }))
   })
 
-  fastify.get<{ Params: { section: string } }>('/forms/:section', { preHandler: requireAuth(...HR_ADMIN) }, async (req) => {
-    const tenantId = activeTenant(req)
+  fastify.get<{ Params: { section: string }; Querystring: { tenantId?: string } }>('/forms/:section', { preHandler: requireAuth(...HR_ADMIN) }, async (req) => {
+    const tenantId = await pickerTenant(req)
     const sec = sectionByKey(req.params.section)
     if (!sec) throw new NotFoundError('HR section', req.params.section)
     const [current, versions] = await Promise.all([
@@ -233,6 +347,8 @@ export async function hrRoutes(fastify: FastifyInstance) {
     help: z.string().max(300).optional(),
     readOnly: z.boolean().optional(),
     system: z.boolean().optional(),
+    min: z.number().optional(),
+    integer: z.boolean().optional(),
     columns: z.array(fieldSchema).max(40).optional(),
   }))
 
@@ -249,23 +365,12 @@ export async function hrRoutes(fastify: FastifyInstance) {
       note: z.string().max(300).optional(),
     }).parse(req.body)
 
-    // Bindings may only point at real slots, and employee bindings only exist
-    // on the Employee Master.
-    const slots = ['employeeId', 'startDate', 'endDate', 'effectiveDate', 'quantity', 'amountCents', 'refId', 'category']
-    for (const fl of body.fields) {
-      if (!fl.bind) continue
-      const ok = sec.key === 'employees' ? fl.bind.startsWith('employee.') && EMP_COLS.has(fl.bind.slice(9)) : slots.includes(fl.bind)
-      if (!ok) throw new AppError('BAD_BINDING', `"${fl.label}" is bound to "${fl.bind}", which this section does not have`, 400)
-    }
-    if (sec.key === 'employees' && !body.fields.some((f) => f.bind === 'employee.fullName')) {
-      throw new AppError('BAD_FORMAT', 'The Employee Master needs a field bound to the employee name', 400)
-    }
-    const problems = checkFormat({ ...sec, fields: sec.key === 'employees' ? [] : sec.fields }, body.fields)
+    const cur = await getFormat(tenantId, sec.key)
+    const problems = formatProblems(sec, body.fields, body.workflow ?? cur.workflow)
     if (problems.length) throw new AppError('BAD_FORMAT', problems.join(' · '), 400)
 
     const last = await prisma.hrFormDefinition.findFirst({ where: { tenantId, section: sec.key }, orderBy: { version: 'desc' } })
     const version = (last?.version ?? 0) + 1
-    const cur = await getFormat(tenantId, sec.key)
     await prisma.$transaction([
       prisma.hrFormDefinition.updateMany({ where: { tenantId, section: sec.key }, data: { isActive: false } }),
       prisma.hrFormDefinition.create({
@@ -289,13 +394,27 @@ export async function hrRoutes(fastify: FastifyInstance) {
   // version (0 = the built-in default).
   fastify.post<{ Params: { section: string } }>('/forms/:section/activate', { preHandler: requireAuth(...HR_ADMIN) }, async (req) => {
     const tenantId = activeTenant(req)
+    const sec = sectionByKey(req.params.section)
+    if (!sec || !(sec.kind === 'record' || sec.key === 'employees')) throw new NotFoundError('HR section', req.params.section)
     const { version } = z.object({ version: z.number().int().min(0) }).parse(req.body)
-    await prisma.hrFormDefinition.updateMany({ where: { tenantId, section: req.params.section }, data: { isActive: false } })
-    if (version > 0) {
-      const n = await prisma.hrFormDefinition.updateMany({ where: { tenantId, section: req.params.section, version }, data: { isActive: true } })
-      if (n.count === 0) throw new NotFoundError('Format version', String(version))
+    // Find the version before anything changes: a mistyped one must leave the
+    // live format live, not drop the section back to the default. And a
+    // version saved before today's rules must pass them to go live again.
+    const target = version > 0 ? await prisma.hrFormDefinition.findFirst({ where: { tenantId, section: sec.key, version } }) : null
+    if (version > 0 && !target) throw new NotFoundError('Format version', String(version))
+    if (target) {
+      const problems = formatProblems(sec, target.fields as unknown as HrField[], target.workflow as unknown as WorkflowStep[])
+      if (problems.length) throw new AppError('BAD_FORMAT', `Version ${version} cannot be used any more: ${problems.join(' · ')}`, 400)
     }
-    return getFormat(tenantId, req.params.section)
+    await prisma.$transaction([
+      prisma.hrFormDefinition.updateMany({ where: { tenantId, section: sec.key }, data: { isActive: false } }),
+      ...(target ? [prisma.hrFormDefinition.update({ where: { id: target.id }, data: { isActive: true } })] : []),
+    ])
+    await audit({
+      category: 'identity', action: 'hr.format.activate', entity: 'HrFormDefinition', entityId: `${sec.key}:v${version}`,
+      userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId, after: { section: sec.key, version },
+    })
+    return getFormat(tenantId, sec.key)
   })
 
   // ── Settings ──────────────────────────────────────────────────────────────
@@ -327,8 +446,8 @@ export async function hrRoutes(fastify: FastifyInstance) {
   })
 
   // ── Organization setup ────────────────────────────────────────────────────
-  fastify.get('/org', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
-    const tenantId = activeTenant(req)
+  fastify.get<{ Querystring: { tenantId?: string } }>('/org', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
+    const tenantId = await pickerTenant(req)
     const [units, departments, locations] = await Promise.all([
       prisma.hrOrgUnit.findMany({ where: { tenantId }, orderBy: [{ kind: 'asc' }, { name: 'asc' }] }),
       prisma.department.findMany({ where: { tenantId, archivedAt: null }, orderBy: { order: 'asc' }, select: { id: true, name: true } }),
@@ -362,8 +481,8 @@ export async function hrRoutes(fastify: FastifyInstance) {
   })
 
   // ── Lookups for pickers (names only — no salaries) ────────────────────────
-  fastify.get('/lookups', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
-    const tenantId = activeTenant(req)
+  fastify.get<{ Querystring: { tenantId?: string } }>('/lookups', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
+    const tenantId = await pickerTenant(req)
     const isAdmin = HR_ADMIN.includes(req.staffUser!.role)
     const [employees, formats] = await Promise.all([
       prisma.hrEmployee.findMany({
@@ -374,7 +493,15 @@ export async function hrRoutes(fastify: FastifyInstance) {
       getAllFormats(tenantId),
     ])
     // Records other sections point at (shifts, leave types, candidates, …).
-    const refSections = Array.from(new Set(Object.values(formats).flatMap((f) => f.fields.filter((x) => x.type === 'record' && x.ref).map((x) => x.ref!))))
+    // Anyone outside HR gets only what their self-service forms pick from,
+    // and only settings (leave types, shifts, holidays) — never candidates,
+    // requisitions or anyone's cases, whatever a format points at.
+    const refsOf = (fields: HrField[]): string[] => fields.flatMap((x) => [
+      ...(x.type === 'record' && x.ref ? [x.ref] : []), ...(x.columns ? refsOf(x.columns) : []),
+    ])
+    const refSections = Array.from(new Set(isAdmin
+      ? Object.values(formats).flatMap((f) => refsOf(f.fields))
+      : ESS_SECTIONS.flatMap((k) => refsOf(formats[k]?.fields ?? [])).filter((k) => sectionByKey(k)?.config)))
     const recs = refSections.length
       ? await prisma.hrRecord.findMany({ where: { tenantId, section: { in: refSections }, status: { not: 'cancelled' } }, include: { employee: { select: { fullName: true } } }, orderBy: { createdAt: 'desc' }, take: 2000 })
       : []
@@ -401,7 +528,7 @@ export async function hrRoutes(fastify: FastifyInstance) {
         },
         orderBy: { employeeCode: 'asc' },
       })
-      const label = await employeeLabels(activeTenant(req), rows)
+      const label = await employeeLabelsAcross(rows)
       return rows.map((e) => ({
         id: e.id, employeeCode: e.employeeCode, fullName: e.fullName, phone: e.phone, status: e.status,
         employmentType: e.employmentType, joiningDate: e.joiningDate, grossSalaryCents: e.grossSalaryCents,
@@ -433,8 +560,14 @@ export async function hrRoutes(fastify: FastifyInstance) {
   })
 
   async function saveEmployee(req: FastifyRequest, id: string | null) {
-    const tenantId = id ? (await prisma.hrEmployee.findFirst({ where: { id, ...writeTenants(req) }, select: { tenantId: true } }))?.tenantId : activeTenant(req)
+    const target = id ? await prisma.hrEmployee.findFirst({ where: { id, ...writeTenants(req) }, select: { tenantId: true, userId: true } }) : null
+    const tenantId = id ? target?.tenantId : activeTenant(req)
     if (!tenantId) throw new NotFoundError('Employee', id ?? '')
+    // Nobody edits the master record linked to their own login — salary, bank
+    // account and status would otherwise skip every approval. The CEO and
+    // co-owner may (a one-person office), and it is recorded.
+    const selfEdit = !!target?.userId && target.userId === req.staffUser!.id
+    if (selfEdit && !SELF_EDITORS.includes(req.staffUser!.role)) throw new ForbiddenError('You cannot edit your own employee record — ask another HR user')
     const fmt = await getFormat(tenantId, 'employees')
     const body = z.object({ data: z.record(z.unknown()) }).parse(req.body)
     const v = validateAgainst(fmt.fields, body.data, { partial: !!id })
@@ -444,6 +577,8 @@ export async function hrRoutes(fastify: FastifyInstance) {
     if (id && cols['managerId'] === id) throw new AppError('BAD_MANAGER', 'An employee cannot report to themselves', 400)
     const extra = Object.fromEntries(Object.entries(v.data).filter(([k]) => !fmt.fields.find((f) => f.key === k)?.bind))
     if (!id) {
+      // A format may leave the name optional; the record may not.
+      if (typeof cols['fullName'] !== 'string' || !cols['fullName'].trim()) throw new AppError('VALIDATION_ERROR', 'Employee name is required', 400)
       const s = await getSettings(tenantId)
       if (!cols['employeeCode']) {
         const codes = await prisma.hrEmployee.findMany({ where: { tenantId }, select: { employeeCode: true } })
@@ -474,7 +609,7 @@ export async function hrRoutes(fastify: FastifyInstance) {
       category: 'identity', action: salaryChanged ? 'hr.employee.salary_edit' : 'hr.employee.update', entity: 'HrEmployee', entityId: id,
       userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId,
       before: salaryChanged ? { grossSalaryCents: cur.grossSalaryCents } : undefined,
-      after: salaryChanged ? { grossSalaryCents: emp.grossSalaryCents } : { fields: Object.keys(v.data) },
+      after: { ...(salaryChanged ? { grossSalaryCents: emp.grossSalaryCents } : { fields: Object.keys(v.data) }), ...(selfEdit && { selfEdit: true }) },
     })
     return emp
   }
@@ -487,13 +622,27 @@ export async function hrRoutes(fastify: FastifyInstance) {
     const { userId } = z.object({ userId: z.string().uuid().nullable() }).parse(req.body)
     const emp = await prisma.hrEmployee.findFirst({ where: { id: req.params.id, ...writeTenants(req) } })
     if (!emp) throw new NotFoundError('Employee', req.params.id)
+    // The link is what "your own request" is checked against, so nobody moves
+    // their own: unlinking yourself would let you approve for yourself.
+    if (emp.userId === req.staffUser!.id || userId === req.staffUser!.id) {
+      throw new ForbiddenError('You cannot link or unlink your own login — ask another HR user')
+    }
     if (userId) {
-      const u = await prisma.user.findFirst({ where: { id: userId, deletedAt: null } })
+      // Only a login that belongs to the employee's company — the same
+      // membership the auth middleware grants (active company or a TenantMember row).
+      const u = await prisma.user.findFirst({
+        where: { id: userId, deletedAt: null, OR: [{ tenantId: emp.tenantId }, { tenantMemberships: { some: { tenantId: emp.tenantId } } }] },
+      })
       if (!u) throw new NotFoundError('User', userId)
       const taken = await prisma.hrEmployee.findFirst({ where: { userId, NOT: { id: emp.id } } })
       if (taken) throw new AppError('ALREADY_LINKED', `That login is already linked to ${taken.fullName}`, 409)
     }
-    return prisma.hrEmployee.update({ where: { id: emp.id }, data: { userId } })
+    const updated = await prisma.hrEmployee.update({ where: { id: emp.id }, data: { userId } })
+    await audit({
+      category: 'identity', action: 'hr.employee.link_user', entity: 'HrEmployee', entityId: emp.id,
+      userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: emp.tenantId, before: { userId: emp.userId }, after: { userId },
+    })
+    return updated
   })
 
   // ── Documents ─────────────────────────────────────────────────────────────
@@ -550,6 +699,7 @@ export async function hrRoutes(fastify: FastifyInstance) {
     '/records/:section', { preHandler: requireAuth(...HR_ADMIN) }, async (req) => {
       const sec = recordSection(req.params.section)
       const { status, employeeId, stage, from, to } = req.query
+      const formatTenantId = activeTenant(req)
       const [rows, fmt] = await Promise.all([
         prisma.hrRecord.findMany({
           where: {
@@ -561,9 +711,13 @@ export async function hrRoutes(fastify: FastifyInstance) {
           orderBy: { createdAt: 'desc' },
           take: 1000,
         }),
-        getFormat(activeTenant(req), sec.key),
+        getFormat(formatTenantId, sec.key),
       ])
-      return { format: fmt, records: rows.map((r) => ({ ...r, label: recordLabel(r, fmt.fields) })) }
+      // The format is the active company's live one. A record saved under
+      // another version, or another company's in portfolio view, is shown
+      // with its own — GET /records/:section/:id — and the list says whose
+      // format this is so the screen can tell.
+      return { format: fmt, formatTenantId, records: rows.map((r) => ({ ...r, label: recordLabel(r, fmt.fields) })) }
     })
 
   fastify.get<{ Params: { section: string; id: string } }>('/records/:section/:id', { preHandler: requireAuth(...HR_ADMIN) }, async (req) => {
@@ -589,13 +743,16 @@ export async function hrRoutes(fastify: FastifyInstance) {
     if (fmt.workflow.length && (rec.status === 'approved' || rec.status === 'rejected' || approvals.length > 0)) {
       throw new AppError('LOCKED', 'This request has already been acted on and can no longer be edited', 409)
     }
-    const merged = { ...(rec.data as Record<string, unknown>), ...body.data }
-    const v = validateAgainst(fmt.fields, merged)
+    const stored = rec.data as Record<string, unknown>
+    const merged = { ...stored, ...omitKeys(body.data, SERVER_OWNED[rec.section] ?? []) }
+    const v = validateAgainst(fmt.fields, merged, { stored })
     if (v.errors.length) throw formErrors(v.errors)
     await checkReferences(rec.tenantId, fmt.fields, v.data)
     const cols = slotColumns(v.slots)
-    await prepareRecord(rec.tenantId, rec.section, cols, v.data, rec.id)
-    return prisma.hrRecord.update({ where: { id: rec.id }, data: { ...cols, data: v.data as Prisma.InputJsonValue } })
+    return prisma.$transaction(async (tx) => {
+      await prepareRecord(tx, rec.tenantId, rec.section, fmt.fields, cols, v.data, rec.id)
+      return tx.hrRecord.update({ where: { id: rec.id }, data: { ...cols, data: v.data as Prisma.InputJsonValue } })
+    })
   })
 
   fastify.post<{ Params: { section: string; id: string } }>('/records/:section/:id/submit', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
@@ -603,8 +760,27 @@ export async function hrRoutes(fastify: FastifyInstance) {
     if (!rec) throw new NotFoundError('HR record', req.params.id)
     if (!HR_ADMIN.includes(req.staffUser!.role) && rec.createdById !== req.staffUser!.id) throw new ForbiddenError('Not your request')
     if (rec.status !== 'draft') throw new AppError('NOT_DRAFT', 'Only a draft can be submitted', 409)
-    if (rec.section === 'leave') await checkLeave(rec.tenantId, rec)
-    return prisma.hrRecord.update({ where: { id: rec.id }, data: { status: 'submitted' } })
+    const fmt = await getFormat(rec.tenantId, rec.section, rec.formVersion).catch(() => getFormat(rec.tenantId, rec.section))
+    // With no approval steps, submitting is approving — through the same
+    // final-approval path as /decide.
+    const approveNow = fmt.workflow.length === 0
+    await prisma.$transaction(async (tx) => {
+      // A draft leave is checked again now it starts to count, under the
+      // employee's booking lock, and its days are recomputed from its dates.
+      let days: number | null | undefined
+      if (rec.section === 'leave') {
+        if (rec.employeeId) await lockEmployeeLeave(tx, rec.employeeId)
+        days = (await checkLeave(rec.tenantId, rec, tx)).quantity
+      }
+      const leaveDays = days != null && days !== rec.quantity
+        ? { quantity: days, data: { ...(rec.data as Record<string, unknown>), [fmt.fields.find((f) => f.bind === 'quantity')?.key ?? 'days']: days } as Prisma.InputJsonValue }
+        : {}
+      const claimed = await tx.hrRecord.updateMany({ where: { id: rec.id, status: 'draft' }, data: { status: approveNow ? 'approved' : 'submitted', ...leaveDays } })
+      if (claimed.count === 0) throw new AppError('CONFLICT', 'Someone else acted on this request first — reload', 409)
+      if (approveNow) await finalApproval(tx, rec)
+    })
+    if (approveNow) await applyDueEffects(rec.tenantId)
+    return prisma.hrRecord.findUniqueOrThrow({ where: { id: rec.id } })
   })
 
   // POST /hr/records/:section/:id/decide — approve or reject the current step.
@@ -630,7 +806,12 @@ export async function hrRoutes(fastify: FastifyInstance) {
     }
     const isLast = rec.currentStep >= fmt.workflow.length - 1
     const nextStatus = body.decision === 'rejected' ? 'rejected' : isLast ? 'approved' : 'submitted'
-    const s = await getSettings(rec.tenantId)
+    // OT hours an approver settles on are kept on the record at every step, so
+    // the next approver starts from them and the final amount pays them — not
+    // the hours originally claimed.
+    const hours = rec.section === 'overtime' && body.decision === 'approved' && body.approvedHours != null ? body.approvedHours : null
+    const data = hours != null ? { ...(rec.data as Record<string, unknown>), approvedHours: hours } : rec.data as Record<string, unknown>
+    const hoursOnQuantity = hours != null && fmt.fields.find((f) => f.key === 'approvedHours')?.bind === 'quantity'
 
     const updated = await prisma.$transaction(async (tx) => {
       // Claim the step: two approvers clicking at once must not both advance it.
@@ -640,12 +821,13 @@ export async function hrRoutes(fastify: FastifyInstance) {
           status: nextStatus,
           currentStep: body.decision === 'approved' && !isLast ? rec.currentStep + 1 : rec.currentStep,
           approvals: [...(rec.approvals as unknown as ApprovalEntry[]), entry] as unknown as Prisma.InputJsonValue,
+          ...(hours != null && { data: data as Prisma.InputJsonValue }),
+          ...(hoursOnQuantity && { quantity: hours }),
         },
       })
       if (claimed.count === 0) throw new AppError('CONFLICT', 'Someone else acted on this request first — reload', 409)
       if (nextStatus === 'approved') {
-        const emp = rec.employeeId ? await tx.hrEmployee.findUnique({ where: { id: rec.employeeId } }) : null
-        await onFinalApproval(tx, { ...rec, status: 'approved' }, emp, s, { approvedHours: body.approvedHours ?? null })
+        await finalApproval(tx, { ...rec, data: data as Prisma.JsonValue, ...(hoursOnQuantity && { quantity: hours }) }, { approvedHours: hours })
       }
       return tx.hrRecord.findUniqueOrThrow({ where: { id: rec.id } })
     })
@@ -667,15 +849,45 @@ export async function hrRoutes(fastify: FastifyInstance) {
     return prisma.hrRecord.update({ where: { id: rec.id }, data: { stage } })
   })
 
+  // Cancel. Anyone may withdraw their own request until an approver has acted
+  // on it; after that only HR can cancel, and not once it has taken effect.
   fastify.post<{ Params: { section: string; id: string } }>('/records/:section/:id/cancel', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
     const rec = await prisma.hrRecord.findFirst({ where: { id: req.params.id, section: req.params.section, ...writeTenants(req) } })
     if (!rec) throw new NotFoundError('HR record', req.params.id)
-    if (!HR_ADMIN.includes(req.staffUser!.role) && rec.createdById !== req.staffUser!.id) throw new ForbiddenError('Not your request')
-    if (rec.appliedAt) throw new AppError('APPLIED', 'This has already taken effect and cannot be cancelled — raise a new request to reverse it', 409)
-    if (rec.section === 'loan' && rec.status === 'approved' && (await loansFor(rec.tenantId, rec.employeeId ?? undefined)).some((l) => l.id === rec.id && l.recoveredCents > 0)) {
-      throw new AppError('APPLIED', 'Installments have already been deducted for this loan', 409)
+    if (!HR_ADMIN.includes(req.staffUser!.role)) {
+      if (rec.createdById !== req.staffUser!.id) throw new ForbiddenError('Not your request')
+      if (!(rec.status === 'draft' || rec.status === 'submitted') || (rec.approvals as unknown as ApprovalEntry[]).length > 0) {
+        throw new AppError('ACTED_ON', 'An approver has already acted on this request — ask HR to cancel it', 409)
+      }
     }
-    return prisma.hrRecord.update({ where: { id: rec.id }, data: { status: 'cancelled' } })
+    if (rec.status === 'cancelled') throw new AppError('ALREADY_CANCELLED', 'This record is already cancelled', 409)
+    if (rec.appliedAt) throw new AppError('APPLIED', 'This has already taken effect and cannot be cancelled — raise a new request to reverse it', 409)
+    if (rec.section === 'loan' && rec.status === 'approved') {
+      // Once an installment sits on any payslip — draft, approved or locked —
+      // cancelling would leave that payroll deducting for a loan that no
+      // longer exists. It comes off the payslip first.
+      const slips = await prisma.hrPayslip.findMany({
+        where: { tenantId: rec.tenantId, ...(rec.employeeId && { employeeId: rec.employeeId }) },
+        select: { inputs: true, run: { select: { period: true, status: true } } },
+      })
+      const on = slips.find((sl) => (((sl.inputs as Record<string, unknown>)['loans'] as Array<{ loanId: string; cents: number }> | undefined) ?? [])
+        .some((l) => l.loanId === rec.id && l.cents > 0))
+      if (on) {
+        throw new AppError('ON_PAYROLL', `An installment of this loan is on the ${on.run.period} payroll (${on.run.status}) — take it off that payroll before cancelling the loan`, 409)
+      }
+    }
+    // Claim: an approval or an effect landing between the read and here must
+    // not end up on a record that also says cancelled.
+    const claimed = await prisma.hrRecord.updateMany({
+      where: { id: rec.id, status: rec.status, currentStep: rec.currentStep, appliedAt: null },
+      data: { status: 'cancelled' },
+    })
+    if (claimed.count === 0) throw new AppError('CONFLICT', 'This record changed while you were cancelling it — reload', 409)
+    await audit({
+      category: 'identity', action: `hr.${rec.section}.cancel`, entity: 'HrRecord', entityId: rec.id,
+      userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: rec.tenantId, before: { status: rec.status }, after: { status: 'cancelled' },
+    })
+    return prisma.hrRecord.findUniqueOrThrow({ where: { id: rec.id } })
   })
 
   fastify.get<{ Params: { section: string }; Querystring: { status?: string; from?: string; to?: string } }>('/records/:section/export.csv', { preHandler: requireAuth(...HR_ADMIN) }, async (req, reply) => {
@@ -687,9 +899,11 @@ export async function hrRoutes(fastify: FastifyInstance) {
       ...((from || to) && { startDate: { ...(from && { gte: new Date(from) }), ...(to && { lte: new Date(to) }) } }),
     }, include: { employee: { select: { fullName: true, employeeCode: true } } }, orderBy: { createdAt: 'asc' } })
     const cols = fmt.fields.filter((f) => f.type !== 'table')
+    // Printed the way the reports print them: money in rupees, references by name.
+    const show = await resolver(rows, cols)
     const out = csv([
       ['Record', 'Status', 'Stage', 'Employee ID', 'Employee', ...cols.map((c) => c.label), 'Created'],
-      ...rows.map((r) => [r.id, r.status, r.stage, r.employee?.employeeCode, r.employee?.fullName, ...cols.map((c) => (r.data as Record<string, unknown>)[c.key]), r.createdAt]),
+      ...rows.map((r) => [r.id, r.status, r.stage, r.employee?.employeeCode, r.employee?.fullName, ...cols.map((c) => show(c, (r.data as Record<string, unknown>)[c.key])), r.createdAt]),
     ])
     return reply.header('Content-Type', 'text/csv; charset=utf-8').header('Content-Disposition', `attachment; filename="hr-${sec.key}.csv"`).send(out)
   })
@@ -728,29 +942,42 @@ export async function hrRoutes(fastify: FastifyInstance) {
     return reply.status(201).send(emp)
   })
 
-  // Full & final — work the figures out from what HR already holds.
+  // Full & final — work the figures out from what HR already holds. It picks
+  // up where payroll left off: salary for the days after the last approved or
+  // locked payroll the employee is on, OT and loans net of what those paid and
+  // recovered, and the paid leave earned this leave year and not taken.
   fastify.post('/final-settlement/calculate', { preHandler: requireAuth(...HR_ADMIN) }, async (req) => {
     const body = z.object({ employeeId: z.string().uuid(), lastWorkingDay: z.string(), unpaidMonthSalary: z.boolean().default(true) }).parse(req.body)
-    const emp = await prisma.hrEmployee.findFirst({ where: { id: body.employeeId, ...writeTenants(req) } })
-    if (!emp) throw new NotFoundError('Employee', body.employeeId)
+    const found = await prisma.hrEmployee.findFirst({ where: { id: body.employeeId, ...writeTenants(req) } })
+    if (!found) throw new NotFoundError('Employee', body.employeeId)
     const lwd = new Date(body.lastWorkingDay)
+    if (Number.isNaN(lwd.getTime())) throw new AppError('BAD_DATE', 'Last working day is not a date', 400)
+    // A revision that has come due but that nothing has applied yet.
+    await applyDueEffects(found.tenantId)
+    const emp = await prisma.hrEmployee.findUniqueOrThrow({ where: { id: found.id } })
     const s = await getSettings(emp.tenantId)
-    const period = periodOf(lwd)
-    const lockedRun = await prisma.hrPayrollRun.findFirst({ where: { tenantId: emp.tenantId, period, status: 'locked' } })
-    const [ot, balances, loans] = await Promise.all([
-      lockedRun ? Promise.resolve([]) : prisma.hrRecord.findMany({ where: { employeeId: emp.id, section: 'overtime', status: 'approved', startDate: { gte: periodStart(period), lte: periodEnd(period) } } }),
+    const PAID_RUNS = ['approved', 'locked']
+    const paidRun = await prisma.hrPayrollRun.findFirst({
+      where: { tenantId: emp.tenantId, status: { in: PAID_RUNS }, payslips: { some: { employeeId: emp.id } } },
+      orderBy: { period: 'desc' }, select: { period: true },
+    })
+    const salaryFrom = !body.unpaidMonthSalary ? null : paidRun ? new Date(periodEnd(paidRun.period).getTime() + 1) : periodStart(periodOf(lwd))
+    const otFrom = await firstPayrollStart(emp.tenantId, periodStart(periodOf(lwd)))
+    const [ot, balances, loans, grossSalaryCents] = await Promise.all([
+      unpaidOvertime(emp.tenantId, emp.id, otFrom, lwd, { runStatuses: PAID_RUNS }),
       leaveBalancesFor(emp.tenantId, emp.id, lwd),
-      loansFor(emp.tenantId, emp.id),
+      loansFor(emp.tenantId, emp.id, { runStatuses: PAID_RUNS }),
+      salaryForPeriod(emp, periodOf(lwd)),
     ])
-    const leaveDays = balances.filter((b) => b.paid).reduce((a, b) => a + Math.max(0, b.balance), 0)
-    const r = finalSettlement(emp, lwd, {
-      unpaidMonthSalary: body.unpaidMonthSalary && !lockedRun,
+    const leaveDays = Math.round(balances.filter((b) => b.paid).reduce((a, b) => a + accruedLeaveDays(b, b.yearFrom, emp.joiningDate, lwd), 0) * 100) / 100
+    const r = finalSettlement({ ...emp, grossSalaryCents }, lwd, {
+      salaryFrom,
       otPayableCents: ot.reduce((a, o) => a + (o.amountCents ?? 0), 0),
       leaveBalanceDays: leaveDays,
       loanOutstandingCents: loans.reduce((a, l) => a + l.outstandingCents, 0),
       deductionsCents: 0, otherAdjustmentsCents: 0,
     }, s)
-    return { ...r, leaveBalanceDays: leaveDays, finalMonthAlreadyPaid: !!lockedRun }
+    return { ...r, leaveBalanceDays: leaveDays, paidThrough: paidRun?.period ?? null, finalMonthAlreadyPaid: !!paidRun && paidRun.period >= periodOf(lwd) }
   })
 
   // ── Payroll ───────────────────────────────────────────────────────────────
@@ -763,7 +990,7 @@ export async function hrRoutes(fastify: FastifyInstance) {
     if (await prisma.hrPayrollRun.findFirst({ where: { tenantId, period } })) throw new AppError('EXISTS', `There is already a payroll for ${period}`, 409)
     const s = await getSettings(tenantId)
     const run = await prisma.hrPayrollRun.create({ data: { tenantId, period, settings: s as unknown as Prisma.InputJsonValue, createdById: req.staffUser!.id } })
-    await calculateRun(tenantId, run.id)
+    await calculateRun(tenantId, run.id, req.staffUser!.id)
     return reply.status(201).send(await prisma.hrPayrollRun.findUnique({ where: { id: run.id } }))
   })
 
@@ -777,7 +1004,7 @@ export async function hrRoutes(fastify: FastifyInstance) {
   fastify.post<{ Params: { id: string } }>('/payroll/runs/:id/recalculate', { preHandler: requireAuth(...HR_ADMIN) }, async (req) => {
     const run = await prisma.hrPayrollRun.findFirst({ where: { id: req.params.id, ...writeTenants(req) } })
     if (!run) throw new NotFoundError('Payroll', req.params.id)
-    return calculateRun(run.tenantId, run.id)
+    return calculateRun(run.tenantId, run.id, req.staffUser!.id)
   })
 
   fastify.patch<{ Params: { id: string } }>('/payroll/payslips/:id', { preHandler: requireAuth(...HR_ADMIN) }, async (req) => {
@@ -793,19 +1020,25 @@ export async function hrRoutes(fastify: FastifyInstance) {
     }).parse(req.body)
     const slip = await prisma.hrPayslip.findFirst({ where: { id: req.params.id, ...writeTenants(req) } })
     if (!slip) throw new NotFoundError('Payslip', req.params.id)
-    await recalcPayslip(slip.id, body)
+    await recalcPayslip(slip.id, body, req.staffUser!.id)
     return prisma.hrPayslip.findUnique({ where: { id: slip.id } })
   })
 
   fastify.post<{ Params: { id: string } }>('/payroll/runs/:id/approve', { preHandler: requireAuth(...PAYROLL_APPROVERS) }, async (req) => {
     const run = await prisma.hrPayrollRun.findFirst({ where: { id: req.params.id, ...writeTenants(req) } })
     if (!run) throw new NotFoundError('Payroll', req.params.id)
-    // The person who prepared payroll does not also approve it — except the
-    // CEO, who is allowed to run a one-person office.
-    if (run.createdById === req.staffUser!.id && req.staffUser!.role !== 'admin') {
-      throw new ForbiddenError('Payroll must be approved by someone other than the person who prepared it')
+    // Whoever prepared payroll — created it, recalculated it or edited a
+    // payslip on it — does not also approve it, except the CEO, who is
+    // allowed to run a one-person office.
+    const me = req.staffUser!.id
+    if ((run.createdById === me || run.preparedByIds.includes(me)) && req.staffUser!.role !== 'admin') {
+      throw new ForbiddenError('Payroll must be approved by someone other than the people who prepared or edited it')
     }
-    const n = await prisma.hrPayrollRun.updateMany({ where: { id: run.id, status: 'draft' }, data: { status: 'approved', approvedById: req.staffUser!.id, approvedAt: new Date() } })
+    const blocker = await runBlocker(run.id)
+    if (blocker) throw new AppError('RUN_INCOMPLETE', blocker, 409)
+    // …and not in between: an edit of theirs landing after the check above.
+    const unedited = req.staffUser!.role === 'admin' ? {} : { NOT: { preparedByIds: { has: me } } }
+    const n = await prisma.hrPayrollRun.updateMany({ where: { id: run.id, status: 'draft', ...unedited }, data: { status: 'approved', approvedById: req.staffUser!.id, approvedAt: new Date() } })
     if (n.count === 0) throw new AppError('NOT_DRAFT', 'This payroll is not a draft', 409)
     await audit({ category: 'identity', action: 'hr.payroll.approve', entity: 'HrPayrollRun', entityId: run.id, userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: run.tenantId, after: { period: run.period, totals: run.totals } })
     return prisma.hrPayrollRun.findUnique({ where: { id: run.id } })
@@ -819,10 +1052,13 @@ export async function hrRoutes(fastify: FastifyInstance) {
     return prisma.hrPayrollRun.findUnique({ where: { id: run.id } })
   })
 
-  // Lock: final. Loan recoveries count from here, and nothing changes after.
+  // Lock: final. Loans show as recovered from here (payroll already treats an
+  // installment on any other run as taken), and nothing changes after.
   fastify.post<{ Params: { id: string } }>('/payroll/runs/:id/lock', { preHandler: requireAuth(...PAYROLL_APPROVERS) }, async (req) => {
     const run = await prisma.hrPayrollRun.findFirst({ where: { id: req.params.id, ...writeTenants(req) } })
     if (!run) throw new NotFoundError('Payroll', req.params.id)
+    const blocker = await runBlocker(run.id)
+    if (blocker) throw new AppError('RUN_INCOMPLETE', blocker, 409)
     const n = await prisma.hrPayrollRun.updateMany({ where: { id: run.id, status: 'approved' }, data: { status: 'locked', lockedAt: new Date() } })
     if (n.count === 0) throw new AppError('NOT_APPROVED', 'Approve the payroll before locking it', 409)
     await audit({ category: 'identity', action: 'hr.payroll.lock', entity: 'HrPayrollRun', entityId: run.id, userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: run.tenantId, after: { period: run.period } })
@@ -861,7 +1097,7 @@ export async function hrRoutes(fastify: FastifyInstance) {
     const stored = await prisma.hrLetterTemplate.findMany({ where: { tenantId: activeTenant(req) } })
     return DEFAULT_LETTERS.map((d) => {
       const s = stored.find((x) => x.key === d.key)
-      const body = s?.body ?? d.body
+      const body = s ? sanitizeLetterHtml(s.body) : d.body
       return { key: d.key, title: s?.title ?? d.title, body, isDefault: !s, version: s?.version ?? 0, placeholders: placeholdersIn(body) }
     })
   })
@@ -870,11 +1106,15 @@ export async function hrRoutes(fastify: FastifyInstance) {
     const tenantId = activeTenant(req)
     if (!DEFAULT_LETTERS.some((d) => d.key === req.params.key)) throw new NotFoundError('Letter', req.params.key)
     const body = z.object({ title: z.string().min(1).max(160), body: z.string().min(1).max(100_000) }).parse(req.body)
+    // Stored as formatting only — see sanitizeLetterHtml. What was cut is
+    // gone; the response carries what was kept.
+    const html = sanitizeLetterHtml(body.body)
+    if (!html.trim()) throw new AppError('EMPTY_LETTER', 'Nothing is left of this letter once scripts and unsupported tags are removed', 400)
     const cur = await prisma.hrLetterTemplate.findUnique({ where: { tenantId_key: { tenantId, key: req.params.key } } })
     return prisma.hrLetterTemplate.upsert({
       where: { tenantId_key: { tenantId, key: req.params.key } },
-      create: { tenantId, key: req.params.key, title: body.title, body: body.body, updatedById: req.staffUser!.id },
-      update: { title: body.title, body: body.body, version: (cur?.version ?? 1) + 1, updatedById: req.staffUser!.id },
+      create: { tenantId, key: req.params.key, title: body.title, body: html, updatedById: req.staffUser!.id },
+      update: { title: body.title, body: html, version: (cur?.version ?? 1) + 1, updatedById: req.staffUser!.id },
     })
   })
 
@@ -886,15 +1126,23 @@ export async function hrRoutes(fastify: FastifyInstance) {
 
   fastify.post('/letters/render', { preHandler: requireAuth(...HR_ADMIN) }, async (req) => {
     const body = z.object({ key: z.string(), employeeId: z.string().uuid().optional(), recordId: z.string().uuid().optional() }).parse(req.body)
-    const tenantId = activeTenant(req)
-    const [emp, rec, tpl] = await Promise.all([
-      body.employeeId ? prisma.hrEmployee.findFirst({ where: { id: body.employeeId, ...writeTenants(req) } }) : null,
-      body.recordId ? prisma.hrRecord.findFirst({ where: { id: body.recordId, ...writeTenants(req) } }) : null,
-      prisma.hrLetterTemplate.findUnique({ where: { tenantId_key: { tenantId, key: body.key } } }),
-    ])
     const def = DEFAULT_LETTERS.find((d) => d.key === body.key)
     if (!def) throw new NotFoundError('Letter', body.key)
-    const employee = emp ?? (rec?.employeeId ? await prisma.hrEmployee.findUnique({ where: { id: rec.employeeId } }) : null)
+    const [emp, rec] = await Promise.all([
+      body.employeeId ? prisma.hrEmployee.findFirst({ where: { id: body.employeeId, ...writeTenants(req) } }) : null,
+      body.recordId ? prisma.hrRecord.findFirst({ where: { id: body.recordId, ...writeTenants(req) } }) : null,
+    ])
+    if (body.employeeId && !emp) throw new NotFoundError('Employee', body.employeeId)
+    if (body.recordId && !rec) throw new NotFoundError('HR record', body.recordId)
+    if (emp && rec && emp.tenantId !== rec.tenantId) throw new AppError('COMPANY_MISMATCH', 'That employee and that record belong to different companies', 422)
+    // The letter is issued by the employee's own company: its name, its
+    // template, its org units and the format the record was saved with —
+    // whichever company happens to be active.
+    const tenantId = emp?.tenantId ?? rec?.tenantId ?? activeTenant(req)
+    const [tpl, employee] = await Promise.all([
+      prisma.hrLetterTemplate.findUnique({ where: { tenantId_key: { tenantId, key: body.key } } }),
+      emp ?? (rec?.employeeId ? prisma.hrEmployee.findFirst({ where: { id: rec.employeeId, tenantId } }) : null),
+    ])
     const ctx = await letterContext(tenantId, employee, rec)
     const out = renderLetter(tpl?.body ?? def.body, ctx)
     await audit({ category: 'identity', action: 'hr.letter.render', entity: 'HrLetterTemplate', entityId: body.key, userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId, after: { employeeId: employee?.id ?? null, recordId: rec?.id ?? null } })
@@ -983,6 +1231,9 @@ export async function hrRoutes(fastify: FastifyInstance) {
       loansFor(emp.tenantId, emp.id),
     ])
     return {
+      // The company self-service pickers read from (?tenantId= on /lookups
+      // and /org) — the employee's, whatever company the login has active.
+      tenantId: emp.tenantId,
       profile: {
         employeeCode: emp.employeeCode, fullName: emp.fullName, phone: emp.phone, personalEmail: emp.personalEmail,
         department: label(emp.departmentId), designation: label(emp.designationId), branch: label(emp.locationId), manager: label(emp.managerId),
@@ -1000,8 +1251,10 @@ export async function hrRoutes(fastify: FastifyInstance) {
     if (!ESS_SECTIONS.includes(req.params.section)) throw new ForbiddenError('Not available in self-service')
     const me = await myEmployee(req)
     const fmt = await getFormat(me.tenantId, req.params.section)
-    // The employee field is filled in for them — they cannot raise a request for someone else.
-    return { ...fmt, fields: fmt.fields.filter((f) => f.bind !== 'employeeId' && !f.readOnly) }
+    // The employee field is filled in for them — they cannot raise a request
+    // for someone else — and pay-driving values are HR's and the approver's.
+    const hidden = [...(SERVER_OWNED[req.params.section] ?? []), ...(ESS_HIDDEN[req.params.section] ?? [])]
+    return { ...fmt, fields: fmt.fields.filter((f) => f.bind !== 'employeeId' && !f.readOnly && !hidden.includes(f.key)) }
   })
 
   fastify.post<{ Params: { section: string } }>('/me/records/:section', { preHandler: requireAuth(...ALL_STAFF) }, async (req, reply) => {
@@ -1022,7 +1275,7 @@ export async function hrRoutes(fastify: FastifyInstance) {
 
   // Who is on the payroll for a month, before running it — a sanity check.
   fastify.get<{ Querystring: { period: string } }>('/payroll/preview', { preHandler: requireAuth(...HR_ADMIN) }, async (req) => {
-    const period = /^\d{4}-\d{2}$/.test(req.query.period ?? '') ? req.query.period : periodOf(new Date())
+    const period = /^\d{4}-\d{2}$/.test(req.query.period ?? '') ? req.query.period : periodOf(pktToday())
     const emps = await payableEmployees(activeTenant(req), period)
     return { period, employees: emps.length }
   })

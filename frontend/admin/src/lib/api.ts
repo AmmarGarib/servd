@@ -223,8 +223,10 @@ async function request<T>(path: string, options: RequestInit = {}, retry = true,
   return res.json() as Promise<T>
 }
 
-/** Download a file the API generates (CSV exports), with the session attached. */
-async function download(path: string, filename: string): Promise<void> {
+/** Download a file the API generates (CSV exports), with the session attached.
+ *  An expired session is refreshed and the download retried once, the same
+ *  as request(); any failure rejects, for the caller to show. */
+async function download(path: string, filename: string, retry = true): Promise<void> {
   const token = getToken()
   const res = await fetch(`${API_URL}/api/v1${path}`, {
     credentials: 'include',
@@ -234,6 +236,12 @@ async function download(path: string, filename: string): Promise<void> {
       ...(localStorage.getItem('servd_view_all_tenants') === '1' && { 'x-servd-portfolio': '1' }),
     },
   })
+  if (res.status === 401 && retry) {
+    if (await refreshAccessToken()) return download(path, filename, false)
+    useAuthStore.getState().clearAuth()
+    window.location.href = '/login'
+    throw new ApiError(401, 'UNAUTHORIZED', 'Session expired')
+  }
   if (!res.ok) {
     const data = await res.json().catch(() => ({ error: { code: 'DOWNLOAD_FAILED', message: 'Download failed' } })) as { error: { code: string; message: string } }
     throw new ApiError(res.status, data.error.code, data.error.message)

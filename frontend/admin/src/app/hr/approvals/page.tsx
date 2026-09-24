@@ -17,8 +17,9 @@ export default function ApprovalsPage() {
   const [open, setOpen] = useState<Pending | null>(null)
   const { data: pending = [] } = useQuery({ queryKey: ['hr-approvals'], queryFn: () => api.get<Pending[]>('/hr/approvals'), refetchInterval: 60_000 })
   const { data: team } = useQuery({ queryKey: ['hr-team'], queryFn: () => api.get<Team>('/hr/team') })
-  const { data: lookups } = useHrLookups()
-  const { data: org } = useHrOrg()
+  // The request's own company's names — the inbox spans every company.
+  const { data: lookups } = useHrLookups(open?.tenantId)
+  const { data: org } = useHrOrg(open?.tenantId)
   return (
     <HrShell title="Approvals" subtitle="Leave, overtime, attendance corrections and everything else waiting on you.">
       <div className="grid lg:grid-cols-3 gap-5">

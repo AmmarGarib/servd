@@ -7,17 +7,17 @@ import Link from 'next/link'
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../../../lib/api'
-import { card, btn, btnGhost, inp, rs, day, human, STATUS_COLOR, type HrFormat, type HrRecord } from '../../../../lib/hr'
-import { HrShell, Stat, useHrLookups, useHrOrg } from '../../../../components/hr/HrShell'
+import { card, btn, btnGhost, inp, rs, day, human, STATUS_COLOR, type HrRecord } from '../../../../lib/hr'
+import { HrShell, Stat, useHrForm, useHrLookups, useHrOrg } from '../../../../components/hr/HrShell'
 import { FormRenderer } from '../../../../components/hr/FormRenderer'
 import { openPrintable } from '../../../../components/hr/RecordDetail'
 
 interface Profile {
-  employee: Record<string, unknown> & { id: string; fullName: string; employeeCode: string; status: string; employmentType: string; grossSalaryCents: number; userId: string | null; data: Record<string, unknown> }
+  employee: Record<string, unknown> & { id: string; tenantId: string; fullName: string; employeeCode: string; status: string; employmentType: string; grossSalaryCents: number; userId: string | null; data: Record<string, unknown> }
   labels: Record<string, string | null>
   documents: Array<{ id: string; docType: string; title: string | null; fileUrl: string | null; issueDate: string | null; expiryDate: string | null; verifiedAt: string | null }>
   records: HrRecord[]
-  leaveBalances: Array<{ leaveTypeId: string; name: string; paid: boolean; entitlement: number; adjustments: number; taken: number; pending: number; balance: number }>
+  leaveBalances: Array<{ leaveTypeId: string; name: string; paid: boolean; entitlement: number; carriedForward: number; adjustments: number; taken: number; pending: number; balance: number }>
   loans: Array<{ id: string; type: string | null; amountCents: number; installments: number; recoveredCents: number; outstandingCents: number; firstPeriod: string }>
   salaryHistory: Array<{ section: string; effectiveDate: string | null; grossCents: number; applied: boolean }>
   user: { id: string; name: string; email: string; role: string } | null
@@ -63,9 +63,11 @@ export default function EmployeeProfilePage() {
 
 function ProfileTab({ p }: { p: Profile }) {
   const qc = useQueryClient()
-  const { data: lookups } = useHrLookups()
-  const { data: org } = useHrOrg()
-  const { data: form } = useQuery({ queryKey: ['hr-form', 'employees'], queryFn: () => api.get<{ current: HrFormat }>('/hr/forms/employees') })
+  // The employee's own company's format and lists — in portfolio view that
+  // need not be the active company, and the API checks against theirs.
+  const { data: lookups } = useHrLookups(p.employee.tenantId)
+  const { data: org } = useHrOrg(p.employee.tenantId)
+  const { data: form } = useHrForm('employees', p.employee.tenantId)
   // Master fields bound to a column read the column; the rest read `data`.
   const initial = () => {
     const v: Record<string, unknown> = {}
@@ -103,7 +105,7 @@ function DocumentsTab({ p }: { p: Profile }) {
   const [err, setErr] = useState('')
   const add = useMutation({
     mutationFn: () => api.post('/hr/documents', { employeeId: p.employee.id, docType: f.docType, title: f.title || undefined, fileUrl: f.fileUrl || undefined, issueDate: f.issueDate || undefined, expiryDate: f.expiryDate || undefined }),
-    onSuccess: () => { setF({ ...f, title: '', fileUrl: '', issueDate: '', expiryDate: '' }); void qc.invalidateQueries() },
+    onSuccess: () => { setErr(''); setF({ ...f, title: '', fileUrl: '', issueDate: '', expiryDate: '' }); void qc.invalidateQueries() },
     onError: (e: Error) => setErr(e.message),
   })
   const verify = useMutation({ mutationFn: (id: string) => api.post(`/hr/documents/${id}/verify`, {}), onSuccess: () => void qc.invalidateQueries() })
@@ -161,7 +163,7 @@ function LeaveTab({ p }: { p: Profile }) {
         <div key={b.leaveTypeId} className="rounded-2xl p-4" style={card}>
           <p className="text-sm font-black text-white/85">{b.name} <span className="text-[10px] font-bold text-white/35">{b.paid ? 'PAID' : 'UNPAID'}</span></p>
           <p className="text-3xl font-black mt-1" style={{ color: b.balance < 0 ? '#f87171' : '#34d399' }}>{b.balance}</p>
-          <p className="text-[11px] text-white/45 mt-1">{b.entitlement} entitled {b.adjustments ? `${b.adjustments > 0 ? '+' : ''}${b.adjustments} adjusted ` : ''}· {b.taken} taken{b.pending ? ` · ${b.pending} pending` : ''}</p>
+          <p className="text-[11px] text-white/45 mt-1">{b.entitlement} entitled {b.carriedForward ? `+${b.carriedForward} carried ` : ''}{b.adjustments ? `${b.adjustments > 0 ? '+' : ''}${b.adjustments} adjusted ` : ''}· {b.taken} taken{b.pending ? ` · ${b.pending} pending` : ''}</p>
         </div>
       ))}
     </div>

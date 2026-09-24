@@ -5592,6 +5592,9 @@ model HrPayrollRun {
   settings     Json // the rates in force when it was calculated
   totals       Json      @default("{}")
   createdById  String?
+  // Everyone who recalculated it or edited a payslip on it. None of them may
+  // approve it (the CEO excepted) — nor may the creator.
+  preparedByIds String[] @default([])
   approvedById String?
   approvedAt   DateTime?
   lockedAt     DateTime?

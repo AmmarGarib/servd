@@ -6,6 +6,7 @@
 // are at module level on purpose: a component declared inside another is a new
 // type every render, and React would remount the inputs on each keystroke.
 
+import { useState } from 'react'
 import { human, inp, type HrField, type Lookups, type OrgData } from '../../lib/hr'
 
 type Values = Record<string, unknown>
@@ -78,15 +79,12 @@ function FieldInput({ f, v, onSet, ctx }: { f: HrField; v: unknown; onSet: (v: u
     case 'textarea':
       return <textarea className={inp} rows={3} value={String(v ?? '')} disabled={dis} onChange={(e) => onSet(e.target.value)} />
     case 'number': case 'percent':
-      return <input type="number" step="any" className={inp} value={v == null ? '' : String(v)} disabled={dis}
-        onChange={(e) => onSet(e.target.value === '' ? null : Number(e.target.value))} />
+      return <NumberInput value={v} scale={1} step={f.integer ? 1 : 'any'} min={f.min} className={inp} disabled={dis} onSet={onSet} />
     case 'money':
       return (
         <div className="relative">
           <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs text-white/35">Rs</span>
-          <input type="number" step="any" min={0} className={`${inp} pl-9`} disabled={dis}
-            value={v == null ? '' : String(Number(v) / 100)}
-            onChange={(e) => onSet(e.target.value === '' ? null : Math.round(Number(e.target.value) * 100))} />
+          <NumberInput value={v} scale={100} step="any" min={0} className={`${inp} pl-9`} disabled={dis} onSet={onSet} />
         </div>
       )
     case 'date':
@@ -145,6 +143,25 @@ function FieldInput({ f, v, onSet, ctx }: { f: HrField; v: unknown; onSet: (v: u
     default:
       return <input type="text" className={inp} value={String(v ?? '')} disabled={dis} onChange={(e) => onSet(e.target.value)} />
   }
+}
+
+/** A number box that keeps what is typed. Rendering it back from the stored
+ *  number would turn "12.0" into "12" mid-keystroke, so 12.05 could never be
+ *  typed; the text is kept, and only replaced when the value changes from
+ *  outside (a reset, a calculation). Money is stored in paisa (scale 100). */
+function NumberInput({ value, scale, onSet, ...rest }: {
+  value: unknown; scale: number; onSet: (v: unknown) => void
+  step: number | 'any'; min?: number; className: string; disabled?: boolean
+}) {
+  const toText = (x: unknown) => (x == null || x === '' ? '' : String(Number(x) / scale))
+  const parse = (t: string) => (t === '' ? null : scale === 1 ? Number(t) : Math.round(Number(t) * scale))
+  const [text, setText] = useState(() => toText(value))
+  const [seen, setSeen] = useState(value)
+  if (value !== seen) {
+    setSeen(value)
+    if (parse(text) !== value) setText(toText(value))
+  }
+  return <input type="number" {...rest} value={text} onChange={(e) => { setText(e.target.value); onSet(parse(e.target.value)) }} />
 }
 
 function ChipPicker({ options, value, onSet, disabled }: { options: Array<{ id: string; label: string }>; value: string[]; onSet: (v: unknown) => void; disabled?: boolean }) {

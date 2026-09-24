@@ -8,7 +8,7 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../../../lib/api'
 import { card, btn, btnGhost, inp, rs, human, STATUS_COLOR } from '../../../../lib/hr'
-import { HrShell, Modal, Stat } from '../../../../components/hr/HrShell'
+import { HrShell, Modal, Stat, useHrAccess } from '../../../../components/hr/HrShell'
 
 interface Line { kind: 'earning' | 'deduction' | 'employer'; code: string; label: string; amountCents: number }
 interface Slip {
@@ -17,11 +17,11 @@ interface Slip {
   inputs: Record<string, number | boolean | string[] | unknown>
   lines: Line[]; grossCents: number; earningsCents: number; deductionsCents: number; eobiEmployeeCents: number; eobiEmployerCents: number; netCents: number
 }
-interface Detail { run: { id: string; period: string; status: string; totals: Record<string, number | string[]> }; payslips: Slip[] }
+interface Detail { run: { id: string; period: string; status: string; createdById: string | null; preparedByIds: string[]; totals: Record<string, number | string[]> }; payslips: Slip[] }
 
 const INPUTS: Array<[string, string, boolean]> = [
   ['absentDays', 'Absent days', false], ['unpaidLeaveDays', 'Unpaid leave days', false], ['lateCount', 'Lates', false],
-  ['otHours', 'OT hours', false], ['otCents', 'OT amount', true], ['earningAdjustmentsCents', 'Bonuses & allowances', true],
+  ['otHours', 'OT hours (prices the OT amount)', false], ['otCents', 'OT amount', true], ['earningAdjustmentsCents', 'Bonuses & allowances', true],
   ['deductionAdjustmentsCents', 'Other deductions', true], ['loanInstallmentsCents', 'Loan installment', true],
 ]
 
@@ -31,6 +31,7 @@ export default function PayrollRunPage() {
   const qc = useQueryClient()
   const [editing, setEditing] = useState<Slip | null>(null)
   const [err, setErr] = useState('')
+  const { userId, role, isPayrollApprover } = useHrAccess()
   const { data } = useQuery({ queryKey: ['hr-payroll', id], queryFn: () => api.get<Detail>(`/hr/payroll/runs/${id}`) })
   const act = useMutation({
     mutationFn: (what: 'recalculate' | 'approve' | 'reopen' | 'lock' | 'delete') =>
@@ -41,7 +42,12 @@ export default function PayrollRunPage() {
   const run = data?.run
   const t = (run?.totals ?? {}) as Record<string, number>
   const warnings = (run?.totals?.['warnings'] as string[] | undefined) ?? []
-  const dl = (kind: string) => { void api.download(`/hr/payroll/runs/${id}/export.csv?kind=${kind}`, `payroll-${run?.period}-${kind}.csv`) }
+  const dl = (kind: string) => { setErr(''); api.download(`/hr/payroll/runs/${id}/export.csv?kind=${kind}`, `payroll-${run?.period}-${kind}.csv`).catch((e: Error) => setErr(e.message)) }
+  // The API's rules: only admin, owner or management approve, reopen and lock,
+  // and nobody approves a payroll they created, recalculated or edited — the
+  // CEO (admin) excepted.
+  const prepared = !!run && !!userId && (run.createdById === userId || (run.preparedByIds ?? []).includes(userId))
+  const canApprove = isPayrollApprover && (!prepared || role === 'admin')
 
   return (
     <HrShell title={run ? `Payroll ${run.period}` : 'Payroll'}
@@ -64,10 +70,10 @@ export default function PayrollRunPage() {
           <div className="flex flex-wrap gap-2">
             {run.status === 'draft' && <>
               <button className={btnGhost} disabled={act.isPending} onClick={() => act.mutate('recalculate')}>Recalculate from records</button>
-              <button className={btn} disabled={act.isPending} onClick={() => act.mutate('approve')}>Approve</button>
+              {canApprove && <button className={btn} disabled={act.isPending} onClick={() => act.mutate('approve')}>Approve</button>}
               <button className="text-xs text-white/35 hover:text-red-400 ml-2" onClick={() => { if (confirm('Delete this draft payroll?')) act.mutate('delete') }}>Delete draft</button>
             </>}
-            {run.status === 'approved' && <>
+            {run.status === 'approved' && isPayrollApprover && <>
               <button className={btnGhost} disabled={act.isPending} onClick={() => act.mutate('reopen')}>Reopen</button>
               <button className={btn} disabled={act.isPending} onClick={() => { if (confirm('Lock payroll? It cannot be changed afterwards.')) act.mutate('lock') }}>Lock</button>
             </>}
@@ -79,7 +85,7 @@ export default function PayrollRunPage() {
             </span>
           </div>
           {err && <p className="text-xs text-red-400">{err}</p>}
-          {run.status === 'draft' && <p className="text-[11px] text-white/40">Approval must come from someone other than the person who calculated it (the CEO excepted).</p>}
+          {run.status === 'draft' && <p className="text-[11px] text-white/40">Approval must come from someone other than whoever created, recalculated or edited it (the CEO excepted){isPayrollApprover ? '' : ', and from the CEO, a co-owner or management'}.</p>}
 
           <div className="rounded-2xl overflow-x-auto" style={card}>
             <table className="w-full text-sm">
@@ -115,8 +121,10 @@ function SlipModal({ slip, period, draft, onClose }: { slip: Slip; period: strin
   const qc = useQueryClient()
   const [vals, setVals] = useState<Record<string, number>>(Object.fromEntries(INPUTS.map(([k]) => [k, Number(slip.inputs[k] ?? 0)])))
   const [err, setErr] = useState('')
+  // Only what was changed: new OT hours are priced at the OT rate unless the
+  // amount was changed too, and an untouched loan total keeps its split.
   const save = useMutation({
-    mutationFn: () => api.patch(`/hr/payroll/payslips/${slip.id}`, vals),
+    mutationFn: () => api.patch(`/hr/payroll/payslips/${slip.id}`, Object.fromEntries(Object.entries(vals).filter(([k, v]) => v !== Number(slip.inputs[k] ?? 0)))),
     onSuccess: () => { void qc.invalidateQueries(); onClose() },
     onError: (e: Error) => setErr(e.message),
   })
@@ -158,7 +166,7 @@ function SlipModal({ slip, period, draft, onClose }: { slip: Slip; period: strin
           </div>
           {err && <p className="text-xs text-red-400 mt-2">{err}</p>}
           {draft && <button className={`${btn} mt-3`} disabled={save.isPending} onClick={() => save.mutate()}>Recalculate this payslip</button>}
-          <p className="text-[10px] text-white/35 mt-2">Prefilled from attendance, approved leave, overtime, adjustments and loans. “Recalculate from records” on the run replaces any edits.</p>
+          <p className="text-[10px] text-white/35 mt-2">Changing the OT hours prices the OT amount at the employee&rsquo;s OT rate; change the amount too to set it by hand. Prefilled from attendance, approved leave, overtime, adjustments and loans. “Recalculate from records” on the run replaces any edits.</p>
         </div>
       </div>
     </Modal>
