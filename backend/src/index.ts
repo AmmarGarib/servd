@@ -61,6 +61,7 @@ import { crmRoutes } from './modules/crm/routes.js'
 import { fixedAssetRoutes } from './modules/fixedAssets/routes.js'
 import { receivableRoutes } from './modules/receivables/routes.js'
 import { foodSafetyRoutes } from './modules/foodSafety/routes.js'
+import { hrRoutes } from './modules/hr/routes.js'
 import { loyaltyRoutes } from './modules/loyalty/routes.js'
 import { storefrontRoutes } from './modules/storefront/routes.js'
 import { webhookRoutes, webhookManagementRoutes } from './modules/webhooks/routes.js'
@@ -320,6 +321,7 @@ async function build() {
       await api.register(fixedAssetRoutes, { prefix: '/accounting/fixed-assets' })
       await api.register(receivableRoutes, { prefix: '/accounting/receivables' })
       await api.register(foodSafetyRoutes, { prefix: '/food-safety' })
+      await api.register(hrRoutes, { prefix: '/hr' })
       await api.register(financeRoutes, { prefix: '/finance' })
       await api.register(crmRoutes, { prefix: '/crm' })
       await api.register(loyaltyRoutes, { prefix: '/loyalty' })

@@ -5409,3 +5409,238 @@ model CleaningLog {
   @@index([taskId, doneAt])
   @@map("cleaning_logs")
 }
+
+// ════════════════════════════════════════════════════════════════════════════
+// HR module — base layer (2026-09-24)
+//
+// Built from the HR team's 30-section module spec. The design splits the two
+// things that change at different speeds:
+//
+//   FORMATS change often and belong to HR. Every section is a form whose field
+//   list lives in HrFormDefinition as data — versioned, editable in admin,
+//   importable as JSON — so the HR team's formats go in without a deploy.
+//
+//   LOGIC changes rarely and belongs to code: leave balances, overtime, payroll
+//   with EOBI, loans, final settlement, approvals. It never reads a field by its
+//   label. It reads a handful of fixed SLOTS on HrRecord (employeeId, startDate,
+//   endDate, quantity, amountCents, effectiveDate), and a format BINDS its
+//   fields to those slots. Rename "Leave from" to "First day off" and the leave
+//   balance still works, because the field is still bound to startDate.
+// ════════════════════════════════════════════════════════════════════════════
+
+// The central HR database. One row per person employed, login or not.
+model HrEmployee {
+  id                String    @id @default(uuid())
+  tenantId          String
+  employeeCode      String // "GSF-0001" — unique per company
+  // Optional link to a servd login. Most kitchen staff never have one; when
+  // they do, it lets self-service and the time clock find their record.
+  userId            String?   @unique
+  fullName          String
+  fatherHusbandName String?
+  cnic              String?
+  cnicExpiry        DateTime?
+  dateOfBirth       DateTime?
+  gender            String?
+  phone             String?
+  personalEmail     String?
+  departmentId      String? // existing company Department table
+  designationId     String? // HrOrgUnit(kind=designation)
+  gradeId           String? // HrOrgUnit(kind=grade)
+  locationId        String? // branch / restaurant — existing Location
+  managerId         String? // reporting manager, another HrEmployee
+  employmentType    String    @default("probation") // permanent | probation | contract | temporary | intern
+  status            String    @default("active") // active | on_leave | resigned | terminated | separated
+  joiningDate       DateTime?
+  probationEnd      DateTime?
+  confirmationDate  DateTime?
+  contractEnd       DateTime?
+  lastWorkingDay    DateTime?
+  noticePeriodDays  Int?
+  basicSalaryCents  Int       @default(0)
+  grossSalaryCents  Int       @default(0)
+  monthlyTaxCents   Int       @default(0) // until slab-based tax exists, HR sets it
+  paymentMethod     String? // bank | cash | cheque
+  bankName          String?
+  iban              String?
+  eobiNo            String?
+  sessiNo           String?
+  ntn               String?
+  photoUrl          String?
+  // Every other field from the Employee Master format (family, dependents,
+  // addresses, emergency contact, …) lives here, keyed as the format defines.
+  data              Json      @default("{}")
+  createdById       String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  documents HrDocument[]
+  records   HrRecord[]
+  payslips  HrPayslip[]
+
+  @@unique([tenantId, employeeCode])
+  @@index([tenantId, status])
+  @@index([managerId])
+  @@map("hr_employees")
+}
+
+// Org setup lists that had no table: business units, sub-departments,
+// designations, grades, cost centres. Departments and branches reuse the
+// existing Department and Location tables.
+model HrOrgUnit {
+  id        String   @id @default(uuid())
+  tenantId  String
+  kind      String // business_unit | sub_department | designation | grade | cost_center
+  name      String
+  code      String?
+  parentId  String?
+  isActive  Boolean  @default(true)
+  data      Json     @default("{}")
+  createdAt DateTime @default(now())
+
+  @@unique([tenantId, kind, name])
+  @@index([tenantId, kind])
+  @@map("hr_org_units")
+}
+
+model HrDocument {
+  id           String    @id @default(uuid())
+  tenantId     String
+  employeeId   String
+  docType      String // cnic_front | cnic_back | frc | photo | education | … (format-defined)
+  title        String?
+  fileUrl      String?
+  issueDate    DateTime?
+  expiryDate   DateTime? // drives document-expiry alerts
+  verifiedById String?
+  verifiedAt   DateTime?
+  notes        String?
+  createdAt    DateTime  @default(now())
+
+  employee HrEmployee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, expiryDate])
+  @@index([employeeId])
+  @@map("hr_documents")
+}
+
+// A section's format. Versioned: a new save is a new row, and every record
+// remembers the version it was captured under, so changing a format never
+// rewrites what an old record meant.
+model HrFormDefinition {
+  id          String   @id @default(uuid())
+  tenantId    String
+  section     String // e.g. "leave", "overtime", "offer"
+  version     Int
+  title       String
+  fields      Json // HrField[] — see modules/hr/forms.ts
+  workflow    Json     @default("[]") // approval steps: [{ key, label, role }]
+  stages      Json     @default("[]") // pipeline stages, where the section has them
+  isActive    Boolean  @default(true)
+  note        String?
+  updatedById String?
+  createdAt   DateTime @default(now())
+
+  @@unique([tenantId, section, version])
+  @@index([tenantId, section, isActive])
+  @@map("hr_form_definitions")
+}
+
+// One entry in any section — a leave application, an OT request, a candidate,
+// a promotion. The format's fields are in `data`; the slots are what logic reads.
+model HrRecord {
+  id            String    @id @default(uuid())
+  tenantId      String
+  section       String
+  formVersion   Int
+  employeeId    String?
+  // ── slots (a format binds fields to these) ──
+  startDate     DateTime?
+  endDate       DateTime?
+  effectiveDate DateTime?
+  quantity      Float? // days, hours, installments — whatever the section counts
+  amountCents   Int?
+  refId         String? // a related record (the interview's candidate, the leave's leave type)
+  category      String? // a classification logic reads: attendance status, paid/unpaid, adjustment type, outcome
+  // ── lifecycle ──
+  status        String    @default("draft") // draft | submitted | approved | rejected | cancelled
+  stage         String? // pipeline position, for sections that have stages
+  currentStep   Int       @default(0)
+  approvals     Json      @default("[]") // [{ step, role, decision, byUserId, byName, at, note }]
+  data          Json      @default("{}")
+  // Effects applied to the employee on final approval (promotion, transfer…),
+  // stamped so they are applied exactly once.
+  appliedAt     DateTime?
+  createdById   String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  employee HrEmployee? @relation(fields: [employeeId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, section, status])
+  @@index([employeeId, section])
+  @@index([tenantId, section, startDate])
+  @@index([tenantId, section, category])
+  @@map("hr_records")
+}
+
+model HrPayrollRun {
+  id           String    @id @default(uuid())
+  tenantId     String
+  period       String // YYYY-MM
+  status       String    @default("draft") // draft | approved | locked
+  settings     Json // the rates in force when it was calculated
+  totals       Json      @default("{}")
+  createdById  String?
+  approvedById String?
+  approvedAt   DateTime?
+  lockedAt     DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  payslips HrPayslip[]
+
+  @@unique([tenantId, period])
+  @@map("hr_payroll_runs")
+}
+
+model HrPayslip {
+  id                String   @id @default(uuid())
+  runId             String
+  tenantId          String
+  employeeId        String
+  // The month's inputs, prefilled from records and editable before approval.
+  inputs            Json // { absentDays, lateCount, unpaidLeaveDays, otHours, … }
+  lines             Json // [{ kind: earning|deduction|employer, code, label, amountCents }]
+  grossCents        Int
+  earningsCents     Int
+  deductionsCents   Int
+  eobiEmployeeCents Int
+  eobiEmployerCents Int
+  netCents          Int
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  run      HrPayrollRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  employee HrEmployee   @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@unique([runId, employeeId])
+  @@map("hr_payslips")
+}
+
+// HR letters — HTML with {{placeholders}}, filled from the employee and the
+// record the letter is about. The HR team's letter formats go in here.
+model HrLetterTemplate {
+  id          String   @id @default(uuid())
+  tenantId    String
+  key         String // offer_letter | confirmation_letter | …
+  title       String
+  body        String
+  version     Int      @default(1)
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([tenantId, key])
+  @@map("hr_letter_templates")
+}
