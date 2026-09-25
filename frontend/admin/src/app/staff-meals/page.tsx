@@ -92,7 +92,9 @@ function MealModal({ users, onClose, onSaved }: { users: User[]; onClose: () => 
   const [staffId, setStaffId] = useState('')
   const [description, setDescription] = useState('')
   const [estimatedCostCents, setEstimatedCostCents] = useState(50000)
-  const [reason, setReason] = useState<'shift_meal' | 'training' | 'tasting' | 'comp'>('shift_meal')
+  // No 'comp' here: comping a customer's order is the till's comp (reason,
+  // caps, manager PIN, on the drawer). Older 'comp' rows still list below.
+  const [reason, setReason] = useState<'shift_meal' | 'training' | 'tasting'>('shift_meal')
   const [managerPin, setManagerPin] = useState('')
 
   const save = useMutation({
@@ -123,7 +125,6 @@ function MealModal({ users, onClose, onSaved }: { users: User[]; onClose: () => 
             <option value="shift_meal">Shift meal</option>
             <option value="training">Training</option>
             <option value="tasting">Tasting</option>
-            <option value="comp">Comp</option>
           </select>
         </Field>
         <Field label="Manager PIN *">

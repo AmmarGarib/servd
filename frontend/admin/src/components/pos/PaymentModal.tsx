@@ -1,7 +1,7 @@
 'use client'
 import { useRef, useState } from 'react'
 import { useMutation } from '@tanstack/react-query'
-import { posApi } from '../../lib/api'
+import { posApi, ApiError } from '../../lib/api'
 import { usePosStore } from '../../store/pos'
 import { useAuthStore } from '../../store/auth'
 
@@ -20,6 +20,7 @@ export function PaymentModal({ taxRate, onClose }: PaymentModalProps) {
   const [method, setMethod] = useState<PaymentMethod>('cash')
   const [tendered, setTendered] = useState('')
   const [compReason, setCompReason] = useState('')
+  const [managerPin, setManagerPin] = useState('')
   const [createdOrderId, setCreatedOrderId] = useState<string | null>(null)
 
   // Stable idempotency key for this checkout — a double-click or a retry after a
@@ -61,19 +62,30 @@ export function PaymentModal({ taxRate, onClose }: PaymentModalProps) {
 
       setCreatedOrderId(order.id)
 
-      // 2. Process payment
+      // 2a. A comp is not a tender: it goes through the one comp engine
+      // (policy caps, manager PIN above the cashier's cap, audit, on this
+      // drawer), which completes the order once the comp covers it. A retry
+      // after a PIN prompt reuses the same order (idempotency key above).
+      if (method === 'comp') {
+        return posApi.compOrder(order.id, {
+          amountCents: order.totalCents,
+          reason: compReason.trim(),
+          shiftId: shiftId!,
+          ...(managerPin && { managerOverridePin: managerPin }),
+        })
+      }
+
+      // 2b. Process payment
       return posApi.processPayment({
         orderId: order.id,
         shiftId: shiftId!,
         payments: [
           {
             method,
-            amountCents: method === 'comp' ? 0 : total,
+            amountCents: total,
             ...(method === 'cash' && { tenderedCents }),
-            ...(method === 'comp' && { gateway: 'none' }),
           },
         ],
-        complimentaryReason: compReason || undefined,
       })
     },
     onSuccess: () => {
@@ -190,13 +202,23 @@ export function PaymentModal({ taxRate, onClose }: PaymentModalProps) {
               placeholder="Staff meal, customer complaint…"
               className="w-full rounded-lg border border-kds-border bg-kds-bg px-3 py-2 text-kds-text"
             />
+            <label className="mb-1 mt-3 block text-sm text-kds-subtext">Manager PIN (needed above your comp limit)</label>
+            <input
+              type="password"
+              inputMode="numeric"
+              value={managerPin}
+              onChange={(e) => setManagerPin(e.target.value)}
+              className="w-full rounded-lg border border-kds-border bg-kds-bg px-3 py-2 text-kds-text"
+            />
           </div>
         )}
 
         {/* Error */}
         {createAndPay.isError && (
           <p className="mb-3 text-sm text-kds-red">
-            {createAndPay.error instanceof Error ? createAndPay.error.message : 'Payment failed'}
+            {createAndPay.error instanceof ApiError && createAndPay.error.code === 'MANAGER_OVERRIDE_REQUIRED'
+              ? 'This comp is above your limit — enter a manager PIN and try again.'
+              : createAndPay.error instanceof Error ? createAndPay.error.message : 'Payment failed'}
           </p>
         )}
 

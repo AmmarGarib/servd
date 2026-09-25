@@ -2514,7 +2514,12 @@ model JournalLine {
 
 model BankStatementImport {
   id                  String   @id @default(uuid())
-  source              String // "bank:hbl", "foodpanda", "keenu", …
+  // Owning company — the ledger the statement reconciles against.
+  tenantId            String?
+  // The bank account the statement is for; source and accountCode derive
+  // from it. Null only for a non-bank ledger (e.g. 1030 card receivable).
+  bankAccountId       String?
+  source              String // "bank:hbl", "keenu", …
   accountCode         String // CoA code the statement is reconciling against (e.g. 1020 Bank)
   statementDate       DateTime
   openingBalanceCents Int      @default(0)
@@ -2523,9 +2528,11 @@ model BankStatementImport {
   importedById        String?
   importedAt          DateTime @default(now())
 
-  lines BankStatementLine[]
+  lines  BankStatementLine[]
+  tenant Tenant?             @relation("TenantBankStatementImports", fields: [tenantId], references: [id])
 
   @@index([source, statementDate(sort: Desc)])
+  @@index([tenantId, statementDate(sort: Desc)])
   @@map("bank_statement_imports")
 }
 
@@ -3552,6 +3559,13 @@ model BankAccount {
   branchCode          String?
   swiftCode           String?
   currency            String    @default("PKR")
+  // Bank details only. The BALANCE lives in the ledger: accountCode is the
+  // chart-of-accounts code (in this company's chart) the money sits in —
+  // 1020 for the operating account, a 102x child for each further bank.
+  // Deposits post to it, bank-statement imports reconcile against it.
+  accountCode         String?
+  // Recorded at setup; not read by any report (the ledger balance of
+  // accountCode is the balance). Shown read-only.
   openingBalanceCents Int       @default(0)
   isActive            Boolean   @default(true)
   notes               String?
@@ -4448,6 +4462,8 @@ model Tenant {
   inventoryItems InventoryItem[] @relation("TenantInventoryItems")
   locations      Location[]      @relation("TenantLocations")
   bankAccounts         BankAccount[]         @relation("TenantBankAccounts")
+  depositDrops         DepositDrop[]         @relation("TenantDepositDrops")
+  bankStatementImports BankStatementImport[] @relation("TenantBankStatementImports")
   modifierTemplates    ModifierTemplate[]    @relation("TenantModifierTemplates")
   webhookSubscriptions WebhookSubscription[] @relation("TenantWebhookSubscriptions")
   refundPolicies       RefundPolicy[]        @relation("TenantRefundPolicies")
@@ -4863,6 +4879,10 @@ model PettyCashMovement {
   receiptUrl   String? // photo of vendor receipt (required above threshold)
   vendorName   String?
   approvedById String? // for spend > role cap
+  // Set when the spend paid a supplier's open bill: it was recorded as that
+  // SupplierPayment (method 'cash', Dr 2010 AP / Cr 1010), the one
+  // ledger-backed way to pay a vendor in cash — never expense it again.
+  supplierPaymentId String?
   createdById  String
   createdAt    DateTime @default(now())
 
@@ -4878,6 +4898,8 @@ model PettyCashMovement {
 
 model DepositDrop {
   id            String   @id @default(cuid())
+  // Owning company — stamped from the operator's active company at create.
+  tenantId      String?
   shiftId       String? // when scoped per-shift
   conceptId     String?
   bankAccountId String?
@@ -4891,8 +4913,11 @@ model DepositDrop {
   droppedAt     DateTime @default(now())
   notes         String?
 
+  tenant Tenant? @relation("TenantDepositDrops", fields: [tenantId], references: [id])
+
   @@index([conceptId, droppedAt])
   @@index([shiftId])
+  @@index([tenantId, droppedAt])
   @@map("deposit_drops")
 }
 

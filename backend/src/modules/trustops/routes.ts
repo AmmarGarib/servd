@@ -15,6 +15,8 @@ import { requireAuth, MANAGERS, ALL_STAFF, ADMIN_ONLY } from '../auth/middleware
 import { flagException } from '../../lib/exceptions.js'
 import { audit } from '../../lib/audit.js'
 import { NotFoundError, AppError } from '../../lib/errors.js'
+import { scopeTenantWhere, conceptWhere, assertConceptOwned, assertShiftOf } from '../../lib/tenantScope.js'
+import { cashVarianceLimitCents } from '../../lib/drawer.js'
 
 // 4-digit OTP for rider hand-off
 function generateOtp(): string {
@@ -146,11 +148,36 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
       reason:       z.string().min(1).max(200),
       receiptUrl:   z.string().url().nullable().optional(),
       vendorName:   z.string().max(120).nullable().optional(),
+      // Spend only: the supplier bill this cash pays. The spend is then
+      // recorded as that bill's SupplierPayment (method 'cash') — the one
+      // ledger-backed way to hand a vendor cash (Dr 2010 AP / Cr 1010) — so
+      // a bill already booked through AP is never expensed a second time.
+      supplierBillId: z.string().uuid().nullable().optional(),
       managerOverridePin: z.string().min(4).max(8).optional(),
     }).parse(req.body)
 
     const box = await prisma.pettyCashBox.findUnique({ where: { id: body.boxId } })
     if (!box) throw new NotFoundError('PettyCashBox', body.boxId)
+
+    // The bill must be an open bill of a supplier of the company the operator
+    // is acting in (the payment posts to that company's ledger).
+    let bill: { id: string; supplierId: string; billNumber: string; supplierName: string } | null = null
+    if (body.supplierBillId) {
+      if (body.type !== 'spend') throw new AppError('BILL_ON_NON_SPEND', 'Only a spend can pay a supplier bill', 400)
+      const tenantId = req.staffUser!.tenantId
+      const found = tenantId
+        ? await prisma.supplierBill.findFirst({
+            where: { id: body.supplierBillId, supplier: { tenantId } },
+            select: { id: true, supplierId: true, billNumber: true, status: true, totalCents: true, paidCents: true, supplier: { select: { name: true } } },
+          })
+        : null
+      if (!found) throw new AppError('BILL_NOT_IN_COMPANY', 'That supplier bill is not in your active company', 422)
+      if (found.status === 'void' || found.status === 'paid') throw new AppError('BILL_NOT_OPEN', `Bill ${found.billNumber} is ${found.status}`, 422)
+      if (Math.abs(body.amountCents) > found.totalCents - found.paidCents) {
+        throw new AppError('OVER_APPLIED', `Only ${found.totalCents - found.paidCents} is still due on bill ${found.billNumber}`, 400)
+      }
+      bill = { id: found.id, supplierId: found.supplierId, billNumber: found.billNumber, supplierName: found.supplier.name }
+    }
 
     const { getOperationsConfig } = await import('../../lib/setup-config.js')
     const ops = await getOperationsConfig(req.staffUser!.tenantId)
@@ -192,7 +219,22 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
       throw new AppError('INSUFFICIENT_FLOAT', `This spend of PKR ${(absAmount / 100).toFixed(0)} exceeds box float of PKR ${(box.floatCents / 100).toFixed(0)}.`, 400)
     }
 
-    const movement = await prisma.$transaction(async (tx) => {
+    const { movement, supplierPaymentId } = await prisma.$transaction(async (tx) => {
+      let supplierPaymentId: string | null = null
+      if (bill) {
+        const { createPaymentTx } = await import('../procurement/service.js')
+        const payment = await createPaymentTx(tx, {
+          supplierId: bill.supplierId,
+          paymentDate: new Date().toISOString(),
+          method: 'cash',
+          reference: `petty cash: ${box.name}`,
+          amountCents: absAmount,
+          notes: body.reason,
+          applications: [{ billId: bill.id, amountAppliedCents: absAmount }],
+          createdBy: req.staffUser!.id,
+        })
+        supplierPaymentId = payment.id
+      }
       const m = await tx.pettyCashMovement.create({
         data: {
           boxId: body.boxId,
@@ -201,8 +243,9 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
           category: body.category ?? null,
           reason: body.reason,
           receiptUrl: body.receiptUrl ?? null,
-          vendorName: body.vendorName ?? null,
+          vendorName: body.vendorName ?? bill?.supplierName ?? null,
           approvedById,
+          supplierPaymentId,
           createdById: req.staffUser!.id,
         },
       })
@@ -210,8 +253,15 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
         where: { id: body.boxId },
         data: { floatCents: newFloat },
       })
-      return m
+      return { movement: m, supplierPaymentId }
     })
+
+    if (supplierPaymentId) {
+      const { postSupplierPayment } = await import('../accounting/supplierPosting.js')
+      postSupplierPayment(supplierPaymentId).catch((err) =>
+        req.log.error({ err: (err as Error).message, supplierPaymentId }, 'postSupplierPayment failed (petty cash)'),
+      )
+    }
 
     await audit({ category: 'identity',
       action: `petty_cash.${body.type}`,
@@ -219,8 +269,8 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
       entityId: movement.id,
       userId: req.staffUser!.id, tenantId: req.staffUser?.tenantId ?? null,
       userEmail: req.staffUser!.email,
-      after: { box: box.name, amount: signedAmount, reason: body.reason },
-      metadata: { ip: req.ip, approvedById },
+      after: { box: box.name, amount: signedAmount, reason: body.reason, supplierBillId: bill?.id ?? null },
+      metadata: { ip: req.ip, approvedById, supplierPaymentId },
     })
 
     return reply.status(201).send({ movement, newFloatCents: newFloat })
@@ -243,8 +293,10 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
       })
       await prisma.pettyCashBox.update({ where: { id: box.id }, data: { floatCents: body.countedCents } })
 
-      // Variance flag — anything over PKR 200 needs eyes
-      if (Math.abs(variance) >= 20000) {
+      // Variance flag — beyond the company's cash tolerance (Configuration →
+      // Receipts, the same limit the till drawers use) needs eyes.
+      const limit = await cashVarianceLimitCents(req.staffUser!.tenantId)
+      if (Math.abs(variance) > limit) {
         await flagException({
           kind: 'cash_variance',
           severity: Math.abs(variance) > 50000 ? 'high' : 'medium',
@@ -268,14 +320,30 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
 
   fastify.get('/deposit-drops', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
     const { conceptId } = req.query as { conceptId?: string }
-    return prisma.depositDrop.findMany({
-      where: { ...(conceptId && { conceptId }) },
+    const rows = await prisma.depositDrop.findMany({
+      where: {
+        ...(await scopeTenantWhere(req, 'read')),
+        ...(conceptId ? await conceptWhere(req, conceptId, 'read') : {}),
+      },
       orderBy: { droppedAt: 'desc' },
       take: 100,
     })
+    // Each drop is judged by its own company's cash tolerance — clients show
+    // `withinTolerance` instead of hard-coding a threshold.
+    const limits = new Map<string | null, number>()
+    const out = []
+    for (const r of rows) {
+      if (!limits.has(r.tenantId)) limits.set(r.tenantId, await cashVarianceLimitCents(r.tenantId))
+      const varianceLimitCents = limits.get(r.tenantId)!
+      out.push({ ...r, varianceLimitCents, withinTolerance: Math.abs(r.varianceCents) <= varianceLimitCents })
+    }
+    return out
   })
 
-  // Computes expected = cash sales for the shift, captures variance.
+  // Record cash taken to the bank. Expected = the shift's drops plus its
+  // counted close less the float kept in the drawer (accounting/
+  // depositPosting.ts); the drop posts Dr <bank's code> / Cr the cash
+  // accounts it came from, so the bank statement can match it.
   fastify.post('/deposit-drops', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
     const body = z.object({
       shiftId:       z.string().uuid().nullable().optional(),
@@ -288,21 +356,29 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
       notes:         z.string().max(500).nullable().optional(),
     }).parse(req.body)
 
-    // Compute expected cash from the shift's cash payments
-    let expected = 0
-    if (body.shiftId) {
-      const cashPayments = await prisma.payment.aggregate({
-        where: { shiftId: body.shiftId, method: 'cash', status: 'paid' },
-        _sum: { amountCents: true },
+    // A deposit is a NEW row: it binds to the active company, and everything
+    // it points at must be that company's own (foreign → 422, never a peek
+    // at another company's shift cash).
+    const tenantId = req.staffUser!.tenantId
+    if (!tenantId) throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company before recording a deposit', 422)
+    if (body.shiftId) await assertShiftOf(tenantId, body.shiftId, false)
+    if (body.conceptId) await assertConceptOwned(req, body.conceptId, 'create')
+    if (body.bankAccountId) {
+      const bank = await prisma.bankAccount.findFirst({
+        where: { id: body.bankAccountId, tenantId, deletedAt: null },
+        select: { id: true },
       })
-      expected = cashPayments._sum.amountCents ?? 0
+      if (!bank) throw new AppError('BANK_ACCOUNT_NOT_IN_COMPANY', 'That bank account is not one of your active company\'s', 422)
     }
 
+    const { expectedShiftDeposit, postDepositDrop } = await import('../accounting/depositPosting.js')
+    const expected = body.shiftId ? (await expectedShiftDeposit(body.shiftId)).expectedCents : 0
     const variance = body.amountCents - expected
 
     const drop = await prisma.depositDrop.create({
       data: {
         ...body,
+        tenantId,
         shiftId: body.shiftId ?? null,
         conceptId: body.conceptId ?? null,
         bankAccountId: body.bankAccountId ?? null,
@@ -316,18 +392,24 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
       },
     })
 
-    // Variance > PKR 200 fires a cash-variance flag (different entity than till variance)
-    if (Math.abs(variance) >= 20000 && expected > 0) {
+    postDepositDrop(drop.id)
+      .then((r) => { if (!r.posted && r.reason) req.log.warn({ dropId: drop.id, reason: r.reason }, 'deposit drop not posted') })
+      .catch((err) => req.log.error({ err: (err as Error).message, dropId: drop.id }, 'postDepositDrop failed'))
+
+    // Beyond the company's cash tolerance fires a cash-variance flag
+    // (a different entity than the till variance).
+    const limit = await cashVarianceLimitCents(tenantId)
+    if (Math.abs(variance) > limit && expected > 0) {
       await flagException({
         kind: 'cash_variance',
         severity: Math.abs(variance) > 100000 ? 'high' : 'medium',
         title: `Deposit drop variance: ${variance >= 0 ? '+' : ''}PKR ${(variance / 100).toFixed(0)}`,
-        description: `Expected PKR ${(expected / 100).toFixed(0)} from shift cash sales, deposited PKR ${(body.amountCents / 100).toFixed(0)}. ${variance < 0 ? 'Cash short — investigate till handover.' : 'Cash over — check shift records.'}`,
+        description: `Expected PKR ${(expected / 100).toFixed(0)} from the shift (drops + counted close − float kept), deposited PKR ${(body.amountCents / 100).toFixed(0)}. ${variance < 0 ? 'Cash short — investigate till handover.' : 'Cash over — check shift records.'}`,
         entityType: 'DepositDrop',
         entityId: drop.id,
         actorId: req.staffUser!.id,
         amountCents: Math.abs(variance),
-        metadata: { expected, deposited: body.amountCents, variance, shiftId: body.shiftId, bagSerial: body.bagSerial },
+        metadata: { expected, deposited: body.amountCents, variance, limitCents: limit, shiftId: body.shiftId, bagSerial: body.bagSerial },
       })
     }
 
@@ -370,12 +452,16 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
       conceptId:          z.string().uuid().nullable().optional(),
       description:        z.string().min(1).max(200),
       estimatedCostCents: z.number().int().min(0).default(0),
-      reason:             z.enum(['shift_meal', 'training', 'tasting', 'comp']).default('shift_meal'),
+      // No 'comp': comping a customer's order goes through the till's one
+      // comp engine (POST /pos/orders/:id/comp). Old 'comp' rows are kept.
+      reason:             z.enum(['shift_meal', 'training', 'tasting']).default('shift_meal'),
       managerPin:         z.string().min(4).max(8),                      // mandatory
     }).parse(req.body)
 
     const approver = await verifyManagerPin(body.managerPin)
     if (!approver) throw new AppError('MANAGER_PIN_REQUIRED', 'Manager PIN required to log a staff meal.', 403)
+    // A new row bound to a drawer: the drawer must be the active company's.
+    if (body.shiftId) await assertShiftOf(req.staffUser!.tenantId, body.shiftId, false)
 
     const meal = await prisma.staffMeal.create({
       data: {

@@ -7,6 +7,7 @@ import { PosCart } from '../../components/pos/PosCart'
 import { PaymentModal } from '../../components/pos/PaymentModal'
 import { requestSync, listenForSync, getQueuedOrders } from '../../lib/offline-queue'
 import Link from 'next/link'
+import { useCurrentShift } from '../../hooks/useCurrentShift'
 
 export default function PosPage() {
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null)
@@ -51,6 +52,8 @@ export default function PosPage() {
   const addItem = usePosStore((s) => s.addItem)
   const storedConceptId = usePosStore((s) => s.conceptId)
   const shiftId = usePosStore((s) => s.shiftId)
+  // The server, not this browser, says which drawer this user is on.
+  useCurrentShift()
   const cartCount = usePosStore((s) => s.cart.reduce((n, i) => n + i.quantity, 0))
 
   const { data: concepts = [] } = useQuery({

@@ -322,11 +322,26 @@ export async function setupRoutes(fastify: FastifyInstance) {
   // 4. Bank accounts
   // ════════════════════════════════════════════════════════════════════════
 
+  // A bank account is the bank DETAILS of a chart-of-accounts code
+  // (lib/bankAccounts.ts): the ledger holds the balance. Each row carries its
+  // accountCode and that code's ledger balance; openingBalanceCents is the
+  // figure typed at setup, shown read-only, and read by nothing else.
   fastify.get('/bank-accounts', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
-    return prisma.bankAccount.findMany({
+    const rows = await prisma.bankAccount.findMany({
       where: { deletedAt: null, ...(await scopeTenantWhere(req, 'read')) },
       orderBy: { name: 'asc' },
     })
+    const { ledgerBalancesByCode } = await import('../../lib/bankAccounts.js')
+    const byTenant = new Map<string, string[]>()
+    for (const r of rows) {
+      if (r.tenantId && r.accountCode) byTenant.set(r.tenantId, [...(byTenant.get(r.tenantId) ?? []), r.accountCode])
+    }
+    const balances = new Map<string, Map<string, number>>()
+    for (const [tenantId, codes] of byTenant) balances.set(tenantId, await ledgerBalancesByCode(tenantId, codes))
+    return rows.map((r) => ({
+      ...r,
+      ledgerBalanceCents: r.tenantId && r.accountCode ? balances.get(r.tenantId)?.get(r.accountCode) ?? null : null,
+    }))
   })
   fastify.post('/bank-accounts', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
     const body = z.object({
@@ -338,10 +353,15 @@ export async function setupRoutes(fastify: FastifyInstance) {
       branchCode:          z.string().nullable().optional(),
       swiftCode:           z.string().nullable().optional(),
       currency:            z.string().length(3).default('PKR'),
-      openingBalanceCents: z.number().int().default(0),
+      // Link to an existing asset account; omitted → 1020 for the first bank,
+      // else a new 102x child account named after this bank.
+      accountCode:         z.string().min(1).max(20).nullable().optional(),
       notes:               z.string().nullable().optional(),
     }).parse(req.body)
-    const created = await prisma.bankAccount.create({ data: { ...body, tenantId: activeTenantId(req) } })
+    const tenantId = activeTenantId(req)
+    const { linkBankLedgerAccount } = await import('../../lib/bankAccounts.js')
+    const accountCode = await linkBankLedgerAccount(tenantId, body.name, body.accountCode)
+    const created = await prisma.bankAccount.create({ data: { ...body, accountCode, tenantId } })
     return reply.status(201).send(created)
   })
   fastify.patch<{ Params: { id: string } }>('/bank-accounts/:id', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
@@ -353,15 +373,21 @@ export async function setupRoutes(fastify: FastifyInstance) {
       iban:                z.string().nullable().optional(),
       branchCode:          z.string().nullable().optional(),
       swiftCode:           z.string().nullable().optional(),
-      openingBalanceCents: z.number().int().optional(),
+      // Re-point the bank at another asset account in the same chart.
+      accountCode:         z.string().min(1).max(20).optional(),
       isActive:            z.boolean().optional(),
       notes:               z.string().nullable().optional(),
     }).parse(req.body)
     const existing = await prisma.bankAccount.findFirst({
       where: { id: req.params.id, deletedAt: null, ...(await scopeTenantWhere(req, 'write')) },
-      select: { id: true },
+      select: { id: true, tenantId: true, name: true },
     })
     if (!existing) throw new NotFoundError('BankAccount', req.params.id)
+    if (body.accountCode) {
+      if (!existing.tenantId) throw new AppError('NO_COMPANY', 'This bank account has no company — it cannot link to a chart', 422)
+      const { linkBankLedgerAccount } = await import('../../lib/bankAccounts.js')
+      await linkBankLedgerAccount(existing.tenantId, body.name ?? existing.name, body.accountCode)
+    }
     return prisma.bankAccount.update({ where: { id: existing.id }, data: body })
   })
   fastify.delete<{ Params: { id: string } }>('/bank-accounts/:id', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {

@@ -3,7 +3,7 @@
 // connection persists across screen switches.
 
 import { useEffect } from 'react'
-import { View, Text, Pressable, Alert, ScrollView } from 'react-native'
+import { View, Text, Pressable, Alert, ScrollView, AppState } from 'react-native'
 import { Slot, useRouter, usePathname } from 'expo-router'
 
 import { theme } from '../../src/lib/theme'
@@ -11,6 +11,8 @@ import { useSessionStore, sessionStore } from '../../src/store/session'
 import { getSocket } from '../../src/lib/socket'
 import { StatusDot } from '../../src/components/StatusDot'
 import { initials } from '../../src/lib/format'
+import { onDrawerError } from '../../src/lib/api'
+import { syncShift } from '../../src/store/shift'
 
 const NAV = [
   { key: 'kds',           label: 'KDS',          icon: '🍳', path: '/(staff)/kds' },
@@ -34,6 +36,15 @@ export default function StaffLayout() {
 
   // Boot the socket as soon as we enter the staff area.
   useEffect(() => { getSocket() }, [])
+
+  // Which drawer this user is on comes from the server: on entry, whenever
+  // the app comes back to the foreground, and after any drawer error.
+  useEffect(() => {
+    void syncShift()
+    onDrawerError(() => { void syncShift() })
+    const sub = AppState.addEventListener('change', (state) => { if (state === 'active') void syncShift() })
+    return () => { onDrawerError(null); sub.remove() }
+  }, [user?.id])
 
   function signOut() {
     Alert.alert('Sign out?', `End shift for ${user?.name ?? 'this user'}?`, [

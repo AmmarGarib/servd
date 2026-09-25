@@ -1,71 +1,19 @@
-import type { FastifyInstance, FastifyRequest } from 'fastify'
+import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
-import type { Prisma } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, CASHIERS, MANAGERS } from '../auth/middleware.js'
 import { createPosOrder, processPayment, openShift, closeShift, getZReport, voidOrderItem, refundOrder, compOrder } from './service.js'
 import { assertConceptAccess } from '../../lib/conceptAccess.js'
-import { AppError, NotFoundError } from '../../lib/errors.js'
-import { scopeTenantWhere, assertConceptOwned, type ScopeMode, type TenantIdWhere } from '../../lib/tenantScope.js'
+import { AppError } from '../../lib/errors.js'
+import { scopeTenantWhere, assertConceptOwned, shiftWhere, findShiftInScope, assertShiftOf } from '../../lib/tenantScope.js'
 import { buildReceiptHtml, buildReceiptData } from './receipt.js'
 
 // ─── Company scoping ──────────────────────────────────────────────────────────
 //
-// A shift has no company column of its own: it belongs to the company of the
-// location it was opened at, or — for shifts opened without a location — the
-// cashier's company. Both sides are checked so a guessed shift id from another
-// company 404s exactly like a foreign order does.
-
-function shiftOfCompany(where: TenantIdWhere): Prisma.ShiftWhereInput {
-  // Shift.tenantId is stamped at open (and backfilled by migration
-  // 20260907140000); the location / cashier fallbacks exist ONLY for rows that
-  // predate the column.
-  //
-  // They used to be OR'd flat, which made them override the real answer rather
-  // than stand in for a missing one. Shift.tenantId is stamped from the
-  // operator's ACTIVE company, while user.tenantId is the cashier's primary
-  // company — and cashiers routinely belong to more than one (that is what the
-  // x-servd-active-tenant header exists for). So a shift opened while active in
-  // company A, at A's location, still matched a scope of company B through
-  // `{ user: { tenantId: B } }`. That let a manager at B read and CLOSE A's
-  // drawer and its Z-report, and let B's orders and payments attach to A's open
-  // shift — so B's cash landed on A's Z-report and, through postShiftClose,
-  // in A's ledger.
-  //
-  // As a precedence chain each fallback only applies when the more reliable
-  // field above it is absent, which is what "covers older rows" actually means.
-  return {
-    OR: [
-      where,
-      { AND: [{ tenantId: null }, { location: where }] },
-      { AND: [{ tenantId: null }, { locationId: null }, { user: where }] },
-    ],
-  }
-}
-
-/** The shift, or 404 when it isn't in scope for `mode`. */
-async function findShiftInScope(req: FastifyRequest, id: string, mode: ScopeMode) {
-  const shift = await prisma.shift.findFirst({
-    where: { id, ...shiftOfCompany(await scopeTenantWhere(req, mode)) },
-  })
-  if (!shift) throw new NotFoundError('Shift', id)
-  return shift
-}
-
-/**
- * 422 unless `shiftId` is a shift of `tenantId` (and open, when `mustBeOpen`).
- * Used wherever a NEW row (order, payment) is about to be attached to a
- * drawer — company A's takings must never land on company B's Z-report.
- */
-async function assertShiftOf(tenantId: string, shiftId: string, mustBeOpen: boolean): Promise<void> {
-  const shift = await prisma.shift.findFirst({
-    where: { id: shiftId, ...(mustBeOpen ? { status: 'open' as const } : {}), ...shiftOfCompany({ tenantId }) },
-    select: { id: true },
-  })
-  if (!shift) {
-    throw new AppError('SHIFT_NOT_IN_COMPANY', mustBeOpen ? 'That shift is not an open shift of this company' : 'That shift does not belong to this company', 422)
-  }
-}
+// Which company a shift belongs to is answered by lib/tenantScope.ts
+// (shiftOfCompany / findShiftInScope / assertShiftOf): Shift.tenantId, with the
+// location and then the cashier as fallbacks ONLY for rows that predate it.
+// A guessed shift id from another company 404s exactly like a foreign order.
 
 const posOrderSchema = z.object({
   conceptId: z.string().uuid(),
@@ -110,14 +58,15 @@ const paymentSchema = z.object({
   shiftId: z.string().uuid(),
   payments: z.array(
     z.object({
-      method: z.enum(['cash', 'card', 'keenu_qr', 'split', 'comp']),   // F-PAY02: dropped wallet methods
+      // F-PAY02: dropped wallet methods. No 'comp': a comp is not a tender,
+      // it goes through POST /pos/orders/:id/comp (caps, PIN, audit).
+      method: z.enum(['cash', 'card', 'keenu_qr', 'split']),
       amountCents: z.number().int().min(0),
       tenderedCents: z.number().int().optional(),
       gatewayRef: z.string().optional(),
       gateway: z.enum(['keenu', 'jazzcash', 'easypaisa', 'none']).optional(),
     }),
   ),
-  complimentaryReason: z.string().optional(),
 })
 
 const openShiftSchema = z.object({
@@ -184,6 +133,24 @@ export async function posRoutes(fastify: FastifyInstance) {
     await assertShiftOf(order.concept.tenantId, body.shiftId, true)
     const result = await processPayment(body)
     return reply.status(201).send(result)
+  })
+
+  // GET /pos/shifts/current — the caller's open drawer, or null.
+  //
+  // The server is the source of truth for "which drawer am I on". Each device
+  // used to keep its own shiftId in local storage, so a drawer closed from
+  // anywhere else (a manager closing it from /reconciliation, the other till)
+  // stranded it: every payment 422'd and every close 400'd with no way out.
+  // Clients re-sync from here on launch and focus, and whenever a call comes
+  // back SHIFT_CLOSED or SHIFT_NOT_IN_COMPANY. A cashier has at most one open
+  // shift (openShift refuses a second), in any company they belong to.
+  fastify.get('/shifts/current', { preHandler: requireAuth(...CASHIERS) }, async (req) => {
+    const shift = await prisma.shift.findFirst({
+      where: { userId: req.staffUser!.id, status: 'open', ...(await shiftWhere(req, 'write')) },
+      orderBy: { openedAt: 'desc' },
+      select: { id: true, openedAt: true, openingFloatCents: true, tenantId: true },
+    })
+    return { shift }
   })
 
   // POST /pos/shifts/open
@@ -283,18 +250,25 @@ export async function posRoutes(fastify: FastifyInstance) {
       const body = z.object({
         amountCents: z.number().int().min(1),
         reason: z.string().min(1).max(200),
+        // The open drawer the comp is rung on — the Z-report's comps and the
+        // shift journal entry's 7030 line only see comps that sit on a shift.
+        shiftId: z.string().uuid(),
         photoUrl: z.string().url().optional(),
         managerOverridePin: z.string().optional(),
       }).parse(req.body)
       const order = await prisma.order.findFirst({
         where: {
           id: req.params.orderId,
-          concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
+          concept: { deletedAt: null, ...(await scopeTenantWhere(req, 'write')) },
         },
+        select: { id: true, concept: { select: { tenantId: true } } },
       })
       if (!order) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Order not found in your active company' } })
+      // Like a payment: the drawer must be an OPEN shift of the order's own company.
+      await assertShiftOf(order.concept.tenantId, body.shiftId, true)
       const result = await compOrder({
         orderId: req.params.orderId,
+        shiftId: body.shiftId,
         amountCents: body.amountCents,
         reason: body.reason,
         photoUrl: body.photoUrl,

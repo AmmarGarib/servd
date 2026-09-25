@@ -17,6 +17,7 @@ interface Box {
   isActive: boolean
   movements: Movement[]
 }
+interface OpenBill { id: string; billNumber: string; status: string; totalCents: number; paidCents: number; supplier: { name: string } }
 interface Movement {
   id: string
   type: 'topup' | 'spend' | 'reconcile' | 'transfer'
@@ -134,12 +135,23 @@ function MovementModal({ box, onClose, onSaved }: { box: Box; onClose: () => voi
   const [vendorName, setVendorName] = useState('')
   const [receiptUrl, setReceiptUrl] = useState('')
   const [managerOverridePin, setManagerOverridePin] = useState('')
+  // Paying a supplier's open bill in cash records it as that bill's supplier
+  // payment (Dr AP / Cr cash) — so the bill, already booked through AP, is not
+  // expensed a second time.
+  const [supplierBillId, setSupplierBillId] = useState('')
+  const { data: bills = [] } = useQuery<OpenBill[]>({
+    queryKey: ['procurement-bills-open'],
+    queryFn: () => api.get('/procurement/bills'),
+    retry: false,
+  })
+  const openBills = bills.filter((b) => b.status === 'open' || b.status === 'partially_paid')
 
   const save = useMutation({
     mutationFn: () => api.post('/trustops/petty-cash/movements', {
       boxId: box.id, type, amountCents,
       reason, category: category || null, vendorName: vendorName || null,
       receiptUrl: receiptUrl || null,
+      ...(type === 'spend' && supplierBillId && { supplierBillId }),
       ...(managerOverridePin && { managerOverridePin }),
     }),
     onSuccess: () => onSaved(),
@@ -169,6 +181,17 @@ function MovementModal({ box, onClose, onSaved }: { box: Box; onClose: () => voi
           <Field label="Category"><input value={category} onChange={(e) => setCategory(e.target.value)} placeholder="supplies · courier" className={fieldCls} /></Field>
           <Field label="Vendor"><input value={vendorName} onChange={(e) => setVendorName(e.target.value)} placeholder="Optional" className={fieldCls} /></Field>
         </div>
+        {openBills.length > 0 && (
+          <Field label="Pays a supplier bill?">
+            <select value={supplierBillId} onChange={(e) => setSupplierBillId(e.target.value)} className={fieldCls}>
+              <option value="">— no, a general spend —</option>
+              {openBills.map((b) => (
+                <option key={b.id} value={b.id}>{b.supplier.name} · {b.billNumber} · PKR {((b.totalCents - b.paidCents) / 100).toLocaleString()} due</option>
+              ))}
+            </select>
+            <p className="text-[10px] text-white/30 mt-1">Recorded as a cash payment against the bill, so it is not expensed twice.</p>
+          </Field>
+        )}
         <Field label="Receipt photo URL">
           <input value={receiptUrl} onChange={(e) => setReceiptUrl(e.target.value)} placeholder="https://… (required above PKR 500)" className={fieldCls} />
           <p className="text-[10px] text-white/30 mt-1">Required for spends above PKR 500.</p>

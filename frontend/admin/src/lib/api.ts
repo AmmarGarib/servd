@@ -330,6 +330,12 @@ export const posApi = {
   closeShift: (shiftId: string, closingFloatCents: number, notes?: string) =>
     api.post<ZReport>(`/pos/shifts/${shiftId}/close`, { closingFloatCents, notes }),
   getZReport: (shiftId: string) => api.get<ZReport>(`/pos/shifts/${shiftId}/zreport`),
+  // The caller's open drawer (or null) — the server, not local storage, says
+  // which shift this user is on.
+  currentShift: () => api.get<{ shift: { id: string; openedAt: string; openingFloatCents: number; tenantId: string | null } | null }>('/pos/shifts/current'),
+  // The one comp engine: capped, PIN-approved above the cashier cap, on the drawer.
+  compOrder: (orderId: string, body: { amountCents: number; reason: string; shiftId: string; managerOverridePin?: string }) =>
+    api.post<{ id: string; orderCompleted: boolean }>(`/pos/orders/${orderId}/comp`, body),
 }
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -436,11 +442,16 @@ export interface Shift {
   openingFloatCents: number
 }
 
+// GET /pos/shifts/:id/zreport — the one shift summary. Expected cash is the
+// one drawer formula (backend lib/drawer.ts); isBalanced is judged against the
+// drawer company's own tolerance, so clients never hard-code a threshold.
 export interface ZReport {
   shiftId: string
   staffName: string
   openedAt: string
   closedAt: string | null
+  status: 'open' | 'closed'
+  notes: string | null
   cashSales: number
   cardSales: number
   walletSales: number
@@ -451,4 +462,16 @@ export interface ZReport {
   expectedCashInDrawer: number
   actualCashInDrawer: number | null
   cashVariance: number | null
+  openingFloatCents: number
+  closingFloatCents: number | null
+  grossCents: number
+  compCents: number
+  refundsCents: number
+  cashRefundsCents: number
+  byMethod: Array<{ method: string; count: number; amountCents: number }>
+  cashMovements: { drops: number; adds: number; payouts: number; payins: number }
+  expectedCashCents: number
+  varianceCents: number | null
+  varianceLimitCents: number
+  isBalanced: boolean
 }

@@ -1,7 +1,8 @@
 // Close shift — cashier counts the drawer, enters the figure, we compute
-// variance against the backend's expectedCashCents (opening float + cash
-// payments − refunds − comps). Negative variance = shortage; positive =
-// overage. Both get flagged on the Z-report.
+// variance against the backend's expectedCashCents (the one drawer formula:
+// opening float + cash sales − cash refunds − drops − pay-outs + adds +
+// pay-ins). Negative variance = shortage; positive = overage. The server
+// flags anything beyond the company's tolerance.
 
 import { useState } from 'react'
 import { View, Text, Alert, Pressable, TextInput } from 'react-native'
@@ -14,7 +15,7 @@ import { pkr } from '../../../src/lib/format'
 import { Panel, Pill } from '../../../src/components/Panel'
 import { Button } from '../../../src/components/Button'
 import { Keypad } from '../../../src/components/Keypad'
-import { useShift } from '../../../src/store/shift'
+import { useShift, syncShift } from '../../../src/store/shift'
 
 interface ZReport {
   expectedCashCents: number
@@ -47,7 +48,12 @@ export default function CloseShiftScreen() {
       setShift(null)
       router.replace('/(staff)/shift')
     },
-    onError: (err: Error) => Alert.alert('Couldn\'t close shift', err.message),
+    onError: (err: Error) => {
+      // Already closed elsewhere (a manager in admin): adopt the server's
+      // view and go back to the shift home instead of retrying forever.
+      Alert.alert('Couldn\'t close shift', err.message)
+      void syncShift().then(() => { if (!useShift.getState().shiftId) router.replace('/(staff)/shift') })
+    },
   })
 
   if (!shift.shiftId) {

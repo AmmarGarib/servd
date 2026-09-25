@@ -23,7 +23,9 @@ export async function checkSplitRoutes(fastify: FastifyInstance) {
         splits: z.array(z.object({
           label:       z.string().max(40).optional(),
           amountCents: z.number().int().min(1),
-          method:      z.enum(['cash', 'card', 'keenu_qr', 'split', 'comp']).default('card'),   // F-PAY02
+          // F-PAY02. No 'comp': a comp is not a split tender — it goes through
+          // POST /pos/orders/:id/comp (caps, manager PIN, audit, drawer).
+          method:      z.enum(['cash', 'card', 'keenu_qr', 'split']).default('card'),
         })).min(2).max(20),
       }).parse(req.body)
 
@@ -89,6 +91,9 @@ export async function checkSplitRoutes(fastify: FastifyInstance) {
       })
       if (!p) throw new NotFoundError('Payment', req.params.id)
       if (p.status !== 'pending') throw new AppError('ALREADY_SETTLED', 'Payment is not pending', 422)
+      // A pending 'comp' split left over from before comps stopped being a
+      // tender must not settle here without the comp controls.
+      if (p.method === 'comp') throw new AppError('COMP_NOT_A_TENDER', 'Comps go through POST /pos/orders/:id/comp — re-split this bill without the comp line', 422)
 
       return prisma.payment.update({
         where: { id: p.id },

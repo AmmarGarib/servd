@@ -15,6 +15,7 @@ import { Panel, Pill } from '../../src/components/Panel'
 import { Button } from '../../src/components/Button'
 import { useManagerOverridePrompt } from '../../src/components/ManagerOverridePin'
 import { printReceipt, isPrinterReady } from '../../src/lib/printer'
+import { useShift } from '../../src/store/shift'
 
 interface OrderLine {
   id: string
@@ -41,6 +42,7 @@ export default function ActiveOrdersScreen() {
   const qc = useQueryClient()
   const [selected, setSelected] = useState<string | null>(null)
   const { prompt, modal } = useManagerOverridePrompt()
+  const shiftId = useShift(s => s.shiftId)
 
   const q = useQuery({
     queryKey: ['active-orders'],
@@ -88,11 +90,18 @@ export default function ActiveOrdersScreen() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['active-orders'] }),
   })
 
+  // A comp is rung on this drawer (the Z-report's comps and the shift's
+  // 7030 ledger line only see comps that sit on a shift).
   const compOrder = useMutation({
-    mutationFn: async ({ orderId, amount, reason }: { orderId: string; amount: number; reason: string }) =>
-      withOverride('Comp requires manager PIN', `${pkr(amount * 100)} — ${reason}`, (pin) =>
-        api.post(`/pos/orders/${orderId}/comp`, { amountCents: amount * 100, reason, managerOverridePin: pin }),
-      ),
+    mutationFn: async ({ orderId, amount, reason }: { orderId: string; amount: number; reason: string }) => {
+      if (!shiftId) {
+        Alert.alert('No open shift', 'Open a shift before comping an order.')
+        return null
+      }
+      return withOverride('Comp requires manager PIN', `${pkr(amount * 100)} — ${reason}`, (pin) =>
+        api.post(`/pos/orders/${orderId}/comp`, { amountCents: amount * 100, reason, shiftId, managerOverridePin: pin }),
+      )
+    },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['active-orders'] }),
   })
 

@@ -3,13 +3,15 @@ import { prisma } from '../../lib/prisma.js'
 import { ingestOrder } from '../orders/service.js'
 import { NotFoundError, AppError } from '../../lib/errors.js'
 import { getFbrQueue, getSrbQueue } from '../../lib/queue.js'
-import { getRefundPolicy, getReceiptConfig, getOperationsConfig, computeServiceCharge } from '../../lib/setup-config.js'
+import { getRefundPolicy, getOperationsConfig, computeServiceCharge } from '../../lib/setup-config.js'
 import { audit } from '../../lib/audit.js'
 import { sendEmail } from '../../lib/notify.js'
 import { flagException } from '../../lib/exceptions.js'
 import { emitItemUpdated } from '../../lib/ws.js'
+import { drawerExpectation, drawerExpectationOf, drawerVariance, cashVarianceLimitCents, isDrawerBalanced } from '../../lib/drawer.js'
+import { shiftTenantId } from '../../lib/tenantScope.js'
 import type { OrderDTO } from '@servd/types'
-import type { PaymentMethod, Prisma } from '@prisma/client'
+import type { Order, PaymentMethod, Prisma } from '@prisma/client'
 
 // ─── Company scoping ──────────────────────────────────────────────────────────
 //
@@ -227,12 +229,75 @@ export interface ProcessPaymentInput {
     gatewayRef?: string     // for card
     gateway?: string
   }>
-  complimentaryReason?: string
 }
 
 // Card / wallet payments require gateway confirmation before being marked 'paid'.
-// Cash and comp settle instantly at the till.
-const INSTANT_SETTLE: Set<PaymentMethod> = new Set(['cash', 'comp'])
+// Cash settles instantly at the till. A comp is NOT a tender: it goes through
+// compOrder (caps, manager PIN, audit, owner notify), which settles the order
+// the same way once it is covered.
+const INSTANT_SETTLE: Set<PaymentMethod> = new Set(['cash'])
+
+type Tx = Prisma.TransactionClient
+
+/**
+ * Close out a till sale that is now fully covered: mark it completed and write
+ * its FinancialEntry (once). Runs inside the caller's transaction. Shared by
+ * the tender path (processPayment) and the comp path (compOrder) so a comped
+ * sale completes exactly like a paid one.
+ */
+async function completeTillSaleTx(
+  tx: Tx,
+  order: Pick<Order, 'id' | 'conceptId' | 'source' | 'totalCents' | 'discountCents' | 'taxCents'>,
+): Promise<void> {
+  await tx.order.update({
+    where: { id: order.id },
+    data: { status: 'completed', completedAt: new Date() },
+  })
+  const existingEntry = await tx.financialEntry.findFirst({ where: { orderId: order.id } })
+  if (!existingEntry) {
+    // Own-fleet ordering only — no aggregator commission to deduct.
+    await tx.financialEntry.create({
+      data: {
+        orderId: order.id,
+        conceptId: order.conceptId,
+        channel: order.source,
+        grossCents: order.totalCents,
+        commissionCents: 0,
+        discountCents: order.discountCents,
+        taxCents: order.taxCents,
+        netCents: order.totalCents - order.discountCents,
+      },
+    })
+  }
+}
+
+/**
+ * After a till sale completes (outside the transaction): the FBR / SRB
+ * invoices and the customer's order-history rollups. Never fails the sale.
+ */
+async function afterTillSale(orderId: string, customerId: string | null): Promise<{ srbInvoiceId: string; qrCodeLink: string | null } | null> {
+  // Tax-invoicing fan-out. FBR (federal) stays fire-and-forget. SRB (Sindh) is
+  // attempted SYNCHRONOUSLY so the invoice-verification QR can print on the
+  // receipt (the SRB spec requires the QR on the invoice) — but it NEVER blocks
+  // or fails the sale: on timeout/error submitSrbForReceipt falls back to the
+  // async retry queue.
+  getFbrQueue()
+    ?.add('submit', { orderId })
+    .catch((err: Error) => console.warn('[FBR] Failed to enqueue invoice submission:', err.message))
+  const srb = await submitSrbForReceipt(orderId)
+
+  // Refresh the customer's denormalised order history. The till completes an
+  // order inside its own transaction rather than going through
+  // updateOrderStatus, so it never reached the rollup bump that path does —
+  // meaning firstOrderAt, lastOrderAt and totalSpentCents stayed stale for
+  // every counter and dine-in sale, which is most of them. Fire-and-forget:
+  // a rollup must never fail a sale that has already been paid for.
+  if (customerId) {
+    const { bumpCustomerRollups } = await import('../../lib/customerRollups.js')
+    bumpCustomerRollups(customerId)
+  }
+  return srb
+}
 
 function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
   return Promise.race([
@@ -292,6 +357,9 @@ export async function processPayment(input: ProcessPaymentInput) {
   }
   if (input.payments.some((p) => p.amountCents <= 0)) {
     throw new AppError('INVALID_AMOUNT', 'Payment amounts must be positive', 400)
+  }
+  if (input.payments.some((p) => p.method === 'comp')) {
+    throw new AppError('COMP_NOT_A_TENDER', 'A comp is not a tender — use POST /pos/orders/:id/comp (reason, caps and manager PIN apply)', 400)
   }
 
   const result = await prisma.$transaction(async (tx) => {
@@ -359,65 +427,20 @@ export async function processPayment(input: ProcessPaymentInput) {
       createdPayments.push(payment)
     }
 
-    // Only mark order completed if all payments settled instantly. Otherwise
-    // it stays in its current status until the gateway webhook confirms.
+    // Only mark order completed (and write its financial entry) if all
+    // payments settled instantly. Otherwise it stays in its current status
+    // until the gateway webhook confirms and creates the entry from there.
     const allInstant = input.payments.every((p) => INSTANT_SETTLE.has(p.method))
-    if (allInstant) {
-      await tx.order.update({
-        where: { id: input.orderId },
-        data: { status: 'completed', completedAt: new Date() },
-      })
-    }
-
-    // Write financial entry only when the order is fully settled (no pending payments).
-    // Pending card/wallet payments will trigger entry creation from the gateway webhook.
-    if (allInstant) {
-      const existingEntry = await tx.financialEntry.findFirst({ where: { orderId: order.id } })
-      if (!existingEntry) {
-        // Own-fleet ordering only — no aggregator commission to deduct.
-        await tx.financialEntry.create({
-          data: {
-            orderId: order.id,
-            conceptId: order.conceptId,
-            channel: order.source,
-            grossCents: order.totalCents,
-            commissionCents: 0,
-            discountCents: order.discountCents,
-            taxCents: order.taxCents,
-            netCents: order.totalCents - order.discountCents,
-          },
-        })
-      }
-    }
+    if (allInstant) await completeTillSaleTx(tx, order)
 
     return { payments: createdPayments, customerId: order.customerId }
   })
 
-  // Tax-invoicing fan-out. FBR (federal) stays fire-and-forget. SRB (Sindh) is
-  // attempted SYNCHRONOUSLY so the invoice-verification QR can print on the
-  // receipt (the SRB spec requires the QR on the invoice) — but it NEVER blocks
-  // or fails the sale: on timeout/error submitSrbForReceipt falls back to the
-  // async retry queue. Only for instant-settle orders; card/wallet orders submit
-  // from the gateway webhook once the payment confirms.
+  // Invoices + rollups only for instant-settle orders; card/wallet orders
+  // submit from the gateway webhook once the payment confirms.
   const allInstantSettle = input.payments.every((p) => INSTANT_SETTLE.has(p.method))
   let srb: { srbInvoiceId: string; qrCodeLink: string | null } | null = null
-  if (allInstantSettle) {
-    getFbrQueue()
-      ?.add('submit', { orderId: input.orderId })
-      .catch((err: Error) => console.warn('[FBR] Failed to enqueue invoice submission:', err.message))
-    srb = await submitSrbForReceipt(input.orderId)
-
-    // Refresh the customer's denormalised order history. The till completes an
-    // order inside the transaction above rather than going through
-    // updateOrderStatus, so it never reached the rollup bump that path does —
-    // meaning firstOrderAt, lastOrderAt and totalSpentCents stayed stale for
-    // every counter and dine-in sale, which is most of them. Fire-and-forget:
-    // a rollup must never fail a sale that has already been paid for.
-    if (result.customerId) {
-      const { bumpCustomerRollups } = await import('../../lib/customerRollups.js')
-      bumpCustomerRollups(result.customerId)
-    }
-  }
+  if (allInstantSettle) srb = await afterTillSale(input.orderId, result.customerId)
 
   // customerId was only carried out of the transaction to drive the rollup
   // above; it isn't part of the settle response.
@@ -445,7 +468,6 @@ export async function closeShift(shiftId: string, closingFloatCents: number, not
   const shift = await prisma.shift.findUnique({
     where: { id: shiftId },
     include: {
-      payments: true,
       user: { select: { name: true, tenantId: true } },
       location: { select: { tenantId: true } },
     },
@@ -453,24 +475,25 @@ export async function closeShift(shiftId: string, closingFloatCents: number, not
   if (!shift) throw new NotFoundError('Shift', shiftId)
   if (shift.status === 'closed') throw new AppError('SHIFT_CLOSED', 'Shift is already closed', 400)
 
-  await prisma.shift.update({
-    where: { id: shiftId },
+  // Claim the close. The tablet and a manager in admin can both be closing
+  // the same drawer; only one of them may win, or the variance is flagged
+  // twice and the second count silently overwrites the first.
+  const claimed = await prisma.shift.updateMany({
+    where: { id: shiftId, status: 'open' },
     data: { status: 'closed', closedAt: new Date(), closingFloatCents, notes: notes ?? null },
   })
+  if (claimed.count === 0) throw new AppError('SHIFT_CLOSED', 'Shift is already closed', 400)
 
-  // Cash variance flag — closing drawer that doesn't reconcile is the
-  // single most common indicator of cashier theft. Threshold lives in the
-  // ReceiptConfig singleton (default PKR 200 = 20000 cents).
-  const cashSales = shift.payments
-    .filter((p) => p.method === 'cash' && p.status === 'paid')
-    .reduce((s, p) => s + p.amountCents, 0)
-  const expected = shift.openingFloatCents + cashSales
+  // Cash variance flag — a closing drawer that doesn't reconcile is the
+  // single most common indicator of cashier theft. Expected cash is the one
+  // formula in lib/drawer.ts (the same figure the cashier counted against on
+  // the Z-report), and the tolerance is the shift's own company's
+  // ReceiptConfig.cashVarianceLimitCents.
+  const drawer = await drawerExpectation(shiftId)
+  const expected = drawer.expectedCents
   const variance = closingFloatCents - expected
-  // The variance limit of the company whose drawer this is: the shift's own
-  // company (Shift.tenantId, stamped at open), falling back to the location's
-  // and then the cashier's only for legacy shifts that predate the column.
-  const recipt = await getReceiptConfig(shift.tenantId ?? shift.location?.tenantId ?? shift.user.tenantId)
-  if (Math.abs(variance) > (recipt?.cashVarianceLimitCents ?? 20000)) {
+  const limit = await cashVarianceLimitCents(shiftTenantId(shift))
+  if (Math.abs(variance) > limit) {
     await flagException({
       kind: 'cash_variance',
       severity: Math.abs(variance) > 100000 ? 'high' : 'medium',
@@ -480,16 +503,24 @@ export async function closeShift(shiftId: string, closingFloatCents: number, not
       entityId: shiftId,
       actorId: shift.userId,
       amountCents: Math.abs(variance),
-      metadata: { expected, counted: closingFloatCents, variance, openingFloat: shift.openingFloatCents, cashSales },
+      metadata: { ...drawer, counted: closingFloatCents, variance, limitCents: limit },
     })
   }
 
-  // Post the day's POS sales + cash variance to the ledger. Lazy import to
-  // avoid a hard dependency from the POS module on accounting.
+  // Post the day's POS sales, drawer movements and true over/short to the
+  // ledger. Lazy import to avoid a hard dependency from the POS module on
+  // accounting. This is the ONLY shift close — /reconciliation closes through
+  // POST /pos/shifts/:id/close too — so every closed drawer reaches the books.
   const { postShiftClose } = await import('../accounting/shiftPosting.js')
-  postShiftClose(shiftId).catch((err) =>
-    console.error(`[journal] postShiftClose failed for ${shiftId}:`, (err as Error).message),
-  )
+  postShiftClose(shiftId)
+    .then((r) => {
+      if (!r.posted && r.reason && r.reason !== 'no_postable_activity') {
+        console.error(`[journal] shift ${shiftId} did not post: ${r.reason}`)
+      }
+    })
+    .catch((err) =>
+      console.error(`[journal] postShiftClose failed for ${shiftId}:`, (err as Error).message),
+    )
 
   return getZReport(shiftId)
 }
@@ -500,7 +531,8 @@ export async function getZReport(shiftId: string) {
     include: {
       payments: { include: { order: { select: { totalCents: true, discountCents: true, taxCents: true, tipCents: true } } } },
       cashMovements: true,
-      user: { select: { name: true } },
+      user: { select: { name: true, tenantId: true } },
+      location: { select: { tenantId: true } },
     },
   })
   if (!shift) throw new NotFoundError('Shift', shiftId)
@@ -525,7 +557,7 @@ export async function getZReport(shiftId: string) {
   const walletSales = 0
 
   const compSales = payments
-    .filter((p) => p.method === 'comp')
+    .filter((p) => p.method === 'comp' && p.status === 'paid')
     .reduce((s, p) => s + p.amountCents, 0)
 
   // Refund rows carry a NEGATIVE amountCents. Summing them raw produced a
@@ -534,10 +566,6 @@ export async function getZReport(shiftId: string) {
   // a phantom drawer shortage. Work in positive magnitudes instead.
   const refundedPayments = payments.filter((p) => p.status === 'refunded')
   const voids = refundedPayments.reduce((s, p) => s + Math.abs(p.amountCents), 0)
-  // Only refunds actually handed back in cash move the drawer.
-  const cashRefunds = refundedPayments
-    .filter((p) => p.method === 'cash')
-    .reduce((s, p) => s + Math.abs(p.amountCents), 0)
 
   const totalSales = cashSales + cardSales + walletSales
   const uniqueOrders = new Map<string, { discountCents: number; taxCents: number; tipCents: number }>()
@@ -555,27 +583,18 @@ export async function getZReport(shiftId: string) {
   const totalTax       = Array.from(uniqueOrders.values()).reduce((s, o) => s + o.taxCents, 0)
   const totalTips      = Array.from(uniqueOrders.values()).reduce((s, o) => s + o.tipCents, 0)
 
-  // Cash movement aggregates — affect the expected drawer total.
-  type CashMov = { type: string; amountCents: number }
-  const movements: CashMov[] = shift.cashMovements ?? []
-  const cashDrops   = movements.filter((m) => m.type === 'drop'  ).reduce((s, m) => s + m.amountCents, 0)
-  const cashAdds    = movements.filter((m) => m.type === 'add'   ).reduce((s, m) => s + m.amountCents, 0)
-  const cashPayouts = movements.filter((m) => m.type === 'payout').reduce((s, m) => s + m.amountCents, 0)
-  const cashPayins  = movements.filter((m) => m.type === 'payin' ).reduce((s, m) => s + m.amountCents, 0)
-
-  // Expected cash = opening + cash sales − cash voids/refunds − drops − payouts + adds + payins
-  const expectedCash = shift.openingFloatCents
-    + cashSales
-    - cashRefunds
-    - cashDrops
-    - cashPayouts
-    + cashAdds
-    + cashPayins
+  // Expected drawer — the one formula (lib/drawer.ts): opening + cash sales
+  // − cash refunds − drops − pay-outs + adds + pay-ins.
+  const drawer = drawerExpectationOf(shift)
+  const expectedCash = drawer.expectedCents
+  const varianceCents = drawerVariance(shift.closingFloatCents, drawer)
+  const varianceLimitCents = await cashVarianceLimitCents(shiftTenantId(shift))
+  const movements = shift.cashMovements ?? []
 
   // Per-method breakdown for the tablet UI.
   const byMethodMap = new Map<string, { method: string; count: number; amountCents: number }>()
   for (const p of payments) {
-    if (p.status !== 'paid' && p.method !== 'comp') continue
+    if (p.status !== 'paid') continue
     const row = byMethodMap.get(p.method) ?? { method: p.method, count: 0, amountCents: 0 }
     row.count       += 1
     row.amountCents += p.amountCents
@@ -605,11 +624,12 @@ export async function getZReport(shiftId: string) {
     netRevenue: totalSales - voids,
     expectedCashInDrawer: expectedCash,
     actualCashInDrawer: shift.closingFloatCents ?? null,
-    cashVariance: shift.closingFloatCents !== null ? shift.closingFloatCents - expectedCash : null,
+    cashVariance: varianceCents,
 
     // ─── v4 additions — tablet POS consumes these directly ─────────────────
     openingFloatCents:    shift.openingFloatCents,
     closingFloatCents:    shift.closingFloatCents,
+    notes:                shift.notes,
     ordersCount:          totalOrders,
     grossCents:           totalSales,
     netCents:             totalSales - voids,
@@ -617,18 +637,23 @@ export async function getZReport(shiftId: string) {
     tipsCents:            totalTips,
     discountCents:        totalDiscounts,
     compCents:            compSales,
-    voidsCount:           payments.filter((p) => p.status === 'refunded').length,
+    voidsCount:           refundedPayments.length,
     refundsCents:         voids,
+    cashRefundsCents:     drawer.cashRefundsCents,
     byMethod,
     cashMovements: {
-      drops:  cashDrops,
-      adds:   cashAdds,
-      payouts: cashPayouts,
-      payins:  cashPayins,
-      list:   movements,
+      drops:   drawer.dropsCents,
+      adds:    drawer.addsCents,
+      payouts: drawer.payoutsCents,
+      payins:  drawer.payinsCents,
+      list:    movements,
     },
     expectedCashCents:    expectedCash,
-    varianceCents:        shift.closingFloatCents !== null ? shift.closingFloatCents - expectedCash : null,
+    varianceCents,
+    // The drawer company's tolerance and the verdict on it — clients show
+    // this rather than hard-coding a threshold of their own.
+    varianceLimitCents,
+    isBalanced:           isDrawerBalanced(varianceCents, varianceLimitCents),
   }
 }
 
@@ -788,7 +813,7 @@ export async function voidOrderItem(input: VoidInput) {
   return voided
 }
 
-interface CompRefundInput {
+export interface CompRefundInput {
   orderId: string
   amountCents: number
   reason: string
@@ -798,12 +823,31 @@ interface CompRefundInput {
   managerOverridePin?: string
 }
 
-export async function compOrder(input: CompRefundInput) {
+export interface CompInput extends CompRefundInput {
+  /** The open drawer the comp is rung on — required, like any settlement. */
+  shiftId: string
+}
+
+/**
+ * Comp (part of) an order: on the house, no payment expected, tracked as a
+ * P&L line (7030 Comps through the shift's journal entry).
+ *
+ * This is the ONE comp engine. The 'comp' tender on POST /pos/payments and on
+ * check-split is gone: it had no RefundPolicy cap, no manager PIN, no audit
+ * and no owner notify. Here the comp is capped and PIN-approved, sits on the
+ * drawer it was rung on (so the Z-report's comps and the shift JE's 7030 line
+ * see it), can never exceed what is still due, and settles the order exactly
+ * like a paid sale once it is covered.
+ */
+export async function compOrder(input: CompInput) {
   const order = await prisma.order.findUnique({
     where: { id: input.orderId },
     include: { concept: { select: { tenantId: true } } },
   })
   if (!order) throw new NotFoundError('Order', input.orderId)
+  if (['cancelled', 'rejected', 'refunded'].includes(order.status)) {
+    throw new AppError('ORDER_NOT_OPEN', `Cannot comp a ${order.status} order`, 422)
+  }
   const tenantId = order.concept.tenantId
 
   const policy = await getRefundPolicy(tenantId)
@@ -820,16 +864,37 @@ export async function compOrder(input: CompRefundInput) {
     tenantId,
   )
 
-  // Comp = settlement at zero cost: a `comp` payment line for the amount.
-  const payment = await prisma.payment.create({
-    data: {
-      orderId: input.orderId,
-      method: 'comp',
-      amountCents: input.amountCents,
-      status: 'paid',
-      gateway: 'none',
-      processedAt: new Date(),
-    },
+  const result = await prisma.$transaction(async (tx) => {
+    // What is still due, read inside the transaction the comp is written in.
+    // Comping a paid order used to overpay it.
+    const paid = await tx.payment.aggregate({
+      where: { orderId: order.id, status: 'paid' },
+      _sum: { amountCents: true },
+    })
+    const alreadyPaid = paid._sum.amountCents ?? 0
+    const due = order.totalCents - alreadyPaid
+    if (due <= 0) throw new AppError('ALREADY_PAID', 'Order is already fully paid', 400)
+    if (input.amountCents > due) {
+      throw new AppError('COMP_EXCEEDS_DUE', `Comp of ${input.amountCents} exceeds the ${due} still due on this order`, 400)
+    }
+
+    // Comp = settlement at zero cost: a `comp` payment line for the amount,
+    // on the drawer it was rung on.
+    const payment = await tx.payment.create({
+      data: {
+        orderId: order.id,
+        shiftId: input.shiftId,
+        method: 'comp',
+        amountCents: input.amountCents,
+        status: 'paid',
+        gateway: 'none',
+        processedAt: new Date(),
+      },
+    })
+
+    const covered = alreadyPaid + input.amountCents >= order.totalCents
+    if (covered) await completeTillSaleTx(tx, order)
+    return { payment, covered }
   })
 
   await audit({ category: 'identity',
@@ -837,10 +902,12 @@ export async function compOrder(input: CompRefundInput) {
     entity: 'Order',
     entityId: input.orderId,
     userId: input.actorId,
-    metadata: { amountCents: input.amountCents, reason: input.reason, photoUrl: input.photoUrl, approverId, paymentId: payment.id },
+    metadata: { amountCents: input.amountCents, reason: input.reason, photoUrl: input.photoUrl, approverId, paymentId: result.payment.id, shiftId: input.shiftId },
   })
   await notifyOwnerIfThreshold(input.amountCents, policy, 'comp', input.orderId, input.reason, input.actorId)
-  return payment
+
+  const srb = result.covered ? await afterTillSale(order.id, order.customerId) : null
+  return { ...result.payment, orderCompleted: result.covered, srb }
 }
 
 export async function refundOrder(input: CompRefundInput) {

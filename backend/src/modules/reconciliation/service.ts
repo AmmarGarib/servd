@@ -114,8 +114,11 @@ export async function importBankStatement(input: {
   filename?: string
   importedById?: string
   csv: string
-  // Company being reconciled — resolves the bank account inside its own chart.
+  // Company being reconciled — resolves the bank account inside its own chart
+  // and owns the import.
   tenantId: string
+  // The bank the statement is for (null for a non-bank ledger like 1030).
+  bankAccountId?: string | null
 }) {
   const account = await prisma.account.findFirst({ where: { tenantId: input.tenantId, code: input.accountCode } })
   if (!account) throw new NotFoundError('Account', input.accountCode)
@@ -125,6 +128,8 @@ export async function importBankStatement(input: {
   return prisma.$transaction(async (tx) => {
     const importRow = await tx.bankStatementImport.create({
       data: {
+        tenantId: input.tenantId,
+        bankAccountId: input.bankAccountId ?? null,
         source: input.source,
         accountCode: input.accountCode,
         statementDate: input.statementDate,
@@ -206,10 +211,6 @@ export async function adjustStatementLine(input: {
   contraAccountCode: string
   memo: string
   postedById: string
-  // Company the operator is reconciling in — BankStatementImport has no
-  // company column yet, so the route supplies it and the adjustment posts to
-  // that company's books.
-  tenantId: string
 }) {
   const line = await prisma.bankStatementLine.findUnique({
     where: { id: input.lineId },
@@ -219,13 +220,16 @@ export async function adjustStatementLine(input: {
   if (line.matchStatus !== 'unmatched') {
     throw new AppError('LINE_NOT_UNMATCHED', `Line is already ${line.matchStatus}`, 422)
   }
+  // The adjustment posts to the books of the company whose statement this is.
+  const tenantId = line.import.tenantId
+  if (!tenantId) throw new AppError('IMPORT_HAS_NO_COMPANY', 'This statement import has no company — it cannot post to a ledger', 422)
 
   // Positive amount = inflow to the reconciling account; negative = outflow.
   const isInflow = line.amountCents > 0
   const abs = Math.abs(line.amountCents)
 
   await postJournalEntry({
-    tenantId: input.tenantId,
+    tenantId,
     sourceType: 'reconciliation.adjustment',
     sourceId: line.id,
     description: `Adjustment: ${line.description} (${input.memo})`,

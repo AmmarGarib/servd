@@ -1,4 +1,8 @@
 'use client'
+// Bank accounts are the bank DETAILS of a chart-of-accounts code: the ledger
+// holds the balance. Each account links to its code (1020 for the first bank,
+// a new 102x child for each further one, or an asset account you pick), and
+// deposits and bank-statement imports use that code.
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
@@ -14,6 +18,8 @@ interface Bank {
   branchCode: string | null
   swiftCode: string | null
   currency: string
+  accountCode: string | null
+  ledgerBalanceCents: number | null
   openingBalanceCents: number
   isActive: boolean
   notes: string | null
@@ -37,7 +43,7 @@ export default function BankAccountsPage() {
           <div>
             <h1 className="text-2xl font-black text-white/90">🏦 Bank accounts</h1>
             <p className="text-sm text-white/40 mt-1 max-w-2xl">
-              Operating accounts. Used to reconcile card payouts and rider COD handoffs.
+              Bank details for each ledger bank account. The balance is the ledger's — deposits post to the linked code and statements reconcile against it.
             </p>
           </div>
           <button onClick={() => setAdding(true)} className="rounded-xl bg-kds-green px-4 py-2.5 text-sm font-black text-black hover:opacity-90">+ Add account</button>
@@ -66,7 +72,13 @@ export default function BankAccountsPage() {
                   {b.iban && <span className="font-mono">IBAN: {b.iban}</span>}
                   {b.accountNumber && <span className="font-mono">A/C: {b.accountNumber}</span>}
                 </div>
-                <p className="text-xs text-white/30 mt-1">Opening balance: PKR {(b.openingBalanceCents / 100).toLocaleString()}</p>
+                <p className="text-xs text-white/55 mt-1">
+                  Ledger {b.accountCode ?? '—'}
+                  {b.ledgerBalanceCents !== null && <> · balance PKR {(b.ledgerBalanceCents / 100).toLocaleString()}</>}
+                </p>
+                {b.openingBalanceCents !== 0 && (
+                  <p className="text-xs text-white/30 mt-0.5">Opening balance recorded at setup: PKR {(b.openingBalanceCents / 100).toLocaleString()} (not in the ledger — post it as a journal entry)</p>
+                )}
               </div>
               <div className="flex flex-col gap-2 shrink-0">
                 <button onClick={() => setEditing(b)} className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-white/55 hover:text-white">Edit</button>
@@ -93,14 +105,15 @@ function Modal({ account, onClose, onSaved }: { account: Bank | null; onClose: (
   const [iban, setIban] = useState(account?.iban ?? '')
   const [branchCode, setBranchCode] = useState(account?.branchCode ?? '')
   const [currency, setCurrency] = useState(account?.currency ?? 'PKR')
-  const [openingBalanceCents, setOpeningBalanceCents] = useState(account?.openingBalanceCents ?? 0)
+  const [accountCode, setAccountCode] = useState(account?.accountCode ?? '')
   const [notes, setNotes] = useState(account?.notes ?? '')
 
   const save = useMutation({
     mutationFn: () => {
-      const payload = { name: name.trim(), bankName: bankName || null, accountTitle: accountTitle || null, accountNumber: accountNumber || null, iban: iban || null, branchCode: branchCode || null, currency, openingBalanceCents, notes: notes || null }
-      if (account) return api.patch(`/setup/bank-accounts/${account.id}`, payload)
-      return api.post('/setup/bank-accounts', payload)
+      const payload = { name: name.trim(), bankName: bankName || null, accountTitle: accountTitle || null, accountNumber: accountNumber || null, iban: iban || null, branchCode: branchCode || null, notes: notes || null }
+      const code = accountCode.trim()
+      if (account) return api.patch(`/setup/bank-accounts/${account.id}`, { ...payload, ...(code && code !== account.accountCode && { accountCode: code }) })
+      return api.post('/setup/bank-accounts', { ...payload, currency, ...(code && { accountCode: code }) })
     },
     onSuccess: () => onSaved(),
   })
@@ -126,9 +139,9 @@ function Modal({ account, onClose, onSaved }: { account: Bank | null; onClose: (
             <Field label="Branch code"><input value={branchCode} onChange={(e) => setBranchCode(e.target.value)} className={fieldCls} /></Field>
           </div>
           <Field label="IBAN"><input value={iban} onChange={(e) => setIban(e.target.value.toUpperCase())} placeholder="PK36SCBL0000001123456702" className={fieldCls} /></Field>
-          <Field label="Opening balance (paisa)">
-            <input type="number" value={openingBalanceCents} onChange={(e) => setOpeningBalanceCents(parseInt(e.target.value) || 0)} className={fieldCls} />
-            <p className="text-[10px] text-white/30 mt-1">≈ PKR {(openingBalanceCents / 100).toLocaleString()}</p>
+          <Field label="Ledger account code">
+            <input value={accountCode} onChange={(e) => setAccountCode(e.target.value)} placeholder={account ? '' : 'Leave blank — 1020, or a new 102x for a further bank'} className={fieldCls + ' font-mono'} />
+            <p className="text-[10px] text-white/30 mt-1">An asset account in this company's chart of accounts. Its ledger balance is this bank's balance.</p>
           </Field>
           <Field label="Notes"><textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} className={fieldCls} /></Field>
         </div>

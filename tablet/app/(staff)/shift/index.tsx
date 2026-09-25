@@ -1,9 +1,9 @@
 // Shift home — open a new shift with opening float, OR shows current shift
 // with a "Close shift" button. Z-report visible alongside.
 
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
 import { View, Text, ScrollView } from 'react-native'
-import { useRouter } from 'expo-router'
+import { useRouter, useFocusEffect } from 'expo-router'
 import { useQuery } from '@tanstack/react-query'
 
 import { api } from '../../../src/lib/api'
@@ -11,7 +11,7 @@ import { theme } from '../../../src/lib/theme'
 import { pkr, shortTime } from '../../../src/lib/format'
 import { Panel, Pill } from '../../../src/components/Panel'
 import { Button } from '../../../src/components/Button'
-import { useShift } from '../../../src/store/shift'
+import { useShift, syncShift } from '../../../src/store/shift'
 import { CashMovementModal } from '../../../src/components/CashMovementModal'
 
 interface CashMovementRow {
@@ -54,6 +54,9 @@ export default function ShiftHomeScreen() {
   const router = useRouter()
   const shift  = useShift()
   const [cashMovementOpen, setCashMovementOpen] = useState(false)
+
+  // The drawer may have been opened or closed elsewhere since we last looked.
+  useFocusEffect(useCallback(() => { void syncShift() }, []))
 
   const z = useQuery({
     queryKey: ['shift', 'zreport', shift.shiftId],

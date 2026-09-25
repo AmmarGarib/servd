@@ -1,7 +1,10 @@
 'use client'
-// Deposit drops — record cash dropped at the bank. Variance vs shift cash sales
-// auto-flags. Photo of teller receipt strongly recommended (auto-flagged
-// when missing for drops > PKR 1,000).
+// Deposit drops — record cash taken to the bank. Expected from a shift = its
+// drops to the safe + its counted close − the float kept in the drawer; a
+// variance beyond the company's cash tolerance auto-flags. The drop posts to
+// the picked bank's ledger code so the bank statement can match it. Photo of
+// teller receipt strongly recommended (auto-flagged when missing for drops >
+// PKR 1,000).
 
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -19,8 +22,10 @@ interface Drop {
   droppedById: string
   droppedAt: string
   notes: string | null
+  withinTolerance: boolean
 }
-interface BankAccount { id: string; name: string }
+interface BankAccount { id: string; name: string; accountCode: string | null }
+interface RecentShift { shiftId: string; cashier: string; openedAt: string; closedAt: string | null; status: string }
 
 export default function DepositDropsPage() {
   const qc = useQueryClient()
@@ -36,7 +41,7 @@ export default function DepositDropsPage() {
           <div>
             <h1 className="text-2xl font-black text-white/90">🏦 Bank deposit drops</h1>
             <p className="text-sm text-white/40 mt-1 max-w-2xl">
-              Record every cash drop to the bank. Variance vs shift cash sales auto-flags. Snap a teller-receipt photo to make the drop reconcilable on the bank statement.
+              Record every cash drop to the bank. It posts to the bank's ledger account, and a variance against the shift (drops + counted close − float kept) auto-flags. Snap a teller-receipt photo to make the drop reconcilable on the bank statement.
             </p>
           </div>
           <button onClick={() => setAdding(true)} className="rounded-xl bg-kds-green px-4 py-2.5 text-sm font-black text-black hover:opacity-90">+ Record drop</button>
@@ -54,7 +59,7 @@ export default function DepositDropsPage() {
           <div key={d.id} className="rounded-2xl p-5"
             style={{
               background: 'rgba(255,255,255,0.025)',
-              border: `1px solid ${Math.abs(d.varianceCents) >= 20000 ? 'rgba(245,158,11,0.3)' : 'rgba(255,255,255,0.06)'}`,
+              border: `1px solid ${!d.withinTolerance ? 'rgba(245,158,11,0.3)' : 'rgba(255,255,255,0.06)'}`,
             }}>
             <div className="flex items-start justify-between gap-3 flex-wrap">
               <div>
@@ -62,7 +67,7 @@ export default function DepositDropsPage() {
                   <span className="text-lg font-black text-white/90">PKR {(d.amountCents / 100).toLocaleString()}</span>
                   {d.expectedCents > 0 && (
                     <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full"
-                      style={Math.abs(d.varianceCents) < 20000
+                      style={d.withinTolerance
                         ? { background: 'rgba(0,212,177,0.1)', color: '#00D4B1' }
                         : { background: 'rgba(245,158,11,0.12)', color: '#FCD34D' }}>
                       {d.varianceCents >= 0 ? '+' : ''}PKR {(d.varianceCents / 100).toLocaleString()}
@@ -73,7 +78,7 @@ export default function DepositDropsPage() {
                   )}
                 </div>
                 <p className="text-xs text-white/45 mt-1">
-                  Expected from shift: PKR {(d.expectedCents / 100).toLocaleString()} · {new Date(d.droppedAt).toLocaleString()}
+                  Expected from shift (drops + count − float): PKR {(d.expectedCents / 100).toLocaleString()} · {new Date(d.droppedAt).toLocaleString()}
                 </p>
                 {d.bagSerial && <p className="text-xs text-white/55 font-mono mt-1">Bag: {d.bagSerial}</p>}
                 {d.notes && <p className="text-xs text-white/55 mt-1">{d.notes}</p>}
@@ -90,6 +95,13 @@ export default function DepositDropsPage() {
 }
 
 function DropModal({ banks, onClose, onSaved }: { banks: BankAccount[]; onClose: () => void; onSaved: () => void }) {
+  // Recent drawers to deposit from, so nobody types a shift UUID by hand.
+  const { data: recent } = useQuery<{ shifts: RecentShift[] }>({
+    queryKey: ['deposit-drop-shifts'],
+    queryFn: () => api.get('/reconciliation/summary'),
+    retry: false,
+  })
+  const shifts = recent?.shifts ?? []
   const [shiftId, setShiftId] = useState('')
   const [amountCents, setAmountCents] = useState(0)
   const [bankAccountId, setBankAccountId] = useState('')
@@ -116,8 +128,19 @@ function DropModal({ banks, onClose, onSaved }: { banks: BankAccount[]; onClose:
         <button onClick={onClose} className="text-white/40 text-xl">✕</button>
       </div>
       <div className="p-5 space-y-3">
-        <Field label="Shift ID (optional — for variance match)">
-          <input value={shiftId} onChange={(e) => setShiftId(e.target.value)} placeholder="UUID — leave blank to skip variance check" className={fieldCls} />
+        <Field label="Shift (optional — for the variance check)">
+          {shifts.length > 0 ? (
+            <select value={shiftId} onChange={(e) => setShiftId(e.target.value)} className={fieldCls}>
+              <option value="">— not from one shift —</option>
+              {shifts.map((s) => (
+                <option key={s.shiftId} value={s.shiftId}>
+                  {s.cashier} · {new Date(s.openedAt).toLocaleString()}{s.status === 'open' ? ' (open)' : ''}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <input value={shiftId} onChange={(e) => setShiftId(e.target.value)} placeholder="Shift UUID — leave blank to skip the variance check" className={fieldCls} />
+          )}
         </Field>
         <Field label="Amount counted at drop (paisa) *">
           <input type="number" value={amountCents} onChange={(e) => setAmountCents(parseInt(e.target.value) || 0)} className={fieldCls} autoFocus />
@@ -126,7 +149,7 @@ function DropModal({ banks, onClose, onSaved }: { banks: BankAccount[]; onClose:
         <Field label="Bank account">
           <select value={bankAccountId} onChange={(e) => setBankAccountId(e.target.value)} className={fieldCls}>
             <option value="">— pick account —</option>
-            {banks.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+            {banks.map((b) => <option key={b.id} value={b.id}>{b.name}{b.accountCode ? ` (${b.accountCode})` : ''}</option>)}
           </select>
         </Field>
         <div className="grid grid-cols-2 gap-3">

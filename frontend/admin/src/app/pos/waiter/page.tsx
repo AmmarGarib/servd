@@ -4,6 +4,7 @@ import { useQuery, useMutation } from '@tanstack/react-query'
 import { api, menuApi, type Category, type MenuItem, type ModifierGroup, type Modifier } from '../../../lib/api'
 import { usePosStore } from '../../../store/pos'
 import Link from 'next/link'
+import { useCurrentShift } from '../../../hooks/useCurrentShift'
 
 type Step = 'table' | 'menu' | 'confirm' | 'done'
 
@@ -20,6 +21,8 @@ export default function WaiterPage() {
 
   const storedConceptId = usePosStore(s => s.conceptId)
   const shiftId = usePosStore(s => s.shiftId)
+  // The server, not this browser, says which drawer this user is on.
+  useCurrentShift()
 
   const { data: concepts = [] } = useQuery({
     queryKey: ['concepts'],

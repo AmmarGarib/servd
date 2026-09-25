@@ -1,9 +1,10 @@
 'use client'
 import { useState } from 'react'
-import { useMutation, useQuery } from '@tanstack/react-query'
+import { useMutation } from '@tanstack/react-query'
 import { posApi, type ZReport } from '../../../lib/api'
 import { usePosStore } from '../../../store/pos'
 import { useAuthStore } from '../../../store/auth'
+import { useCurrentShift } from '../../../hooks/useCurrentShift'
 
 function fmt(cents: number) { return `PKR ${(cents / 100).toFixed(0)}` }
 
@@ -14,9 +15,12 @@ export default function ShiftPage() {
   const [closingFloat, setClosingFloat] = useState('')
   const [zReport, setZReport] = useState<ZReport | null>(null)
 
+  // The server says which drawer this user is on (hooks/useCurrentShift).
+  const current = useCurrentShift()
+
   const openMutation = useMutation({
     mutationFn: () => posApi.openShift(Math.round(parseFloat(openingFloat || '0') * 100)),
-    onSuccess: (shift) => setShiftId(shift.id),
+    onSuccess: (shift) => { setShiftId(shift.id); void current.refetch() },
   })
 
   const closeMutation = useMutation({
@@ -24,7 +28,10 @@ export default function ShiftPage() {
     onSuccess: (report) => {
       setZReport(report)
       setShiftId(null)
+      void current.refetch()
     },
+    // Closed elsewhere already: drop the stale id and pick up the truth.
+    onError: () => { void current.refetch() },
   })
 
   if (zReport) {

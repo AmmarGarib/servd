@@ -10,8 +10,9 @@
 // write guard on the client already gates those at the UI layer.
 
 import type { FastifyRequest } from 'fastify'
+import type { Prisma } from '@prisma/client'
 import { prisma } from './prisma.js'
-import { NotFoundError } from './errors.js'
+import { AppError, NotFoundError } from './errors.js'
 import { requestedBrand, markBrandApplied } from './brandScope.js'
 
 export interface TenantScope {
@@ -164,4 +165,89 @@ export async function conceptWhere(
     return { conceptId }
   }
   return { conceptId: { in: await conceptIdsInScope(req, mode) } }
+}
+
+// ─── Shifts (drawers) ────────────────────────────────────────────────────────
+//
+// Which company a shift belongs to is answered ONE way, here. Shift.tenantId
+// is stamped at open (and backfilled by migration 20260907140000); the
+// location and cashier are fallbacks ONLY for rows that predate the column.
+//
+// They used to be OR'd flat in some places and read as the cashier's company
+// in others. Shift.tenantId is the operator's ACTIVE company, while
+// user.tenantId is the cashier's PRIMARY company — and cashiers routinely
+// belong to more than one. A flat OR let a shift opened in company A match a
+// scope of company B through `{ user: { tenantId: B } }`: a manager at B could
+// read and close A's drawer, and B's orders and payments could attach to A's
+// open shift, landing B's cash on A's Z-report and, through postShiftClose, in
+// A's ledger. As a precedence chain each fallback applies only when the more
+// reliable field above it is null.
+
+/** Prisma `where` for "this shift belongs to one of these companies". */
+export function shiftOfCompany(where: TenantIdWhere): Prisma.ShiftWhereInput {
+  return {
+    OR: [
+      where,
+      { AND: [{ tenantId: null }, { location: where }] },
+      { AND: [{ tenantId: null }, { locationId: null }, { user: where }] },
+    ],
+  }
+}
+
+/** `shiftOfCompany` for the request's companies in `mode`. */
+export async function shiftWhere(req: FastifyRequest, mode: ScopeMode = 'read'): Promise<Prisma.ShiftWhereInput> {
+  return shiftOfCompany(await scopeTenantWhere(req, mode))
+}
+
+/** What `shiftTenantId` needs loaded: `include: SHIFT_COMPANY_INCLUDE`. */
+export const SHIFT_COMPANY_INCLUDE = {
+  location: { select: { tenantId: true } },
+  user:     { select: { tenantId: true } },
+} as const
+
+/**
+ * The company a shift belongs to — the same precedence as `shiftOfCompany`:
+ * Shift.tenantId, else its location's company, else (no location at all) the
+ * cashier's. Null when none applies; callers must treat that as "no company"
+ * (skip, 422), never fall back to something wider.
+ */
+export function shiftTenantId(shift: {
+  tenantId: string | null
+  locationId: string | null
+  location?: { tenantId: string | null } | null
+  user?: { tenantId: string | null } | null
+}): string | null {
+  if (shift.tenantId) return shift.tenantId
+  if (shift.locationId) return shift.location?.tenantId ?? null
+  return shift.user?.tenantId ?? null
+}
+
+/**
+ * The shift, or 404 when it isn't in scope for `mode`. Use on every route
+ * that takes a shift id for an EXISTING drawer (read it, close it, record a
+ * movement on it).
+ */
+export async function findShiftInScope(req: FastifyRequest, id: string, mode: ScopeMode) {
+  const shift = await prisma.shift.findFirst({ where: { id, ...(await shiftWhere(req, mode)) } })
+  if (!shift) throw new NotFoundError('Shift', id)
+  return shift
+}
+
+/**
+ * 422 unless `shiftId` is a shift of `tenantId` (and open, when `mustBeOpen`).
+ * Use wherever a NEW row (order, payment, comp, deposit drop, staff meal) is
+ * about to be bound to a drawer — company A's takings must never land on
+ * company B's Z-report. Pass the company the new row belongs to (the order's
+ * brand's company, or the operator's active company for 'create').
+ */
+export async function assertShiftOf(tenantId: string | null, shiftId: string, mustBeOpen: boolean): Promise<void> {
+  const shift = tenantId
+    ? await prisma.shift.findFirst({
+        where: { id: shiftId, ...(mustBeOpen ? { status: 'open' as const } : {}), ...shiftOfCompany({ tenantId }) },
+        select: { id: true },
+      })
+    : null
+  if (!shift) {
+    throw new AppError('SHIFT_NOT_IN_COMPANY', mustBeOpen ? 'That shift is not an open shift of this company' : 'That shift does not belong to this company', 422)
+  }
 }

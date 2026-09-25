@@ -478,6 +478,16 @@ export interface CreatePaymentInput {
 }
 
 export async function createPayment(input: CreatePaymentInput) {
+  return prisma.$transaction((tx) => createPaymentTx(tx, input))
+}
+
+/**
+ * createPayment inside the caller's transaction — for a cash spend recorded
+ * elsewhere (a petty-cash box paying a supplier's bill) that must write the
+ * SupplierPayment and its own row atomically. The caller posts the ledger
+ * entry (postSupplierPayment) after commit, as the /procurement route does.
+ */
+export async function createPaymentTx(tx: Prisma.TransactionClient, input: CreatePaymentInput) {
   if (input.amountCents <= 0) throw new AppError('INVALID_AMOUNT', 'Amount must be positive', 400)
 
   const allocations = input.applications ?? []
@@ -486,58 +496,56 @@ export async function createPayment(input: CreatePaymentInput) {
     throw new AppError('OVER_ALLOCATED', 'Allocations exceed payment amount', 400)
   }
 
-  return prisma.$transaction(async (tx) => {
-    // Validate all bills belong to the same supplier and aren't void/paid
-    if (allocations.length > 0) {
-      const bills = await tx.supplierBill.findMany({
-        where: { id: { in: allocations.map((a) => a.billId) } },
-      })
-      for (const a of allocations) {
-        const b = bills.find((x) => x.id === a.billId)
-        if (!b)                              throw new NotFoundError('SupplierBill', a.billId)
-        if (b.supplierId !== input.supplierId) throw new AppError('SUPPLIER_MISMATCH', `Bill ${b.billNumber} belongs to a different supplier`, 400)
-        if (b.status === 'void')             throw new AppError('BILL_VOID',  `Bill ${b.billNumber} is void`,        400)
-        if (b.status === 'paid')             throw new AppError('BILL_PAID',  `Bill ${b.billNumber} is fully paid`, 400)
-
-        const remaining = b.totalCents - b.paidCents
-        if (a.amountAppliedCents > remaining) {
-          throw new AppError('OVER_APPLIED', `Cannot apply ${a.amountAppliedCents} to bill ${b.billNumber} — only ${remaining} due`, 400)
-        }
-      }
-    }
-
-    const payment = await tx.supplierPayment.create({
-      data: {
-        supplierId:  input.supplierId,
-        paymentDate: new Date(input.paymentDate),
-        method:      input.method,
-        reference:   input.reference ?? null,
-        amountCents: input.amountCents,
-        appliedCents: totalAllocated,
-        notes:       input.notes ?? null,
-        createdBy:   input.createdBy,
-        applications: { create: allocations.map((a) => ({ billId: a.billId, amountAppliedCents: a.amountAppliedCents })) },
-      },
-      include: { applications: true },
+  // Validate all bills belong to the same supplier and aren't void/paid
+  if (allocations.length > 0) {
+    const bills = await tx.supplierBill.findMany({
+      where: { id: { in: allocations.map((a) => a.billId) } },
     })
-
-    // Update bill paid totals + statuses
     for (const a of allocations) {
-      const bill = await tx.supplierBill.update({
-        where: { id: a.billId },
-        data:  { paidCents: { increment: a.amountAppliedCents } },
-      })
-      const newStatus =
-        bill.paidCents >= bill.totalCents ? 'paid' :
-        bill.paidCents > 0                ? 'partially_paid' :
-        bill.status
-      if (newStatus !== bill.status) {
-        await tx.supplierBill.update({ where: { id: bill.id }, data: { status: newStatus } })
+      const b = bills.find((x) => x.id === a.billId)
+      if (!b)                              throw new NotFoundError('SupplierBill', a.billId)
+      if (b.supplierId !== input.supplierId) throw new AppError('SUPPLIER_MISMATCH', `Bill ${b.billNumber} belongs to a different supplier`, 400)
+      if (b.status === 'void')             throw new AppError('BILL_VOID',  `Bill ${b.billNumber} is void`,        400)
+      if (b.status === 'paid')             throw new AppError('BILL_PAID',  `Bill ${b.billNumber} is fully paid`, 400)
+
+      const remaining = b.totalCents - b.paidCents
+      if (a.amountAppliedCents > remaining) {
+        throw new AppError('OVER_APPLIED', `Cannot apply ${a.amountAppliedCents} to bill ${b.billNumber} — only ${remaining} due`, 400)
       }
     }
+  }
 
-    return payment
+  const payment = await tx.supplierPayment.create({
+    data: {
+      supplierId:  input.supplierId,
+      paymentDate: new Date(input.paymentDate),
+      method:      input.method,
+      reference:   input.reference ?? null,
+      amountCents: input.amountCents,
+      appliedCents: totalAllocated,
+      notes:       input.notes ?? null,
+      createdBy:   input.createdBy,
+      applications: { create: allocations.map((a) => ({ billId: a.billId, amountAppliedCents: a.amountAppliedCents })) },
+    },
+    include: { applications: true },
   })
+
+  // Update bill paid totals + statuses
+  for (const a of allocations) {
+    const bill = await tx.supplierBill.update({
+      where: { id: a.billId },
+      data:  { paidCents: { increment: a.amountAppliedCents } },
+    })
+    const newStatus =
+      bill.paidCents >= bill.totalCents ? 'paid' :
+      bill.paidCents > 0                ? 'partially_paid' :
+      bill.status
+    if (newStatus !== bill.status) {
+      await tx.supplierBill.update({ where: { id: bill.id }, data: { status: newStatus } })
+    }
+  }
+
+  return payment
 }
 
 /** Allocate an existing unallocated payment to bills. */

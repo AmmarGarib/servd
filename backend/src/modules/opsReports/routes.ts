@@ -1,8 +1,13 @@
 // Operational efficiency reports — read-only endpoints that surface things a
 // manager would otherwise have to compute by hand:
 //   - prep-list:    per-station prep checklist for tomorrow (from forecast)
-//   - shift-digest: end-of-shift summary (orders, peaks, voids, complaints)
 //   - anomalies:    ticket-time spikes, comp/void patterns, supplier price drift
+//
+// The end-of-shift summary is the Z-report (GET /pos/shifts/:id/zreport) —
+// the old /ops/shift-digest had no caller, took gross from Order.shiftId
+// rather than the tenders the drawer reconciles against, and counted the
+// whole company's voids and complaints as the shift's. The scheduled
+// 'shift_summary' email sends the Z-report.
 
 import type { FastifyInstance } from 'fastify'
 import { prisma } from '../../lib/prisma.js'
@@ -137,115 +142,6 @@ export async function opsReportRoutes(fastify: FastifyInstance) {
       })).sort((a, b) => a.stationName.localeCompare(b.stationName))
 
       return { byStation: out, unmappedItems: unmapped, generatedAt: new Date().toISOString() }
-    },
-  )
-
-  // ─── /ops/shift-digest/:shiftId ────────────────────────────────────────────
-  // Auto-generated end-of-shift summary: orders, hourly peaks, complaints,
-  // 86'd items, comps, voids, top sellers.
-  fastify.get<{ Params: { shiftId: string } }>(
-    '/shift-digest/:shiftId',
-    { preHandler: requireAuth(...MANAGERS) },
-    async (req) => {
-      // Tenant scope via user.tenantId — only show shifts owned by users
-      // who belong to the active tenant.
-      const shift = await prisma.shift.findFirst({
-        where: {
-          id: req.params.shiftId,
-          user: { tenantId: req.staffUser!.tenantId },
-        },
-        include: { user: { select: { id: true, name: true, email: true } } },
-      })
-      if (!shift) return { error: 'Shift not found' }
-
-      const from = shift.openedAt
-      const to   = shift.closedAt ?? new Date()
-
-      const [orders, payments, complaints, voids] = await Promise.all([
-        prisma.order.findMany({
-          where: { shiftId: shift.id },
-          select: {
-            id: true, status: true, totalCents: true, placedAt: true, source: true,
-            items: { select: { name: true, quantity: true, status: true, unitPriceCents: true } },
-          },
-        }),
-        prisma.payment.aggregate({
-          where: { shiftId: shift.id, status: 'paid' },
-          _sum: { amountCents: true }, _count: true,
-        }),
-        // Scope both to the shift's tenant — a bare time window would count
-        // every company's complaints/voids into this shift's digest.
-        prisma.orderComplaint.count({
-          where: {
-            createdAt: { gte: from, lte: to },
-            concept: { tenantId: req.staffUser!.tenantId },
-          },
-        }).catch(() => 0),
-        prisma.orderItem.count({
-          where: {
-            status: 'voided',
-            updatedAt: { gte: from, lte: to },
-            order: { concept: { tenantId: req.staffUser!.tenantId } },
-          },
-        }),
-      ])
-
-      // Hourly distribution
-      const byHour: Record<number, number> = {}
-      for (const o of orders) {
-        const h = o.placedAt.getHours()
-        byHour[h] = (byHour[h] ?? 0) + 1
-      }
-      const peakHourEntry = Object.entries(byHour).sort((a, b) => b[1] - a[1])[0]
-      const peakHour = peakHourEntry ? { hour: parseInt(peakHourEntry[0]), orders: peakHourEntry[1] } : null
-
-      // Top items
-      const itemTally: Record<string, { name: string; qty: number; revenue: number }> = {}
-      for (const o of orders) {
-        for (const it of o.items) {
-          if (!itemTally[it.name]) itemTally[it.name] = { name: it.name, qty: 0, revenue: 0 }
-          itemTally[it.name]!.qty += it.quantity
-          itemTally[it.name]!.revenue += it.quantity * it.unitPriceCents
-        }
-      }
-      const topItems = Object.values(itemTally).sort((a, b) => b.qty - a.qty).slice(0, 5)
-
-      const completed = orders.filter((o) => o.status === 'completed').length
-      const cancelled = orders.filter((o) => o.status === 'cancelled' || o.status === 'refunded').length
-      const grossCents = orders.filter((o) => o.status === 'completed').reduce((s, o) => s + o.totalCents, 0)
-
-      return {
-        shift: {
-          id:        shift.id,
-          user:      shift.user,
-          openedAt:  shift.openedAt.toISOString(),
-          closedAt:  shift.closedAt?.toISOString() ?? null,
-          durationMin: Math.round((to.getTime() - from.getTime()) / 60_000),
-          openingFloatCents: shift.openingFloatCents,
-          closingFloatCents: shift.closingFloatCents,
-        },
-        orders: {
-          total:     orders.length,
-          completed,
-          cancelled,
-          grossCents,
-        },
-        payments: {
-          collectedCents: payments._sum.amountCents ?? 0,
-          paymentCount:   payments._count,
-        },
-        peakHour,
-        topItems,
-        flags: {
-          complaints,
-          voids,
-          voidRate: orders.length > 0 ? Math.round((voids / orders.length) * 100) : 0,
-        },
-        narrative: buildShiftNarrative({
-          orders: orders.length, completed, cancelled, grossCents,
-          peakHour, voids, complaints, durationMin: Math.round((to.getTime() - from.getTime()) / 60_000),
-        }),
-      }
     },
   )
 
@@ -387,25 +283,4 @@ function round2(n: number): number {
 
 function severityRank(s: 'low' | 'medium' | 'high'): number {
   return s === 'high' ? 3 : s === 'medium' ? 2 : 1
-}
-
-function buildShiftNarrative(args: {
-  orders: number; completed: number; cancelled: number; grossCents: number
-  peakHour: { hour: number; orders: number } | null; voids: number; complaints: number; durationMin: number
-}): string {
-  const lines: string[] = []
-  if (args.orders === 0) {
-    return 'Quiet shift — no orders recorded. Check that the shift was opened correctly and orders linked.'
-  }
-  const cancelRate = args.orders > 0 ? Math.round((args.cancelled / args.orders) * 100) : 0
-  lines.push(`${args.completed} completed orders out of ${args.orders} placed (${100 - cancelRate}% completion).`)
-  lines.push(`Gross PKR ${(args.grossCents / 100).toLocaleString()}, avg ticket PKR ${args.completed > 0 ? Math.round(args.grossCents / args.completed / 100).toLocaleString() : 0}.`)
-  if (args.peakHour) {
-    const h = args.peakHour.hour
-    lines.push(`Peak hour: ${h}:00 (${args.peakHour.orders} orders).`)
-  }
-  if (args.voids > 0) lines.push(`⚠ ${args.voids} item${args.voids === 1 ? '' : 's'} voided — review with manager.`)
-  if (args.complaints > 0) lines.push(`⚠ ${args.complaints} complaint${args.complaints === 1 ? '' : 's'} opened during this shift.`)
-  if (args.cancelled > 0) lines.push(`${args.cancelled} cancellation${args.cancelled === 1 ? '' : 's'} — usually customer no-show or kitchen-side issue.`)
-  return lines.join(' ')
 }

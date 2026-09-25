@@ -9,6 +9,8 @@
 import cron from 'node-cron'
 import { serviceClient as prisma } from '../lib/prisma.js'
 import { sendEmail } from '../lib/notify.js'
+import { shiftOfCompany } from '../lib/tenantScope.js'
+import { getZReport } from '../modules/pos/service.js'
 
 type ReportType = 'sales_daily' | 'shift_summary' | 'low_stock' | 'food_cost' | 'ap_aging' | 'menu_engineering'
 
@@ -35,7 +37,7 @@ async function tick(): Promise<void> {
     // company at all (pre-migration row) is skipped rather than emailed
     // org-wide.
     if (!r.tenantId) { console.warn(`[scheduledReports] ${r.id} has no company — skipped`); continue }
-    void run(r.id, r.reportType as ReportType, r.recipients, r.conceptId, r.tenantId, r.name)
+    void run(r.id, r.reportType as ReportType, r.recipients, r.conceptId, r.tenantId, r.name, r.lastRunAt)
       .catch((err) => console.warn(`[scheduledReports] ${r.id} failed:`, (err as Error).message))
       .finally(() => RUNNING.delete(r.id))
   }
@@ -48,25 +50,31 @@ async function run(
   conceptId: string | null,
   tenantId: string,
   name: string,
+  lastRunAt: Date | null,
 ): Promise<void> {
   let html = ''
   let subject = `[servd] ${name}`
+  let send = true
   try {
     if (reportType === 'sales_daily') {
       ({ subject, html } = await buildDailySalesReport(conceptId, tenantId))
+    } else if (reportType === 'shift_summary') {
+      const report = await buildShiftSummaryReport(tenantId, lastRunAt)
+      if (report) ({ subject, html } = report)
+      else send = false                                    // no drawer closed since the last run
     } else if (reportType === 'low_stock') {
       ({ subject, html } = await buildLowStockReport(tenantId))
     } else if (reportType === 'ap_aging') {
       ({ subject, html } = await buildApAgingReport(tenantId))
     } else {
-      // Stub for shift_summary / food_cost / menu_engineering — wire to real
-      // computers once their report endpoints stabilise.
+      // Stub for food_cost / menu_engineering — wire to real computers once
+      // their report endpoints stabilise.
       html = `<p>Report ${reportType} is queued but not yet implemented.</p>`
     }
-    await Promise.all(recipients.map((to) => sendEmail(to, subject, html)))
+    if (send) await Promise.all(recipients.map((to) => sendEmail(to, subject, html)))
     await prisma.scheduledReport.update({
       where: { id },
-      data: { lastRunAt: new Date(), lastStatus: 'success' },
+      data: { lastRunAt: new Date(), lastStatus: send ? 'success' : 'success: nothing to send' },
     })
   } catch (err) {
     await prisma.scheduledReport.update({
@@ -147,6 +155,54 @@ async function buildDailySalesReport(conceptId: string | null, tenantId: string)
         <li>Tax: ${fmt(tax)}</li>
         <li><strong>Net: ${fmt(gross - discount)}</strong></li>
       </ul>`,
+  }
+}
+
+/**
+ * The end-of-shift summary IS the Z-report (pos/service.ts getZReport) — the
+ * same figures the cashier counted against and the ledger posted. One section
+ * per drawer of this company closed since the schedule last ran (the last 24
+ * hours on a first run). Drawers belong to a company, not a brand, so a
+ * schedule's brand filter does not apply. Null when nothing closed.
+ */
+export async function buildShiftSummaryReport(tenantId: string, since: Date | null): Promise<{ subject: string; html: string } | null> {
+  const from = since ?? new Date(Date.now() - 24 * 60 * 60 * 1000)
+  const shifts = await prisma.shift.findMany({
+    where: { status: 'closed', closedAt: { gt: from }, ...shiftOfCompany({ tenantId }) },
+    select: { id: true },
+    orderBy: { closedAt: 'asc' },
+    take: 100,
+  })
+  if (shifts.length === 0) return null
+
+  const fmt = (c: number | null) => c === null ? '—' : `PKR ${(c / 100).toLocaleString('en-PK', { maximumFractionDigits: 0 })}`
+  const esc = (t: string) => t.replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]!))
+  const sections: string[] = []
+  let unbalanced = 0
+  for (const s of shifts) {
+    const z = await getZReport(s.id)
+    if (!z.isBalanced) unbalanced++
+    const closed = z.closedAt ? new Date(z.closedAt).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : ''
+    sections.push(`
+      <h3>${esc(z.staffName)} — closed ${closed}</h3>
+      <table cellpadding="6" border="1" style="border-collapse:collapse">
+        <tr><td>Orders</td><td>${z.ordersCount}</td></tr>
+        <tr><td>Gross (cash + card)</td><td>${fmt(z.grossCents)}</td></tr>
+        <tr><td>Refunds</td><td>${fmt(z.refundsCents)}</td></tr>
+        <tr><td>Comps</td><td>${fmt(z.compCents)}</td></tr>
+        <tr><td>Discounts</td><td>${fmt(z.discountCents)}</td></tr>
+        <tr><td>Tax</td><td>${fmt(z.taxCents)}</td></tr>
+        <tr><td>Opening float</td><td>${fmt(z.openingFloatCents)}</td></tr>
+        <tr><td>Drops / pay-outs</td><td>${fmt(z.cashMovements.drops)} / ${fmt(z.cashMovements.payouts)}</td></tr>
+        <tr><td>Adds / pay-ins</td><td>${fmt(z.cashMovements.adds)} / ${fmt(z.cashMovements.payins)}</td></tr>
+        <tr><td><strong>Expected cash</strong></td><td><strong>${fmt(z.expectedCashCents)}</strong></td></tr>
+        <tr><td>Counted</td><td>${fmt(z.closingFloatCents)}</td></tr>
+        <tr><td><strong>Variance</strong></td><td><strong>${fmt(z.varianceCents)}</strong> ${z.isBalanced ? '(within tolerance)' : `(outside the ${fmt(z.varianceLimitCents)} tolerance)`}</td></tr>
+      </table>`)
+  }
+  return {
+    subject: `[servd] ${shifts.length} shift(s) closed${unbalanced > 0 ? ` — ${unbalanced} outside tolerance` : ''}`,
+    html: `<h2>Shift summary</h2>${sections.join('')}`,
   }
 }
 
