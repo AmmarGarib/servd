@@ -6,7 +6,7 @@ import { postJournalEntry } from './journal.js'
 import { requireAuth, FINANCIALS_VIEWERS, ADMIN_ONLY } from '../auth/middleware.js'
 import { AppError } from '../../lib/errors.js'
 import { resolveDateRange, parsePktEndOfDay, fmtPktDate } from './dates.js'
-import { trialBalance, balanceSheet, profitAndLoss, cashFlow } from './reports.js'
+import { trialBalance, balanceSheet, profitAndLoss, pnlByConcept, cashFlow } from './reports.js'
 import { salesTaxReturn } from './salesTaxReturn.js'
 import { resolveTenantScope } from '../../lib/tenantScope.js'
 import { toCsv, fmtPkr } from './csv.js'
@@ -37,70 +37,17 @@ function sendCsv(reply: FastifyReply, filename: string, body: string) {
 }
 
 export async function accountingRoutes(fastify: FastifyInstance) {
-  // ─── Legacy P&L (FinancialEntry-based, retained for current dashboards) ──
-
-  fastify.get<{
-    Querystring: { conceptId?: string; dateFrom?: string; dateTo?: string; period?: string }
-  }>('/pl', { preHandler: requireAuth(...FINANCIALS_VIEWERS) }, async (req) => {
-    const { conceptId, dateFrom, dateTo } = req.query
-
-    const defaultFrom = new Date(Date.now() - 90 * 86_400_000)
-    const from = dateFrom ? new Date(dateFrom) : defaultFrom
-    const to = dateTo ? new Date(dateTo) : undefined
-
-    const entries = await prisma.financialEntry.findMany({
-      where: {
-        ...(conceptId && { conceptId }),
-        // Scope to active tenant via concept relation
-        concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
-        entryDate: { gte: from, ...(to && { lte: to }) },
-      },
-      include: { concept: { select: { name: true, slug: true } } },
-    })
-
-    const byConceptMap = new Map<string, {
-      conceptName: string
-      gross: number; commission: number; discount: number; tax: number; net: number; orders: number
-    }>()
-    for (const entry of entries) {
-      const key = entry.conceptId
-      const existing = byConceptMap.get(key)
-      if (existing) {
-        existing.gross += entry.grossCents
-        existing.commission += entry.commissionCents
-        existing.discount += entry.discountCents
-        existing.tax += entry.taxCents
-        existing.net += entry.netCents
-        existing.orders += 1
-      } else {
-        byConceptMap.set(key, {
-          conceptName: entry.concept.name,
-          gross: entry.grossCents, commission: entry.commissionCents,
-          discount: entry.discountCents, tax: entry.taxCents,
-          net: entry.netCents, orders: 1,
-        })
-      }
-    }
-
-    const byConcept = Object.fromEntries(byConceptMap)
-    const totals = {
-      gross: entries.reduce((s, e) => s + e.grossCents, 0),
-      commission: entries.reduce((s, e) => s + e.commissionCents, 0),
-      discount: entries.reduce((s, e) => s + e.discountCents, 0),
-      tax: entries.reduce((s, e) => s + e.taxCents, 0),
-      net: entries.reduce((s, e) => s + e.netCents, 0),
-      orders: entries.length,
-    }
-    return { byConcept, totals, dateFrom, dateTo }
-  })
-
   // ─── Ledger / journal entry feed ─────────────────────────────────────────
 
-  fastify.get<{ Querystring: { accountId?: string; dateFrom?: string; dateTo?: string; limit?: string; cursor?: string; format?: string } }>(
+  // THE transaction feed: /accounting/ledger in admin, the Accounting hub's
+  // activity links (?id=) and the CSV export. (/finance/ledger listed the
+  // sales register to every manager tier and had no caller; the /finance
+  // Transactions tab called a GET /accounting/entries that never existed.)
+  fastify.get<{ Querystring: { id?: string; accountId?: string; dateFrom?: string; dateTo?: string; limit?: string; cursor?: string; format?: string } }>(
     '/ledger',
     { preHandler: requireAuth(...FINANCIALS_VIEWERS) },
     async (req, reply) => {
-      const { accountId, dateFrom, dateTo, limit: limitStr, cursor, format } = req.query
+      const { id, accountId, dateFrom, dateTo, limit: limitStr, cursor, format } = req.query
       const limit = Math.min(parseInt(limitStr ?? '50', 10), 1000)
       const { from, to } = resolveDateRange(dateFrom, dateTo)
 
@@ -110,12 +57,19 @@ export async function accountingRoutes(fastify: FastifyInstance) {
       const entries = await prisma.journalEntry.findMany({
         where: {
           tenantId: { in: scope.tenantIds },
-          ...(accountId && { lines: { some: { accountId } } }),
-          entryDate: { gte: from, lte: to },
-          ...(cursor && { id: { lt: cursor } }),
+          // One entry (the activity feed's links) ignores the date window.
+          ...(id
+            ? { id }
+            : {
+                ...(accountId && { lines: { some: { accountId } } }),
+                entryDate: { gte: from, lte: to },
+              }),
         },
         include: { lines: { include: { account: { select: { code: true, name: true, type: true } } } } },
-        orderBy: { entryDate: 'desc' },
+        // Page by position in (entryDate, id) order. `id < cursor` paged on a
+        // random uuid while sorting by date, so pages skipped and repeated.
+        orderBy: [{ entryDate: 'desc' }, { id: 'desc' }],
+        ...(cursor && !id && { cursor: { id: cursor }, skip: 1 }),
         take: limit + 1,
       })
 
@@ -326,6 +280,78 @@ export async function accountingRoutes(fastify: FastifyInstance) {
     },
   )
 
+  // ─── P&L by brand (ledger-based) ─────────────────────────────────────────
+  // The "By brand" tab of /accounting/pl-ledger (it replaces the /finance
+  // "By Concept" tab, which summed the sales register). Straight from the
+  // journal: each brand's MEASURED revenue, discounts/refunds, COGS and opex
+  // from brand-tagged lines, plus the shared bucket (untagged lines —
+  // overhead, manual entries, older postings) shown as its own row, never
+  // spread across brands here.
+
+  fastify.get<{ Querystring: { dateFrom?: string; dateTo?: string; format?: string } }>(
+    '/pl-ledger/brands',
+    { preHandler: requireAuth(...FINANCIALS_VIEWERS) },
+    async (req, reply) => {
+      const { from, to } = resolveDateRange(req.query.dateFrom, req.query.dateTo)
+      const tenantIds = (await resolveTenantScope(req)).tenantIds
+      const [buckets, concepts] = await Promise.all([
+        pnlByConcept(tenantIds, from, to),
+        prisma.concept.findMany({ where: { tenantId: { in: tenantIds } }, select: { id: true, name: true, slug: true } }),
+      ])
+      const byId = new Map(concepts.map((c) => [c.id, c]))
+      const row = (b: (typeof buckets)[number]) => {
+        const netRevenueCents  = b.revenueCents - b.contraRevenueCents
+        const grossProfitCents = netRevenueCents - b.cogsCents
+        const netProfitCents   = grossProfitCents - b.opexCents
+        return {
+          conceptId: b.conceptId,
+          name: b.conceptId ? (byId.get(b.conceptId)?.name ?? 'Unknown brand') : 'Shared / unallocated',
+          slug: b.conceptId ? (byId.get(b.conceptId)?.slug ?? null) : null,
+          revenueCents: b.revenueCents,
+          contraRevenueCents: b.contraRevenueCents,
+          netRevenueCents,
+          cogsCents: b.cogsCents,
+          grossProfitCents,
+          opexCents: b.opexCents,
+          netProfitCents,
+          grossMarginPct: b.revenueCents > 0 ? Number(((grossProfitCents / b.revenueCents) * 100).toFixed(2)) : 0,
+        }
+      }
+      const brands = buckets.filter((b) => b.conceptId).map(row).sort((a, b) => b.revenueCents - a.revenueCents)
+      const sharedBucket = buckets.find((b) => !b.conceptId)
+      const shared = sharedBucket ? row(sharedBucket) : null
+      const all = [...brands, ...(shared ? [shared] : [])]
+      const totals = all.reduce(
+        (t, r) => ({
+          revenueCents: t.revenueCents + r.revenueCents,
+          contraRevenueCents: t.contraRevenueCents + r.contraRevenueCents,
+          netRevenueCents: t.netRevenueCents + r.netRevenueCents,
+          cogsCents: t.cogsCents + r.cogsCents,
+          grossProfitCents: t.grossProfitCents + r.grossProfitCents,
+          opexCents: t.opexCents + r.opexCents,
+          netProfitCents: t.netProfitCents + r.netProfitCents,
+        }),
+        { revenueCents: 0, contraRevenueCents: 0, netRevenueCents: 0, cogsCents: 0, grossProfitCents: 0, opexCents: 0, netProfitCents: 0 },
+      )
+      const report = { dateFrom: fmtPktDate(from), dateTo: fmtPktDate(to), brands, shared, totals }
+
+      if (req.query.format === 'csv') {
+        const flat = [...all, { ...totals, name: 'TOTAL', grossMarginPct: '' }].map((r) => ({
+          brand: r.name,
+          revenue: fmtPkr(r.revenueCents),
+          discountsRefunds: fmtPkr(r.contraRevenueCents),
+          netRevenue: fmtPkr(r.netRevenueCents),
+          cogs: fmtPkr(r.cogsCents),
+          grossProfit: fmtPkr(r.grossProfitCents),
+          opex: fmtPkr(r.opexCents),
+          netProfit: fmtPkr(r.netProfitCents),
+        }))
+        return sendCsv(reply, `pl-by-brand-${report.dateFrom}-${report.dateTo}.csv`, toCsv(flat))
+      }
+      return report
+    },
+  )
+
   // ─── Cash flow ───────────────────────────────────────────────────────────
 
   fastify.get<{ Querystring: { dateFrom?: string; dateTo?: string; format?: string } }>(
@@ -355,21 +381,31 @@ export async function accountingRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuth(...FINANCIALS_VIEWERS) },
     async (req) => {
       const limit = Math.min(parseInt(req.query.limit ?? '30', 10), 100)
+      const scope = await resolveTenantScope(req)
+      // Audit rows: the BOOKS' trail only (category 'accounting'), of the
+      // companies in view, and only for the roles allowed to read that trail
+      // (ACCOUNTING_AUDIT_ROLES — the same gate as /accounting/audit-log,
+      // where these rows link). This used to merge every company's identity
+      // and accounting trail into the feed for every financials viewer.
+      const canReadTrail = (ACCOUNTING_AUDIT_ROLES as string[]).includes(req.staffUser!.role)
       const [entries, audits, orders] = await Promise.all([
         prisma.journalEntry.findMany({
-          where: { tenantId: { in: (await resolveTenantScope(req)).tenantIds } },
+          where: { tenantId: { in: scope.tenantIds } },
           orderBy: { createdAt: 'desc' }, take: limit,
           select: { id: true, reference: true, description: true, createdAt: true, postedBy: true },
         }),
-        prisma.auditLog.findMany({
-          orderBy: { createdAt: 'desc' }, take: limit,
-          select: { id: true, action: true, entity: true, entityId: true, userEmail: true, createdAt: true },
-        }),
+        canReadTrail
+          ? prisma.auditLog.findMany({
+              where: { category: 'accounting', tenantId: { in: scope.tenantIds } },
+              orderBy: { createdAt: 'desc' }, take: limit,
+              select: { id: true, action: true, entity: true, entityId: true, userEmail: true, createdAt: true },
+            })
+          : Promise.resolve([]),
         prisma.order.findMany({
           where: {
             deletedAt: null,
             status: { in: ['completed', 'refunded', 'cancelled'] },
-            concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
+            concept: { tenantId: { in: scope.tenantIds }, deletedAt: null },
           },
           orderBy: { completedAt: 'desc' }, take: limit,
           select: {

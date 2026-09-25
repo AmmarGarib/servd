@@ -9,7 +9,7 @@ Background workers. Most are BullMQ-driven (Redis-backed queues) — a few are s
 - `loyaltyTriggers.ts` — Birthday bonuses, tier promotions, expiring-points alerts.
 - `loyaltyExpiration.ts` — Expires unused loyalty points after the configured TTL.
 - `reservationReminders.ts` — 24h + 2h SMS reminders for upcoming reservations.
-- `dailyDigest.ts` — Manager email at 08:00 with yesterday's metrics.
+- `scheduledReports.ts` — Per-company scheduled report emails (daily sales, shift summary, low stock, AP aging), configured in Configuration → Scheduled reports.
 - `fbrSubmission.ts` — Batches completed orders + submits to FBR every 5 minutes.
 - `segmentComputation.ts` — Recomputes behavioural CRM segments nightly.
 - `socialPublish.ts` — Polls scheduled Meta/Instagram posts and publishes them.

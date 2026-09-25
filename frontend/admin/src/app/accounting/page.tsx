@@ -105,11 +105,13 @@ export default function AccountingHubPage() {
               href: '/accounting/food-cost',
             },
             {
-              label: 'Gross Revenue (MTD)',
+              // Sales-register figure (what customers paid, incl. GST) — the
+              // books' revenue is the P&L.
+              label: 'Sales (MTD, register)',
               value: foodCost ? fmt(foodCost.revenue.grossCents) : '—',
-              sub: foodCost ? `Net: ${fmt(foodCost.revenue.netCents)}` : undefined,
+              sub: foodCost ? `incl. GST · register net ${fmt(foodCost.revenue.netCents)}` : undefined,
               color: 'text-gradient-brand',
-              href: '/finance',
+              href: '/reports',
             },
             {
               label: 'Active Vendors',
@@ -163,7 +165,8 @@ export default function AccountingHubPage() {
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-sm">
             <Link href="/accounting/trial-balance"  className="s-card-hover p-3 rounded border border-s-border text-s-text">Trial Balance</Link>
             <Link href="/accounting/balance-sheet"  className="s-card-hover p-3 rounded border border-s-border text-s-text">Balance Sheet</Link>
-            <Link href="/accounting/pl-ledger"      className="s-card-hover p-3 rounded border border-s-border text-s-text">P&L (ledger)</Link>
+            <Link href="/accounting/pl-ledger"      className="s-card-hover p-3 rounded border border-s-border text-s-text">P&L</Link>
+            <Link href="/accounting/ledger"         className="s-card-hover p-3 rounded border border-s-border text-s-text">Ledger</Link>
             <Link href="/accounting/cash-flow"      className="s-card-hover p-3 rounded border border-s-border text-s-text">Cash Flow</Link>
             <Link href="/accounting/period-close"      className="s-card-hover p-3 rounded border border-s-border text-s-text">Period Close</Link>
             <Link href="/accounting/ap-aging"          className="s-card-hover p-3 rounded border border-s-border text-s-text">AP Aging</Link>
@@ -300,7 +303,7 @@ export default function AccountingHubPage() {
               { href: '/accounting/food-cost', icon: '🍽', label: 'Food Cost', desc: 'Theoretical vs actual' },
               { href: '/accounting/recipes',   icon: '📐', label: 'Recipes',   desc: 'Ingredient costing' },
               { href: '/accounting/vendors',   icon: '🏭', label: 'Vendors',   desc: 'Suppliers & POs' },
-              { href: '/finance',              icon: '💰', label: 'P&L',       desc: 'Profit & Loss' },
+              { href: '/accounting/pl-ledger', icon: '💰', label: 'P&L',       desc: 'Profit & Loss (ledger)' },
               { href: '/reports',              icon: '📈', label: 'Reports',   desc: 'Sales & analytics' },
               { href: '/inventory',            icon: '📦', label: 'Inventory', desc: 'Stock & par levels' },
             ].map((item) => (

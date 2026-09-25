@@ -143,7 +143,9 @@ export async function effectiveModulesForUser(user: {
 // Paths are matched after stripping the /api/v1 prefix. Deliberately covers
 // only the audit-flagged financial/reporting surfaces — see header comment.
 const GATED_PREFIXES: Array<{ prefix: string; anyOf: string[] }> = [
-  { prefix: '/accounting/pl', anyOf: ['finance_pl', 'accounting'] },
+  // The P&L (and its by-brand tab) is THE P&L — reachable with the P&L module
+  // or the accounting module, as the old /finance P&L was.
+  { prefix: '/accounting/pl-ledger', anyOf: ['finance_pl', 'accounting'] },
   { prefix: '/accounting',    anyOf: ['accounting'] },
   { prefix: '/reports',       anyOf: ['reports'] },
   { prefix: '/management',    anyOf: ['brand_dashboard', 'fnb_dashboard'] },

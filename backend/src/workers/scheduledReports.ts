@@ -11,6 +11,8 @@ import { serviceClient as prisma } from '../lib/prisma.js'
 import { sendEmail } from '../lib/notify.js'
 import { shiftOfCompany } from '../lib/tenantScope.js'
 import { getZReport } from '../modules/pos/service.js'
+import { salesTotals, topItems, salesByChannel, type SalesQuery } from '../modules/reports/service.js'
+import { fmtPktDate, parsePktStartOfDay, parsePktEndOfDay } from '../modules/accounting/dates.js'
 
 type ReportType = 'sales_daily' | 'shift_summary' | 'low_stock' | 'food_cost' | 'ap_aging' | 'menu_engineering'
 
@@ -120,42 +122,85 @@ function matchField(field: string, value: number, min: number, max: number): boo
 
 // ─── Report builders ─────────────────────────────────────────────────────────
 
-async function buildDailySalesReport(conceptId: string | null, tenantId: string): Promise<{ subject: string; html: string }> {
-  const now = new Date()
-  const yesterday = new Date(now); yesterday.setDate(yesterday.getDate() - 1)
-  const start = new Date(yesterday); start.setHours(0, 0, 0, 0)
-  const end   = new Date(yesterday); end.setHours(23, 59, 59, 999)
-
-  const orders = await prisma.order.findMany({
-    where: {
-      placedAt: { gte: start, lte: end },
-      status:   { notIn: ['cancelled', 'rejected'] },
-      deletedAt: null,
-      // One brand, or every brand of this company — never another company's.
-      ...(conceptId ? { conceptId } : { concept: { tenantId } }),
-    },
-    select: { totalCents: true, discountCents: true, taxCents: true, source: true },
-  })
-
-  const gross    = orders.reduce((s, o) => s + o.totalCents, 0)
-  const discount = orders.reduce((s, o) => s + (o.discountCents ?? 0), 0)
-  const tax      = orders.reduce((s, o) => s + (o.taxCents ?? 0), 0)
+/**
+ * The daily sales email — the ONE daily sales sender. (A second one, the
+ * dailyDigest worker, mailed every company's orders blended into one email
+ * to an env-var address; it is gone, and its top items and channel breakdown
+ * live here now.) Yesterday in PKT, for one brand or every brand of one
+ * company, from the same sales-register functions as /reports/sales — so the
+ * email matches the dashboard: completed orders; "sales" is what customers
+ * paid, incl. GST and service charge, after discounts. (Both old emails
+ * showed "Net = total − discount", taking the discount off twice.)
+ */
+export async function buildDailySalesReport(conceptId: string | null, tenantId: string, now = new Date()): Promise<{ subject: string; html: string }> {
+  const pktToday = fmtPktDate(now)
+  const day = new Date(new Date(`${pktToday}T00:00:00Z`).getTime() - 86_400_000).toISOString().slice(0, 10)
+  const q: SalesQuery = {
+    company: { tenantId },
+    // One brand, or every brand of this company — never another company's.
+    conceptId,
+    from: parsePktStartOfDay(day),
+    to: parsePktEndOfDay(day),
+  }
+  const [totals, top, channels] = await Promise.all([salesTotals(q), topItems(q, 5), salesByChannel(q)])
 
   const fmt = (c: number) => `PKR ${(c / 100).toLocaleString('en-PK', { maximumFractionDigits: 0 })}`
-  const dateLabel = yesterday.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' })
+  const esc = (t: string) => t.replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]!))
+  const dateLabel = new Date(`${day}T12:00:00Z`).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'UTC' })
+
+  const topRows = top.length === 0
+    ? '<tr><td colspan="3">No items sold.</td></tr>'
+    : top.map((t) => `<tr><td>#${t.rank}</td><td>${esc(t.name)}</td><td>${t.quantity}×</td></tr>`).join('')
+  const channelRows = channels.length === 0
+    ? '<tr><td colspan="3">No orders.</td></tr>'
+    : channels.map((c) => `<tr><td>${esc(c.source)}</td><td>${c.orders} orders</td><td>${fmt(c.gross)}</td></tr>`).join('')
 
   return {
     subject: `Daily sales — ${dateLabel}`,
     html: `
       <h2>Daily sales — ${dateLabel}</h2>
-      <p><strong>${orders.length}</strong> orders</p>
+      <p><strong>${totals.orders}</strong> completed orders</p>
       <ul>
-        <li>Gross: ${fmt(gross)}</li>
-        <li>Discounts: ${fmt(discount)}</li>
-        <li>Tax: ${fmt(tax)}</li>
-        <li><strong>Net: ${fmt(gross - discount)}</strong></li>
-      </ul>`,
+        <li><strong>Sales: ${fmt(totals.gross)}</strong> <small>(what customers paid, incl. GST and service charge, after discounts)</small></li>
+        <li>Discounts given: ${fmt(totals.discount)}</li>
+        <li>Sales tax on these orders: ${fmt(totals.tax)}</li>
+      </ul>
+      <h3>Top items</h3>
+      <table cellpadding="6" border="1" style="border-collapse:collapse">${topRows}</table>
+      <h3>By channel</h3>
+      <table cellpadding="6" border="1" style="border-collapse:collapse">${channelRows}</table>
+      <p><small>Sales-register figures. The books (P&amp;L, sales-tax return) are in Accounting.</small></p>`,
   }
+}
+
+/**
+ * One-time carry-over from the retired dailyDigest worker: when the box still
+ * has DIGEST_EMAIL (or, as the digest fell back to, SMTP_FROM) set, give every
+ * company a "Daily sales" schedule to that address at the digest's old time
+ * (00:05). Skipped for a company that already has — or ever had, even if
+ * since deleted — a sales_daily schedule, so an operator's own schedule or
+ * deletion is never overridden. Returns the companies it created one for.
+ */
+export async function carryOverDigestRecipient(): Promise<string[]> {
+  const recipient = (process.env['DIGEST_EMAIL'] ?? process.env['SMTP_FROM'] ?? '').trim()
+  // SMTP_FROM may be "Name <addr>" — take the address.
+  const address = recipient.match(/<([^>]+)>/)?.[1] ?? recipient
+  if (!address || !address.includes('@')) return []
+  const companies = await prisma.tenant.findMany({ where: { isActive: true, deletedAt: null }, select: { id: true, slug: true } })
+  const created: string[] = []
+  for (const c of companies) {
+    const existing = await prisma.scheduledReport.findFirst({ where: { tenantId: c.id, reportType: 'sales_daily' }, select: { id: true } })
+    if (existing) continue
+    await prisma.scheduledReport.create({
+      data: {
+        tenantId: c.id, name: 'Daily sales', reportType: 'sales_daily', cron: '5 0 * * *',
+        recipients: [address], conceptId: null,
+        notes: 'Carried over from the retired daily digest (DIGEST_EMAIL). Edit or delete here.',
+      },
+    })
+    created.push(c.slug)
+  }
+  return created
 }
 
 /**

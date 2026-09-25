@@ -143,7 +143,7 @@ export default function BrandDashboardPage() {
         {/* Revenue + customers strip */}
         <Section title="This period" hint={range.label}>
           <div style={{ display: 'grid', gap: '0.7rem', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))' }}>
-            <MiniStat label="Revenue"  value={dash(m?.revenue.grossCents)} />
+            <MiniStat label="Sales (incl. GST)"  value={dash(m?.revenue.grossCents)} />
             <MiniStat label="Orders"   value={(m?.revenue.orders ?? 0).toLocaleString()} />
             <MiniStat label="Active customers" value={(m?.customers.distinct ?? 0).toLocaleString()} />
           </div>

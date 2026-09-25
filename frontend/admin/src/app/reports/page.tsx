@@ -236,9 +236,9 @@ export default function ReportsPage() {
               <button
                 onClick={() => {
                   const rows: Record<string, unknown>[] = [
-                    { metric: 'Gross Revenue', value: Math.round(sales.totals.gross / 100) },
-                    { metric: 'Net Revenue', value: Math.round(sales.totals.net / 100) },
-                    { metric: 'Tax Collected', value: Math.round(sales.totals.tax / 100) },
+                    { metric: 'Sales incl. GST (register)', value: Math.round(sales.totals.gross / 100) },
+                    { metric: 'Register net (sales − discounts)', value: Math.round(sales.totals.net / 100) },
+                    { metric: 'Tax on these orders (register)', value: Math.round(sales.totals.tax / 100) },
                     { metric: 'Total Orders', value: sales.totals.orders },
                   ]
                   exportToCsv(rows, `sales_${slug}.csv`)
@@ -252,24 +252,26 @@ export default function ReportsPage() {
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
               {[
                 {
-                  label: 'Gross Revenue',
+                  // Sales-register figures: what customers paid, incl. GST
+                  // and service charge. The books' revenue is the ledger P&L.
+                  label: 'Sales (incl. GST)',
                   value: fmt(sales.totals.gross),
                   color: 'text-gradient-brand',
-                  sub: undefined,
+                  sub: 'sales register — not the P&L',
                   delta: compare && prevSales ? computeDelta(sales.totals.gross, prevSales.totals.gross) : null,
                 },
                 {
-                  label: 'Net Revenue',
+                  label: 'Register net',
                   value: fmt(sales.totals.net),
                   color: 'text-s-teal',
-                  sub: sales.totals.gross > 0 ? `${((sales.totals.net / sales.totals.gross) * 100).toFixed(1)}% margin` : undefined,
+                  sub: 'register: sales − discounts',
                   delta: compare && prevSales ? computeDelta(sales.totals.net, prevSales.totals.net) : null,
                 },
                 {
-                  label: 'Tax Collected',
+                  label: 'Tax on orders',
                   value: fmt(sales.totals.tax),
                   color: 'text-s-amber',
-                  sub: undefined,
+                  sub: 'register — the filed figure is the tax return',
                   delta: compare && prevSales ? computeDelta(sales.totals.tax, prevSales.totals.tax) : null,
                 },
                 {
@@ -507,8 +509,8 @@ export default function ReportsPage() {
                       <tr>
                         <th>Channel</th>
                         <th className="text-right">Orders</th>
-                        <th className="text-right">Gross</th>
-                        <th className="text-right">Net</th>
+                        <th className="text-right">Sales (incl. GST)</th>
+                        <th className="text-right">Register net</th>
                         {compare && <th className="text-right">vs Prev</th>}
                       </tr>
                     </thead>

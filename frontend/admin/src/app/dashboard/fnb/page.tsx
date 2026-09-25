@@ -133,7 +133,7 @@ export default function FnbDashboardPage() {
 
         {/* Hero */}
         <div style={{ marginTop: '1.2rem', display: 'grid', gap: '0.8rem', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}>
-          <Scorecard label="Sales"        value={dash(m?.sales.grossCents)} accent="#00D4B1" sub={`${(m?.sales.orders ?? 0).toLocaleString()} orders`} />
+          <Scorecard label="Sales"        value={dash(m?.sales.grossCents)} accent="#00D4B1" sub={`incl. GST · ${(m?.sales.orders ?? 0).toLocaleString()} orders`} />
           <Scorecard label="Avg ticket"   value={dash(m?.sales.aovCents)}   accent="#4F8EF7" sub="per order" />
           <Scorecard label="Kitchen speed" value={m?.kitchen.avgTicketMinutes != null ? `${m.kitchen.avgTicketMinutes} min` : '—'} accent="#A855F7" sub="fire → bump avg" />
           <Scorecard label="Food complaints" value={(m?.quality.foodComplaints ?? 0).toLocaleString()} accent={(m?.quality.foodComplaints ?? 0) > 0 ? '#FF4D4F' : '#F59E0B'} sub="quality · wrong · missing" />

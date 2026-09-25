@@ -220,8 +220,9 @@ const NAV: NavSection[] = [
     title: 'Finance',
     defaultCollapsed: true,
     items: [
-      { href: '/finance',                label: 'P&L',             icon: '💰', module: 'finance_pl' },
+      { href: '/accounting/pl-ledger',   label: 'P&L',             icon: '💰', module: 'finance_pl' },
       { href: '/accounting',             label: 'Accounting',      icon: '📊', module: 'accounting', children: [
+        { href: '/accounting/ledger',           label: 'Ledger',           module: 'accounting' },
         { href: '/accounting/food-cost',        label: 'Food Cost',        module: 'accounting' },
         // Sales-mix quadrant report (orders × margin). Renamed so the ONE
         // "Menu Engineering" is the Kitchen pricing page at /menu-engineering.

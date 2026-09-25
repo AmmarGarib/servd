@@ -369,7 +369,7 @@ export async function buildShiftCloseEntry(shiftId: string): Promise<ShiftCloseE
     lines.push({ accountCode: short ? ACCT.CASH_DRAWER   : ACCT.CASH_VARIANCE, type: 'credit', amountCents, memo })
   }
 
-  // ── Credits: revenue, service charge, tips per brand + GST output ───────
+  // ── Credits per brand: revenue, service charge, tips, GST output ────────
   for (const b of sales.byConcept.values()) {
     if (b.revenueCents > 0) {
       lines.push({ accountCode: revenueCodeForConcept(b.conceptSlug), type: 'credit', amountCents: b.revenueCents, memo: `Revenue @ ${b.conceptSlug}`, conceptId: b.conceptId })
@@ -380,9 +380,11 @@ export async function buildShiftCloseEntry(shiftId: string): Promise<ShiftCloseE
     if (b.tipCents > 0) {
       lines.push({ accountCode: ACCT.TIPS_PAYABLE, type: 'credit', amountCents: b.tipCents, memo: `Tips @ ${b.conceptSlug}`, conceptId: b.conceptId })
     }
-  }
-  if (sales.totals.taxCents > 0) {
-    lines.push({ accountCode: ACCT.GST_OUTPUT, type: 'credit', amountCents: sales.totals.taxCents, memo: `GST output ${tag}` })
+    // GST per brand, tagged like an order's own entry, so tax is measurable
+    // per brand as well as per company.
+    if (b.taxCents > 0) {
+      lines.push({ accountCode: ACCT.GST_OUTPUT, type: 'credit', amountCents: b.taxCents, memo: `GST output @ ${b.conceptSlug} ${tag}`, conceptId: b.conceptId })
+    }
   }
 
   if (lines.length < 2) return { ok: false, reason: 'no_postable_activity' }

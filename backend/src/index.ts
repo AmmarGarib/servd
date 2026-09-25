@@ -23,13 +23,12 @@ import { startCoursePacingWorker } from './workers/coursePacing.js'
 import { startLoyaltyTriggerWorker } from './workers/loyaltyTriggers.js'
 import { startLoyaltyExpirationWorker } from './workers/loyaltyExpiration.js'
 import { startReservationReminderWorker } from './workers/reservationReminders.js'
-import { startDailyDigestWorker } from './workers/dailyDigest.js'
 import { startDeliveryWatch } from './workers/deliveryWatch.js'
 import { startReviewPromptWorker } from './workers/reviewPrompt.js'
 import { startFbrSubmissionWorker } from './workers/fbrSubmission.js'
 import { startSrbSubmissionWorker } from './workers/srbSubmission.js'
 import { startWebhookDeliveryWorker } from './workers/webhookDelivery.js'
-import { startScheduledReportsWorker } from './workers/scheduledReports.js'
+import { startScheduledReportsWorker, carryOverDigestRecipient } from './workers/scheduledReports.js'
 import { startShrinkageTrendWorker } from './workers/shrinkageTrend.js'
 import { startRiderScoringWorker } from './workers/riderScoring.js'
 import { startOrderAutoCancelWorker } from './workers/orderAutoCancel.js'
@@ -65,7 +64,6 @@ import { hrRoutes } from './modules/hr/routes.js'
 import { loyaltyRoutes } from './modules/loyalty/routes.js'
 import { storefrontRoutes } from './modules/storefront/routes.js'
 import { webhookRoutes, webhookManagementRoutes } from './modules/webhooks/routes.js'
-import { financeRoutes } from './modules/finance/routes.js'
 import { reviewRoutes } from './modules/reviews/routes.js'
 import { complaintRoutes } from './modules/complaints/routes.js'
 import { feedbackRoutes } from './modules/feedback/routes.js'
@@ -320,7 +318,6 @@ async function build() {
       await api.register(receivableRoutes, { prefix: '/accounting/receivables' })
       await api.register(foodSafetyRoutes, { prefix: '/food-safety' })
       await api.register(hrRoutes, { prefix: '/hr' })
-      await api.register(financeRoutes, { prefix: '/finance' })
       await api.register(crmRoutes, { prefix: '/crm' })
       await api.register(loyaltyRoutes, { prefix: '/loyalty' })
       await api.register(storefrontRoutes, { prefix: '/storefront' })
@@ -768,7 +765,11 @@ async function build() {
     startLoyaltyTriggerWorker()
     startLoyaltyExpirationWorker()
     startReservationReminderWorker()
-    startDailyDigestWorker()
+    // The daily sales email is a per-company scheduled report now; a box that
+    // still sets DIGEST_EMAIL gets that address carried over once.
+    carryOverDigestRecipient()
+      .then((slugs) => { if (slugs.length > 0) fastify.log.info(`[scheduledReports] daily sales schedule carried over from DIGEST_EMAIL for ${slugs.join(', ')}`) })
+      .catch((err: Error) => fastify.log.warn(`[scheduledReports] digest carry-over skipped: ${err.message}`))
     startDeliveryWatch()
     startReviewPromptWorker()
     startFbrSubmissionWorker()

@@ -13,7 +13,7 @@
 //   3. The return needs to be signed and filed by a person — never auto-file.
 
 import { prisma } from '../../lib/prisma.js'
-import { ACCT } from './journal.js'
+import { ACCT, revenueCodeForConcept } from './journal.js'
 import { fmtPktDate } from './dates.js'
 
 interface AccountTotal {
@@ -79,6 +79,36 @@ const PROVINCIAL_OUTPUT_CODES = [
 
 const PROVINCIAL_INPUT_CODES = ['1321', '1322', '1323', '1324']
 
+/** Every output sales-tax account the return files: FBR 2030 + PRA/SRB/KPRA/BRA. */
+export const OUTPUT_TAX_CODES: string[] = [ACCT.GST_OUTPUT, ...PROVINCIAL_OUTPUT_CODES]
+
+/**
+ * Sales tax collected in the period, from the ledger — the output accounts the
+ * return files, net of reversals. This is the figure the CEO "Tax collected"
+ * card shows; it used to show the sales register's taxCents, which missed POS
+ * card sales and refunds and used payment timing, so it never matched the
+ * return. `tenantIds` is the company scope (a return itself is one company).
+ */
+export async function outputTaxCollectedCents(tenantIds: string[], from: Date, to: Date): Promise<number> {
+  if (tenantIds.length === 0) return 0
+  const accounts = await prisma.account.findMany({
+    where: { tenantId: { in: tenantIds }, code: { in: OUTPUT_TAX_CODES } },
+    select: { id: true },
+  })
+  if (accounts.length === 0) return 0
+  const sums = await prisma.journalLine.groupBy({
+    by: ['type'],
+    _sum: { amountCents: true },
+    where: {
+      accountId: { in: accounts.map((a) => a.id) },
+      journalEntry: { tenantId: { in: tenantIds }, entryDate: { gte: from, lte: to } },
+    },
+  })
+  const credit = sums.find((x) => x.type === 'credit')?._sum.amountCents ?? 0
+  const debit  = sums.find((x) => x.type === 'debit')?._sum.amountCents ?? 0
+  return credit - debit
+}
+
 export async function salesTaxReturn(tenantId: string, from: Date, to: Date): Promise<SalesTaxReturnReport> {
   const accounts = await prisma.account.findMany({
     where: { tenantId, code: { in: [ACCT.GST_OUTPUT, ACCT.GST_INPUT, ...PROVINCIAL_OUTPUT_CODES, ...PROVINCIAL_INPUT_CODES] } },
@@ -120,7 +150,7 @@ export async function salesTaxReturn(tenantId: string, from: Date, to: Date): Pr
   const countedAccountIds = new Set<string>()
   for (const c of concepts) {
     // Find the matching 4xxx account by code-mapping in journal.ts (revenueCodeForConcept)
-    const revAccount = revenueAccounts.find((a) => a.code === conceptRevenueCodeFromSlug(c.slug))
+    const revAccount = revenueAccounts.find((a) => a.code === revenueCodeForConcept(c.slug))
     if (!revAccount) continue
     if (countedAccountIds.has(revAccount.id)) continue
     countedAccountIds.add(revAccount.id)
@@ -175,17 +205,3 @@ export async function salesTaxReturn(tenantId: string, from: Date, to: Date): Pr
   }
 }
 
-// Mirror of revenueCodeForConcept (kept private here to avoid circular import).
-const SLUG_TO_REVENUE_CODE: Record<string, string> = {
-  'simmer':          '4001',
-  'stackd':          '4002',
-  'stax':            '4002',  // pre-rename slug — keep so historical rows still map
-  'strata':          '4003',
-  'flipd':           '4004',
-  'garnish-station': '4005',
-  'stax-padel':      '4006',
-  'bukhari':         '4007',
-}
-function conceptRevenueCodeFromSlug(slug: string): string {
-  return SLUG_TO_REVENUE_CODE[slug] ?? '4090'
-}

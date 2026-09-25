@@ -141,7 +141,7 @@ export default function CeoDashboardPage() {
               CEO — {brandName} · {range.label}
             </h1>
             <p style={{ color: '#6E7186', margin: '0.35rem 0 0', fontSize: '0.88rem' }}>
-              How the business is doing. Pick a brand to drill in. Numbers reconcile with Reports.
+              How the business is doing. Pick a brand to drill in. Profit, margins and tax reconcile with the ledger P&amp;L; sales and orders with Reports.
             </p>
           </div>
           <PeriodSwitcher value={period} onChange={setPeriod} />
@@ -174,7 +174,7 @@ export default function CeoDashboardPage() {
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.6rem' }}>
             <Pill href="/reports"     label="Full reports →"     accent="#00D4B1" />
             <Pill href="/accounting"  label="Accounting →"        accent="#00D4B1" />
-            <Pill href="/finance"     label="P&L →"               accent="#22C55E" />
+            <Pill href="/accounting/pl-ledger" label="P&L →"      accent="#22C55E" />
             <Pill href="/crm"         label="Customer base →"     accent="#6366F1" />
             <Pill href="/inventory"   label="Inventory →"         accent="#F59E0B" />
             <Pill href="/menu"        label="Menu editor →"       accent="#A855F7" />
@@ -225,7 +225,7 @@ function BrandSelectCard({ label, sublabel, conceptId, selected, onSelect, fromI
         {selected && <span style={{ fontSize: '0.6rem', fontWeight: 800, letterSpacing: '0.12em', color: '#00D4B1', textTransform: 'uppercase' }}>viewing</span>}
       </div>
       <p style={{ fontSize: '1.35rem', fontWeight: 800, margin: '0.45rem 0 0', fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.01em' }}>{pkr(gross)}</p>
-      <p style={{ color: '#6E7186', fontSize: '0.72rem', margin: '0.35rem 0 0', fontVariantNumeric: 'tabular-nums' }}>{orders} orders · {sublabel}</p>
+      <p style={{ color: '#6E7186', fontSize: '0.72rem', margin: '0.35rem 0 0', fontVariantNumeric: 'tabular-nums' }}>sales incl. GST · {orders} orders · {sublabel}</p>
     </button>
   )
 }
@@ -234,8 +234,12 @@ function BrandSelectCard({ label, sublabel, conceptId, selected, onSelect, fromI
 interface PlBlock { revenueCents?: number; cogsCents?: number; contraCents?: number; opexCents?: number; labourCents?: number; grossProfitCents?: number; netProfitCents?: number; grossMarginPct?: number; netMarginPct?: number; foodCostPct?: number; labourPct?: number; primeCostPct?: number }
 interface BrandPl { company?: PlBlock; selected?: PlBlock | null }
 interface ExecOverview {
+  // Sales register (orders, what customers paid incl. GST) — labelled as such.
   sales?: { totals?: { gross?: number; net?: number; tax?: number; orders?: number } }
+  // Everything below is the ledger.
   pl?: BrandPl
+  netRevenueCents?: number
+  taxCollectedCents?: number
   cashFlowNetCents?: number
   series?: Array<{ date: string; gross: number; orders: number }>
 }
@@ -243,8 +247,10 @@ interface MenuEngItem { priceCents?: number; qtySold?: number; foodCostCents?: n
 
 function MoneySection({ scope, isCompany }: { scope: Scope; isCompany: boolean }) {
   const { conceptId, fromISO, toISO } = scope
-  // One consolidated call for the heaviest section: sales totals + series +
-  // per-brand P&L + cash-flow net (replaces four separate round-trips).
+  // One consolidated call for the heaviest section. Profit, margins, net
+  // revenue and tax are the LEDGER (the same books as the P&L and the tax
+  // return); sales, orders, average ticket and the sparkline are the sales
+  // register, and say so.
   const ov = useQuery({ queryKey: ['ceo', 'exec-ov', conceptId, fromISO, toISO], queryFn: () => api.get<ExecOverview>(`/management/executive-overview${qs({ conceptId, dateFrom: fromISO, dateTo: toISO })}`), refetchInterval: 120_000 })
   const menuEng = useQuery({
     queryKey: ['ceo', 'menu-eng-cost', conceptId, fromISO, toISO],
@@ -276,8 +282,9 @@ function MoneySection({ scope, isCompany }: { scope: Scope; isCompany: boolean }
   return (
     <Section title="The money" hint={isCompany ? 'company-wide P&L' : `${scope.brandName} · shared costs revenue-share allocated`}>
       <Grid>
-        <Scorecard label="Net revenue"  value={pkr(t?.net ?? gross)} accent="#00D4B1" sub={`${orders} orders`} spark={grossSpark} />
-        <Scorecard label="Avg ticket"   value={pkr(aov)} accent="#4F8EF7" sub="per order" spark={ordersSpark} />
+        <Scorecard label="Net revenue"  value={pkr(ov.data?.netRevenueCents)} accent="#00D4B1" sub="ledger · ex-GST, after discounts & refunds" tag={tag} />
+        <Scorecard label="Sales"        value={pkr(gross)} accent="#4F8EF7" sub={`register · incl. GST · ${orders} orders`} spark={grossSpark} />
+        <Scorecard label="Avg ticket"   value={pkr(aov)} accent="#4F8EF7" sub="register · per order" spark={ordersSpark} />
         <Scorecard label="Gross profit" value={pkr(block?.grossProfitCents)} accent="#22C55E" sub="rev − COGS" tag={tag} />
         <Scorecard label="Gross margin" value={pct(block?.grossMarginPct)} accent="#22C55E" sub="of revenue" tag={tag} />
         <Scorecard label="Food cost"    value={pct(foodPct)} accent="#F59E0B" sub={isCompany ? 'COGS / rev' : 'recipe-weighted'} />
@@ -285,7 +292,7 @@ function MoneySection({ scope, isCompany }: { scope: Scope; isCompany: boolean }
         <Scorecard label="Prime cost"   value={pct(primePct)} accent="#EF4444" sub="food + labour" />
         <Scorecard label="Net profit"   value={pkr(block?.netProfitCents)} accent="#00D4B1" sub="bottom line" tag={tag} />
         <Scorecard label="Net margin"   value={pct(block?.netMarginPct)} accent="#00D4B1" sub="profit / rev" tag={tag} />
-        <Scorecard label="Tax collected" value={pkr(t?.tax)} accent="#A855F7" sub="FBR + provincial" />
+        <Scorecard label="Tax collected" value={pkr(ov.data?.taxCollectedCents)} accent="#A855F7" sub="ledger · FBR + provincial output" tag="co." />
         <Scorecard label="OpEx"         value={pkr(block?.opexCents)} accent="#6E7186" sub="operating expense" tag={tag} />
         <Scorecard label="Discounts"    value={pkr(block?.contraCents)} accent="#6E7186" sub="contra-revenue" tag={tag} />
         <Scorecard label="Cash flow"    value={pkr(ov.data?.cashFlowNetCents)} accent="#4F8EF7" sub="net in − out" tag="co." />

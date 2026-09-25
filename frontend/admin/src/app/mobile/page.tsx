@@ -86,7 +86,7 @@ export default function OwnerMobilePage() {
           {sales ? fmtPKR(sales.totals.gross) : '—'}
         </p>
         <p className="text-xs text-white/40 mt-2">
-          {sales ? `${sales.totals.orders} orders · avg ${fmtPKR(sales.totals.orders > 0 ? sales.totals.gross / sales.totals.orders : 0)}` : 'Loading…'}
+          {sales ? `sales incl. GST · ${sales.totals.orders} orders · avg ${fmtPKR(sales.totals.orders > 0 ? sales.totals.gross / sales.totals.orders : 0)}` : 'Loading…'}
         </p>
       </section>
 

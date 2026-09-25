@@ -110,8 +110,10 @@ export default function ChainRollupPage() {
         {/* KPI grid */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           {[
-            { label: 'Total gross', value: fmtPKR(totalGross), color: '#00D4B1' },
-            { label: 'Total net',   value: fmtPKR(totalNet),   color: '#6366F1' },
+            // Sales-register figures (what customers paid, incl. GST) — the
+            // books' revenue is the ledger P&L.
+            { label: 'Sales (incl. GST)', value: fmtPKR(totalGross), color: '#00D4B1' },
+            { label: 'Register net',      value: fmtPKR(totalNet),   color: '#6366F1' },
             { label: 'Orders',      value: totalOrders.toLocaleString(), color: '#F59E0B' },
             { label: 'Avg ticket',  value: fmtPKR(avgTicket),  color: '#FFFFFF' },
           ].map((k) => (
