@@ -15,6 +15,8 @@ import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
 import { requireCustomerAuth } from '../auth/middleware.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
+import { ingestOrder } from '../orders/service.js'
+import type { OrderDTO } from '@servd/types'
 
 function genShareCode(): string {
   // 6 chars from an unambiguous alphabet, sampled with CSPRNG (so attackers
@@ -284,95 +286,65 @@ export async function groupOrderRoutes(fastify: FastifyInstance) {
         select: { id: true, name: true },
       })
 
-      let order
-      try {
-        order = await prisma.$transaction(async (tx) => {
-        const created = await tx.order.create({
-          data: {
-            conceptId:    go.conceptId,
-            source:       'servd',
-            externalId:   `group-${go.shareCode}`,
-            status:       'received',
-            totalCents:   total,
-            taxCents,
-            customerId:   submitter?.id ?? null,
-            customerName: submitter?.name ?? go.initiatorName,
-            placedAt:     new Date(),
-            items: {
-              create: go.items.map((i) => ({
-                menuItemId:    i.menuItemId,
-                externalItemId: i.id,
-                name:          `${i.name} · ${i.member.displayName}`,
-                quantity:      i.quantity,
-                unitPriceCents: i.unitPriceCents,
-                notes:         i.notes ?? null,
-                status:        'pending' as never,
-              })),
-            },
-            // One pending Payment row so the check-split flow has something
-            // to replace, and so an order without any Payment doesn't slip
-            // through accounting reconciliation.
-            payments: {
-              create: {
-                method:      'split' as never,
-                amountCents: total,
-                status:      'pending',
-              },
-            },
-          },
-        })
-        // Claim the group conditionally. The `go.orderId` check above happens
-        // outside this transaction, so two submits landing together — a
-        // double-tapped button is enough — both passed it and both created an
-        // Order. That is two kitchen tickets and two Payment rows for one
-        // group, with the losing Order orphaned but already fired to the pass.
-        //
-        // Only one writer can move the group from orderId=null, and the loser
-        // throws, which rolls back the Order it just created.
-        const claimed = await tx.groupOrder.updateMany({
-          where: { id: go.id, orderId: null },
-          data: { status: 'submitted', orderId: created.id },
-        })
-        if (claimed.count === 0) {
-          throw new AppError('ALREADY_SUBMITTED', 'This group order has already been submitted', 409)
-        }
-        return created
-        })
-      } catch (err) {
-        // The losing side of a concurrent submit — a double-tapped button is
-        // enough to produce one.
-        //
-        // Two things stop a second Order being created, and both land here.
-        // The database already had @@unique([source, externalId]) and the
-        // externalId is `group-<shareCode>`, so the duplicate insert fails with
-        // P2002; the conditional claim above catches the case where a submit
-        // gets past that. Either way the loser's Order is rolled back and the
-        // winner's is live.
-        //
-        // What was wrong was the answer: both arrive as a 500 "Internal server
-        // error", because Prisma re-wraps whatever comes out of $transaction.
-        // Telling someone the system broke when their order went through fine
-        // invites them to try again.
-        const e = err as { code?: string }
-        const isConcurrentSubmit =
-          e.code === 'P2002' || (err instanceof AppError && err.code === 'ALREADY_SUBMITTED')
-        if (!isConcurrentSubmit) throw err
+      // The order is created by ingestOrder, like every other channel. This
+      // route used to insert the Order itself, so a group order skipped
+      // everything ingestOrder does: items were never routed to a station
+      // (they never showed on the per-station KDS), KDS / expo were never
+      // pushed, stock was never deducted, course pacing and the customer
+      // receipt never ran, the customer rollups were never bumped, and the
+      // brand / unpriced-item guards were never applied.
+      const dto: OrderDTO = {
+        source: 'servd',
+        // Idempotency key: ingestOrder dedupes on (source, external_id), so a
+        // double-tapped submit gets the SAME order back instead of a second
+        // ticket.
+        external_id: `group-${go.shareCode}`,
+        concept_id: go.conceptId,
+        placed_at: new Date().toISOString(),
+        customer_id: submitter?.id ?? null,
+        customer_name: submitter?.name ?? go.initiatorName,
+        items: go.items.map((i) => ({
+          menuItemId: i.menuItemId,
+          externalItemId: i.id,
+          name: `${i.name} · ${i.member.displayName}`,
+          quantity: i.quantity,
+          unitPriceCents: i.unitPriceCents,
+          notes: i.notes ?? undefined,
+          modifiers: [],
+        })),
+        // No provider: the one Payment row is the pending 'split' created below.
+        payment: { provider: null, amountCents: total, status: 'pending' },
+        loyalty_points_earned: null,
+        delivery_notes: null,
+        estimated_pickup: null,
+        tax_cents: taxCents,
+        // A group bill is one table's bill split at the till (check-split),
+        // so it stays dine-in — the fulfilment it has always been stored with.
+        fulfilment_type: 'dine_in',
+        raw_payload: { channel: 'group_order', shareCode: go.shareCode },
+      }
+      const { order, created } = await ingestOrder(dto)
 
-        // The winner may not have committed at the instant we failed, so read
-        // the group again before answering.
-        for (let attempt = 0; attempt < 3; attempt++) {
-          const fresh = await prisma.groupOrder.findUnique({
-            where: { id: go.id },
-            select: { orderId: true },
-          })
-          if (fresh?.orderId) return { orderId: fresh.orderId, alreadySubmitted: true }
-          await new Promise((r) => setTimeout(r, 60))
-        }
-        throw new AppError(
-          'ALREADY_SUBMITTED',
-          'This group order is already being submitted. Refresh to see the order.',
-          409,
-        )
+      // One pending Payment row so the check-split flow has something to
+      // replace, and so an order without any Payment doesn't slip through
+      // accounting reconciliation. Only the request that created the order
+      // writes it — a concurrent submit got the same order back.
+      if (created) {
+        await prisma.payment.create({
+          data: { orderId: order.id, method: 'split', amountCents: total, status: 'pending' },
+        })
+      }
+
+      // Claim the group conditionally: only one writer can move it from
+      // orderId=null. Both sides of a concurrent submit hold the same order
+      // (ingestOrder's idempotency), so the loser just reports it.
+      const claimed = await prisma.groupOrder.updateMany({
+        where: { id: go.id, orderId: null },
+        data: { status: 'submitted', orderId: order.id },
+      })
+      if (claimed.count === 0) {
+        const fresh = await prisma.groupOrder.findUnique({ where: { id: go.id }, select: { orderId: true } })
+        return { orderId: fresh?.orderId ?? order.id, alreadySubmitted: true }
       }
 
       return { orderId: order.id, total }

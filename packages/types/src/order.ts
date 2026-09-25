@@ -58,6 +58,8 @@ export interface OrderDTO {
   promo_discount_cents?: number
   // Wallet payment
   wallet_amount_cents?: number
+  /** How the order leaves the kitchen. Inferred from table_id when absent. */
+  fulfilment_type?: 'dine_in' | 'takeout' | 'delivery'
 }
 
 export type OrderStatus =

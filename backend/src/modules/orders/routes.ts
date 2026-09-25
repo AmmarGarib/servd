@@ -2,19 +2,22 @@ import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, ALL_STAFF, MANAGERS } from '../auth/middleware.js'
-import { ingestOrder, listOrders, getOrder, updateOrderStatus, updateItemStatus, cancelOrder } from './service.js'
+import { listOrders, getOrder, updateOrderStatus, updateItemStatus, cancelOrder } from './service.js'
 import { assertConceptAccess, filterConceptIdsForStaff } from '../../lib/conceptAccess.js'
 import { conceptWhere, scopeTenantWhere, type ScopeMode } from '../../lib/tenantScope.js'
 import { audit } from '../../lib/audit.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
-import { getFbrQueue, getSrbQueue } from '../../lib/queue.js'
-import type { OrderDTO } from '@servd/types'
 
 // Orders are brand-anchored (Order.conceptId) and a brand belongs to one
 // company, so "is this order mine?" is always answered through the concept.
 // `assertConceptAccess` is a per-user brand whitelist that NO-OPs for every
 // management role — it is not a company check. Every handler below scopes
 // the lookup itself, before touching a client-supplied id.
+//
+// There is no POST /orders. Every channel creates orders through ingestOrder
+// (the till via /pos/orders, the storefront, group orders, WhatsApp); a staff
+// "manual intake" here used to skip the till's discount caps, service charge
+// and idempotency, and could book a paid Payment on no shift.
 
 /**
  * `where` fragment: the order's brand belongs to a company in scope for
@@ -24,45 +27,6 @@ import type { OrderDTO } from '@servd/types'
 async function orderInCompany(req: FastifyRequest, mode: ScopeMode) {
   return { concept: { deletedAt: null, ...(await scopeTenantWhere(req, mode)) } }
 }
-
-/** A staff user belongs to `tenantId` as their primary company or via a membership. */
-function userInCompany(tenantId: string) {
-  return { OR: [{ tenantId }, { tenantMemberships: { some: { tenantId } } }] }
-}
-
-const createOrderSchema = z.object({
-  source: z.enum(['servd', 'pos', 'cart', 'manual']),
-  external_id: z.string().default(() => `manual-${Date.now()}`),
-  concept_id: z.string().uuid(),
-  placed_at: z.string().datetime().default(() => new Date().toISOString()),
-  customer_id: z.string().uuid().nullable().default(null),
-  customer_name: z.string().nullable().default(null),
-  table_id: z.string().uuid().nullable().optional(),
-  pos_staff_id: z.string().uuid().nullable().optional(),
-  shift_id: z.string().uuid().nullable().optional(),
-  items: z.array(
-    z.object({
-      externalItemId: z.string().default('manual'),
-      menuItemId: z.string().uuid().nullable().default(null),
-      name: z.string(),
-      quantity: z.number().int().min(1),
-      unitPriceCents: z.number().int().min(0),
-      modifiers: z
-        .array(z.object({ name: z.string(), priceDeltaCents: z.number().int() }))
-        .default([]),
-      notes: z.string().optional(),
-      course: z.number().int().optional(),
-    }),
-  ),
-  payment: z.object({
-    provider: z.enum(['keenu', 'jazzcash', 'easypaisa', 'platform', 'cash']).nullable().default(null),
-    amountCents: z.number().int().min(0),
-    status: z.enum(['paid', 'pending', 'refunded']).default('pending'),
-  }),
-  loyalty_points_earned: z.number().nullable().default(null),
-  delivery_notes: z.string().nullable().default(null),
-  estimated_pickup: z.string().datetime().nullable().default(null),
-})
 
 // Kitchen / service progress only. Cancelling is POST /orders/:id/cancel — it
 // needs a manager, a reason and an audit entry, none of which this route asks
@@ -132,67 +96,6 @@ export async function orderRoutes(fastify: FastifyInstance) {
       return order
     },
   )
-
-  // POST /orders — manual order creation (server / cashier manual intake)
-  fastify.post('/', { preHandler: requireAuth(...ALL_STAFF) }, async (req, reply) => {
-    const dto = createOrderSchema.parse(req.body) as OrderDTO
-    // A create binds to the ACTIVE company only ('create' scope) — the brand
-    // must be one of the active company's (404 otherwise, so a foreign id is
-    // never confirmed), and every row attached below must sit in that same
-    // company. Otherwise a head-office member of both companies could file a
-    // GSX Viva ticket under a GS Foods brand from the wrong tab.
-    const tenantId = req.staffUser!.tenantId
-    if (!tenantId) throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company before creating an order', 422)
-    const concept = await prisma.concept.findFirst({
-      where: { id: dto.concept_id, deletedAt: null, ...(await scopeTenantWhere(req, 'create')) },
-    })
-    if (!concept) throw new NotFoundError('Concept', dto.concept_id)
-    await assertConceptAccess(req.staffUser!, dto.concept_id)
-
-    // Cross-company attach guards on the body. table_id + menuItemId are
-    // checked against the brand inside ingestOrder (shared with POS /
-    // storefront); shift + cashier are company-anchored through User /
-    // Location, so they're checked here where the active company is known.
-    if (dto.pos_staff_id) {
-      const staff = await prisma.user.findFirst({
-        where: { id: dto.pos_staff_id, deletedAt: null, ...userInCompany(tenantId) },
-        select: { id: true },
-      })
-      if (!staff) throw new AppError('STAFF_NOT_IN_COMPANY', 'pos_staff_id does not belong to this company', 422)
-    }
-    if (dto.shift_id) {
-      const shift = await prisma.shift.findFirst({
-        where: { id: dto.shift_id, OR: [{ location: { tenantId } }, { user: userInCompany(tenantId) }] },
-        select: { id: true },
-      })
-      if (!shift) throw new AppError('SHIFT_NOT_IN_COMPANY', 'shift_id does not belong to this company', 422)
-    }
-
-    // SRB alignment: compute GST server-side on the PRE-discount item total
-    // (manual orders carry no discount), so taxCents is correct and the SRB
-    // filing matches the books — never trust a client-supplied amount for a
-    // taxable sale. Mirrors the POS tax rule (cash → taxRateCash, else card).
-    const itemTotal = dto.items.reduce((s, it) => {
-      const mods = (it.modifiers ?? []).reduce((m, x) => m + x.priceDeltaCents, 0)
-      return s + (it.unitPriceCents + mods) * it.quantity
-    }, 0)
-    const isCash = dto.payment.provider === 'cash'
-    const rate = (isCash ? (concept.taxRateCash ?? concept.taxRate) : (concept.taxRateCard ?? concept.taxRate)) / 100
-    const taxCents = Math.round(itemTotal * rate)
-    const totalCents = itemTotal + taxCents
-    dto.payment.amountCents = totalCents
-
-    const result = await ingestOrder(dto)
-    if (result.created) {
-      await prisma.order.update({ where: { id: result.order.id }, data: { taxCents, totalCents } })
-      // File to SRB (+ FBR) once the sale is paid — same fan-out as the POS.
-      if (dto.payment.status === 'paid') {
-        getFbrQueue()?.add('submit', { orderId: result.order.id }).catch((e: Error) => console.warn('[FBR] manual order enqueue failed:', e.message))
-        getSrbQueue()?.add('submit', { orderId: result.order.id }).catch((e: Error) => console.warn('[SRB] manual order enqueue failed:', e.message))
-      }
-    }
-    return reply.status(result.created ? 201 : 200).send({ ...result.order, taxCents, totalCents })
-  })
 
   // GET /orders/curbside — active curbside queue. Cars-here-first, then
   // cars-still-coming. Powers the admin /orders/curbside dashboard.

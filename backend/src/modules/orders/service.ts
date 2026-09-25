@@ -170,8 +170,7 @@ export async function ingestOrder(dto: OrderDTO) {
   // source + tableId combination. The CEO needs every ticket to clearly
   // show plate vs package, so we never leave this null.
   const fulfilmentType: 'dine_in' | 'takeout' | 'delivery' =
-    (dto as { fulfilment_type?: 'dine_in' | 'takeout' | 'delivery' }).fulfilment_type
-    ?? (dto.table_id ? 'dine_in' : 'takeout')
+    dto.fulfilment_type ?? (dto.table_id ? 'dine_in' : 'takeout')
 
   async function runTransaction() {
     return prisma.$transaction(async (tx) => {

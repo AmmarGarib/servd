@@ -17,7 +17,7 @@
  *   1  — one or more failures (full stack traces dumped on first error)
  */
 
-import { PrismaClient, type OrderStatus } from '@prisma/client'
+import { PrismaClient } from '@prisma/client'
 import { ingestOrder, scheduleCoursePacing, processCoursePacingTick, deductInventoryForOrder, updateItemStatus, updateOrderStatus } from '../src/modules/orders/service.js'
 
 const prisma = new PrismaClient()
@@ -307,7 +307,7 @@ async function testLifecycle(orderId: string) {
   header('Test 4: full order lifecycle')
 
   // Expo confirms & fires the order: received → preparing.
-  await updateOrderStatus(orderId, 'preparing' as OrderStatus)
+  await updateOrderStatus(orderId, 'preparing')
 
   const items = await prisma.orderItem.findMany({ where: { orderId } })
   const itemIds = items.map((i) => i.id)
@@ -325,7 +325,7 @@ async function testLifecycle(orderId: string) {
   check('Order handed to expo as "ready" (not auto-completed)', ready?.status === 'ready')
 
   // Expo hands off (serve / dispatch / pickup): ready → completed.
-  await updateOrderStatus(orderId, 'completed' as OrderStatus)
+  await updateOrderStatus(orderId, 'completed')
   const order = await prisma.order.findUnique({ where: { id: orderId } })
   check('Order completed by expo hand-off', order?.status === 'completed')
   check('Order has completedAt timestamp', order?.completedAt !== null)
