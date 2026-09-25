@@ -1,6 +1,8 @@
 import type { FastifyInstance, FastifyReply } from 'fastify'
+import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
+import { postJournalEntry } from './journal.js'
 import { requireAuth, FINANCIALS_VIEWERS, ADMIN_ONLY } from '../auth/middleware.js'
 import { AppError } from '../../lib/errors.js'
 import { resolveDateRange, parsePktEndOfDay, fmtPktDate } from './dates.js'
@@ -21,6 +23,9 @@ const journalEntrySchema = z.object({
       type: z.enum(['debit', 'credit']),
       amountCents: z.number().int().min(1),
       memo: z.string().optional(),
+      // Optional brand attribution, so a manual adjustment can land on one
+      // brand's P&L instead of the shared bucket.
+      conceptId: z.string().uuid().nullable().optional(),
     }),
   ).min(2),
 })
@@ -141,6 +146,13 @@ export async function accountingRoutes(fastify: FastifyInstance) {
   )
 
   // ─── Manual journal entry (admin) ────────────────────────────────────────
+  //
+  // Posts through postJournalEntry like every other writer, so a manual entry
+  // gets the same balance rule, the same period-lock check and message, the
+  // same per-company chart resolution and an idempotency key of its own
+  // (`manual:<uuid>`). It used to create the JournalEntry directly with a
+  // copy of the lock check, and could not carry a brand, so every manual
+  // adjustment landed in the shared bucket of the brand P&L.
 
   fastify.post('/journal', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req, reply) => {
     const body = journalEntrySchema.parse(req.body)
@@ -158,32 +170,53 @@ export async function accountingRoutes(fastify: FastifyInstance) {
     const tenantId = req.staffUser!.tenantId
     if (!tenantId) throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company first — the ledger is per company', 422)
 
+    // The client names accounts by id; the posting engine takes codes, which
+    // it resolves again inside this company's chart.
     const accountIds = Array.from(new Set(body.lines.map((l) => l.accountId)))
-    const owned = await prisma.account.count({ where: { id: { in: accountIds }, tenantId } })
-    if (owned !== accountIds.length) {
+    const accounts = await prisma.account.findMany({
+      where: { id: { in: accountIds }, tenantId },
+      select: { id: true, code: true, isActive: true },
+    })
+    if (accounts.length !== accountIds.length) {
       throw new AppError('ACCOUNT_NOT_IN_COMPANY', 'One or more accounts belong to another company', 422)
     }
+    const inactive = accounts.filter((a) => !a.isActive).map((a) => a.code)
+    if (inactive.length > 0) {
+      throw new AppError('ACCOUNT_INACTIVE', `Account(s) ${inactive.join(', ')} are deactivated — reactivate them in Configuration → Chart of accounts first`, 422)
+    }
+    const codeOf = new Map(accounts.map((a) => [a.id, a.code]))
 
-    // Period-lock check
-    const entryDate = body.entryDate ? new Date(body.entryDate) : new Date()
-    const lock = await prisma.periodLock.findFirst({ where: { tenantId }, orderBy: { lockedThrough: 'desc' } })
-    if (lock && entryDate <= lock.lockedThrough) {
-      throw new AppError(
-        'PERIOD_LOCKED',
-        `Books are closed through ${fmtPktDate(lock.lockedThrough)}. Adjust in the open period.`,
-        422,
-      )
+    // Brand attribution per line, optional. A brand must belong to the company
+    // whose books this is (a create: the active company only).
+    const conceptIds = Array.from(new Set(body.lines.map((l) => l.conceptId).filter((c): c is string => !!c)))
+    if (conceptIds.length > 0) {
+      const ownBrands = await prisma.concept.count({ where: { id: { in: conceptIds }, tenantId, deletedAt: null } })
+      if (ownBrands !== conceptIds.length) {
+        throw new AppError('BRAND_NOT_IN_COMPANY', 'A line names a brand that is not one of this company\'s brands', 422)
+      }
     }
 
-    const entry = await prisma.journalEntry.create({
-      data: {
-        tenantId,
-        reference: body.reference,
-        description: body.description,
-        entryDate,
-        postedBy: req.staffUser!.id,
-        lines: { create: body.lines },
-      },
+    const reference = body.reference?.trim() || null
+    const posted = await postJournalEntry({
+      tenantId,
+      sourceType: 'manual',
+      sourceId: randomUUID(),
+      // JournalEntry.reference holds the idempotency key, so the operator's
+      // own reference travels in the description (and the audit metadata).
+      description: reference ? `${body.description} · ref ${reference}` : body.description,
+      entryDate: body.entryDate ? new Date(body.entryDate) : new Date(),
+      postedBy: req.staffUser!.id,
+      lines: body.lines.map((l) => ({
+        accountCode: codeOf.get(l.accountId)!,
+        type: l.type,
+        amountCents: l.amountCents,
+        memo: l.memo,
+        conceptId: l.conceptId ?? null,
+      })),
+    })
+
+    const entry = await prisma.journalEntry.findUniqueOrThrow({
+      where: { id: posted.entryId },
       include: { lines: { include: { account: true } } },
     })
     await audit({ category: 'accounting',
@@ -193,7 +226,7 @@ export async function accountingRoutes(fastify: FastifyInstance) {
       userId: req.staffUser!.id, tenantId: req.staffUser?.tenantId ?? null,
       userEmail: req.staffUser!.email,
       after: entry,
-      metadata: { ip: req.ip, debits, credits },
+      metadata: { ip: req.ip, debits, credits, reference },
     })
 
     // Every manual JE is a high-trust action. The system fires a flag for
@@ -204,26 +237,19 @@ export async function accountingRoutes(fastify: FastifyInstance) {
       kind: 'manual_journal',
       severity: debits >= 100000 ? 'high' : 'medium',           // PKR 1,000+ = high
       title: `Manual journal entry posted: ${body.description}`,
-      description: `${req.staffUser!.email} posted a manual JE for PKR ${(debits / 100).toFixed(0)}. Reference: ${body.reference}.`,
+      description: `${req.staffUser!.email} posted a manual JE for PKR ${(debits / 100).toFixed(0)}. Reference: ${reference ?? 'none'}.`,
       entityType: 'JournalEntry',
       entityId: entry.id,
       actorId: req.staffUser!.id,
       amountCents: debits,
-      metadata: { reference: body.reference, debits, credits, lineCount: body.lines.length, ip: req.ip },
+      metadata: { reference, debits, credits, lineCount: body.lines.length, ip: req.ip },
     })
 
     return reply.status(201).send(entry)
   })
 
-  // ─── Chart of accounts ───────────────────────────────────────────────────
-
-  fastify.get('/accounts', { preHandler: requireAuth(...FINANCIALS_VIEWERS) }, async (req) => {
-    const scope = await resolveTenantScope(req)
-    return prisma.account.findMany({
-      where: { isActive: true, tenantId: { in: scope.tenantIds } },
-      orderBy: { code: 'asc' },
-    })
-  })
+  // The chart of accounts is read and edited through /setup/chart-of-accounts
+  // (Configuration → Chart of accounts) — the one chart API.
 
   // ─── Trial balance ───────────────────────────────────────────────────────
 

@@ -18,6 +18,7 @@
 import type { Prisma, PrismaClient } from '@prisma/client'
 import { prisma as defaultPrisma } from '../../lib/prisma.js'
 import { AppError } from '../../lib/errors.js'
+import { fmtPktDate } from './dates.js'
 
 type Tx = Prisma.TransactionClient | PrismaClient
 
@@ -202,9 +203,11 @@ export async function postJournalEntry(
       select: { lockedThrough: true },
     })
     if (lock && entryDate <= lock.lockedThrough) {
+      // Dates in PKT — a lock is a PKT end-of-day, and "books are closed
+      // through 31 Aug" must read the same here as on the period-close page.
       throw new AppError(
         'PERIOD_LOCKED',
-        `Cannot post to ${entryDate.toISOString().slice(0,10)} — books are closed through ${lock.lockedThrough.toISOString().slice(0,10)}. Post adjustments in the open period instead.`,
+        `Cannot post to ${fmtPktDate(entryDate)} — books are closed through ${fmtPktDate(lock.lockedThrough)}. Post adjustments in the open period instead.`,
         422,
       )
     }

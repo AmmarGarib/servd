@@ -101,7 +101,7 @@ function computeOrderCogsCents(order: OrderForPosting): number {
   return totalCents
 }
 
-interface SaleAccounting {
+export interface SaleAccounting {
   // Customer-facing money flow (charged to a payment instrument)
   totalChargedCents:   number   // hits cash drawer / card receivable
   walletAppliedCents:  number   // dr wallet liability
@@ -117,7 +117,25 @@ interface SaleAccounting {
   tipCents:        number       // cr 2095 tips payable to staff
 }
 
-function computeSaleAccounting(order: OrderForPosting): SaleAccounting {
+/** The order columns the sale formula reads. */
+export type SaleOrderFields = Pick<
+  Order,
+  'totalCents' | 'walletAmountCents' | 'taxCents' | 'discountCents' | 'promoDiscountCents' | 'serviceChargeCents' | 'tipCents'
+>
+
+/**
+ * THE sale-to-ledger formula — one order's split into charged money, wallet,
+ * discount, GST, service charge, tip and item revenue. Used per order by the
+ * order-completion posting (online / non-till orders) AND, summed per brand,
+ * by the POS shift close (shiftPosting.ts). The shift close used to carry its
+ * own inline copy that never split out the service charge, so POS service
+ * charge was credited to the brand's food revenue while every other order
+ * credited 4100.
+ *
+ * By construction it balances: charged + wallet + loyalty + discount
+ *   = revenue + tax + service charge + tip.
+ */
+export function computeSaleAccounting(order: SaleOrderFields): SaleAccounting {
   const totalChargedCents   = order.totalCents
   const walletAppliedCents  = order.walletAmountCents
   const loyaltyRedeemedCents = 0

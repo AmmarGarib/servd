@@ -24,7 +24,7 @@ import { randomBytes } from 'crypto'
 import { Prisma } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
 import { audit } from '../../lib/audit.js'
-import { requireAuth, MANAGERS, ADMIN_ONLY, ALL_STAFF } from '../auth/middleware.js'
+import { requireAuth, MANAGERS, ADMIN_ONLY, ALL_STAFF, FINANCE_TEAM } from '../auth/middleware.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import {
   scopeTenantWhere, assertConceptOwned, conceptIdsInScope, conceptWhere, type ScopeMode,
@@ -775,12 +775,19 @@ export async function setupRoutes(fastify: FastifyInstance) {
 
   // Each company keeps its own chart of accounts — the same code means a
   // different account in a different company's books.
-  fastify.get('/chart-of-accounts', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
+  //
+  // This is THE chart API (GET /accounting/accounts, an active-only copy with
+  // no caller, is gone). Readable by every manager tier AND finance — the
+  // finance officer works the books and could not open the only chart page
+  // while it was MANAGERS-only.
+  fastify.get('/chart-of-accounts', { preHandler: requireAuth(...FINANCE_TEAM) }, async (req) => {
     return prisma.account.findMany({
       where: await scopeTenantWhere(req, 'read'),
       orderBy: { code: 'asc' },
     })
   })
+  // Adding, renaming or switching off an account changes what can post, so
+  // both writes go on the accounting trail (category 'accounting').
   fastify.post('/chart-of-accounts', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req, reply) => {
     const body = z.object({
       code:        z.string().min(1).max(20),
@@ -788,7 +795,17 @@ export async function setupRoutes(fastify: FastifyInstance) {
       type:        z.enum(['asset', 'liability', 'equity', 'revenue', 'expense']),
       description: z.string().max(500).nullable().optional(),
     }).parse(req.body)
-    const created = await prisma.account.create({ data: { ...body, tenantId: activeTenantId(req) } })
+    const tenantId = activeTenantId(req)
+    const created = await prisma.account.create({ data: { ...body, tenantId } })
+    await audit({ category: 'accounting',
+      action: 'account.create',
+      entity: 'Account',
+      entityId: created.id,
+      userId: req.staffUser!.id, tenantId,
+      userEmail: req.staffUser!.email,
+      after: created,
+      metadata: { ip: req.ip },
+    })
     return reply.status(201).send(created)
   })
   fastify.patch<{ Params: { id: string } }>('/chart-of-accounts/:id', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req) => {
@@ -799,10 +816,22 @@ export async function setupRoutes(fastify: FastifyInstance) {
     }).parse(req.body)
     const existing = await prisma.account.findFirst({
       where: { id: req.params.id, ...(await scopeTenantWhere(req, 'write')) },
-      select: { id: true },
     })
     if (!existing) throw new NotFoundError('Account', req.params.id)
-    return prisma.account.update({ where: { id: existing.id }, data: body })
+    const updated = await prisma.account.update({ where: { id: existing.id }, data: body })
+    await audit({ category: 'accounting',
+      action: 'account.update',
+      entity: 'Account',
+      entityId: updated.id,
+      // The account's own company — a head-office editor may be working in
+      // another company's view.
+      userId: req.staffUser!.id, tenantId: existing.tenantId,
+      userEmail: req.staffUser!.email,
+      before: existing,
+      after: updated,
+      metadata: { ip: req.ip },
+    })
+    return updated
   })
 
   // ════════════════════════════════════════════════════════════════════════

@@ -164,3 +164,45 @@ export async function ensureChartOfAccounts(tenantId: string): Promise<number> {
   })
   return missing.length
 }
+
+/**
+ * Accounts the old demo seed (prisma/seed.ts) created that are not in the
+ * chart above: third-party delivery aggregator accounts, which servd will
+ * never use. Matched on code AND the seeded name, so an operator who reused
+ * one of these codes for an account of their own is never touched.
+ */
+export const RETIRED_ACCOUNTS: Array<{ code: string; namePattern: RegExp }> = [
+  { code: '1120', namePattern: /foodpanda/i },
+  { code: '2070', namePattern: /foodpanda/i },
+  { code: '6090', namePattern: /foodpanda/i },
+  { code: '6095', namePattern: /aggregator/i },
+]
+
+/**
+ * Deactivate `tenantId`'s retired aggregator accounts once their ledger
+ * balance is zero. Rows are never deleted and an account still carrying a
+ * balance stays active until the accountant clears it — deactivating it
+ * would hide money, not remove it. Returns the codes it deactivated.
+ */
+export async function retireAggregatorAccounts(tenantId: string): Promise<string[]> {
+  const rows = await prisma.account.findMany({
+    where: { tenantId, isActive: true, code: { in: RETIRED_ACCOUNTS.map((r) => r.code) } },
+    select: { id: true, code: true, name: true },
+  })
+  const retired: string[] = []
+  for (const row of rows) {
+    const rule = RETIRED_ACCOUNTS.find((r) => r.code === row.code)
+    if (!rule || !rule.namePattern.test(row.name)) continue
+    const sums = await prisma.journalLine.groupBy({
+      by: ['type'],
+      where: { accountId: row.id },
+      _sum: { amountCents: true },
+    })
+    const debit  = sums.find((s) => s.type === 'debit')?._sum.amountCents ?? 0
+    const credit = sums.find((s) => s.type === 'credit')?._sum.amountCents ?? 0
+    if (debit !== credit) continue
+    await prisma.account.update({ where: { id: row.id }, data: { isActive: false } })
+    retired.push(row.code)
+  }
+  return retired
+}

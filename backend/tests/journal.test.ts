@@ -1,8 +1,18 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeAll, beforeEach } from 'vitest'
 import { PrismaClient } from '@prisma/client'
 import { postJournalEntry, reverseJournalEntry } from '../src/modules/accounting/journal.ts'
+import { ensureChartOfAccounts } from '../src/lib/chartOfAccounts.ts'
 
 const prisma = new PrismaClient()
+
+// The ledger is per company: every posting names its company, and codes
+// resolve inside that company's chart.
+let tenantId: string
+
+beforeAll(async () => {
+  tenantId = (await prisma.tenant.create({ data: { name: 'Journal Co', slug: `journal-co-${Date.now()}` } })).id
+  await ensureChartOfAccounts(tenantId)
+})
 
 beforeEach(async () => {
   // Clean ledger between tests
@@ -15,6 +25,7 @@ describe('postJournalEntry', () => {
   it('rejects unbalanced entries', async () => {
     await expect(
       postJournalEntry({
+        tenantId,
         sourceType: 'test.unbalanced',
         sourceId: 'a',
         description: 'Bad',
@@ -29,6 +40,7 @@ describe('postJournalEntry', () => {
   it('rejects negative amounts', async () => {
     await expect(
       postJournalEntry({
+        tenantId,
         sourceType: 'test.neg',
         sourceId: 'a',
         description: 'Bad',
@@ -42,6 +54,7 @@ describe('postJournalEntry', () => {
 
   it('posts a balanced entry and is idempotent on (sourceType, sourceId)', async () => {
     const input = {
+      tenantId,
       sourceType: 'test.idem',
       sourceId: 'order-1',
       description: 'Test sale',
@@ -64,6 +77,7 @@ describe('postJournalEntry', () => {
 
   it('reverseJournalEntry posts the inverse', async () => {
     const input = {
+      tenantId,
       sourceType: 'test.reverse',
       sourceId: 'order-2',
       description: 'Test',
@@ -74,7 +88,7 @@ describe('postJournalEntry', () => {
     }
     await postJournalEntry(input)
 
-    await reverseJournalEntry('test.reverse', 'order-2', 'Customer cancelled')
+    await reverseJournalEntry(tenantId, 'test.reverse', 'order-2', 'Customer cancelled')
 
     // Sum debits and credits across both entries should equal — net zero
     const lines = await prisma.journalLine.findMany({})
@@ -86,11 +100,12 @@ describe('postJournalEntry', () => {
 
   it('refuses to post into a locked period', async () => {
     await prisma.periodLock.create({
-      data: { lockedThrough: new Date('2026-04-30T23:59:59Z'), lockedBy: 'test' },
+      data: { tenantId, lockedThrough: new Date('2026-04-30T23:59:59Z'), lockedBy: 'test' },
     })
 
     await expect(
       postJournalEntry({
+        tenantId,
         sourceType: 'test.locked',
         sourceId: 'order-3',
         description: 'Backdated',
@@ -105,10 +120,11 @@ describe('postJournalEntry', () => {
 
   it('allows posting in the open period after a lock', async () => {
     await prisma.periodLock.create({
-      data: { lockedThrough: new Date('2026-04-30T23:59:59Z'), lockedBy: 'test' },
+      data: { tenantId, lockedThrough: new Date('2026-04-30T23:59:59Z'), lockedBy: 'test' },
     })
 
     const result = await postJournalEntry({
+      tenantId,
       sourceType: 'test.open',
       sourceId: 'order-4',
       description: 'Current period',
@@ -124,6 +140,7 @@ describe('postJournalEntry', () => {
   it('throws if any account code is missing', async () => {
     await expect(
       postJournalEntry({
+        tenantId,
         sourceType: 'test.bad-account',
         sourceId: 'order-5',
         description: 'Bad',

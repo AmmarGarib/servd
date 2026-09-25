@@ -113,7 +113,7 @@ import { kdsRoutes } from './modules/kds/routes.js'
 import { positionRoutes } from './modules/positions/routes.js'
 import { expoRoutes } from './modules/expo/routes.js'
 import { parSheetRoutes } from './modules/par-sheet/routes.js'
-import { ensureChartOfAccounts, REQUIRED_ACCOUNT_CODES } from './lib/chartOfAccounts.js'
+import { ensureChartOfAccounts, retireAggregatorAccounts, REQUIRED_ACCOUNT_CODES } from './lib/chartOfAccounts.js'
 import { isDegraded as loginLimiterDegraded } from './lib/loginRateLimit.js'
 import { whatsappConfigured as isWhatsappConfigured } from './lib/whatsapp.js'
 import { emailConfigured as isEmailConfigured } from './lib/mailer.js'
@@ -756,6 +756,8 @@ async function build() {
     for (const t of tenants) {
       const added = await ensureChartOfAccounts(t.id)
       if (added > 0) fastify.log.info(`[ledger] seeded ${added} account(s) for "${t.slug}"`)
+      const retired = await retireAggregatorAccounts(t.id)
+      if (retired.length > 0) fastify.log.info(`[ledger] deactivated zero-balance aggregator account(s) ${retired.join(', ')} for "${t.slug}"`)
     }
   } catch (err) {
     fastify.log.warn(`[ledger] chart-of-accounts bootstrap skipped: ${(err as Error).message}`)

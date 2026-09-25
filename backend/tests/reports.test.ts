@@ -1,9 +1,18 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeAll, beforeEach } from 'vitest'
 import { PrismaClient } from '@prisma/client'
 import { postJournalEntry } from '../src/modules/accounting/journal.ts'
 import { trialBalance, balanceSheet, profitAndLoss } from '../src/modules/accounting/reports.ts'
+import { ensureChartOfAccounts } from '../src/lib/chartOfAccounts.ts'
 
 const prisma = new PrismaClient()
+
+// Every report takes the company scope; every posting names its company.
+let tenantId: string
+
+beforeAll(async () => {
+  tenantId = (await prisma.tenant.create({ data: { name: 'Reports Co', slug: `reports-co-${Date.now()}` } })).id
+  await ensureChartOfAccounts(tenantId)
+})
 
 beforeEach(async () => {
   await prisma.journalLine.deleteMany({})
@@ -13,6 +22,7 @@ beforeEach(async () => {
 describe('reports', () => {
   it('trial balance ties to zero after a balanced entry', async () => {
     await postJournalEntry({
+      tenantId,
       sourceType: 'test.tb',
       sourceId: 'e1',
       description: 'Sale',
@@ -23,7 +33,7 @@ describe('reports', () => {
       ],
     })
 
-    const tb = await trialBalance(new Date())
+    const tb = await trialBalance([tenantId], new Date())
     expect(tb.totals.debitCents).toBe(1170)
     expect(tb.totals.creditCents).toBe(1170)
     expect(tb.totals.differenceCents).toBe(0)
@@ -32,6 +42,7 @@ describe('reports', () => {
   it('balance sheet balances (A = L + E + earnings)', async () => {
     // Sale: debit cash, credit revenue + GST
     await postJournalEntry({
+      tenantId,
       sourceType: 'test.bs.sale',
       sourceId: 'e2',
       description: 'Sale',
@@ -43,6 +54,7 @@ describe('reports', () => {
     })
     // Cost: derecognise inventory to COGS
     await postJournalEntry({
+      tenantId,
       sourceType: 'test.bs.cogs',
       sourceId: 'e2',
       description: 'COGS',
@@ -52,7 +64,7 @@ describe('reports', () => {
       ],
     })
 
-    const bs = await balanceSheet(new Date())
+    const bs = await balanceSheet([tenantId], new Date())
     // assets = liabilities + equity + currentEarnings
     expect(bs.totals.differenceCents).toBe(0)
     expect(bs.totals.currentEarningsCents).toBe(600) // 1000 revenue − 400 COGS
@@ -61,6 +73,7 @@ describe('reports', () => {
   it('P&L surfaces COGS and discounts separately from OpEx', async () => {
     // Revenue 1000, COGS 400, marketing 50 (OpEx), discount 100 (contra-rev)
     await postJournalEntry({
+      tenantId,
       sourceType: 'test.pl',
       sourceId: 'e3',
       description: 'Combined',
@@ -75,7 +88,7 @@ describe('reports', () => {
       ],
     })
 
-    const pl = await profitAndLoss(new Date(Date.now() - 86400_000), new Date(Date.now() + 86400_000))
+    const pl = await profitAndLoss([tenantId], new Date(Date.now() - 86400_000), new Date(Date.now() + 86400_000))
     expect(pl.totals.revenueCents).toBe(1000)
     expect(pl.totals.cogsCents).toBe(400)
     expect(pl.totals.contraRevenueCents).toBe(100)

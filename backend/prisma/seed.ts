@@ -1,5 +1,6 @@
 import { PrismaClient } from '@prisma/client'
 import bcrypt from 'bcryptjs'
+import { ensureChartOfAccounts } from '../src/lib/chartOfAccounts.js'
 
 const prisma = new PrismaClient()
 
@@ -182,136 +183,28 @@ async function main() {
 
   console.info('✓ Kitchen stations seeded')
 
-  // ─── Chart of Accounts (FBR-aligned PKR ledger) ──────────────────────────
+  // ─── Chart of Accounts ───────────────────────────────────────────────────
   //
-  // Numbering convention:
-  //   1xxx assets · 2xxx liabilities · 3xxx equity · 4xxx revenue
-  //   5xxx COGS · 6xxx operating expenses · 7xxx contra-revenue
-  //   8xxx other (variances, FX)
-
-  const accounts: Array<{ code: string; name: string; type: 'asset' | 'liability' | 'equity' | 'revenue' | 'expense'; description?: string }> = [
-    // ── Assets ────────────────────────────────────────────────────────────
-    { code: '1010', name: 'Cash on Hand',                       type: 'asset',     description: 'Petty cash / safe' },
-    { code: '1015', name: 'Cash in POS Drawer',                 type: 'asset',     description: 'Open-shift drawer floats and takings before deposit' },
-    { code: '1020', name: 'Bank — Operating Account',           type: 'asset' },
-    { code: '1030', name: 'Card / Gateway Receivable',          type: 'asset',     description: 'Keenu / JazzCash / Easypaisa awaiting settlement' },
-    { code: '1110', name: 'Customer Accounts Receivable',       type: 'asset' },
-    { code: '1120', name: 'Foodpanda Settlement Receivable',    type: 'asset',     description: 'Net of commission, due from Foodpanda' },
-    { code: '1210', name: 'Inventory — Food',                   type: 'asset' },
-    { code: '1220', name: 'Inventory — Beverage',               type: 'asset' },
-    { code: '1230', name: 'Inventory — Packaging',              type: 'asset' },
-    { code: '1310', name: 'Prepaid Expenses',                   type: 'asset' },
-    { code: '1320', name: 'GST Input (Recoverable)',            type: 'asset',     description: 'Federal sales tax (FBR) recoverable on supplier purchases — offsets 2030' },
-    { code: '1321', name: 'PRA Sales Tax Input',                type: 'asset',     description: 'Punjab Revenue Authority sales tax on services — recoverable, Punjab outlets only' },
-    { code: '1322', name: 'SRB Sales Tax Input',                type: 'asset',     description: 'Sindh Revenue Board sales tax — Sindh outlets only' },
-    { code: '1323', name: 'KPRA Sales Tax Input',               type: 'asset',     description: 'KP Revenue Authority sales tax — KP outlets only' },
-    { code: '1324', name: 'BRA Sales Tax Input',                type: 'asset',     description: 'Balochistan Revenue Authority sales tax — Balochistan outlets only' },
-    { code: '1330', name: 'Income Tax (WHT) Receivable',        type: 'asset',     description: 'Income tax withheld at source by clients/platforms' },
-    { code: '1340', name: 'Advances to Suppliers',              type: 'asset',     description: 'Payments made before goods received' },
-    { code: '1510', name: 'Kitchen Equipment',                  type: 'asset' },
-    { code: '1520', name: 'Furniture & Fixtures',               type: 'asset' },
-    { code: '1530', name: 'IT Equipment',                       type: 'asset' },
-    { code: '1590', name: 'Accumulated Depreciation',           type: 'asset',     description: 'Contra-asset' },
-
-    // ── Liabilities ───────────────────────────────────────────────────────
-    { code: '2010', name: 'Accounts Payable — Suppliers',       type: 'liability' },
-    { code: '2020', name: 'Wages Payable',                      type: 'liability' },
-    { code: '2030', name: 'GST Output (Payable to FBR)',        type: 'liability', description: 'Federal sales tax (17%) collected on sales — owed to FBR' },
-    { code: '2031', name: 'PRA Sales Tax Output',               type: 'liability', description: 'Punjab service-sector sales tax collected' },
-    { code: '2032', name: 'SRB Sales Tax Output',               type: 'liability', description: 'Sindh service-sector sales tax' },
-    { code: '2033', name: 'KPRA Sales Tax Output',              type: 'liability', description: 'KP service-sector sales tax' },
-    { code: '2034', name: 'BRA Sales Tax Output',               type: 'liability', description: 'Balochistan service-sector sales tax' },
-    { code: '2040', name: 'Income Tax Withholding Payable',     type: 'liability', description: 'WHT deducted from supplier payments — owed to FBR' },
-    { code: '2041', name: 'Sales Tax Withholding Payable',      type: 'liability', description: 'STWH where we are the withholding agent' },
-    { code: '2050', name: 'Customer Wallet Liability',          type: 'liability', description: 'Funds customers have loaded but not spent' },
-    { code: '2060', name: 'Loyalty Points Liability',           type: 'liability', description: 'Accrued unredeemed loyalty points (breakage)' },
-    { code: '2070', name: 'Foodpanda Commission Payable',       type: 'liability' },
-    { code: '2080', name: 'Gift Card Liability',                type: 'liability' },
-    { code: '2090', name: 'Accrued Expenses',                   type: 'liability' },
-    { code: '2095', name: 'Tips Payable to Staff',              type: 'liability', description: 'Customer-discretionary tips received, owed to staff' },
-
-    // ── Equity ────────────────────────────────────────────────────────────
-    { code: '3010', name: "Owner's Capital",                    type: 'equity' },
-    { code: '3020', name: 'Retained Earnings',                  type: 'equity' },
-    { code: '3030', name: "Owner's Drawings",                   type: 'equity' },
-
-    // ── Revenue (per concept) ────────────────────────────────────────────
-    { code: '4001', name: 'Revenue — Simmer',                   type: 'revenue' },
-    { code: '4002', name: 'Revenue — Stax',                     type: 'revenue' },
-    { code: '4003', name: 'Revenue — Strata',                   type: 'revenue' },
-    { code: '4004', name: 'Revenue — Flipd',                    type: 'revenue' },
-    { code: '4005', name: 'Revenue — Garnish Station',          type: 'revenue' },
-    { code: '4006', name: 'Revenue — Stax @ Padel',             type: 'revenue' },
-    { code: '4007', name: 'Revenue — Bukhari',                  type: 'revenue' },
-    { code: '4090', name: 'Revenue — Other / Catering',         type: 'revenue' },
-    { code: '4100', name: 'Service Charges',                    type: 'revenue' },
-
-    // ── COGS ──────────────────────────────────────────────────────────────
-    { code: '5010', name: 'Food Cost',                          type: 'expense' },
-    { code: '5020', name: 'Beverage Cost',                      type: 'expense' },
-    { code: '5030', name: 'Packaging Cost',                     type: 'expense' },
-    { code: '5040', name: 'Waste / Spoilage',                   type: 'expense' },
-    { code: '5050', name: 'Inventory Variance',                 type: 'expense' },
-    { code: '5060', name: 'Inventory Cost Adjustment',          type: 'expense' },
-
-    // ── Operating expenses ────────────────────────────────────────────────
-    { code: '6010', name: 'Rent',                               type: 'expense' },
-    { code: '6020', name: 'Electricity',                        type: 'expense' },
-    { code: '6021', name: 'Gas',                                type: 'expense' },
-    { code: '6022', name: 'Internet & Telecom',                 type: 'expense' },
-    { code: '6023', name: 'Water',                              type: 'expense' },
-    { code: '6030', name: 'Wages — Kitchen',                    type: 'expense' },
-    { code: '6031', name: 'Wages — Front of House',             type: 'expense' },
-    { code: '6032', name: 'Wages — Management',                 type: 'expense' },
-    { code: '6035', name: 'Wages — Riders / Delivery',          type: 'expense' },
-    { code: '6040', name: 'Cleaning & Supplies',                type: 'expense' },
-    { code: '6050', name: 'Repairs & Maintenance',              type: 'expense' },
-    { code: '6060', name: 'Marketing & Promo',                  type: 'expense' },
-    { code: '6070', name: 'Software & Subscriptions',           type: 'expense' },
-    { code: '6080', name: 'Bank / Card Processing Fees',        type: 'expense' },
-    { code: '6081', name: 'Bank Charges (Misc)',                type: 'expense' },
-    { code: '6090', name: 'Foodpanda Commission Expense',       type: 'expense' },
-    { code: '6095', name: 'Aggregator Commission (Other)',      type: 'expense' },
-    { code: '6100', name: 'Insurance',                          type: 'expense' },
-    { code: '6110', name: 'Professional Fees (Legal/Accounting)', type: 'expense' },
-    { code: '6120', name: 'Licences & Permits',                 type: 'expense' },
-    { code: '6130', name: 'Property Taxes',                     type: 'expense' },
-    { code: '6140', name: 'Travel & Entertainment',             type: 'expense' },
-    { code: '6150', name: 'Depreciation Expense',               type: 'expense' },
-
-    // ── Contra-revenue ────────────────────────────────────────────────────
-    { code: '7010', name: 'Discounts Given',                    type: 'expense' },
-    { code: '7020', name: 'Loyalty Redemptions',                type: 'expense' },
-    { code: '7030', name: 'Comps & Promo Items',                type: 'expense' },
-    { code: '7040', name: 'Refunds Issued',                     type: 'expense' },
-
-    // ── Other ─────────────────────────────────────────────────────────────
-    { code: '8010', name: 'Cash Variance (Over / Short)',       type: 'expense' },
-    { code: '8020', name: 'Foreign Exchange Gain / Loss',       type: 'expense' },
-  ]
-
-  // Each company keeps its OWN chart of accounts (Account.tenantId; the code
-  // is unique per company), so seed the full chart for every company.
+  // ONE starting chart: lib/chartOfAccounts.ts, the list the API also runs at
+  // boot for every company. This file used to carry its own copy, which had
+  // drifted (it still created Foodpanda / aggregator accounts and lacked
+  // 1350, 1540, 1550 and 8030), and its upsert overwrote name, type,
+  // description and isActive on every run, undoing operator edits and
+  // re-enabling accounts the operator had switched off. ensureChartOfAccounts
+  // only adds the codes a company is missing.
   const seedTenants = await prisma.tenant.findMany({
     where: { isActive: true, deletedAt: null },
     select: { id: true, slug: true },
   })
-  for (const t of seedTenants) {
-    for (const acc of accounts) {
-      await prisma.account.upsert({
-        where: { tenantId_code: { tenantId: t.id, code: acc.code } },
-        update: { name: acc.name, type: acc.type, description: acc.description ?? null, isActive: true },
-        create: { ...acc, tenantId: t.id, isActive: true },
-      })
-    }
-  }
+  let accountsAdded = 0
+  for (const t of seedTenants) accountsAdded += await ensureChartOfAccounts(t.id)
 
   await prisma.account.updateMany({
     where: { name: 'Craveman Revenue' },
     data: { isActive: false },
   })
 
-  console.info(`✓ Chart of accounts seeded (${accounts.length} accounts × ${seedTenants.length} company(ies))`)
+  console.info(`✓ Chart of accounts ensured (${accountsAdded} account(s) added across ${seedTenants.length} company(ies))`)
 
   // ─── Admin user ────────────────────────────────────────────────────────────
 

@@ -146,6 +146,22 @@ export async function webhookRoutes(fastify: FastifyInstance) {
         where: { orderId: payload.order_id, gatewayRef: payload.transaction_id },
         data: { status: mappedStatus as never },
       })
+
+      // A till card the drawer's close already booked as "awaiting gateway
+      // confirmation" (1030) and the gateway has now failed: move it to the
+      // customer's receivable. No-op for anything else (open drawer, online
+      // order); idempotent per payment. Never fails the webhook.
+      if (mappedStatus === 'failed') {
+        const failed = await prisma.payment.findMany({
+          where: { orderId: payload.order_id, gatewayRef: payload.transaction_id, shiftId: { not: null } },
+          select: { id: true },
+        })
+        const { postPosCardFailure } = await import('../accounting/shiftPosting.js')
+        for (const p of failed) {
+          await postPosCardFailure(p.id).catch((err: Error) =>
+            fastify.log.error({ paymentId: p.id, err: err.message }, 'Keenu failure could not be posted to the ledger'))
+        }
+      }
     }
 
     return reply.status(200).send({ received: true })

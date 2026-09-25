@@ -10,6 +10,7 @@ import { flagException } from '../../lib/exceptions.js'
 import { emitItemUpdated } from '../../lib/ws.js'
 import { drawerExpectation, drawerExpectationOf, drawerVariance, cashVarianceLimitCents, isDrawerBalanced } from '../../lib/drawer.js'
 import { shiftTenantId } from '../../lib/tenantScope.js'
+import { SHIFT_SALE_PAYMENT_INCLUDE, summariseShiftSales } from '../accounting/shiftPosting.js'
 import type { OrderDTO } from '@servd/types'
 import type { Order, PaymentMethod, Prisma } from '@prisma/client'
 
@@ -529,7 +530,8 @@ export async function getZReport(shiftId: string) {
   const shift = await prisma.shift.findUnique({
     where: { id: shiftId },
     include: {
-      payments: { include: { order: { select: { totalCents: true, discountCents: true, taxCents: true, tipCents: true } } } },
+      // The same rows, and the same sale summary, the ledger post reads.
+      payments: { include: SHIFT_SALE_PAYMENT_INCLUDE },
       cashMovements: true,
       user: { select: { name: true, tenantId: true } },
       location: { select: { tenantId: true } },
@@ -568,20 +570,15 @@ export async function getZReport(shiftId: string) {
   const voids = refundedPayments.reduce((s, p) => s + Math.abs(p.amountCents), 0)
 
   const totalSales = cashSales + cardSales + walletSales
-  const uniqueOrders = new Map<string, { discountCents: number; taxCents: number; tipCents: number }>()
-  for (const p of payments) {
-    if (p.order && !uniqueOrders.has(p.orderId)) {
-      uniqueOrders.set(p.orderId, {
-        discountCents: p.order.discountCents,
-        taxCents: p.order.taxCents,
-        tipCents: ('tipCents' in p.order && typeof p.order.tipCents === 'number') ? p.order.tipCents : 0,
-      })
-    }
-  }
-  const totalOrders = uniqueOrders.size
-  const totalDiscounts = Array.from(uniqueOrders.values()).reduce((s, o) => s + o.discountCents, 0)
-  const totalTax       = Array.from(uniqueOrders.values()).reduce((s, o) => s + o.taxCents, 0)
-  const totalTips      = Array.from(uniqueOrders.values()).reduce((s, o) => s + o.tipCents, 0)
+  // Orders, tax, discounts, tips and service charge are the till orders this
+  // drawer books, split by the one sale formula (accounting/shiftPosting.ts
+  // summariseShiftSales → computeSaleAccounting) — the figures the shift's
+  // journal entry posts, not a second count of its own.
+  const sales = summariseShiftSales(shiftId, payments)
+  const totalOrders    = sales.totals.orders
+  const totalDiscounts = sales.totals.discountCents
+  const totalTax       = sales.totals.taxCents
+  const totalTips      = sales.totals.tipCents
 
   // Expected drawer — the one formula (lib/drawer.ts): opening + cash sales
   // − cash refunds − drops − pay-outs + adds + pay-ins.
@@ -635,6 +632,7 @@ export async function getZReport(shiftId: string) {
     netCents:             totalSales - voids,
     taxCents:             totalTax,
     tipsCents:            totalTips,
+    serviceChargeCents:   sales.totals.serviceChargeCents,
     discountCents:        totalDiscounts,
     compCents:            compSales,
     voidsCount:           refundedPayments.length,
