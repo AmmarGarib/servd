@@ -12,6 +12,7 @@ import { sendEmail } from '../lib/notify.js'
 import { shiftOfCompany } from '../lib/tenantScope.js'
 import { getZReport } from '../modules/pos/service.js'
 import { salesTotals, topItems, salesByChannel, type SalesQuery } from '../modules/reports/service.js'
+import { agingReport } from '../modules/procurement/service.js'
 import { fmtPktDate, parsePktStartOfDay, parsePktEndOfDay } from '../modules/accounting/dates.js'
 
 type ReportType = 'sales_daily' | 'shift_summary' | 'low_stock' | 'food_cost' | 'ap_aging' | 'menu_engineering'
@@ -277,29 +278,29 @@ async function buildLowStockReport(tenantId: string): Promise<{ subject: string;
   }
 }
 
-async function buildApAgingReport(tenantId: string): Promise<{ subject: string; html: string }> {
-  const bills = await prisma.supplierBill.findMany({
-    where: { status: { not: 'void' }, supplier: { tenantId } },
-    include: { supplier: { select: { name: true } }, applications: true },
-  })
-  const fmt = (c: number) => `PKR ${(c / 100).toLocaleString('en-PK', { maximumFractionDigits: 0 })}`
-  const open = bills
-    .map((b) => {
-      const paid = b.applications.reduce((s, a) => s + a.amountAppliedCents, 0)
-      const due = b.totalCents - paid
-      const ageDays = Math.floor((Date.now() - new Date(b.billDate).getTime()) / 86_400_000)
-      return { supplier: b.supplier.name, billNumber: b.billNumber, due, ageDays }
-    })
-    .filter((b) => b.due > 0)
-    .sort((a, b) => b.ageDays - a.ageDays)
+/**
+ * The emailed AP aging IS the AP aging (procurement agingReport) — the same
+ * rows as the Accounting and Procurement screens: net of withholding, by due
+ * date, unapplied payments as credits, opening balances apart. It used to age
+ * by bill date on gross amounts. One company; suppliers with no company are
+ * not in any company's books, so they are not in this email.
+ */
+export async function buildApAgingReport(tenantId: string): Promise<{ subject: string; html: string }> {
+  const aging = await agingReport([tenantId], { includeUnassigned: false })
+  const fmt = (c: number) => (c === 0 ? '' : `PKR ${(c / 100).toLocaleString('en-PK', { maximumFractionDigits: 0 })}`)
+  const esc = (t: string) => t.replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]!))
+  const row = (name: string, r: { current: number; '1_30': number; '31_60': number; '61_90': number; '90_plus': number; creditsCents: number; total: number; openingCents: number }) =>
+    `<tr><td>${name}</td><td>${fmt(r.current)}</td><td>${fmt(r['1_30'])}</td><td>${fmt(r['31_60'])}</td><td>${fmt(r['61_90'])}</td><td>${fmt(r['90_plus'])}</td><td>${fmt(-r.creditsCents)}</td><td><strong>${fmt(r.total) || 'PKR 0'}</strong></td><td>${fmt(r.openingCents)}</td></tr>`
 
   return {
-    subject: `[servd] AP aging — ${open.length} open bill(s)`,
+    subject: `[servd] AP aging — ${aging.total.bills} open bill(s), PKR ${(aging.total.total / 100).toLocaleString('en-PK', { maximumFractionDigits: 0 })} owed`,
     html: `
       <h2>AP aging</h2>
+      <p>Days past due date. Amounts are net of withholding tax, as in the ledger (AP 2010).</p>
       <table cellpadding="6" border="1" style="border-collapse:collapse">
-        <tr><th>Supplier</th><th>Bill</th><th>Days</th><th>Due</th></tr>
-        ${open.map((b) => `<tr><td>${b.supplier}</td><td>${b.billNumber}</td><td>${b.ageDays}</td><td>${fmt(b.due)}</td></tr>`).join('')}
+        <tr><th>Supplier</th><th>Current</th><th>1–30</th><th>31–60</th><th>61–90</th><th>90+</th><th>Credits</th><th>Owed (ledger)</th><th>Opening (not in ledger)</th></tr>
+        ${aging.bySupplier.map((r) => row(esc(r.supplierName), r)).join('')}
+        ${row('<strong>Total</strong>', aging.total)}
       </table>`,
   }
 }

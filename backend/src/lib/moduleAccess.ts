@@ -149,6 +149,9 @@ const GATED_PREFIXES: Array<{ prefix: string; anyOf: string[] }> = [
   { prefix: '/accounting',    anyOf: ['accounting'] },
   { prefix: '/reports',       anyOf: ['reports'] },
   { prefix: '/management',    anyOf: ['brand_dashboard', 'fnb_dashboard'] },
+  // The one AP aging serves the Accounting AP aging page too, so finance
+  // (accounting, no procurement) can open it.
+  { prefix: '/procurement/ap-aging', anyOf: ['procurement', 'accounting'] },
   { prefix: '/procurement',   anyOf: ['procurement'] },
   { prefix: '/reconciliation', anyOf: ['reconciliation'] },
   { prefix: '/gift-cards',    anyOf: ['gift_cards'] },

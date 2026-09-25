@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
-import { requireAuth, MANAGERS, ADMIN_ONLY, ALL_STAFF } from '../auth/middleware.js'
+import { requireAuth, MANAGERS, ADMIN_ONLY, ALL_STAFF, FINANCE_TEAM } from '../auth/middleware.js'
 import { resolveTenantScope } from '../../lib/tenantScope.js'
 import { NotFoundError, ForbiddenError } from '../../lib/errors.js'
 
@@ -38,7 +38,7 @@ import {
   createPo, submitPo, approvePo, rejectPo, cancelPo, sendPoToSupplier, receivePo,
   createBill, voidBill, matchBill,
   createPayment, allocatePayment,
-  agingReport, reorderSuggestions,
+  agingReport, supplierAging, reorderSuggestions,
 } from './service.js'
 
 // ─── Zod schemas ─────────────────────────────────────────────────────────────
@@ -202,15 +202,21 @@ export async function procurementRoutes(fastify: FastifyInstance) {
       await assertSupplierAccess(req, req.params.id)
       const supplier = await prisma.supplier.findUnique({ where: { id: req.params.id } })
       if (!supplier) throw new NotFoundError('Supplier', req.params.id)
-      const [bills, payments] = await Promise.all([
+      const [bills, payments, aging] = await Promise.all([
         prisma.supplierBill.findMany({ where: { supplierId: req.params.id }, orderBy: { billDate: 'desc' } }),
         prisma.supplierPayment.findMany({ where: { supplierId: req.params.id }, orderBy: { paymentDate: 'desc' }, include: { applications: true } }),
+        supplierAging(req.params.id),
       ])
-      const billed = bills.reduce((s, b) => s + (b.status === 'void' ? 0 : b.totalCents), 0)
-      const paid   = bills.reduce((s, b) => s + b.paidCents, 0)
+      // The same figures as the AP aging row: bills net of withholding, less
+      // unapplied payments (ledgerOutstanding — ties to AP 2010), plus the
+      // opening balance, which was never posted to the ledger.
+      const ledgerOutstanding = aging?.total ?? 0
       return {
         supplier,
-        outstanding: supplier.openingBalanceCents + billed - paid,
+        outstanding: supplier.openingBalanceCents + ledgerOutstanding,
+        ledgerOutstanding,
+        openingBalanceCents: supplier.openingBalanceCents,
+        aging,
         bills,
         payments,
       }
@@ -336,58 +342,14 @@ export async function procurementRoutes(fastify: FastifyInstance) {
 
   // ── Bills (AP) ─────────────────────────────────────────────────────────────
 
-  // GET /procurement/ap-aging — accounts payable aging buckets
-  // (current / 1-30 / 31-60 / 61-90 / 90+ days past due) by supplier.
-  fastify.get('/ap-aging', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
-    const now = new Date()
-    const tenantWhere = await supplierTenantFilter(req)
-    const open = await prisma.supplierBill.findMany({
-      where: {
-        status: { in: ['open', 'partially_paid'] },
-        supplier: tenantWhere,
-      },
-      select: {
-        id: true, billNumber: true, supplierId: true, dueDate: true,
-        totalCents: true, paidCents: true,
-        supplier: { select: { name: true } },
-      },
-    })
-
-    const bucketize = (days: number): 'current' | '1_30' | '31_60' | '61_90' | '90_plus' => {
-      if (days <= 0) return 'current'
-      if (days <= 30) return '1_30'
-      if (days <= 60) return '31_60'
-      if (days <= 90) return '61_90'
-      return '90_plus'
-    }
-
-    type Bucket = { current: number; '1_30': number; '31_60': number; '61_90': number; '90_plus': number; total: number; bills: number }
-    const bySupplier = new Map<string, { supplierName: string } & Bucket>()
-
-    let total: Bucket = { current: 0, '1_30': 0, '31_60': 0, '61_90': 0, '90_plus': 0, total: 0, bills: 0 }
-
-    for (const b of open) {
-      const remainingCents = b.totalCents - b.paidCents
-      if (remainingCents <= 0) continue
-      const daysPastDue = Math.floor((now.getTime() - b.dueDate.getTime()) / 86_400_000)
-      const bucket = bucketize(daysPastDue)
-      const slot = bySupplier.get(b.supplierId) ?? {
-        supplierName: b.supplier.name, current: 0, '1_30': 0, '31_60': 0, '61_90': 0, '90_plus': 0, total: 0, bills: 0,
-      }
-      slot[bucket]   += remainingCents
-      slot.total     += remainingCents
-      slot.bills     += 1
-      bySupplier.set(b.supplierId, slot)
-
-      total[bucket]  += remainingCents
-      total.total    += remainingCents
-      total.bills    += 1
-    }
-
-    const bySupplierArr = Array.from(bySupplier.entries()).map(([supplierId, v]) => ({ supplierId, ...v }))
-      .sort((a, b) => b.total - a.total)
-
-    return { bySupplier: bySupplierArr, total, asOf: now.toISOString() }
+  // GET /procurement/ap-aging — THE accounts-payable aging (service.ts
+  // agingReport): net of withholding, by due date, unapplied payments as
+  // credits, opening balances on their own, suppliers with no company apart.
+  // Behind the Accounting AP aging page and the Procurement Aging tab; open to
+  // finance as well as managers (module: procurement OR accounting).
+  fastify.get('/ap-aging', { preHandler: requireAuth(...FINANCE_TEAM) }, async (req) => {
+    const scope = await resolveTenantScope(req)
+    return agingReport(scope.tenantIds)
   })
 
   fastify.get<{ Querystring: { supplierId?: string; status?: string; overdue?: string } }>(
@@ -517,11 +479,6 @@ export async function procurementRoutes(fastify: FastifyInstance) {
   )
 
   // ── Aging + reorder + price history ────────────────────────────────────────
-
-  fastify.get('/aging', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
-    const scope = await resolveTenantScope(req)
-    return agingReport(scope.tenantIds)
-  })
 
   fastify.get('/reorder', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
     const scope = await resolveTenantScope(req)

@@ -2368,6 +2368,12 @@ model SupplierBill {
   subtotalCents Int       @default(0)
   taxCents      Int       @default(0)
   totalCents    Int       @default(0)
+  // Income-tax withheld at source (s.153), fixed when the bill is recorded
+  // and booked by postSupplierBill: the supplier is owed totalCents − whtCents
+  // (credited to AP 2010) and the rest is owed to FBR (2040). Every "still
+  // due" figure — payments, status, AP aging, the supplier statement — is net
+  // of it, so a bill paid net of withholding clears, as it does in the ledger.
+  whtCents      Int       @default(0)
   paidCents     Int       @default(0) // running total of payments applied
   notes         String?
   attachmentUrl String? // S3/R2 link to scanned bill

@@ -12,6 +12,7 @@
 import { prisma } from '../../lib/prisma.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { sendEmail } from '../../lib/notify.js'
+import { withholdingForBill } from '../accounting/supplierPosting.js'
 import type { Prisma } from '@prisma/client'
 
 // ─── Settings ────────────────────────────────────────────────────────────────
@@ -350,6 +351,9 @@ export async function createBill(input: CreateBillInput) {
   const subtotalCents = input.lines.reduce((s, l) => s + Math.round(l.unitCostCents * l.quantity), 0)
   const taxCents      = input.taxCents ?? 0
   const totalCents    = subtotalCents + taxCents
+  // Withholding is fixed now, from the supplier's company's settings, and the
+  // ledger books this same figure (postSupplierBill) — see SupplierBill.whtCents.
+  const whtCents      = await withholdingForBill(subtotalCents, supplier.tenantId)
 
   const billDate = new Date(input.billDate)
   const dueDate  = input.dueDate
@@ -367,6 +371,7 @@ export async function createBill(input: CreateBillInput) {
         subtotalCents,
         taxCents,
         totalCents,
+        whtCents,
         notes:        input.notes         ?? null,
         attachmentUrl: input.attachmentUrl ?? null,
         createdBy:    input.createdBy,
@@ -463,6 +468,29 @@ export async function matchBill(billId: string) {
   }
 }
 
+// ─── What a bill still owes ──────────────────────────────────────────────────
+//
+// ONE rule, net of withholding: the supplier is owed totalCents − whtCents
+// (that is what AP 2010 was credited with), less what has been applied. The
+// payment paths, the bill status, the AP aging, the supplier statement and a
+// petty-cash spend against a bill all use it. They used to use the gross
+// total, so a bill paid net of withholding stayed 'partially_paid' for ever
+// and showed as owing the WHT the ledger had already moved to FBR.
+
+type BillAmounts = { totalCents: number; whtCents: number; paidCents: number }
+
+/** What the supplier is still owed on this bill. */
+export function billDueCents(b: BillAmounts): number {
+  return b.totalCents - b.whtCents - b.paidCents
+}
+
+/** The status a bill's payments put it in (void and draft are left alone). */
+function paidStatus(b: BillAmounts & { status: string }): string {
+  if (b.status === 'void' || b.status === 'draft') return b.status
+  if (b.paidCents > 0 && billDueCents(b) <= 0) return 'paid'
+  return b.paidCents > 0 ? 'partially_paid' : b.status
+}
+
 // ─── Supplier Payments ───────────────────────────────────────────────────────
 
 export interface CreatePaymentInput {
@@ -508,7 +536,7 @@ export async function createPaymentTx(tx: Prisma.TransactionClient, input: Creat
       if (b.status === 'void')             throw new AppError('BILL_VOID',  `Bill ${b.billNumber} is void`,        400)
       if (b.status === 'paid')             throw new AppError('BILL_PAID',  `Bill ${b.billNumber} is fully paid`, 400)
 
-      const remaining = b.totalCents - b.paidCents
+      const remaining = billDueCents(b)
       if (a.amountAppliedCents > remaining) {
         throw new AppError('OVER_APPLIED', `Cannot apply ${a.amountAppliedCents} to bill ${b.billNumber} — only ${remaining} due`, 400)
       }
@@ -536,10 +564,7 @@ export async function createPaymentTx(tx: Prisma.TransactionClient, input: Creat
       where: { id: a.billId },
       data:  { paidCents: { increment: a.amountAppliedCents } },
     })
-    const newStatus =
-      bill.paidCents >= bill.totalCents ? 'paid' :
-      bill.paidCents > 0                ? 'partially_paid' :
-      bill.status
+    const newStatus = paidStatus(bill)
     if (newStatus !== bill.status) {
       await tx.supplierBill.update({ where: { id: bill.id }, data: { status: newStatus } })
     }
@@ -570,7 +595,8 @@ export async function allocatePayment(
       const bill = await tx.supplierBill.findUnique({ where: { id: a.billId } })
       if (!bill) throw new NotFoundError('SupplierBill', a.billId)
       if (bill.supplierId !== payment.supplierId) throw new AppError('SUPPLIER_MISMATCH', 'Bill belongs to different supplier', 400)
-      const remaining = bill.totalCents - bill.paidCents
+      if (bill.status === 'void') throw new AppError('BILL_VOID', `Bill ${bill.billNumber} is void`, 400)
+      const remaining = billDueCents(bill)
       if (a.amountAppliedCents > remaining) {
         throw new AppError('OVER_APPLIED', `Bill ${bill.billNumber} only has ${remaining} due`, 400)
       }
@@ -582,10 +608,7 @@ export async function allocatePayment(
         where: { id: a.billId },
         data:  { paidCents: { increment: a.amountAppliedCents } },
       })
-      const newStatus =
-        updated.paidCents >= updated.totalCents ? 'paid' :
-        updated.paidCents > 0                   ? 'partially_paid' :
-        updated.status
+      const newStatus = paidStatus(updated)
       if (newStatus !== updated.status) {
         await tx.supplierBill.update({ where: { id: updated.id }, data: { status: newStatus } })
       }
@@ -600,54 +623,133 @@ export async function allocatePayment(
   })
 }
 
-// ─── Aging Report ────────────────────────────────────────────────────────────
+// ─── AP aging ────────────────────────────────────────────────────────────────
+//
+// THE accounts-payable aging: the Accounting AP aging page, the Procurement
+// Aging tab, the emailed ap_aging report and the supplier statement all read
+// it. There used to be three agings (two bucketed by due date with different
+// shapes — one of which crashed its tab — and the email by bill date) and a
+// fourth "outstanding" on the statement; none of them tied to the ledger.
+//
+// Per supplier, it ties to ledger AP 2010:
+//   buckets   each open bill's billDueCents (net of withholding), aged by
+//             days past its DUE date (current / 1-30 / 31-60 / 61-90 / 90+)
+//   credits   payments not yet applied to a bill, plus any bill paid beyond
+//             what it owed — both already debited to AP in full
+//   total     Σ buckets − credits   ← the supplier's AP balance in the ledger
+//   opening   Supplier.openingBalanceCents, shown on its own: it was never
+//             posted to the ledger, so it is not in `total`
+// Suppliers with no company are never posted to any ledger; they are listed
+// under `unassigned`, never inside a company's totals.
 
-export async function agingReport(tenantIds?: string[]) {
-  // Optional tenant filter: when supplied, scope to bills whose supplier
-  // belongs to one of the listed tenants OR has no tenant assigned (legacy
-  // orphan rows — still surfaced so the CEO can clean them up).
-  const supplierFilter = tenantIds && tenantIds.length > 0
-    ? { OR: [{ tenantId: { in: tenantIds } }, { tenantId: null }] }
-    : {}
-  const bills = await prisma.supplierBill.findMany({
-    where: {
-      status: { in: ['open', 'partially_paid'] },
-      ...(tenantIds && tenantIds.length > 0 ? { supplier: supplierFilter } : {}),
+export type AgingBucketKey = 'current' | '1_30' | '31_60' | '61_90' | '90_plus'
+
+export interface AgingRow {
+  supplierId: string
+  supplierName: string
+  tenantId: string | null
+  bills: number
+  current: number
+  '1_30': number
+  '31_60': number
+  '61_90': number
+  '90_plus': number
+  creditsCents: number
+  total: number
+  openingCents: number
+}
+
+export type AgingTotals = Omit<AgingRow, 'supplierId' | 'supplierName' | 'tenantId'>
+
+export interface AgingReport {
+  asOf: string
+  bySupplier: AgingRow[]
+  total: AgingTotals
+  unassigned: { bySupplier: AgingRow[]; total: AgingTotals }
+}
+
+function agingBucket(daysPastDue: number): AgingBucketKey {
+  if (daysPastDue <= 0) return 'current'
+  if (daysPastDue <= 30) return '1_30'
+  if (daysPastDue <= 60) return '31_60'
+  if (daysPastDue <= 90) return '61_90'
+  return '90_plus'
+}
+
+const emptyTotals = (): AgingTotals => ({ bills: 0, current: 0, '1_30': 0, '31_60': 0, '61_90': 0, '90_plus': 0, creditsCents: 0, total: 0, openingCents: 0 })
+
+async function agingRows(supplierWhere: Prisma.SupplierWhereInput, asOf: Date): Promise<AgingRow[]> {
+  const suppliers = await prisma.supplier.findMany({
+    where: supplierWhere,
+    select: {
+      id: true, name: true, tenantId: true, openingBalanceCents: true,
+      bills: {
+        where: { status: { notIn: ['void', 'draft'] } },
+        select: { dueDate: true, totalCents: true, whtCents: true, paidCents: true, status: true },
+      },
+      payments: { select: { amountCents: true, appliedCents: true } },
     },
-    include: { supplier: { select: { id: true, name: true } } },
   })
 
-  const today = new Date()
-  type Bucket = 'current' | 'd30' | 'd60' | 'd90' | 'd90plus'
-  const buckets: Record<Bucket, number> = { current: 0, d30: 0, d60: 0, d90: 0, d90plus: 0 }
-  const bySupplier = new Map<string, { supplierId: string; supplierName: string; current: number; d30: number; d60: number; d90: number; d90plus: number; total: number }>()
-
-  for (const b of bills) {
-    const remaining = b.totalCents - b.paidCents
-    if (remaining <= 0) continue
-    const daysOverdue = Math.floor((today.getTime() - b.dueDate.getTime()) / (24 * 60 * 60 * 1000))
-    const bucket: Bucket =
-      daysOverdue <= 0  ? 'current' :
-      daysOverdue <= 30 ? 'd30' :
-      daysOverdue <= 60 ? 'd60' :
-      daysOverdue <= 90 ? 'd90' :
-                          'd90plus'
-
-    buckets[bucket] += remaining
-
-    const existing = bySupplier.get(b.supplierId) ?? {
-      supplierId: b.supplierId, supplierName: b.supplier.name,
-      current: 0, d30: 0, d60: 0, d90: 0, d90plus: 0, total: 0,
+  const rows: AgingRow[] = []
+  for (const s of suppliers) {
+    const row: AgingRow = {
+      supplierId: s.id, supplierName: s.name, tenantId: s.tenantId,
+      bills: 0, current: 0, '1_30': 0, '31_60': 0, '61_90': 0, '90_plus': 0,
+      creditsCents: 0, total: 0, openingCents: s.openingBalanceCents,
     }
-    existing[bucket] += remaining
-    existing.total   += remaining
-    bySupplier.set(b.supplierId, existing)
+    for (const b of s.bills) {
+      const due = billDueCents(b)
+      if (due < 0) { row.creditsCents += -due; continue }   // paid beyond what it owed
+      if (due === 0) continue
+      row[agingBucket(Math.floor((asOf.getTime() - b.dueDate.getTime()) / 86_400_000))] += due
+      row.bills += 1
+    }
+    for (const p of s.payments) row.creditsCents += Math.max(0, p.amountCents - p.appliedCents)
+    row.total = row.current + row['1_30'] + row['31_60'] + row['61_90'] + row['90_plus'] - row.creditsCents
+    if (row.bills > 0 || row.creditsCents > 0 || row.openingCents !== 0) rows.push(row)
   }
+  return rows.sort((a, b) => b.total - a.total)
+}
 
-  return {
-    totals: { ...buckets, grandTotal: Object.values(buckets).reduce((s, v) => s + v, 0) },
-    bySupplier: Array.from(bySupplier.values()).sort((a, b) => b.total - a.total),
+function totalsOf(rows: AgingRow[]): AgingTotals {
+  const t = emptyTotals()
+  for (const r of rows) {
+    t.bills += r.bills
+    t.current += r.current; t['1_30'] += r['1_30']; t['31_60'] += r['31_60']; t['61_90'] += r['61_90']; t['90_plus'] += r['90_plus']
+    t.creditsCents += r.creditsCents; t.total += r.total; t.openingCents += r.openingCents
   }
+  return t
+}
+
+/**
+ * AP aging for the companies in `tenantIds` (the request's scope). Fails
+ * closed: an empty scope is an empty report, never every company's.
+ */
+export async function agingReport(
+  tenantIds: string[],
+  opts: { includeUnassigned?: boolean; asOf?: Date } = {},
+): Promise<AgingReport> {
+  const asOf = opts.asOf ?? new Date()
+  if (tenantIds.length === 0) {
+    return { asOf: asOf.toISOString(), bySupplier: [], total: emptyTotals(), unassigned: { bySupplier: [], total: emptyTotals() } }
+  }
+  const [rows, orphanRows] = await Promise.all([
+    agingRows({ tenantId: { in: tenantIds } }, asOf),
+    opts.includeUnassigned === false ? Promise.resolve([]) : agingRows({ tenantId: null }, asOf),
+  ])
+  return {
+    asOf: asOf.toISOString(),
+    bySupplier: rows,
+    total: totalsOf(rows),
+    unassigned: { bySupplier: orphanRows, total: totalsOf(orphanRows) },
+  }
+}
+
+/** One supplier's aging row (the statement's "outstanding"). */
+export async function supplierAging(supplierId: string, asOf = new Date()): Promise<AgingRow | null> {
+  const [row] = await agingRows({ id: supplierId }, asOf)
+  return row ?? null
 }
 
 // ─── Reorder Suggestions ─────────────────────────────────────────────────────

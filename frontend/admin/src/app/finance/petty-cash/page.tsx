@@ -17,7 +17,7 @@ interface Box {
   isActive: boolean
   movements: Movement[]
 }
-interface OpenBill { id: string; billNumber: string; status: string; totalCents: number; paidCents: number; supplier: { name: string } }
+interface OpenBill { id: string; billNumber: string; status: string; totalCents: number; whtCents: number; paidCents: number; supplier: { name: string } }
 interface Movement {
   id: string
   type: 'topup' | 'spend' | 'reconcile' | 'transfer'
@@ -186,7 +186,7 @@ function MovementModal({ box, onClose, onSaved }: { box: Box; onClose: () => voi
             <select value={supplierBillId} onChange={(e) => setSupplierBillId(e.target.value)} className={fieldCls}>
               <option value="">— no, a general spend —</option>
               {openBills.map((b) => (
-                <option key={b.id} value={b.id}>{b.supplier.name} · {b.billNumber} · PKR {((b.totalCents - b.paidCents) / 100).toLocaleString()} due</option>
+                <option key={b.id} value={b.id}>{b.supplier.name} · {b.billNumber} · PKR {((b.totalCents - (b.whtCents ?? 0) - b.paidCents) / 100).toLocaleString()} due</option>
               ))}
             </select>
             <p className="text-[10px] text-white/30 mt-1">Recorded as a cash payment against the bill, so it is not expensed twice.</p>

@@ -10,6 +10,21 @@ import { prisma } from '../../lib/prisma.js'
 import { ACCT, postJournalEntry, type JournalLineInput } from './journal.js'
 import { getOperationsConfig } from '../../lib/setup-config.js'
 
+/**
+ * Income-tax withholding (s.153/153A) on a supplier bill, from the supplier's
+ * company's Operations config. Fixed ONCE, when the bill is recorded
+ * (procurement createBill stores it on SupplierBill.whtCents), and booked
+ * from that stored figure — so the ledger's AP and every "still due" figure
+ * are the same number. A supplier with no company never posts, so it
+ * withholds nothing (and never reads another company's settings).
+ */
+export async function withholdingForBill(subtotalCents: number, tenantId: string | null): Promise<number> {
+  if (!tenantId || subtotalCents <= 0) return 0
+  const ops = await getOperationsConfig(tenantId)
+  if (!ops.withholdingTaxEnabled || !(ops.withholdingTaxPct > 0)) return 0
+  return Math.round(subtotalCents * ops.withholdingTaxPct)
+}
+
 export async function postSupplierBill(billId: string): Promise<{ posted: boolean; entryId: string | null; reason?: string }> {
   const bill = await prisma.supplierBill.findUnique({
     where: { id: billId },
@@ -17,6 +32,10 @@ export async function postSupplierBill(billId: string): Promise<{ posted: boolea
   })
   if (!bill) return { posted: false, entryId: null, reason: 'bill_not_found' }
   if (bill.status === 'void') return { posted: false, entryId: null, reason: 'bill_voided' }
+
+  // Supplier bills post into the supplier's own company.
+  const tenantId = bill.supplier.tenantId
+  if (!tenantId) return { posted: false, entryId: null, reason: 'supplier_has_no_company' }
 
   // v1: book all inventory purchases to Food. Beverage/Packaging splits will
   // come once InventoryItem grows a `category` field — see schema TODO.
@@ -30,29 +49,24 @@ export async function postSupplierBill(billId: string): Promise<{ posted: boolea
 
   // Withholding tax — section 153/153A. We deduct at source: supplier is
   // paid net of WHT, and we book a payable to FBR for the deducted amount.
-  // The `withholdingTaxRecoverable` flag is informational (tracked in audit
-  // metadata so the operator can later claim it).
+  // The amount is the bill's own whtCents (fixed when it was recorded), so
+  // this entry and the bill's "still due" can never disagree. The
+  // `withholdingTaxRecoverable` flag is informational (memo only).
   // Math: Inventory dr X, AP cr (X-WHT), WHT_PAYABLE cr WHT  → balanced.
-  const ops = await getOperationsConfig(bill.supplier?.tenantId ?? null)
-  let whtCents = 0
-  if (ops.withholdingTaxEnabled && ops.withholdingTaxPct > 0 && bill.subtotalCents > 0) {
-    whtCents = Math.round(bill.subtotalCents * ops.withholdingTaxPct)
-    if (whtCents > 0) {
-      lines.push({
-        accountCode: ACCT.WHT_PAYABLE,
-        type: 'credit',
-        amountCents: whtCents,
-        memo: `WHT ${(ops.withholdingTaxPct * 100).toFixed(2)}% on ${bill.billNumber}${ops.withholdingTaxRecoverable ? ' (recoverable)' : ''}`,
-      })
-    }
+  const whtCents = bill.whtCents
+  if (whtCents > 0) {
+    const ops = await getOperationsConfig(tenantId)
+    const pct = bill.subtotalCents > 0 ? (whtCents / bill.subtotalCents) * 100 : 0
+    lines.push({
+      accountCode: ACCT.WHT_PAYABLE,
+      type: 'credit',
+      amountCents: whtCents,
+      memo: `WHT ${pct.toFixed(2)}% on ${bill.billNumber}${ops.withholdingTaxRecoverable ? ' (recoverable)' : ''}`,
+    })
   }
 
   const apPayable = bill.totalCents - whtCents
   lines.push({ accountCode: ACCT.AP_SUPPLIERS, type: 'credit', amountCents: apPayable, memo: `${bill.supplier.name} bill ${bill.billNumber}${whtCents > 0 ? ' (net of WHT)' : ''}` })
-
-  // Supplier bills post into the supplier's own company.
-  const tenantId = bill.supplier.tenantId
-  if (!tenantId) return { posted: false, entryId: null, reason: 'supplier_has_no_company' }
 
   const result = await postJournalEntry({
     tenantId,

@@ -168,13 +168,16 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
       const found = tenantId
         ? await prisma.supplierBill.findFirst({
             where: { id: body.supplierBillId, supplier: { tenantId } },
-            select: { id: true, supplierId: true, billNumber: true, status: true, totalCents: true, paidCents: true, supplier: { select: { name: true } } },
+            select: { id: true, supplierId: true, billNumber: true, status: true, totalCents: true, whtCents: true, paidCents: true, supplier: { select: { name: true } } },
           })
         : null
       if (!found) throw new AppError('BILL_NOT_IN_COMPANY', 'That supplier bill is not in your active company', 422)
       if (found.status === 'void' || found.status === 'paid') throw new AppError('BILL_NOT_OPEN', `Bill ${found.billNumber} is ${found.status}`, 422)
-      if (Math.abs(body.amountCents) > found.totalCents - found.paidCents) {
-        throw new AppError('OVER_APPLIED', `Only ${found.totalCents - found.paidCents} is still due on bill ${found.billNumber}`, 400)
+      // Net of withholding — the one "still due" rule (procurement billDueCents).
+      const { billDueCents } = await import('../procurement/service.js')
+      const due = billDueCents(found)
+      if (Math.abs(body.amountCents) > due) {
+        throw new AppError('OVER_APPLIED', `Only ${due} is still due on bill ${found.billNumber}`, 400)
       }
       bill = { id: found.id, supplierId: found.supplierId, billNumber: found.billNumber, supplierName: found.supplier.name }
     }

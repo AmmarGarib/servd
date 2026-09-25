@@ -3,6 +3,7 @@ import { useState, useCallback, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../lib/api'
 import { useViewAllTenants } from '../../components/ui/TenantSwitcher'
+import { ApAging } from '../../components/finance/ApAging'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -33,11 +34,15 @@ interface PurchaseOrder {
 interface Bill {
   id: string; supplierId: string; poId?: string | null; billNumber: string
   billDate: string; dueDate: string; status: string
-  subtotalCents: number; taxCents: number; totalCents: number; paidCents: number
+  subtotalCents: number; taxCents: number; totalCents: number; whtCents: number; paidCents: number
   notes?: string | null; attachmentUrl?: string | null
   supplier?: { name: string } | null
   po?: { id: string; reference?: string | null } | null
 }
+
+// What the supplier is still owed: net of the withholding the ledger moved to
+// FBR (the server's billDueCents rule).
+const billDue = (b: Pick<Bill, 'totalCents' | 'whtCents' | 'paidCents'>) => b.totalCents - (b.whtCents ?? 0) - b.paidCents
 
 interface SupplierPayment {
   id: string; supplierId: string; paymentDate: string; method: string
@@ -46,8 +51,6 @@ interface SupplierPayment {
   supplier?: { name: string } | null
 }
 
-interface AgingBucket { current: number; days1_30: number; days31_60: number; days61_90: number; over90: number; total: number }
-interface AgingRow { supplier: { id: string; name: string }; buckets: AgingBucket }
 
 interface ReorderItem {
   id: string; name: string; unit: string; currentStock: number; parLevel: number
@@ -650,8 +653,8 @@ function BillsTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
                     <td className="px-4 py-3 text-kds-subtext hidden md:table-cell">{fmt(b.billDate)}</td>
                     <td className={`px-4 py-3 hidden md:table-cell ${isOverdue ? 'text-kds-red font-semibold' : 'text-kds-subtext'}`}>{fmt(b.dueDate)}</td>
                     <td className="px-4 py-3 text-kds-text font-semibold text-right">{pkr(b.totalCents)}</td>
-                    <td className={`px-4 py-3 font-semibold text-right ${b.totalCents - b.paidCents > 0 ? 'text-kds-red' : 'text-kds-green'}`}>
-                      {pkr(b.totalCents - b.paidCents)}
+                    <td className={`px-4 py-3 font-semibold text-right ${billDue(b) > 0 ? 'text-kds-red' : 'text-kds-green'}`}>
+                      {pkr(billDue(b))}
                     </td>
                     <td className="px-4 py-3"><Badge status={isOverdue ? 'overdue' : b.status} /></td>
                     <td className="px-4 py-3">
@@ -974,18 +977,18 @@ function AllocateModal({ paymentId, qc, onClose }: { paymentId: string; qc: Retu
           <button onClick={onClose} className="text-kds-subtext text-xs">✕</button>
         </div>
         <div className="space-y-2 max-h-64 overflow-y-auto">
-          {bills.filter((b) => b.totalCents - b.paidCents > 0).map((b) => (
+          {bills.filter((b) => billDue(b) > 0).map((b) => (
             <div key={b.id} className="flex items-center gap-3">
               <div className="flex-1 min-w-0">
                 <p className="text-sm text-kds-text font-medium">{b.billNumber}</p>
-                <p className="text-xs text-kds-subtext">Outstanding: {pkr(b.totalCents - b.paidCents)}</p>
+                <p className="text-xs text-kds-subtext">Outstanding: {pkr(billDue(b))}</p>
               </div>
               <input type="number" placeholder="Amount (PKR)" className="w-32 rounded-lg bg-kds-bg border border-kds-border px-2 py-1.5 text-sm text-kds-text focus:border-kds-green focus:outline-none"
                 value={allocations[b.id] ?? ''}
                 onChange={(e) => setAllocations({ ...allocations, [b.id]: e.target.value })} />
             </div>
           ))}
-          {bills.filter((b) => b.totalCents - b.paidCents > 0).length === 0 && (
+          {bills.filter((b) => billDue(b) > 0).length === 0 && (
             <p className="text-kds-subtext text-sm">No open bills to allocate to.</p>
           )}
         </div>
@@ -1256,75 +1259,13 @@ function SupplierForm({ qc, supplier, onClose }: { qc: ReturnType<typeof useQuer
 // AGING TAB
 // ══════════════════════════════════════════════════════════════════════════════
 
+// The one AP aging (GET /procurement/ap-aging) — the same view as the
+// Accounting AP aging page. This tab used to read GET /procurement/aging, an
+// object it treated as an array, so it crashed.
 function AgingTab() {
-  const { data, isLoading } = useQuery({
-    queryKey: ['procurement', 'aging'],
-    queryFn: () => api.get<AgingRow[]>('/procurement/aging'),
-  })
-
-  const bucketLabels = ['Current', '1–30 days', '31–60 days', '61–90 days', '90+ days', 'Total']
-
-  if (isLoading) return <div className="p-6"><p className="text-kds-subtext text-sm">Loading…</p></div>
-  if (!data || data.length === 0) return <div className="p-6"><EmptyState icon="📅" title="No aging data" sub="Record bills and payments to see aging" /></div>
-
-  const totals = data.reduce((acc, row) => ({
-    current: acc.current + row.buckets.current,
-    days1_30: acc.days1_30 + row.buckets.days1_30,
-    days31_60: acc.days31_60 + row.buckets.days31_60,
-    days61_90: acc.days61_90 + row.buckets.days61_90,
-    over90: acc.over90 + row.buckets.over90,
-    total: acc.total + row.buckets.total,
-  }), { current: 0, days1_30: 0, days31_60: 0, days61_90: 0, over90: 0, total: 0 })
-
   return (
-    <div className="p-6 space-y-4">
-      <div className="flex items-center justify-between">
-        <div>
-          <p className="font-bold text-kds-text text-lg">Accounts Payable Aging</p>
-          <p className="text-sm text-kds-subtext">Outstanding balances by aging bucket</p>
-        </div>
-        <div className="text-right">
-          <p className="text-xs text-kds-subtext">Total outstanding</p>
-          <p className="text-xl font-black text-kds-red">{pkr(totals.total)}</p>
-        </div>
-      </div>
-
-      <div className="rounded-xl border border-kds-border overflow-hidden">
-        <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-kds-border bg-kds-card/40">
-              <th className="text-left px-4 py-2.5 text-xs text-kds-subtext font-semibold">Supplier</th>
-              {bucketLabels.map((l) => (
-                <th key={l} className="text-right px-4 py-2.5 text-xs text-kds-subtext font-semibold hidden md:table-cell last:table-cell">{l}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {data.map((row) => (
-              <tr key={row.supplier.id} className="border-b border-kds-border/50 last:border-0 hover:bg-kds-card/30">
-                <td className="px-4 py-3 text-kds-text font-medium">{row.supplier.name}</td>
-                <td className="px-4 py-3 text-right text-kds-text hidden md:table-cell">{row.buckets.current > 0 ? pkr(row.buckets.current) : '—'}</td>
-                <td className="px-4 py-3 text-right text-amber-400 hidden md:table-cell">{row.buckets.days1_30 > 0 ? pkr(row.buckets.days1_30) : '—'}</td>
-                <td className="px-4 py-3 text-right text-orange-400 hidden md:table-cell">{row.buckets.days31_60 > 0 ? pkr(row.buckets.days31_60) : '—'}</td>
-                <td className="px-4 py-3 text-right text-red-400 hidden md:table-cell">{row.buckets.days61_90 > 0 ? pkr(row.buckets.days61_90) : '—'}</td>
-                <td className="px-4 py-3 text-right text-kds-red hidden md:table-cell">{row.buckets.over90 > 0 ? pkr(row.buckets.over90) : '—'}</td>
-                <td className="px-4 py-3 text-right font-bold text-kds-text">{pkr(row.buckets.total)}</td>
-              </tr>
-            ))}
-            <tr className="border-t-2 border-kds-border bg-kds-card/60 font-bold">
-              <td className="px-4 py-3 text-xs text-kds-subtext uppercase tracking-widest">Totals</td>
-              <td className="px-4 py-3 text-right text-kds-text text-sm hidden md:table-cell">{pkr(totals.current)}</td>
-              <td className="px-4 py-3 text-right text-amber-400 text-sm hidden md:table-cell">{pkr(totals.days1_30)}</td>
-              <td className="px-4 py-3 text-right text-orange-400 text-sm hidden md:table-cell">{pkr(totals.days31_60)}</td>
-              <td className="px-4 py-3 text-right text-red-400 text-sm hidden md:table-cell">{pkr(totals.days61_90)}</td>
-              <td className="px-4 py-3 text-right text-kds-red text-sm hidden md:table-cell">{pkr(totals.over90)}</td>
-              <td className="px-4 py-3 text-right text-kds-red text-lg">{pkr(totals.total)}</td>
-            </tr>
-          </tbody>
-        </table>
-        </div>
-      </div>
+    <div className="p-6">
+      <ApAging />
     </div>
   )
 }
