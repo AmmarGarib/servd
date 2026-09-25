@@ -1,4 +1,8 @@
-// Rider CRUD + assignment + ratings.
+// Rider roster: CRUD, history and ratings. Assigning, unassigning, marking
+// delivered and setting a rider's availability are /dispatch (the one set of
+// rules, dispatch/service.ts) — this module used to carry its own
+// /riders/assign, /riders/unassign and two status PATCHes that disagreed
+// with it.
 //
 // Tenant model: every Rider carries a tenantId (added in migration
 // 20260602100000_rider_tenant_id) so a manager in tenant A cannot enumerate,
@@ -78,19 +82,6 @@ export async function riderRoutes(fastify: FastifyInstance) {
     },
   )
 
-  // PATCH /riders/:id/status — go available / busy / offline
-  fastify.patch<{ Params: { id: string }; Body: { status: string } }>(
-    '/:id/status',
-    { preHandler: requireAuth(...ALL_STAFF) },
-    async (req) => {
-      const { status } = z.object({
-        status: z.enum(['available', 'busy', 'offline']),
-      }).parse(req.body)
-      const rider = await loadRiderInScope(req, req.params.id, 'write')
-      return prisma.rider.update({ where: { id: rider.id }, data: { status } })
-    },
-  )
-
   // DELETE /riders/:id (soft)
   fastify.delete<{ Params: { id: string } }>(
     '/:id',
@@ -99,85 +90,6 @@ export async function riderRoutes(fastify: FastifyInstance) {
       const rider = await loadRiderInScope(req, req.params.id, 'write')
       await prisma.rider.update({ where: { id: rider.id }, data: { deletedAt: new Date(), isActive: false } })
       return reply.status(204).send()
-    },
-  )
-
-  // POST /riders/assign — assign rider to an order. Both must be in the
-  // caller's scope AND in the same company. Stops cross-tenant fleet hijacking.
-  fastify.post<{ Body: { orderId: string; riderId: string } }>(
-    '/assign',
-    { preHandler: requireAuth(...ALL_STAFF) },
-    async (req) => {
-      const { orderId, riderId } = z.object({
-        orderId: z.string().uuid(),
-        riderId: z.string().uuid(),
-      }).parse(req.body)
-
-      const scope = await scopeTenantWhere(req, 'write')
-      const [order, rider] = await Promise.all([
-        prisma.order.findFirst({
-          where: {
-            id: orderId,
-            concept: { deletedAt: null, ...scope },
-          },
-          select: { id: true, concept: { select: { tenantId: true } } },
-        }),
-        prisma.rider.findFirst({
-          where: { id: riderId, deletedAt: null, isActive: true, ...scope },
-        }),
-      ])
-
-      if (!order) throw new NotFoundError('Order', orderId)
-      if (!rider) throw new NotFoundError('Rider', riderId)
-      // Write scope spans every company a head-office operator belongs to,
-      // so "both in scope" is not "same company": the rider must belong to
-      // the ORDER's company or one fleet ends up carrying the other's orders.
-      if (rider.tenantId !== order.concept.tenantId) {
-        throw new AppError('RIDER_NOT_IN_COMPANY', "Rider does not belong to the order's company", 422)
-      }
-
-      const [updatedOrder] = await prisma.$transaction([
-        prisma.order.update({ where: { id: orderId }, data: { riderId } }),
-        prisma.rider.update({ where: { id: riderId }, data: { status: 'busy' } }),
-      ])
-
-      return updatedOrder
-    },
-  )
-
-  // POST /riders/unassign — unassign rider from order (mark delivered)
-  fastify.post<{ Body: { orderId: string } }>(
-    '/unassign',
-    { preHandler: requireAuth(...ALL_STAFF) },
-    async (req) => {
-      const { orderId } = z.object({ orderId: z.string().uuid() }).parse(req.body)
-      const order = await prisma.order.findFirst({
-        where: {
-          id: orderId,
-          concept: { deletedAt: null, ...(await scopeTenantWhere(req, 'write')) },
-        },
-      })
-      if (!order) throw new NotFoundError('Order', orderId)
-
-      let riderFreeAfter = false
-      if (order.riderId) {
-        const otherActive = await prisma.order.count({
-          where: { riderId: order.riderId, id: { not: orderId }, status: { in: ['confirmed', 'preparing', 'ready'] } },
-        })
-        riderFreeAfter = otherActive === 0
-      }
-
-      await prisma.$transaction(async (tx) => {
-        await tx.order.update({ where: { id: orderId }, data: { riderId: null, status: 'completed', completedAt: new Date() } })
-        if (order.riderId && riderFreeAfter) {
-          await tx.rider.update({
-            where: { id: order.riderId },
-            data: { status: 'available', totalDeliveries: { increment: 1 } },
-          })
-        }
-      })
-
-      return { success: true }
     },
   )
 
@@ -293,28 +205,6 @@ export async function riderRoutes(fastify: FastifyInstance) {
         rider: { id: rider.id, name: rider.name, avgRating: rider.avgRating, totalDeliveries: rider.totalDeliveries },
         ratings: ratings.map((r) => ({ ...r, order: orderMap.get(r.orderId) ?? null })),
       }
-    },
-  )
-
-  // PATCH /riders/:id/availability — set status and optional notes
-  fastify.patch<{ Params: { id: string } }>(
-    '/:id/availability',
-    { preHandler: requireAuth(...ALL_STAFF) },
-    async (req) => {
-      const body = z.object({
-        status: z.enum(['available', 'busy', 'offline']),
-        notes: z.string().max(500).optional(),
-      }).parse(req.body)
-
-      const rider = await loadRiderInScope(req, req.params.id, 'write')
-
-      return prisma.rider.update({
-        where: { id: rider.id },
-        data: {
-          status: body.status,
-          ...(body.notes !== undefined && { notes: body.notes }),
-        },
-      })
     },
   )
 

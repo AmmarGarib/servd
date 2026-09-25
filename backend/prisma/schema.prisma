@@ -1582,6 +1582,10 @@ model Order {
   deliveryOtp           String?
   deliveryOtpVerifiedAt DateTime?
   deliveryOtpAttempts   Int            @default(0)
+  // Set once by POST /dispatch/orders/:id/delivered — the rider dropped it
+  // off. The claim that makes "mark delivered" count a delivery (and free the
+  // rider) exactly once, while the order keeps its riderId for history.
+  deliveredAt           DateTime?
   placedAt              DateTime       @default(now())
   completedAt           DateTime?
 

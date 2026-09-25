@@ -51,6 +51,13 @@ export default function DispatchPage() {
   const unassign = useMutation({
     mutationFn: (orderId: string) => api.post(`/dispatch/orders/${orderId}/unassign`, {}),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['dispatch-board'] }),
+    onError: (err: Error) => alert(err.message),
+  })
+
+  const delivered = useMutation({
+    mutationFn: (orderId: string) => api.post(`/dispatch/orders/${orderId}/delivered`, {}),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['dispatch-board'] }),
+    onError: (err: Error) => alert(err.message),
   })
 
   return (
@@ -122,7 +129,14 @@ export default function DispatchPage() {
                       <p className="text-sm font-semibold">{o.concept.name}</p>
                       <p className="text-[11px] text-s-muted">{o.customerName ?? 'Walk-in'} · {fmtPkrShort(o.totalCents)}</p>
                       {o.deliveryNotes && <p className="text-[11px] italic text-s-muted mt-1">{o.deliveryNotes}</p>}
-                      <button onClick={() => unassign.mutate(o.id)} className="mt-2 text-[11px] text-s-red hover:underline">Unassign</button>
+                      <div className="mt-2 flex gap-3">
+                        {o.status === 'ready' && (
+                          <button onClick={() => delivered.mutate(o.id)} disabled={delivered.isPending}
+                            className="text-[11px] text-s-teal hover:underline disabled:opacity-50">Delivered</button>
+                        )}
+                        <button onClick={() => unassign.mutate(o.id)} disabled={unassign.isPending}
+                          className="text-[11px] text-s-red hover:underline disabled:opacity-50">Unassign</button>
+                      </div>
                     </div>
                   ))}
                 </div>

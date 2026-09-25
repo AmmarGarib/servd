@@ -69,20 +69,26 @@ export default function RidersPage() {
     onSuccess: () => { void qc.invalidateQueries({ queryKey: ['riders'] }); setShowAdd(false); setAddForm({ name: '', phone: '', vehicleType: 'bike', notes: '' }) },
   })
 
+  // Assigning, delivering and rider availability all go through /dispatch —
+  // the one set of rider rules (same company, active, not offline; the rider
+  // is freed after their last drop).
   const statusMutation = useMutation({
-    mutationFn: ({ id, status }: { id: string; status: string }) => api.patch(`/riders/${id}/status`, { status }),
+    mutationFn: ({ id, status }: { id: string; status: string }) => api.post(`/dispatch/riders/${id}/status`, { status }),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['riders'] }),
+    onError: (err: Error) => alert(err.message),
   })
 
   const assignMutation = useMutation({
     mutationFn: ({ orderId, riderId }: { orderId: string; riderId: string }) =>
-      api.post('/riders/assign', { orderId, riderId }),
+      api.post(`/dispatch/orders/${orderId}/assign`, { riderId }),
     onSuccess: () => { void qc.invalidateQueries({ queryKey: ['riders'] }); void qc.invalidateQueries({ queryKey: ['orders-delivery'] }); setAssigningOrder(null) },
+    onError: (err: Error) => alert(err.message),
   })
 
-  const unassignMutation = useMutation({
-    mutationFn: (orderId: string) => api.post('/riders/unassign', { orderId }),
+  const deliveredMutation = useMutation({
+    mutationFn: (orderId: string) => api.post(`/dispatch/orders/${orderId}/delivered`, {}),
     onSuccess: () => { void qc.invalidateQueries({ queryKey: ['riders'] }); void qc.invalidateQueries({ queryKey: ['orders-delivery'] }) },
+    onError: (err: Error) => alert(err.message),
   })
 
   const deleteMutation = useMutation({
@@ -276,11 +282,17 @@ export default function RidersPage() {
                       In transit
                     </span>
                   </div>
-                  <button onClick={() => unassignMutation.mutate(order.id)}
-                    disabled={unassignMutation.isPending}
-                    className="mt-3 w-full rounded-lg border border-kds-green text-kds-green font-bold py-2 text-sm hover:bg-kds-green/10 transition-colors disabled:opacity-50">
-                    ✓ Mark Delivered
-                  </button>
+                  {order.status === 'ready' ? (
+                    <button onClick={() => deliveredMutation.mutate(order.id)}
+                      disabled={deliveredMutation.isPending}
+                      className="mt-3 w-full rounded-lg border border-kds-green text-kds-green font-bold py-2 text-sm hover:bg-kds-green/10 transition-colors disabled:opacity-50">
+                      Mark Delivered
+                    </button>
+                  ) : (
+                    <p className="mt-3 text-center text-xs text-kds-subtext">
+                      Kitchen still on it ({order.status}) — deliverable once ready
+                    </p>
+                  )}
                 </div>
               ))}
             </div>
