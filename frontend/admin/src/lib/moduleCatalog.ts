@@ -83,7 +83,7 @@ export const MODULE_CATALOG: AppModule[] = [
     id: 'pos', ref: '1', name: 'POS, orders & write-offs', icon: '💳',
     build: 'built', absorbed: ['pos', 'sales', 'variance'],
     blurb: 'Taking the order, taking the money, and everything that leaves without being paid for.',
-    gaps: 'Tax is wrong at the till in two directions: the POS never sends the tender, so every sale is taxed at taxRateCash (15%) even on card (should be 8%), and the cart displays GST at the legacy concept.taxRate (17%), so the on-screen total never matches what is charged. Offline orders are lost — sw.js replays to the wrong origin unauthenticated, then deletes them. Two refund engines disagree: /refunds reverses ledger, loyalty and gift cards but writes no Payment row (so the till, Z-report and SRB return never see it) and ignores the caps at /configuration/refund-policy; POS refundOrder() does the reverse. Voids and comps have no admin screen at all. StaffMeal cost never posts to the ledger or deducts stock, so it never reaches COGS. The Orders "Channel" tab calls /reports/sales/by-source, which does not exist, so it reads "No channel data" forever. Split bills (/orders/[id]/split) and the live floor plan (/floorplan) exist but are not linked from here.',
+    gaps: 'Tax is wrong at the till in two directions: the POS never sends the tender, so every sale is taxed at taxRateCash (15%) even on card (should be 8%), and the cart displays GST at the legacy concept.taxRate (17%), so the on-screen total never matches what is charged. Offline orders are lost — sw.js replays to the wrong origin unauthenticated, then deletes them. Two refund engines disagree: /refunds reverses ledger, loyalty and gift cards but writes no Payment row (so the till, Z-report and SRB return never see it) and ignores the caps at /configuration/refund-policy; POS refundOrder() does the reverse. Comps have no admin screen; voids are per line on the order page (/orders/[id]) through the one POS void, with its caps and manager PIN. StaffMeal cost never posts to the ledger or deducts stock, so it never reaches COGS. Split bills (/orders/[id]/split) and the live floor plan (/floorplan) exist but are not linked from here.',
     sections: [
       { label: 'Point of Sale', href: '/pos',              module: 'pos' },
       { label: 'Waiter mode',   href: '/pos/waiter',       module: 'pos' },
@@ -108,7 +108,7 @@ export const MODULE_CATALOG: AppModule[] = [
       { label: 'Deposit drops',   href: '/finance/deposit-drops',       module: 'accounting' },
       { label: 'Bank accounts',   href: '/configuration/bank-accounts', module: 'accounting' },
       { label: 'Exceptions',      href: '/exceptions',                  module: 'exceptions' },
-      { label: 'Orders by source', href: '/reports',                    module: 'reports', hint: 'The working channel view — the one on /orders is broken' },
+      { label: 'Orders by source', href: '/reports',                    module: 'reports', hint: 'The one sales-by-channel view (the /orders tab was removed)' },
     ],
   },
   {

@@ -1,13 +1,14 @@
 'use client'
 
-// Refund management. Lists recent completed orders the manager could refund,
-// captures a reason, and triggers the dedicated /orders/:id/refund endpoint.
-// Audit trail and reversing journal entries fire automatically.
+// Refund management. Lists recent orders the manager could refund or cancel,
+// captures a reason, and triggers /orders/:id/refund (paid) or the one staff
+// cancel, /orders/:id/cancel (unpaid). Audit trail, restores and reversing
+// journal entries fire automatically.
 
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
-import { api } from '../../lib/api'
+import { api, ordersApi } from '../../lib/api'
 import { fmtPkr } from '../../lib/money'
 
 interface Order {
@@ -45,7 +46,9 @@ export default function RefundsPage() {
   })
 
   const refund = useMutation({
-    mutationFn: (orderId: string) => api.post(`/orders/${orderId}/refund`, { reason, mode }),
+    mutationFn: (orderId: string) => mode === 'cancel'
+      ? ordersApi.cancel(orderId, reason)
+      : api.post(`/orders/${orderId}/refund`, { reason }),
     onSuccess: () => {
       setFeedback({ ok: true, msg: `Order ${mode === 'cancel' ? 'cancelled' : 'refunded'} and reversal posted to the ledger.` })
       setSelectedId(null); setReason('')

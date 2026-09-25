@@ -13,14 +13,17 @@
 //       hours is a generous ceiling; real kitchens will notice before then, but
 //       this catches crashes, tablet deaths, or forgotten tickets.
 //
-// For each cancelled order we send a status-update notification to the
-// customer (SMS + email) via the shared sendOrderStatusUpdate helper, which
-// uses operator-defined template overrides if configured.
+// Each order is cancelled through cancelOrder() — the same path a manager's
+// cancel takes — so the customer is notified (operator templates apply), the
+// wallet and gift-card money they paid with is given back, a promo usage is
+// released and the cancellation is audited. This worker used to write the
+// status directly, which did none of that: a storefront order that timed out
+// kept the customer's wallet and gift-card money.
 
 import { Queue, Worker } from 'bullmq'
 import { redis } from '../lib/redis.js'
 import { serviceClient as prisma } from '../lib/prisma.js'
-import { sendOrderStatusUpdate } from '../lib/notify.js'
+import { cancelOrder } from '../modules/orders/service.js'
 
 const QUEUE_NAME = 'order-auto-cancel'
 const RUN_EVERY_MS = 5 * 60_000
@@ -52,7 +55,7 @@ export function startOrderAutoCancelWorker() {
   }
 }
 
-async function runCancelSweep(): Promise<void> {
+export async function runCancelSweep(): Promise<void> {
   const now = new Date()
   const receivedCutoff  = new Date(now.getTime() - RECEIVED_TIMEOUT_MS)
   const confirmedCutoff = new Date(now.getTime() - CONFIRMED_TIMEOUT_MS)
@@ -65,35 +68,23 @@ async function runCancelSweep(): Promise<void> {
     prisma.order.findMany({
       where: {
         status: 'received',
+        deletedAt: null,
         source: { in: ['servd', 'cart'] },
         placedAt: { lt: receivedCutoff },
       },
       take: 200,
-      select: {
-        id: true,
-        conceptId: true,
-        customerId: true,
-        customerName: true,
-        customer: { select: { email: true, phone: true, name: true } },
-        concept:  { select: { name: true } },
-      },
+      select: { id: true, status: true },
     }),
 
     // Any-source orders stuck in 'confirmed' > 2 hours.
     prisma.order.findMany({
       where: {
         status: 'confirmed',
+        deletedAt: null,
         placedAt: { lt: confirmedCutoff },
       },
       take: 200,
-      select: {
-        id: true,
-        conceptId: true,
-        customerId: true,
-        customerName: true,
-        customer: { select: { email: true, phone: true, name: true } },
-        concept:  { select: { name: true } },
-      },
+      select: { id: true, status: true },
     }),
   ])
 
@@ -103,38 +94,16 @@ async function runCancelSweep(): Promise<void> {
 
   console.log(`[orderAutoCancel] cancelling ${toCancel.length} stalled order(s) (${stalledReceived.length} received, ${stalledConfirmed.length} confirmed)`)
 
-  const cancelledAt = new Date()
-
   for (const order of toCancel) {
     try {
-      await prisma.order.update({
-        where: { id: order.id },
-        data: {
-          status: 'cancelled',
-          cancelledAt,
-          cancellationReason: 'auto_cancelled_timeout',
-        },
+      // onlyFrom: the status the sweep saw. If the kitchen confirmed the order
+      // in the meantime it is no longer stalled and must not be cancelled.
+      await cancelOrder(order.id, {
+        reason: 'auto_cancelled_timeout',
+        actor: null,
+        action: 'order.auto_cancel',
+        onlyFrom: [order.status],
       })
-
-      // Best-effort notification — a send failure must not prevent the next
-      // order from being processed or the DB update from sticking.
-      const email        = order.customer?.email ?? null
-      const phone        = order.customer?.phone ?? null
-      const customerName = order.customer?.name ?? order.customerName ?? null
-
-      if (email || phone) {
-        await sendOrderStatusUpdate({
-          email,
-          phone,
-          conceptName: order.concept.name,
-          conceptId: order.conceptId,
-          orderId: order.id,
-          status: 'cancelled',
-          customerName,
-        }).catch((err: Error) => {
-          console.error(`[orderAutoCancel] notify failed for order ${order.id}:`, err.message)
-        })
-      }
     } catch (err) {
       console.error(`[orderAutoCancel] failed to cancel order ${order.id}:`, (err as Error).message)
     }

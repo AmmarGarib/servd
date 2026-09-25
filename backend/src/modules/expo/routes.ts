@@ -453,34 +453,35 @@ export async function expoRoutes(fastify: FastifyInstance) {
   )
 
   // POST /expo/orders/:id/reject — expo declines an incoming order (out of
-  // stock, blacklisted customer, etc.). Cancels the order; refund/notify
-  // logic is downstream.
+  // stock, blacklisted customer, etc.). Goes through cancelOrder as a
+  // 'rejected' order: the reason is stamped on the order (not only the audit
+  // log), the customer is told, and anything they paid with wallet / gift
+  // card is given back.
   fastify.post<{ Params: { id: string }; Body: { reason: string } }>(
     '/orders/:id/reject',
     { preHandler: requireAuth(...MANAGERS) },
     async (req, reply) => {
-      const body = z.object({ reason: z.string().min(1).max(280) }).parse(req.body)
-      const tenantId = req.staffUser!.tenantFilter
+      const body = z.object({ reason: z.string().trim().min(1).max(280) }).parse(req.body)
+      // Company scope through the shared helper: tenantFilter is null for a
+      // staff user with no company, and `tenantId: null` would match every
+      // company-less brand instead of nothing.
+      const { scopeTenantWhere } = await import('../../lib/tenantScope.js')
       const order = await prisma.order.findFirst({
         where: {
           id: req.params.id,
-          concept: { tenantId, deletedAt: null },
+          concept: { deletedAt: null, ...(await scopeTenantWhere(req, 'write')) },
           deletedAt: null,
         },
+        select: { id: true },
       })
       if (!order) throw new NotFoundError('Order', req.params.id)
-      const { updateOrderStatus } = await import('../orders/service.js')
-      await updateOrderStatus(req.params.id, 'rejected')
-      try {
-        const { audit } = await import('../../lib/audit.js')
-        await audit({ category: 'identity',
-          userId:   req.staffUser!.id,
-          entity:   'Order',
-          entityId: order.id,
-          action:   'expo.reject',
-          metadata: { reason: body.reason },
-        })
-      } catch { /* */ }
+      const { cancelOrder } = await import('../orders/service.js')
+      await cancelOrder(order.id, {
+        status: 'rejected',
+        reason: body.reason,
+        actor: { id: req.staffUser!.id, email: req.staffUser!.email, tenantId: req.staffUser!.tenantId ?? null },
+        action: 'expo.reject',
+      })
       return reply.status(200).send({ ok: true })
     },
   )

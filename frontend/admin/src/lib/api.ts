@@ -295,9 +295,12 @@ export const ordersApi = {
     return api.get<{ data: Order[]; cursor: string | null; hasMore: boolean }>(`/orders${qs}`)
   },
   get: (id: string) => api.get<Order>(`/orders/${id}`),
-  create: (body: unknown) => api.post<Order>('/orders', body),
+  // Kitchen / service progress only — the API refuses 'cancelled' here.
   updateStatus: (id: string, status: string) =>
     api.patch<Order>(`/orders/${id}/status`, { status }),
+  // The one staff cancel: managers only, reason required, audited.
+  cancel: (id: string, reason: string) =>
+    api.post<{ ok: true; order: Order }>(`/orders/${id}/cancel`, { reason }),
   updateItemStatus: (itemId: string, status: string) =>
     api.patch<OrderItem>(`/order-items/${itemId}/status`, { status }),
 }

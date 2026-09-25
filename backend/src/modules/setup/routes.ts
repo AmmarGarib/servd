@@ -597,10 +597,16 @@ export async function setupRoutes(fastify: FastifyInstance) {
       notes:                    z.string().nullable().optional(),
     }).parse(req.body)
     const policy = await findOrCreateSingleton<{ id: string }>('refundPolicy', activeTenantId(req), {})
-    return prisma.refundPolicy.update({
+    const updated = await prisma.refundPolicy.update({
       where: { id: policy.id },
       data: { ...body, updatedById: req.staffUser!.id },
     })
+    // The till reads these caps through the cached setup-config reader —
+    // drop the cache so a tightened void / comp / refund cap applies to the
+    // very next ring-up, not up to a minute later.
+    const { invalidateSetupCache } = await import('../../lib/setup-config.js')
+    invalidateSetupCache()
+    return updated
   })
 
   // ════════════════════════════════════════════════════════════════════════
@@ -681,10 +687,14 @@ export async function setupRoutes(fastify: FastifyInstance) {
       cashVarianceLimitCents: z.number().int().min(0).optional(),
     }).parse(req.body)
     const cfg = await findOrCreateSingleton<{ id: string }>('receiptConfig', activeTenantId(req), {})
-    return prisma.receiptConfig.update({
+    const updated = await prisma.receiptConfig.update({
       where: { id: cfg.id },
       data: { ...body, updatedById: req.staffUser!.id },
     })
+    // Receipts and the shift-close variance check read the cached reader.
+    const { invalidateSetupCache } = await import('../../lib/setup-config.js')
+    invalidateSetupCache()
+    return updated
   })
 
   // ════════════════════════════════════════════════════════════════════════
@@ -717,7 +727,7 @@ export async function setupRoutes(fastify: FastifyInstance) {
     }).parse(req.body)
     const cfg = await findOrCreateSingleton<{ id: string }>('operationsConfig', activeTenantId(req), {})
     const { tipPoolRoleWeights, ...rest } = body
-    return prisma.operationsConfig.update({
+    const updated = await prisma.operationsConfig.update({
       where: { id: cfg.id },
       data: {
         ...rest,
@@ -727,6 +737,10 @@ export async function setupRoutes(fastify: FastifyInstance) {
         updatedById: req.staffUser!.id,
       },
     })
+    // Discount caps and the service charge are read through the cached reader.
+    const { invalidateSetupCache } = await import('../../lib/setup-config.js')
+    invalidateSetupCache()
+    return updated
   })
 
   // ════════════════════════════════════════════════════════════════════════

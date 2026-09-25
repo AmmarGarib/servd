@@ -2,7 +2,7 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useParams } from 'next/navigation'
-import { api } from '../../../lib/api'
+import { api, ApiError, ordersApi } from '../../../lib/api'
 import { useAuthStore } from '../../../store/auth'
 import { formatDistanceToNowStrict, format } from 'date-fns'
 import Link from 'next/link'
@@ -146,7 +146,9 @@ function RefundModal({
   const [mode, setMode] = useState<'refund' | 'cancel'>('refund')
 
   const refund = useMutation({
-    mutationFn: () => api.post(`/orders/${orderId}/refund`, { reason, mode }),
+    mutationFn: () => mode === 'cancel'
+      ? ordersApi.cancel(orderId, reason)
+      : api.post(`/orders/${orderId}/refund`, { reason }),
     onSuccess: () => { onDone(); onClose() },
   })
 
@@ -216,6 +218,34 @@ export default function OrderDetailPage() {
     mutationFn: (status: string) => api.patch(`/orders/${id}/status`, { status }),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['order-detail', id] }),
   })
+
+  // Void one line through the POS void — the only void path: it enforces the
+  // void caps at /configuration/refund-policy, asks for a manager PIN above
+  // the cashier cap, requires a reason and is audited.
+  const voidLine = useMutation({
+    mutationFn: async ({ itemId, reason }: { itemId: string; reason: string }) => {
+      const send = (managerOverridePin?: string) =>
+        api.post(`/pos/orders/${id}/void`, { orderItemId: itemId, reason, ...(managerOverridePin && { managerOverridePin }) })
+      try {
+        return await send()
+      } catch (err) {
+        if (err instanceof ApiError && err.code === 'MANAGER_OVERRIDE_REQUIRED') {
+          const pin = window.prompt(`${err.message}. Manager PIN:`)?.trim()
+          if (!pin) return null
+          return send(pin)
+        }
+        throw err
+      }
+    },
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['order-detail', id] }),
+    onError: (err: Error) => alert(err.message),
+  })
+
+  function promptVoid(itemId: string, name: string) {
+    const reason = window.prompt(`Reason for voiding "${name}" (required):`)?.trim() ?? ''
+    if (!reason) return
+    voidLine.mutate({ itemId, reason })
+  }
 
   const saveNote = useMutation({
     mutationFn: (note: string) => api.patch(`/orders/${id}/notes`, { notes: note }),
@@ -478,7 +508,7 @@ export default function OrderDetailPage() {
               <table className="w-full text-sm">
                 <thead className="bg-kds-card/50 border-b border-kds-border">
                   <tr>
-                    {['Item', 'Qty', 'Unit Price', 'Subtotal', 'Status'].map((h) => (
+                    {['Item', 'Qty', 'Unit Price', 'Subtotal', 'Status', ''].map((h) => (
                       <th key={h} className="px-4 py-2.5 text-left text-xs font-semibold text-kds-subtext">{h}</th>
                     ))}
                   </tr>
@@ -513,6 +543,16 @@ export default function OrderDetailPage() {
                           <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${ITEM_STATUS_COLORS[item.status] ?? 'text-kds-subtext'}`}>
                             {item.status}
                           </span>
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          {item.status !== 'voided' && !['cancelled', 'rejected', 'refunded'].includes(order.status) && (
+                            <button
+                              onClick={() => promptVoid(item.id, item.name)}
+                              disabled={voidLine.isPending}
+                              className="rounded-lg border border-kds-red/40 text-kds-red text-[11px] font-semibold px-2 py-1 hover:bg-kds-red/10 transition-colors disabled:opacity-50">
+                              Void
+                            </button>
+                          )}
                         </td>
                       </tr>
                     )

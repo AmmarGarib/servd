@@ -113,6 +113,13 @@ const STATUS_COPY: Record<string, { subject: string; headline: string; body: str
     headline: 'Order cancelled',
     body: 'Your order has been cancelled. If you have questions, please contact us.',
   },
+  // Expo declined the order at intake. It used to end silently — the customer
+  // was never told their order would not arrive.
+  rejected: {
+    subject: "We couldn't accept your order",
+    headline: "Order not accepted",
+    body: "The restaurant couldn't take your order this time. Any wallet credit or gift card balance you used on it has been returned. If you have questions, please contact us.",
+  },
 }
 
 export async function sendOrderStatusUpdate(opts: {

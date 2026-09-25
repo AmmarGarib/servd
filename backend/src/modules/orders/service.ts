@@ -468,9 +468,39 @@ export async function getOrder(id: string, scope: Prisma.OrderWhereInput = {}) {
 
 // ─── Update order status ──────────────────────────────────────────────────────
 
-export async function updateOrderStatus(id: string, status: OrderStatus) {
+/** Statuses that end an order without a sale. Only cancelOrder() writes them. */
+export type CancelStatus = Extract<OrderStatus, 'cancelled' | 'rejected'>
+
+/**
+ * Move an order along the kitchen / service lifecycle (confirm, fire, ready,
+ * complete, refund). Cancelling or rejecting is NOT done here — it needs a
+ * reason and an audit entry, so it goes through cancelOrder(), which the type
+ * enforces.
+ */
+export async function updateOrderStatus(id: string, status: Exclude<OrderStatus, CancelStatus>) {
+  return (await transitionOrder(id, status)).order
+}
+
+/**
+ * The one writer of Order.status. Validates the transition, claims it with a
+ * conditional update, and runs the side effects exactly once. `changed` is
+ * false for a same-state write or a lost race — nothing ran.
+ */
+async function transitionOrder(
+  id: string,
+  status: OrderStatus,
+  opts: { cancellationReason?: string; onlyFrom?: OrderStatus[] } = {},
+) {
   const order = await prisma.order.findFirst({ where: { id, deletedAt: null } })
   if (!order) throw new NotFoundError('Order', id)
+
+  // A caller that decided on a stale read (the auto-cancel sweep picked this
+  // order up while it sat in 'received') must not act on an order that has
+  // since moved on — the kitchen confirming it is exactly the case it must not
+  // cancel.
+  if (opts.onlyFrom && !opts.onlyFrom.includes(order.status)) {
+    throw new AppError('ORDER_MOVED_ON', `Order ${id} is now ${order.status}`, 409)
+  }
 
   // B19: validate the transition. Retried webhooks / repeated client requests
   // that try to move a `completed` order back to `received` (or `confirmed`)
@@ -486,14 +516,25 @@ export async function updateOrderStatus(id: string, status: OrderStatus) {
     )
   }
 
+  // A same-state write is a no-op, not a transition. The state machine allows
+  // it (gateway retries of the same callback must not 409), and the
+  // conditional update below would still match, so without this every side
+  // effect ran again: a second 'completed' — the admin bulk "Complete" over an
+  // already-completed order is enough — awarded the loyalty points twice and
+  // re-sent the customer notice and the webhook; a second 'cancelled'
+  // re-ran the reversal.
+  if (order.status === status) return { order, changed: false }
+
   // Conditional update so two parallel writers don't both succeed. Whoever
   // gets through second sees count===0 and we no-op without re-firing side
   // effects (still emit the WS event — same end-state, idempotent).
+  const isCancel = status === 'cancelled' || status === 'rejected'
   const result = await prisma.order.updateMany({
     where: { id, status: order.status },
     data: {
       status,
       ...(status === 'completed' && { completedAt: new Date() }),
+      ...(isCancel && { cancelledAt: new Date(), cancellationReason: opts.cancellationReason ?? null }),
     },
   })
   if (result.count === 0) {
@@ -501,7 +542,7 @@ export async function updateOrderStatus(id: string, status: OrderStatus) {
     // status. Treat as success but skip the side-effect cascade.
     emitOrderUpdated(id, status)
     const refreshed = await prisma.order.findUnique({ where: { id } })
-    return refreshed!
+    return { order: refreshed!, changed: false }
   }
   const updated = await prisma.order.update({ where: { id }, data: {} })   // refetch shape
 
@@ -598,16 +639,19 @@ export async function updateOrderStatus(id: string, status: OrderStatus) {
   }
 
   // Notify customer on key status transitions
-  if (['preparing', 'ready', 'completed', 'cancelled'].includes(status)) {
+  if (['preparing', 'ready', 'completed', 'cancelled', 'rejected'].includes(status)) {
     notifyStatusChange(id, status).catch((err) =>
       console.error(`[Notify] Status update failed for ${id}:`, (err as Error).message),
     )
   }
 
-  // Journal posting on terminal status transitions. Refund and cancellation
-  // both reverse the original completion entry (idempotent — replays are
-  // safe). Posting errors are logged but never block the status update.
-  if (status === 'refunded' || status === 'cancelled') {
+  // Journal posting on terminal status transitions. Refund, cancellation and
+  // rejection all reverse the original completion entry (idempotent — replays
+  // are safe) and give back what the customer spent at checkout: wallet,
+  // gift-card balance, earned points. A rejected order is a cancelled one the
+  // kitchen declined at intake — it kept the customer's money before this.
+  // Posting errors are logged but never block the status update.
+  if (status === 'refunded' || isCancel) {
     postOrderRefund(id, `Order ${status}`).catch((err) =>
       console.error(`[journal] postOrderRefund failed for ${id}:`, (err as Error).message),
     )
@@ -622,12 +666,100 @@ export async function updateOrderStatus(id: string, status: OrderStatus) {
       })
   }
 
-  return updated
+  // A promo applied to an order that never happened is given back: the usage
+  // row goes, so the per-customer limit no longer counts it, and a capped
+  // promo's usedCount comes back down. Refunds keep the usage — the sale did
+  // happen.
+  if (isCancel && order.promoCodeId) {
+    releasePromoUsage(id, order.promoCodeId).catch((err) =>
+      console.error(`[promo] usage release failed for ${id}:`, (err as Error).message),
+    )
+  }
+
+  return { order: updated, changed: true }
+}
+
+async function releasePromoUsage(orderId: string, promoCodeId: string): Promise<void> {
+  // Deleting is the claim: a second run finds nothing and gives nothing back.
+  const released = await prisma.promoCodeUsage.deleteMany({ where: { orderId, promoCodeId } })
+  if (released.count === 0) return
+  const promo = await prisma.promoCode.findUnique({ where: { id: promoCodeId }, select: { maxUsageCount: true } })
+  // usedCount is only counted for capped promos (checkout increments it only
+  // when maxUsageCount is set), so only those are given the count back.
+  if (promo?.maxUsageCount == null) return
+  await prisma.promoCode.updateMany({
+    where: { id: promoCodeId, usedCount: { gte: released.count } },
+    data: { usedCount: { decrement: released.count } },
+  })
+}
+
+// ─── Cancel / reject ──────────────────────────────────────────────────────────
+//
+// The one way an order ends without a sale. Every entry point — the manager
+// cancel on /orders and /refunds, the expo reject, refused-at-door and the
+// auto-cancel sweep — comes through here, so each one gets the state machine,
+// the cancelledAt + reason stamp, the customer notice, the restores (wallet,
+// gift card, points earned on it), the promo release and an audit entry.
+
+export interface CancelOrderInput {
+  /** Why. Required — stored on the order and in the audit trail. */
+  reason: string
+  /** 'rejected' = declined at intake (expo). Defaults to 'cancelled'. */
+  status?: CancelStatus
+  /** The staff member acting; null for the system (auto-cancel sweep). */
+  actor: { id: string; email?: string | null; tenantId?: string | null } | null
+  /** Audit action. Defaults to order.cancel / order.reject. */
+  action?: string
+  /** Only act if the order is still in one of these statuses. */
+  onlyFrom?: OrderStatus[]
+  metadata?: Record<string, unknown>
+}
+
+export async function cancelOrder(id: string, input: CancelOrderInput) {
+  const status: CancelStatus = input.status ?? 'cancelled'
+  const reason = input.reason.trim()
+  if (!reason) throw new AppError('REASON_REQUIRED', 'A reason is required to cancel an order', 422)
+
+  const before = await prisma.order.findFirst({
+    where: { id, deletedAt: null },
+    select: { status: true, totalCents: true },
+  })
+  if (!before) throw new NotFoundError('Order', id)
+
+  const { order, changed } = await transitionOrder(id, status, {
+    cancellationReason: reason,
+    onlyFrom: input.onlyFrom,
+  })
+
+  // Audit only what actually happened: a repeat cancel is a no-op, not a
+  // second cancellation.
+  if (changed) {
+    const { audit } = await import('../../lib/audit.js')
+    await audit({
+      category: 'identity',
+      action: input.action ?? (status === 'rejected' ? 'order.reject' : 'order.cancel'),
+      entity: 'Order',
+      entityId: id,
+      userId: input.actor?.id ?? null,
+      userEmail: input.actor?.email ?? null,
+      tenantId: input.actor?.tenantId ?? null,
+      before: { status: before.status, totalCents: before.totalCents },
+      after: { status },
+      metadata: { reason, ...(input.metadata ?? {}) },
+    })
+  }
+  return order
 }
 
 // ─── Update order item status (KDS interactions) ──────────────────────────────
 
-export async function updateItemStatus(itemId: string, status: ItemStatus, staffId?: string) {
+// Kitchen moves only. A void is voidOrderItem() in pos/service.ts — caps, PIN,
+// reason and audit — so 'voided' is not accepted here.
+export async function updateItemStatus(itemId: string, status: Exclude<ItemStatus, 'voided'>, staffId?: string) {
+  // Belt and braces for callers that cast past the type.
+  if ((status as ItemStatus) === 'voided') {
+    throw new AppError('USE_POS_VOID', 'Void a line through POST /pos/orders/:orderId/void', 422)
+  }
   const item = await prisma.orderItem.findUnique({ where: { id: itemId } })
   if (!item) throw new NotFoundError('OrderItem', itemId)
 
@@ -654,7 +786,6 @@ export async function updateItemStatus(itemId: string, status: ItemStatus, staff
       status,
       ...(isCompleting && !item.completedAt && { completedAt: new Date() }),
       ...(status === 'preparing' && { firedAt: new Date() }),
-      ...(status === 'voided' && { voidedAt: new Date(), voidReason: 'staff void' }),
     },
   })
   if (result.count === 0) {
@@ -728,6 +859,7 @@ async function notifyStatusChange(orderId: string, status: string): Promise<void
     email: order.customer?.email,
     phone: order.customer?.phone,
     conceptName: order.concept.name,
+    conceptId: order.conceptId,
     orderId: order.id,
     status,
     customerName: order.customer?.name ?? order.customerName,

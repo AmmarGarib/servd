@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, ALL_STAFF, MANAGERS } from '../auth/middleware.js'
-import { ingestOrder, listOrders, getOrder, updateOrderStatus, updateItemStatus } from './service.js'
+import { ingestOrder, listOrders, getOrder, updateOrderStatus, updateItemStatus, cancelOrder } from './service.js'
 import { assertConceptAccess, filterConceptIdsForStaff } from '../../lib/conceptAccess.js'
 import { conceptWhere, scopeTenantWhere, type ScopeMode } from '../../lib/tenantScope.js'
 import { audit } from '../../lib/audit.js'
@@ -64,12 +64,23 @@ const createOrderSchema = z.object({
   estimated_pickup: z.string().datetime().nullable().default(null),
 })
 
+// Kitchen / service progress only. Cancelling is POST /orders/:id/cancel — it
+// needs a manager, a reason and an audit entry, none of which this route asks
+// for (it used to accept 'cancelled' from any staff role with no reason).
 const updateOrderStatusSchema = z.object({
-  status: z.enum(['received', 'confirmed', 'preparing', 'ready', 'completed', 'cancelled', 'refunded']),
+  status: z.enum(['received', 'confirmed', 'preparing', 'ready', 'completed', 'refunded']),
 })
 
+const cancelOrderSchema = z.object({
+  reason: z.string().trim().min(3, 'Reason is required').max(500),
+})
+
+// Kitchen moves only. Voiding a line is POST /pos/orders/:orderId/void — it
+// enforces the void caps and manager PIN at /configuration/refund-policy,
+// requires a reason and is audited; this route used to accept 'voided' from
+// any staff role with none of that.
 const updateItemStatusSchema = z.object({
-  status: z.enum(['pending', 'preparing', 'ready', 'bumped', 'held', 'recalled', 'voided']),
+  status: z.enum(['pending', 'preparing', 'ready', 'bumped', 'held', 'recalled']),
 })
 
 export async function orderRoutes(fastify: FastifyInstance) {
@@ -266,7 +277,32 @@ export async function orderRoutes(fastify: FastifyInstance) {
       })
       if (!order) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Order not found in your active company' } })
       await assertConceptAccess(req.staffUser!, order.conceptId)
-      return updateOrderStatus(req.params.id, status as never)
+      return updateOrderStatus(req.params.id, status)
+    },
+  )
+
+  // POST /orders/:id/cancel — the staff cancel. Managers only, reason required,
+  // audited; goes through cancelOrder like every other way an order can end
+  // without a sale (expo reject, refused-at-door, the auto-cancel sweep).
+  fastify.post<{ Params: { id: string }; Body: { reason: string } }>(
+    '/:id/cancel',
+    { preHandler: requireAuth(...MANAGERS) },
+    async (req, reply) => {
+      const { reason } = cancelOrderSchema.parse(req.body)
+      // Company-scoped lookup first — a foreign order 404s before anything
+      // is read, cancelled or audited.
+      const order = await prisma.order.findFirst({
+        where: { id: req.params.id, ...(await orderInCompany(req, 'write')) },
+        select: { id: true, conceptId: true },
+      })
+      if (!order) throw new AppError('NOT_FOUND', 'Order not found in your active company', 404)
+      await assertConceptAccess(req.staffUser!, order.conceptId)
+      const updated = await cancelOrder(order.id, {
+        reason,
+        actor: { id: req.staffUser!.id, email: req.staffUser!.email, tenantId: req.staffUser!.tenantId ?? null },
+        metadata: { ip: req.ip },
+      })
+      return reply.send({ ok: true, order: updated })
     },
   )
 
@@ -349,30 +385,41 @@ export async function orderRoutes(fastify: FastifyInstance) {
       if (!order.customerId) {
         return reply.status(422).send({ error: { code: 'NO_CUSTOMER', message: 'Refused-at-door strike requires a linked customer.' } })
       }
+      // Only an order still in service can be refused. This used to overwrite
+      // ANY status with 'cancelled' — a completed sale kept its revenue and
+      // journal entry while showing as cancelled (and was stamped completedAt
+      // as it went). A completed order that comes back is a refund.
+      if (!['received', 'confirmed', 'preparing', 'ready'].includes(order.status)) {
+        throw new AppError(
+          'ORDER_NOT_IN_SERVICE',
+          order.status === 'completed'
+            ? 'This order is already completed — refund it instead of marking it refused.'
+            : `This order is already ${order.status}.`,
+          409,
+        )
+      }
 
-      // Flip order to cancelled with reason — the food's already cooked, so
-      // accounting still records the COGS hit but no revenue.
-      await prisma.order.update({
-        where: { id: order.id },
-        data: { status: 'cancelled', completedAt: new Date() },
+      // Cancel through the one cancel path — the food's already cooked, so
+      // there is no revenue to book, and whatever the customer paid with
+      // wallet or gift card is given back.
+      const severity = order.totalCents >= 500_000 ? 2 : 1
+      const reason = body.reason?.trim() || 'Customer refused order at the door.'
+      await cancelOrder(order.id, {
+        reason,
+        actor: { id: req.staffUser!.id, email: req.staffUser!.email, tenantId: req.staffUser!.tenantId ?? null },
+        action: 'order.refused_at_door',
+        metadata: { severity, totalCents: order.totalCents },
       })
 
       const { recordStrike } = await import('../../lib/strikes.js')
-      const severity = order.totalCents >= 500_000 ? 2 : 1
       await recordStrike({
         customerId: order.customerId,
         kind: 'cod_refused',
         sourceType: 'order',
         sourceId: order.id,
         severity,
-        reason: body.reason ?? 'Customer refused order at the door.',
+        reason,
         recordedById: req.staffUser?.id,
-      })
-
-      await audit({ category: 'identity',
-        action: 'order.refused_at_door', entity: 'Order', entityId: order.id,
-        userId: req.staffUser?.id ?? null, tenantId: req.staffUser?.tenantId ?? null, userEmail: req.staffUser?.email ?? null,
-        metadata: { reason: body.reason, severity, totalCents: order.totalCents },
       })
       return { ok: true, severity }
     },
@@ -380,31 +427,34 @@ export async function orderRoutes(fastify: FastifyInstance) {
 
   // POST /orders/:id/refund — manager-only refund flow with mandatory reason.
   // Wraps the status change so we always have a reason captured in the audit
-  // log. Use this from the admin UI; never auto-refund.
-  fastify.post<{ Params: { id: string }; Body: { reason: string; mode?: 'refund' | 'cancel' } }>(
+  // log. Use this from the admin UI; never auto-refund. (Cancelling an unpaid
+  // order is POST /orders/:id/cancel — this route used to take mode 'cancel'
+  // as a second way in.)
+  fastify.post<{ Params: { id: string }; Body: { reason: string } }>(
     '/:id/refund',
     { preHandler: requireAuth(...MANAGERS) },
     async (req, reply) => {
       const body = z.object({
         reason: z.string().min(3, 'Reason is required').max(500),
-        mode:   z.enum(['refund', 'cancel']).default('refund'),
+        // Only 'refund' is accepted, so a stale client still sending
+        // mode 'cancel' is refused instead of refunding the order.
+        mode:   z.literal('refund').optional(),
       }).parse(req.body)
       // Company-scoped at the lookup — a foreign order 404s before anything
       // is read, refunded or audited.
       const order = await getOrder(req.params.id, await orderInCompany(req, 'write'))
       await assertConceptAccess(req.staffUser!, order.conceptId)
 
-      const targetStatus = body.mode === 'cancel' ? 'cancelled' : 'refunded'
-      const updated = await updateOrderStatus(req.params.id, targetStatus as never)
+      const updated = await updateOrderStatus(req.params.id, 'refunded')
 
       await audit({ category: 'identity',
-        action: `order.${body.mode}`,
+        action: 'order.refund',
         entity: 'Order',
         entityId: order.id,
         userId: req.staffUser!.id, tenantId: req.staffUser?.tenantId ?? null,
         userEmail: req.staffUser!.email,
         before: { status: order.status, totalCents: order.totalCents },
-        after:  { status: targetStatus },
+        after:  { status: 'refunded' },
         metadata: { reason: body.reason, ip: req.ip, conceptSlug: order.conceptId },
       })
 
@@ -415,7 +465,7 @@ export async function orderRoutes(fastify: FastifyInstance) {
 
 // Separate route prefix for order items
 export async function orderItemRoutes(fastify: FastifyInstance) {
-  // PATCH /order-items/:id/status — bump/hold/recall/fire
+  // PATCH /order-items/:id/status — bump/hold/recall/fire (never void — see schema)
   // Concept access is enforced: a cashier scoped to concept A cannot mutate
   // ticket state for items in concept B by guessing/scraping the item id.
   fastify.patch<{ Params: { id: string } }>(
@@ -431,7 +481,7 @@ export async function orderItemRoutes(fastify: FastifyInstance) {
       })
       if (!item) throw new NotFoundError('OrderItem', req.params.id)
       await assertConceptAccess(req.staffUser!, item.order.conceptId)
-      return updateItemStatus(req.params.id, status as never, req.staffUser?.id)
+      return updateItemStatus(req.params.id, status, req.staffUser?.id)
     },
   )
 

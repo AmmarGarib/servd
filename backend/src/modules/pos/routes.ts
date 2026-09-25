@@ -251,10 +251,12 @@ export async function posRoutes(fastify: FastifyInstance) {
         reason: z.string().min(1).max(200),
         managerOverridePin: z.string().optional(),     // required when above cashier cap
       }).parse(req.body)
+      // Company scope through the shared helper — a null tenantFilter would
+      // otherwise match every company-less brand.
       const order = await prisma.order.findFirst({
         where: {
           id: req.params.orderId,
-          concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
+          concept: { deletedAt: null, ...(await scopeTenantWhere(req, 'write')) },
         },
       })
       if (!order) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Order not found in your active company' } })

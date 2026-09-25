@@ -3,54 +3,21 @@ import { prisma } from '../../lib/prisma.js'
 import { ingestOrder } from '../orders/service.js'
 import { NotFoundError, AppError } from '../../lib/errors.js'
 import { getFbrQueue, getSrbQueue } from '../../lib/queue.js'
-import { getRefundPolicy, getReceiptConfig, getOperationsConfig } from '../../lib/setup-config.js'
+import { getRefundPolicy, getReceiptConfig, getOperationsConfig, computeServiceCharge } from '../../lib/setup-config.js'
 import { audit } from '../../lib/audit.js'
 import { sendEmail } from '../../lib/notify.js'
 import { flagException } from '../../lib/exceptions.js'
+import { emitItemUpdated } from '../../lib/ws.js'
 import type { OrderDTO } from '@servd/types'
 import type { PaymentMethod, Prisma } from '@prisma/client'
 
 // ─── Company scoping ──────────────────────────────────────────────────────────
 //
-// The singleton config tables hold one global row PER COMPANY (unique on
-// tenantId + scope + scopeId). The shared readers in lib/setup-config.ts still
-// resolve a company-less "first row", which on a multi-company box is
-// whichever company's row happens to sort first — so the till resolves its
-// discount caps, service charge, refund caps and drawer-variance limit for the
-// order's / shift's own company here. A brand with no company (legacy) falls
-// back to the shared reader.
-
-const GLOBAL_SCOPE = { scope: 'global', scopeId: null } as const
-
-async function operationsConfigFor(tenantId: string | null) {
-  if (!tenantId) return getOperationsConfig()
-  const where = { ...GLOBAL_SCOPE, tenantId }
-  return (await prisma.operationsConfig.findFirst({ where })) ?? prisma.operationsConfig.create({ data: where })
-}
-
-async function refundPolicyFor(tenantId: string | null) {
-  if (!tenantId) return getRefundPolicy()
-  const where = { ...GLOBAL_SCOPE, tenantId }
-  return (await prisma.refundPolicy.findFirst({ where })) ?? prisma.refundPolicy.create({ data: where })
-}
-
-async function receiptConfigFor(tenantId: string | null) {
-  if (!tenantId) return getReceiptConfig()
-  const where = { ...GLOBAL_SCOPE, tenantId }
-  return (await prisma.receiptConfig.findFirst({ where })) ?? prisma.receiptConfig.create({ data: where })
-}
-
-/** Mirror of lib/setup-config's computeServiceCharge, fed the company's own row. */
-function serviceChargeFrom(
-  ops: { serviceChargePct: number; serviceChargeAppliesToChannels: string[] } | null,
-  subtotalCents: number,
-  channel: string,
-): number {
-  if (!ops || ops.serviceChargePct <= 0) return 0
-  const channels = ops.serviceChargeAppliesToChannels ?? []
-  if (channels.length > 0 && !channels.includes(channel)) return 0
-  return Math.round(subtotalCents * ops.serviceChargePct)
-}
+// The singleton config tables hold one global row PER COMPANY. Every policy
+// the till reads (discount caps, service charge, refund / void / comp caps,
+// drawer-variance limit) goes through the shared readers in
+// lib/setup-config.ts with the order's / shift's own company — never a local
+// copy of the query.
 
 /**
  * Only managers of `tenantId` (primary company or a membership) may approve
@@ -118,7 +85,7 @@ export async function createPosOrder(input: PosOrderInput) {
   // Every policy read below (discount caps, service charge, manager PINs) is
   // resolved for the brand's own company.
   const tenantId = concept.tenantId
-  const ops = await operationsConfigFor(tenantId)
+  const ops = await getOperationsConfig(tenantId)
 
   // ── Discount + price-override role gates ─────────────────────────────────
   // Prevents cashiers giving 100%-off to friends. Above policy thresholds the
@@ -207,7 +174,7 @@ export async function createPosOrder(input: PosOrderInput) {
   const taxCents = Math.round(itemTotal * taxRate)
   const netAfterDiscount = itemTotal + taxCents - discount
   // Service charge sits on top of the net (food + tax − discount).
-  const serviceChargeCents = serviceChargeFrom(ops, netAfterDiscount, 'pos')
+  const serviceChargeCents = await computeServiceCharge(netAfterDiscount, 'pos', tenantId)
   const totalCents = netAfterDiscount + serviceChargeCents
 
   const dto: OrderDTO = {
@@ -499,9 +466,10 @@ export async function closeShift(shiftId: string, closingFloatCents: number, not
     .reduce((s, p) => s + p.amountCents, 0)
   const expected = shift.openingFloatCents + cashSales
   const variance = closingFloatCents - expected
-  // The variance limit of the company whose drawer this is — the location's
-  // company, or the cashier's for shifts opened without a location.
-  const recipt = await receiptConfigFor(shift.location?.tenantId ?? shift.user.tenantId)
+  // The variance limit of the company whose drawer this is: the shift's own
+  // company (Shift.tenantId, stamped at open), falling back to the location's
+  // and then the cashier's only for legacy shifts that predate the column.
+  const recipt = await getReceiptConfig(shift.tenantId ?? shift.location?.tenantId ?? shift.user.tenantId)
   if (Math.abs(variance) > (recipt?.cashVarianceLimitCents ?? 20000)) {
     await flagException({
       kind: 'cash_variance',
@@ -763,7 +731,7 @@ export async function voidOrderItem(input: VoidInput) {
   const lineCents = item.unitPriceCents * item.quantity
   const tenantId = item.order.concept.tenantId
 
-  const policy = await refundPolicyFor(tenantId)
+  const policy = await getRefundPolicy(tenantId)
   const { approverId } = await ensureCapOrManagerOverride(
     lineCents,
     policy.cashierVoidLimitCents,
@@ -781,6 +749,10 @@ export async function voidOrderItem(input: VoidInput) {
     where: { id: input.orderItemId },
     data: { voidedAt: new Date(), voidReason: input.reason, status: 'voided' },
   })
+  // The kitchen screens drop the line live — this is the only void path now
+  // (the KDS status route no longer accepts 'voided'), so it carries the push
+  // that route used to send.
+  emitItemUpdated(voided.id, 'voided', voided.stationId)
   await audit({ category: 'identity',
     action: 'order_item_void',
     entity: 'OrderItem',
@@ -834,7 +806,7 @@ export async function compOrder(input: CompRefundInput) {
   if (!order) throw new NotFoundError('Order', input.orderId)
   const tenantId = order.concept.tenantId
 
-  const policy = await refundPolicyFor(tenantId)
+  const policy = await getRefundPolicy(tenantId)
   const { approverId } = await ensureCapOrManagerOverride(
     input.amountCents,
     policy.cashierCompLimitCents,
@@ -903,7 +875,7 @@ export async function refundOrder(input: CompRefundInput) {
     )
   }
 
-  const policy = await refundPolicyFor(tenantId)
+  const policy = await getRefundPolicy(tenantId)
   const { approverId } = await ensureCapOrManagerOverride(
     input.amountCents,
     policy.cashierRefundLimitCents,

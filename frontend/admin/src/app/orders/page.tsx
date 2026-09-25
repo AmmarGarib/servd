@@ -3,6 +3,8 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { ordersApi, api, type Order } from '../../lib/api'
 import { useAuthStore } from '../../store/auth'
+import { useRoleModules, modulesForRole } from '../../store/roleModules'
+import type { AppRole } from '../../lib/appRoles'
 import { formatDistanceToNowStrict } from 'date-fns'
 import Link from 'next/link'
 
@@ -60,7 +62,7 @@ const STATUS_LABEL: Record<string, string> = { received: 'Awaiting Fire', prepar
 const STATUS_NEXT:  Record<string, string> = { received: 'preparing' }
 const STATUS_CTA:   Record<string, string> = { received: 'Fire 🔥' }
 
-type Tab = 'live' | 'history' | 'channel'
+type Tab = 'live' | 'history'
 interface Concept { id: string; name: string; primaryColor: string | null }
 
 export default function OrdersPage() {
@@ -106,14 +108,13 @@ export default function OrdersPage() {
     enabled: tab === 'history',
   })
 
-  const thirty = new Date(); thirty.setDate(thirty.getDate() - 30)
-  const { data: channelData } = useQuery({
-    queryKey: ['orders', 'channel', conceptFilter],
-    queryFn: () => api.get<{ bySource: Record<string, { orders: number; gross: number; net: number }> }>(
-      `/reports/sales/by-source?dateFrom=${thirty.toISOString()}&dateTo=${new Date().toISOString()}${conceptFilter !== 'all' ? `&conceptId=${conceptFilter}` : ''}`
-    ),
-    enabled: tab === 'channel',
-  })
+  // Sales by channel lives on /reports (GET /reports/by-source) — the one
+  // channel breakdown. This page used to carry a second "By channel" tab that
+  // called a route that never existed. The link shows only to roles that can
+  // open /reports.
+  const role = useAuthStore((st) => st.user?.role) as AppRole | undefined
+  const moduleOverrides = useRoleModules((st) => st.overrides)
+  const canSeeReports = !!role && modulesForRole(role, moduleOverrides).includes('reports')
 
   const updateStatus = useMutation({
     mutationFn: ({ id, s }: { id: string; s: string }) => api.patch(`/orders/${id}/status`, { status: s }),
@@ -128,6 +129,20 @@ export default function OrdersPage() {
       void qc.invalidateQueries({ queryKey: ['orders'] })
       setSelected(new Set())
     },
+  })
+
+  // Cancelling is not a status write: it goes through the one staff cancel
+  // (managers, reason required, audited), which also gives back what the
+  // customer paid with wallet / gift card and releases a promo.
+  const bulkCancel = useMutation({
+    mutationFn: async ({ ids, reason }: { ids: string[]; reason: string }) => {
+      await Promise.all(ids.map((id) => ordersApi.cancel(id, reason)))
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['orders'] })
+      setSelected(new Set())
+    },
+    onError: (err: Error) => alert(err.message),
   })
 
   const saveNote = useMutation({
@@ -168,7 +183,7 @@ export default function OrdersPage() {
       <header className="border-b border-kds-border px-4 py-3 md:px-6 md:py-4 flex items-center justify-between gap-3">
         <div>
           <h1 className="text-xl md:text-2xl font-black text-kds-text mt-0.5">Orders</h1>
-          <p className="text-xs md:text-sm text-kds-subtext">Live pipeline, history and channel breakdown</p>
+          <p className="text-xs md:text-sm text-kds-subtext">Live pipeline and history</p>
         </div>
         <Link href="/kds/all"
           className="shrink-0 rounded-xl border border-kds-border px-3 py-1.5 md:px-4 md:py-2 text-xs md:text-sm text-kds-subtext hover:border-kds-green hover:text-kds-green transition-colors">
@@ -224,15 +239,21 @@ export default function OrdersPage() {
         <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
           {/* ── Tabs ── */}
           <div className="flex gap-1 px-6 pt-4 border-b border-kds-border pb-0">
-            {(['live', 'history', 'channel'] as Tab[]).map((t) => (
+            {(['live', 'history'] as Tab[]).map((t) => (
               <button key={t} onClick={() => setTab(t)}
                 className={`px-4 py-2 text-sm font-medium rounded-t-lg border-b-2 transition-colors
                   ${tab === t ? 'border-kds-green text-kds-green bg-kds-card' : 'border-transparent text-kds-subtext hover:text-kds-text'}`}>
                 {t === 'live'
                   ? `Live${liveOrders.length > 0 ? ` (${liveOrders.length})` : ''}`
-                  : t === 'channel' ? 'By channel' : 'History'}
+                  : 'History'}
               </button>
             ))}
+            {canSeeReports && (
+              <Link href="/reports"
+                className="ml-auto px-4 py-2 text-sm font-medium text-kds-subtext hover:text-kds-green transition-colors">
+                Sales by channel ↗
+              </Link>
+            )}
           </div>
 
           <div className="flex-1 overflow-y-auto p-6">
@@ -481,45 +502,6 @@ export default function OrdersPage() {
               </div>
             )}
 
-            {/* ════ CHANNEL ════ */}
-            {tab === 'channel' && (
-              <div className="space-y-4 max-w-xl">
-                <p className="text-sm text-kds-subtext">Orders and revenue by source over the last 30 days.</p>
-                {channelData?.bySource ? (
-                  <div className="rounded-xl border border-kds-border overflow-x-auto">
-                    <table className="w-full text-sm">
-                      <thead className="bg-kds-card border-b border-kds-border">
-                        <tr>
-                          {['Channel', 'Orders', 'Gross', 'Net'].map((h) => (
-                            <th key={h} className="px-4 py-3 text-left font-semibold text-kds-subtext">{h}</th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-kds-border">
-                        {Object.entries(channelData.bySource)
-                          .sort((a, b) => b[1].gross - a[1].gross)
-                          .map(([src, data]) => (
-                            <tr key={src} className="hover:bg-kds-card/50">
-                              <td className="px-4 py-3">
-                                <span className={`rounded px-2 py-0.5 text-xs font-bold uppercase ${SOURCE_COLORS[src] ?? ''}`}>{src}</span>
-                              </td>
-                              <td className="px-4 py-3 text-kds-subtext">{data.orders}</td>
-                              <td className="px-4 py-3 text-kds-text">{fmt(data.gross)}</td>
-                              <td className="px-4 py-3 font-bold text-kds-green">{fmt(data.net)}</td>
-                            </tr>
-                          ))}
-                      </tbody>
-                    </table>
-                  </div>
-                ) : (
-                  <div className="text-center py-12 text-kds-subtext">
-                    <p className="text-3xl mb-2">📊</p>
-                    <p>No channel data for this period</p>
-                  </div>
-                )}
-              </div>
-            )}
-
           </div>
         </div>
       </div>
@@ -530,10 +512,14 @@ export default function OrdersPage() {
           <span className="text-sm font-semibold text-kds-text">{selCount} selected</span>
           <div className="w-px h-5 bg-kds-border" />
           <button
-            onClick={() => bulkUpdate.mutate({ ids: Array.from(selected), s: 'cancelled' })}
-            disabled={bulkUpdate.isPending}
+            onClick={() => {
+              const reason = window.prompt(`Reason for cancelling ${selCount} orders (required):`)?.trim() ?? ''
+              if (reason.length < 3) return
+              bulkCancel.mutate({ ids: Array.from(selected), reason })
+            }}
+            disabled={bulkCancel.isPending || bulkUpdate.isPending}
             className="rounded-lg border border-kds-red/40 bg-kds-red/10 text-kds-red font-semibold px-4 py-1.5 text-sm hover:bg-kds-red/20 transition-colors disabled:opacity-50">
-            {bulkUpdate.isPending ? 'Updating…' : 'Cancel'}
+            {bulkCancel.isPending ? 'Cancelling…' : 'Cancel'}
           </button>
           <button
             onClick={() => bulkUpdate.mutate({ ids: Array.from(selected), s: 'completed' })}
