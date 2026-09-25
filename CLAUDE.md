@@ -4,6 +4,25 @@ This file is read automatically by Claude Code when working on this repo.
 It captures the deploy flow, common pitfalls, and project conventions
 that aren't obvious from the code itself.
 
+## ⚠️ Standing rule: flag duplicates BEFORE building (product owner, 2026-09-25)
+
+Many module bugs came from a new build duplicating something an older build
+already had (two payrolls, two P&Ls, two refund engines, two period-lock
+paths…), leaving two sources of truth that disagree. So:
+
+- **Before building any feature, module, page, model or route, search for an
+  existing one that does the same job** (grep routes, Prisma models, admin
+  pages, `lib/moduleCatalog.ts`, the sidebar in `components/ui/AppShell.tsx`).
+- **If one exists, STOP and flag it to the owner before writing code**: say
+  what already exists (paths), how it overlaps, and the options (extend the
+  old one / replace it and remove the old one / keep both and why). Let the
+  owner decide the reconciliation at that moment — do not silently build a
+  second one.
+- When a replacement is agreed, the old one is removed in the same piece of
+  work (API, pages, sidebar links, catalogue entries), with anything it fed
+  (ledger postings, reports, dashboards) moved to the new one first. Keep the
+  old tables unless the owner says to drop the data.
+
 ## ⚠️ Corrections (2026-06-11 audit) — read before trusting older sections
 
 Parts of this file have drifted from reality. Until the relevant sections are
