@@ -53,19 +53,30 @@ function txt(s: string): number[] {
 function line(s = '') { return [...txt(s), LF] }
 function rule()       { return line('--------------------------------') }
 
+// Shape of GET /pos/orders/:id/receipt-data — the same builder as the HTML
+// receipt (backend pos/receipt.ts), so both print the stored tax and total.
 export interface ReceiptOrder {
+  /** "Invoice #": our tax-invoice number when issued, else the order reference. */
   number: string
+  invoiceNumber?: string | null
+  orderRef?: string
   conceptName: string
   customerName?: string | null
   table?: string | null
   source: string
+  /** price is the unit price INCLUDING modifiers, so qty × price is the line. */
   items: Array<{ name: string; qty: number; price: number; modifiers?: string[] }>
   subtotalCents: number
+  discountCents?: number
   taxCents:      number
+  serviceChargeCents?: number
+  tipCents?:     number
   totalCents:    number
   paidCents?:    number
-  tenderType?:   string
+  tenderType?:   string | null
   placedAt:      string
+  // Ids returned by the tax authorities, printed as-is.
+  fbrInvoiceNo?: string | null
   // SRB e-invoicing — when present, printed as a verification QR on the receipt
   // (mandatory for SRB-registered Sindh outlets per the SRB POS spec).
   srbInvoiceNo?: string | null
@@ -99,7 +110,8 @@ export function buildReceipt(order: ReceiptOrder): Uint8Array {
   // Header
   bytes.push(...alignCtr, ...boldOn, ...sizeBig, ...line(order.conceptName))
   bytes.push(...sizeNorm, ...boldOff)
-  bytes.push(...line(`Order #${order.number}`))
+  bytes.push(...line(order.invoiceNumber ? `Invoice #${order.invoiceNumber}` : `Order #${order.number}`))
+  if (order.invoiceNumber && order.orderRef) bytes.push(...line(`Order ${order.orderRef}`))
   bytes.push(...line(new Date(order.placedAt).toLocaleString('en-PK')))
   bytes.push(LF)
 
@@ -130,7 +142,10 @@ export function buildReceipt(order: ReceiptOrder): Uint8Array {
     return line(`${label}${' '.repeat(pad)}${right}`)
   }
   bytes.push(...totalLine('Subtotal', order.subtotalCents))
+  if (order.discountCents)      bytes.push(...totalLine('Discount', -order.discountCents))
   bytes.push(...totalLine('Tax',      order.taxCents))
+  if (order.serviceChargeCents) bytes.push(...totalLine('Service', order.serviceChargeCents))
+  if (order.tipCents)           bytes.push(...totalLine('Tip', order.tipCents))
   bytes.push(...boldOn, ...sizeBig)
   bytes.push(...totalLine('TOTAL', order.totalCents))
   bytes.push(...sizeNorm, ...boldOff)
@@ -141,6 +156,10 @@ export function buildReceipt(order: ReceiptOrder): Uint8Array {
     if (order.paidCents > order.totalCents) {
       bytes.push(...line(`Change: ${rs(order.paidCents - order.totalCents)}`))
     }
+  }
+
+  if (order.fbrInvoiceNo) {
+    bytes.push(LF, ...line(`FBR Invoice: ${order.fbrInvoiceNo}`))
   }
 
   // SRB verification QR — mandatory on the receipt for SRB-registered outlets.

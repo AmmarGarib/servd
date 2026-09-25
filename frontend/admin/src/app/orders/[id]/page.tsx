@@ -58,6 +58,7 @@ interface OrderDetail {
     status: string
     changeCents: number | null
   }>
+  taxInvoices?: Array<{ id: string; invoiceNumber: string; type: 'invoice' | 'credit_note'; issuedAt: string }>
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -79,6 +80,19 @@ async function reprintReceipt(orderId: string) {
   } else {
     URL.revokeObjectURL(url)
   }
+}
+
+// The numbered tax invoice / credit note, as issued (backend invoices/service).
+async function openInvoice(invoiceId: string) {
+  const token = useAuthStore.getState().token
+  const res = await fetch(`${API_URL}/api/v1/invoices/${invoiceId}/html`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  })
+  if (!res.ok) { alert('Invoice not available'); return }
+  const blob = new Blob([await res.text()], { type: 'text/html' })
+  const url = URL.createObjectURL(blob)
+  const win = window.open(url, '_blank', 'width=720,height=900')
+  if (!win) URL.revokeObjectURL(url)
 }
 
 const STATUS_COLORS: Record<string, string> = {
@@ -622,6 +636,28 @@ export default function OrderDetailPage() {
                         )}
                         <p className="text-[10px] text-kds-subtext capitalize">{p.status}</p>
                       </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Tax documents — the numbered invoice and any credit notes */}
+              {(order.taxInvoices?.length ?? 0) > 0 && (
+                <div className="mt-4 pt-4 border-t border-kds-border space-y-2">
+                  <p className="text-xs font-bold text-kds-subtext uppercase tracking-widest mb-2">Tax documents</p>
+                  {order.taxInvoices!.map((inv) => (
+                    <div key={inv.id} className="flex items-center justify-between gap-3">
+                      <div>
+                        <p className="font-mono text-sm text-kds-text">{inv.invoiceNumber}</p>
+                        <p className="text-[10px] text-kds-subtext">
+                          {inv.type === 'credit_note' ? 'Credit note' : 'Tax invoice'} · {format(new Date(inv.issuedAt), 'dd MMM yyyy, HH:mm')}
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => void openInvoice(inv.id)}
+                        className="rounded-lg border border-kds-border text-kds-subtext text-xs px-3 py-1.5 hover:border-kds-green hover:text-kds-green transition-colors">
+                        View
+                      </button>
                     </div>
                   ))}
                 </div>

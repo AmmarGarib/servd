@@ -459,6 +459,9 @@ export async function getOrder(id: string, scope: Prisma.OrderWhereInput = {}) {
       customer: true,
       payments: true,
       posStaff: { select: { name: true } },
+      // The numbered legal documents (tax invoice, credit notes) — the order
+      // page links each to /invoices/:id/html.
+      taxInvoices: { select: { id: true, invoiceNumber: true, type: true, issuedAt: true }, orderBy: { issuedAt: 'asc' } },
     },
   })
   if (!order) throw new NotFoundError('Order', id)

@@ -7,7 +7,7 @@ import { createPosOrder, processPayment, openShift, closeShift, getZReport, void
 import { assertConceptAccess } from '../../lib/conceptAccess.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { scopeTenantWhere, assertConceptOwned, type ScopeMode, type TenantIdWhere } from '../../lib/tenantScope.js'
-import { buildReceiptHtml } from './receipt.js'
+import { buildReceiptHtml, buildReceiptData } from './receipt.js'
 
 // ─── Company scoping ──────────────────────────────────────────────────────────
 //
@@ -222,7 +222,8 @@ export async function posRoutes(fastify: FastifyInstance) {
     },
   )
 
-  // GET /pos/receipt/:orderId — returns printable HTML receipt
+  // GET /pos/receipt/:orderId — the receipt as printable HTML. Same data as
+  // /pos/orders/:orderId/receipt-data (one builder, pos/receipt.ts).
   fastify.get<{ Params: { orderId: string } }>(
     '/receipt/:orderId',
     { preHandler: requireAuth(...CASHIERS) },
@@ -230,8 +231,9 @@ export async function posRoutes(fastify: FastifyInstance) {
       const order = await prisma.order.findFirst({
         where: {
           id: req.params.orderId,
-          concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
+          concept: { deletedAt: null, ...(await scopeTenantWhere(req, 'read')) },
         },
+        select: { id: true },
       })
       if (!order) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Order not found in your active company' } })
       const html = await buildReceiptHtml(req.params.orderId)
@@ -361,9 +363,10 @@ export async function posRoutes(fastify: FastifyInstance) {
     },
   )
 
-  // GET /pos/orders/:orderId/receipt-data — JSON receipt for tablet thermal
-  // printing. Mirror of /pos/receipt/:orderId (HTML version), shaped to match
-  // the ReceiptOrder interface in tablet/src/lib/printer.ts.
+  // GET /pos/orders/:orderId/receipt-data — the receipt as data, for the
+  // tablet's thermal printer (ReceiptOrder in tablet/src/lib/printer.ts).
+  // Same builder as the HTML receipt: stored tax and total, modifiers in the
+  // subtotal, our TaxInvoice number, and the FBR / SRB ids and SRB QR link.
   fastify.get<{ Params: { orderId: string } }>(
     '/orders/:orderId/receipt-data',
     { preHandler: requireAuth(...CASHIERS) },
@@ -371,45 +374,12 @@ export async function posRoutes(fastify: FastifyInstance) {
       const order = await prisma.order.findFirst({
         where: {
           id: req.params.orderId,
-          concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
+          concept: { deletedAt: null, ...(await scopeTenantWhere(req, 'read')) },
         },
-        include: {
-          items: { include: { modifiers: true } },
-          concept: { select: { name: true } },
-          customer: { select: { name: true } },
-          table: { select: { label: true } },
-          payments: { where: { status: 'paid' } },
-        },
+        select: { id: true },
       })
       if (!order) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Order not found in your active company' } })
-
-      const paidCents = order.payments.reduce((s, p) => s + p.amountCents, 0)
-      const primaryTender = order.payments[0]?.method ?? null
-      const subtotalCents = order.items.reduce((s, it) => s + it.unitPriceCents * it.quantity, 0)
-
-      return {
-        number:        order.id.slice(-6).toUpperCase(),
-        conceptName:   order.concept.name,
-        customerName:  order.customer?.name ?? order.customerName ?? null,
-        table:         order.table?.label ?? null,
-        source:        order.source,
-        items:         order.items.map((it) => ({
-          name:      it.name,
-          qty:       it.quantity,
-          price:     it.unitPriceCents,
-          modifiers: it.modifiers.map((m) => m.name).filter(Boolean),
-        })),
-        subtotalCents,
-        taxCents:      order.taxCents,
-        totalCents:    order.totalCents,
-        paidCents,
-        tenderType:    primaryTender,
-        placedAt:      order.placedAt.toISOString(),
-        // SRB compliance — printed as "SRB Invoice No" + verification QR when
-        // the order's concept is SRB-registered and submission has succeeded.
-        srbInvoiceNo:  order.srbInvoiceNumber ?? null,
-        srbQrLink:     order.srbQrCodeLink ?? null,
-      }
+      return buildReceiptData(order.id)
     },
   )
 
