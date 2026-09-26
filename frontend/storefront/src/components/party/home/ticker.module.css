@@ -1,0 +1,93 @@
+/* Crossed tapes over the butter → cream seam under the hero. */
+.seam {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  height: clamp(9rem, 15vw, 12.5rem);
+  /* Top half continues the hero floor, bottom half is the kitchens' cream. */
+  background: linear-gradient(180deg, #F4C22E 0 50%, #FFF4D6 50% 100%);
+  overflow: hidden;
+}
+
+.tape {
+  position: absolute;
+  left: -10%;
+  width: 120%;
+  overflow: hidden;
+  border-block: 2.5px solid #2A1A2B;
+  padding-block: clamp(0.55rem, 1vw, 0.85rem);
+  box-shadow: 0 6px 0 #2A1A2B;
+}
+
+.tapeFront {
+  z-index: 2;
+  background: #4E2A4F;
+  color: #FFF4D6;
+  transform: rotate(-2.6deg);
+}
+
+.tapeBack {
+  z-index: 1;
+  background: #FF5A3C;
+  color: #2A1A2B;
+  transform: rotate(2.2deg);
+  padding-block: clamp(0.35rem, 0.7vw, 0.55rem);
+}
+
+.track {
+  display: flex;
+  width: max-content;
+  will-change: transform;
+}
+
+.half {
+  display: flex;
+  flex-shrink: 0;
+}
+
+.item {
+  display: inline-flex;
+  align-items: center;
+  gap: clamp(1rem, 2vw, 1.6rem);
+  padding-right: clamp(1rem, 2vw, 1.6rem);
+  font-family: var(--font-display);
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  white-space: nowrap;
+  line-height: 1;
+}
+.tapeFront .item { font-size: clamp(1.6rem, 3.6vw, 3rem); }
+.tapeBack .item  { font-size: clamp(1rem, 1.8vw, 1.4rem); text-transform: uppercase; letter-spacing: 0.08em; }
+
+.italic { font-style: italic; }
+
+.doodle {
+  width: clamp(22px, 2.6vw, 34px);
+  height: auto;
+  flex-shrink: 0;
+}
+.doodle[data-kind='star'] { fill: #FFD447; animation: spin 7s linear infinite; }
+.doodle[data-kind='squiggle'] { width: clamp(38px, 4.4vw, 58px); fill: none; stroke: #FF5A3C; stroke-width: 6; stroke-linecap: round; }
+.doodle[data-kind='dot'] { width: clamp(12px, 1.3vw, 18px); fill: #FF5A3C; }
+.doodle[data-kind='heart'] { fill: #FFD447; }
+
+.tapeBack .doodle { width: clamp(14px, 1.5vw, 20px); }
+.tapeBack .doodle[data-kind='star'],
+.tapeBack .doodle[data-kind='heart'] { fill: #2A1A2B; }
+.tapeBack .doodle[data-kind='squiggle'] { width: clamp(26px, 2.8vw, 36px); stroke: #2A1A2B; }
+.tapeBack .doodle[data-kind='dot'] { fill: #FFF4D6; }
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Phones: the hero has no floor band there (it ends in plain butter), and
+   the tapes need a steeper cross to both read at 375px. */
+@media (max-width: 640px) {
+  .seam { background: linear-gradient(180deg, #FFD447 0 50%, #FFF4D6 50% 100%); height: 8.5rem; }
+  .tapeFront { transform: rotate(-5deg); }
+  .tapeBack { transform: rotate(4.5deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .doodle { animation: none !important; }
+}

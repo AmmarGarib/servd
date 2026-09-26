@@ -1,0 +1,174 @@
+/* What we do — the sticker wall. Labels are plum-dark on cream/white (13.5:1
+   / 16.1:1); numbers plum on cream (7.77:1). */
+
+.wall {
+  position: relative;
+  padding: clamp(4rem, 10vh, 7rem) 0 clamp(3rem, 8vh, 5rem);
+}
+.head { max-width: 40rem; }
+
+.grid {
+  list-style: none;
+  margin: clamp(2rem, 5vh, 3rem) 0 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(15rem, 100%), 1fr));
+  gap: clamp(1rem, 2.5vw, 2rem);
+}
+
+.sticker {
+  --tilt: -2deg;
+  --lift: 0px;
+  position: relative;
+  aspect-ratio: 1 / 1;
+  transform: translateY(var(--lift)) rotate(var(--tilt));
+  transition: transform 420ms cubic-bezier(0.34, 1.56, 0.64, 1), filter 240ms ease;
+  filter: drop-shadow(0 14px 20px rgba(28, 8, 16, 0.5));
+}
+.sticker:nth-child(4n + 2) { --tilt: 1.8deg; }
+.sticker:nth-child(4n + 3) { --tilt: -1deg; }
+.sticker:nth-child(4n + 4) { --tilt: 2.6deg; }
+.sticker:hover { --tilt: 0deg; --lift: -8px; filter: drop-shadow(0 26px 26px rgba(28, 8, 16, 0.55)); }
+
+/* Slapped on: hidden until the wall is first seen (only when JS armed it). */
+.armed .sticker { opacity: 0; }
+.armed.seen .sticker {
+  opacity: 1;
+  animation: slap 760ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  animation-delay: calc(var(--i) * 130ms);
+}
+@keyframes slap {
+  0% { opacity: 0; scale: 1.6; rotate: -14deg; translate: 0 -30px; }
+  55% { opacity: 1; scale: 0.94; rotate: 3deg; translate: 0 0; }
+  78% { scale: 1.03; rotate: -1deg; }
+  100% { opacity: 1; scale: 1; rotate: 0deg; translate: 0 0; }
+}
+
+.die { position: absolute; inset: 0; width: 100%; height: 100%; }
+.inner {
+  position: relative;
+  z-index: 1;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  max-width: 58%;
+  margin: 0 auto;
+  /* The die's lobes sit low-left and high-right; its roomiest band is a
+     little above centre, so the content is lifted into it. */
+  padding: 0 0 14%;
+}
+.num {
+  margin-top: 0.35rem;
+  font-family: var(--stackd-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.2em;
+  color: var(--stackd-plum);
+}
+.label {
+  margin: 0.25rem 0 0;
+  font-family: var(--stackd-display);
+  font-weight: 700;
+  font-size: clamp(1rem, 1.45vw, 1.2rem);
+  line-height: 1.12;
+  color: var(--stackd-plum-dark);
+  text-wrap: balance;
+}
+
+/* ── Vignettes ─────────────────────────────────────────────────────────── */
+.vig { width: clamp(5rem, 9vw, 6.75rem); height: auto; overflow: visible; }
+.vig * { animation-play-state: paused; }
+.live .vig * { animation-play-state: running; }
+.ink { stroke: var(--stackd-plum-dark); stroke-width: 3; stroke-linejoin: round; stroke-linecap: round; }
+.ink:not([fill]) { fill: none; }
+.inkThin { stroke: var(--stackd-plum-dark); stroke-width: 2; stroke-linecap: round; fill: none; }
+.inkThin[fill] { fill: var(--stackd-sky); }
+
+/* pan + steam */
+.steamG path { fill: none; stroke: var(--stackd-plum); stroke-width: 2.6; stroke-linecap: round; opacity: 0; animation: steam 2.4s ease-in-out infinite; transform-box: fill-box; transform-origin: 50% 100%; }
+.steamG path:nth-child(2) { animation-delay: 0.8s; }
+.steamG path:nth-child(3) { animation-delay: 1.6s; }
+@keyframes steam {
+  0% { opacity: 0; transform: translateY(20%); }
+  30% { opacity: 0.9; }
+  100% { opacity: 0; transform: translateY(-40%) scaleX(1.3); }
+}
+.pan { transform-box: fill-box; transform-origin: 90% 60%; animation: toss 2.4s ease-in-out infinite; }
+@keyframes toss {
+  0%, 60%, 100% { transform: none; }
+  70% { transform: rotate(-6deg) translateY(-3px); }
+  82% { transform: rotate(3deg); }
+}
+.egg { fill: var(--stackd-sky); stroke: var(--stackd-plum-dark); stroke-width: 2; transform-box: fill-box; transform-origin: center; animation: flip 2.4s ease-in-out infinite; }
+@keyframes flip {
+  0%, 62%, 100% { transform: none; }
+  72% { transform: translateY(-22px) scaleY(0.3); }
+  82% { transform: translateY(-4px); }
+}
+.flame { fill: none; stroke: var(--stackd-sky); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; animation: flicker 0.6s ease-in-out infinite alternate; transform-box: fill-box; transform-origin: 50% 100%; }
+@keyframes flicker { to { transform: scaleY(1.35) scaleX(0.94); } }
+
+/* sandwich stacks itself */
+.layer { animation: drop 3.2s cubic-bezier(0.34, 1.56, 0.64, 1) infinite; animation-delay: calc(var(--d) * 0.16s); transform-box: view-box; }
+@keyframes drop {
+  0% { transform: translateY(-70px); opacity: 0; }
+  12% { opacity: 1; }
+  24%, 86% { transform: none; opacity: 1; }
+  100% { transform: none; opacity: 0; }
+}
+
+/* mocktail pour */
+.bottle { animation: tip 3.4s ease-in-out infinite; transform-box: view-box; transform-origin: 88px 24px; }
+@keyframes tip {
+  0%, 100% { transform: rotate(18deg) translate(6px, -6px); }
+  15%, 70% { transform: none; }
+  82% { transform: rotate(18deg) translate(6px, -6px); }
+}
+.stream { fill: none; stroke: var(--stackd-sky); stroke-width: 4; stroke-linecap: round; stroke-dasharray: 70; animation: stream 3.4s ease-in-out infinite; }
+@keyframes stream {
+  0%, 12% { stroke-dashoffset: 70; opacity: 1; }
+  24%, 66% { stroke-dashoffset: 0; opacity: 1; }
+  76% { stroke-dashoffset: -70; opacity: 1; }
+  77%, 100% { stroke-dashoffset: -70; opacity: 0; }
+}
+.liquid { transform-box: view-box; animation: fill 3.4s ease-in-out infinite; }
+@keyframes fill {
+  0%, 16% { transform: translateY(56px); }
+  72%, 94% { transform: translateY(12px); }
+  100% { transform: translateY(56px); }
+}
+.ice, .ice2 { fill: #FFFFFF; stroke: var(--stackd-plum-dark); stroke-width: 1.8; transform-box: fill-box; transform-origin: center; animation: bob 3.4s ease-in-out infinite; }
+.ice2 { animation-delay: 0.3s; }
+@keyframes bob {
+  0%, 20% { transform: translateY(20px) rotate(0deg); }
+  60% { transform: translateY(-8px) rotate(12deg); }
+  80% { transform: translateY(-10px) rotate(-6deg); }
+  100% { transform: translateY(20px); }
+}
+.garnish { fill: var(--stackd-cream); stroke: var(--stackd-plum-dark); stroke-width: 2.4; }
+
+/* bag on its way out */
+.bagSwing { transform-box: view-box; transform-origin: 60px 16px; animation: swing 2.2s ease-in-out infinite; }
+@keyframes swing {
+  0%, 100% { transform: rotate(-7deg); }
+  50% { transform: rotate(7deg) translateY(-2px); }
+}
+.baguette { fill: var(--stackd-cream); stroke: var(--stackd-plum-dark); stroke-width: 2.6; stroke-linejoin: round; }
+.bagText { font-family: var(--stackd-display); font-weight: 800; font-size: 15px; fill: var(--stackd-plum-dark); }
+
+@media (max-width: 640px) {
+  .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.75rem 0.6rem; }
+  .inner { max-width: 66%; }
+  .vig { width: 3.6rem; }
+  .label { font-size: 0.86rem; }
+  .num { font-size: 0.64rem; margin-top: 0.15rem; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sticker, .sticker:hover { transition: none; transform: rotate(var(--tilt)); }
+  .armed .sticker, .armed.seen .sticker { opacity: 1; animation: none; }
+  .vig *, .live .vig * { animation: none !important; }
+  .steamG path { opacity: 0.7; }
+}

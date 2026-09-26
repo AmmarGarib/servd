@@ -1,340 +1,349 @@
 'use client'
 import Link from 'next/link'
-import { useScrollProgress } from './motionHooks'
+import { useCallback, useRef, useState, type CSSProperties } from 'react'
+import { emitCrowd } from '../characters/crowdBus'
+import type { CharacterKind } from '../characters/types'
+import {
+  FlipdCrowd,
+  OrderLink,
+  DoodleBurst,
+  DoodleSpeed,
+  DoodleSquiggle,
+  DoodleStar,
+  DoodleSeeds,
+  DoodleSpatula,
+} from '../brand/flipd/FlipdBits'
+import { useBuildProgress } from '../brand/flipd/useFlipdMotion'
+import f from '../brand/flipd/flipd.module.css'
+import s from '../brand/flipd/hero.module.css'
 
 /**
- * FlipdSpecHero — flipd's web entrance: the burger built to its own spec.
+ * FlipdSpecHero — Flipd's entrance: the burger built to its own spec, in
+ * front of a court-side crowd.
  *
- * Where it comes from, both halves of it from the brand book:
+ * The idea is unchanged from the brand-book rebuild — the first core value is
+ * "The spec is the boss", so the page shows the BUILD SHEET for a burger (a
+ * technical drawing with a datum line and numbered callouts) and builds it as
+ * you scroll, heel first, the way it is built on the line. The parts are the
+ * brand's own artwork, cut out of the badge.
  *
- *   1. The artwork. The signature flipd graphic — on the shirt backs, the
- *      bags, the sticker, the badge itself — is a burger drawn in navy line
- *      art: crown, fillings and heel. This hero is that drawing, moving.
+ * What is new is that it is now a show:
+ *   - The first frame is never empty. The wordmark drops in letter by letter
+ *     and flips over in a wave every few seconds, marker doodles boil on the
+ *     sheet, and the order buttons are live immediately.
+ *   - Parts fall with tilt and motion streaks, squash as they seat, and the
+ *     patty gets a real spatula flip — one and a half turns on the way down.
+ *   - The finished stack drops onto the datum, bounces three times, and the
+ *     SMASH throws register marks and grease spray; the sheet shakes, steam
+ *     rises, an inspection stamp slams on.
+ *   - The crowd (fries, burger, shake) stands on the counter along the bottom
+ *     and watches: each seated part gets one of them hopping, the smash gets
+ *     all of them cheering, and hovering Order winds them up.
  *
- *   2. The first core value: "The spec is the boss. Every burger is built the
- *      same way by whoever is on the line. Recipes are written, weights are
- *      weighed, no one improvises during service."
+ * Mechanics: one tall section with a pinned child. useBuildProgress writes
+ * --scroll-progress on the section and CSS does the motion off it, so
+ * scrolling never re-renders React; React state changes only when progress
+ * crosses a mark (a part seats, the burger lands) — a handful of renders per
+ * pass, not one per frame.
  *
- * So the page does not show a burger. It shows the BUILD SHEET for one — a
- * technical drawing with a datum line and numbered callouts on leader lines —
- * and then builds it. Five parts drop in from above the sheet, each landing
- * flush on the one below, and when the last one seats you are looking at a
- * whole burger, not a diagram of one. Then it drops onto the datum and hits.
- *
- * Three things an earlier pass got wrong, all of which this fixes:
- *
- *   - Every part started barely a part-height above its slot, so it emerged
- *     from behind the part above it rather than falling in. They now start
- *     clear of the sheet entirely and accelerate down, because a thing that
- *     falls is not a thing that slides.
- *   - The stack stayed exploded, with air between every layer, so it never
- *     resolved into anything. The slots are flush now: the burger closes.
- *   - It ran over four and a half screens of scroll, which turned a build into
- *     a slideshow: one part per screenful, nothing ever moving at the same
- *     time as anything else. It is 340vh now — cut to 240vh first, which went
- *     too far the other way and was too quick to follow.
- *
- * The one flourish is earned by the name: at 04 the patty FLIPS as it drops.
- * Once, on one part. The book says "restraint over decoration — if something
- * on the plate isn't earning its place, it comes off", so the impact is drawn
- * the way this brand draws everything else: a datum line that flexes and six
- * short navy ticks, struck like register marks. No dust, no glow, no bounce.
- *
- * Mechanics: one tall section with a pinned child. useScrollProgress writes
- * --scroll-progress on the section and CSS does all the work off it, so
- * scrolling never re-renders React. Each part carries its own --t (0 before it
- * moves, 1 when seated) and the stage carries --fall and --hit for the drop.
- *
- * prefers-reduced-motion: the whole thing renders built and static, with every
- * callout visible. It is a build sheet either way — the motion is how it is
- * read, not what it says.
+ * prefers-reduced-motion: the whole thing renders built, landed and static,
+ * with every callout and the stamp visible, and the pinned scroll removed.
  */
 
 interface Props {
   brandName: string
   orderHref: string
   menuHref: string
-  /** Shown under the wordmark once the burger lands. */
+  /** Shown under the build, above the order buttons. */
   tagline: string
 }
 
-// The parts, crown to heel — the order they appear in the badge.
-//
-// Every spec line is a fact already published somewhere: the menu sheet's build
-// lines, or the brand book's own sentences. Nothing here is written copy. The
-// book's voice rule is "plain-spoken: names the ingredient, skips the
-// adjective", so where there is no fact to state the line is just the part.
 interface Part {
   /** Callout number — the BUILD step, so 01 is the heel at the bottom. */
   no: string
   name: string
   /** One line, verbatim from the menu sheet or the brand book. */
   spec: string
-  /** Which piece of the badge artwork this part is. */
   art: 'crown' | 'lettuce' | 'wing' | 'patty' | 'heel'
-  /** Which side the leader line runs to on desktop. */
   side: 'left' | 'right'
   /** Scroll progress at which this part starts to fall. */
   fire: number
-  /**
-   * The part's own width, as a fraction of the widest piece.
-   *
-   * These are the source PNGs' real pixel widths (crown 918, lettuce 993,
-   * wing 1038, patty 834, heel 894) divided by the widest. Forcing all five
-   * to 100% — which is what used to happen — stretches the narrow ones to the
-   * width of the wide ones, and a burger whose patty is as wide as its lettuce
-   * does not read as a burger. This is the whole difference between a stack of
-   * shapes and something you recognise.
-   */
+  /** The part's own width as a fraction of the widest piece (real PNG widths). */
   w: number
-  /**
-   * How far above its own slot the part starts, as a multiple of the drawing's
-   * width — so the fall scales with the drawing instead of with the window.
-   *
-   * These are measured against the real laid-out stack, not guessed: each part
-   * starts clear above everything already placed under it, and falls a third
-   * to three-quarters of the drawing's width. The whole fall is on screen and
-   * nothing begins its fall inside another part — which is exactly what the
-   * version before this did, with one small fixed drop for everything, and why
-   * the parts looked like they were coming out of each other.
-   */
+  /** Start height above its slot, as a multiple of the drawing's width. */
   drop: number
-  /** The patty turns over on the way down. Nothing else does. */
-  flip?: boolean
+  /** Degrees of spin about X on the way down. Only the patty flips. */
+  flip?: number
+  /** Degrees of in-plane tilt at the top of the fall, straightened on landing. */
+  tilt: number
+  /** Which member of the crowd hops when this part seats. */
+  cheer: CharacterKind
 }
 
-/**
- * Laid out crown-first, because that is top-to-bottom on the page — but BUILT
- * heel-first, because that is how it is built on the line, and the numbers on
- * the sheet are build steps.
- *
- * That ordering is not a detail. Assembling downwards means every part after
- * the first has to fall THROUGH the ones already placed, which looks like a
- * mistake however well it is timed. Assembling upwards, each part lands on
- * what is already there and touches nothing else — and it is what the brand
- * book's first value actually describes.
- */
+// Crown-first for the vertical layout; built heel-first (the numbers are
+// build steps). Every spec line is a fact already published on the menu
+// sheet or in the brand book — the voice rule is "names the ingredient,
+// skips the adjective".
 const PARTS: Part[] = [
-  { no: '05', name: 'Crown', spec: 'Brioche.',                       art: 'crown',   side: 'left',  fire: 0.460, w: 0.884, drop: -0.34 },
-  { no: '04', name: 'Jam',   spec: 'Shroom & onion. House made.',    art: 'lettuce', side: 'right', fire: 0.355, w: 0.957, drop: -0.50 },
-  { no: '03', name: 'Aioli', spec: 'Chimichurri. Roasted garlic.',   art: 'wing',    side: 'left',  fire: 0.250, w: 1.000, drop: -0.61 },
-  { no: '02', name: 'Patty', spec: 'Salt and pepper. Nothing else.', art: 'patty',   side: 'right', fire: 0.145, w: 0.803, drop: -0.68, flip: true },
-  { no: '01', name: 'Heel',  spec: 'Brioche.',                       art: 'heel',    side: 'left',  fire: 0.040, w: 0.861, drop: -0.75 },
+  { no: '05', name: 'Crown', spec: 'Brioche.',                       art: 'crown',   side: 'left',  fire: 0.460, w: 0.884, drop: -0.34, tilt: -9,  cheer: 'burger' },
+  { no: '04', name: 'Jam',   spec: 'Shroom & onion. House made.',    art: 'lettuce', side: 'right', fire: 0.355, w: 0.957, drop: -0.50, tilt: 11,  cheer: 'shake' },
+  { no: '03', name: 'Aioli', spec: 'Chimichurri. Roasted garlic.',   art: 'wing',    side: 'left',  fire: 0.250, w: 1.000, drop: -0.61, tilt: -7,  cheer: 'fries' },
+  { no: '02', name: 'Patty', spec: 'Salt and pepper. Nothing else.', art: 'patty',   side: 'right', fire: 0.145, w: 0.803, drop: -0.68, tilt: 6,   cheer: 'burger', flip: 540 },
+  { no: '01', name: 'Heel',  spec: 'Brioche.',                       art: 'heel',    side: 'left',  fire: 0.040, w: 0.861, drop: -0.75, tilt: -5,  cheer: 'fries' },
 ]
-
-/** The same five in the order they are built, for the written list. */
 const BUILD_ORDER = [...PARTS].reverse()
 
-/**
- * 0..1 for one part: how far through its own seating window the scroll is.
- *
- * The default rate is the pace of the build. A part's fall spans 1/rate of the
- * scroll, so at rate 6 across a 340vh section each one takes about 40vh of
- * travel — roughly twice what it did at rate 7 in a 240vh section, which read
- * as too quick to follow. Successive parts fire 0.105 apart, closer together
- * than a part's own 0.167 window, so two are in the air at once and the build
- * never stalls between them. The order still resolves correctly: each part
- * lands well before the one above it does.
- */
-const seat = (fire: number, rate = 6) =>
+/** Each part's fall spans 1/RATE of the scroll. */
+const RATE = 6
+
+/** 0..1 for one window of the scroll, as a CSS expression. */
+const seat = (fire: number, rate = RATE) =>
   `max(0, min(1, (var(--scroll-progress, 0) - ${fire}) * ${rate}))`
 
 /** A 0..1..0 pulse: rises over the first window, falls over the second. */
 const pulse = (up: number, upRate: number, down: number, downRate: number) =>
   `max(0, ${seat(up, upRate)} - ${seat(down, downRate)})`
 
-/**
- * A smooth 0..1..0 arc across one window — the shape of a thing thrown up and
- * caught. 4x(1-x) is a parabola peaking at the midpoint, which is exactly the
- * height curve of a bounce under gravity.
- */
+/** A parabola 0..1..0 across one window — a bounce under gravity. */
 const hump = (from: number, to: number) => {
   const r = `max(0, min(1, (var(--scroll-progress, 0) - ${from}) * ${(1 / (to - from)).toFixed(3)}))`
   return `(4 * ${r} * (1 - ${r}))`
 }
 
-// The register marks struck at the moment of impact, as angles off the
-// vertical. Six, symmetrical, in the brand's own navy — this is a technical
-// drawing, so the impact is drawn, not rendered.
-const TICKS = [-64, -38, -14, 14, 38, 64]
+// The drop and the bounce. The crown seats at 0.627; nothing moves until 0.76
+// — a beat looking at a finished burger — then it falls, hits at 0.8267 and
+// bounces three times, each smaller, each with its own squash.
+const FALL_AT = 0.76
+const HIT_AT = 0.8267
+const fall = seat(FALL_AT, 15)
+const b1 = hump(HIT_AT, 0.868)
+const b2 = hump(0.868, 0.898)
+const b3 = hump(0.898, 0.918)
+const bounce = `calc(${b1} * 0.38 + ${b2} * 0.15 + ${b3} * 0.055)`
+const stretch = `calc(${b1} * 0.55 + ${b2} * 0.3 + ${b3} * 0.12)`
+const squash = `calc(${pulse(0.82, 150, HIT_AT, 26)} + ${pulse(0.8635, 220, 0.868, 40)} * 0.45 + ${pulse(0.8955, 400, 0.898, 70)} * 0.18)`
+const hit = pulse(0.82, 150, HIT_AT, 26)
+/** Runs 0 → 1 once, starting at impact: drives the grease spray. */
+const spray = seat(HIT_AT, 11)
+/** The wordmark clears before the heel reaches it. */
+const markGone = seat(0.02, 14)
 
-/**
- * The parts are the BRAND'S OWN ARTWORK, cut out of the badge.
- *
- * These were hand-drawn SVG approximations until the operator pointed out
- * there was no reason to approximate: the badge already contains every one of
- * these pieces, drawn properly. So each part is a slice of the real plate —
- * segmented off the high-resolution badge by colour distance and
- * connected-component analysis, with a soft alpha so the hand-drawn edge keeps
- * its texture instead of being hard-thresholded into a jaggy silhouette.
- *
- * They are navy line art on transparent, so they sit on the mustard field the
- * way the book draws them. Each is a plain <img>: no filters, no recolouring —
- * the book says the artwork is "stamped, not printed... keep it that way".
- */
-function PartArt({ part }: { part: Part }) {
+/** Where each part has fully seated, in build order (heel → crown). */
+const SEAT_MARKS = BUILD_ORDER.map((p) => p.fire + 1 / RATE)
+/** [build started, ...each part seated, burger hit the datum] */
+const MARKS = [0.02, ...SEAT_MARKS, HIT_AT]
+
+// The register marks struck at impact, as angles off the vertical.
+const TICKS = [-78, -58, -38, -18, 18, 38, 58, 78]
+// Grease spray: [dx, dy, size]. Mostly outward and up; gravity is in the CSS.
+const DOTS: [number, number, number][] = [
+  [-150, -60, 8], [-118, -96, 6], [-84, -118, 9], [-40, -86, 5], [-190, -24, 6],
+  [150, -56, 8], [112, -104, 7], [70, -124, 6], [36, -90, 9], [196, -30, 6],
+  [-128, -30, 5], [132, -26, 5],
+]
+
+function Stamp() {
   return (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img src={`/brand/parts/${part.art}.png`} alt="" aria-hidden="true" />
+    <svg viewBox="0 0 120 120" aria-hidden>
+      <defs>
+        <path id="flipd-stamp-ring" d="M60 60 m-44 0 a44 44 0 1 1 88 0 a44 44 0 1 1 -88 0" />
+      </defs>
+      <circle cx="60" cy="60" r="56" fill="#F9F0E1" stroke="#294375" strokeWidth="4" />
+      <circle cx="60" cy="60" r="33" fill="none" stroke="#294375" strokeWidth="2" />
+      <text fill="#294375" fontFamily="Poppins, system-ui, sans-serif" fontWeight="700" fontSize="10.5" letterSpacing="2.6">
+        <textPath href="#flipd-stamp-ring">SAME BURGER · EVERY TIME · SAME BURGER · EVERY TIME ·</textPath>
+      </text>
+      <text x="60" y="57" textAnchor="middle" fill="#294375" fontFamily="'Alfa Slab One', Georgia, serif" fontSize="15">
+        SMASHED
+      </text>
+      <text x="60" y="73" textAnchor="middle" fill="#294375" fontFamily="Poppins, system-ui, sans-serif" fontWeight="700" fontSize="9" letterSpacing="2">
+        TO SPEC
+      </text>
+    </svg>
   )
 }
 
 export function FlipdSpecHero({ brandName, orderHref, menuHref, tagline }: Props) {
-  // liveAt matches the outro's own fade-in point exactly, so `past` flips at
-  // the same instant its opacity leaves 0 — the links become reachable and
-  // visible together, with no visual change from the switch.
-  const { ref, past } = useScrollProgress<HTMLElement>({ liveAt: 0.92 })
+  const [started, setStarted] = useState(false)
+  const [landed, setLanded] = useState(false)
+  const [excited, setExcited] = useState(false)
+  const [jiggling, setJiggling] = useState(false)
+  const stageRef = useRef<HTMLDivElement | null>(null)
 
-  // ── THE DROP AND THE BOUNCE ────────────────────────────────────────────
-  // The crown seats at 0.627 and nothing moves until 0.76, which leaves a
-  // deliberate beat of about 2.5 wheel notches looking at a finished burger.
-  // Without it, the last part seating and the whole stack dropping run
-  // together into one event and the drop stops reading as something that
-  // happens to a burger that is already built.
-  //
-  // Then it falls, hits, and BOUNCES — three times, each smaller, each with
-  // its own squash. A single squash on contact read as a thud; a brioche stack
-  // dropped on a counter rebounds. The heights are 38% / 15% / 5.5% of the
-  // drop, which is roughly what a real object with this much give does.
-  const fall = seat(0.76, 15)
-  const b1 = hump(0.8267, 0.868)   // first rebound, the big one
-  const b2 = hump(0.868, 0.898)
-  const b3 = hump(0.898, 0.918)
-  // Height above the datum, as a fraction of the 5vh drop. CSS multiplies it.
-  const bounce = `calc(${b1} * 0.38 + ${b2} * 0.15 + ${b3} * 0.055)`
-  // Airborne stretch: a bouncing thing elongates on the way up and flattens on
-  // contact. Without it the bounce reads as a rigid hop.
-  const stretch = `calc(${b1} * 0.55 + ${b2} * 0.3 + ${b3} * 0.12)`
-  // One squash per contact, sharp on the way in and slower out, each weaker
-  // than the last. The first is the impact; the others are it settling.
-  const squash = `calc(${pulse(0.820, 150, 0.8267, 26)} + ${pulse(0.8635, 220, 0.868, 40)} * 0.45 + ${pulse(0.8955, 400, 0.898, 70)} * 0.18)`
-  // The struck register marks and the flexing datum rule fire on the FIRST
-  // contact only — that is the impact. The rise is deliberately violent and
-  // tops out at 0.8267, exactly when the fall completes. This one window does
-  // not get slower as the section grows: an impact is fast or it is not an
-  // impact, and stretching it turns the strike into a slow bloom.
-  const hit = pulse(0.820, 150, 0.8267, 26)
-  // Lands once the burger has. The rate is set so it reaches full opacity by
-  // the very end of the scroll rather than short of it — at a slower rate the
-  // section runs out first and the CTAs never quite arrive.
-  const built = seat(0.92, 12.5)
-  // The wordmark holds the middle of the sheet until parts start arriving on
-  // top of it. It must be gone before the heel — the first part to fall —
-  // reaches it.
-  const markGone = seat(0.02, 16)
+  // Point the crowd's eyes at the burger (they go back to the cursor on the
+  // next real pointer move).
+  const glance = useCallback(() => {
+    const r = stageRef.current?.getBoundingClientRect()
+    if (r) emitCrowd({ type: 'look', x: r.left + r.width / 2, y: r.top + r.height / 2 })
+  }, [])
+
+  const ref = useBuildProgress<HTMLElement>(MARKS, (i, forward) => {
+    if (i === 0) { setStarted(forward); return }
+    if (i === MARKS.length - 1) {
+      setLanded(forward)
+      if (forward) { glance(); emitCrowd({ type: 'cheer' }) }
+      return
+    }
+    if (forward) {
+      glance()
+      const part = BUILD_ORDER[i - 1]
+      if (part) emitCrowd({ type: 'cheer', kind: part.cheer })
+    }
+  })
+
+  function onStageClick() {
+    if (!landed || jiggling) return
+    setJiggling(true)
+    emitCrowd({ type: 'cheer' })
+    window.setTimeout(() => setJiggling(false), 640)
+  }
+
+  const excitement = excited ? 1 : landed ? 0.55 : started ? 0.3 : 0.1
+  const letters = Array.from(brandName)
 
   return (
     <>
-    <section ref={ref} className="flipd-spec" aria-label={`${brandName} — how it is built`}>
-      <div className="flipd-spec-pin">
+      <section ref={ref} className={s.hero} aria-labelledby="flipd-hero-title">
+        <div className={`${s.pin} ${landed ? s.landed : ''}`}>
+          <div className={s.title}>
+            <span className={s.titleNo}>Build sheet</span>
+            <span className={s.titleRule} aria-hidden />
+            <span className={s.titleNo}>Same, every time</span>
+          </div>
 
-        {/* Sheet header — this is a drawing, so it gets a drawing's title block. */}
-        <div className="flipd-spec-title">
-          <span className="flipd-spec-titleno">Build sheet</span>
-          <span className="flipd-spec-titlerule" aria-hidden />
-          <span className="flipd-spec-titleno">Same, every time</span>
-        </div>
+          <div className={s.doodles} aria-hidden>
+            <DoodleBurst className={`${s.d1} ${f.float}`} />
+            <DoodleSpeed className={s.d2} />
+            <DoodleSpeed className={s.d3} />
+            <DoodleSquiggle className={`${s.d4} ${f.float}`} />
+            <DoodleStar className={`${s.d5} ${f.float}`} />
+            <DoodleSpatula className={s.d6} />
+            <DoodleSeeds className={s.d7} />
+          </div>
 
-        <div className="flipd-spec-field">
-          <div
-            className="flipd-spec-stage"
-            style={{
-              ['--fall' as string]: fall,
-              ['--hit' as string]: hit,
-              ['--bounce' as string]: bounce,
-              ['--stretch' as string]: stretch,
-              ['--squash' as string]: squash,
-            }}
-          >
-            {PARTS.map((part, i) => (
-              <div
-                key={part.no}
-                className={`flipd-spec-part flipd-spec-part--${part.side}`}
-                style={{
-                  ['--t' as string]: seat(part.fire),
-                  ['--w' as string]: `${(part.w * 100).toFixed(1)}%`,
-                  ['--drop' as string]: part.drop,
-                  // Upper layers paint over lower ones, which is what makes the
-                  // overlap read as a burger rather than as five cut-outs. DOM
-                  // order has to run crown-first for the vertical layout, so
-                  // the painting order is set here instead.
-                  zIndex: PARTS.length - i,
-                }}
-              >
-                {/* Leader line + callout. Hidden below the diagram on narrow
-                    screens, where there is no room beside it. */}
-                <div className="flipd-spec-callout" aria-hidden>
-                  <span className="flipd-spec-no">{part.no}</span>
-                  <span className="flipd-spec-lead" />
-                  <span className="flipd-spec-text">
-                    <span className="flipd-spec-name">{part.name}</span>
-                    <span className="flipd-spec-sub">{part.spec}</span>
-                  </span>
-                </div>
+          <div className={s.field}>
+            <div
+              ref={stageRef}
+              className={`${s.stage} ${jiggling ? s.jiggle : ''}`}
+              onClick={onStageClick}
+              style={{
+                ['--fall' as string]: fall,
+                ['--hit' as string]: hit,
+                ['--bounce' as string]: bounce,
+                ['--stretch' as string]: stretch,
+                ['--squash' as string]: squash,
+              }}
+            >
+              {PARTS.map((part, i) => {
+                const seatEnd = part.fire + 1 / RATE
+                return (
+                  <div
+                    key={part.no}
+                    className={`${s.part} ${part.side === 'left' ? s.left : s.right}`}
+                    style={{
+                      ['--t' as string]: seat(part.fire),
+                      ['--w' as string]: `${(part.w * 100).toFixed(1)}%`,
+                      ['--drop' as string]: part.drop,
+                      ['--land' as string]: pulse(seatEnd - 0.012, 84, seatEnd, 28),
+                      // Upper layers paint over lower ones.
+                      zIndex: PARTS.length - i,
+                    }}
+                  >
+                    <div className={s.callout} aria-hidden>
+                      <span className={s.no}>{part.no}</span>
+                      <span className={s.lead} />
+                      <span className={s.text}>
+                        <span className={s.name}>{part.name}</span>
+                        <span className={s.sub}>{part.spec}</span>
+                      </span>
+                    </div>
+                    {/* Hover spreads the finished stack into an exploded view:
+                        crown furthest, heel not at all. */}
+                    <div className={s.spread} style={{ ['--k' as string]: PARTS.length - 1 - i }}>
+                      <div
+                        className={s.art}
+                        style={{
+                          ['--flip' as string]: `${part.flip ?? 0}deg`,
+                          ['--tilt' as string]: `${part.tilt}deg`,
+                        }}
+                      >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={`/brand/parts/${part.art}.png`} alt="" aria-hidden="true" />
+                      </div>
+                    </div>
+                  </div>
+                )
+              })}
 
-                {/* The flip lives here rather than on the part, so the callout
-                    beside it stays the right way up. */}
-                <div
-                  className="flipd-spec-art"
-                  style={{ ['--flip' as string]: part.flip ? '180deg' : '0deg' }}
-                >
-                  <PartArt part={part} />
-                </div>
+              <div className={s.steam} aria-hidden>
+                {[0, 1, 2].map((k) => (
+                  <svg key={k} className={s.wisp} viewBox="0 0 20 80" preserveAspectRatio="none">
+                    <path d="M10 78 C 2 64, 18 54, 10 40 S 2 16, 10 2" />
+                  </svg>
+                ))}
               </div>
-            ))}
 
-            {/* The wordmark holds the middle of the sheet until the build
-                starts — which is exactly where FLIPD sits inside the badge. */}
-            <p className="flipd-spec-mark" style={{ ['--t' as string]: markGone }}>
-              {brandName}
-            </p>
+              <div className={s.intro} style={{ ['--t' as string]: markGone }}>
+                <h1 id="flipd-hero-title" className={s.mark}>
+                  <span className={f.srOnly}>{brandName}</span>
+                  <span aria-hidden>
+                    {letters.map((ch, i) => (
+                      <span key={`${ch}-${i}`} className={s.letter} style={{ '--i': i } as CSSProperties}>
+                        <span className={s.letterIn} style={{ '--i': i } as CSSProperties}>{ch}</span>
+                      </span>
+                    ))}
+                  </span>
+                </h1>
+                <span className={s.hint} aria-hidden>
+                  Scroll to build it
+                  <svg viewBox="0 0 24 24"><path d="M12 4v15M6 13l6 6 6-6" /></svg>
+                </span>
+              </div>
+            </div>
+
+            <div className={s.datum} style={{ ['--hit' as string]: hit, ['--spray' as string]: spray }} aria-hidden>
+              <span className={s.datumRule} />
+              {TICKS.map((a) => (
+                <span key={a} className={s.tick} style={{ ['--a' as string]: `${a}deg` }} />
+              ))}
+              {DOTS.map(([dx, dy, sz], k) => (
+                <span
+                  key={k}
+                  className={s.dot}
+                  style={{ ['--dx' as string]: `${dx}px`, ['--dy' as string]: `${dy}px`, ['--sz' as string]: `${sz}px` }}
+                />
+              ))}
+            </div>
+
+            <div className={s.stamp} aria-hidden>
+              <Stamp />
+            </div>
           </div>
 
-          {/* The datum line the build sits on, and what it lands on. It is part
-              of the drawing from the first frame, not something that appears
-              for the impact — otherwise the burger falls onto nothing. */}
-          <div className="flipd-spec-datum" style={{ ['--hit' as string]: hit }} aria-hidden>
-            <span className="flipd-spec-datumrule" />
-            {TICKS.map((a) => (
-              <span key={a} className="flipd-spec-tick" style={{ ['--a' as string]: `${a}deg` }} />
-            ))}
+          <div className={s.outro}>
+            <p className={s.tagline}>{tagline}</p>
+            <div className={f.ctaRow}>
+              <OrderLink href={orderHref} onExcite={setExcited}>Order now</OrderLink>
+              <Link href={menuHref} className={`${f.btn} ${f.btnGhost}`}>See the menu</Link>
+            </div>
           </div>
+
+          <FlipdCrowd className={s.crowd} excitement={excitement} />
         </div>
+      </section>
 
-        {/* Lands once the burger has. Hidden outright until then, not merely
-            transparent: two full-width buttons that are invisible but still
-            clickable sit across the bottom of the first screen of the hero. */}
-        <div
-          className="flipd-spec-outro"
-          style={{ ['--t' as string]: built, visibility: past ? 'visible' : 'hidden' }}
-        >
-          <p className="flipd-spec-tagline">{tagline}</p>
-          <div className="flipd-spec-cta">
-            <Link href={orderHref} className="flipd-btn">Order now</Link>
-            <Link href={menuHref} className="flipd-btn flipd-btn-ghost">See the menu</Link>
-          </div>
-        </div>
-
-        <span className="flipd-spec-hint" style={{ ['--t' as string]: seat(0.02, 10) }} aria-hidden>
-          Scroll to build it
-        </span>
-      </div>
-    </section>
-
-    {/* The written build, after the pinned section.
-        It is the accessible copy of the diagram — the callouts are aria-hidden
-        precisely so a screen reader gets this one and not both — and on a phone
-        it is also the visible one, because five parts plus five callouts do not
-        fit beside each other at 390px. Desktop hides it. */}
-    <ol className="flipd-spec-list">
-      {BUILD_ORDER.map((p) => (
-        <li key={p.no}>
-          <span className="flipd-spec-no">{p.no}</span>
-          <span className="flipd-spec-name">{p.name}</span>
-          <span className="flipd-spec-sub">{p.spec}</span>
-        </li>
-      ))}
-    </ol>
+      {/* The written build. The callouts are aria-hidden so a screen reader
+          gets this copy and not both; on narrow screens it is also the
+          visible one, because callouts do not fit beside the drawing. */}
+      <ol className={s.list} aria-label={`How a ${brandName} burger is built`}>
+        {BUILD_ORDER.map((p) => (
+          <li key={p.no} className={s.listItem}>
+            <span className={s.no}>{p.no}</span>
+            <span className={s.name}>{p.name}</span>
+            <span className={s.sub}>{p.spec}</span>
+          </li>
+        ))}
+      </ol>
     </>
   )
 }

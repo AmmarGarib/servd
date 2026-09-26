@@ -22,7 +22,18 @@ export interface BrandFooterConfig {
 
 // Defaults derived from the concept — matches what the footer rendered before
 // it became editable, so an un-configured brand looks identical to today.
-export function defaultBrandFooter(concept: { name: string; description?: string | null }): BrandFooterConfig {
+export function defaultBrandFooter(concept: { name: string; slug?: string; description?: string | null }): BrandFooterConfig {
+  // simmer's bible bans question and exclamation marks and title case, so the
+  // generic "Hungry? Let's eat." can never be its default.
+  if (concept.slug === 'simmer') {
+    return {
+      ctaEyebrow: 'simmer · the room is set',
+      ctaHeadline: 'the kitchen is on.',
+      ctaAccent: 'come down.',
+      tagline: concept.description ?? '',
+      social: {},
+    }
+  }
   return {
     ctaEyebrow: `${concept.name.toLowerCase()} · ready when you are`,
     ctaHeadline: 'Hungry?',

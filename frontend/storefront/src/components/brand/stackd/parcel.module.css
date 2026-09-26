@@ -1,0 +1,155 @@
+/* Wrapped, not plated — a cream paper band with torn edges. Story text is
+   plum-dark on cream (13.5:1); spec label plum on cream (7.77:1). */
+
+.section {
+  position: relative;
+  margin: clamp(1.5rem, 4vh, 3rem) 0;
+  padding: clamp(4rem, 10vh, 7rem) 0;
+  background: var(--stackd-cream);
+  color: var(--stackd-plum-dark);
+}
+/* Torn/pinked paper edge, top and bottom. */
+.section::before,
+.section::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 14px;
+  background:
+    linear-gradient(135deg, var(--stackd-cream) 50%, transparent 50%) 0 0 / 28px 14px repeat-x,
+    linear-gradient(-135deg, var(--stackd-cream) 50%, transparent 50%) 0 0 / 28px 14px repeat-x;
+}
+.section::before { top: -13px; transform: scaleY(-1); }
+.section::after { bottom: -13px; }
+
+.grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
+  gap: clamp(1.5rem, 5vw, 4rem);
+  align-items: center;
+}
+.copy { min-width: 0; }
+.story {
+  margin: 1.3rem 0 0;
+  max-width: 54ch;
+  font-size: clamp(1rem, 1.25vw, 1.1rem);
+  line-height: 1.75;
+  color: var(--stackd-plum-dark);
+}
+
+/* ── The parcel ─────────────────────────────────────────────────────────
+   One square of paper, four triangular flaps meeting in the middle. Each
+   flap is hinged on its own edge and folds back toward the reader in turn;
+   the front face is the printed paper, the back face the plain inside. */
+.stage {
+  --sq: min(11.5rem, 27vw);
+  --seal: max(0, min(1, (var(--p, 0) - 0.04) * 6));
+  --f0: max(0, min(1, (var(--p, 0) - 0.16) * 4.2));
+  --f1: max(0, min(1, (var(--p, 0) - 0.28) * 4.2));
+  --f2: max(0, min(1, (var(--p, 0) - 0.40) * 4.2));
+  --f3: max(0, min(1, (var(--p, 0) - 0.52) * 4.2));
+  --pop: max(0, min(1, (var(--p, 0) - 0.62) * 5));
+  position: relative;
+  height: calc(var(--sq) * 3);
+  display: grid;
+  place-items: center;
+  perspective: 1400px;
+}
+.parcel {
+  position: relative;
+  width: var(--sq);
+  height: var(--sq);
+  transform-style: preserve-3d;
+  transform: rotate(-6deg);
+}
+.inside {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: #FFFFFF;
+  outline: 1.5px solid var(--stackd-plum-dark);
+  box-shadow: 0 30px 40px -20px rgba(61, 17, 34, 0.45);
+}
+.sandwich {
+  width: 86%;
+  transform: scale(calc(0.8 + var(--pop) * 0.2)) rotate(calc((1 - var(--pop)) * -8deg));
+  opacity: calc(0.2 + var(--pop) * 0.8);
+}
+.sandwich svg { display: block; width: 100%; height: auto; }
+
+.flap {
+  position: absolute;
+  inset: 0;
+  transform-style: preserve-3d;
+  pointer-events: none;
+}
+.front, .back {
+  position: absolute;
+  inset: 0;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+/* The printed paper: the mascot, as on the real wrap, over white. */
+.front {
+  background:
+    linear-gradient(var(--shade, 180deg), rgba(61, 17, 34, 0.1), rgba(61, 17, 34, 0) 60%),
+    linear-gradient(rgba(255, 255, 255, 0.5), rgba(255, 255, 255, 0.5)),
+    url('/brand/stackd-mascot.png') 0 0 / 26px auto space,
+    #FFFFFF;
+  background-size: auto, auto, 26px 35px, auto;
+  background-repeat: no-repeat, no-repeat, repeat, no-repeat;
+  background-position: 0 0, 0 0, 6px 4px, 0 0;
+}
+.back { background: #FFFFFF; }
+.front svg, .back svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+
+.top { transform-origin: 50% 0; transform: rotateX(calc(var(--f0) * 176deg)); z-index: 4; }
+.top .front { clip-path: polygon(0 0, 100% 0, 50% 50%); --shade: 0deg; }
+.top .back { clip-path: polygon(0 100%, 100% 100%, 50% 50%); transform: rotateX(180deg); }
+
+.right { transform-origin: 100% 50%; transform: rotateY(calc(var(--f1) * 176deg)); z-index: 3; }
+.right .front { clip-path: polygon(100% 0, 100% 100%, 50% 50%); --shade: 270deg; }
+.right .back { clip-path: polygon(0 0, 0 100%, 50% 50%); transform: rotateY(180deg); }
+
+.bottom { transform-origin: 50% 100%; transform: rotateX(calc(var(--f2) * -176deg)); z-index: 2; }
+.bottom .front { clip-path: polygon(0 100%, 100% 100%, 50% 50%); --shade: 180deg; }
+.bottom .back { clip-path: polygon(0 0, 100% 0, 50% 50%); transform: rotateX(180deg); }
+
+.left { transform-origin: 0 50%; transform: rotateY(calc(var(--f3) * -176deg)); z-index: 1; }
+.left .front { clip-path: polygon(0 0, 0 100%, 50% 50%); --shade: 90deg; }
+.left .back { clip-path: polygon(100% 0, 100% 100%, 50% 50%); transform: rotateY(180deg); }
+
+/* The seal that holds it shut — peels off first and flutters away. */
+.seal {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: calc(var(--sq) * 0.46);
+  aspect-ratio: 1;
+  display: grid;
+  place-items: center;
+  transform:
+    translate(-50%, -50%)
+    translateZ(2px)
+    translate(calc(var(--seal) * var(--sq) * 0.9), calc(var(--seal) * var(--sq) * -1.05))
+    rotate(calc(var(--seal) * 38deg))
+    scale(calc(1 + var(--seal) * 0.12));
+  filter: drop-shadow(0 calc(2px + var(--seal) * 14px) calc(3px + var(--seal) * 10px) rgba(61, 17, 34, 0.35));
+  z-index: 5;
+}
+.seal svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+.seal span {
+  position: relative;
+  font-family: var(--stackd-display);
+  font-weight: 800;
+  font-size: calc(var(--sq) * 0.1);
+  letter-spacing: -0.02em;
+  color: var(--stackd-plum-dark);
+}
+
+@media (max-width: 860px) {
+  .grid { grid-template-columns: minmax(0, 1fr); }
+  .stage { --sq: min(10rem, 29vw); order: 2; }
+}

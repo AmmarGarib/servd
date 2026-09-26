@@ -1,0 +1,483 @@
+/* Flipd landing — section layouts below the hero. Palette + pairs: see
+   flipd.module.css. Grounds alternate mustard → blue → mustard → bone → blue
+   so the page has rhythm, all inside the book's three colours. */
+
+.section {
+  position: relative;
+  padding: clamp(3.5rem, 9vh, 6rem) clamp(1.25rem, 5vw, 3rem);
+  overflow-x: clip;
+}
+.inner { position: relative; max-width: 72rem; margin: 0 auto; }
+
+.eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.26em;
+  text-transform: uppercase;
+  color: var(--flipd-blue);
+}
+.eyebrow::before {
+  content: '';
+  width: 1.6rem;
+  height: 3px;
+  border-radius: 2px;
+  background: currentColor;
+}
+.h2 {
+  margin: 0.8rem 0 0;
+  font-family: var(--flipd-display);
+  font-weight: 400;
+  font-size: clamp(2.2rem, 5.4vw, 4rem);
+  line-height: 1;
+  letter-spacing: -0.01em;
+  color: var(--flipd-blue);
+  text-wrap: balance;
+}
+.underlined { display: inline-block; }
+.body {
+  margin: 1.4rem 0 0;
+  max-width: 60ch;
+  font-size: 1.04rem;
+  line-height: 1.75;
+  color: var(--flipd-blue-deep);
+}
+
+/* ── Mission ───────────────────────────────────────────────────────────── */
+.mission {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
+  gap: clamp(2rem, 6vw, 5rem);
+  align-items: center;
+}
+.missionArt {
+  position: relative;
+  display: grid;
+  place-items: center;
+}
+.missionArt > div:first-child { width: min(100%, 25rem); }
+.facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.7rem;
+  margin: 1.8rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+.fact {
+  padding: 0.6rem 1rem;
+  font-size: 0.86rem;
+  font-weight: 700;
+  box-shadow: 3px 4px 0 var(--flipd-blue);
+}
+@media (max-width: 860px) {
+  .mission { grid-template-columns: 1fr; }
+  .missionArt > div:first-child { width: min(78vw, 20rem); }
+}
+
+/* ── Off the grill (menu highlights) ───────────────────────────────────── */
+.railHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1rem 2rem;
+  margin-bottom: 2.4rem;
+}
+.railBlock { position: relative; }
+.tickets {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 18rem), 1fr));
+  gap: 2.6rem 1.6rem;
+  padding: 1.7rem 0.4rem 0.6rem;
+}
+/* On a phone the rail scrolls sideways with snap — a row of tickets you
+   thumb through, not a column you scroll past. The scroller is inside the
+   section, so the page itself never scrolls horizontally. */
+@media (max-width: 640px) {
+  .tickets {
+    display: flex;
+    gap: 1.1rem;
+    overflow-x: auto;
+    scroll-snap-type: x mandatory;
+    padding: 1.7rem 1.25rem 1.2rem;
+    margin: 0 -1.25rem;
+    scrollbar-width: none;
+  }
+  .tickets::-webkit-scrollbar { display: none; }
+  .tickets > * { flex: 0 0 min(80%, 17rem); scroll-snap-align: center; }
+  .swipeHint { display: inline-flex; }
+}
+.swipeHint {
+  display: none;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: 0.4rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--flipd-blue);
+}
+.swipeHint svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; animation: swipe 1.6s ease-in-out infinite; }
+@keyframes swipe { 0%, 100% { transform: translateX(-3px); } 50% { transform: translateX(5px); } }
+
+/* ── Values: stickers on the blue band ─────────────────────────────────── */
+.blue {
+  background: var(--flipd-blue);
+  color: var(--flipd-mustard);
+}
+.blue .eyebrow, .blue .h2 { color: var(--flipd-mustard); }
+.values {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr));
+  gap: clamp(1.4rem, 3vw, 2.2rem);
+  margin-top: clamp(2rem, 5vh, 3rem);
+  padding: 0;
+  list-style: none;
+}
+.value {
+  position: relative;
+  padding: 2.4rem 1.35rem 1.5rem;
+  box-shadow: 6px 7px 0 var(--flipd-mustard);
+}
+.valueNo {
+  position: absolute;
+  top: -1.35rem;
+  left: 1.1rem;
+  display: grid;
+  place-items: center;
+  width: 3rem;
+  height: 3rem;
+  border-radius: 50%;
+  background: var(--flipd-mustard);
+  border: 2.5px solid var(--flipd-blue);
+  font-family: var(--flipd-display);
+  font-size: 1.1rem;
+  color: var(--flipd-blue);
+  transition: transform 500ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.value:hover .valueNo { transform: rotate(360deg) scale(1.12); }
+.valueTitle {
+  margin: 0;
+  font-family: var(--flipd-display);
+  font-weight: 400;
+  font-size: 1.25rem;
+  line-height: 1.15;
+  color: var(--flipd-blue);
+}
+.valueBody {
+  margin: 0.6rem 0 0;
+  font-size: 0.9rem;
+  line-height: 1.6;
+  color: var(--flipd-blue-deep);
+}
+.bandDoodle { color: var(--flipd-mustard); }
+.bandDoodle path, .bandDoodle ellipse { stroke: var(--flipd-mustard); }
+
+/* ── Visit: the counter, the crowd, the rally ──────────────────────────── */
+.bone { background: var(--flipd-bone); }
+.visitHead { text-align: center; }
+.visitHead .body { margin-left: auto; margin-right: auto; }
+.stand {
+  position: relative;
+  width: min(100%, 60rem);
+  margin: clamp(1.5rem, 4vh, 2.5rem) auto 0;
+  padding-top: clamp(5rem, 12vh, 8rem);
+}
+.standCrowd {
+  position: relative;
+  height: calc(clamp(120px, 22vh, 210px) + 40px);
+}
+.stools {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  justify-content: space-around;
+  margin-top: 2px;
+  padding: 0 4%;
+}
+.stool {
+  width: clamp(44px, 7vw, 68px);
+  pointer-events: auto;
+  cursor: grab;
+}
+.stool svg { display: block; width: 100%; height: auto; overflow: visible; }
+.stoolStripes { animation: stoolSpin 2.4s linear infinite; }
+.stool:hover .stoolStripes { animation-duration: 0.35s; }
+.stool:nth-child(2) .stoolStripes { animation-direction: reverse; animation-duration: 3.1s; }
+.stool:nth-child(3) .stoolStripes { animation-duration: 2s; }
+.stool:nth-child(4) .stoolStripes { animation-direction: reverse; }
+@keyframes stoolSpin { from { transform: translateX(0); } to { transform: translateX(-16px); } }
+
+/* The ball: X runs linear back and forth, Y is a parabola per crossing
+   (ease-out up, ease-in down), and a shadow tracks it along the counter. */
+.rally {
+  position: absolute;
+  z-index: 3;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: calc(clamp(5rem, 12vh, 8rem) + clamp(120px, 22vh, 210px) - 30px);
+  pointer-events: none;
+}
+.ballX {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 100%;
+  animation: rallyX 3s linear infinite alternate;
+}
+.ballY {
+  position: absolute;
+  left: calc(50% - 23px);
+  bottom: 30%;
+  width: 46px;
+  height: 46px;
+  animation: rallyY 3s infinite;
+}
+.ball {
+  display: block;
+  width: 100%;
+  height: 100%;
+  animation: ballSpin 0.9s linear infinite;
+}
+@keyframes rallyX { from { transform: translateX(-38%); } to { transform: translateX(38%); } }
+@keyframes rallyY {
+  0%   { transform: translateY(0); animation-timing-function: cubic-bezier(0.2, 0.7, 0.4, 1); }
+  50%  { transform: translateY(-300%); animation-timing-function: cubic-bezier(0.6, 0, 0.8, 0.3); }
+  100% { transform: translateY(0); }
+}
+@keyframes ballSpin { to { transform: rotate(360deg); } }
+.stand:not([data-live]) .ballX,
+.stand:not([data-live]) .ballY,
+.stand:not([data-live]) .ball,
+.stand:not([data-live]) .stoolStripes { animation-play-state: paused; }
+
+.visitGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2.4rem 1.8rem;
+  width: min(100%, 60rem);
+  margin: clamp(2.5rem, 6vh, 3.5rem) auto 0;
+  padding-top: 1.6rem;
+}
+@media (max-width: 760px) { .visitGrid { grid-template-columns: 1fr; } }
+.visitTicket { min-height: 0; }
+.visitTitle {
+  margin: 0.2rem 0 0.9rem;
+  font-family: var(--flipd-display);
+  font-weight: 400;
+  font-size: clamp(1.5rem, 3vw, 2rem);
+  line-height: 1.05;
+  color: var(--flipd-blue);
+}
+/* The door sign. Hangs from two strings and flips over on its hooks when
+   the section arrives. Lit side: blue board, mustard type (6.92:1). */
+.signHang {
+  position: relative;
+  display: inline-block;
+  padding-top: 18px;
+  margin: 0.2rem 0 0.4rem;
+  transform-origin: 50% 0;
+}
+.signHang::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 22%;
+  right: 22%;
+  height: 20px;
+  border: 2px solid var(--flipd-blue);
+  border-bottom: 0;
+  border-radius: 999px 999px 0 0;
+}
+[data-armed]:not([data-in]) .signHang { opacity: 0; }
+[data-in] .signHang { animation: signFlip 1.1s cubic-bezier(0.3, 1.3, 0.5, 1) 300ms both; }
+@keyframes signFlip {
+  0%   { opacity: 0; transform: perspective(500px) rotateX(-110deg); }
+  35%  { opacity: 1; transform: perspective(500px) rotateX(24deg); }
+  60%  { transform: perspective(500px) rotateX(-10deg); }
+  80%  { transform: perspective(500px) rotateX(4deg); }
+  100% { opacity: 1; transform: none; }
+}
+.sign {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.1rem;
+  margin: 0;
+  padding: 0.6rem 1.3rem 0.65rem;
+  border-radius: 0.8rem;
+  border: 3px solid var(--flipd-blue);
+  background: var(--flipd-bone);
+  color: var(--flipd-blue);
+  box-shadow: 3px 4px 0 var(--flipd-blue);
+  text-align: center;
+}
+.signOpen {
+  background: var(--flipd-blue);
+  color: var(--flipd-mustard);
+  /* Chase bulbs round the board, inset so they never touch the letters. */
+  background-image:
+    radial-gradient(circle, var(--flipd-mustard) 0 2.5px, transparent 3px);
+  background-size: 12px 12px;
+  background-position: -3px -3px;
+  padding: 0.75rem 1.5rem 0.8rem;
+}
+.signOpen::before {
+  content: '';
+  position: absolute;
+  inset: 6px;
+  border-radius: 0.5rem;
+  background: var(--flipd-blue);
+}
+.signHead, .signSub { position: relative; }
+.signHead {
+  font-family: var(--flipd-display);
+  font-size: 1.35rem;
+  line-height: 1.05;
+}
+.signSub {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.signOpen .signHead { animation: flicker 5s steps(1) infinite; }
+@keyframes flicker { 0%, 92%, 96% { opacity: 1; } 94% { opacity: 0.55; } }
+
+/* Hours as a counter board: one row per day, today lit. */
+.hours {
+  margin: 1rem 0 0;
+  padding: 0;
+  list-style: none;
+  border-top: 2px solid var(--flipd-blue);
+}
+.hourRow {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.32rem 0.6rem;
+  border-bottom: 2px dashed rgba(41, 67, 117, 0.35);
+  font-size: 0.9rem;
+  color: var(--flipd-blue);
+}
+.hourDay { font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; font-size: 0.78rem; }
+.hourTime { font-variant-numeric: tabular-nums; text-align: right; }
+.hourToday {
+  background: var(--flipd-blue);
+  color: var(--flipd-mustard);
+  border-radius: 0.4rem;
+  border-bottom-color: transparent;
+}
+.address {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 600;
+  line-height: 1.5;
+  color: var(--flipd-blue);
+}
+.visitLinks {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.2rem;
+  margin-top: 0.8rem;
+}
+.visitCta { margin-top: 1.2rem; }
+.route {
+  display: block;
+  width: 100%;
+  max-width: 22rem;
+  height: auto;
+  margin-top: 1.2rem;
+  overflow: visible;
+}
+.routePath {
+  fill: none;
+  stroke: var(--flipd-blue);
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-dasharray: 2 9;
+}
+[data-in] .routeDraw { animation: routeDash 1.8s linear infinite; }
+@keyframes routeDash { to { stroke-dashoffset: -22; } }
+.pin { transform-box: fill-box; transform-origin: 50% 100%; }
+[data-in] .pin { animation: pinDrop 800ms cubic-bezier(0.34, 1.56, 0.64, 1) 500ms both; }
+@keyframes pinDrop {
+  0%   { opacity: 0; transform: translateY(-40px) scaleY(1.2); }
+  60%  { opacity: 1; transform: translateY(0) scaleY(0.8); }
+  100% { opacity: 1; transform: none; }
+}
+.muted { margin: 0.6rem 0 0; font-size: 0.92rem; color: var(--flipd-blue-deep); }
+
+/* ── Sign-off: the badge, stamped ──────────────────────────────────────── */
+.signoff {
+  background: var(--flipd-blue);
+  text-align: center;
+  padding: clamp(4rem, 11vh, 6.5rem) 1.25rem;
+  overflow-x: clip;
+}
+.badgeWrap {
+  position: relative;
+  width: min(15rem, 62vw);
+  aspect-ratio: 1;
+  margin: 0 auto 1.4rem;
+  display: grid;
+  place-items: center;
+}
+.badgeRing {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  animation: ringSpin 30s linear infinite;
+}
+.signoff:not([data-live]) .badgeRing { animation-play-state: paused; }
+@keyframes ringSpin { to { transform: rotate(-360deg); } }
+.badge {
+  display: block;
+  width: 70%;
+  height: auto;
+  transition: transform 400ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.badgeWrap:hover .badge { transform: rotate(-6deg) scale(1.05); }
+[data-armed]:not([data-in]) .badge { opacity: 0; }
+[data-in] .badge { animation: badgeSlam 700ms cubic-bezier(0.34, 1.56, 0.64, 1) 150ms both; }
+@keyframes badgeSlam {
+  0%   { opacity: 0; transform: scale(2.4) rotate(-24deg); }
+  55%  { opacity: 1; transform: scale(0.88) rotate(4deg); }
+  78%  { transform: scale(1.04) rotate(-1deg); }
+  100% { opacity: 1; transform: none; }
+}
+.signoffLine {
+  margin: 0;
+  font-family: var(--flipd-display);
+  font-size: clamp(1.4rem, 3.4vw, 2.2rem);
+  color: var(--flipd-mustard);
+}
+.signoffAddr {
+  margin: 0.7rem 0 0;
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--flipd-bone);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .valueNo, .badge { transition: none; }
+  .value:hover .valueNo, .badgeWrap:hover .badge { transform: none; }
+  .ballX, .ballY, .ball, .stoolStripes, .badgeRing, .swipeHint svg, .signOpen .signHead { animation: none; }
+  [data-armed]:not([data-in]) .signHang { opacity: 1; }
+  [data-in] .routeDraw, [data-in] .pin { animation: none; }
+  [data-in] .signHang { animation: none; }
+  [data-armed]:not([data-in]) .badge { opacity: 1; }
+  [data-in] .badge { animation: none; }
+}

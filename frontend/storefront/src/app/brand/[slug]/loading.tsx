@@ -1,19 +1,15 @@
-// Skeleton for brand microsites — matches the hero + featured-card structure.
+'use client'
+// Loading state for brand microsites. Never the servd butter party — each
+// brand loads in its own language (see BrandLoader). loading.tsx receives no
+// params, so the slug comes from useParams(); this still server-renders, so
+// the loader paints before hydration. On a brand's own domain the middleware
+// rewrite still resolves [slug], so the same variant shows there.
+import { useParams } from 'next/navigation'
+import { BrandLoader } from '../../../components/party/loader/BrandLoader'
 
 export default function BrandLoading() {
-  return (
-    <div>
-      <div style={{ height: 'min(78dvh, 700px)', background: 'linear-gradient(135deg, rgba(0,0,0,0.04) 0%, rgba(0,0,0,0.08) 100%)' }} aria-hidden="true" />
-      <div className="container" style={{ padding: '3rem 0', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: '1.25rem' }}>
-        {Array.from({ length: 4 }).map((_, i) => (
-          <div key={i} aria-hidden="true" style={{
-            background: 'rgba(0,0,0,0.04)',
-            borderRadius: '1rem',
-            height: '320px',
-          }} />
-        ))}
-      </div>
-      <span className="sr-only" role="status">Loading brand…</span>
-    </div>
-  )
+  const params = useParams<{ slug?: string | string[] }>()
+  const raw = params?.slug
+  const slug = Array.isArray(raw) ? raw[0] : raw
+  return <BrandLoader slug={slug?.toLowerCase()} />
 }

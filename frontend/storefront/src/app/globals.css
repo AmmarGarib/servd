@@ -2100,3 +2100,63 @@ button:hover > .kinetic-caret::after { transform: translateX(6px); }
 @media (prefers-reduced-motion: reduce) {
   .servd-loader-cell { animation: none; background-color: var(--cell-color); opacity: 0.35; }
 }
+
+/* ── Brand microsite focus rings ───────────────────────────────────────────
+   The global plum ring vanishes on the brand grounds (1.08–1.36:1). Each
+   brand gets its own ring plus an inner halo in its base colour, so it
+   reads on both its light and dark sections (≥6.9:1). No orange — simmer
+   keeps its single orange signal. */
+:is(.brand-shell--simmer, .simmer-page) :is(a, button, [role="button"], summary):focus-visible {
+  outline: 2px solid var(--simmer-bone);
+  outline-offset: 3px;
+  box-shadow: 0 0 0 5px var(--simmer-green);
+}
+:is(.brand-shell--stackd, .stackd-page) :is(a, button, [role="button"], summary):focus-visible {
+  outline: 2px solid var(--stackd-cream);
+  outline-offset: 3px;
+  box-shadow: 0 0 0 5px var(--stackd-plum-dark);
+}
+:is(.brand-shell--flipd, .flipd-page) :is(a, button, [role="button"], summary):focus-visible {
+  outline: 2px solid var(--flipd-blue);
+  outline-offset: 3px;
+  box-shadow: 0 0 0 5px var(--flipd-mustard);
+}
+
+/* Keep keyboard focus clear of the pinned brand header. */
+html:has(.brand-shell) { scroll-padding-top: 5.5rem; }
+
+/* Pill nav on small phones: the disc + wordmark + 3–4 pill links run
+   18–91px past a 375px screen. Drop the wordmark text (the logo disc stays
+   and the home link keeps its aria-label) and tighten the pill so it keeps
+   fitting — the pill itself stays, per its design intent. !important beats
+   the component's inline padding. */
+@media (max-width: 440px) {
+  .brand-shell .brand-nav-wordmark { display: none; }
+  .brand-shell .brand-nav-pill-link {
+    padding-left: 0.62rem !important;
+    padding-right: 0.62rem !important;
+    font-size: 0.86rem !important;
+  }
+}
+@media (max-width: 360px) {
+  .brand-shell .brand-nav-pill-link {
+    padding-left: 0.42rem !important;
+    padding-right: 0.42rem !important;
+    font-size: 0.8rem !important;
+  }
+}
+
+/* Invisible 44px hit area on small chips and nav-pill links — the visual
+   size is unchanged, only the tappable area grows. */
+.flipd-page .flipd-chip[href],
+.brand-shell nav a { position: relative; }
+.flipd-page .flipd-chip[href]::after,
+.brand-shell nav a::after {
+  content: "";
+  position: absolute;
+  inset: 50% auto auto 50%;
+  width: max(100%, 44px);
+  height: 44px;
+  transform: translate(-50%, -50%);
+}
+

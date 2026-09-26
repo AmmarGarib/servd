@@ -4,6 +4,7 @@
 // to any brand. Mirrors the admin loader; default palette is servd royal purple.
 
 import React from 'react'
+import { PartyLoader } from '../party/loader/PartyLoader'
 
 // servd obsidian-plum gradient (the storefront brand). Simmer = single orange
 // signal (their rules ban gradients); Stackd = navy-grey.
@@ -43,6 +44,9 @@ export function Loader({
   )
 }
 
+// Inline page-level loading state. With no `colors`, it shows the compact
+// servd food-crowd loader (the characters doing their wave) — the hub look.
+// Passing `colors` keeps the themed ripple for brand-coloured surfaces.
 export function LoadingScreen({
   label,
   size = 34,
@@ -54,6 +58,13 @@ export function LoadingScreen({
   colors?: string[]
   minHeight?: string | number
 }) {
+  if (!colors) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight }}>
+        <PartyLoader variant="inline" label={label} />
+      </div>
+    )
+  }
   return (
     <div role="status" aria-label="Loading" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '1.1rem', minHeight, padding: '2rem' }}>
       <Loader size={size} colors={colors} />

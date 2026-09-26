@@ -1,10 +1,14 @@
 'use client'
 import Link from 'next/link'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type CSSProperties } from 'react'
+import { motion, useReducedMotion } from 'framer-motion'
+import { Search, X, UtensilsCrossed } from 'lucide-react'
 import type { Concept } from '../../lib/concept'
-import { typeLabel, conceptHeroImage, brandStory } from '../../lib/concept'
-import { isOpenNow, fmtHourWindow } from '../../lib/hours'
+import { formatBrandName } from '../../lib/concept'
 import { trackSearch, trackFilterApplied, track } from '../../lib/analytics'
+import { BrowseCard } from '../../components/party/browse/BrowseCard'
+import { Doodles } from '../../components/party/browse/Doodles'
+import s from '../../components/party/browse/browse.module.css'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -24,11 +28,26 @@ interface MenuHit {
   concept: { name: string; slug: string; primaryColor: string | null }
 }
 
+// Each word drops in on its own beat, matching the home hero's headline
+// motion (see components/party/PartyHero.tsx BouncyWords).
+function BouncyWords({ text }: { text: string }) {
+  return (
+    <>
+      {text.split(' ').map((w, i) => (
+        <span key={`${w}-${i}`} className={s.titleWord} style={{ '--i': i } as CSSProperties}>
+          {w}
+        </span>
+      ))}
+    </>
+  )
+}
+
 export function BrowseClient({ concepts }: Props) {
   const [filter, setFilter] = useState<typeof FILTERS[number]['key']>('all')
   const [query, setQuery] = useState('')
   const [menuHits, setMenuHits] = useState<MenuHit[]>([])
   const [searching, setSearching] = useState(false)
+  const reduceMotion = useReducedMotion()
 
   // Debounced cross-menu search. Only fires when there's a query — otherwise
   // we leave the static brand grid alone.
@@ -60,120 +79,119 @@ export function BrowseClient({ concepts }: Props) {
     })
   }, [concepts, filter, query])
 
-  return (
-    <div style={{ background: 'var(--servd-bg)' }}>
+  const trimmedQuery = query.trim()
+  const isSearchingDishes = trimmedQuery.length >= 2
 
-      {/* Header — editorial, asymmetric, matches /home + brand microsites */}
-      <section className="section-tight" style={{ paddingBottom: '1.5rem', borderBottom: '1px solid var(--servd-line)' }}>
-        <div className="container">
-          <p className="eyebrow eyebrow-accent">Every kitchen</p>
-          <h1 className="display" style={{ fontSize: 'clamp(2.5rem, 7vw, 5rem)', margin: '0.5rem 0 0.75rem', maxWidth: '900px' }}>
-            Pick your craving.<br />
-            <span className="display-italic">{concepts.length} kitchens.</span>
+  const liveMessage = isSearchingDishes
+    ? (searching
+        ? 'Searching…'
+        : `${menuHits.length} dish${menuHits.length === 1 ? '' : 'es'} and ${filtered.length} brand${filtered.length === 1 ? '' : 's'} found for "${trimmedQuery}"`)
+    : `${filtered.length} brand${filtered.length === 1 ? '' : 's'} shown`
+
+  function clearAll() {
+    setFilter('all')
+    setQuery('')
+  }
+
+  return (
+    <div className={s.page}>
+
+      {/* Header — butter stage, same energy as the home hero */}
+      <section className={s.header}>
+        <Doodles />
+        <div className={s.headerInner}>
+          <p className={s.eyebrow}>Every kitchen</p>
+          <h1 className={s.title}>
+            <BouncyWords text="Pick your craving." />
+            <span className={s.titleTail}>
+              {concepts.length} kitchen{concepts.length === 1 ? '' : 's'}.
+              <svg aria-hidden className={s.underline} viewBox="0 0 220 20" preserveAspectRatio="none">
+                <path d="M4 14 C 44 4, 88 18, 132 9 S 204 6, 216 12" />
+              </svg>
+            </span>
           </h1>
-          <p style={{ color: 'var(--servd-mute)', fontSize: '1.05rem', maxWidth: '36rem', lineHeight: 1.55 }}>
+          <p className={s.lead}>
             One app, one delivery bag. Mix and match — pick from one, two, or all of them, and we figure out the timing.
           </p>
 
-          {/* Search + filters */}
-          <div style={{ marginTop: '2rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-            <div role="search" style={{ position: 'relative' }}>
-              <span aria-hidden="true" style={{
-                position: 'absolute',
-                left: '1.1rem',
-                top: '50%',
-                transform: 'translateY(-50%)',
-                color: 'var(--servd-mute)',
-                display: 'inline-flex',
-              }}>
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <circle cx="11" cy="11" r="8"/>
-                  <line x1="21" y1="21" x2="16.65" y2="16.65"/>
-                </svg>
-              </span>
-              <input
-                type="text"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search brands, cuisines, dishes…"
-                aria-label="Search brands"
-                className="servd-input"
-                style={{ paddingLeft: '2.6rem', borderRadius: '999px', maxWidth: '36rem' }}
-              />
-            </div>
+          <div className={s.searchWrap} role="search">
+            <Search aria-hidden size={18} className={s.searchIcon} />
+            <label htmlFor="browse-search" className={s.srOnly}>Search brands, cuisines, dishes</label>
+            <input
+              id="browse-search"
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search brands, cuisines, dishes…"
+              className={s.searchInput}
+            />
+            {query.length > 0 && (
+              <button
+                type="button"
+                aria-label="Clear search"
+                className={s.clearBtn}
+                onClick={() => setQuery('')}
+              >
+                <X aria-hidden size={18} />
+              </button>
+            )}
+          </div>
 
-            <div role="group" aria-label="Filter by service type" style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-              {FILTERS.map((f) => {
-                const active = filter === f.key
-                return (
-                  <button
-                    key={f.key}
-                    onClick={() => { setFilter(f.key); trackFilterApplied('browse_type', f.key) }}
-                    aria-pressed={active}
-                    style={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      minHeight: '44px',
-                      padding: '0.5rem 1rem',
-                      borderRadius: '999px',
-                      border: '1px solid var(--servd-line)',
-                      background: active ? 'var(--servd-black)' : 'white',
-                      color: active ? 'white' : 'var(--servd-ink)',
-                      fontWeight: 600,
-                      fontSize: '0.875rem',
-                      cursor: 'pointer',
-                      transition: 'background 120ms ease, color 120ms ease',
-                    }}
-                  >
-                    {f.label}
-                  </button>
-                )
-              })}
-            </div>
+          <div role="group" aria-label="Filter by service type" className={s.chips}>
+            {FILTERS.map((f) => {
+              const active = filter === f.key
+              return (
+                <motion.button
+                  key={f.key}
+                  type="button"
+                  aria-pressed={active}
+                  className={`${s.chip} ${active ? s.chipActive : ''}`}
+                  whileTap={reduceMotion ? undefined : { scale: 0.92 }}
+                  onClick={() => { setFilter(f.key); trackFilterApplied('browse_type', f.key) }}
+                >
+                  {f.label}
+                </motion.button>
+              )
+            })}
           </div>
         </div>
       </section>
 
+      {/* Polite live region — announces result counts without duplicating
+          the visible headings below. */}
+      <p aria-live="polite" className={s.srOnly}>{liveMessage}</p>
+
       {/* Menu hits — only when typing */}
-      {query.trim().length >= 2 && (
-        <section className="section-tight" style={{ paddingBottom: 0 }}>
-          <div className="container">
-            <h2 style={{ fontSize: '1.05rem', fontWeight: 700, marginBottom: '1rem' }}>
-              {searching ? 'Searching dishes…' : `${menuHits.length} dish${menuHits.length === 1 ? '' : 'es'} matching "${query.trim()}"`}
+      {isSearchingDishes && (
+        <section className={s.hitsSection}>
+          <div className={s.inner}>
+            <h2 className={s.sectionLabel}>
+              {searching ? 'Searching dishes…' : `${menuHits.length} dish${menuHits.length === 1 ? '' : 'es'} matching "${trimmedQuery}"`}
             </h2>
             {menuHits.length > 0 && (
-              <div style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))',
-                gap: '0.85rem',
-              }}>
+              <div className={s.hitsGrid}>
                 {menuHits.map((hit) => {
                   const fmt = (c: number) => `PKR ${(c / 100).toLocaleString('en-PK', { maximumFractionDigits: 0 })}`
                   return (
                     <Link
                       key={hit.id}
                       href={`/${hit.concept.slug}`}
-                      aria-label={`${hit.name} from ${hit.concept.name}`}
-                      className="servd-card"
-                      style={{ textDecoration: 'none', color: 'inherit', display: 'flex', gap: '0.85rem', padding: '0.85rem', alignItems: 'center' }}
+                      aria-label={`${hit.name} from ${formatBrandName(hit.concept.name)}`}
+                      className={s.hitCard}
                     >
-                      <div style={{
-                        width: 64, height: 64, borderRadius: '0.6rem',
-                        flexShrink: 0,
-                        background: hit.imageUrl
-                          ? `url(${hit.imageUrl}) center/cover`
-                          : `linear-gradient(135deg, ${hit.concept.primaryColor ?? 'var(--servd-green)'} 0%, white 200%)`,
-                      }} aria-hidden="true" />
+                      <div
+                        className={s.hitThumb}
+                        aria-hidden
+                        style={{
+                          background: hit.imageUrl
+                            ? `url(${hit.imageUrl}) center/cover`
+                            : `linear-gradient(135deg, ${hit.concept.primaryColor ?? 'var(--party-plum)'} 0%, var(--party-cream) 200%)`,
+                        }}
+                      />
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <p style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--servd-green-dark)', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: '0.15rem' }}>
-                          {hit.concept.name}
-                        </p>
-                        <p style={{ fontSize: '0.95rem', fontWeight: 700, marginBottom: '0.15rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                          {hit.name}
-                        </p>
-                        <p style={{ fontSize: '0.85rem', color: 'var(--servd-green-dark)', fontWeight: 700 }}>
-                          {fmt(hit.priceCents)}
-                        </p>
+                        <p className={s.hitConcept}>{formatBrandName(hit.concept.name)}</p>
+                        <p className={s.hitName}>{hit.name}</p>
+                        <p className={s.hitPrice}>{fmt(hit.priceCents)}</p>
                       </div>
                     </Link>
                   )
@@ -185,108 +203,35 @@ export function BrowseClient({ concepts }: Props) {
       )}
 
       {/* Grid */}
-      <section className="section-tight">
-        <div className="container">
-          {query.trim().length >= 2 && filtered.length > 0 && (
-            <h2 style={{ fontSize: '1.05rem', fontWeight: 700, marginBottom: '1rem' }}>
-              Brands matching "{query.trim()}"
-            </h2>
+      <section className={s.gridSection}>
+        <div className={s.inner}>
+          {isSearchingDishes && filtered.length > 0 && (
+            <h2 className={s.sectionLabel}>Brands matching "{trimmedQuery}"</h2>
           )}
           {filtered.length === 0 ? (
-            <div style={{ textAlign: 'center', padding: '4rem 2rem', color: 'var(--servd-mute)' }}>
-              <p style={{ fontSize: '1.05rem', marginBottom: '0.75rem' }}>No brands match.</p>
-              <button onClick={() => { setFilter('all'); setQuery('') }} className="servd-btn-secondary">Clear filters</button>
+            <div className={s.empty}>
+              <UtensilsCrossed aria-hidden size={40} className={s.emptyIcon} />
+              <p className={s.emptyTitle}>No brands match — try another craving.</p>
+              <button type="button" onClick={clearAll} className={s.clearAllBtn}>Clear filters</button>
             </div>
           ) : (
-            <div style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 280px), 1fr))',
-              gap: '1.25rem',
-            }}>
-              {filtered.map((c) => <BrowseCard key={c.id} concept={c} />)}
+            <div className={s.grid}>
+              {filtered.map((c, i) => (
+                <motion.div
+                  key={c.id}
+                  className={s.cardWrap}
+                  initial={reduceMotion ? false : { opacity: 0, y: 26 }}
+                  whileInView={{ opacity: 1, y: 0 }}
+                  viewport={{ once: true, margin: '0px 0px -80px 0px' }}
+                  transition={{ type: 'spring', stiffness: 220, damping: 20, delay: reduceMotion ? 0 : (i % 6) * 0.06 }}
+                >
+                  <BrowseCard concept={c} />
+                </motion.div>
+              ))}
             </div>
           )}
         </div>
       </section>
     </div>
-  )
-}
-
-function BrowseCard({ concept }: { concept: Concept }) {
-  const story = brandStory(concept.slug)
-  const status = isOpenNow(concept.type)
-  return (
-    <Link
-      href={`/brand/${concept.slug}`}
-      aria-label={`Visit ${concept.name}${status.open ? ' — open now' : ' — closed'}`}
-      className="servd-card"
-      style={{ textDecoration: 'none', color: 'inherit', display: 'flex', flexDirection: 'column', position: 'relative' }}
-      onClick={() => track('concept_switched', { slug: concept.slug })}
-    >
-      <div style={{
-        aspectRatio: '16/10',
-        background: `${concept.primaryColor ?? 'var(--servd-green-dark)'} url(${conceptHeroImage(concept)}) center/cover`,
-        position: 'relative',
-        filter: status.open ? undefined : 'saturate(0.5)',
-      }}>
-        <div style={{
-          position: 'absolute',
-          inset: 0,
-          background: 'linear-gradient(180deg, transparent 40%, rgba(0,0,0,0.55) 100%)',
-        }} />
-        <span style={{
-          position: 'absolute',
-          top: '0.85rem',
-          left: '0.85rem',
-          background: 'rgba(255,255,255,0.92)',
-          color: 'var(--servd-black)',
-          fontSize: '0.7rem',
-          fontWeight: 700,
-          letterSpacing: '0.1em',
-          textTransform: 'uppercase',
-          padding: '0.3rem 0.65rem',
-          borderRadius: '999px',
-        }}>
-          {typeLabel(concept.type)}
-        </span>
-        <span style={{
-          position: 'absolute',
-          top: '0.85rem',
-          right: '0.85rem',
-          background: status.open ? 'rgba(58,14,105,0.95)' : 'rgba(0,0,0,0.7)',
-          color: status.open ? 'var(--servd-black)' : 'white',
-          fontSize: '0.7rem',
-          fontWeight: 700,
-          letterSpacing: '0.1em',
-          textTransform: 'uppercase',
-          padding: '0.3rem 0.65rem',
-          borderRadius: '999px',
-        }}>
-          {status.open ? '● Open' : '○ Closed'}
-        </span>
-      </div>
-      <div style={{ padding: '1.25rem 1.4rem', flex: 1, display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-        <h3 style={{ fontSize: '1.2rem' }}>{concept.name}</h3>
-        <p style={{ color: 'var(--servd-mute)', fontSize: '0.9rem', lineHeight: 1.45, flex: 1 }}>
-          {concept.description || story.oneLiner}
-        </p>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '0.5rem' }}>
-          <span style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            background: 'var(--servd-green)', color: 'white',
-            fontWeight: 800,
-            fontSize: '0.85rem',
-            padding: '0.45rem 1rem',
-            borderRadius: '999px',
-          }}>
-            Order →
-          </span>
-          <span style={{ fontSize: '0.75rem', color: 'var(--servd-dim)' }}>
-            See brand →
-          </span>
-        </div>
-      </div>
-    </Link>
   )
 }

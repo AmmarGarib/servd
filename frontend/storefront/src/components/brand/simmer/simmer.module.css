@@ -1,0 +1,677 @@
+/* simmer — motion + surface language for the brand microsite.
+ *
+ * Bible, enforced here: flat colour only. No gradient of any kind — not in a
+ * fill, not in an overlay, not as a glow (no radial halos, no blurred
+ * shadows, no text-shadow). Light is drawn as flat stacked shapes at low
+ * opacity; shadows are hard offsets. Bone #EDE6D3 is the lightest colour on
+ * the page — there is no white. Orange #E94E1B is a light source, never small
+ * text (it measures 3.41:1 on tiber and 3.03:1 on bone), and there is one of
+ * it per viewport.
+ *
+ * Every loop and every reveal has a reduced-motion final state at the bottom
+ * of this file.
+ */
+
+/* ── Page root ───────────────────────────────────────────────────────────── */
+
+.root {
+  /* Local tokens (read from the global --simmer-* set, never redefined). */
+  --s-green:  var(--simmer-green, #06392F);
+  --s-bone:   var(--simmer-bone, #EDE6D3);
+  --s-orange: var(--simmer-orange, #E94E1B);
+  --s-walnut: var(--simmer-walnut, #3D2817);
+  --s-black:  var(--simmer-black, #0E0E0E);
+  --s-ease:   cubic-bezier(0.2, 0.7, 0.1, 1);
+  overflow-x: clip;
+}
+
+/* Focus. The global ring is obsidian plum, which all but vanishes on tiber
+   (about 1.1:1). Here it is the ink colour of whatever ground the control
+   sits on — bone on tiber (10.3:1), tiber on bone (10.3:1). */
+.root a:focus-visible,
+.root button:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 4px;
+  border-radius: 2px;
+}
+
+.bone {
+  background: var(--s-bone);
+  color: var(--s-green);
+}
+
+.utility {
+  font-family: var(--simmer-body);
+  letter-spacing: 0.28em;
+  text-transform: lowercase;
+  font-size: 0.8rem;
+}
+
+.amarante {
+  font-family: var(--simmer-display);
+  font-weight: 400;
+  letter-spacing: 0.01em;
+}
+
+.srOnly {
+  position: absolute !important;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Eyebrow row that opens each section: label left, live stamp right,
+   hairline under both. */
+.eyebrow {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 1rem;
+  flex-wrap: wrap;
+  padding-bottom: 0.9rem;
+  border-bottom: 1px solid currentColor;
+  border-bottom-color: rgba(237, 230, 211, 0.22);
+}
+.bone .eyebrow { border-bottom-color: rgba(6, 57, 47, 0.2); }
+
+/* ── Links + buttons ─────────────────────────────────────────────────────── */
+
+/* Underline that draws in from the left on hover / keyboard focus and
+   retracts to the right on the way out. A 1px flat rule, currentColor. */
+.draw {
+  position: relative;
+  text-decoration: none;
+  color: inherit;
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+}
+.draw::after {
+  content: '';
+  position: absolute;
+  left: 0; right: 0;
+  bottom: 0.55rem;
+  height: 1px;
+  background: currentColor;
+  transform: scaleX(0);
+  transform-origin: right center;
+  transition: transform 520ms var(--s-ease);
+}
+.draw:hover::after,
+.draw:focus-visible::after {
+  transform: scaleX(1);
+  transform-origin: left center;
+}
+.draw .arrow {
+  display: inline-block;
+  margin-left: 0.55em;
+  transition: transform 520ms var(--s-ease);
+}
+.draw:hover .arrow,
+.draw:focus-visible .arrow { transform: translateX(0.35em); }
+
+.btn,
+.btnSolid {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 48px;
+  padding: 0.85rem 1.5rem;
+  font-family: var(--simmer-body);
+  font-size: 0.8rem;
+  letter-spacing: 0.28em;
+  text-transform: lowercase;
+  text-decoration: none;
+  white-space: nowrap;
+  border: 1px solid var(--s-bone);
+  transition: background-color 240ms ease, color 240ms ease, border-color 240ms ease;
+}
+.btn { color: var(--s-bone); background: transparent; }
+.btn:hover { background: var(--s-bone); color: var(--s-green); }
+.btnSolid { color: var(--s-green); background: var(--s-bone); }
+.btnSolid:hover { background: transparent; color: var(--s-bone); }
+.bone .btn { color: var(--s-green); border-color: var(--s-green); }
+.bone .btn:hover { background: var(--s-green); color: var(--s-bone); }
+.bone .btnSolid { color: var(--s-bone); background: var(--s-green); border-color: var(--s-green); }
+.bone .btnSolid:hover { background: transparent; color: var(--s-green); }
+
+/* ── Reveal: line by line ────────────────────────────────────────────────── */
+/* Three states, set by useReveal on [data-reveal]:
+     (none)   — server render / no JS / reduced motion: fully visible.
+     armed    — below the fold on mount: lines sit under their mask.
+     shown    — scrolled into view: lines rise, staggered by --i. */
+
+.line {
+  display: block;
+  overflow: hidden;
+  /* Room for Amarante's descenders inside the mask. */
+  padding-bottom: 0.12em;
+  margin-bottom: -0.12em;
+}
+.line > span { display: inline-block; will-change: transform; }
+
+[data-reveal='armed'] .line > span {
+  transform: translateY(108%);
+}
+[data-reveal='shown'] .line > span {
+  transform: translateY(0);
+  transition: transform 1150ms var(--s-ease);
+  transition-delay: calc(var(--i, 0) * 150ms);
+}
+
+/* Fade-rise for blocks (paragraphs, rows, frames). */
+[data-reveal='armed'] .rise { opacity: 0; transform: translateY(18px); }
+[data-reveal='shown'] .rise {
+  opacity: 1;
+  transform: none;
+  transition: opacity 900ms ease, transform 1100ms var(--s-ease);
+  transition-delay: calc(var(--i, 0) * 140ms);
+}
+
+/* A hairline that draws across. */
+.rule {
+  display: block;
+  height: 1px;
+  background: currentColor;
+  opacity: 0.22;
+  transform-origin: left center;
+}
+[data-reveal='armed'] .rule { transform: scaleX(0); }
+[data-reveal='shown'] .rule { transform: scaleX(1); transition: transform 1300ms var(--s-ease); }
+
+/* Letters of the title wordmark surface one at a time, like a title card. */
+.letter { display: inline-block; }
+[data-reveal='armed'] .letter { opacity: 0; transform: translateY(0.08em); }
+[data-reveal='shown'] .letter {
+  opacity: 1;
+  transform: none;
+  transition: opacity 1400ms ease, transform 1600ms var(--s-ease);
+  transition-delay: calc(300ms + var(--i, 0) * 170ms);
+}
+
+/* ── Candle ──────────────────────────────────────────────────────────────── */
+/* Built from flat layered shapes: wax, wick, an orange outer flame, a bone
+   core. The light it throws is three flat bone discs at 3–5% — stepped, like
+   a screenprint, never a gradient. Smoke is bone ribbon at low opacity. */
+
+.candle {
+  position: relative;
+  display: inline-block;
+  line-height: 0;
+}
+.candle svg { overflow: visible; display: block; }
+
+.flame {
+  transform-box: fill-box;
+  transform-origin: 50% 100%;
+  animation:
+    flicker 2.3s ease-in-out infinite,
+    sway 5.7s ease-in-out infinite;
+}
+.core {
+  transform-box: fill-box;
+  transform-origin: 50% 100%;
+  animation: flicker 1.7s ease-in-out infinite reverse;
+}
+@keyframes flicker {
+  0%   { transform: scale(1, 1); }
+  18%  { transform: scale(0.96, 1.07); }
+  31%  { transform: scale(1.03, 0.95); }
+  47%  { transform: scale(0.98, 1.1); }
+  63%  { transform: scale(1.02, 0.97); }
+  81%  { transform: scale(0.97, 1.04); }
+  100% { transform: scale(1, 1); }
+}
+@keyframes sway {
+  0%, 100% { rotate: 0deg; }
+  25% { rotate: -3deg; }
+  60% { rotate: 2.5deg; }
+}
+
+.halo {
+  transform-box: fill-box;
+  transform-origin: 50% 50%;
+  animation: breathe 2.3s ease-in-out infinite;
+}
+@keyframes breathe {
+  0%, 100% { transform: scale(1); }
+  40% { transform: scale(1.05); }
+  70% { transform: scale(0.97); }
+}
+
+.smoke {
+  transform-box: fill-box;
+  transform-origin: 50% 100%;
+  opacity: 0;
+  animation: rise 7s ease-out infinite;
+  animation-delay: calc(var(--i, 0) * -2.3s);
+}
+@keyframes rise {
+  0%   { opacity: 0;    transform: translate(0, 0) scale(0.7, 0.6); }
+  15%  { opacity: 0.55; }
+  60%  { opacity: 0.28; transform: translate(4px, -30px) scale(1, 1); }
+  100% { opacity: 0;    transform: translate(-6px, -56px) scale(1.3, 1.25); }
+}
+
+.ember {
+  transform-box: fill-box;
+  opacity: 0;
+  animation: ember 5.3s ease-out infinite;
+  animation-delay: calc(var(--i, 0) * -1.9s);
+}
+@keyframes ember {
+  0%   { opacity: 0; transform: translate(0, 0); }
+  8%   { opacity: 1; }
+  70%  { opacity: 0.6; }
+  100% { opacity: 0; transform: translate(var(--dx, 6px), -64px); }
+}
+
+/* The snuffed wick at the sign-off: one thin curl, slower. */
+.snuff {
+  transform-box: fill-box;
+  transform-origin: 50% 100%;
+  animation: snuff 9s ease-in-out infinite;
+  animation-delay: calc(var(--i, 0) * -3s);
+}
+@keyframes snuff {
+  0%   { opacity: 0;    transform: translate(0, 6px) scale(0.9, 0.8); }
+  20%  { opacity: 0.5; }
+  70%  { opacity: 0.22; }
+  100% { opacity: 0;    transform: translate(8px, -40px) scale(1.2, 1.2); }
+}
+
+/* ── Soft bone ring cursor ──────────────────────────────────────────────── */
+.cursor {
+  position: fixed;
+  left: 0; top: 0;
+  width: 46px; height: 46px;
+  margin: -23px 0 0 -23px;
+  border-radius: 50%;
+  border: 1px solid var(--s-bone);
+  pointer-events: none;
+  z-index: 60;
+  opacity: 0;
+  transform: translate3d(-100px, -100px, 0) scale(0.4);
+  transition: opacity 260ms ease, border-color 260ms ease, width 260ms ease;
+  will-change: transform;
+}
+.cursor[data-on='true'] { opacity: 0.9; }
+.cursor[data-ground='bone'] { border-color: var(--s-green); }
+
+/* ── Itinerary (tonight's service) ───────────────────────────────────────── */
+
+.rail {
+  position: absolute;
+  top: 1rem; bottom: 1rem;
+  left: 50%;
+  width: 1px;
+  transform: translateX(-50%);
+  background: rgba(6, 57, 47, 0.28);
+}
+.railEmber {
+  position: absolute;
+  left: 50%;
+  width: 9px; height: 9px;
+  margin: -4.5px 0 0 -4.5px;
+  border-radius: 50%;
+  background: var(--s-orange);
+  z-index: 4;
+}
+.railEmber::before {
+  /* Flat ring of the same orange at low opacity — the ember's own light,
+     not a glow. Part of the same single signal. */
+  content: '';
+  position: absolute;
+  inset: -6px;
+  border-radius: 50%;
+  background: var(--s-orange);
+  opacity: 0.16;
+  animation: breathe 2.6s ease-in-out infinite;
+}
+.stopDot {
+  position: absolute;
+  left: 50%; top: 50%;
+  width: 9px; height: 9px;
+  border-radius: 50%;
+  background: var(--s-bone);
+  border: 1.5px solid var(--s-green);
+  transform: translate(-50%, -50%);
+  z-index: 3;
+}
+
+.stop {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  margin-bottom: clamp(2rem, 4vw, 3.4rem);
+}
+
+/* Walnut frame: flat walnut, a darker rebate line, a lighter bevel line,
+   and a hard offset shadow cast onto the bone wall. */
+.frame {
+  position: relative;
+  width: clamp(168px, 46%, 360px);
+  padding: 12px;
+  background: var(--s-walnut);
+  box-shadow:
+    inset 0 0 0 1px #24170c,
+    inset 0 0 0 3px #5a3b22,
+    inset 0 0 0 4px #24170c,
+    10px 12px 0 rgba(6, 57, 47, 0.13);
+  transform-origin: 50% 0%;
+}
+.mat {
+  background: var(--s-green);
+  padding: 4px;
+  box-shadow: inset 0 0 0 1px #042a22;
+}
+.picture {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 5 / 4;
+  overflow: hidden;
+  background: var(--s-green);
+}
+/* The picture is taller than its window by 18% so the parallax drift never
+   shows an edge. */
+.parallax {
+  position: absolute;
+  left: 0; right: 0;
+  top: -9%; bottom: -9%;
+}
+.parallax > img,
+.parallax > svg {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+[data-reveal='armed'] .frame { opacity: 0; transform: translateY(26px) rotate(-1.6deg); }
+[data-reveal='shown'] .frame {
+  opacity: 1;
+  transform: none;
+  transition: opacity 900ms ease, transform 1500ms cubic-bezier(0.25, 1.35, 0.4, 1);
+}
+
+/* Sketches draw themselves in once their frame is shown. */
+.ink {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 0;
+}
+[data-reveal='armed'] .ink { stroke-dashoffset: 1; }
+[data-reveal='shown'] .ink {
+  stroke-dashoffset: 0;
+  transition: stroke-dashoffset 2200ms var(--s-ease);
+  transition-delay: calc(500ms + var(--i, 0) * 180ms);
+}
+.steam {
+  transform-box: fill-box;
+  transform-origin: 50% 100%;
+  animation: steam 5.5s ease-in-out infinite;
+  animation-delay: calc(var(--i, 0) * -1.8s);
+  opacity: 0;
+}
+@keyframes steam {
+  0%   { opacity: 0;    transform: translateY(6px) scaleY(0.8); }
+  30%  { opacity: 0.7; }
+  100% { opacity: 0;    transform: translateY(-16px) scaleY(1.15); }
+}
+.bubble {
+  animation: bubble 4.2s linear infinite;
+  animation-delay: calc(var(--i, 0) * -1.4s);
+  opacity: 0;
+}
+@keyframes bubble {
+  0%   { opacity: 0;   transform: translateY(0); }
+  15%  { opacity: 0.7; }
+  85%  { opacity: 0.5; }
+  100% { opacity: 0;   transform: translateY(-26px); }
+}
+.surface {
+  transform-box: fill-box;
+  transform-origin: 50% 50%;
+  animation: tilt 6s ease-in-out infinite;
+}
+@keyframes tilt {
+  0%, 100% { transform: rotate(0deg); }
+  50% { transform: rotate(-1.6deg); }
+}
+
+.label {
+  margin: 0.8rem 0 0;
+  font-size: 0.8rem;
+  width: clamp(168px, 46%, 360px);
+}
+
+/* Mobile: the rail moves to the left edge and the frames stack beside it,
+   so the pictures stay a readable size at 375px. */
+@media (max-width: 560px) {
+  .rail { left: 6px; transform: none; }
+  .railEmber { left: 6.5px; }
+  /* The frame zone starts after the stop's 1.6rem gutter; reach back to
+     the rail. */
+  .stopDot { left: calc(6.5px - 1.6rem); }
+  .stop { align-items: flex-start !important; padding-left: 1.6rem; }
+  .frame, .label { width: 100%; max-width: 420px; }
+  .label { text-align: left !important; }
+  .stopFrameZone { width: 100%; }
+}
+
+/* ── Kitchen note ────────────────────────────────────────────────────────── */
+.noteGrid {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: clamp(2rem, 6vw, 4.5rem);
+  align-items: center;
+  /* Head-room for the smoke, so it never rises through the eyebrow. */
+  margin-top: clamp(7rem, 16vh, 9rem);
+}
+.noteCandle { display: flex; justify-content: center; padding-bottom: 0.4rem; }
+@media (max-width: 640px) {
+  .noteGrid { grid-template-columns: 1fr; gap: 2.4rem; }
+  .noteCandle { order: -1; }
+}
+/* Sentences surface one after another, in place — opacity only, so the
+   paragraph never reflows. */
+[data-reveal='armed'] .sentence { opacity: 0; }
+[data-reveal='shown'] .sentence {
+  opacity: 1;
+  transition: opacity 1400ms ease;
+  transition-delay: calc(400ms + var(--i, 0) * 650ms);
+}
+
+/* ── Find the door ───────────────────────────────────────────────────────── */
+.doorGrid {
+  display: grid;
+  grid-template-columns: 1.25fr 1fr;
+  gap: clamp(2rem, 6vw, 5rem);
+  align-items: start;
+}
+@media (max-width: 760px) {
+  .doorGrid { grid-template-columns: 1fr; }
+}
+.hours {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.55rem 1.4rem;
+  margin: 0;
+}
+.hours dt { opacity: 0.8; }
+.hours dd { margin: 0; }
+
+.pilot {
+  display: inline-block;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--s-orange);
+  margin-right: 0.6rem;
+  vertical-align: 0.1em;
+  animation: pilot 2.8s ease-in-out infinite;
+}
+.pilotBone {
+  display: inline-block;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--s-bone);
+  margin-right: 0.6rem;
+  vertical-align: 0.1em;
+  animation: pilot 2.8s ease-in-out infinite;
+}
+.pilotOff {
+  display: inline-block;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  border: 1px solid var(--s-bone);
+  margin-right: 0.6rem;
+  vertical-align: 0.1em;
+}
+@keyframes pilot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
+.icons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem clamp(0.2rem, 1.6vw, 0.9rem);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.icon {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px; height: 48px;
+  color: var(--s-bone);
+  opacity: 0.85;
+  transition: opacity 200ms ease;
+}
+.icon::after {
+  /* Bone ring draws around the icon on hover / focus. */
+  content: '';
+  position: absolute;
+  inset: 2px;
+  border-radius: 50%;
+  border: 1px solid currentColor;
+  transform: scale(0.6);
+  opacity: 0;
+  transition: transform 420ms var(--s-ease), opacity 300ms ease;
+}
+.icon:hover, .icon:focus-visible { opacity: 1; }
+.icon:hover::after, .icon:focus-visible::after { transform: scale(1); opacity: 1; }
+
+/* ── Other kitchens ──────────────────────────────────────────────────────── */
+.kitchens { list-style: none; margin: 0; padding: 0; }
+.kitchen {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: baseline;
+  gap: 1rem;
+  padding: 1.3rem 0;
+  border-bottom: 1px solid rgba(6, 57, 47, 0.2);
+  color: inherit;
+  text-decoration: none;
+  min-height: 44px;
+}
+.kitchenName {
+  position: relative;
+  display: inline-block;
+  font-family: var(--simmer-display);
+  font-size: clamp(1.9rem, 5vw, 3rem);
+  line-height: 1.05;
+}
+.kitchenName::after {
+  content: '';
+  position: absolute;
+  left: 0; right: 0; bottom: -0.05em;
+  height: 1px;
+  background: currentColor;
+  transform: scaleX(0);
+  transform-origin: right center;
+  transition: transform 600ms var(--s-ease);
+}
+.kitchen:hover .kitchenName::after,
+.kitchen:focus-visible .kitchenName::after { transform: scaleX(1); transform-origin: left center; }
+.kitchen .arrow { transition: transform 600ms var(--s-ease); display: inline-block; }
+.kitchen:hover .arrow, .kitchen:focus-visible .arrow { transform: translateX(0.4em); }
+
+/* ── Menu card ──────────────────────────────────────────────────────────── */
+.table {
+  padding: clamp(2rem, 6vh, 4rem) clamp(1rem, 4vw, 3rem) clamp(3rem, 8vh, 5rem);
+}
+.card {
+  position: relative;
+  max-width: 40rem;
+  margin: 0 auto;
+  background: var(--s-bone);
+  color: var(--s-green);
+  padding: clamp(1.6rem, 5vw, 3.4rem) clamp(1.25rem, 5vw, 3.4rem);
+  /* Hard offset shadow on the table — flat, the card's own silhouette. */
+  box-shadow: 12px 14px 0 #042a22;
+  transform: rotate(-0.5deg);
+  animation: layCard 1500ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+@keyframes layCard {
+  0%   { opacity: 0; transform: translateY(70px) rotate(-3.5deg) scale(1.03); box-shadow: 34px 44px 0 #042a22; }
+  35%  { opacity: 1; }
+  100% { opacity: 1; transform: rotate(-0.5deg); box-shadow: 12px 14px 0 #042a22; }
+}
+/* The fold where the card was creased for the pocket. */
+.fold {
+  position: absolute;
+  left: 0; right: 0;
+  top: 50%;
+  height: 1px;
+  background: rgba(6, 57, 47, 0.08);
+  pointer-events: none;
+}
+.leader {
+  flex: 1;
+  border-bottom: 1px dotted rgba(6, 57, 47, 0.45);
+  transform: translateY(-0.3em);
+  min-width: 1.5rem;
+}
+.numeral {
+  font-family: var(--simmer-display);
+  font-size: 1.6rem;
+  line-height: 1;
+  transition: color 600ms ease;
+}
+.numeralLit { color: var(--s-orange); }
+
+@media (max-width: 480px) {
+  .card { transform: none; animation-name: layCardFlat; }
+  @keyframes layCardFlat {
+    0%   { opacity: 0; transform: translateY(50px) rotate(-2deg); box-shadow: 20px 28px 0 #042a22; }
+    35%  { opacity: 1; }
+    100% { opacity: 1; transform: none; box-shadow: 8px 10px 0 #042a22; }
+  }
+  .card { box-shadow: 8px 10px 0 #042a22; }
+}
+
+/* ── Reduced motion: final states, no loops ──────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  .flame, .core, .halo, .ember, .steam, .bubble, .surface, .pilot, .pilotBone,
+  .railEmber::before {
+    animation: none !important;
+  }
+  .smoke, .snuff { animation: none !important; opacity: 0.3; }
+  .ember, .steam, .bubble { opacity: 0 !important; }
+  .card { animation: none !important; }
+  .cursor { display: none; }
+  [data-reveal] .line > span,
+  [data-reveal] .rise,
+  [data-reveal] .rule,
+  [data-reveal] .letter,
+  [data-reveal] .frame,
+  [data-reveal] .sentence,
+  [data-reveal] .ink {
+    transition: none !important;
+  }
+}

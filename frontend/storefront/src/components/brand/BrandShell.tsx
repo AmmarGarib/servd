@@ -53,7 +53,11 @@ export function BrandShell({ concept, children }: Props) {
   } as React.CSSProperties
 
   return (
-    <div style={wrapperStyle}>
+    // brand-shell--<slug> is a styling hook only (no rules ship with it here):
+    // it lets globals.css give the nav + footer the brand's own focus ring,
+    // since they sit outside the .simmer-page / .stackd-page / .flipd-page
+    // wrappers the layouts render.
+    <div className={`brand-shell brand-shell--${concept.slug}`} style={wrapperStyle}>
       <BrandNav concept={concept} onBrandHost={onBrandHost} accent={accent} />
       {children}
       <BrandFooter concept={concept} onBrandHost={onBrandHost} accent={accent} />
@@ -110,13 +114,11 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
   }, [pinnedNav])
   const navBg: React.CSSProperties = concept.slug === 'simmer'
     ? {
+        // The blueprint grid as an SVG tile, not gradient functions — same
+        // 40px minor / 200px major lines, matching the fridge hero's pattern.
         backgroundColor: surface.bg,
-        backgroundImage:
-          'linear-gradient(rgba(237,230,211,0.06) 1px, transparent 1px),' +
-          'linear-gradient(90deg, rgba(237,230,211,0.06) 1px, transparent 1px),' +
-          'linear-gradient(rgba(237,230,211,0.10) 1px, transparent 1px),' +
-          'linear-gradient(90deg, rgba(237,230,211,0.10) 1px, transparent 1px)',
-        backgroundSize: '40px 40px, 40px 40px, 200px 200px, 200px 200px',
+        backgroundImage: SIMMER_GRID,
+        backgroundSize: '200px 200px',
       }
     : diner
     ? {
@@ -258,15 +260,17 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
           flexShrink: 0,
           // The logo disc is the one place the two brand colours meet head-on:
           // Flipd Blue field, Smash Mustard mark.
-          background: diner ? 'var(--flipd-blue)' : accent,
-          color: diner ? 'var(--flipd-mustard)' : '#0a0a0a',
+          // simmer's disc is bone: the orange order arrow in the pill is its
+          // one signal per viewport, and an orange disc would make two.
+          background: diner ? 'var(--flipd-blue)' : concept.slug === 'simmer' ? 'var(--simmer-bone)' : accent,
+          color: diner ? 'var(--flipd-mustard)' : concept.slug === 'simmer' ? 'var(--simmer-green)' : '#0a0a0a',
           display: 'inline-flex',
           alignItems: 'center', justifyContent: 'center',
           fontSize: '1.1rem',
           fontWeight: 900,
           fontFamily: 'var(--font-display)',
           letterSpacing: '-0.02em',
-          boxShadow: '0 2px 10px rgba(0,0,0,0.25)',
+          boxShadow: concept.slug === 'simmer' ? 'none' : '0 2px 10px rgba(0,0,0,0.25)',
         }}>
           {concept.logoUrl
             // eslint-disable-next-line @next/next/no-img-element
@@ -277,7 +281,7 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
         </span>
         )}
         {!diner && (
-        <span style={{
+        <span className="brand-nav-wordmark" style={{
           fontFamily: wordmark.font,
           fontSize: '1.6rem',
           fontWeight: wordmark.weight,
@@ -321,6 +325,8 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
                 key={l.href}
                 href={l.href}
                 {...extra}
+                aria-current={active ? 'page' : undefined}
+                className={pillNav ? 'brand-nav-pill-link' : undefined}
                 style={{
                   padding: '0.45rem 0.9rem',
                   color: diner ? 'var(--flipd-blue)' : (active ? surface.text : surface.muted),
@@ -334,6 +340,7 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
                 }}
               >
                 {l.label}
+                {l.external && <span className="sr-only"> (opens in a new tab)</span>}
               </Tag>
             )
           })}
@@ -357,7 +364,10 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
             >
               {/* flipd's system is two colours; there is no third signal to
                   tint the arrow with, so it stays ink like the label. */}
-              Order <span style={{ color: diner ? 'var(--flipd-blue)' : accent }}>→</span>
+              {/* simmer's nav is pinned over every scene, and each scene
+                  carries its own orange signal — an orange arrow here would
+                  always make two, so on simmer it stays bone. */}
+              Order <span style={{ color: diner ? 'var(--flipd-blue)' : concept.slug === 'simmer' ? surface.text : accent }}>→</span>
             </Link>
           )}
         </div>
@@ -395,15 +405,19 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
         )}
 
         {/* Hamburger — the link row is hidden < sm, so phones need this. */}
+        {/* Named "Navigation", not "Menu": on a restaurant site the nav
+            already has a "Menu" link to the food, and two controls with the
+            same name that do different things is a trap for screen readers. */}
         <button
           type="button"
-          aria-label="Menu"
+          aria-label="Navigation"
           aria-expanded={open}
+          aria-controls="brand-nav-sheet"
           onClick={() => setOpen((o) => !o)}
           className={pillNav ? 'hidden' : 'inline-flex items-center justify-center sm:hidden'}
           style={{ width: '2.75rem', height: '2.75rem', marginLeft: '0.15rem', background: diner ? 'var(--flipd-bone)' : pillNav ? `rgba(${pillTint},0.05)` : 'transparent', border: diner ? '2px solid var(--flipd-blue)' : pillNav ? `1px solid rgba(${pillTint},0.18)` : 'none', borderRadius: pillNav ? '50%' : undefined, boxShadow: diner ? '0 3px 0 var(--flipd-blue)' : undefined, color: diner ? 'var(--flipd-blue)' : surface.text, cursor: 'pointer' }}
         >
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <svg aria-hidden="true" focusable="false" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             {open
               ? <><path d="M6 6l12 12" /><path d="M18 6L6 18" /></>
               : <><path d="M3 6h18" /><path d="M3 12h18" /><path d="M3 18h18" /></>}
@@ -414,6 +428,7 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
       {/* Mobile dropdown — full-width sheet below the bar. */}
       {open && !pillNav && (
         <div
+          id="brand-nav-sheet"
           className="sm:hidden flex flex-col"
           style={{
             position: 'absolute', top: '100%', left: 0, right: 0,
@@ -424,11 +439,17 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
           }}
         >
           {links.map((l) => {
-            const active = l.href === base ? pathname === l.href : pathname.startsWith(l.href)
+            const active = !l.external && (l.href === base ? pathname === l.href : pathname.startsWith(l.href))
+            // External (maps) links need a plain anchor for target/rel, same
+            // as the desktop row; <Link> would drop them.
+            const Tag: ElementType = l.external ? 'a' : Link
+            const extra = l.external ? { target: '_blank', rel: 'noopener noreferrer' } : {}
             return (
-              <Link
+              <Tag
                 key={l.href}
                 href={l.href}
+                {...extra}
+                aria-current={active ? 'page' : undefined}
                 onClick={() => setOpen(false)}
                 style={{
                   padding: '0.85rem 0.4rem',
@@ -440,7 +461,8 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
                 }}
               >
                 {l.label}
-              </Link>
+                {l.external && <span className="sr-only"> (opens in a new tab)</span>}
+              </Tag>
             )
           })}
           {/* No servd backlink on a brand microsite. The brand footer already
@@ -460,6 +482,14 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
     </nav>
   )
 }
+
+// 200px tile: bone lines at 6% every 40px, 10% on the 200px major line.
+const SIMMER_GRID = `url("data:image/svg+xml,${encodeURIComponent(
+  '<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200">' +
+  '<path d="M40 0V200M80 0V200M120 0V200M160 0V200M0 40H200M0 80H200M0 120H200M0 160H200" stroke="rgba(237,230,211,0.06)" stroke-width="1"/>' +
+  '<path d="M0 0.5H200M0.5 0V200" stroke="rgba(237,230,211,0.10)" stroke-width="1"/>' +
+  '</svg>',
+)}")`
 
 function BrandFooter({ concept, onBrandHost, accent }: { concept: Concept; onBrandHost: boolean; accent: string }) {
   const servdHome   = servdHref('/',       onBrandHost)
@@ -490,6 +520,7 @@ function BrandFooter({ concept, onBrandHost, accent }: { concept: Concept; onBra
   ].filter((s) => s.href)
 
   const surface = brandSurface(concept.slug)
+  const simmer = concept.slug === 'simmer'
   const linkStyle: React.CSSProperties = {
     color: surface.text, opacity: 0.85, textDecoration: 'none', fontSize: '0.95rem', fontWeight: 500,
   }
@@ -504,22 +535,55 @@ function BrandFooter({ concept, onBrandHost, accent }: { concept: Concept; onBra
       <div className="container relative z-10">
         {/* Brand-CTA banner at the top — call to action sits where the
             eye naturally lands when leaving a page. */}
-        <div style={{ marginBottom: 'clamp(3rem, 5vw, 4rem)', maxWidth: '900px' }}>
-          <p className="eyebrow" style={{ color: accent, marginBottom: '1rem' }}>
-            {cfg.ctaEyebrow}
-          </p>
-          <h2 className="display" style={{
-            fontSize: 'clamp(2.5rem, 6vw, 4.5rem)',
-            color: surface.text,
-            marginBottom: '1.5rem',
-          }}>
-            {cfg.ctaHeadline}
-            <span className="display-italic" style={{ color: accent }}> {cfg.ctaAccent}</span>
-          </h2>
-          <Link href={`/${concept.slug}`} className="brand-pill">
-            Order from {formatBrandName(concept.name)} →
-          </Link>
-        </div>
+        {simmer ? (
+          // simmer's bible: Amarante + Times, lowercase, one orange signal
+          // (the outlined order link), no blurred shadows, no Bricolage.
+          <div style={{ marginBottom: 'clamp(3rem, 5vw, 4rem)', maxWidth: '900px' }}>
+            <p style={{ fontFamily: 'var(--simmer-body)', fontSize: '0.8rem', letterSpacing: '0.28em', textTransform: 'lowercase', color: surface.text, opacity: 0.8, margin: '0 0 1rem' }}>
+              {cfg.ctaEyebrow.toLowerCase()}
+            </p>
+            <h2 style={{
+              fontFamily: 'var(--simmer-display)',
+              fontWeight: 400,
+              fontSize: 'clamp(2.5rem, 6vw, 4.5rem)',
+              lineHeight: 1.05,
+              letterSpacing: '0.01em',
+              textTransform: 'lowercase',
+              color: surface.text,
+              margin: '0 0 1.75rem',
+            }}>
+              {cfg.ctaHeadline} <span style={{ fontStyle: 'italic' }}>{cfg.ctaAccent}</span>
+            </h2>
+            <Link href={`/${concept.slug}`} style={{
+              display: 'inline-flex', alignItems: 'center', minHeight: 48,
+              padding: '0.85rem 1.6rem',
+              border: `1px solid ${accent}`,
+              color: accent,
+              fontFamily: 'var(--simmer-body)', fontSize: '0.82rem',
+              letterSpacing: '0.28em', textTransform: 'lowercase',
+              textDecoration: 'none',
+            }}>
+              order from simmer
+            </Link>
+          </div>
+        ) : (
+          <div style={{ marginBottom: 'clamp(3rem, 5vw, 4rem)', maxWidth: '900px' }}>
+            <p className="eyebrow" style={{ color: accent, marginBottom: '1rem' }}>
+              {cfg.ctaEyebrow}
+            </p>
+            <h2 className="display" style={{
+              fontSize: 'clamp(2.5rem, 6vw, 4.5rem)',
+              color: surface.text,
+              marginBottom: '1.5rem',
+            }}>
+              {cfg.ctaHeadline}
+              <span className="display-italic" style={{ color: accent }}> {cfg.ctaAccent}</span>
+            </h2>
+            <Link href={`/${concept.slug}`} className="brand-pill">
+              Order from {formatBrandName(concept.name)} <span aria-hidden="true">→</span>
+            </Link>
+          </div>
+        )}
 
         <div style={{
           display: 'grid',
@@ -546,9 +610,10 @@ function BrandFooter({ concept, onBrandHost, accent }: { concept: Concept; onBra
             {socials.length > 0 && (
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.9rem', marginTop: '1.1rem' }}>
                 {socials.map((s) => (
-                  <a key={s.key} href={s.href} target="_blank" rel="noreferrer"
+                  <a key={s.key} href={s.href} target="_blank" rel="noopener noreferrer"
                     style={{ fontSize: '0.72rem', fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase', color: surface.muted, textDecoration: 'none' }}>
                     {s.label}
+                    <span className="sr-only"> (opens in a new tab)</span>
                   </a>
                 ))}
               </div>
@@ -570,7 +635,7 @@ function BrandFooter({ concept, onBrandHost, accent }: { concept: Concept; onBra
                   // nav, so the nav's mapsUrl isn't in scope here.
                   const m = locationFor(concept.slug)?.mapsUrl
                   return m
-                    ? <a href={m} target="_blank" rel="noopener noreferrer" style={linkStyle}>Find us</a>
+                    ? <a href={m} target="_blank" rel="noopener noreferrer" style={linkStyle}>Find us<span className="sr-only"> (opens in a new tab)</span></a>
                     : <Link href={onBrandHost ? '/visit' : `/brand/${concept.slug}/visit`} style={linkStyle}>Find us</Link>
                 })()}
               </li>
@@ -624,7 +689,7 @@ function BrandFooter({ concept, onBrandHost, accent }: { concept: Concept; onBra
         }}>
           <span>© {new Date().getFullYear()} {formatBrandName(concept.name)} · GS Foods Pvt. Ltd.</span>
           <Link href={servdHome} style={{ color: surface.muted, textDecoration: 'none' }}>
-            back to servd<span style={{ color: accent }}>.</span> →
+            back to servd<span style={{ color: accent }}>.</span> <span aria-hidden="true">→</span>
           </Link>
         </div>
       </div>

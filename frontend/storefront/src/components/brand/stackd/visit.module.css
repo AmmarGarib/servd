@@ -1,0 +1,159 @@
+/* Visit. Receipt text: plum-dark on white (16.1:1); today's row cream on
+   plum (7.77:1). Address + phone: cream on plum (7.77:1). */
+
+.section { padding: clamp(4rem, 10vh, 7rem) 0 clamp(3.5rem, 8vh, 5rem); }
+.grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(0, 0.75fr);
+  gap: clamp(2.5rem, 6vw, 5rem);
+  align-items: start;
+}
+.when, .where { min-width: 0; }
+
+.pair {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: clamp(1.5rem, 4vw, 2.5rem);
+  margin-top: 1.75rem;
+}
+.pair > :first-child { flex: 0 1 17rem; }
+
+/* ── The receipt ───────────────────────────────────────────────────────── */
+.receipt {
+  --edge: 10px;
+  position: relative;
+  flex: 1 1 17rem;
+  max-width: 22rem;
+  padding: 1.6rem 1.35rem 1.4rem;
+  background: #FFFFFF;
+  color: var(--stackd-plum-dark);
+  font-family: var(--stackd-mono);
+  rotate: 1.4deg;
+  filter: drop-shadow(0 18px 18px rgba(20, 6, 12, 0.45));
+  /* Serrated tear top and bottom. */
+  -webkit-mask:
+    conic-gradient(from -45deg at bottom, #0000, #000 1deg 89deg, #0000 90deg) 50% 100% / 14px var(--edge) repeat-x,
+    conic-gradient(from 135deg at top, #0000, #000 1deg 89deg, #0000 90deg) 50% 0 / 14px var(--edge) repeat-x,
+    linear-gradient(#000 0 0) 0 var(--edge) / 100% calc(100% - var(--edge) * 2) no-repeat;
+  mask:
+    conic-gradient(from -45deg at bottom, #0000, #000 1deg 89deg, #0000 90deg) 50% 100% / 14px var(--edge) repeat-x,
+    conic-gradient(from 135deg at top, #0000, #000 1deg 89deg, #0000 90deg) 50% 0 / 14px var(--edge) repeat-x,
+    linear-gradient(#000 0 0) 0 var(--edge) / 100% calc(100% - var(--edge) * 2) no-repeat;
+}
+.printed { animation: print 1400ms steps(18, end) both; }
+@keyframes print {
+  from { clip-path: inset(0 0 100% 0); translate: 0 -12px; }
+  to { clip-path: inset(0 0 0 0); translate: 0 0; }
+}
+.rHead {
+  margin: 0;
+  text-align: center;
+  font-family: var(--stackd-display);
+  font-weight: 800;
+  font-size: 1.35rem;
+  letter-spacing: -0.01em;
+}
+.rSub {
+  margin: 0.2rem 0 0;
+  text-align: center;
+  font-size: 0.72rem;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--stackd-plum);
+}
+.rRule { border: 0; border-top: 2px dashed rgba(61, 17, 34, 0.45); margin: 1rem 0; }
+.rows { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.2rem; font-size: 0.8rem; }
+.rows li {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  padding: 0.3rem 0.45rem;
+  border-radius: 0.4rem;
+}
+.rows li > :last-child { text-align: right; }
+.dots { flex: 1; border-bottom: 2px dotted rgba(61, 17, 34, 0.35); translate: 0 -0.25em; min-width: 0.75rem; }
+.today { background: var(--stackd-plum); color: var(--stackd-cream); font-weight: 700; }
+.today .dots { border-color: rgba(252, 232, 206, 0.55); }
+.rLine { margin: 0; font-size: 0.9rem; line-height: 1.6; text-align: center; }
+.rFoot {
+  margin: 0;
+  text-align: center;
+  font-family: var(--stackd-display);
+  font-style: italic;
+  font-size: 0.95rem;
+}
+.barcode { display: block; width: 70%; height: 1.4rem; margin: 0.9rem auto 0.3rem; fill: var(--stackd-plum-dark); }
+
+/* ── Where ─────────────────────────────────────────────────────────────── */
+.pin {
+  position: relative;
+  width: 3rem;
+  height: 4.4rem;
+  margin: 1.5rem 0 0.5rem;
+}
+.pin svg {
+  width: 3rem;
+  height: 3.75rem;
+  fill: var(--stackd-sky);
+  stroke: var(--stackd-plum-dark);
+  stroke-width: 2.5;
+  animation: pinBounce 2.4s cubic-bezier(0.34, 1.56, 0.64, 1) infinite;
+  transform-origin: 50% 100%;
+}
+.pin svg circle { fill: var(--stackd-cream); }
+.pinShadow {
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  width: 1.8rem;
+  height: 0.45rem;
+  margin-left: -0.9rem;
+  border-radius: 50%;
+  background: rgba(20, 6, 12, 0.45);
+  animation: pinShadow 2.4s cubic-bezier(0.34, 1.56, 0.64, 1) infinite;
+}
+@keyframes pinBounce {
+  0%, 55%, 100% { transform: none; }
+  25% { transform: translateY(-14px) scale(0.96, 1.04); }
+  45% { transform: scale(1.08, 0.9); }
+}
+@keyframes pinShadow {
+  0%, 55%, 100% { transform: none; opacity: 1; }
+  25% { transform: scale(0.6); opacity: 0.5; }
+}
+.address {
+  margin: 0;
+  font-style: normal;
+  font-family: var(--stackd-display);
+  font-weight: 600;
+  font-size: clamp(1.3rem, 2vw, 1.6rem);
+  line-height: 1.35;
+  color: var(--stackd-cream);
+  max-width: 22ch;
+}
+.phone { margin: 0.9rem 0 0; }
+.phone a {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  min-height: 44px;
+  font-family: var(--stackd-mono);
+  font-size: 0.95rem;
+  color: var(--stackd-cream);
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 4px;
+  text-decoration-color: var(--stackd-sky);
+}
+.phone a:focus-visible { outline: 3px solid var(--stackd-sky); outline-offset: 3px; border-radius: 4px; }
+.phone svg { width: 1.1rem; height: 1.1rem; fill: none; stroke: var(--stackd-sky); stroke-width: 2; stroke-linejoin: round; }
+.actions { display: flex; flex-wrap: wrap; gap: 0.9rem; margin-top: 1.6rem; }
+
+@media (max-width: 900px) {
+  .grid { grid-template-columns: minmax(0, 1fr); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .printed, .pin svg, .pinShadow { animation: none; }
+}

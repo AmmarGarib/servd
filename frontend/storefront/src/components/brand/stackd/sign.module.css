@@ -1,0 +1,111 @@
+/* The door sign + the hero status pill. */
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin: 0;
+  font-family: var(--stackd-mono);
+  font-size: 0.78rem;
+  letter-spacing: 0.06em;
+  color: var(--stackd-cream);
+}
+.pillHead { font-weight: 700; text-transform: uppercase; letter-spacing: 0.16em; }
+.pillSub { color: rgba(252, 232, 206, 0.88); }
+.dot {
+  width: 0.7rem;
+  height: 0.7rem;
+  border-radius: 50%;
+  border: 2px solid var(--stackd-sky);
+  flex-shrink: 0;
+}
+.pill[data-open='true'] .dot {
+  background: var(--stackd-sky);
+  animation: pulse 2.2s ease-in-out infinite;
+}
+@keyframes pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(155, 211, 221, 0.55); }
+  50% { box-shadow: 0 0 0 6px rgba(155, 211, 221, 0); }
+}
+
+/* ── The hanging sign ─────────────────────────────────────────────────── */
+.hang {
+  --swing: 3deg;
+  position: relative;
+  width: min(19rem, 100%);
+  padding-top: 3.4rem;
+  transform-origin: 50% 0.4rem;
+  animation: swing 4.6s ease-in-out infinite;
+}
+.hang:hover { --swing: 7deg; animation-duration: 1.6s; }
+@keyframes swing {
+  0%, 100% { transform: rotate(calc(var(--swing) * -1)); }
+  50% { transform: rotate(var(--swing)); }
+}
+.strings {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 3.6rem;
+  overflow: visible;
+}
+.strings circle { fill: var(--stackd-plum-dark); stroke: var(--stackd-cream); stroke-width: 2; }
+.strings path { fill: none; stroke: var(--stackd-cream); stroke-width: 2; stroke-linecap: round; }
+
+.board {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 0.15rem;
+  padding: 1.15rem 1.25rem 1.2rem;
+  border-radius: 1.4rem;
+  background: var(--stackd-cream);
+  color: var(--stackd-plum-dark);
+  border: 3px solid var(--stackd-plum-dark);
+  box-shadow: 0 0 0 5px var(--stackd-sky), 0 18px 30px -12px rgba(20, 6, 12, 0.7);
+}
+/* The two eyelets the string runs through. */
+.board::before,
+.board::after {
+  content: '';
+  position: absolute;
+  top: 0.55rem;
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+  background: var(--stackd-plum-dark);
+}
+.board::before { left: 12%; }
+.board::after { right: 12%; }
+
+.kicker {
+  font-family: var(--stackd-display);
+  font-style: italic;
+  font-weight: 600;
+  font-size: 1.05rem;
+  color: var(--stackd-plum);
+}
+.word {
+  font-family: var(--stackd-display);
+  font-weight: 900;
+  font-size: clamp(2.1rem, 4vw, 2.6rem);
+  line-height: 1;
+  letter-spacing: -0.02em;
+}
+.sub {
+  margin-top: 0.35rem;
+  font-family: var(--stackd-mono);
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--stackd-plum);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hang, .hang:hover { animation: none; transform: none; }
+  .pill[data-open='true'] .dot { animation: none; }
+}

@@ -1,0 +1,225 @@
+/* Flipd menu page (/brand/flipd/menu). Primitives from flipd.module.css;
+   tickets from tickets.module.css. */
+
+.head {
+  position: relative;
+  padding: clamp(7rem, 15vh, 8.5rem) clamp(1.25rem, 5vw, 3rem) clamp(2.5rem, 6vh, 4rem);
+  overflow-x: clip;
+}
+.headInner {
+  position: relative;
+  max-width: 72rem;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr);
+  gap: clamp(2rem, 6vw, 4rem);
+  align-items: center;
+}
+.eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.26em;
+  text-transform: uppercase;
+  color: var(--flipd-blue);
+}
+.eyebrow::before { content: ''; width: 1.6rem; height: 3px; border-radius: 2px; background: currentColor; }
+.h1 {
+  margin: 0.8rem 0 0;
+  font-family: var(--flipd-display);
+  font-weight: 400;
+  font-size: clamp(2.8rem, 8vw, 5.6rem);
+  line-height: 0.95;
+  color: var(--flipd-blue);
+}
+.lede {
+  margin: 1.2rem 0 0;
+  max-width: 46ch;
+  font-size: 1.04rem;
+  line-height: 1.65;
+  color: var(--flipd-blue-deep);
+}
+.ctas { justify-content: flex-start; margin-top: 1.8rem; }
+.headArt { position: relative; display: grid; place-items: center; }
+.headArt > div:first-child { width: min(100%, 22rem); }
+@media (max-width: 760px) {
+  .headInner { grid-template-columns: 1fr; }
+  .headArt { order: -1; }
+  .headArt > div:first-child { width: min(62vw, 15rem); }
+  .head { padding-top: 6.5rem; }
+}
+
+/* ── Sticky section chips with scrollspy ───────────────────────────────── */
+.chipBar {
+  position: sticky;
+  top: 86px;
+  z-index: 30;
+  background: var(--flipd-mustard);
+  border-bottom: 3px solid var(--flipd-blue);
+}
+.chips {
+  display: flex;
+  gap: 0.55rem;
+  /* Lines the first chip up with the category column below it. */
+  padding: 0.7rem max(clamp(1.25rem, 5vw, 3rem), calc((100% - 72rem) / 2)) 0.85rem;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.chips::-webkit-scrollbar { display: none; }
+.chip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-height: 44px;
+  padding: 0 1rem;
+  border-radius: 999px;
+  border: 2.5px solid var(--flipd-blue);
+  background: var(--flipd-bone);
+  color: var(--flipd-blue);
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  text-decoration: none;
+  box-shadow: 0 3px 0 var(--flipd-blue);
+  transition:
+    transform 220ms cubic-bezier(0.34, 1.56, 0.64, 1),
+    box-shadow 180ms ease,
+    background-color 160ms ease,
+    color 160ms ease;
+}
+.chip:hover { transform: translateY(-2px) rotate(-2deg); box-shadow: 0 5px 0 var(--flipd-blue); }
+.chip:active { transform: translateY(2px); box-shadow: 0 1px 0 var(--flipd-blue); }
+.chip:focus-visible { outline: 3px solid var(--flipd-blue); outline-offset: 3px; }
+.chipActive {
+  background: var(--flipd-blue);
+  color: var(--flipd-mustard);
+  transform: rotate(-2deg);
+}
+.chipCount {
+  display: inline-grid;
+  place-items: center;
+  min-width: 1.45rem;
+  height: 1.45rem;
+  padding: 0 0.3rem;
+  border-radius: 999px;
+  background: var(--flipd-mustard);
+  color: var(--flipd-blue);
+  font-size: 0.68rem;
+  border: 1.5px solid var(--flipd-blue);
+}
+
+/* ── Categories ───────────────────────────────────────────────────────── */
+.cats { padding: clamp(2rem, 5vh, 3rem) clamp(1.25rem, 5vw, 3rem) clamp(3rem, 8vh, 5rem); overflow-x: clip; }
+.cat {
+  max-width: 72rem;
+  margin: 0 auto;
+  padding-top: clamp(1.5rem, 4vh, 2.5rem);
+  /* Clears the fixed header AND the sticky chip bar. */
+  scroll-margin-top: 10.5rem;
+  outline: none;
+}
+.cat + .cat { margin-top: clamp(2rem, 5vh, 3.5rem); }
+.catHead {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.6rem 1rem;
+  margin-bottom: 2.2rem;
+}
+.catNo {
+  display: grid;
+  place-items: center;
+  width: 3.2rem;
+  height: 3.2rem;
+  border-radius: 50%;
+  background: var(--flipd-blue);
+  color: var(--flipd-mustard);
+  font-family: var(--flipd-display);
+  font-size: 1.15rem;
+  rotate: -8deg;
+}
+[data-in] .catNo { animation: pop 560ms cubic-bezier(0.34, 1.56, 0.64, 1) both; }
+@keyframes pop {
+  0%   { transform: scale(0.2) rotate(-90deg); opacity: 0; }
+  70%  { transform: scale(1.12) rotate(6deg); opacity: 1; }
+  100% { transform: none; opacity: 1; }
+}
+.catTitle {
+  margin: 0;
+  font-family: var(--flipd-display);
+  font-weight: 400;
+  font-size: clamp(1.8rem, 4.2vw, 2.8rem);
+  line-height: 1;
+  color: var(--flipd-blue);
+}
+.catCount {
+  padding: 0.35rem 0.75rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  box-shadow: 3px 3px 0 var(--flipd-blue);
+}
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 16rem), 1fr));
+  gap: 2.6rem 1.6rem;
+  padding: 1.7rem 0.3rem 0;
+}
+
+/* ── Empty state ─────────────────────────────────────────────────────── */
+.empty {
+  max-width: 30rem;
+  margin: 0 auto;
+  text-align: center;
+  padding-top: 1.5rem;
+}
+.emptyTitle {
+  margin: 0 0 0.6rem;
+  font-family: var(--flipd-display);
+  font-weight: 400;
+  font-size: 1.6rem;
+  color: var(--flipd-blue);
+}
+.emptyBody { margin: 0 0 1.4rem; font-size: 0.98rem; color: var(--flipd-blue-deep); }
+
+/* ── Bottom CTA with the crowd ────────────────────────────────────────── */
+.close {
+  position: relative;
+  background: var(--flipd-blue);
+  text-align: center;
+  padding-top: clamp(3rem, 8vh, 4.5rem);
+  overflow-x: clip;
+}
+.closeTitle {
+  margin: 0 0 1.5rem;
+  padding: 0 1.25rem;
+  font-family: var(--flipd-display);
+  font-weight: 400;
+  font-size: clamp(1.9rem, 5vw, 3.2rem);
+  line-height: 1.05;
+  color: var(--flipd-mustard);
+}
+.closeCrowd {
+  position: relative;
+  height: calc(clamp(130px, 22vh, 210px) + 40px);
+  margin-top: clamp(1rem, 3vh, 2rem);
+}
+.closeCrowd > div:first-child { width: min(100%, 44rem); margin: 0 auto; }
+
+@media (max-width: 760px) {
+  .chipBar { top: 78px; }
+  .cat { scroll-margin-top: 9.5rem; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chip { transition: none; }
+  .chip:hover, .chip:active { transform: none; }
+  .chipActive { transform: none; }
+  [data-in] .catNo { animation: none; }
+}

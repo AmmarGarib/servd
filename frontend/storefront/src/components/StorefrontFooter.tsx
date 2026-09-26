@@ -1,7 +1,10 @@
 'use client'
 import Link from 'next/link'
+import type { CSSProperties } from 'react'
 import { usePathname } from 'next/navigation'
 import { useOnBrandMicrosite } from '../lib/host'
+import { FooterWave } from './party/footer/FooterWave'
+import s from './party/footer/footer.module.css'
 
 // Live brands only — the long historical list (Strata, Craveman, Garnish
 // Station, Stackd@Padel) lived in the footer when they had no concept rows,
@@ -16,7 +19,21 @@ const BRANDS = [
   { slug: 'flipd',  name: 'Flipd',  accent: '#2092E9' },
 ]
 
-export function StorefrontFooter({ initialBrandSlug = null }: { initialBrandSlug?: string | null }) {
+interface StorefrontFooterProps {
+  initialBrandSlug?: string | null
+  /**
+   * The background colour of whatever section sits directly above the
+   * footer on THIS page, so the scalloped top edge reads as that ground
+   * dipping onto the plum rather than a mismatched shape. Defaults to the
+   * party system's cream (`--servd-*` pages typically end on a cream
+   * section — see home's Insiders strip and browse's grid). Pass this when
+   * a page's last section is a different colour (e.g. a legacy white
+   * surface) instead of the wave staying hardcoded to one page's ground.
+   */
+  groundColor?: string
+}
+
+export function StorefrontFooter({ initialBrandSlug = null, groundColor }: StorefrontFooterProps) {
   // Brand microsites render their own BrandFooter (via BrandShell); the global
   // servd footer must hide there or those pages show two footers.
   //
@@ -29,95 +46,56 @@ export function StorefrontFooter({ initialBrandSlug = null }: { initialBrandSlug
   const pathname = usePathname() ?? '/'
   const onBrandMicrosite = useOnBrandMicrosite(initialBrandSlug)
   if (onBrandMicrosite || pathname.startsWith('/brand/')) return null
+
   return (
     <footer
-      className="surface-ink relative overflow-hidden"
-      style={{
-        padding: 'clamp(4rem, 7vw, 6rem) 0 2rem',
-        marginTop: '4rem',
-        // Brand-purple footer (was a black slab). Accent is a light lavender so
-        // the eyebrow / "Let's go" / dot / pill read against the deep purple.
-        background: 'linear-gradient(165deg, #4E2A4F 0%, #2D1E2F 55%, #1E1420 100%)',
-        ['--brand-accent' as string]: '#C9A4F2',
-        ['--brand-ink' as string]:    '#2D1E2F',
-      } as React.CSSProperties}
+      className={s.footer}
+      style={groundColor ? ({ ['--wave-color' as string]: groundColor } as CSSProperties) : undefined}
     >
-      <div className="container relative z-10">
+      <FooterWave />
 
-        {/* Headline lockup — chunky display, "ready when you are" loop */}
-        <div style={{ marginBottom: 'clamp(3rem, 5vw, 4rem)', maxWidth: '900px' }}>
-          <p className="eyebrow" style={{ color: 'var(--brand-accent)', marginBottom: '1rem' }}>
-            One place for every kitchen
-          </p>
-          <h2 className="display" style={{
-            fontSize: 'clamp(2.5rem, 6vw, 4.5rem)',
-            color: 'white',
-            marginBottom: '1.5rem',
-          }}>
-            Hungry now?
-            <span className="display-italic" style={{ color: 'var(--brand-accent)' }}> Let's go.</span>
+      {/* Doodles — decoration only. */}
+      <svg aria-hidden className={`${s.doodle} ${s.doodleStar}`} viewBox="0 0 40 40">
+        <path d="M20 2 L24 16 L38 20 L24 24 L20 38 L16 24 L2 20 L16 16 Z" />
+      </svg>
+      <svg aria-hidden className={`${s.doodle} ${s.doodleDot}`} viewBox="0 0 20 20">
+        <circle cx="10" cy="10" r="8" />
+      </svg>
+
+      <div className={s.inner}>
+
+        {/* Headline lockup */}
+        <div className={s.lockup}>
+          <p className={s.eyebrow}>One place for every kitchen</p>
+          <h2 className={s.title}>
+            Hungry now?<span className={s.titleItalic}> Let's go.</span>
           </h2>
-          <Link href="/browse" className="brand-pill">
-            Order now <span style={{ opacity: 0.6 }}>→</span>
+          <Link href="/browse" className={s.cta}>
+            Order now
+            <svg aria-hidden viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M5 12h14M13 6l6 6-6 6" />
+            </svg>
           </Link>
         </div>
 
-        {/* Link columns — asymmetric, looser layout than the previous grid */}
-        <div style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
-          gap: '2.5rem',
-          paddingTop: '2.5rem',
-          borderTop: '1px solid rgba(255,255,255,0.08)',
-        }}>
+        {/* Link columns */}
+        <div className={s.columns}>
           <div>
-            <Link
-              href="/"
-              style={{
-                fontFamily: 'var(--font-display)',
-                fontSize: '2rem',
-                fontWeight: 800,
-                letterSpacing: '-0.045em',
-                color: 'white',
-                textDecoration: 'none',
-                display: 'inline-flex',
-                alignItems: 'baseline',
-                gap: '0.1rem',
-                marginBottom: '0.75rem',
-              }}
-            >
-              servd<span style={{ color: 'var(--brand-accent)' }}>.</span>
+            <Link href="/" className={s.wordmark}>
+              servd<span style={{ color: 'var(--party-butter)' }}>.</span>
             </Link>
-            <p style={{ fontSize: '0.92rem', maxWidth: '20rem', color: 'rgba(255,255,255,0.55)', lineHeight: 1.55 }}>
+            <p className={s.blurb}>
               Every kitchen in one place — order what you are craving, explore the brands, and join Insiders.
             </p>
           </div>
 
           <div>
-            <h3 className="eyebrow" style={{ color: 'rgba(255,255,255,0.45)', marginBottom: '1rem' }}>
-              Kitchens
-            </h3>
-            <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'grid', gap: '0.7rem' }}>
+            <h3 className={s.columnLabel}>Kitchens</h3>
+            <ul className={s.linkList}>
               {BRANDS.map((b) => (
                 <li key={b.slug}>
-                  <Link
-                    href={`/brand/${b.slug}`}
-                    className="kinetic-caret"
-                    style={{
-                      color: 'rgba(255,255,255,0.85)',
-                      textDecoration: 'none',
-                      fontSize: '1rem',
-                      fontWeight: 600,
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: '0.55rem',
-                    }}
-                  >
-                    <span style={{
-                      width: '0.55rem', height: '0.55rem',
-                      background: b.accent, borderRadius: '999px',
-                      display: 'inline-block',
-                    }} />
+                  <Link href={`/brand/${b.slug}`} className={s.linkRow}>
+                    <span aria-hidden className={s.dot} style={{ background: b.accent }} />
                     {b.name}
                   </Link>
                 </li>
@@ -126,51 +104,30 @@ export function StorefrontFooter({ initialBrandSlug = null }: { initialBrandSlug
           </div>
 
           <div>
-            <h3 className="eyebrow" style={{ color: 'rgba(255,255,255,0.45)', marginBottom: '1rem' }}>
-              Customer
-            </h3>
-            <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'grid', gap: '0.7rem' }}>
-              <li><Link href="/browse"  style={footerLinkStyle}>Browse all brands</Link></li>
-              <li><Link href="/account" style={footerLinkStyle}>My account</Link></li>
-              <li><Link href="/orders"  style={footerLinkStyle}>Order history</Link></li>
-              <li><Link href="/login"   style={footerLinkStyle}>Sign in</Link></li>
+            <h3 className={s.columnLabel}>Customer</h3>
+            <ul className={s.linkList}>
+              <li><Link href="/browse"  className={s.linkRow}>Browse all brands</Link></li>
+              <li><Link href="/account" className={s.linkRow}>My account</Link></li>
+              <li><Link href="/orders"  className={s.linkRow}>Order history</Link></li>
+              <li><Link href="/login"   className={s.linkRow}>Sign in</Link></li>
             </ul>
           </div>
 
           <div>
-            <h3 className="eyebrow" style={{ color: 'rgba(255,255,255,0.45)', marginBottom: '1rem' }}>
-              Company
-            </h3>
-            <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'grid', gap: '0.7rem' }}>
-              <li><span style={{ color: 'rgba(255,255,255,0.5)', fontSize: '0.95rem' }}>GS Foods Pvt. Ltd.</span></li>
-              <li><span style={{ color: 'rgba(255,255,255,0.5)', fontSize: '0.95rem' }}>Karachi · Pakistan</span></li>
-              <li><a href="mailto:hello@servd.pk" style={footerLinkStyle}>hello@servd.pk</a></li>
+            <h3 className={s.columnLabel}>Company</h3>
+            <ul className={s.linkList}>
+              <li><span className={s.staticRow}>GS Foods Pvt. Ltd.</span></li>
+              <li><span className={s.staticRow}>Karachi · Pakistan</span></li>
+              <li><a href="mailto:hello@servd.pk" className={s.linkRow}>hello@servd.pk</a></li>
             </ul>
           </div>
         </div>
 
-        <div style={{
-          marginTop: '3rem',
-          paddingTop: '1.5rem',
-          borderTop: '1px solid rgba(255,255,255,0.08)',
-          display: 'flex',
-          justifyContent: 'space-between',
-          flexWrap: 'wrap',
-          gap: '0.75rem',
-          fontSize: '0.78rem',
-          color: 'rgba(255,255,255,0.4)',
-        }}>
+        <div className={s.bottomBar}>
           <span>© {new Date().getFullYear()} GS Foods. All rights reserved.</span>
           <span>Made in Karachi. Cooked in Karachi. For Karachi.</span>
         </div>
       </div>
     </footer>
   )
-}
-
-const footerLinkStyle: React.CSSProperties = {
-  color: 'rgba(255,255,255,0.8)',
-  textDecoration: 'none',
-  fontSize: '0.95rem',
-  fontWeight: 500,
 }

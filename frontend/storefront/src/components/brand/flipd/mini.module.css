@@ -1,0 +1,78 @@
+/* MiniBuild — looping build on a bone plate. See MiniBuild.tsx. */
+
+.plate {
+  position: relative;
+  width: min(100%, 24rem);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: var(--flipd-bone);
+  border: 3px solid var(--flipd-blue);
+  box-shadow: 8px 10px 0 var(--flipd-blue);
+  display: grid;
+  place-items: center;
+}
+.plate::before {
+  content: '';
+  position: absolute;
+  inset: 13%;
+  border-radius: 50%;
+  border: 2px dashed var(--flipd-blue);
+  opacity: 0.35;
+}
+
+.ring {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  animation: ringSpin 26s linear infinite;
+}
+@keyframes ringSpin { to { transform: rotate(360deg); } }
+
+.stack {
+  position: relative;
+  width: 56%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  translate: 0 6%;
+}
+.part {
+  width: var(--w);
+  --d: calc(var(--step) * 0.26s);
+  animation: build 7.2s infinite backwards;
+  animation-delay: var(--d);
+  transform-origin: 50% 100%;
+}
+.part + .part { margin-top: -2.6%; }
+.part img { display: block; width: 100%; height: auto; }
+
+@keyframes build {
+  0%   { opacity: 0; transform: translateY(-230%) rotate(var(--tilt)); animation-timing-function: cubic-bezier(0.55, 0, 1, 0.45); }
+  3%   { opacity: 1; }
+  13%  { transform: translateY(0) rotate(0deg); animation-timing-function: ease-out; }
+  16%  { transform: scaleY(0.78) scaleX(1.08); animation-timing-function: cubic-bezier(0.34, 1.56, 0.64, 1); }
+  21%  { transform: none; }
+  74%  { opacity: 1; transform: none; animation-timing-function: cubic-bezier(0.5, 0, 0.75, 0); }
+  84%  { opacity: 0; transform: translateY(-120%) rotate(calc(var(--tilt) * -1.4)); }
+  100% { opacity: 0; transform: translateY(-230%); }
+}
+
+.flip {
+  animation: flip 7.2s infinite backwards;
+  animation-delay: 0.26s;
+  transform-origin: 50% 50%;
+}
+@keyframes flip {
+  0%   { transform: perspective(500px) rotateX(540deg); animation-timing-function: ease-out; }
+  13%  { transform: perspective(500px) rotateX(0deg); }
+  100% { transform: perspective(500px) rotateX(0deg); }
+}
+
+.plate:not([data-live]) .ring,
+.plate:not([data-live]) .part,
+.plate:not([data-live]) .flip { animation-play-state: paused; }
+
+@media (prefers-reduced-motion: reduce) {
+  .ring, .part, .flip { animation: none; }
+}

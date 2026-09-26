@@ -1,25 +1,26 @@
-// SimmerMenu — placeholder menu surface for /brand/simmer/menu.
-// Renders the printed-card aesthetic of the brand microsite while
-// real menu data is still in flight: forest green ink-on-paper feel
-// inverted to bone-on-green, Amarante for the dish names + section
-// rubrics, Times for prices and notes, single orange signal on the
-// service date. Marked as `pending kitchen` so anyone scanning the
-// QR in the room knows this is a draft.
+'use client'
+// SimmerMenu — the menu for /brand/simmer/menu, while the kitchen's own menu
+// is still unpublished.
+//
+// It reads as a printed card laid on a dark table: the card comes down onto
+// the tiber ground at a slight angle and settles, casting a hard flat shadow
+// (no blur, no gradient). Bone paper, tiber ink, Amarante for dish names and
+// course numerals, Times for everything else. Each course is revealed as you
+// reach it — the rule draws across, then the dishes set one by one.
+//
+// One orange at a time: the numeral of the course you are reading. While the
+// masthead is on screen none is lit.
 //
 // When the operator publishes a real menu (`/api/v1/storefront/<slug>/menu`
-// returns categories), the menu page will render the live categories
-// through the generic table-style layout instead of this placeholder.
+// returns items), the menu page renders the live categories through the
+// generic layout instead of this placeholder.
 
 import Link from 'next/link'
-
-// Today's date in the menu's signature `26.05.26` format.
-function todayStamp(): string {
-  const d = new Date()
-  const dd = String(d.getDate()).padStart(2, '0')
-  const mm = String(d.getMonth() + 1).padStart(2, '0')
-  const yy = String(d.getFullYear()).slice(-2)
-  return `${dd}.${mm}.${yy}`
-}
+import { useEffect, useRef, useState, type CSSProperties } from 'react'
+import { SimmerCursor } from '../simmer/SimmerCursor'
+import { Reveal, Line } from '../simmer/reveal'
+import { useService } from '../simmer/serviceClock'
+import s from '../simmer/simmer.module.css'
 
 interface PlaceholderItem {
   name: string
@@ -33,9 +34,8 @@ interface PlaceholderCourse {
 }
 
 // Placeholder courses — operator can replace any item via the API.
-// Copy intentionally dry: ingredient list, no banned words (no
-// "crafted", "elevated", "experience", "journey", "passionate",
-// "artisanal", "fusion", "twist on a classic"). No exclamation marks.
+// Copy intentionally dry: ingredient list, no banned words, no exclamation
+// marks.
 const PLACEHOLDER_MENU: PlaceholderCourse[] = [
   {
     rubric: 'I.',
@@ -75,146 +75,157 @@ const PLACEHOLDER_MENU: PlaceholderCourse[] = [
   },
 ]
 
+const i = (n: number) => ({ ['--i' as string]: n } as CSSProperties)
+const fmt = (pkr: number) => `Rs ${pkr.toLocaleString('en-PK')}`
+
+/**
+ * Which course is being read: the last one whose top has passed the reading
+ * line (40% down the viewport). None while the masthead is still on screen.
+ */
+function useActiveCourse(count: number) {
+  const mastRef = useRef<HTMLDivElement | null>(null)
+  const courseRefs = useRef<Array<HTMLElement | null>>([])
+  const [active, setActive] = useState(-1)
+  useEffect(() => {
+    let raf = 0
+    const update = () => {
+      raf = 0
+      const vh = window.innerHeight
+      const mast = mastRef.current?.getBoundingClientRect()
+      if (mast && mast.bottom > 0) { setActive(-1); return }
+      let idx = -1
+      courseRefs.current.forEach((el, n) => {
+        if (el && el.getBoundingClientRect().top < vh * 0.4) idx = n
+      })
+      setActive(idx)
+    }
+    const onScroll = () => { if (!raf) raf = requestAnimationFrame(update) }
+    update()
+    window.addEventListener('scroll', onScroll, { passive: true })
+    window.addEventListener('resize', onScroll, { passive: true })
+    return () => {
+      window.removeEventListener('scroll', onScroll)
+      window.removeEventListener('resize', onScroll)
+      if (raf) cancelAnimationFrame(raf)
+    }
+  }, [count])
+  return { mastRef, courseRefs, active }
+}
+
 export function SimmerMenu({ slug, conceptName }: { slug: string, conceptName: string }) {
-  const stamp = todayStamp()
-  const fmt = (pkr: number) => `Rs ${pkr.toLocaleString('en-PK')}`
+  const { stamp } = useService()
+  const { mastRef, courseRefs, active } = useActiveCourse(PLACEHOLDER_MENU.length)
+  const brand = conceptName.toLowerCase()
 
   return (
-    <div className="simmer-page" style={{ minHeight: '100dvh' }}>
+    <div className={`simmer-page ${s.root}`} style={{ minHeight: '100dvh' }}>
+      <SimmerCursor />
+      {/* The page's h1. The masthead is set as wordmark + utility type, not a
+          heading, so this carries the title for screen readers and search. */}
+      <h1 className={s.srOnly}>the {brand} menu</h1>
 
-      {/* ── MASTHEAD — printed-menu header ─────────────────────────── */}
-      <section style={{
-        padding: 'clamp(2.5rem, 6vh, 4rem) clamp(1.5rem, 5vw, 3rem) clamp(1.5rem, 4vh, 2.5rem)',
-      }}>
-        <div style={{ maxWidth: '38rem', margin: '0 auto' }}>
-          <div style={{
-            display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
-            paddingBottom: '0.9rem',
-            borderBottom: '1px solid rgba(237,230,211,0.22)',
-          }}>
-            <span className="utility" style={{ fontSize: '0.72rem' }}>tonight&apos;s service</span>
-            <span className="utility signal" style={{ fontSize: '0.72rem', whiteSpace: 'nowrap' }}>{stamp}</span>
+      <div className={s.table}>
+        <p className={s.utility} style={{ textAlign: 'center', margin: '0 0 1.6rem', color: 'rgba(237,230,211,0.8)' }}>
+          set for tonight
+        </p>
+
+        {/* ── THE CARD ─────────────────────────────────────────────────── */}
+        <article data-ground="bone" className={s.card} aria-labelledby="simmer-menu-title">
+          <span aria-hidden="true" className={s.fold} />
+
+          {/* Masthead */}
+          <div ref={mastRef}>
+            <div className={`${s.eyebrow}`} style={{ borderBottomColor: 'rgba(6,57,47,0.22)' }}>
+              <span className={s.utility}>tonight&apos;s service</span>
+              <span className={s.utility} suppressHydrationWarning>{stamp}</span>
+            </div>
+            <div style={{ textAlign: 'center', padding: '2.6rem 0 0.8rem' }}>
+              <p id="simmer-menu-title" className={s.amarante} style={{ fontSize: 'clamp(3.4rem, 12vw, 5.6rem)', lineHeight: 0.95, margin: 0 }}>
+                {brand}
+              </p>
+              <p className={s.amarante} style={{ fontSize: 'clamp(1.15rem, 3vw, 1.5rem)', margin: '0.7rem 0 0' }}>
+                simmer down.
+              </p>
+              <p className={s.utility} style={{ margin: '1.8rem 0 0' }}>the menu</p>
+              <p className={s.utility} style={{ margin: '0.5rem 0 0', fontSize: '0.72rem', color: 'rgba(6,57,47,0.8)' }}>
+                draft — pending kitchen
+              </p>
+            </div>
           </div>
 
-          <div style={{ textAlign: 'center', padding: '2.4rem 0 0.6rem' }}>
-            <p className="utility" style={{ fontSize: '0.7rem', opacity: 0.7, marginBottom: '1rem' }}>
-              the menu
-            </p>
-            <p className="wordmark amarante" style={{
-              fontSize: 'clamp(2.6rem, 8vw, 4.2rem)', lineHeight: 1, margin: 0,
-            }}>
-              simmer down<span className="signal">.</span>
-            </p>
-            <p className="utility" style={{
-              fontSize: '0.66rem', opacity: 0.55, marginTop: '1.4rem',
-              letterSpacing: '0.4em',
-            }}>
-              draft — pending kitchen
-            </p>
-          </div>
-        </div>
-      </section>
-
-      {/* ── COURSES ────────────────────────────────────────────────── */}
-      <section style={{
-        padding: '0 clamp(1.5rem, 5vw, 3rem) clamp(3rem, 8vh, 5rem)',
-      }}>
-        <div style={{ maxWidth: '38rem', margin: '0 auto' }}>
+          {/* Courses */}
           {PLACEHOLDER_MENU.map((course, ci) => (
-            <div key={course.title} style={{
-              padding: '2.2rem 0',
-              borderTop: ci === 0 ? '1px solid rgba(237,230,211,0.22)' : '0',
-              borderBottom: '1px solid rgba(237,230,211,0.18)',
-            }}>
-              {/* Course header — Amarante numeral + lowercase rubric */}
-              <div style={{
-                display: 'flex', alignItems: 'baseline', gap: '0.9rem',
-                marginBottom: '1.4rem',
-              }}>
-                <span className="amarante signal" style={{
-                  fontSize: '1.5rem', lineHeight: 1,
-                }}>{course.rubric}</span>
-                <span className="utility" style={{
-                  fontSize: '0.72rem', opacity: 0.72,
-                }}>{course.title}</span>
-              </div>
+            <Reveal
+              as="section"
+              key={course.title}
+              aria-labelledby={`simmer-course-${ci}`}
+              rootMargin="0px 0px -18% 0px"
+              style={{ paddingTop: '2.4rem' }}
+            >
+              <div ref={(el: HTMLDivElement | null) => { courseRefs.current[ci] = el }}>
+                <span aria-hidden="true" className={s.rule} style={{ opacity: 0.3 }} />
+                {/* Course header — numeral + lowercase rubric, one heading. */}
+                <h2 id={`simmer-course-${ci}`} style={{
+                  display: 'flex', alignItems: 'baseline', gap: '0.9rem',
+                  margin: '1.6rem 0 1.5rem', fontWeight: 400, letterSpacing: 0,
+                }}>
+                  <span className={`${s.numeral} ${active === ci ? s.numeralLit : ''}`}>
+                    <Line>{course.rubric}</Line>
+                  </span>
+                  {' '}
+                  <span className={`${s.utility} ${s.rise}`} style={i(1)}>{course.title}</span>
+                </h2>
 
-              {/* Items — name + body line, price right-aligned */}
-              <div style={{ display: 'grid', gap: '1.2rem' }}>
-                {course.items.map((item) => (
-                  <div key={item.name} style={{
-                    display: 'grid',
-                    gridTemplateColumns: '1fr auto',
-                    gap: '1rem',
-                    alignItems: 'baseline',
-                  }}>
-                    <div>
-                      <p className="amarante" style={{
-                        fontSize: '1.2rem', lineHeight: 1.2, margin: '0 0 0.25rem',
-                      }}>
-                        {item.name}
-                      </p>
+                <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'grid', gap: '1.35rem' }}>
+                  {course.items.map((item, n) => (
+                    <li key={item.name} className={s.rise} style={i(n + 2)}>
+                      <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.7rem' }}>
+                        <p className={s.amarante} style={{ fontSize: 'clamp(1.1rem, 2.6vw, 1.3rem)', lineHeight: 1.2, margin: 0 }}>
+                          {item.name}
+                        </p>
+                        <span aria-hidden="true" className={s.leader} />
+                        <p className={s.amarante} style={{ fontSize: '1.02rem', letterSpacing: '0.04em', whiteSpace: 'nowrap', margin: 0 }}>
+                          {fmt(item.pricePkr)}
+                        </p>
+                      </div>
                       <p style={{
-                        fontFamily: 'var(--simmer-body)',
-                        fontSize: '0.86rem',
-                        lineHeight: 1.45,
-                        letterSpacing: '0.02em',
-                        opacity: 0.78,
-                        margin: 0,
+                        fontFamily: 'var(--simmer-body)', fontSize: '0.92rem', lineHeight: 1.5,
+                        letterSpacing: '0.02em', margin: '0.3rem 0 0', color: 'rgba(6,57,47,0.85)',
                       }}>
                         {item.body}
                       </p>
-                    </div>
-                    <p className="amarante" style={{
-                      fontSize: '1rem',
-                      letterSpacing: '0.04em',
-                      opacity: 0.88,
-                      whiteSpace: 'nowrap',
-                      margin: 0,
-                    }}>
-                      {fmt(item.pricePkr)}
-                    </p>
-                  </div>
-                ))}
+                    </li>
+                  ))}
+                </ul>
               </div>
-            </div>
+            </Reveal>
           ))}
-        </div>
-      </section>
 
-      {/* ── FOOTER NOTES + CTA ─────────────────────────────────────── */}
-      <section style={{
-        padding: 'clamp(3rem, 7vh, 5rem) clamp(1.5rem, 5vw, 3rem) clamp(4rem, 10vh, 6rem)',
-        textAlign: 'center',
-      }}>
-        <div style={{ maxWidth: '32rem', margin: '0 auto' }}>
-          <p className="utility" style={{ fontSize: '0.66rem', opacity: 0.55, letterSpacing: '0.4em' }}>
-            menu changes when the kitchen changes
+          <Reveal style={{ paddingTop: '2.6rem', textAlign: 'center' }}>
+            <span aria-hidden="true" className={s.rule} style={{ opacity: 0.3 }} />
+            <p className={`${s.utility} ${s.rise}`} style={{ margin: '1.6rem 0 0', fontSize: '0.72rem', color: 'rgba(6,57,47,0.8)' }}>
+              menu changes when the kitchen changes
+            </p>
+          </Reveal>
+        </article>
+
+        {/* ── OFF THE CARD ─────────────────────────────────────────────
+            Tableside ordering isn't live yet — the live /<slug> route needs
+            the kitchen's API to publish real items first. Until then: flag a
+            server, or book. Swap in an order link once the menu is live. */}
+        <Reveal style={{ maxWidth: '32rem', margin: 'clamp(3.5rem, 9vh, 5.5rem) auto 0', textAlign: 'center' }}>
+          <p className={s.amarante} style={{ fontSize: 'clamp(1.6rem, 4.4vw, 2.3rem)', lineHeight: 1.2, margin: 0 }}>
+            <Line>ready when you are.</Line>
           </p>
-          {/* Tableside ordering isn't live yet — the live /<slug> route
-              needs the kitchen's API to publish real items first. Until
-              then we land politely: tell the room to flag a server,
-              offer reservations as the only working action. Swap this
-              for an order CTA the moment the menu API is wired up. */}
-          <p className="amarante" style={{
-            fontSize: 'clamp(1.4rem, 4vw, 2rem)', lineHeight: 1.25, margin: '1.4rem 0 0',
-          }}>
-            ready when you are.
-          </p>
-          <p style={{
-            fontFamily: 'var(--simmer-body)',
-            fontSize: '0.95rem', letterSpacing: '0.02em',
-            opacity: 0.78, marginTop: '0.8rem',
-          }}>
+          <p className={s.rise} style={{ ...i(1), fontSize: '1rem', lineHeight: 1.7, letterSpacing: '0.02em', margin: '0.9rem 0 0' }}>
             Flag your server — they&apos;ll take the order. Tableside ordering opens once the kitchen publishes.
           </p>
-          <div style={{ marginTop: '2rem', display: 'flex', gap: '1rem', justifyContent: 'center', flexWrap: 'wrap' }}>
-            <Link href={`/reserve/${slug}`} className="action action--signal">reserve a table</Link>
-            <Link href={`/brand/${slug}`} className="action">{conceptName.toLowerCase()} home</Link>
+          <div className={s.rise} style={{ ...i(2), marginTop: '2rem', display: 'flex', gap: '0.8rem', justifyContent: 'center', flexWrap: 'wrap' }}>
+            <Link href={`/reserve/${slug}`} className={s.btnSolid}>reserve a table</Link>
+            <Link href={`/brand/${slug}`} className={s.btn}>{brand} home</Link>
           </div>
-        </div>
-      </section>
-
+        </Reveal>
+      </div>
     </div>
   )
 }

@@ -1,0 +1,210 @@
+/* Global servd footer — playful "food crowd" direction.
+   Ground is the obsidian-plum gradient already used sitewide (plum #4E2A4F →
+   obsidian #2D1E2F → near-black), which is also the party palette's plum
+   token — so this slots into the same rhythm as browse/home (butter → cream
+   → plum). Text stays solid cream (var(--party-cream)) against it: the
+   checked pair is cream/plum 10.84:1. */
+
+.footer {
+  --party-butter: #FFD447;
+  --party-cream: #FFF4D6;
+  --party-plum: #4E2A4F;
+  --party-ink: #2A1A2B;
+  --party-tomato: #FF5A3C;
+  /* Both mute/dim tokens stay ≥4.5:1 against the flattest (lightest) part of
+     the ground gradient, --party-plum, per the contrast check in
+     scratchpad/contrast.js (0.7 → 6.16:1, 0.68 → 5.90:1). */
+  --cream-mute: rgba(255, 244, 214, 0.7);
+  --cream-dim: rgba(255, 244, 214, 0.68);
+  /* The colour of the page section immediately above the footer, so the
+     scalloped top edge (below) reads as that ground dipping onto the plum
+     rather than a mismatched shape. Defaults to the party system's cream —
+     right for every page that ends on a cream section (home's Insiders
+     strip, browse's grid). A page whose last section is a different colour
+     (e.g. a legacy white surface) should pass `groundColor` to
+     <StorefrontFooter> to override this, rather than the wave being
+     hardcoded to one page's background. */
+  --wave-color: var(--party-cream);
+
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+  padding: clamp(3.5rem, 7vw, 5.5rem) 0 2rem;
+  background: linear-gradient(165deg, #4E2A4F 0%, #2D1E2F 55%, #1E1420 100%);
+  color: var(--party-cream);
+}
+
+/* Scalloped/wavy top edge — the page above dips down onto the plum ground. */
+.waveWrap {
+  position: absolute;
+  top: -1px;
+  left: 0;
+  width: 100%;
+  height: clamp(28px, 5vw, 48px);
+  z-index: 1;
+  pointer-events: none;
+  overflow: hidden;
+  line-height: 0;
+}
+
+.wave { display: block; width: 100%; height: 100%; }
+.wave path { fill: var(--wave-color); }
+
+.inner {
+  position: relative;
+  z-index: 2;
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 0 clamp(1.25rem, 5vw, 3rem);
+}
+
+/* ── Doodles ──────────────────────────────────────────────────────────── */
+.doodle { position: absolute; z-index: 1; pointer-events: none; }
+.doodleStar {
+  width: clamp(20px, 2.6vw, 34px);
+  top: 12%;
+  right: 8%;
+  fill: var(--party-butter);
+  animation: spin 11s linear infinite;
+}
+.doodleDot {
+  width: clamp(10px, 1.2vw, 16px);
+  top: 30%;
+  left: 4%;
+  fill: var(--party-tomato);
+  animation: bob 2.8s ease-in-out infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes bob  { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-8px); } }
+
+/* ── Headline lockup ──────────────────────────────────────────────────── */
+.lockup { margin-bottom: clamp(3rem, 5vw, 4rem); max-width: 900px; }
+
+.eyebrow {
+  margin: 0 0 1rem;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 0.8rem;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--party-butter);
+}
+
+.title {
+  margin: 0 0 1.6rem;
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: clamp(2.4rem, 6vw, 4.4rem);
+  line-height: 0.98;
+  letter-spacing: -0.04em;
+  color: var(--party-cream);
+  text-wrap: balance;
+}
+
+.titleItalic { font-style: italic; }
+
+.cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-height: 56px;
+  padding: 0.9rem 1.9rem;
+  border-radius: 999px;
+  border: 2.5px solid var(--party-ink);
+  background: var(--party-cream);
+  color: var(--party-ink);
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 1.08rem;
+  letter-spacing: -0.01em;
+  text-decoration: none;
+  box-shadow: 0 6px 0 var(--party-ink);
+  cursor: pointer;
+  transition: transform 160ms cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 160ms ease;
+}
+
+.cta svg { transition: transform 200ms ease; }
+.cta:hover { transform: translateY(-3px) rotate(-1.5deg); box-shadow: 0 9px 0 var(--party-ink); }
+.cta:hover svg { transform: translateX(4px); }
+.cta:active { transform: translateY(4px); box-shadow: 0 2px 0 var(--party-ink); }
+.cta:focus-visible { outline: 3px solid var(--party-butter); outline-offset: 4px; }
+
+/* ── Link columns ─────────────────────────────────────────────────────── */
+.columns {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 2.5rem;
+  padding-top: 2.5rem;
+  border-top: 2px solid rgba(255, 244, 214, 0.16);
+}
+
+.wordmark {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.1rem;
+  margin-bottom: 0.75rem;
+  font-family: var(--font-display);
+  font-size: 2rem;
+  font-weight: 800;
+  letter-spacing: -0.045em;
+  color: var(--party-cream);
+  text-decoration: none;
+}
+
+.wordmark:focus-visible { outline: 3px solid var(--party-butter); outline-offset: 3px; border-radius: 4px; }
+
+.blurb { max-width: 20rem; font-size: 0.92rem; line-height: 1.55; color: var(--cream-mute); }
+
+.columnLabel {
+  margin: 0 0 0.5rem;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 0.78rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--cream-dim);
+}
+
+.linkList { list-style: none; padding: 0; margin: 0; display: grid; }
+
+.linkRow {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  min-height: 44px;
+  color: var(--party-cream);
+  text-decoration: none;
+  font-size: 1rem;
+  font-weight: 600;
+  transition: color 140ms ease, transform 140ms ease;
+}
+
+.linkRow:hover { color: var(--party-butter); transform: translateX(2px); }
+.linkRow:focus-visible { outline: 3px solid var(--party-butter); outline-offset: 2px; border-radius: 4px; }
+
+.dot { width: 0.6rem; height: 0.6rem; border-radius: 999px; display: inline-block; border: 1px solid rgba(0, 0, 0, 0.25); flex-shrink: 0; }
+
+.staticRow { display: inline-flex; align-items: center; min-height: 44px; font-size: 0.95rem; color: var(--cream-mute); }
+
+/* ── Bottom bar ───────────────────────────────────────────────────────── */
+.bottomBar {
+  margin-top: 3rem;
+  padding-top: 1.5rem;
+  border-top: 2px solid rgba(255, 244, 214, 0.16);
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  font-size: 0.78rem;
+  color: var(--cream-dim);
+}
+
+@media (max-width: 640px) {
+  .doodle { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .doodle { animation: none; }
+  .cta:hover { transform: none; }
+  .linkRow:hover { transform: none; }
+}

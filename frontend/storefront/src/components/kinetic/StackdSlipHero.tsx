@@ -1,38 +1,32 @@
 'use client'
 import Link from 'next/link'
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { useScrollProgress } from './motionHooks'
-import { STACKD_DIE } from '../../lib/stackdDie'
+import { Die } from '../brand/stackd/Die'
+import s from '../brand/stackd/slip.module.css'
+import ui from '../brand/stackd/ui.module.css'
 
 /**
- * StackdSlipHero — he slips, and the bread goes flying.
+ * StackdSlipHero — the stackd hero. He stands on the brand's die-cut coaster
+ * with a loaf for a head: breathing, the loaf teetering and steaming on the
+ * tray, leaning after the cursor, hopping when poked. Scroll, and he slips —
+ * he goes down, the bread goes up, and it never comes back. The tagline
+ * ("Cooked here. Wrapped, not plated.") gives way to the punchline.
  *
- * The mascot is a man carrying a stack of scratch-cut slices on a plum tray
- * where his head should be. So: he goes down, and the stack launches. Scroll
- * DOWN and the bread goes UP — the further you read, the higher it gets, and it
- * never comes back. That inversion is the whole gag.
+ * The slip needs the drawing in two pieces, which it can be: rows 173-198 of
+ * the source PNG are the tray, a solid bar 326px wide, so a cut at y=173 runs
+ * exactly along its top edge. Above it, the bread; below it, the guy. See
+ * public/brand/stackd/.
  *
- * An earlier pass had him land bolt upright with the stack dead level ("not a
- * crumb moved"). That was a different, more po-faced joke and not the one
- * asked for. Slapstick is the right register for a hand-drawn character whose
- * head is a loaf.
+ * Choreography, in scroll progress (section is 250vh):
+ *   0.00-0.10  standing, alive — idle breathing, cursor lean, steam
+ *   0.10-0.32  the slip: he rotates back and drops; the bread holds a beat
+ *   0.34-0.44  landing — the coaster squashes, the seals jump off
+ *   0.14-1.00  the bread climbs and tumbles out of frame
+ *   0.18-0.36  the tagline tips over into "we'll make another."
  *
- * This needs the drawing in two pieces, which it can be: rows 173-198 of the
- * source PNG are the tray, a solid bar 326px wide at 100% fill, so a cut at
- * y=173 runs exactly along its top edge rather than through any artwork.
- * Above it, the bread. Below it, the tray, both hands, the trousers and the
- * shoes — the guy. See public/brand/stackd/.
- *
- * Choreography, in scroll progress:
- *   0.00-0.12  standing, bread on the tray
- *   0.12-0.34  the slip: heels shoot forward, he rotates back. The bread holds
- *              its place for a beat — inertia is what sells it — then leaves.
- *   0.34-0.58  he goes flat and the seals jump off the impact
- *   0.16-1.00  the bread climbs and tumbles, easing out like a real lob
- *   0.60-1.00  the payoff
- *
- * Deliberately NOT flipd's hero, which is a technical drawing whose parts stop
- * dead where they seat. This brand is hand-drawn ink and warm paper, so this
- * one is all weight and timing.
+ * The CTAs are always visible and reachable — nothing here is gated behind
+ * the gag. Reduced motion: he stands still, holding it, and nothing pins.
  */
 
 interface Props {
@@ -40,16 +34,16 @@ interface Props {
   orderHref: string
   menuHref: string
   mascotAlt: string
-  /** What the counter actually puts out. */
-  counterLines: string[]
+  wordmarkSrc: string
+  wordmarkDims: { width?: number; height?: number }
+  tagline: string
+  oneLiner: string
+  /** Live open/closed line, rendered under the CTAs. */
+  status?: ReactNode
   /**
-   * An operator-uploaded mascot, from admin -> Marketing -> Brands.
-   *
-   * The slip needs the drawing in two pieces and those are cut from the
-   * BUNDLED artwork at known pixel rows — an arbitrary upload cannot be split
-   * the same way at runtime. So a custom mascot is shown whole and still
-   * rather than silently ignored, which is what would otherwise happen: the
-   * operator uploads a drawing and nothing on the page changes.
+   * An operator-uploaded mascot (admin -> Marketing -> Brands). It cannot be
+   * split into bread + guy at runtime, so it is shown whole — still alive
+   * (breathing, leaning), but it does not slip.
    */
   customMascotSrc?: string | null
   customMascotDims?: { width?: number; height?: number }
@@ -58,123 +52,201 @@ interface Props {
 /** 0..1 across a window of the scroll. */
 const ramp = (from: number, rate: number) =>
   `max(0, min(1, (var(--scroll-progress, 0) - ${from}) * ${rate}))`
-
-/** A 0..1..0 pulse: rises over the first window, falls over the second. */
+/** A 0..1..0 pulse. */
 const pulse = (up: number, upRate: number, down: number, downRate: number) =>
   `max(0, ${ramp(up, upRate)} - ${ramp(down, downRate)})`
 
-// The seals that jump off him hitting the floor. Offsets in rem — a percentage
-// on the seal's own transform is a percentage of the SEAL, a couple of rem
-// wide, which piles them all in one spot.
+// Seals that jump off the landing. x/y in units of his width.
 const SEALS = [
-  { x: -19, y: -1.2, size: 3.2, tilt: -14, fire: 0.40 },
-  { x: 16, y: -2.4, size: 2.7, tilt: 11, fire: 0.41 },
-  { x: -11, y: -3.6, size: 2.0, tilt: 8, fire: 0.43 },
-  { x: 21, y: -0.6, size: 1.7, tilt: -19, fire: 0.42 },
-  { x: -23, y: -0.3, size: 1.4, tilt: 16, fire: 0.45 },
+  { x: -0.95, y: -0.1, size: '11%', tilt: -14, fire: 0.36 },
+  { x: 0.85, y: -0.25, size: '9%', tilt: 11, fire: 0.37 },
+  { x: -0.55, y: -0.5, size: '7%', tilt: 8, fire: 0.39 },
+  { x: 0.95, y: -0.4, size: '6%', tilt: -19, fire: 0.38 },
+  { x: -1.1, y: 0.08, size: '5%', tilt: 16, fire: 0.41 },
 ]
 
-function Seal({ size }: { size: number }) {
-  return (
-    <svg viewBox="0 0 100 100" width={`${size}rem`} height={`${size}rem`} aria-hidden>
-      <path d={STACKD_DIE} fill="var(--stackd-cream)" stroke="var(--stackd-plum-dark)" strokeWidth="2.5" vectorEffect="non-scaling-stroke" />
-    </svg>
-  )
-}
-
 export function StackdSlipHero({
-  brandName, orderHref, menuHref, mascotAlt, counterLines, customMascotSrc, customMascotDims,
+  brandName, orderHref, menuHref, mascotAlt, wordmarkSrc, wordmarkDims, tagline, oneLiner, status,
+  customMascotSrc, customMascotDims,
 }: Props) {
-  // Matches the payoff's own fade-in point, so its links become reachable and
-  // visible at the same instant. Without it the two CTAs are transparent but
-  // still clickable and still in the tab order for the whole fall.
-  const { ref, past } = useScrollProgress<HTMLElement>({ liveAt: 0.58 })
+  const custom = !!customMascotSrc
+  const { ref, progressRef } = useScrollProgress<HTMLElement>()
+  const stageRef = useRef<HTMLDivElement | null>(null)
+  const [nervous, setNervous] = useState(false)
+  const [hopping, setHopping] = useState(false)
+  const hopTimer = useRef<number | undefined>(undefined)
 
-  // The slip itself. Eased so the first moment is slow — the wobble — and the
-  // rest goes fast, which is how a real slip reads.
-  const slip = ramp(0.12, 4.4)
-  // The bread leaves slightly AFTER he does. That lag is the whole illusion:
-  // the tray is yanked out from under it and it hangs for a frame.
-  const toss = ramp(0.16, 1.25)
-  const impact = pulse(0.36, 20, 0.40, 12)
-  const after = ramp(0.58, 3.0)
+  // Cursor lean: which side of him the pointer is on, -1..1. Written straight
+  // to a CSS variable once per frame; the springy transition does the rest.
+  useEffect(() => {
+    const stage = stageRef.current
+    if (!stage) return
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+    if (!window.matchMedia('(pointer: fine)').matches) return
+    let raf = 0
+    let x = 0
+    const apply = () => {
+      raf = 0
+      const r = stage.getBoundingClientRect()
+      if (r.bottom < 0 || r.top > window.innerHeight) return
+      const cx = r.left + r.width / 2
+      const span = Math.max(260, window.innerWidth / 2)
+      const lx = Math.max(-1, Math.min(1, (x - cx) / span))
+      stage.style.setProperty('--lx', lx.toFixed(3))
+    }
+    const onMove = (e: PointerEvent) => {
+      x = e.clientX
+      if (!raf) raf = requestAnimationFrame(apply)
+    }
+    window.addEventListener('pointermove', onMove, { passive: true })
+    return () => {
+      window.removeEventListener('pointermove', onMove)
+      if (raf) cancelAnimationFrame(raf)
+    }
+  }, [])
+
+  useEffect(() => () => window.clearTimeout(hopTimer.current), [])
+
+  // Poke him: a hop, the loaf jumps on the tray. Only while he is standing.
+  const poke = useCallback(() => {
+    if (progressRef.current > 0.08) return
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+    setHopping(false)
+    requestAnimationFrame(() => setHopping(true))
+    window.clearTimeout(hopTimer.current)
+    hopTimer.current = window.setTimeout(() => setHopping(false), 860)
+  }, [progressRef])
+
+  const pinVars = {
+    '--s': ramp(0.1, 4.5),
+    '--toss': ramp(0.14, 1.2),
+    '--impact': pulse(0.33, 20, 0.37, 12),
+    '--swap': ramp(0.17, 7),
+    '--hintOut': ramp(0.02, 14),
+  } as CSSProperties
+
+  const stageClass = [s.stage, nervous ? s.nervous : '', hopping ? s.hopping : ''].filter(Boolean).join(' ')
 
   return (
-    <section ref={ref} className="stackd-slip" aria-label={`${brandName} — the slip`}>
-      <div className="stackd-slip-pin">
-        <div className="stackd-slip-stage">
-
-          <span className="stackd-slip-hint" style={{ ['--t' as string]: ramp(0.02, 14) }} aria-hidden>
-            Scroll
-          </span>
-
-          {/* The floor, as one of the brand's own seals stretched wide — this
-              brand has no straight-edged boxes anywhere in its collateral.
-              Cream, and it has to stay cream: the mascot is PLUM line art on
-              transparent, so on the plum field he is nearly invisible and the
-              floor is the only thing he reads against. Trying it as a dark
-              shadow instead made the whole lying pose disappear. */}
-          <div className="stackd-slip-floor" style={{ ['--impact' as string]: impact }} aria-hidden>
-            <svg viewBox="0 0 100 100" preserveAspectRatio="none" width="100%" height="100%">
-              <path d={STACKD_DIE} fill="var(--stackd-cream)" opacity="0.92" />
-            </svg>
+    <section ref={ref} className={`${s.hero} ${custom ? s.still : ''}`} aria-labelledby="stackd-hero-title">
+      <div className={s.pin} style={custom ? undefined : pinVars}>
+        <div className={s.copy}>
+          <div className={s.kicker}>
+            <p className={ui.spec}>Karachi</p>
+            <p className={ui.spec}>café · market · scratch kitchen</p>
           </div>
 
-          <div className="stackd-slip-seals" aria-hidden>
-            {SEALS.map((s, i) => (
-              <span
-                key={i}
-                className="stackd-slip-seal"
-                style={{
-                  ['--t' as string]: ramp(s.fire, 4.5),
-                  ['--x' as string]: `${s.x}rem`,
-                  ['--y' as string]: `${s.y}rem`,
-                  ['--tilt' as string]: `${s.tilt}deg`,
-                }}
-              >
-                <Seal size={s.size} />
-              </span>
-            ))}
-          </div>
-
-          {customMascotSrc ? (
-            /* Uploaded artwork: whole and still. */
-            <div className="stackd-slip-custom">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={customMascotSrc} alt={mascotAlt} {...(customMascotDims ?? {})} />
-            </div>
-          ) : (
-          <>
-          {/* The bread. Climbs and tumbles for the whole rest of the scroll and
-              never comes down: scroll further, it goes higher. */}
-          <div className="stackd-slip-bread" style={{ ['--t' as string]: toss }}>
+          {/* The supplied wordmark artwork, not a webfont approximation. The
+              <h1> stays real text for search and screen readers. */}
+          <h1 id="stackd-hero-title" className={s.wordmark}>
+            <span className={ui.srOnly}>{brandName} — stackd &amp; servd</span>
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/brand/stackd/bread.png" alt="" aria-hidden="true" width={197} height={167} />
+            <img src={wordmarkSrc} alt="" aria-hidden="true" {...wordmarkDims} />
+          </h1>
+
+          <div className={s.lines}>
+            <p className={`${s.line} ${s.lineA}`}>{tagline}</p>
+            {!custom && (
+              <p className={`${s.line} ${s.lineB}`} aria-hidden="true">we&rsquo;ll make another.</p>
+            )}
           </div>
 
-          {/* Him. Heels forward, over he goes. */}
-          <div className="stackd-slip-guy" style={{ ['--t' as string]: slip, ['--impact' as string]: impact }}>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/brand/stackd/guy.png" alt={mascotAlt} width={326} height={274} />
-          </div>
-          </>
-          )}
+          <p className={s.sub}>{oneLiner}</p>
 
+          <div className={s.ctas}>
+            <Link href={orderHref} className={ui.btn}>
+              Order {brandName}
+              <svg viewBox="0 0 24 24" aria-hidden><path d="M5 12h14M13 6l6 6-6 6" /></svg>
+            </Link>
+            <Link href={menuHref} className={`${ui.btn} ${ui.ghost}`}>See the menu</Link>
+          </div>
+
+          {status && <div className={s.status}>{status}</div>}
         </div>
 
-        {/* Its own grid row, so he can never land on the words. Hidden rather
-            than transparent until it lands — see liveAt above. */}
+        {/* The stage is decoration with one toy in it: poke him. It is a
+            div, not a button, because it does nothing a reader needs — the
+            mascot's alt text still describes him. */}
         <div
-          className="stackd-slip-after"
-          style={{ ['--t' as string]: after, visibility: past ? 'visible' : 'hidden' }}
+          ref={stageRef}
+          className={stageClass}
+          onPointerEnter={(e) => { if (e.pointerType === 'mouse') setNervous(true) }}
+          onPointerLeave={() => setNervous(false)}
+          onClick={poke}
         >
-          <p className="stackd-slip-line">we&rsquo;ll make another.</p>
-          <p className="stackd-slip-sub">
-            everything here is cut, baked and built on site — {counterLines.map((l) => l.replace(/\.$/, '')).join(', ').toLowerCase()}.
-          </p>
-          <div className="stackd-slip-cta">
-            <Link href={orderHref} className="stackd-btn">Order {brandName}</Link>
-            <Link href={menuHref} className="stackd-btn stackd-btn-ghost">See the menu</Link>
+          {!custom && (
+            <p className={s.hint} aria-hidden>
+              scroll. carefully.
+              <svg viewBox="0 0 24 24"><path d="M12 5v14M6 13l6 6 6-6" /></svg>
+            </p>
+          )}
+
+          <div className={s.coaster} aria-hidden>
+            <Die className={s.coasterDie} />
+            <span className={s.stamp}>
+              <Die face="#FFFFFF" bandWidth={0} keylineWidth={4} keyline="#3D1122" />
+              <span className={s.stampText}>cooked<br />here.</span>
+            </span>
+          </div>
+
+          {!custom && (
+            <div className={s.seals} aria-hidden>
+              {SEALS.map((seal, i) => (
+                <span
+                  key={i}
+                  className={s.seal}
+                  style={{
+                    '--t': ramp(seal.fire, 4.5),
+                    '--x': seal.x,
+                    '--y': seal.y,
+                    '--tilt': `${seal.tilt}deg`,
+                    '--size': seal.size,
+                  } as CSSProperties}
+                >
+                  <Die face="#FCE8CE" band="#9BD3DD" keyline="#3D1122" bandWidth={5} keylineWidth={2.5} />
+                </span>
+              ))}
+            </div>
+          )}
+
+          <div className={s.figure}>
+            <div className={s.lean}>
+              <div className={s.hop}>
+                {custom ? (
+                  <div className={`${s.custom} ${s.guyIdle}`}>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={customMascotSrc!} alt={mascotAlt} {...(customMascotDims ?? {})} />
+                  </div>
+                ) : (
+                  <>
+                    <div className={s.guy}>
+                      <div className={s.guyIdle}>
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src="/brand/stackd/guy.png" alt={mascotAlt} width={326} height={274} />
+                      </div>
+                      <span className={s.crumb} aria-hidden />
+                      <span className={s.crumb} aria-hidden />
+                      <span className={s.crumb} aria-hidden />
+                    </div>
+                    <div className={s.bread} aria-hidden>
+                      <div className={s.breadHop}>
+                        <div className={s.breadWobble}>
+                          <div className={s.breadIdle}>
+                            <svg className={s.steam} viewBox="0 0 100 70" preserveAspectRatio="none">
+                              <path d="M28 68 C 18 54, 38 44, 28 30 S 34 10, 26 2" />
+                              <path d="M52 68 C 42 52, 62 42, 52 28 S 58 8, 50 0" />
+                              <path d="M74 68 C 66 56, 84 46, 74 32 S 80 12, 72 4" />
+                            </svg>
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img src="/brand/stackd/bread.png" alt="" width={197} height={167} />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
           </div>
         </div>
       </div>

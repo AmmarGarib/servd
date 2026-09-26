@@ -1,43 +1,42 @@
-// flipd — the menu, as its own page (/brand/flipd/menu).
+// Flipd — the menu, as its own page (/brand/flipd/menu).
 //
-// This is the READ-ONLY menu: what we serve and what it costs. Ordering lives
-// at /flipd, which is the same data plus a basket. Both read the same API
-// (`/storefront/flipd/menu`), so there is one menu in the system and the admin
-// is the only place it is edited. Nothing here is hardcoded — an item renamed
-// in admin is renamed here on the next request.
+// The READ-ONLY menu: what we serve and what it costs. Ordering lives at
+// /flipd, which is the same data plus a basket. Both read the same API
+// (`/storefront/flipd/menu`, fetched server-side by app/brand/[slug]/menu),
+// so there is one menu in the system and admin is the only place it is
+// edited. Nothing here is hardcoded — an item renamed in admin is renamed here
+// on the next request. Voice rule: "names the ingredient, skips the
+// adjective", so each item's description is printed as-is.
 //
-// Built to the brand book like the landing page: mustard field, Flipd Blue
-// marks, navy/bone checker as the rule, bone panels so long lists stay
-// readable. Voice rule is "names the ingredient, skips the adjective", so the
-// item's description is printed as-is and nothing is written around it.
+// Built to be fun AND fast to browse:
+//   - a sticky chip bar with scrollspy — the section you are in is lit, and a
+//     tap jumps straight to any other
+//   - every item is an order ticket clipped to the kitchen rail; each
+//     section's tickets swing in as it arrives, straighten and lift on hover,
+//     and carry their own Order link
+//   - the same burger builds on a loop in the header, and the crowd waits by
+//     the order button at the bottom (hover winds them up, click, they cheer)
 
 'use client'
 
 import Link from 'next/link'
+import { useEffect, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent } from 'react'
+import { FlipdCrowd, Marquee, OrderLink, Words, DoodleBurst, DoodleSquiggle } from '../flipd/FlipdBits'
+import { ItemTicket } from '../flipd/ItemTicket'
+import { MiniBuild } from '../flipd/MiniBuild'
+import { useSectionMotion } from '../flipd/useFlipdMotion'
+import type { FlipdMenuCategoryLive } from '../flipd/types'
+import f from '../flipd/flipd.module.css'
+import m from '../flipd/menu.module.css'
 
-export interface FlipdModifier {
-  id: string
-  name: string
-  priceDeltaCents?: number
-}
-export interface FlipdModifierGroup {
-  id: string
-  name: string
-  modifiers?: FlipdModifier[]
-}
-export interface FlipdMenuItemLive {
-  id: string
-  name: string
-  description: string | null
-  priceCents: number
-  isAvailable?: boolean
-  modifierGroups?: FlipdModifierGroup[]
-}
-export interface FlipdMenuCategoryLive {
-  id: string
-  name: string
-  items: FlipdMenuItemLive[]
-}
+// Kept exported from here for anything that imported them before the types
+// moved next to the components that share them.
+export type {
+  FlipdModifier,
+  FlipdModifierGroup,
+  FlipdMenuItemLive,
+  FlipdMenuCategoryLive,
+} from '../flipd/types'
 
 interface Props {
   slug: string
@@ -45,185 +44,212 @@ interface Props {
   categories: FlipdMenuCategoryLive[]
 }
 
+const MARQUEE = ['Built to spec', 'Salt and pepper. Nothing else.', 'Same burger, every time', 'Smash burgers']
+
 function Checker() {
-  return <div aria-hidden className="flipd-checker" />
+  return <div aria-hidden className={f.checker} />
 }
 
-const fmtPkr = (cents: number) =>
-  `PKR ${(cents / 100).toLocaleString('en-PK', { maximumFractionDigits: 0 })}`
+function Header({ slug, conceptName }: { slug: string; conceptName: string }) {
+  const ref = useSectionMotion<HTMLElement>(0.1)
+  return (
+    <section ref={ref} className={m.head} aria-labelledby="flipd-menu-title">
+      <div className={m.headInner}>
+        <div>
+          <p className={m.eyebrow}>The menu</p>
+          <h1 id="flipd-menu-title" className={m.h1}>
+            <Words text="Built to spec." />
+          </h1>
+          <p className={m.lede}>
+            Every burger on a fixed build. Prices and what&rsquo;s on today come
+            straight from the kitchen&rsquo;s own list.
+          </p>
+          <div className={`${f.ctaRow} ${m.ctas}`}>
+            <OrderLink href={`/${slug}`}>Order now</OrderLink>
+            <Link href={`/brand/${slug}`} className={`${f.btn} ${f.btnGhost}`}>Back to {conceptName}</Link>
+          </div>
+        </div>
+        <div className={m.headArt}>
+          <MiniBuild ring="THE MENU · BUILT TO SPEC · THE MENU · BUILT TO SPEC · " />
+          <DoodleBurst className={f.float} style={{ top: '-2%', right: '4%', width: 52 }} />
+          <DoodleSquiggle className={f.float} style={{ bottom: '2%', left: '0%', width: 80 }} />
+        </div>
+      </div>
+    </section>
+  )
+}
+
+/**
+ * Sticky jump-chips with scrollspy. Plain anchors underneath, so they work
+ * before hydration and without JS; with JS the jump is smooth (unless reduced
+ * motion), focus moves to the section, and the chip for the section on screen
+ * is lit and kept in view inside the bar.
+ */
+function ChipBar({ cats, active }: { cats: FlipdMenuCategoryLive[]; active: string | null }) {
+  const barRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const bar = barRef.current
+    if (!bar || !active) return
+    const chip = bar.querySelector<HTMLElement>(`[data-cat="${CSS.escape(active)}"]`)
+    if (!chip) return
+    const target = chip.offsetLeft - bar.clientWidth / 2 + chip.offsetWidth / 2
+    const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+    bar.scrollTo({ left: Math.max(0, target), behavior: reduced ? 'auto' : 'smooth' })
+  }, [active])
+
+  function jump(e: ReactMouseEvent<HTMLAnchorElement>, id: string) {
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return
+    const el = document.getElementById(`cat-${id}`)
+    if (!el) return
+    e.preventDefault()
+    const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+    el.scrollIntoView({ behavior: reduced ? 'auto' : 'smooth', block: 'start' })
+    el.focus({ preventScroll: true })
+    history.replaceState(null, '', `#cat-${id}`)
+  }
+
+  return (
+    <nav aria-label="Menu sections" className={m.chipBar}>
+      <div ref={barRef} className={m.chips}>
+        {cats.map((c) => (
+          <a
+            key={c.id}
+            href={`#cat-${c.id}`}
+            data-cat={c.id}
+            onClick={(e) => jump(e, c.id)}
+            className={`${m.chip} ${active === c.id ? m.chipActive : ''}`}
+            aria-current={active === c.id ? 'true' : undefined}
+          >
+            {c.name}
+            <span className={m.chipCount} aria-hidden>{c.items.length}</span>
+            <span className={f.srOnly}>, {c.items.length} {c.items.length === 1 ? 'item' : 'items'}</span>
+          </a>
+        ))}
+      </div>
+    </nav>
+  )
+}
+
+function Category({ cat, index, slug }: { cat: FlipdMenuCategoryLive; index: number; slug: string }) {
+  const ref = useSectionMotion<HTMLElement>(0.05)
+  return (
+    <section
+      ref={ref}
+      id={`cat-${cat.id}`}
+      data-spy={cat.id}
+      tabIndex={-1}
+      className={m.cat}
+      aria-labelledby={`cat-title-${cat.id}`}
+    >
+      <div className={m.catHead}>
+        <span className={m.catNo} aria-hidden>{String(index + 1).padStart(2, '0')}</span>
+        <h2 id={`cat-title-${cat.id}`} className={m.catTitle}>{cat.name}</h2>
+        <span className={`${f.sticker} ${m.catCount}`} style={{ '--r': '3deg', '--i': 0 } as CSSProperties}>
+          {cat.items.length} {cat.items.length === 1 ? 'item' : 'items'}
+        </span>
+      </div>
+      <div className={f.rail} aria-hidden />
+      <div className={m.grid}>
+        {cat.items.map((item, i) => (
+          <ItemTicket key={item.id} item={item} index={i} orderHref={`/${slug}`} label={cat.name} />
+        ))}
+      </div>
+    </section>
+  )
+}
+
+function Close({ slug }: { slug: string }) {
+  const [excited, setExcited] = useState(false)
+  return (
+    <section className={m.close} aria-labelledby="flipd-menu-close">
+      <h2 id="flipd-menu-close" className={m.closeTitle}>Same burger, every time.</h2>
+      <div className={f.ctaRow}>
+        <OrderLink href={`/${slug}`} className={`${f.btn} ${f.btnOnBlue}`} onExcite={setExcited}>
+          Order now
+        </OrderLink>
+      </div>
+      <FlipdCrowd className={m.closeCrowd} excitement={excited ? 1 : 0.2} />
+    </section>
+  )
+}
 
 export function FlipdMenuPage({ slug, conceptName, categories }: Props) {
   // A category with no items is a draft as far as a customer is concerned —
   // don't print an empty heading at them.
   const shown = categories.filter((c) => (c.items?.length ?? 0) > 0)
+  const [active, setActive] = useState<string | null>(shown[0]?.id ?? null)
+  const shownKey = shown.map((c) => c.id).join('|')
+
+  // Scrollspy: whichever section crosses the band just under the sticky bar.
+  useEffect(() => {
+    if (typeof IntersectionObserver === 'undefined') return
+    const els = Array.from(document.querySelectorAll<HTMLElement>('[data-spy]'))
+    if (els.length === 0) return
+    const io = new IntersectionObserver(
+      (entries) => {
+        const hit = entries
+          .filter((e) => e.isIntersecting)
+          .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)[0]
+        const id = hit?.target.getAttribute('data-spy')
+        if (id) setActive(id)
+      },
+      { rootMargin: '-30% 0px -60% 0px' },
+    )
+    els.forEach((el) => io.observe(el))
+    // The last section is often too short to ever reach the spy band, so at
+    // the very bottom of the page it wins outright.
+    const last = els[els.length - 1]?.getAttribute('data-spy')
+    const onScroll = () => {
+      const atEnd = window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 4
+      const lastEl = els[els.length - 1]
+      if (atEnd && last && lastEl && lastEl.getBoundingClientRect().top < window.innerHeight) setActive(last)
+    }
+    window.addEventListener('scroll', onScroll, { passive: true })
+    return () => {
+      io.disconnect()
+      window.removeEventListener('scroll', onScroll)
+    }
+  }, [shownKey])
 
   return (
     <div className="flipd-page">
       <Checker />
 
-      {/* ── HEADER ─────────────────────────────────────────────────────────
-          No badge here. It carries the landing page; repeating it at the top
-          of every sub-page is decoration, and the book asks for restraint. */}
-      <section style={{ padding: 'clamp(2.5rem, 7vh, 4rem) clamp(1.5rem, 5vw, 3rem) clamp(1.5rem, 4vh, 2.5rem)' }}>
-        <div style={{ maxWidth: '62rem', margin: '0 auto' }}>
-          <span className="flipd-eyebrow">The menu</span>
-          <h1
-            className="flipd-display"
-            style={{ fontSize: 'clamp(2rem, 5.5vw, 3.4rem)', margin: '0.6rem 0 0' }}
-          >
-            Built to spec.
-          </h1>
-          <p
-            style={{
-              fontSize: '1rem',
-              lineHeight: 1.65,
-              color: 'var(--flipd-blue-dim)',
-              maxWidth: '48ch',
-              margin: '1rem 0 0',
-            }}
-          >
-            Every burger on a fixed build. Prices and what&rsquo;s on today come
-            straight from the kitchen&rsquo;s own list.
-          </p>
+      <Header slug={slug} conceptName={conceptName} />
 
-          <div style={{ marginTop: '2rem', display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
-            <Link href={`/${slug}`} className="flipd-btn">Order now</Link>
-            <Link href={`/brand/${slug}`} className="flipd-btn flipd-btn-ghost">Back to {conceptName}</Link>
-          </div>
-        </div>
-      </section>
+      <Marquee items={MARQUEE} duration={34} />
 
-      {/* Section jump-list. Only worth its space once there's more than one. */}
-      {shown.length > 1 && (
-        <nav
-          aria-label="Menu sections"
-          className="no-scrollbar"
-          style={{
-            display: 'flex',
-            gap: '0.5rem',
-            overflowX: 'auto',
-            padding: '0 clamp(1.5rem, 5vw, 3rem) clamp(1.5rem, 4vh, 2.5rem)',
-            maxWidth: '68rem',
-            margin: '0 auto',
-          }}
-        >
-          {shown.map((c) => (
-            <a key={c.id} href={`#cat-${c.id}`} className="flipd-chip" style={{ whiteSpace: 'nowrap', textDecoration: 'none' }}>
-              {c.name}
-            </a>
-          ))}
-        </nav>
-      )}
-
-      <Checker />
+      {shown.length > 1 && <ChipBar cats={shown} active={active} />}
 
       {shown.length === 0 ? (
-        // The API answered but there is nothing published. Say so plainly and
-        // send them somewhere useful rather than printing an empty page.
-        <section style={{ padding: 'clamp(3rem, 9vh, 5rem) clamp(1.5rem, 5vw, 3rem)' }}>
-          <div className="flipd-panel" style={{ maxWidth: '40rem', margin: '0 auto', padding: 'clamp(2rem, 5vw, 3rem)', textAlign: 'center' }}>
-            <h2 className="flipd-display" style={{ fontSize: '1.5rem', margin: '0 0 0.6rem' }}>
-              The menu isn&rsquo;t up yet.
-            </h2>
-            <p style={{ color: 'var(--flipd-blue-dim)', margin: '0 0 1.5rem', fontSize: '0.95rem' }}>
-              Call the counter and we&rsquo;ll tell you what&rsquo;s on.
-            </p>
-            <Link href={`/${slug}`} className="flipd-btn">Go to ordering</Link>
+        // The API answered but nothing is published (or it did not answer).
+        // Say so plainly and send them somewhere useful.
+        <section className={m.cats}>
+          <div className={m.empty}>
+            <div className={f.ticketWrap} style={{ '--r': '-1.5deg' } as CSSProperties}>
+              <span className={f.clip} aria-hidden />
+              <div className={f.ticket}>
+                <div className={f.ticketHead}><span>No. 00</span><span>Kitchen</span></div>
+                <hr className={f.perf} />
+                <h2 className={m.emptyTitle}>The menu isn&rsquo;t up yet.</h2>
+                <p className={m.emptyBody}>Call the counter and we&rsquo;ll tell you what&rsquo;s on.</p>
+                <Link href={`/${slug}`} className={f.btn}>Go to ordering</Link>
+              </div>
+            </div>
           </div>
         </section>
       ) : (
-        <section style={{ padding: 'clamp(2.5rem, 7vh, 4rem) clamp(1.5rem, 5vw, 3rem)' }}>
-          <div style={{ maxWidth: '68rem', margin: '0 auto', display: 'grid', gap: 'clamp(1.25rem, 3vw, 2rem)' }}>
-            {shown.map((cat) => (
-              <div
-                key={cat.id}
-                id={`cat-${cat.id}`}
-                className="flipd-panel"
-                style={{ padding: 'clamp(1.5rem, 3.5vw, 2.25rem)', scrollMarginTop: '7rem' }}
-              >
-                <h2 className="flipd-display" style={{ fontSize: 'clamp(1.5rem, 3vw, 2rem)', margin: '0 0 0.25rem' }}>
-                  {cat.name}
-                </h2>
-
-                <div style={{ marginTop: '1rem' }}>
-                  {cat.items.map((item) => {
-                    const soldOut = item.isAvailable === false
-                    // Modifier names are the "Single / Double / Lettuce wrap"
-                    // style choices. They're the operator's own words from
-                    // admin, printed flat — not restyled per option.
-                    const options = (item.modifierGroups ?? [])
-                      .flatMap((g) => (g.modifiers ?? []).map((m) => m.name))
-                      .filter(Boolean)
-
-                    return (
-                      <div
-                        key={item.id}
-                        className="flipd-item"
-                        style={{ padding: '0.95rem 0', opacity: soldOut ? 0.45 : 1 }}
-                      >
-                        <div style={{ display: 'flex', alignItems: 'baseline', gap: '1rem', justifyContent: 'space-between' }}>
-                          <p className="flipd-item-name" style={{ margin: 0 }}>
-                            {item.name}
-                            {soldOut && (
-                              <span
-                                style={{
-                                  marginLeft: '0.6rem',
-                                  fontSize: '0.64rem',
-                                  fontWeight: 700,
-                                  letterSpacing: '0.16em',
-                                  textTransform: 'uppercase',
-                                  color: 'var(--flipd-blue-faint)',
-                                }}
-                              >
-                                Sold out
-                              </span>
-                            )}
-                          </p>
-                          <p
-                            style={{
-                              margin: 0,
-                              whiteSpace: 'nowrap',
-                              fontWeight: 700,
-                              fontSize: '0.95rem',
-                              color: 'var(--flipd-blue)',
-                              fontVariantNumeric: 'tabular-nums',
-                            }}
-                          >
-                            {fmtPkr(item.priceCents)}
-                          </p>
-                        </div>
-
-                        {item.description && (
-                          <p className="flipd-item-build" style={{ margin: '0.3rem 0 0' }}>
-                            {item.description}
-                          </p>
-                        )}
-
-                        {options.length > 0 && (
-                          <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap', marginTop: '0.6rem' }}>
-                            {options.map((o) => (
-                              <span key={o} className="flipd-chip">{o}</span>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    )
-                  })}
-                </div>
-              </div>
-            ))}
-          </div>
-        </section>
+        <div className={m.cats}>
+          {shown.map((cat, i) => (
+            <Category key={cat.id} cat={cat} index={i} slug={slug} />
+          ))}
+        </div>
       )}
 
       <Checker />
 
-      <section style={{ padding: 'clamp(2.5rem, 7vh, 4rem) clamp(1.5rem, 5vw, 3rem)', textAlign: 'center' }}>
-        <h2 className="flipd-display" style={{ fontSize: 'clamp(1.5rem, 3.5vw, 2.25rem)', margin: '0 0 1.5rem' }}>
-          Same burger, every time.
-        </h2>
-        <Link href={`/${slug}`} className="flipd-btn">Order now</Link>
-      </section>
+      <Close slug={slug} />
 
       <Checker />
     </div>

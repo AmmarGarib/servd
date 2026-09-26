@@ -1,49 +1,54 @@
 'use client'
-// flipd — brand microsite, rebuilt from the GS Foods brand book (Sept 2026).
+// Flipd — brand microsite.
 //
-// This replaced a 1950s American-diner treatment (candy-stripe awning, Lobster
-// cursive, neon, chrome) and, before that, a padel-court turf theme. Neither is
-// what the book describes, and the turf one broke an explicit rule in it:
-// "Not about padel: We happen to be there. We never borrow the court's
-// identity."
-//
-// What the book actually specifies, and what this page is built to:
+// Built to the GS Foods brand book, now played loud. The book is still the
+// rulebook for WHAT is on the page:
 //
 //   Palette    Three colours. Smash Mustard #FED561 is the field, Flipd Blue
 //              #294375 is every mark on it, Bone #F9F0E1 is the third checker
 //              square and the calm surface. Tokens are --flipd-* in globals.css.
-//   Logo       The stamped badge, supplied as artwork (/brand/flipd-badge.png).
-//              "The badge is built to feel stamped, not printed — a little
-//              rough, entirely intentional. Keep it that way." So it is used as
-//              the image, never re-set in type, and never recoloured.
-//   Checker    Navy/bone, the signature edge. It bands the top and bottom of
-//              the page and rules between sections, as it does on every spread.
-//   Type       Display is Bronto Burger, which we have no webfont licence for;
-//              Alfa Slab One stands in and the comment on the token says so.
-//              Body is Poppins, which IS the book's pick and is free.
-//   Voice      "Plain-spoken: names the ingredient, skips the adjective." The
-//              menu prints build lines verbatim from the spec sheet — no
-//              invented descriptions, because that breaks the voice rule and
-//              the first core value ("the spec is the boss") simultaneously.
-//   Restraint  "Restraint over decoration... If something on the plate isn't
-//              earning its place, it comes off." No gradients, no glows, no
-//              drop-shadowed type, no motion for its own sake.
+//   Logo       The stamped badge artwork (/brand/flipd-badge.png), never re-set
+//              in type and never recoloured.
+//   Checker    Navy/bone, the signature edge.
+//   Type       Alfa Slab One standing in for Bronto Burger; Poppins body.
+//   Voice      "Plain-spoken: names the ingredient, skips the adjective." Every
+//              line on the page is the book's, the spec sheet's, or the menu
+//              API's own words.
+//
+// What changed (Sept 2026, "I want this website to feel alive") is HOW it
+// moves. The book's personality line — "Playful, not childish. Energetic, not
+// chaotic. Bold, not brash." and "Hand-made: marker lines over vectors.
+// Slightly wrong is on-brand" — is the motion brief: a court-side crowd that
+// watches the burger get built and cheers the smash, tickets that swing on a
+// kitchen rail, stickers slapped on, marquee chase lights, spinning stools,
+// marker doodles that boil like hand-drawn animation. All of it in the three
+// colours, all of it transform/opacity, paused off-screen, and still under
+// prefers-reduced-motion.
+//
+// Section rhythm: mustard hero → blue marquee → mustard mission → mustard
+// rail → blue values → bone court-side → mustard cross-links → blue sign-off.
 
-import Link from 'next/link'
+import type { CSSProperties } from 'react'
 import type { Concept } from '../../../lib/concept'
 import { CrossBrandStrip } from '../parts/CrossBrandStrip'
-import { OpenStatusBadge, HoursGrid, useHoursData } from '../parts/OpenStatusBadge'
+import { useHoursData } from '../parts/OpenStatusBadge'
 import { brandStory, formatBrandName } from '../../../lib/concept'
+import { locationFor } from '../../../lib/brandLocations'
 import { FlipdSpecHero } from '../../kinetic/FlipdSpecHero'
+import { Marquee, Words, DoodleBurst, DoodleSquiggle, DoodleStar } from '../flipd/FlipdBits'
+import { MiniBuild } from '../flipd/MiniBuild'
+import { OffTheGrill, CourtSide } from '../flipd/LandingSections'
+import { useSectionMotion } from '../flipd/useFlipdMotion'
+import f from '../flipd/flipd.module.css'
+import l from '../flipd/landing.module.css'
 
 interface Props {
   concept: Concept
   concepts: Concept[]
 }
 
-// Straight from the book's Core Values spread. Kept as the brand's own words —
-// these are operating commitments, not marketing lines, and paraphrasing them
-// would soften exactly the thing that makes them useful.
+// Straight from the book's Core Values spread — operating commitments, kept
+// in the brand's own words.
 const CORE_VALUES = [
   {
     title: 'The spec is the boss.',
@@ -63,20 +68,137 @@ const CORE_VALUES = [
   },
 ]
 
-/** The navy/bone checker band. The brand's edge, used as a rule. */
+// Marquee lines: the book's and the spec sheet's own facts, as signage.
+const MARQUEE = [
+  'Smash burgers',
+  'Salt and pepper. Nothing else.',
+  'Same burger, every time',
+  'Components, not sauce',
+  'Built to spec',
+]
+
+// Three facts pulled verbatim from the brand story, slapped on as stickers.
+const FACTS = ['Salt and pepper, nothing else.', 'Real components, not sauce.', 'Fuel that fits the court.']
+const FACT_TILTS = [-3, 2.5, -1.5]
+const VALUE_TILTS = [-2, 1.5, -1, 2]
+
 function Checker() {
-  return <div aria-hidden className="flipd-checker" />
+  return <div aria-hidden className={f.checker} />
+}
+
+function Mission({ long }: { long: string }) {
+  const ref = useSectionMotion<HTMLElement>(0.2)
+  return (
+    <section ref={ref} className={l.section} aria-labelledby="flipd-mission-title">
+      <div className={`${l.inner} ${l.mission}`}>
+        <div>
+          <p className={l.eyebrow}>Our mission</p>
+          <h2 id="flipd-mission-title" className={l.h2}>
+            <Words text="Same burger," />{' '}
+            <span className={l.underlined}>
+              <Words text="every time." offset={2} />
+              <svg aria-hidden className={f.scribble} viewBox="0 0 300 20" preserveAspectRatio="none">
+                <path d="M4 13 C 60 5, 120 17, 180 9 S 280 6, 296 12" />
+              </svg>
+            </span>
+          </h2>
+          <p className={l.body}>{long}</p>
+          <ul className={l.facts}>
+            {FACTS.map((fact, i) => (
+              <li
+                key={fact}
+                className={`${f.sticker} ${l.fact}`}
+                style={{ '--r': `${FACT_TILTS[i]}deg`, '--i': i + 2 } as CSSProperties}
+              >
+                {fact}
+              </li>
+            ))}
+          </ul>
+        </div>
+        <div className={l.missionArt}>
+          <MiniBuild />
+          <DoodleBurst className={f.float} style={{ top: '-4%', left: '2%', width: 56 }} />
+          <DoodleStar className={f.float} style={{ bottom: '4%', right: '0%', width: 44 }} />
+        </div>
+      </div>
+    </section>
+  )
+}
+
+function Values() {
+  const ref = useSectionMotion<HTMLElement>(0.15)
+  return (
+    <section ref={ref} className={`${l.section} ${l.blue}`} aria-labelledby="flipd-values-title">
+      <div className={l.inner}>
+        <p className={l.eyebrow}>Core values</p>
+        <h2 id="flipd-values-title" className={l.h2}>
+          <Words text="What we hold to." />
+        </h2>
+        <ol className={l.values}>
+          {CORE_VALUES.map((v, i) => (
+            <li
+              key={v.title}
+              className={`${f.sticker} ${l.value}`}
+              style={{ '--r': `${VALUE_TILTS[i]}deg`, '--i': i } as CSSProperties}
+            >
+              <span className={l.valueNo} aria-hidden>{String(i + 1).padStart(2, '0')}</span>
+              <h3 className={l.valueTitle}>{v.title}</h3>
+              <p className={l.valueBody}>{v.body}</p>
+            </li>
+          ))}
+        </ol>
+        <DoodleSquiggle className={`${l.bandDoodle} ${f.float}`} style={{ top: '0.4rem', right: '2%', width: 92 }} />
+      </div>
+    </section>
+  )
+}
+
+function SignOff({ badge, badgeIsFallback, address }: { badge: string; badgeIsFallback: boolean; address: string }) {
+  const ref = useSectionMotion<HTMLElement>(0.3)
+  return (
+    <section ref={ref} className={l.signoff} aria-label="Sign-off">
+      <div className={l.badgeWrap}>
+        <svg className={l.badgeRing} viewBox="0 0 200 200" aria-hidden>
+          <defs>
+            <path id="flipd-signoff-ring" d="M100 100 m-90 0 a90 90 0 1 1 180 0 a90 90 0 1 1 -180 0" />
+          </defs>
+          <text fill="#FED561" fontFamily="Poppins, system-ui, sans-serif" fontWeight="700" fontSize="12" letterSpacing="3.4">
+            <textPath href="#flipd-signoff-ring">SMASH BURGERS · BUILT TO SPEC · SAME BURGER, EVERY TIME · </textPath>
+          </text>
+        </svg>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={badge}
+          alt=""
+          aria-hidden="true"
+          loading="lazy"
+          className={l.badge}
+          {...(badgeIsFallback ? { width: 1200, height: 1200 } : {})}
+        />
+      </div>
+      <p className={l.signoffLine}>Same burger, every time.</p>
+      <p className={l.signoffAddr}>{address}</p>
+    </section>
+  )
 }
 
 export function FlipdLayout({ concept, concepts }: Props) {
   const hoursData = useHoursData(concept.slug)
   const story = brandStory(concept.slug)
   const reservations = concept.reservationsEnabled !== false
+  const orderHref = `/${concept.slug}`
+  const menuHref = `/brand/${concept.slug}/menu`
 
   // Operator-uploaded artwork wins; otherwise the copy bundled in this build.
   // `||` not `??` — a cleared admin field sends '', which must fall back too.
   const badge = concept.wordmarkUrl || '/brand/flipd-badge.png'
   const badgeIsFallback = !concept.wordmarkUrl
+
+  // Directions: the operator's Maps link when configured, else a Maps search
+  // for the published address. Nothing when there is neither.
+  const mapsUrl =
+    locationFor(concept.slug)?.mapsUrl ??
+    (concept.address ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(concept.address)}` : null)
 
   return (
     <div className="flipd-page">
@@ -100,124 +222,24 @@ export function FlipdLayout({ concept, concepts }: Props) {
         </div>
       )}
 
-      {/* ── HERO: THE BUILD SHEET ────────────────────────────────────────
-          The badge is NOT repeated here. It sits in the nav at top left,
-          where a logo belongs — parked in the middle of the page it landed
-          straight on the eyeline and competed with the diagram, which is the
-          thing that should hold the centre. See FlipdSpecHero. */}
       <FlipdSpecHero
         brandName={formatBrandName(concept.name)}
-        orderHref={`/${concept.slug}`}
-        menuHref={`/brand/${concept.slug}/menu`}
+        orderHref={orderHref}
+        menuHref={menuHref}
         tagline={story.tagline}
       />
 
+      <Marquee items={MARQUEE} />
+
+      <Mission long={story.long} />
+
       <Checker />
 
-      {/* ── MISSION ──────────────────────────────────────────────────────────
-          A bone panel so the long read is comfortable; a full-strength mustard
-          field behind a paragraph this length is punishing. */}
-      <section style={{ padding: 'clamp(3rem, 8vh, 5rem) clamp(1.5rem, 5vw, 3rem)' }}>
-        <div className="flipd-panel" style={{ maxWidth: '54rem', margin: '0 auto', padding: 'clamp(2rem, 5vw, 3.25rem)' }}>
-          <span className="flipd-eyebrow">Our mission</span>
-          <h2 className="flipd-display" style={{ fontSize: 'clamp(1.7rem, 3.6vw, 2.5rem)', margin: '0.7rem 0 1.4rem' }}>
-            Same burger, every time.
-          </h2>
-          <p style={{ fontSize: '1.02rem', lineHeight: 1.75, color: 'var(--flipd-blue-dim)', margin: 0, maxWidth: '62ch' }}>
-            {story.long}
-          </p>
-        </div>
-      </section>
+      <OffTheGrill slug={concept.slug} orderHref={orderHref} menuHref={menuHref} />
 
-      {/* The menu used to live here, inline. It is now its own page
-          (/brand/flipd/menu) driven by the live menu API, so the landing page
-          stays a pitch and there is exactly one copy of the menu — the one
-          the kitchen and the till already agree on. */}
-      {/* ── CORE VALUES ──────────────────────────────────────────────────────
-          On the inverted band: Flipd Blue field, mustard type. */}
-      <section
-        style={{
-          background: 'var(--flipd-blue)',
-          color: 'var(--flipd-mustard)',
-          padding: 'clamp(3.5rem, 9vh, 5.5rem) clamp(1.5rem, 5vw, 3rem)',
-        }}
-      >
-        <div style={{ maxWidth: '68rem', margin: '0 auto' }}>
-          <h2
-            className="flipd-display"
-            style={{ fontSize: 'clamp(1.9rem, 4vw, 2.8rem)', margin: '0 0 2rem', color: 'var(--flipd-mustard)' }}
-          >
-            What we hold to.
-          </h2>
+      <Values />
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 14rem), 1fr))', gap: 'clamp(1.5rem, 3vw, 2.5rem)' }}>
-            {CORE_VALUES.map((v, i) => (
-              <div key={v.title}>
-                <span
-                  className="flipd-display"
-                  style={{ fontSize: '1.6rem', color: 'rgba(254,213,97,0.38)', display: 'block', lineHeight: 1 }}
-                >
-                  {String(i + 1).padStart(2, '0')}
-                </span>
-                <h3 style={{ fontSize: '1rem', fontWeight: 700, margin: '0.6rem 0 0.5rem', color: 'var(--flipd-mustard)' }}>
-                  {v.title}
-                </h3>
-                <p style={{ fontSize: '0.88rem', lineHeight: 1.65, margin: 0, color: 'rgba(254,213,97,0.74)' }}>
-                  {v.body}
-                </p>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* ── HOURS + WHERE ─────────────────────────────────────────────────── */}
-      <section style={{ padding: 'clamp(3rem, 8vh, 5rem) clamp(1.5rem, 5vw, 3rem)' }}>
-        <div
-          className="flipd-visit-grid"
-          style={{ maxWidth: '68rem', margin: '0 auto', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'clamp(2rem, 5vw, 4rem)' }}
-        >
-          <div>
-            <span className="flipd-eyebrow">Hours</span>
-            <h2 className="flipd-display" style={{ fontSize: 'clamp(1.6rem, 3vw, 2.2rem)', margin: '0.7rem 0 1.5rem' }}>
-              When we&rsquo;re on.
-            </h2>
-            <div style={{ marginBottom: '1.4rem' }}><OpenStatusBadge hoursData={hoursData} /></div>
-            <div style={{ fontSize: '0.92rem', color: 'var(--flipd-blue-dim)' }}>
-              {hoursData?.hours && hoursData.hours.length > 0 ? (
-                <HoursGrid hoursData={hoursData} />
-              ) : (
-                <p style={{ opacity: 0.7 }}>Hours not published yet.</p>
-              )}
-            </div>
-          </div>
-
-          <div>
-            <span className="flipd-eyebrow">Where</span>
-            <h2 className="flipd-display" style={{ fontSize: 'clamp(1.6rem, 3vw, 2.2rem)', margin: '0.7rem 0 1.5rem' }}>
-              Find us.
-            </h2>
-            <p style={{ fontSize: '1.05rem', lineHeight: 1.5, margin: '0 0 1rem', fontWeight: 500 }}>
-              {concept.address ?? 'Karachi · address TBA'}
-            </p>
-            {concept.phone && (
-              <p style={{ fontSize: '0.92rem', margin: 0 }}>
-                <a
-                  href={`tel:${concept.phone.replace(/\s/g, '')}`}
-                  style={{ color: 'var(--flipd-blue)', textDecoration: 'none', borderBottom: '1px solid currentColor' }}
-                >
-                  {concept.phone}
-                </a>
-              </p>
-            )}
-            {reservations && (
-              <div style={{ marginTop: '2rem' }}>
-                <Link href={`/reserve/${concept.slug}`} className="flipd-btn flipd-btn-ghost">Book a table</Link>
-              </div>
-            )}
-          </div>
-        </div>
-      </section>
+      <CourtSide concept={concept} hoursData={hoursData} mapsUrl={mapsUrl} reservations={reservations} />
 
       <Checker />
 
@@ -229,31 +251,11 @@ export function FlipdLayout({ concept, concepts }: Props) {
         heading="Other kitchens from the same group."
       />
 
-      {/* ── SIGN-OFF ─────────────────────────────────────────────────────────
-          The badge again to close, on the blue band. No order button: BrandShell
-          renders its own CTA directly below, and two order buttons a screen
-          apart just split the click. */}
-      <section
-        style={{
-          background: 'var(--flipd-blue)',
-          padding: 'clamp(3.5rem, 10vh, 6rem) clamp(1.5rem, 5vw, 3rem)',
-          textAlign: 'center',
-        }}
-      >
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src={badge}
-          alt=""
-          aria-hidden="true"
-          {...(badgeIsFallback ? { width: 1200, height: 1200 } : {})}
-          style={{ display: 'block', width: 'min(11rem, 40vw)', height: 'auto', margin: '0 auto 1.25rem' }}
-        />
-        <p className="flipd-eyebrow" style={{ color: 'rgba(254,213,97,0.6)' }}>
-          {concept.address ?? 'Karachi'}
-        </p>
-      </section>
+      {/* No order button here: BrandShell renders its own order CTA directly
+          below, and two a screen apart just split the click. */}
+      <SignOff badge={badge} badgeIsFallback={badgeIsFallback} address={concept.address ?? 'Karachi'} />
 
-      <Checker />
+      <Marquee items={MARQUEE} reverse duration={46} />
     </div>
   )
 }

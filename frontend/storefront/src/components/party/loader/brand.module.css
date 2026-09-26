@@ -1,0 +1,97 @@
+/* BrandLoader — per-brand route loading. Each brand in its own palette;
+   the servd butter party never appears here. Contrast: bone on forest
+   green ~10:1, cream on red plum ~8:1, Flipd Blue on mustard ~7:1. */
+
+.wrap {
+  min-height: 72dvh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3rem 16px;
+  text-align: center;
+}
+.col { display: flex; flex-direction: column; align-items: center; }
+.col p { margin: 0; }
+.art { display: block; width: 84px; height: auto; overflow: visible; margin-bottom: 1.1rem; }
+
+/* ── simmer: one candle, one orange signal, no gradients ─────────────── */
+.simmer { background: #06392F; color: #EDE6D3; }
+.simmer .art { width: 60px; }
+.flame {
+  transform-box: fill-box;
+  transform-origin: 50% 100%;
+  animation: flicker 2.2s ease-in-out infinite;
+}
+@keyframes flicker {
+  0%, 100% { transform: none; }
+  20% { transform: scale(0.95, 1.07) skewX(-3deg); }
+  45% { transform: scale(1.03, 0.94) skewX(2deg); }
+  70% { transform: scale(0.97, 1.05) skewX(-1deg); }
+}
+.smoke {
+  opacity: 0;
+  stroke-dasharray: 40;
+  stroke-dashoffset: 40;
+  animation: smoke 4.4s ease-out infinite;
+}
+@keyframes smoke {
+  0% { opacity: 0; stroke-dashoffset: 40; transform: none; }
+  25% { opacity: 0.4; }
+  100% { opacity: 0; stroke-dashoffset: 0; transform: translateY(-8px); }
+}
+.simmerMark { font-family: var(--simmer-display, 'Amarante', serif); font-size: 2.6rem; line-height: 1; }
+.simmerTag {
+  margin-top: 0.5rem !important;
+  font-family: var(--simmer-body, 'Times New Roman', Times, serif);
+  font-style: italic;
+  font-size: 1.05rem;
+  letter-spacing: 0.04em;
+  opacity: 0.78;
+}
+
+/* ── stackd: the layers drop in and stack ────────────────────────────── */
+.stackd { background: #7C2946; color: #FCE8CE; }
+.stackd .art { width: 112px; }
+.stack { animation: clear 3.4s infinite; }
+@keyframes clear { 0%, 84% { opacity: 1; transform: none; } 94% { opacity: 0; transform: translateY(6px); } 100% { opacity: 0; } }
+.l0, .l1, .l2, .l3 { animation: 3.4s infinite; }
+.l0 { animation-name: d0; }
+.l1 { animation-name: d1; }
+.l2 { animation-name: d2; }
+.l3 { animation-name: d3; }
+@keyframes d0 { 0% { transform: translateY(-70px); opacity: 0; animation-timing-function: cubic-bezier(0.34, 1.56, 0.64, 1); } 12%, 100% { transform: none; opacity: 1; } }
+@keyframes d1 { 0%, 9% { transform: translateY(-70px); opacity: 0; animation-timing-function: cubic-bezier(0.34, 1.56, 0.64, 1); } 21%, 100% { transform: none; opacity: 1; } }
+@keyframes d2 { 0%, 18% { transform: translateY(-70px); opacity: 0; animation-timing-function: cubic-bezier(0.34, 1.56, 0.64, 1); } 30%, 100% { transform: none; opacity: 1; } }
+@keyframes d3 { 0%, 27% { transform: translateY(-70px); opacity: 0; animation-timing-function: cubic-bezier(0.34, 1.56, 0.64, 1); } 40%, 100% { transform: none; opacity: 1; } }
+.stackdMark { font-family: var(--stackd-display, 'Playfair Display', Georgia, serif); font-weight: 700; font-size: 2.5rem; line-height: 1; letter-spacing: -0.01em; }
+.stackdLine { margin-top: 0.6rem !important; font-family: var(--stackd-body, 'Inter', system-ui, sans-serif); font-size: 0.95rem; color: rgba(252, 232, 206, 0.8); }
+
+/* ── Flipd: a patty flips over the griddle ───────────────────────────── */
+.flipd { background: #FED561; color: #294375; }
+.flipd .art { width: 104px; }
+.patty {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: flip 1.8s infinite;
+}
+@keyframes flip {
+  0%, 100% { transform: none; }
+  10% { transform: scale(1.1, 0.8); animation-timing-function: cubic-bezier(0.2, 0.7, 0.3, 1); }
+  30% { transform: translateY(-46px) scaleY(0.15) rotate(-8deg); animation-timing-function: linear; }
+  45% { transform: translateY(-54px) scaleY(-1); animation-timing-function: linear; }
+  60% { transform: translateY(-30px) scaleY(0.15) rotate(8deg); animation-timing-function: cubic-bezier(0.6, 0, 0.9, 0.5); }
+  72% { transform: scale(1.14, 0.78); animation-timing-function: cubic-bezier(0.34, 1.56, 0.64, 1); }
+  84% { transform: none; }
+}
+.sizzle { opacity: 0; animation: sizzle 1.05s ease-out infinite; }
+@keyframes sizzle {
+  0% { opacity: 0; transform: none; }
+  30% { opacity: 0.85; }
+  100% { opacity: 0; transform: translateY(-10px); }
+}
+.flipdMark { font-family: var(--flipd-display, 'Alfa Slab One', Georgia, serif); font-size: 2.6rem; line-height: 1; }
+.flipdLine { margin-top: 0.55rem !important; font-family: var(--flipd-body, 'Poppins', system-ui, sans-serif); font-weight: 600; font-size: 0.95rem; }
+
+@media (prefers-reduced-motion: reduce) {
+  .wrap * { animation: none !important; }
+}

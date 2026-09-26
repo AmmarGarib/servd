@@ -1,0 +1,368 @@
+/* simmer — the walk-in. Styles for SpeakeasyFridgeHero.
+ *
+ * The component writes eased scroll phases as custom properties on .walkin:
+ *   --handle  0→1  the lever turns down
+ *   --door    0→120 degrees the door has swung (crack, then the heavy swing)
+ *   --vapor   0→1  cold air spilling out of the seal, along the floor
+ *   --inside  0→1  the interior drawing, visible once the seal breaks
+ *   --pilot   1→0  the orange pilot light, out once the door is open
+ *   --flame   0→1  the candle at the bottom of the stairs
+ *   --l0 --l1 --l2  the three lines of the titles, one after another
+ *   --cta     0→1  reserve / menu
+ *   --floor   0→1  the hours on the floor
+ *   --cue     1→0  "scroll to open"
+ *
+ * Flat colour only: the grid is an SVG pattern (no linear-gradient), the
+ * steel frame is two bone rules, the door's weight is a real edge, not a
+ * blurred shadow. One orange at a time: the pilot light while the door is
+ * shut, the candle once it is open.
+ */
+
+.walkin {
+  position: relative;
+  height: 250vh;
+  background: var(--simmer-green);
+  color: var(--simmer-bone);
+}
+
+.pin {
+  position: sticky;
+  /* The brand header is sticky above this and ~5rem tall; pin just under it
+     so the door is centred in what is actually visible. */
+  top: 5rem;
+  height: calc(100vh - 5rem);
+  height: calc(100svh - 5rem);
+  min-height: 30rem;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.grid {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+/* Drawing furniture: title blocks + the dimension footer. Times, lowercase,
+   tracked — the utility voice. 0.72 bone on tiber is 6.2:1. */
+.block {
+  position: absolute;
+  /* Under the stage: the door swings in front of the drawing's title
+     block, as it would in a room. */
+  z-index: 1;
+  font-family: var(--simmer-body);
+  font-size: 0.68rem;
+  letter-spacing: 0.28em;
+  line-height: 1.7;
+  text-transform: lowercase;
+  color: var(--simmer-bone);
+  opacity: 0.78;
+  pointer-events: none;
+  margin: 0;
+}
+.blockTL { top: 1.4rem; left: clamp(1rem, 4vw, 3rem); }
+.blockTR { top: 1.4rem; right: clamp(1rem, 4vw, 3rem); text-align: right; }
+.blockBottom {
+  bottom: 1rem;
+  left: clamp(1rem, 4vw, 3rem);
+  right: clamp(1rem, 4vw, 3rem);
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+}
+.strong { opacity: 1; color: var(--simmer-bone); }
+
+.cue {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.7rem;
+  opacity: var(--cue, 1);
+}
+.cueLine {
+  position: relative;
+  display: inline-block;
+  width: 1px;
+  height: 1.6rem;
+  overflow: hidden;
+  background: rgba(237, 230, 211, 0.25);
+}
+.cueLine::after {
+  content: '';
+  position: absolute;
+  left: 0; top: 0;
+  width: 1px; height: 100%;
+  background: var(--simmer-bone);
+  animation: drip 2.4s cubic-bezier(0.6, 0, 0.3, 1) infinite;
+}
+@keyframes drip {
+  0%   { transform: translateY(-100%); }
+  60%  { transform: translateY(0); }
+  100% { transform: translateY(100%); }
+}
+
+/* ── The stage: the doorway itself ──────────────────────────────────────── */
+.stage {
+  position: relative;
+  z-index: 2;
+  width: min(88vw, 600px, calc((100svh - 14rem) * 0.652));
+  aspect-ratio: 3 / 4.6;
+  perspective: 1800px;
+  container-type: inline-size;
+  margin-top: 1.5rem;
+}
+
+.interior {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  opacity: var(--inside, 0);
+  background: var(--simmer-green);
+}
+
+.candleSpot {
+  position: absolute;
+  left: 50%;
+  top: 61%;
+  width: 6%;
+  transform: translateX(-50%);
+  opacity: var(--flame, 0);
+}
+
+.door {
+  position: absolute;
+  inset: 0;
+  transform-origin: left center;
+  transform: rotateY(calc(var(--door, 0) * -1deg));
+  transform-style: preserve-3d;
+  z-index: 3;
+  will-change: transform;
+}
+.face {
+  position: absolute;
+  inset: 0;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  background: var(--simmer-green);
+}
+/* The door's thickness: a real edge on the free side, so the door has
+   weight as it swings instead of being a card. */
+.edge {
+  position: absolute;
+  top: 0; bottom: 0; right: 0;
+  width: 3cqw;
+  transform-origin: right center;
+  transform: rotateY(-90deg);
+  background: var(--simmer-green);
+  border-left: 1px solid rgba(237, 230, 211, 0.85);
+  border-right: 1px solid rgba(237, 230, 211, 0.85);
+  box-shadow: inset 0 0 0 0.9cqw #04291f;
+}
+.inner {
+  transform: translateZ(-3cqw) rotateY(180deg);
+}
+
+/* Steel frame around the doorway, as two bone rules — a drawing of steel,
+   not a painting of it. */
+.frame {
+  position: absolute;
+  inset: -12px;
+  border: 1.5px solid rgba(237, 230, 211, 0.85);
+  pointer-events: none;
+  z-index: 4;
+}
+.frame::before {
+  content: '';
+  position: absolute;
+  inset: 7px;
+  border: 1px solid rgba(237, 230, 211, 0.4);
+}
+.bolt {
+  position: absolute;
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  border: 1px solid rgba(237, 230, 211, 0.85);
+}
+
+/* Thermometer + pilot light, mounted over the frame. */
+.thermo {
+  position: absolute;
+  bottom: calc(100% + 20px);
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  z-index: 5;
+  pointer-events: none;
+}
+.thermoBody {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 9px;
+  background: var(--simmer-black);
+  border: 1px solid rgba(237, 230, 211, 0.35);
+  font-family: var(--simmer-body);
+  font-size: 0.66rem;
+  letter-spacing: 0.2em;
+  color: var(--simmer-bone);
+}
+.readout {
+  font-size: 0.9rem;
+  letter-spacing: 0.06em;
+  font-variant-numeric: tabular-nums;
+}
+.pilotWrap {
+  position: relative;
+  width: 9px; height: 9px;
+}
+.pilotRing {
+  position: absolute; inset: 0;
+  border-radius: 50%;
+  border: 1px solid rgba(237, 230, 211, 0.7);
+}
+.pilot {
+  position: absolute; inset: 0;
+  border-radius: 50%;
+  background: var(--simmer-orange);
+  opacity: var(--pilot, 1);
+}
+.pilot::after {
+  /* The lamp's own lit disc — same orange, flat, low opacity. */
+  content: '';
+  position: absolute;
+  inset: -5px;
+  border-radius: 50%;
+  background: var(--simmer-orange);
+  opacity: 0.18;
+  animation: hum 3.1s ease-in-out infinite;
+}
+@keyframes hum {
+  0%, 100% { transform: scale(1); opacity: 0.18; }
+  50% { transform: scale(1.25); opacity: 0.1; }
+}
+
+/* Condensation drips on the view pane. */
+.drip {
+  animation: run 9s cubic-bezier(0.5, 0, 0.8, 0.6) infinite;
+  animation-delay: calc(var(--i, 0) * -4.2s);
+}
+@keyframes run {
+  0%, 30% { transform: translateY(0); opacity: 0; }
+  36%     { opacity: 0.6; }
+  90%     { transform: translateY(96px); opacity: 0.5; }
+  100%    { transform: translateY(104px); opacity: 0; }
+}
+
+/* ── Vapour ─────────────────────────────────────────────────────────────── */
+.vapor {
+  position: absolute;
+  left: -40%; right: -40%;
+  bottom: -9%;
+  height: 32%;
+  z-index: 5;
+  opacity: var(--vapor, 0);
+  pointer-events: none;
+}
+.vapor svg { width: 100%; height: 100%; overflow: visible; display: block; }
+.wisp {
+  transform-box: fill-box;
+  transform-origin: 50% 100%;
+  animation: roll var(--d, 9s) ease-in-out infinite alternate;
+  animation-delay: calc(var(--i, 0) * -2.7s);
+}
+@keyframes roll {
+  0%   { transform: translateX(calc(var(--dx, 16px) * -1)) scale(0.96, 0.9); }
+  100% { transform: translateX(var(--dx, 16px)) scale(1.05, 1.08); }
+}
+/* ── Titles inside the doorway ──────────────────────────────────────────── */
+.titles {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  pointer-events: none;
+}
+.stamp {
+  position: absolute;
+  top: 6%;
+  left: 0; right: 0;
+  margin: 0;
+  font-family: var(--simmer-body);
+  font-size: max(0.66rem, 2.9cqw);
+  letter-spacing: 0.28em;
+  text-transform: lowercase;
+  opacity: var(--l0, 0);
+}
+.headline {
+  position: absolute;
+  top: 10.5%;
+  left: 0; right: 0;
+  margin: 0;
+  font-family: var(--simmer-display);
+  font-weight: 400;
+  font-size: 12.5cqw;
+  line-height: 1.02;
+  letter-spacing: 0.01em;
+}
+.hLine {
+  display: block;
+  overflow: hidden;
+  padding-bottom: 0.1em;
+}
+.hLine > span {
+  display: inline-block;
+  transform: translateY(calc((1 - var(--t, 0)) * 110%));
+}
+.ctas {
+  position: absolute;
+  top: 75%;
+  left: 0; right: 0;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.6rem;
+  padding: 0 4%;
+  opacity: var(--cta, 0);
+  transform: translateY(calc((1 - var(--cta, 0)) * 14px));
+  pointer-events: auto;
+}
+.ctas a {
+  font-size: max(0.7rem, 2.5cqw);
+  padding-left: max(1rem, 3.4cqw);
+  padding-right: max(1rem, 3.4cqw);
+}
+.floor {
+  position: absolute;
+  bottom: 3.5%;
+  left: 0; right: 0;
+  margin: 0;
+  font-family: var(--simmer-body);
+  font-size: max(0.66rem, 2.6cqw);
+  letter-spacing: 0.3em;
+  text-transform: lowercase;
+  opacity: var(--floor, 0);
+}
+
+@media (max-width: 600px) {
+  .hideSm { display: none !important; }
+  .block { font-size: 0.62rem; letter-spacing: 0.22em; }
+  .blockTL, .blockTR { top: 0.9rem; }
+}
+
+/* ── Reduced motion ─────────────────────────────────────────────────────── */
+/* No runway and no swing: one screen, the door already open, the candle
+   lit, the titles set, the links live. No loops. */
+@media (prefers-reduced-motion: reduce) {
+  .walkin { height: auto !important; }
+  .pin { position: relative; top: 0; }
+  .cueLine::after, .pilot::after, .drip, .wisp { animation: none !important; }
+  .drip { opacity: 0; }
+}

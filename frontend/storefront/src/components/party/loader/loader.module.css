@@ -1,0 +1,228 @@
+/* PartyLoader — servd hub route loader. Palette per design-system party.md:
+   plum on butter 8.35:1, ink on butter 11.52:1. Tomato = decoration only.
+   One 2.6s beat drives the wave; --i staggers each character. */
+
+.screen,
+.inline {
+  --plum: #4E2A4F;
+  --ink: #2A1A2B;
+  --tomato: #FF5A3C;
+  --beat: 2.6s;
+  --spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  color: var(--ink);
+}
+
+.screen {
+  min-height: 100dvh;
+  padding: 6rem 16px 3rem;
+  gap: clamp(0.4rem, 2vh, 1.2rem);
+  overflow: hidden;
+  isolation: isolate;
+  background:
+    radial-gradient(ellipse 60% 45% at 50% 45%, rgba(255, 250, 225, 0.8) 0%, rgba(255, 250, 225, 0) 70%),
+    #FFD447;
+}
+
+.inline { padding: 2rem 16px; gap: 0.4rem; }
+
+.stage { position: relative; width: min(100%, 900px); }
+.inline .stage { width: min(100%, 340px); }
+.crowd { position: relative; display: block; width: 100%; height: auto; overflow: visible; }
+
+/* Retro diner sunburst — slow spin behind the crowd. */
+.burst {
+  position: absolute;
+  z-index: -1;
+  left: 50%;
+  top: 44%;
+  width: min(150vmax, 1500px);
+  aspect-ratio: 1;
+  translate: -50% -50%;
+  border-radius: 50%;
+  background: repeating-conic-gradient(rgba(255, 248, 214, 0.5) 0 7.5deg, rgba(255, 248, 214, 0) 7.5deg 15deg);
+  -webkit-mask-image: radial-gradient(circle, #000 12%, transparent 58%);
+  mask-image: radial-gradient(circle, #000 12%, transparent 58%);
+  animation: spin 60s linear infinite;
+}
+@keyframes spin { to { rotate: 360deg; } }
+
+/* Phones: crop the row to the middle four so every face stays big. */
+@media (max-width: 560px) {
+  .screen .stage {
+    overflow: hidden;
+    -webkit-mask-image: linear-gradient(90deg, transparent, #000 14%, #000 86%, transparent);
+    mask-image: linear-gradient(90deg, transparent, #000 14%, #000 86%, transparent);
+  }
+  .screen .crowd { width: 150%; margin-left: -25%; }
+}
+
+/* ── Characters ─────────────────────────────────────────────────────── */
+.hop {
+  animation: hop var(--beat) infinite;
+  animation-delay: calc(var(--i) * 120ms);
+}
+@keyframes hop {
+  0%, 44%, 100% { transform: none; }
+  7%  { transform: scale(1.13, 0.85); animation-timing-function: cubic-bezier(0.2, 0.7, 0.3, 1); }
+  21% { transform: translateY(-46px) scale(0.93, 1.09); animation-timing-function: ease-in-out; }
+  25% { transform: translateY(-48px) scale(1); animation-timing-function: cubic-bezier(0.6, 0, 0.9, 0.5); }
+  33% { transform: translateY(0) scale(1.16, 0.83); animation-timing-function: var(--spring); }
+  39% { transform: scale(0.96, 1.05); }
+}
+
+.armL { transform: rotate(18deg); animation: armL var(--beat) infinite; }
+.armR { transform: rotate(-18deg); animation: armR var(--beat) infinite; }
+.armL, .armR { animation-delay: calc(var(--i) * 120ms); }
+@keyframes armL {
+  0%, 44%, 100% { transform: rotate(18deg); }
+  9%  { transform: rotate(48deg); }
+  19%, 29% { transform: rotate(158deg); }
+  37% { transform: rotate(8deg); }
+}
+@keyframes armR {
+  0%, 44%, 100% { transform: rotate(-18deg); }
+  9%  { transform: rotate(-48deg); }
+  19%, 29% { transform: rotate(-158deg); }
+  37% { transform: rotate(-8deg); }
+}
+
+.shadow {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: shadow var(--beat) infinite;
+  animation-delay: calc(var(--i) * 120ms);
+}
+@keyframes shadow {
+  0%, 44%, 100% { transform: none; opacity: 0.16; }
+  7%  { transform: scaleX(1.12); }
+  23% { transform: scale(0.5); opacity: 0.06; }
+  33% { transform: scaleX(1.18); opacity: 0.2; }
+}
+
+.spark {
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: spark var(--beat) infinite;
+  animation-delay: calc(var(--i) * 120ms);
+}
+@keyframes spark {
+  0%, 17%  { opacity: 0; transform: scale(0) rotate(0); }
+  24% { opacity: 1; transform: scale(1.3) rotate(45deg); }
+  34% { opacity: 1; transform: scale(0.9) rotate(90deg); }
+  42%, 100% { opacity: 0; transform: scale(0) rotate(120deg); }
+}
+
+/* Eyes: blink on each character's own clock; glance follows the wave. */
+.blink {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: blink var(--b) infinite;
+  animation-delay: calc(var(--i) * -0.7s);
+}
+@keyframes blink {
+  0%, 93%, 100% { transform: none; }
+  96% { transform: scaleY(0.08); }
+}
+.look { animation: look var(--beat) infinite ease-in-out; }
+@keyframes look {
+  0%, 18%, 100% { transform: translateX(-3px); }
+  50%, 62% { transform: translateX(3px); }
+  70%, 90% { transform: translate(0, 1px); }
+}
+.up { animation: up var(--beat) infinite; animation-delay: calc(var(--i) * 120ms); }
+@keyframes up {
+  0%, 40%, 100% { transform: none; }
+  14%, 30% { transform: translateY(-2.6px); }
+}
+
+/* ── Wordmark + status ──────────────────────────────────────────────── */
+.brand { display: grid; justify-items: center; gap: 0.5rem; }
+
+.wordmark {
+  margin: 0;
+  font-family: var(--font-wordmark);
+  font-weight: 800;
+  font-size: clamp(3rem, 10vw, 5rem);
+  line-height: 1;
+  letter-spacing: -0.04em;
+  color: var(--plum);
+}
+.inline .wordmark { font-size: 1.9rem; }
+.wordmark span {
+  display: inline-block;
+  animation: letter var(--beat) infinite;
+  animation-delay: calc(900ms + var(--l) * 70ms);
+}
+@keyframes letter {
+  0%, 30%, 100% { transform: none; }
+  9%  { transform: translateY(-22%) rotate(-5deg); animation-timing-function: ease-in; }
+  18% { transform: translateY(4%) scaleY(0.94); animation-timing-function: var(--spring); }
+}
+.wordmark .dot {
+  width: 0.2em;
+  height: 0.2em;
+  margin-left: 0.05em;
+  border-radius: 50%;
+  background: var(--tomato);
+  animation-name: dot;
+}
+@keyframes dot {
+  0%, 36%, 100% { transform: none; }
+  11% { transform: translateY(-160%); animation-timing-function: ease-in; }
+  21% { transform: scale(1.3, 0.7); animation-timing-function: var(--spring); }
+  27% { transform: translateY(-40%); }
+}
+
+.status {
+  position: relative;
+  margin: 0;
+  width: 22rem;
+  max-width: 100%;
+  height: 1.6em;
+  overflow: hidden;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 1.05rem;
+  letter-spacing: -0.01em;
+  color: var(--plum);
+}
+.status span {
+  position: absolute;
+  inset: 0;
+  white-space: nowrap;
+  opacity: 0;
+  animation: line 7s infinite backwards;
+  animation-delay: calc(var(--n) * 1.4s - 0.25s);
+}
+.status .fixed { opacity: 1; animation: none; }
+@keyframes line {
+  0%   { opacity: 0; transform: translateY(80%); }
+  3.6%, 17% { opacity: 1; transform: none; animation-timing-function: ease-in; }
+  20%, 100% { opacity: 0; transform: translateY(-80%); }
+}
+
+/* ── Doodles ────────────────────────────────────────────────────────── */
+.doodle { position: absolute; animation: float 5s ease-in-out infinite; }
+.dStar { top: 16%; left: 9%; width: clamp(28px, 4vw, 46px); fill: var(--plum); }
+.dDot { top: 24%; right: 12%; width: 18px; fill: var(--tomato); animation-delay: -2s; }
+.dSquig {
+  bottom: 16%; right: 8%; width: clamp(64px, 9vw, 96px);
+  fill: none; stroke: var(--tomato); stroke-width: 5; stroke-linecap: round;
+  animation-delay: -3.5s;
+}
+@keyframes float {
+  0%, 100% { transform: translateY(0) rotate(0); }
+  50% { transform: translateY(-12px) rotate(10deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .screen *, .inline * { animation: none !important; }
+  .status span:first-child { opacity: 1; transform: none; }
+}

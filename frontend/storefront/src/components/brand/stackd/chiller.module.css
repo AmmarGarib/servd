@@ -1,0 +1,269 @@
+/* The grab-and-go chiller. Chips: plum-dark on sky (9.80:1). Cabinet labels:
+   cream on plum-dark (13.5:1). The cabinet itself is aria-hidden decoration. */
+
+.section { padding: clamp(3.5rem, 9vh, 6rem) 0; }
+.grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: clamp(2rem, 6vw, 5rem);
+  align-items: center;
+}
+.copy { min-width: 0; }
+
+.chips {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  margin: 1.4rem 0 0;
+  padding: 0;
+}
+.chips li {
+  padding: 0.4rem 0.85rem;
+  border-radius: 999px;
+  background: var(--stackd-sky);
+  color: var(--stackd-plum-dark);
+  font-family: var(--stackd-mono);
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  border: 2px solid var(--stackd-plum-dark);
+}
+.chips li:nth-child(2) { rotate: -2deg; }
+.chips li:nth-child(3) { rotate: 1.5deg; }
+
+/* ── The cabinet ─────────────────────────────────────────────────────── */
+.fridge {
+  /* Hinged on the RIGHT so the open door swings away from the copy. */
+  --door: calc(var(--p, 0) * 104deg);
+  position: relative;
+  width: min(30rem, 100%);
+  justify-self: center;
+}
+.top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.9rem 1.4rem 0.75rem;
+  border-radius: 2rem 2rem 0 0;
+  background: var(--stackd-plum-dark);
+  color: var(--stackd-cream);
+  box-shadow: inset 0 3px 0 rgba(252, 232, 206, 0.12);
+}
+.brand { font-family: var(--stackd-display); font-weight: 800; font-size: 1.35rem; letter-spacing: -0.02em; }
+.led {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.25rem 0.65rem;
+  border-radius: 999px;
+  background: #1F0912;
+  font-family: var(--stackd-mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--stackd-sky);
+}
+.ledDot { width: 0.45rem; height: 0.45rem; border-radius: 50%; background: var(--stackd-sky); box-shadow: 0 0 8px var(--stackd-sky); animation: blink 2.4s steps(1) infinite; }
+@keyframes blink { 50% { opacity: 0.35; } }
+
+.cabinet {
+  position: relative;
+  padding: 0 0.85rem 0.85rem;
+  background: var(--stackd-plum-dark);
+  border-radius: 0 0 1.6rem 1.6rem;
+  perspective: 1500px;
+  box-shadow: 0 50px 60px -34px rgba(20, 6, 12, 0.9);
+}
+
+.interior {
+  position: relative;
+  overflow: hidden;
+  border-radius: 1rem;
+  padding: 0.6rem 0.9rem 0;
+  background: linear-gradient(180deg, #F2FAFB 0%, #CBE9EE 45%, #A9D9E1 100%);
+  box-shadow: inset 0 0 0 3px rgba(61, 17, 34, 0.35), inset 0 18px 30px -12px rgba(255, 255, 255, 0.9);
+}
+.light {
+  position: absolute;
+  top: 0;
+  left: 12%;
+  right: 12%;
+  height: 0.35rem;
+  border-radius: 0 0 0.5rem 0.5rem;
+  background: #FFFFFF;
+  box-shadow: 0 0 22px 8px rgba(255, 255, 255, 0.85);
+}
+.crowd {
+  position: relative;
+  width: calc(100% + 1.8rem);
+  margin: 0 -0.9rem;
+  height: clamp(10rem, 40vw, 13.5rem);
+}
+.rail {
+  position: relative;
+  height: 0.55rem;
+  margin: 0 -0.9rem;
+  background: linear-gradient(180deg, #5A2238 0%, var(--stackd-plum-dark) 100%);
+  box-shadow: 0 8px 12px -6px rgba(61, 17, 34, 0.45);
+}
+.rowWraps, .rowBottles {
+  display: flex;
+  justify-content: center;
+  align-items: flex-end;
+  padding-top: 0.6rem;
+}
+.rowWraps { gap: 0.4rem; }
+.rowWraps svg { width: 28%; max-width: 7rem; height: auto; display: block; }
+.rowBottles { gap: 0.2rem; }
+.rowBottles svg { width: 15%; max-width: 3.4rem; height: auto; display: block; }
+.isOpen .rowBottles svg { animation: clink 600ms ease-out both; }
+.isOpen .rowBottles svg:nth-child(2) { animation-delay: 70ms; }
+.isOpen .rowBottles svg:nth-child(3) { animation-delay: 140ms; }
+.isOpen .rowBottles svg:nth-child(4) { animation-delay: 210ms; }
+.isOpen .rowBottles svg:nth-child(5) { animation-delay: 280ms; }
+@keyframes clink {
+  30% { transform: rotate(-4deg); }
+  60% { transform: rotate(3deg); }
+  100% { transform: none; }
+}
+
+/* Cold air rolling out of the open door. */
+.mist {
+  position: relative;
+  height: 2.4rem;
+  margin: 0 -0.9rem;
+  opacity: calc(var(--p, 0) * 1.2 - 0.2);
+  pointer-events: none;
+}
+.mist span {
+  position: absolute;
+  bottom: -0.6rem;
+  width: 55%;
+  height: 2.6rem;
+  border-radius: 50%;
+  background: radial-gradient(ellipse at center, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0) 70%);
+  animation: roll 5s ease-in-out infinite;
+}
+.mist span:nth-child(1) { left: -10%; }
+.mist span:nth-child(2) { left: 30%; animation-delay: -1.7s; }
+.mist span:nth-child(3) { left: 60%; animation-delay: -3.3s; }
+@keyframes roll {
+  0%, 100% { transform: translateX(-8%) scale(1); }
+  50% { transform: translateX(10%) scale(1.15, 0.9); }
+}
+
+/* The door: hinged on the left, swings toward the reader. */
+.door {
+  position: absolute;
+  top: 0;
+  left: 0.85rem;
+  right: 0.85rem;
+  bottom: 0.85rem;
+  transform-origin: 100% 50%;
+  transform-style: preserve-3d;
+  transform: rotateY(var(--door));
+  will-change: transform;
+}
+.doorFace, .doorBack {
+  position: absolute;
+  inset: 0;
+  border-radius: 1rem;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+.doorFace {
+  overflow: hidden;
+  border: 0.55rem solid #2A0B17;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.18), rgba(255, 255, 255, 0.04) 45%, rgba(255, 255, 255, 0.12));
+  box-shadow: inset 0 0 0 2px rgba(252, 232, 206, 0.18);
+}
+/* Inside of the door: the gasket and two door shelves. */
+.doorBack {
+  transform: rotateY(180deg);
+  background:
+    linear-gradient(180deg, transparent 0 30%, #5A2238 30% 32%, transparent 32% 62%, #5A2238 62% 64%, transparent 64%),
+    linear-gradient(90deg, #2A0B17, #3D1122 60%, #2A0B17);
+  box-shadow: inset 0 0 0 0.7rem #3D1122, inset 0 0 0 0.9rem rgba(155, 211, 221, 0.45);
+}
+.fog {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: calc(0.92 - var(--p, 0) * 1.15);
+}
+.drops {
+  position: absolute;
+  inset: 0;
+  opacity: calc(1 - var(--p, 0) * 1.5);
+  background-image:
+    radial-gradient(circle at 30% 30%, rgba(255, 255, 255, 0.95) 0 1.2px, rgba(255, 255, 255, 0) 2.4px),
+    radial-gradient(circle at 70% 60%, rgba(255, 255, 255, 0.85) 0 1.8px, rgba(255, 255, 255, 0) 3px),
+    radial-gradient(circle at 50% 80%, rgba(255, 255, 255, 0.8) 0 1px, rgba(255, 255, 255, 0) 2px);
+  background-size: 23px 29px, 37px 41px, 17px 19px;
+}
+.drip {
+  position: absolute;
+  top: 12%;
+  width: 5px;
+  height: 11px;
+  border-radius: 50% 50% 50% 50% / 40% 40% 60% 60%;
+  background: rgba(255, 255, 255, 0.95);
+  box-shadow: 0 0 0 1px rgba(124, 41, 70, 0.25);
+  opacity: calc(1 - var(--p, 0) * 2);
+  animation: drip 6s cubic-bezier(0.5, 0, 0.9, 0.6) infinite;
+}
+@keyframes drip {
+  0%, 20% { transform: translateY(0); }
+  100% { transform: translateY(340px); }
+}
+.decal {
+  position: absolute;
+  left: 1.6rem;
+  bottom: 1.6rem;
+  width: 5.2rem;
+  height: 5.2rem;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--stackd-cream);
+  border: 3px solid var(--stackd-plum);
+  box-shadow: 0 0 0 4px var(--stackd-sky);
+  font-family: var(--stackd-display);
+  font-style: italic;
+  font-weight: 700;
+  font-size: 1rem;
+  line-height: 0.95;
+  text-align: center;
+  color: var(--stackd-plum-dark);
+  rotate: -10deg;
+}
+.handle {
+  position: absolute;
+  top: 34%;
+  left: 0.7rem;
+  width: 0.7rem;
+  height: 30%;
+  border-radius: 0.4rem;
+  background: linear-gradient(90deg, #C9CCD0, #FFFFFF 50%, #9EA2A8);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+  transform: translateZ(10px);
+  backface-visibility: hidden;
+}
+.feet {
+  display: flex;
+  justify-content: space-between;
+  padding: 0 2rem;
+}
+.feet span { width: 2.2rem; height: 0.7rem; border-radius: 0 0 0.5rem 0.5rem; background: #2A0B17; }
+
+@media (max-width: 860px) {
+  .grid { grid-template-columns: minmax(0, 1fr); }
+  .fridge { width: min(26rem, 100%); }
+  .crowd { height: clamp(9.5rem, 44vw, 12rem); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ledDot, .mist span, .drip, .isOpen .rowBottles svg { animation: none; }
+}

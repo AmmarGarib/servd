@@ -1,0 +1,389 @@
+/* The kitchens — trading-card deck on a cream ground. */
+.section {
+  position: relative;
+  padding: clamp(3rem, 6vw, 5rem) 0 clamp(4.5rem, 8vw, 7rem);
+  background:
+    radial-gradient(circle, rgba(78, 42, 79, 0.09) 1.4px, transparent 1.6px) 0 0 / 22px 22px,
+    #FFF4D6;
+  scroll-margin-top: 4rem;
+}
+
+.bgStar {
+  position: absolute;
+  width: clamp(26px, 3vw, 42px);
+  top: 3.5rem;
+  right: 7%;
+  fill: #FF5A3C;
+  animation: spin 11s linear infinite;
+}
+
+.head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1.5rem 3rem;
+  margin-bottom: clamp(3.5rem, 6vw, 5rem);
+}
+
+.note {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.2rem;
+  margin: 0 0 0.5rem;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-style: italic;
+  font-size: 1.05rem;
+  color: #4E2A4F;
+  transform: rotate(-4deg);
+}
+.note span { max-width: 9.5rem; line-height: 1.15; text-align: right; }
+.note svg {
+  width: 82px;
+  fill: none;
+  stroke: #4E2A4F;
+  stroke-width: 3.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transform: translateY(18px);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: clamp(1.5rem, 3vw, 2.75rem);
+  align-items: start;
+  perspective: 1100px;
+}
+
+/* ── One card ─────────────────────────────────────────────────────────── */
+.slot {
+  position: relative;
+  /* Stagger the hand so it doesn't read as a template row. */
+}
+.slot:nth-child(2) { margin-top: 2.5rem; }
+
+.card {
+  position: relative;
+  padding: 12px 12px 16px;
+  border: 2.5px solid #2A1A2B;
+  border-radius: 28px;
+  box-shadow: 10px 10px 0 #2A1A2B;
+  transform-style: preserve-3d;
+  transition: box-shadow 220ms ease, translate 260ms cubic-bezier(0.34, 1.56, 0.64, 1);
+  isolation: isolate;
+}
+.slot:hover .card,
+.slot:focus-within .card {
+  translate: 0 -8px;
+  box-shadow: 14px 18px 0 #2A1A2B;
+}
+
+.tab {
+  position: absolute;
+  top: -30px;
+  left: 26px;
+  z-index: 0;
+  padding: 0.35rem 0.95rem 0.55rem;
+  border: 2.5px solid #2A1A2B;
+  border-bottom: 0;
+  border-radius: 14px 14px 0 0;
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 0.85rem;
+  letter-spacing: 0.02em;
+  line-height: 1.2;
+  transform: translateZ(-1px);
+}
+
+.photo {
+  position: relative;
+  aspect-ratio: 5 / 4;
+  overflow: hidden;
+  border: 2.5px solid #2A1A2B;
+  border-radius: 18px;
+  background: rgba(0, 0, 0, 0.2);
+}
+.photo img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  transition: transform 700ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.slot:hover .photo img { transform: scale(1.07) rotate(-0.6deg); }
+
+.num,
+.kind {
+  position: absolute;
+  font-family: var(--font-display);
+  font-weight: 800;
+  line-height: 1;
+  border: 2px solid #2A1A2B;
+  border-radius: 999px;
+}
+.num {
+  top: 10px;
+  left: 10px;
+  padding: 0.35rem 0.6rem;
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  background: #2A1A2B;
+  color: #FFF4D6;
+}
+.kind {
+  left: 10px;
+  bottom: 12px;
+  padding: 0.45rem 0.8rem;
+  font-size: 0.85rem;
+  background: #FFF4D6;
+  color: #2A1A2B;
+  transform: rotate(-3deg);
+  box-shadow: 0 3px 0 #2A1A2B;
+}
+
+/* Stickers slapped over the photo corner. */
+.sticker {
+  position: absolute;
+  z-index: 3;
+  pointer-events: none;
+  display: block;
+  transition: transform 380ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.sticker img { display: block; width: 100%; height: auto; }
+.stickerBadge {
+  width: clamp(92px, 9vw, 124px);
+  top: -34px;
+  right: -26px;
+  transform: rotate(14deg);
+  filter: drop-shadow(0 4px 0 rgba(42, 26, 43, 0.55));
+}
+.slot:hover .stickerBadge { transform: rotate(-4deg) scale(1.12); }
+/* stackd's walking-bread mascot on a die-cut cream disc. */
+.stickerMascot {
+  width: clamp(84px, 8vw, 104px);
+  aspect-ratio: 1;
+  top: -30px;
+  right: -22px;
+  padding: 10px 14px 6px;
+  border-radius: 999px;
+  border: 2.5px solid #2A1A2B;
+  background: #FCE8CE;
+  box-shadow: 0 4px 0 #2A1A2B;
+  transform: rotate(10deg);
+  overflow: hidden;
+}
+.stickerMascot img {
+  height: 100%;
+  width: auto;
+  margin-inline: auto;
+  transform-origin: 50% 90%;
+  animation: strut 1.4s ease-in-out infinite;
+  animation-play-state: paused;
+}
+.slot:hover .stickerMascot { transform: rotate(-6deg) scale(1.1); }
+.slot:hover .stickerMascot img { animation-play-state: running; }
+
+@keyframes strut {
+  0%, 100% { transform: rotate(-5deg); }
+  50% { transform: rotate(5deg) translateY(-3px); }
+}
+
+.body {
+  padding: 1.25rem 0.6rem 0.2rem;
+}
+
+.name {
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: clamp(2.3rem, 3.6vw, 3.1rem);
+  line-height: 0.95;
+  letter-spacing: -0.045em;
+  color: var(--text);
+}
+.wordmark {
+  display: block;
+  height: clamp(2.2rem, 3.3vw, 2.9rem);
+  width: auto;
+}
+
+/* Stretched link: the name's ::after covers the whole card. */
+.stretch {
+  color: inherit;
+  text-decoration: none;
+  outline: none;
+}
+.stretch::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  border-radius: 26px;
+}
+.stretch:focus-visible::after {
+  outline: 3px solid #2A1A2B;
+  outline-offset: 6px;
+}
+
+.tagline {
+  margin: 0.7rem 0 0;
+  font-size: 1.02rem;
+  line-height: 1.5;
+  color: var(--text);
+}
+
+.chips {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 1rem 0 0;
+  padding: 0;
+}
+.chips li {
+  padding: 0.32rem 0.7rem;
+  border: 1.5px solid var(--text);
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--text);
+}
+
+.actions {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-top: 1.4rem;
+}
+/* Sits above the stretched link. */
+.order { position: relative; z-index: 4; min-height: 50px; padding: 0.7rem 1.3rem; font-size: 0.98rem; }
+
+.visit {
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  border-radius: 999px;
+  border: 2px solid var(--text);
+  color: var(--text);
+  transition: transform 300ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.slot:hover .visit { transform: rotate(45deg) scale(1.08); }
+
+.glare {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: 26px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 250ms ease;
+  mix-blend-mode: soft-light;
+}
+.slot:hover .glare { opacity: 1; }
+
+/* ── simmer: the quiet card in the set ────────────────────────────────── */
+.elegant .name {
+  font-family: var(--simmer-display);
+  font-weight: 400;
+  letter-spacing: 0.01em;
+  font-size: clamp(2.4rem, 3.8vw, 3.2rem);
+}
+.elegant .tagline,
+.elegant .chips li {
+  font-family: var(--simmer-body);
+  letter-spacing: 0.03em;
+  text-transform: lowercase;
+}
+.elegant .tagline { font-size: 1.1rem; font-style: italic; }
+.elegant .chips li { border-width: 1px; border-color: rgba(243, 236, 222, 0.45); font-weight: 400; font-size: 0.85rem; }
+.elegant .num { background: #06392F; color: #F3ECDE; border-color: #F3ECDE; font-family: var(--simmer-body); font-weight: 400; letter-spacing: 0.2em; text-transform: lowercase; }
+.elegant .kind { background: #06392F; color: #F3ECDE; border: 1px solid #F3ECDE; box-shadow: none; transform: none; font-family: var(--simmer-body); font-weight: 400; letter-spacing: 0.14em; }
+.elegant .visit { border-width: 1px; }
+.elegant .photo img { filter: saturate(0.85) contrast(1.05); }
+.elegant .glare { mix-blend-mode: overlay; }
+
+.hairline {
+  display: block;
+  width: 3.5rem;
+  height: 2px;
+  margin-top: 0.9rem;
+  background: #E94E1B;
+  transform-origin: left;
+  animation: drawRule 1.6s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+@keyframes drawRule { from { transform: scaleX(0); } }
+
+/* Slow candle light over the photo — the only motion simmer gets. */
+.candle {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 70% 60% at 30% 85%, rgba(233, 78, 27, 0.28), transparent 70%),
+    linear-gradient(180deg, rgba(6, 57, 47, 0) 45%, rgba(6, 57, 47, 0.55) 100%);
+  animation: candle 5.5s ease-in-out infinite alternate;
+}
+@keyframes candle {
+  0% { opacity: 0.65; }
+  35% { opacity: 1; }
+  60% { opacity: 0.8; }
+  100% { opacity: 0.95; }
+}
+
+.orderQuiet {
+  position: relative;
+  z-index: 4;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 50px;
+  padding: 0.7rem 1.3rem;
+  border: 1px solid #F3ECDE;
+  border-radius: 999px;
+  color: #F3ECDE;
+  background: transparent;
+  font-family: var(--simmer-body);
+  font-size: 1rem;
+  letter-spacing: 0.06em;
+  text-transform: lowercase;
+  text-decoration: none;
+  transition: background-color 400ms ease, color 400ms ease;
+}
+.orderQuiet:hover { background: #F3ECDE; color: #06392F; }
+.orderQuiet:focus-visible { outline: 3px solid #2A1A2B; outline-offset: 4px; }
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── Responsive ───────────────────────────────────────────────────────── */
+@media (max-width: 980px) {
+  .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 4rem; }
+  .slot:nth-child(2) { margin-top: 0; }
+  .slot:nth-child(3) { grid-column: 1 / -1; max-width: 32rem; justify-self: center; width: 100%; }
+}
+
+@media (max-width: 640px) {
+  .grid { grid-template-columns: minmax(0, 1fr); row-gap: 3.5rem; perspective: none; }
+  .slot:nth-child(3) { max-width: none; }
+  .note { display: none; }
+  .card { box-shadow: 7px 7px 0 #2A1A2B; }
+  .stickerBadge { right: -8px; top: -30px; width: 88px; }
+  .stickerMascot { right: -6px; top: -26px; width: 80px; }
+  .actions .order { width: auto; flex: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bgStar, .stickerMascot img, .candle, .hairline { animation: none; }
+  .glare { display: none; }
+  .slot:hover .card, .slot:focus-within .card { translate: none; }
+  .slot:hover .photo img, .slot:hover .visit { transform: none; }
+  .slot:hover .stickerBadge { transform: rotate(14deg); }
+  .slot:hover .stickerMascot { transform: rotate(10deg); }
+}
