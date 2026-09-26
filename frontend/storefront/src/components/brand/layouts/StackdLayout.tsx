@@ -404,6 +404,8 @@ export function StackdLayout({ concept, concepts }: Props) {
                 src={wordmarkSrc}
                 alt=""
                 aria-hidden="true"
+                loading="lazy"
+                decoding="async"
                 {...wordmarkDims}
                 style={{ display: 'block', width: 'min(22rem, 70vw)', height: 'auto', margin: '0 auto' }}
               />

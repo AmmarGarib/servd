@@ -53,7 +53,11 @@ export function BrandShell({ concept, children }: Props) {
   } as React.CSSProperties
 
   return (
-    <div style={wrapperStyle}>
+    // brand-shell--<slug> is a styling hook only (no rules ship with it here):
+    // it lets globals.css give the nav + footer the brand's own focus ring,
+    // since they sit outside the .simmer-page / .stackd-page / .flipd-page
+    // wrappers the layouts render.
+    <div className={`brand-shell brand-shell--${concept.slug}`} style={wrapperStyle}>
       <BrandNav concept={concept} onBrandHost={onBrandHost} accent={accent} />
       {children}
       <BrandFooter concept={concept} onBrandHost={onBrandHost} accent={accent} />
@@ -277,7 +281,7 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
         </span>
         )}
         {!diner && (
-        <span style={{
+        <span className="brand-nav-wordmark" style={{
           fontFamily: wordmark.font,
           fontSize: '1.6rem',
           fontWeight: wordmark.weight,
@@ -321,6 +325,8 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
                 key={l.href}
                 href={l.href}
                 {...extra}
+                aria-current={active ? 'page' : undefined}
+                className={pillNav ? 'brand-nav-pill-link' : undefined}
                 style={{
                   padding: '0.45rem 0.9rem',
                   color: diner ? 'var(--flipd-blue)' : (active ? surface.text : surface.muted),
@@ -334,6 +340,7 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
                 }}
               >
                 {l.label}
+                {l.external && <span className="sr-only"> (opens in a new tab)</span>}
               </Tag>
             )
           })}
@@ -395,15 +402,19 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
         )}
 
         {/* Hamburger — the link row is hidden < sm, so phones need this. */}
+        {/* Named "Navigation", not "Menu": on a restaurant site the nav
+            already has a "Menu" link to the food, and two controls with the
+            same name that do different things is a trap for screen readers. */}
         <button
           type="button"
-          aria-label="Menu"
+          aria-label="Navigation"
           aria-expanded={open}
+          aria-controls="brand-nav-sheet"
           onClick={() => setOpen((o) => !o)}
           className={pillNav ? 'hidden' : 'inline-flex items-center justify-center sm:hidden'}
           style={{ width: '2.75rem', height: '2.75rem', marginLeft: '0.15rem', background: diner ? 'var(--flipd-bone)' : pillNav ? `rgba(${pillTint},0.05)` : 'transparent', border: diner ? '2px solid var(--flipd-blue)' : pillNav ? `1px solid rgba(${pillTint},0.18)` : 'none', borderRadius: pillNav ? '50%' : undefined, boxShadow: diner ? '0 3px 0 var(--flipd-blue)' : undefined, color: diner ? 'var(--flipd-blue)' : surface.text, cursor: 'pointer' }}
         >
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <svg aria-hidden="true" focusable="false" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             {open
               ? <><path d="M6 6l12 12" /><path d="M18 6L6 18" /></>
               : <><path d="M3 6h18" /><path d="M3 12h18" /><path d="M3 18h18" /></>}
@@ -414,6 +425,7 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
       {/* Mobile dropdown — full-width sheet below the bar. */}
       {open && !pillNav && (
         <div
+          id="brand-nav-sheet"
           className="sm:hidden flex flex-col"
           style={{
             position: 'absolute', top: '100%', left: 0, right: 0,
@@ -424,11 +436,17 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
           }}
         >
           {links.map((l) => {
-            const active = l.href === base ? pathname === l.href : pathname.startsWith(l.href)
+            const active = !l.external && (l.href === base ? pathname === l.href : pathname.startsWith(l.href))
+            // External (maps) links need a plain anchor for target/rel, same
+            // as the desktop row; <Link> would drop them.
+            const Tag: ElementType = l.external ? 'a' : Link
+            const extra = l.external ? { target: '_blank', rel: 'noopener noreferrer' } : {}
             return (
-              <Link
+              <Tag
                 key={l.href}
                 href={l.href}
+                {...extra}
+                aria-current={active ? 'page' : undefined}
                 onClick={() => setOpen(false)}
                 style={{
                   padding: '0.85rem 0.4rem',
@@ -440,7 +458,8 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
                 }}
               >
                 {l.label}
-              </Link>
+                {l.external && <span className="sr-only"> (opens in a new tab)</span>}
+              </Tag>
             )
           })}
           {/* No servd backlink on a brand microsite. The brand footer already
@@ -517,7 +536,7 @@ function BrandFooter({ concept, onBrandHost, accent }: { concept: Concept; onBra
             <span className="display-italic" style={{ color: accent }}> {cfg.ctaAccent}</span>
           </h2>
           <Link href={`/${concept.slug}`} className="brand-pill">
-            Order from {formatBrandName(concept.name)} →
+            Order from {formatBrandName(concept.name)} <span aria-hidden="true">→</span>
           </Link>
         </div>
 
@@ -546,9 +565,10 @@ function BrandFooter({ concept, onBrandHost, accent }: { concept: Concept; onBra
             {socials.length > 0 && (
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.9rem', marginTop: '1.1rem' }}>
                 {socials.map((s) => (
-                  <a key={s.key} href={s.href} target="_blank" rel="noreferrer"
+                  <a key={s.key} href={s.href} target="_blank" rel="noopener noreferrer"
                     style={{ fontSize: '0.72rem', fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase', color: surface.muted, textDecoration: 'none' }}>
                     {s.label}
+                    <span className="sr-only"> (opens in a new tab)</span>
                   </a>
                 ))}
               </div>
@@ -570,7 +590,7 @@ function BrandFooter({ concept, onBrandHost, accent }: { concept: Concept; onBra
                   // nav, so the nav's mapsUrl isn't in scope here.
                   const m = locationFor(concept.slug)?.mapsUrl
                   return m
-                    ? <a href={m} target="_blank" rel="noopener noreferrer" style={linkStyle}>Find us</a>
+                    ? <a href={m} target="_blank" rel="noopener noreferrer" style={linkStyle}>Find us<span className="sr-only"> (opens in a new tab)</span></a>
                     : <Link href={onBrandHost ? '/visit' : `/brand/${concept.slug}/visit`} style={linkStyle}>Find us</Link>
                 })()}
               </li>
@@ -624,7 +644,7 @@ function BrandFooter({ concept, onBrandHost, accent }: { concept: Concept; onBra
         }}>
           <span>© {new Date().getFullYear()} {formatBrandName(concept.name)} · GS Foods Pvt. Ltd.</span>
           <Link href={servdHome} style={{ color: surface.muted, textDecoration: 'none' }}>
-            back to servd<span style={{ color: accent }}>.</span> →
+            back to servd<span style={{ color: accent }}>.</span> <span aria-hidden="true">→</span>
           </Link>
         </div>
       </div>

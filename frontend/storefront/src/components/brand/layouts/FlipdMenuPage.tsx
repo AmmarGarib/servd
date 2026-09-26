@@ -162,8 +162,14 @@ export function FlipdMenuPage({ slug, conceptName, categories }: Props) {
                         style={{ padding: '0.95rem 0', opacity: soldOut ? 0.45 : 1 }}
                       >
                         <div style={{ display: 'flex', alignItems: 'baseline', gap: '1rem', justifyContent: 'space-between' }}>
-                          <p className="flipd-item-name" style={{ margin: 0 }}>
+                          {/* A level-3 heading under the category's h2, so a
+                              screen reader can step item to item. Stays a <p>
+                              so no heading styles leak into the look. */}
+                          <p className="flipd-item-name" role="heading" aria-level={3} style={{ margin: 0 }}>
                             {item.name}
+                            {/* The visible gap is a margin, so without this a
+                                screen reader runs the two together. */}
+                            {soldOut && <span className="sr-only">, </span>}
                             {soldOut && (
                               <span
                                 style={{

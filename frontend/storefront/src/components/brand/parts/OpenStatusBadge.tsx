@@ -234,6 +234,8 @@ export function HoursGrid({ hoursData, accentColor }: GridProps) {
               color: isToday ? accent : 'rgba(255,255,255,0.7)',
             }}>
               {label}
+              {/* Today is marked by colour alone on screen; say it. */}
+              {isToday && <span className="sr-only"> (today)</span>}
             </span>
             {isClosed ? (
               <span style={{ fontSize: '0.52rem', color: 'rgba(255,255,255,0.4)', fontWeight: 700 }}>Closed</span>

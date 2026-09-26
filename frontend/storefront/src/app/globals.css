@@ -2100,3 +2100,330 @@ button:hover > .kinetic-caret::after { transform: translateX(6px); }
 @media (prefers-reduced-motion: reduce) {
   .servd-loader-cell { animation: none; background-color: var(--cell-color); opacity: 0.35; }
 }
+
+/* ── Brand microsite focus rings ───────────────────────────────────────────
+   The global plum ring vanishes on the brand grounds (1.08–1.36:1). Each
+   brand gets its own ring plus an inner halo in its base colour, so it
+   reads on both its light and dark sections (≥6.9:1). No orange — simmer
+   keeps its single orange signal. */
+:is(.brand-shell--simmer, .simmer-page) :is(a, button, [role="button"], summary):focus-visible {
+  outline: 2px solid var(--simmer-bone);
+  outline-offset: 3px;
+  box-shadow: 0 0 0 5px var(--simmer-green);
+}
+:is(.brand-shell--stackd, .stackd-page) :is(a, button, [role="button"], summary):focus-visible {
+  outline: 2px solid var(--stackd-cream);
+  outline-offset: 3px;
+  box-shadow: 0 0 0 5px var(--stackd-plum-dark);
+}
+:is(.brand-shell--flipd, .flipd-page) :is(a, button, [role="button"], summary):focus-visible {
+  outline: 2px solid var(--flipd-blue);
+  outline-offset: 3px;
+  box-shadow: 0 0 0 5px var(--flipd-mustard);
+}
+
+/* Keep keyboard focus clear of the pinned brand header. */
+html:has(.brand-shell) { scroll-padding-top: 5.5rem; }
+
+/* Pill nav on small phones: the disc + wordmark + 3–4 pill links run
+   18–91px past a 375px screen. Drop the wordmark text (the logo disc stays
+   and the home link keeps its aria-label) and tighten the pill so it keeps
+   fitting — the pill itself stays, per its design intent. !important beats
+   the component's inline padding. */
+@media (max-width: 440px) {
+  .brand-shell .brand-nav-wordmark { display: none; }
+  .brand-shell .brand-nav-pill-link {
+    padding-left: 0.62rem !important;
+    padding-right: 0.62rem !important;
+    font-size: 0.86rem !important;
+  }
+}
+@media (max-width: 360px) {
+  .brand-shell .brand-nav-pill-link {
+    padding-left: 0.42rem !important;
+    padding-right: 0.42rem !important;
+    font-size: 0.8rem !important;
+  }
+}
+
+/* Invisible 44px hit area on small chips and nav-pill links — the visual
+   size is unchanged, only the tappable area grows. */
+.flipd-page .flipd-chip[href],
+.brand-shell nav a { position: relative; }
+.flipd-page .flipd-chip[href]::after,
+.brand-shell nav a::after {
+  content: "";
+  position: absolute;
+  inset: 50% auto auto 50%;
+  width: max(100%, 44px);
+  height: 44px;
+  transform: translate(-50%, -50%);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   servd HUB design system — dark premium, tactile.
+   Spec: design-system/servd/MASTER.md (generated with ui-ux-pro-max, adapted
+   to the obsidian-plum brand). Scope: home, browse, servd nav + footer ONLY.
+   Everything is scoped under `.hub` so brand microsites are untouched.
+   All text pairs verified WCAG AA — see MASTER.md before changing a color.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.hub {
+  --hub-bg:          #110B13;
+  --hub-bg-raised:   #171019;
+  --hub-surface:     #211824;
+  --hub-surface-2:   #2A1F2D;
+  --hub-line:        rgba(255, 255, 255, 0.08);
+  --hub-line-strong: rgba(255, 255, 255, 0.16);
+  --hub-text:        #F4EEF3;
+  --hub-text-mute:   #B8AAB9;
+  --hub-text-dim:    #9A8B9C;
+  --hub-plum:        #4E2A4F;
+  --hub-lilac:       #C9A4F2;
+  --hub-on-lilac:    #110B13;
+  --hub-ember:       #E8955F;
+  --hub-open:        #7BD88F;
+  /* WhatsApp green — only with DARK text; white on it is ~2:1 and fails. */
+  --hub-whatsapp:    #25D366;
+
+  --hub-font-display: 'Playfair Display', Georgia, 'Times New Roman', serif;
+  --hub-font-body:    'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+
+  --hub-ease:        cubic-bezier(0.22, 1, 0.36, 1);
+  --hub-ease-expo:   cubic-bezier(0.16, 1, 0.3, 1);
+  --hub-radius:      20px;
+  --hub-shadow:      inset 0 1px 0 rgba(255, 255, 255, 0.04),
+                     0 12px 32px -12px rgba(0, 0, 0, 0.6),
+                     0 2px 6px rgba(0, 0, 0, 0.35);
+  --hub-shadow-lift: inset 0 1px 0 rgba(255, 255, 255, 0.06),
+                     0 28px 56px -18px rgba(0, 0, 0, 0.75),
+                     0 4px 12px rgba(0, 0, 0, 0.4);
+
+  background: var(--hub-bg);
+  color: var(--hub-text);
+  font-family: var(--hub-font-body);
+  font-size: 1rem;
+  line-height: 1.6;
+  color-scheme: dark;
+}
+
+/* Keyboard focus — lilac ring on every interactive element in the hub. */
+.hub a:focus-visible,
+.hub button:focus-visible,
+.hub input:focus-visible,
+.hub select:focus-visible,
+.hub textarea:focus-visible,
+.hub [role="button"]:focus-visible {
+  outline: 2px solid var(--hub-lilac);
+  outline-offset: 3px;
+  border-radius: 10px;
+}
+
+/* ── Layout ─────────────────────────────────────────────────────────────── */
+.hub-container {
+  width: 100%;
+  max-width: 1240px;
+  margin: 0 auto;
+  padding-left: clamp(1.25rem, 4vw, 2.5rem);
+  padding-right: clamp(1.25rem, 4vw, 2.5rem);
+}
+.hub-section {
+  position: relative;
+  padding-top: clamp(4rem, 9vw, 8rem);
+  padding-bottom: clamp(4rem, 9vw, 8rem);
+}
+.hub-section--raised { background: var(--hub-bg-raised); }
+
+/* ── Type ───────────────────────────────────────────────────────────────── */
+.hub-display {
+  font-family: var(--hub-font-display);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.02;
+  color: var(--hub-text);
+  text-wrap: balance;
+}
+.hub-display em,
+.hub-display .hub-italic {
+  font-style: italic;
+  font-weight: 500;
+  color: var(--hub-lilac);
+}
+.hub-eyebrow {
+  font-family: var(--hub-font-body);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--hub-text-dim);
+}
+.hub-eyebrow--accent { color: var(--hub-ember); }
+.hub-lead {
+  font-size: clamp(1.05rem, 1.4vw, 1.2rem);
+  line-height: 1.65;
+  color: var(--hub-text-mute);
+  max-width: 62ch;
+  text-wrap: pretty;
+}
+.hub-meta { font-size: 0.875rem; color: var(--hub-text-dim); }
+
+/* ── Buttons — ≥44px targets, tactile press, 200ms states ──────────────── */
+.hub-btn,
+.hub-btn-ghost,
+.hub-btn-plum {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.55rem;
+  min-height: 48px;
+  padding: 0.8rem 1.5rem;
+  border-radius: 999px;
+  font-family: var(--hub-font-body);
+  font-weight: 600;
+  font-size: 0.975rem;
+  letter-spacing: -0.005em;
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: transform 220ms var(--hub-ease),
+              background-color 200ms ease,
+              border-color 200ms ease,
+              box-shadow 220ms var(--hub-ease),
+              color 200ms ease;
+  -webkit-tap-highlight-color: transparent;
+}
+.hub-btn {
+  background: var(--hub-lilac);
+  color: var(--hub-on-lilac);
+  box-shadow: 0 10px 28px -10px rgba(201, 164, 242, 0.55);
+}
+.hub-btn:hover { background: #D6B8F6; box-shadow: 0 16px 36px -12px rgba(201, 164, 242, 0.7); transform: translateY(-1px); }
+.hub-btn-ghost {
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--hub-text);
+  border-color: var(--hub-line-strong);
+}
+.hub-btn-ghost:hover { background: rgba(255, 255, 255, 0.09); border-color: rgba(255, 255, 255, 0.28); }
+.hub-btn-plum { background: var(--hub-plum); color: #fff; border-color: rgba(255, 255, 255, 0.12); }
+.hub-btn-plum:hover { background: #5E3560; }
+.hub-btn:active,
+.hub-btn-ghost:active,
+.hub-btn-plum:active { transform: scale(0.97); transition-duration: 120ms; }
+.hub-btn svg,
+.hub-btn-ghost svg,
+.hub-btn-plum svg { width: 18px; height: 18px; flex-shrink: 0; transition: transform 220ms var(--hub-ease); }
+.hub-btn:hover svg,
+.hub-btn-ghost:hover svg,
+.hub-btn-plum:hover svg { transform: translateX(3px); }
+
+/* ── Surfaces ───────────────────────────────────────────────────────────── */
+.hub-card {
+  position: relative;
+  background: var(--hub-surface);
+  border: 1px solid var(--hub-line-strong);
+  border-radius: var(--hub-radius);
+  box-shadow: var(--hub-shadow);
+  transition: transform 300ms var(--hub-ease),
+              box-shadow 300ms var(--hub-ease),
+              border-color 250ms ease,
+              background-color 250ms ease;
+}
+.hub-card--interactive { cursor: pointer; }
+.hub-card--interactive:hover {
+  transform: translateY(-4px);
+  box-shadow: var(--hub-shadow-lift);
+  border-color: rgba(255, 255, 255, 0.24);
+  background: var(--hub-surface-2);
+}
+
+/* Media tile — photography with reserved aspect + slow zoom on hover. */
+.hub-media {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--hub-radius);
+  background: var(--hub-surface);
+  isolation: isolate;
+}
+.hub-media img,
+.hub-media .hub-media-fill {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  transition: transform 900ms var(--hub-ease-expo), filter 500ms ease;
+}
+.hub-media:hover img,
+.hub-media:hover .hub-media-fill { transform: scale(1.05); filter: saturate(1.1) contrast(1.03); }
+
+/* Status pill — always text + dot, never color alone. */
+.hub-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.3rem 0.75rem;
+  border-radius: 999px;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  line-height: 1.3;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--hub-line-strong);
+  color: var(--hub-text);
+  white-space: nowrap;
+}
+.hub-pill-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--hub-open); box-shadow: 0 0 0 3px rgba(123, 216, 143, 0.18); }
+
+/* Grain — film texture over dark grounds so gradients read as lit
+   surfaces. Static under reduced motion. */
+.hub-grain { position: relative; }
+.hub-grain::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.06;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23g)'/%3E%3C/svg%3E");
+  background-size: 200px 200px;
+  animation: hubGrain 1.1s steps(3) infinite;
+  z-index: 0;
+}
+@keyframes hubGrain {
+  0%   { background-position: 0 0; }
+  33%  { background-position: -40px 26px; }
+  66%  { background-position: 30px -36px; }
+  100% { background-position: 0 0; }
+}
+
+/* Ambient glow blobs for hero/feature grounds. */
+.hub-glow {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(90px);
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* Hairline divider */
+.hub-rule { height: 1px; border: 0; margin: 0; background: var(--hub-line); }
+
+/* Above-the-fold entrance — pure CSS so it runs WITHOUT waiting for JS
+   hydration (framer reveals SSR as opacity:0 and would blank the hero
+   until the bundle loads). Stagger with style={{ '--hub-delay': '80ms' }}. */
+.hub-enter {
+  animation: hubEnter 800ms var(--hub-ease-expo) both;
+  animation-delay: var(--hub-delay, 0ms);
+}
+@keyframes hubEnter {
+  from { opacity: 0; transform: translateY(24px); }
+  to   { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hub-grain::after { animation: none; }
+  .hub-enter { animation: none; }
+  .hub-card--interactive:hover,
+  .hub-btn:hover { transform: none; }
+  .hub-media:hover img,
+  .hub-media:hover .hub-media-fill { transform: none; }
+}

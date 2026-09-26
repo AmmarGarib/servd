@@ -81,6 +81,10 @@ export function SimmerMenu({ slug, conceptName }: { slug: string, conceptName: s
 
   return (
     <div className="simmer-page" style={{ minHeight: '100dvh' }}>
+      {/* The page's h1. The masthead's "the menu" / "simmer down." are set as
+          utility and wordmark type, not a heading, so this carries the page
+          title for screen readers and search without changing the card. */}
+      <h1 className="sr-only">the {conceptName.toLowerCase()} menu</h1>
 
       {/* ── MASTHEAD — printed-menu header ─────────────────────────── */}
       <section style={{
@@ -126,14 +130,19 @@ export function SimmerMenu({ slug, conceptName }: { slug: string, conceptName: s
               borderTop: ci === 0 ? '1px solid rgba(237,230,211,0.22)' : '0',
               borderBottom: '1px solid rgba(237,230,211,0.18)',
             }}>
-              {/* Course header — Amarante numeral + lowercase rubric */}
-              <div style={{
+              {/* Course header — Amarante numeral + lowercase rubric. Exposed
+                  as a level-2 heading ("II. large plates") so the courses are
+                  navigable by heading; the look is unchanged. */}
+              <div role="heading" aria-level={2} style={{
                 display: 'flex', alignItems: 'baseline', gap: '0.9rem',
                 marginBottom: '1.4rem',
               }}>
                 <span className="amarante signal" style={{
                   fontSize: '1.5rem', lineHeight: 1,
                 }}>{course.rubric}</span>
+                {/* Whitespace between flex items isn't rendered, but it keeps
+                    the heading's text "I. small plates", not "I.small plates". */}
+                {' '}
                 <span className="utility" style={{
                   fontSize: '0.72rem', opacity: 0.72,
                 }}>{course.title}</span>

@@ -1,0 +1,426 @@
+/* servd home — page-level layout for the hub home. Tokens, type, buttons and
+   surfaces come from the `.hub` system in globals.css; this file only holds
+   the responsive grid/placement rules that inline styles can't express.
+   Spec: design-system/servd/MASTER.md. Scrims use rgba(17,11,19,…), which is
+   --hub-bg with alpha — keep them in sync if the ground token ever moves. */
+
+/* ── Shared ─────────────────────────────────────────────────────────────── */
+.sectionHead {
+  display: grid;
+  gap: 1.25rem;
+  margin-bottom: clamp(2.5rem, 5vw, 3.5rem);
+}
+@media (min-width: 900px) {
+  .sectionHead {
+    grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+    align-items: end;
+    gap: clamp(2rem, 5vw, 4rem);
+  }
+}
+.h2 {
+  font-size: clamp(2.25rem, 5.2vw, 4rem);
+  margin: 0.75rem 0 0;
+}
+.dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--accent, var(--hub-lilac));
+  /* Some brand accents are dark (Flipd blue) — the ring keeps the dot
+     visible on the obsidian ground. Decorative only; never carries state. */
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.22);
+}
+.iconBadge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 999px;
+  background: var(--hub-surface-2);
+  border: 1px solid var(--hub-line-strong);
+  color: var(--hub-lilac);
+  flex-shrink: 0;
+}
+.iconBadge svg { width: 20px; height: 20px; }
+
+/* ── Hero ───────────────────────────────────────────────────────────────── */
+.hero {
+  overflow: hidden;
+  min-height: 100svh;
+  display: flex;
+  align-items: center;
+  /* The servd nav is position:absolute over the home hero — clear it. */
+  padding-top: clamp(7.5rem, 12vw, 9rem);
+  padding-bottom: clamp(4rem, 8vw, 6rem);
+}
+.heroGrid {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  gap: clamp(3rem, 7vw, 4rem);
+  align-items: center;
+}
+@media (min-width: 1024px) {
+  .heroGrid { grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); }
+}
+.heroTitle {
+  font-size: clamp(2.75rem, 7vw, 5.5rem);
+  margin: 1.25rem 0 0;
+  overflow-wrap: break-word;
+}
+.heroLead { margin-top: 1.5rem; }
+.heroCtas {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 2.25rem;
+}
+.heroNote {
+  margin-top: 1.5rem;
+  max-width: 52ch;
+}
+
+/* Tilted stack of three brand photos. The box reserves its own space via
+   aspect-ratio so nothing shifts when the photos arrive (CLS). */
+.stack {
+  position: relative;
+  width: 100%;
+  max-width: 460px;
+  margin: 0 auto;
+  aspect-ratio: 1 / 1;
+}
+@media (min-width: 1024px) {
+  .stack { max-width: 540px; aspect-ratio: 4 / 5; }
+}
+.stackSlot { position: absolute; }
+.stackSlot:nth-child(1) { top: 0; right: 0; width: 54%; z-index: 1; }
+.stackSlot:nth-child(2) { top: 12%; left: 0; width: 52%; z-index: 2; }
+.stackSlot:nth-child(3) { bottom: 0; left: 27%; width: 50%; z-index: 3; }
+.stackCard {
+  aspect-ratio: 4 / 5;
+  box-shadow: var(--hub-shadow-lift);
+  border: 1px solid var(--hub-line-strong);
+}
+.stackSlot:nth-child(1) .stackCard { rotate: 6deg; }
+.stackSlot:nth-child(2) .stackCard { rotate: -7deg; }
+.stackSlot:nth-child(3) .stackCard { rotate: 2.5deg; }
+.stackLabel {
+  position: absolute;
+  left: 0.75rem;
+  bottom: 0.75rem;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.8rem;
+  border-radius: 999px;
+  background: rgba(17, 11, 19, 0.72);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--hub-text);
+}
+/* The back card's lower half sits under the front card — label it up top. */
+.stackSlot:nth-child(1) .stackLabel { bottom: auto; top: 0.75rem; left: auto; right: 0.75rem; }
+
+/* ── Bento: the kitchens ────────────────────────────────────────────────── */
+.bento {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: minmax(0, 1fr);
+}
+@media (min-width: 640px) {
+  .bento { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1.25rem; }
+  .areaBig, .areaCta { grid-column: 1 / -1; }
+}
+@media (min-width: 1024px) {
+  .bento {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    grid-template-rows: minmax(300px, auto) minmax(300px, auto) auto;
+    gap: 1.5rem;
+  }
+  .areaBig  { grid-column: 1 / 4; grid-row: 1 / 3; }
+  .areaS1   { grid-column: 4 / 7; grid-row: 1; }
+  .areaS2   { grid-column: 4 / 7; grid-row: 2; }
+  .areaV1   { grid-column: 1 / 3; grid-row: 3; }
+  .areaV2   { grid-column: 3 / 5; grid-row: 3; }
+  .areaCta  { grid-column: 5 / 7; grid-row: 3; }
+}
+.cell { display: flex; }
+.cell > * { flex: 1; }
+
+.tile {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  min-height: 360px;
+  box-shadow: var(--hub-shadow);
+  border: 1px solid var(--hub-line-strong);
+}
+.tileBig { min-height: 440px; }
+@media (min-width: 1024px) {
+  .tile { min-height: 300px; }
+  .tileBig { min-height: 624px; }
+}
+.tile > img {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+}
+.tileScrim {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    to top,
+    rgba(17, 11, 19, 0.94) 0%,
+    rgba(17, 11, 19, 0.7) 38%,
+    rgba(17, 11, 19, 0.12) 72%,
+    rgba(17, 11, 19, 0.3) 100%
+  );
+}
+.tileHairline {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: var(--accent);
+  pointer-events: none;
+}
+/* Stretched link: the whole tile goes to the brand microsite; the order
+   button sits above it on its own layer so the two intents never nest. */
+.stretched {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: inherit;
+  cursor: pointer;
+}
+/* .hub-media clips overflow, so the default 3px-outside focus ring would be
+   cut off — draw it inside the tile instead. */
+.tile .stretched:focus-visible {
+  outline-offset: -5px;
+  border-radius: var(--hub-radius);
+}
+.tileBody {
+  position: relative;
+  z-index: 2;
+  pointer-events: none;
+  padding: clamp(1.5rem, 3.5vw, 2.25rem);
+}
+.tileEyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  color: var(--hub-text-mute);
+}
+.tileName {
+  font-size: clamp(2.25rem, 4vw, 3rem);
+  margin: 0.6rem 0 0;
+}
+.tileBig .tileName { font-size: clamp(2.75rem, 6vw, 4.75rem); }
+.tileTagline {
+  margin: 0.6rem 0 0;
+  color: var(--hub-text);
+  font-size: clamp(1rem, 1.3vw, 1.125rem);
+  line-height: 1.5;
+  max-width: 34ch;
+}
+.tileBtn {
+  position: relative;
+  z-index: 3;
+  pointer-events: auto;
+  margin-top: 1.5rem;
+}
+
+.valueCard {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: clamp(1.5rem, 3vw, 2rem);
+  color: var(--hub-text);
+  text-decoration: none;
+  height: 100%;
+}
+.valueTitle {
+  font-family: var(--hub-font-display);
+  font-size: 1.5rem;
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: -0.01em;
+  margin: 0.5rem 0 0;
+}
+.valueBody {
+  margin: 0;
+  color: var(--hub-text-mute);
+  font-size: 1rem;
+  line-height: 1.6;
+}
+.valueMore {
+  margin-top: auto;
+  padding-top: 0.5rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: var(--hub-lilac);
+}
+.valueMore svg { width: 16px; height: 16px; transition: transform 220ms var(--hub-ease); }
+.valueCard:hover .valueMore svg { transform: translateX(3px); }
+
+.bento .ctaCard {
+  background:
+    radial-gradient(120% 90% at 100% 0%, rgba(201, 164, 242, 0.16) 0%, transparent 60%),
+    var(--hub-plum);
+  border-color: rgba(255, 255, 255, 0.14);
+}
+.ctaCard .valueBody { color: var(--hub-text); opacity: 0.86; }
+.ctaBtn { margin-top: auto; align-self: flex-start; }
+
+/* ── Right now ──────────────────────────────────────────────────────────── */
+.statusGrid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
+}
+@media (min-width: 1024px) { .statusGrid { gap: 1.5rem; } }
+.statusCard {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  padding: 1.5rem;
+  height: 100%;
+}
+.statusHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem 0.75rem;
+}
+.statusName {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-family: var(--hub-font-display);
+  font-size: 1.5rem;
+  font-weight: 700;
+  line-height: 1.1;
+  margin: 0;
+  color: var(--hub-text);
+}
+.statusPill { margin-left: auto; }
+.statusArea {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin: 0;
+  font-size: 0.9375rem;
+  color: var(--hub-text-mute);
+}
+.statusArea svg { width: 16px; height: 16px; margin-top: 0.25rem; flex-shrink: 0; color: var(--hub-text-dim); }
+.statusActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin-top: auto;
+  padding-top: 0.25rem;
+}
+.statusActions > * { flex: 1 1 auto; }
+
+/* ── Insiders ───────────────────────────────────────────────────────────── */
+.insiders { overflow: hidden; }
+.insidersInner { position: relative; z-index: 1; }
+.perks {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: stretch;
+}
+@media (min-width: 900px) {
+  .perks { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1.5rem; padding-top: 12px; }
+}
+.perk {
+  display: flex;
+  flex-direction: column;
+  padding: clamp(1.5rem, 3vw, 2rem);
+  height: 100%;
+}
+.perks .perkFeatured {
+  background: var(--hub-surface-2);
+  border-color: rgba(201, 164, 242, 0.45);
+  box-shadow: var(--hub-shadow-lift);
+}
+.perkFeatured .iconBadge {
+  background: var(--hub-lilac);
+  border-color: transparent;
+  color: var(--hub-on-lilac);
+}
+@media (min-width: 900px) {
+  .perkFeatured { transform: translateY(-12px); }
+}
+.perkTag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  margin: 1.25rem 0 0.6rem;
+}
+.perkHead {
+  font-family: var(--hub-font-display);
+  font-size: clamp(1.375rem, 2.2vw, 1.625rem);
+  font-weight: 700;
+  line-height: 1.12;
+  letter-spacing: -0.015em;
+  margin: 0 0 0.75rem;
+  color: var(--hub-text);
+}
+.perkBody {
+  margin: 0;
+  color: var(--hub-text-mute);
+  font-size: 0.9375rem;
+  line-height: 1.65;
+}
+.insiderCtas {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem 1rem;
+  margin-top: clamp(2.5rem, 5vw, 3.5rem);
+}
+/* WhatsApp green stays recognisable, but white-on-green fails AA (≈2:1) —
+   obsidian text on it clears 9:1. Fallback hex until a shared token lands. */
+.insiderCtas .whatsappBtn {
+  background: var(--hub-whatsapp);
+  color: var(--hub-on-lilac);
+  box-shadow: 0 10px 28px -10px rgba(37, 211, 102, 0.5);
+}
+.insiderCtas .whatsappBtn:hover {
+  background: var(--hub-whatsapp);
+  filter: brightness(1.08);
+  transform: translateY(-1px);
+}
+.signinLink {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 0.25rem;
+  font-weight: 600;
+  font-size: 0.9375rem;
+  color: var(--hub-text);
+  text-decoration: underline;
+  text-underline-offset: 4px;
+  text-decoration-color: var(--hub-line-strong);
+  cursor: pointer;
+  transition: text-decoration-color 200ms ease, color 200ms ease;
+}
+.signinLink:hover { color: var(--hub-lilac); text-decoration-color: currentColor; }
+
+@media (prefers-reduced-motion: reduce) {
+  .insiderCtas .whatsappBtn:hover { transform: none; }
+  .valueCard:hover .valueMore svg { transform: none; }
+}

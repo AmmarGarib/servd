@@ -13,7 +13,7 @@
 // /brand/simmer/menu route renders the full menu in the locked format.
 // This page leads with brand identity and routes to menu / reserve / order.
 
-import Link from 'next/link'
+import { useEffect, useState } from 'react'
 import type { Concept } from '../../../lib/concept'
 import { conceptHeroImage } from '../../../lib/concept'
 import { CrossBrandStrip } from '../parts/CrossBrandStrip'
@@ -36,7 +36,17 @@ function todayStamp(): string {
   return `${dd}.${mm}.${yy}`
 }
 
-const STAMP = todayStamp()
+// The stamp used to be a module-level constant. On the server a module is
+// evaluated once per process, so the "live" service date froze at whatever day
+// the container started and stayed there until the next deploy — and the
+// browser, evaluating the module fresh, disagreed with it at hydration.
+// Computed per render instead, then re-read on mount so the reader's own
+// calendar day wins over the server's timezone.
+function useTodayStamp(): string {
+  const [stamp, setStamp] = useState(todayStamp)
+  useEffect(() => { setStamp(todayStamp()) }, [])
+  return stamp
+}
 
 // ─── Walnut-framed picture hung off the itinerary rail ──────────────
 // Side: 'left' = card pinned to the left half, 'right' = right half.
@@ -127,7 +137,7 @@ function ItineraryStop({ side, label, children }: { side: 'left' | 'right', labe
 // ─── Top-down plated-dish sketch (the kitchen) ──────────────────────
 function PlateSketch() {
   return (
-    <svg viewBox="0 0 200 160" preserveAspectRatio="xMidYMid slice"
+    <svg aria-hidden="true" focusable="false" viewBox="0 0 200 160" preserveAspectRatio="xMidYMid slice"
          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', display: 'block' }}>
       <rect width="200" height="160" fill="#06392F"/>
       <g stroke="rgba(237,230,211,0.6)" strokeWidth="1.2" fill="none">
@@ -155,7 +165,7 @@ function PlateSketch() {
 // ─── Coupe-glass mocktail sketch (the bar) ──────────────────────────
 function CoupeSketch() {
   return (
-    <svg viewBox="0 0 200 160" preserveAspectRatio="xMidYMid slice"
+    <svg aria-hidden="true" focusable="false" viewBox="0 0 200 160" preserveAspectRatio="xMidYMid slice"
          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', display: 'block' }}>
       <rect width="200" height="160" fill="#06392F"/>
       <g stroke="rgba(237,230,211,0.7)" strokeWidth="1.2" fill="none" strokeLinecap="round">
@@ -186,6 +196,20 @@ function ElsewhereButton({ href, ariaLabel, icon }: {
   icon: React.ReactNode
 }) {
   const isExternal = !href.startsWith('mailto:') && !href.startsWith('tel:') && !href.startsWith('/')
+  const lit = (el: HTMLElement) => {
+    el.style.opacity = '1'
+    el.style.color = 'var(--simmer-orange)'
+  }
+  const rest = (el: HTMLElement) => {
+    el.style.opacity = '0.78'
+    el.style.color = 'var(--simmer-bone)'
+  }
+  // Keyboard focus only — a mouse click also focuses the link, and it is
+  // already lit by the hover then. Older engines without :focus-visible just
+  // light on any focus, which is the safe side to fail on.
+  const isKeyboardFocus = (el: HTMLElement) => {
+    try { return el.matches(':focus-visible') } catch { return true }
+  }
   return (
     <a
       href={href}
@@ -195,21 +219,28 @@ function ElsewhereButton({ href, ariaLabel, icon }: {
         display: 'inline-flex',
         alignItems: 'center',
         justifyContent: 'center',
-        width: '2.5rem',
-        height: '2.5rem',
+        // 44px hit area (was 40px). The -2px margins give the 4px back, so the
+        // row's spacing and every icon's position are exactly as before.
+        width: '2.75rem',
+        height: '2.75rem',
+        margin: '-0.125rem',
         color: 'var(--simmer-bone)',
         opacity: 0.78,
         transition: 'opacity 160ms ease, color 160ms ease',
         textDecoration: 'none',
       }}
-      onMouseEnter={(e) => {
-        e.currentTarget.style.opacity = '1'
-        e.currentTarget.style.color = 'var(--simmer-orange)'
-      }}
+      onMouseEnter={(e) => lit(e.currentTarget)}
       onMouseLeave={(e) => {
-        e.currentTarget.style.opacity = '0.78'
-        e.currentTarget.style.color = 'var(--simmer-bone)'
+        const el = e.currentTarget
+        // Stay lit only if the keyboard is sitting on it; a clicked link
+        // goes back to rest exactly as it always did.
+        if (!(document.activeElement === el && isKeyboardFocus(el))) rest(el)
       }}
+      // The global focus ring is obsidian plum, which all but vanishes on
+      // simmer green (about 1.1:1). Keyboard focus gets the same orange the
+      // pointer gets on hover, so a tabbing reader can see where they are.
+      onFocus={(e) => { if (isKeyboardFocus(e.currentTarget)) lit(e.currentTarget) }}
+      onBlur={(e) => rest(e.currentTarget)}
     >
       {icon}
     </a>
@@ -267,14 +298,26 @@ function MailIcon() {
   )
 }
 
+// The eyebrow rows ("tonight's service", "what's next", "elsewhere") are the
+// section titles of this page — visually they are tracked-out utility Times,
+// not display type, so they stay spans and are exposed as level-2 headings.
+// That gives a screen reader the page outline without touching the look.
+const sectionHeading = { role: 'heading', 'aria-level': 2 } as const
+
 export function SimmerLayout({ concept, concepts }: Props) {
   // Hours + reservations CTA live in the chiller hero; this page no
   // longer needs the hoursData hook or the reservations gate.
+  const STAMP = useTodayStamp()
 
   // Classes (.simmer-page, .amarante, .utility, .signal, .rule, .wordmark,
   // .action, .action--signal, .simmer-visit-grid) live in globals.css.
   return (
     <div className="simmer-page">
+      {/* The page's one h1. The chiller hero is a drawing with no heading in
+          it, so without this the page has none. Lowercase wordmark; the
+          tagline follows it in reading order, never before. */}
+      <h1 className="sr-only">simmer</h1>
+
       {/* ── Announcement strip (only when operator has filled the field) ───────
           Per the brand bible: operational copy stays plain and clear. */}
       {concept.announcementBanner && (
@@ -334,8 +377,8 @@ export function SimmerLayout({ concept, concepts }: Props) {
             borderBottom: '1px solid rgba(6,57,47,0.18)',
             marginBottom: '2.4rem',
           }}>
-            <span className="utility" style={{ fontSize: '0.78rem' }}>tonight&apos;s service</span>
-            <span className="utility signal" style={{ fontSize: '0.78rem', whiteSpace: 'nowrap' }}>{STAMP}</span>
+            <span {...sectionHeading} className="utility" style={{ fontSize: '0.78rem' }}>tonight&apos;s service</span>
+            <span className="utility signal" style={{ fontSize: '0.78rem', whiteSpace: 'nowrap' }} suppressHydrationWarning>{STAMP}</span>
           </div>
 
           {/* Itinerary — orange rail + three walnut-framed pictures */}
@@ -348,9 +391,14 @@ export function SimmerLayout({ concept, concepts }: Props) {
             }}/>
 
             <ItineraryStop side="left" label="the space">
+              {/* Decorative: the visible "the space" label names it. Lazy,
+                  since it sits below a 260vh hero. */}
+              {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={conceptHeroImage(concept)}
                 alt=""
+                loading="lazy"
+                decoding="async"
                 style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
               />
             </ItineraryStop>
@@ -385,8 +433,8 @@ export function SimmerLayout({ concept, concepts }: Props) {
             marginBottom: '2rem',
             borderBottom: '1px solid rgba(237,230,211,0.18)',
           }}>
-            <span className="utility" style={{ fontSize: '0.78rem' }}>what&apos;s next</span>
-            <span className="utility signal" style={{ fontSize: '0.78rem', whiteSpace: 'nowrap' }}>{STAMP}</span>
+            <span {...sectionHeading} className="utility" style={{ fontSize: '0.78rem' }}>what&apos;s next</span>
+            <span className="utility signal" style={{ fontSize: '0.78rem', whiteSpace: 'nowrap' }} suppressHydrationWarning>{STAMP}</span>
           </div>
           <p style={{
             fontFamily: 'var(--simmer-body)',
@@ -432,7 +480,7 @@ export function SimmerLayout({ concept, concepts }: Props) {
             gap: '1rem',
             flexWrap: 'wrap',
           }}>
-            <span className="utility" style={{ fontSize: '0.78rem' }}>elsewhere</span>
+            <span {...sectionHeading} className="utility" style={{ fontSize: '0.78rem' }}>elsewhere</span>
             <span className="utility signal" style={{ fontSize: '0.78rem', whiteSpace: 'nowrap' }}>@simmer_down</span>
           </div>
           <div style={{
@@ -456,12 +504,14 @@ export function SimmerLayout({ concept, concepts }: Props) {
               const waHref = loc ? whatsappLink(loc, 'hi simmer') : 'https://wa.me/'
               return (
                 <>
-                  <ElsewhereButton ariaLabel="instagram" href="https://instagram.com/simmer_down" icon={<InstagramIcon />} />
-                  <ElsewhereButton ariaLabel="tiktok"    href="https://tiktok.com/@simmer_down"   icon={<TikTokIcon />} />
-                  <ElsewhereButton ariaLabel="facebook"  href="https://facebook.com/simmerdown"   icon={<FacebookIcon />} />
-                  <ElsewhereButton ariaLabel="whatsapp"  href={waHref}                            icon={<WhatsAppIcon />} />
-                  <ElsewhereButton ariaLabel="maps"      href={mapsHref}                          icon={<MapsIcon />} />
-                  <ElsewhereButton ariaLabel="email"     href="mailto:hello@eatsimmer.com"        icon={<MailIcon />} />
+                  {/* Names say where each one goes, and that the outbound
+                      ones open a new tab. Lowercase, per the brand voice. */}
+                  <ElsewhereButton ariaLabel="simmer on instagram (opens in a new tab)" href="https://instagram.com/simmer_down" icon={<InstagramIcon />} />
+                  <ElsewhereButton ariaLabel="simmer on tiktok (opens in a new tab)"    href="https://tiktok.com/@simmer_down"   icon={<TikTokIcon />} />
+                  <ElsewhereButton ariaLabel="simmer on facebook (opens in a new tab)"  href="https://facebook.com/simmerdown"   icon={<FacebookIcon />} />
+                  <ElsewhereButton ariaLabel="message simmer on whatsapp (opens in a new tab)" href={waHref}              icon={<WhatsAppIcon />} />
+                  <ElsewhereButton ariaLabel="find simmer on google maps (opens in a new tab)" href={mapsHref}            icon={<MapsIcon />} />
+                  <ElsewhereButton ariaLabel="email simmer"                             href="mailto:hello@eatsimmer.com"        icon={<MailIcon />} />
                 </>
               )
             })()}

@@ -1,6 +1,7 @@
 'use client'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
+import { ArrowRight } from 'lucide-react'
 import { useOnBrandMicrosite } from '../lib/host'
 
 // Live brands only — the long historical list (Strata, Craveman, Garnish
@@ -29,56 +30,51 @@ export function StorefrontFooter({ initialBrandSlug = null }: { initialBrandSlug
   const pathname = usePathname() ?? '/'
   const onBrandMicrosite = useOnBrandMicrosite(initialBrandSlug)
   if (onBrandMicrosite || pathname.startsWith('/brand/')) return null
-  return (
-    <footer
-      className="surface-ink relative overflow-hidden"
-      style={{
-        padding: 'clamp(4rem, 7vw, 6rem) 0 2rem',
-        marginTop: '4rem',
-        // Brand-purple footer (was a black slab). Accent is a light lavender so
-        // the eyebrow / "Let's go" / dot / pill read against the deep purple.
-        background: 'linear-gradient(165deg, #4E2A4F 0%, #2D1E2F 55%, #1E1420 100%)',
-        ['--brand-accent' as string]: '#C9A4F2',
-        ['--brand-ink' as string]:    '#2D1E2F',
-      } as React.CSSProperties}
-    >
-      <div className="container relative z-10">
 
-        {/* Headline lockup — chunky display, "ready when you are" loop */}
+  return (
+    <footer className="hub hub-grain" style={{ position: 'relative', overflow: 'hidden', paddingTop: 'clamp(4rem, 7vw, 6rem)', paddingBottom: '2rem' }}>
+      {/* Ambient glow, matches the hub hero treatment — lilac for interaction. */}
+      <div
+        aria-hidden="true"
+        className="hub-glow"
+        style={{ width: '620px', height: '620px', top: '-260px', right: '-160px', background: 'var(--hub-plum)', opacity: 0.5 }}
+      />
+
+      <div className="hub-container" style={{ position: 'relative', zIndex: 1 }}>
+
+        {/* Closing CTA — chunky display headline, "hungry now?" hook. */}
         <div style={{ marginBottom: 'clamp(3rem, 5vw, 4rem)', maxWidth: '900px' }}>
-          <p className="eyebrow" style={{ color: 'var(--brand-accent)', marginBottom: '1rem' }}>
+          <p className="hub-eyebrow" style={{ marginBottom: '1rem' }}>
             One place for every kitchen
           </p>
-          <h2 className="display" style={{
-            fontSize: 'clamp(2.5rem, 6vw, 4.5rem)',
-            color: 'white',
-            marginBottom: '1.5rem',
-          }}>
-            Hungry now?
-            <span className="display-italic" style={{ color: 'var(--brand-accent)' }}> Let's go.</span>
+          <h2 className="hub-display" style={{ fontSize: 'clamp(2.5rem, 6vw, 4.5rem)', marginBottom: '1.5rem' }}>
+            Hungry now? <em>Let&rsquo;s go.</em>
           </h2>
-          <Link href="/browse" className="brand-pill">
-            Order now <span style={{ opacity: 0.6 }}>→</span>
+          <Link href="/browse" className="hub-btn">
+            Order now
+            <ArrowRight size={18} aria-hidden="true" />
           </Link>
         </div>
 
-        {/* Link columns — asymmetric, looser layout than the previous grid */}
+        {/* Link columns */}
+        <div
+          className="hub-rule"
+          style={{ marginBottom: '2.5rem' }}
+        />
         <div style={{
           display: 'grid',
           gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
           gap: '2.5rem',
-          paddingTop: '2.5rem',
-          borderTop: '1px solid rgba(255,255,255,0.08)',
         }}>
           <div>
             <Link
               href="/"
               style={{
-                fontFamily: 'var(--font-display)',
+                fontFamily: 'var(--hub-font-display)',
                 fontSize: '2rem',
-                fontWeight: 800,
+                fontWeight: 700,
                 letterSpacing: '-0.045em',
-                color: 'white',
+                color: 'var(--hub-text)',
                 textDecoration: 'none',
                 display: 'inline-flex',
                 alignItems: 'baseline',
@@ -86,38 +82,23 @@ export function StorefrontFooter({ initialBrandSlug = null }: { initialBrandSlug
                 marginBottom: '0.75rem',
               }}
             >
-              servd<span style={{ color: 'var(--brand-accent)' }}>.</span>
+              servd<span style={{ color: 'var(--hub-lilac)' }}>.</span>
             </Link>
-            <p style={{ fontSize: '0.92rem', maxWidth: '20rem', color: 'rgba(255,255,255,0.55)', lineHeight: 1.55 }}>
+            <p className="hub-meta" style={{ maxWidth: '20rem' }}>
               Every kitchen in one place — order what you are craving, explore the brands, and join Insiders.
             </p>
           </div>
 
           <div>
-            <h3 className="eyebrow" style={{ color: 'rgba(255,255,255,0.45)', marginBottom: '1rem' }}>
-              Kitchens
-            </h3>
-            <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'grid', gap: '0.7rem' }}>
+            <h3 className="hub-eyebrow" style={{ marginBottom: '1rem' }}>Kitchens</h3>
+            <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'grid' }}>
               {BRANDS.map((b) => (
                 <li key={b.slug}>
-                  <Link
-                    href={`/brand/${b.slug}`}
-                    className="kinetic-caret"
-                    style={{
-                      color: 'rgba(255,255,255,0.85)',
-                      textDecoration: 'none',
-                      fontSize: '1rem',
-                      fontWeight: 600,
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: '0.55rem',
-                    }}
-                  >
-                    <span style={{
-                      width: '0.55rem', height: '0.55rem',
-                      background: b.accent, borderRadius: '999px',
-                      display: 'inline-block',
-                    }} />
+                  <Link href={`/brand/${b.slug}`} style={footerRowStyle}>
+                    <span
+                      aria-hidden="true"
+                      style={{ width: '0.55rem', height: '0.55rem', background: b.accent, borderRadius: '999px', display: 'inline-block', flexShrink: 0 }}
+                    />
                     {b.name}
                   </Link>
                 </li>
@@ -126,51 +107,52 @@ export function StorefrontFooter({ initialBrandSlug = null }: { initialBrandSlug
           </div>
 
           <div>
-            <h3 className="eyebrow" style={{ color: 'rgba(255,255,255,0.45)', marginBottom: '1rem' }}>
-              Customer
-            </h3>
-            <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'grid', gap: '0.7rem' }}>
-              <li><Link href="/browse"  style={footerLinkStyle}>Browse all brands</Link></li>
-              <li><Link href="/account" style={footerLinkStyle}>My account</Link></li>
-              <li><Link href="/orders"  style={footerLinkStyle}>Order history</Link></li>
-              <li><Link href="/login"   style={footerLinkStyle}>Sign in</Link></li>
+            <h3 className="hub-eyebrow" style={{ marginBottom: '1rem' }}>Customer</h3>
+            <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'grid' }}>
+              <li><Link href="/browse"  style={footerRowStyle}>Browse all brands</Link></li>
+              <li><Link href="/account" style={footerRowStyle}>My account</Link></li>
+              <li><Link href="/orders"  style={footerRowStyle}>Order history</Link></li>
+              <li><Link href="/login"   style={footerRowStyle}>Sign in</Link></li>
             </ul>
           </div>
 
           <div>
-            <h3 className="eyebrow" style={{ color: 'rgba(255,255,255,0.45)', marginBottom: '1rem' }}>
-              Company
-            </h3>
-            <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'grid', gap: '0.7rem' }}>
-              <li><span style={{ color: 'rgba(255,255,255,0.5)', fontSize: '0.95rem' }}>GS Foods Pvt. Ltd.</span></li>
-              <li><span style={{ color: 'rgba(255,255,255,0.5)', fontSize: '0.95rem' }}>Karachi · Pakistan</span></li>
-              <li><a href="mailto:hello@servd.pk" style={footerLinkStyle}>hello@servd.pk</a></li>
+            <h3 className="hub-eyebrow" style={{ marginBottom: '1rem' }}>Company</h3>
+            <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'grid' }}>
+              <li><span className="hub-meta" style={footerRowStyle}>GS Foods Pvt. Ltd.</span></li>
+              <li><span className="hub-meta" style={footerRowStyle}>Karachi &middot; Pakistan</span></li>
+              <li><a href="mailto:hello@servd.pk" style={footerRowStyle}>hello@servd.pk</a></li>
             </ul>
           </div>
         </div>
 
+        <div
+          className="hub-rule"
+          style={{ marginTop: '3rem', marginBottom: '1.5rem' }}
+        />
         <div style={{
-          marginTop: '3rem',
-          paddingTop: '1.5rem',
-          borderTop: '1px solid rgba(255,255,255,0.08)',
           display: 'flex',
           justifyContent: 'space-between',
           flexWrap: 'wrap',
           gap: '0.75rem',
-          fontSize: '0.78rem',
-          color: 'rgba(255,255,255,0.4)',
         }}>
-          <span>© {new Date().getFullYear()} GS Foods. All rights reserved.</span>
-          <span>Made in Karachi. Cooked in Karachi. For Karachi.</span>
+          <span className="hub-meta">© {new Date().getFullYear()} GS Foods. All rights reserved.</span>
+          <span className="hub-meta">Made in Karachi. Cooked in Karachi. For Karachi.</span>
         </div>
       </div>
     </footer>
   )
 }
 
-const footerLinkStyle: React.CSSProperties = {
-  color: 'rgba(255,255,255,0.8)',
+// Shared row style for the link columns — full-width tap target, ≥44px tall
+// on mobile so the list reads as a proper touch menu, not compressed text.
+const footerRowStyle: React.CSSProperties = {
+  color: 'var(--hub-text-mute)',
   textDecoration: 'none',
   fontSize: '0.95rem',
   fontWeight: 500,
+  display: 'flex',
+  alignItems: 'center',
+  gap: '0.55rem',
+  minHeight: '44px',
 }

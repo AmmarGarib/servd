@@ -80,6 +80,11 @@ export function FlipdLayout({ concept, concepts }: Props) {
 
   return (
     <div className="flipd-page">
+      {/* The page's h1. The badge that carries the name is an image in the
+          nav, and the hero's "flipd" is a wordmark that fades as the build
+          starts — neither is a heading, so without this the page has none. */}
+      <h1 className="sr-only">{formatBrandName(concept.name)}</h1>
+
       <Checker />
 
       {concept.announcementBanner && (
@@ -245,6 +250,8 @@ export function FlipdLayout({ concept, concepts }: Props) {
           src={badge}
           alt=""
           aria-hidden="true"
+          loading="lazy"
+          decoding="async"
           {...(badgeIsFallback ? { width: 1200, height: 1200 } : {})}
           style={{ display: 'block', width: 'min(11rem, 40vw)', height: 'auto', margin: '0 auto 1.25rem' }}
         />

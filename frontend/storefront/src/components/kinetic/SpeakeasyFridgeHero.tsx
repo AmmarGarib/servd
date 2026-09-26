@@ -56,11 +56,17 @@ export function SpeakeasyFridgeHero({
   reserveHref, menuHref,
   coolerImageUrl,
 }: Props) {
-  const { ref } = useScrollProgress<HTMLDivElement>()
+  // liveAt matches the reveal layer's own fade-in point (its opacity is
+  // (progress - 0.65) * 3), so `past` flips at the instant that opacity leaves
+  // 0. Until then the Reserve / Menu links are hidden outright rather than
+  // merely transparent: otherwise they sit in the tab order and catch clicks
+  // over the closed door while nobody can see them.
+  const { ref, past } = useScrollProgress<HTMLDivElement>({ liveAt: 0.65 })
 
   return (
     <div
       ref={ref}
+      className="simmer-fridge"
       style={{
         height: '260vh',                       // generous runway for the open
         position: 'relative',
@@ -71,7 +77,19 @@ export function SpeakeasyFridgeHero({
         ['--simmer-marble' as string]: marble,
       } as React.CSSProperties}
     >
-      <div className="sticky overflow-hidden"
+      {/* Reduced motion: no 260vh scroll runway and no door swing. The section
+          collapses to one screen and the pinned stage is held at its end state
+          (--scroll-progress: 1) — door open, interior lit, CTAs showing. With
+          the section no taller than the viewport, useScrollProgress also flips
+          `past`, so the CTAs are reachable. Scoped here rather than in
+          globals.css so it travels with the component; the !important is what
+          lets a stylesheet rule beat the inline height. */}
+      <style>{`@media (prefers-reduced-motion: reduce) {
+  .simmer-fridge { height: auto !important; }
+  .simmer-fridge .simmer-fridge-pin { --scroll-progress: 1; }
+}`}</style>
+
+      <div className="sticky overflow-hidden simmer-fridge-pin"
         style={{
           top: 0,
           height: '100vh',
@@ -122,8 +140,10 @@ export function SpeakeasyFridgeHero({
 
         {/* TITLE BLOCK — top-left corner. Same convention every real
             engineering drawing uses: project name + drawing number +
-            scale. Sells the "this is a deliberate schematic" framing. */}
-        <div style={{
+            scale. Sells the "this is a deliberate schematic" framing.
+            Drawing furniture, so it is hidden from screen readers — read
+            aloud it is a string of sheet codes and arrows. */}
+        <div aria-hidden="true" style={{
           position: 'absolute', top: '3vh', left: '4vw',
           color: 'rgba(237,230,211,0.7)',
           fontFamily: 'var(--font-display)',
@@ -138,7 +158,7 @@ export function SpeakeasyFridgeHero({
           <p style={{ color: 'rgba(237,230,211,0.45)', marginTop: '0.6rem' }}>· SHEET A-02 / ENTRANCE</p>
         </div>
         {/* TITLE BLOCK — top-right corner: scale + revision */}
-        <div style={{
+        <div aria-hidden="true" style={{
           position: 'absolute', top: '3vh', right: '4vw',
           color: 'rgba(237,230,211,0.7)',
           fontFamily: 'var(--font-display)',
@@ -207,8 +227,10 @@ export function SpeakeasyFridgeHero({
               boxShadow: 'calc(var(--scroll-progress, 0) * 30px) 0 60px rgba(0,0,0,0.6)',
             } as React.CSSProperties}
           >
-            {/* Front face — the blueprint drawing */}
-            <div style={{
+            {/* Front face — the blueprint drawing. Its callout <text> nodes
+                are drawing labels, not content, so the face is hidden from
+                screen readers like the inner face and the interior. */}
+            <div aria-hidden="true" style={{
               position: 'absolute', inset: 0,
               backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden',
             }}>
@@ -340,6 +362,8 @@ export function SpeakeasyFridgeHero({
             transition: 'opacity 100ms linear',
             zIndex: 10,
             pointerEvents: 'auto',
+            // Hidden until the fade-in starts — see liveAt above.
+            visibility: past ? 'visible' : 'hidden',
           } as React.CSSProperties}
         >
           <p
@@ -364,9 +388,16 @@ export function SpeakeasyFridgeHero({
           </div>
         </div>
 
+        {/* The two facts the drawing carries — reservations only, and the
+            hours on the floor sticker — live inside the aria-hidden interior,
+            so a screen reader would otherwise never hear them. Same words,
+            said once, outside the drawing. Not gated on scroll. */}
+        <p className="sr-only">reservations only. open 7pm to late, tuesday to sunday.</p>
+
         {/* Bottom annotation row — the standard engineering-drawing
-            footer with dimension callouts. Static; doesn't fade. */}
-        <div style={{
+            footer with dimension callouts. Static; doesn't fade.
+            Drawing furniture, hidden from screen readers. */}
+        <div aria-hidden="true" style={{
           position: 'absolute',
           bottom: '3vh', left: '4vw', right: '4vw',
           display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
