@@ -374,6 +374,55 @@ riders but no app is wired to call it. Future work in this order:
 2. Earnings/payouts models + nightly payout worker + admin dashboard
 3. KYC, push notifications, route optimization
 
+## Claude Code operating policy — model routing & parallel agents
+
+Per the product owner (2026-09-27): optimize for **speed AND efficiency
+together**. Claude decides the split — route each unit of work to the
+cheapest model that will do it right the first time, and spawn as many
+parallel subagents as the task genuinely benefits from. Do not ask
+permission to parallelize; do not serialize work that is independent.
+
+### Model routing
+
+The main session runs on **Fable** and stays the orchestrator: it owns
+design and architecture decisions, cross-cutting integration, the final
+review, and it personally handles anything correctness-critical —
+payments, FBR/SRB tax submission, auth/permissions, RLS/tenant
+isolation, order money math.
+
+Subagents are routed via the Agent tool's `model` parameter:
+
+| `model` | Route here |
+|---|---|
+| `fable` (or inherit) | Hardest isolated problems; final review of critical-path changes; anything touching money, tax, auth, or tenant isolation |
+| `opus` (Opus 5.5 / latest Opus tier) | Heavy reasoning in parallel: gnarly bug hunts, security-sensitive review, complex multi-file refactors, backend modules with real business logic |
+| `sonnet` | Standard implementation at scale: page restyles, route ports, tests, docs, codemods that still need judgment |
+| `haiku` | Mechanical/bulk: broad searches, screenshot/verification runs, log triage, exact-spec find-and-replace across many files |
+
+Rule of thumb: **escalate a tier** when a cheaper agent's output would
+need line-by-line review anyway (the review erases the saving);
+**de-escalate** when the spec is exact and failure is cheap to detect.
+
+### Parallel agents
+
+- Fan out independent work — per-module, per-page, per-brand — as
+  multiple Agent calls in a **single message** so they run concurrently.
+  No fixed cap on agent count; use as many as the work decomposes into.
+- Give each agent a **disjoint file set**. Two agents must never edit
+  the same file; shared files (globals.css, schema.prisma, index.ts
+  registrations) are integrated by the orchestrator afterward.
+- Agents run in the background by default — keep working while they do.
+  Reuse a finished agent via SendMessage instead of re-briefing a new one.
+- Keep serial what is serial: design decisions, schema changes, and ONE
+  verification pass (typecheck → build → screenshots) run by the
+  orchestrator after merging agent output. Agents do not run builds or
+  dev servers — a prod build and the dev server share `.next/` and
+  clobber each other (this has bitten us).
+- Don't spawn an agent for what a single tool call does; batch
+  independent tool calls in one message instead.
+- The orchestrator spot-checks all agent output on the critical path;
+  verification of money/tax/auth code is never delegated below `opus`.
+
 ## What NOT to do
 
 - **Never commit credentials to this repo.** Use GitHub Actions Secrets.
