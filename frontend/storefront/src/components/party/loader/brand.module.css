@@ -2,15 +2,28 @@
    the servd butter party never appears here. Contrast: bone on forest
    green ~10:1, cream on red plum ~8:1, Flipd Blue on mustard ~7:1. */
 
+/* Fills the whole screen in the brand's own ground, so the page turns into
+   that brand the instant you navigate. */
 .wrap {
-  min-height: 72dvh;
+  min-height: 100dvh;
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 3rem 16px;
   text-align: center;
 }
-.col { display: flex; flex-direction: column; align-items: center; }
+/* Ground instantly, content after a beat — no flicker on fast loads. */
+.col {
+  display: flex; flex-direction: column; align-items: center;
+  animation: brandReveal 560ms cubic-bezier(0.22, 1, 0.36, 1) 220ms both;
+}
+@keyframes brandReveal {
+  from { opacity: 0; transform: translateY(14px); }
+  to   { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .col { animation: none; }
+}
 .col p { margin: 0; }
 .art { display: block; width: 84px; height: auto; overflow: visible; margin-bottom: 1.1rem; }
 

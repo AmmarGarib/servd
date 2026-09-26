@@ -123,6 +123,41 @@ export function createCrowdEngine(host: HTMLElement, opts: EngineOptions): Crowd
     return c
   }
 
+  /* ---------------- incremental warm-up ---------------- */
+  const warmQueue: CharacterKind[] = []
+  let warmPending = false
+  const idle = (fn: () => void) =>
+    typeof window.requestIdleCallback === 'function'
+      ? window.requestIdleCallback(fn, { timeout: 150 })
+      : window.setTimeout(fn, 16)
+  function queueWarm(kinds: CharacterKind[]): void {
+    for (const k of kinds) if (!warmQueue.includes(k)) warmQueue.push(k)
+    if (!warmPending) {
+      warmPending = true
+      idle(warmStep)
+    }
+  }
+  function warmStep(): void {
+    warmPending = false
+    if (disposed) return
+    const kind = warmQueue.shift()
+    if (kind && !built.has(kind)) {
+      // Build, then compile its materials against the real scene (so the
+      // lights/shadow shader variants match) while it's still off-stage.
+      const c = getChar(kind)
+      scene.add(c.root)
+      renderer.compile(scene, camera)
+      scene.remove(c.root)
+    }
+    if (warmQueue.length) {
+      warmPending = true
+      idle(warmStep)
+    } else {
+      layout()
+      requestRender()
+    }
+  }
+
   /* ---------------- layout ---------------- */
   let width = 0
   let height = 0
@@ -139,10 +174,25 @@ export function createCrowdEngine(host: HTMLElement, opts: EngineOptions): Crowd
 
     const n = Math.min(cast.length, aspect < 0.95 ? 3 : aspect < 1.35 ? 4 : cast.length)
     const start = Math.max(0, Math.floor((cast.length - n) / 2))
-    const next = cast.slice(start, start + n).map(getChar)
+    const kinds = cast.slice(start, start + n)
+    // Characters are built + shader-compiled one per idle slice (warmStep),
+    // never all at once — a synchronous build of a whole crowd was a 100-200ms
+    // main-thread block, felt as a stutter when a crowd mounted mid-scroll.
+    // The stage stays empty until the whole cast is warm, then everyone is
+    // placed at once and grows in, staggered.
+    const missing = kinds.filter((k) => !built.has(k))
+    if (missing.length) {
+      queueWarm(missing)
+      for (const c of shown) scene.remove(c.root)
+      shown = []
+      return
+    }
+    const next = kinds.map(getChar)
+    const entering = next.filter((c) => !shown.includes(c))
     for (const c of shown) if (!next.includes(c)) scene.remove(c.root)
-    for (const c of next) if (!shown.includes(c)) scene.add(c.root)
+    for (const c of entering) scene.add(c.root)
     shown = next
+    if (!reduced) entering.forEach((c, i) => c.enter(0.1 + i * 0.09))
     if (!shown.length) return
 
     const vfov = THREE.MathUtils.degToRad(camera.fov)

@@ -1,9 +1,11 @@
 import type { Metadata, Viewport } from 'next'
 import { headers } from 'next/headers'
+import 'lenis/dist/lenis.css'
 import './globals.css'
 import { StorefrontNav } from '../components/StorefrontNav'
 import { StorefrontFooter } from '../components/StorefrontFooter'
 import { FeedbackWidget } from '../components/feedback/FeedbackWidget'
+import { SmoothScroll } from '../components/ui/SmoothScroll'
 import { SERVD_ORIGIN, BRAND_HOST_HEADER } from '../lib/brandDomains'
 
 export const metadata: Metadata = {
@@ -69,6 +71,7 @@ export default function StorefrontLayout({ children }: { children: React.ReactNo
         <main id="main">{children}</main>
         <StorefrontFooter initialBrandSlug={initialBrandSlug} />
         <FeedbackWidget />
+        <SmoothScroll />
       </body>
     </html>
   )

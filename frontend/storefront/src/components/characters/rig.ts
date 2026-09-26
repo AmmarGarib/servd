@@ -22,6 +22,11 @@ const TAU = Math.PI * 2
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v))
 const damp = (cur: number, target: number, lambda: number, dt: number) => cur + (target - cur) * (1 - Math.exp(-lambda * dt))
 const easeInOut = (t: number) => (t < 0.5 ? 2 * t * t : 1 - (-2 * t + 2) ** 2 / 2)
+const easeOutBack = (t: number) => {
+  const c1 = 1.70158
+  const c3 = c1 + 1
+  return 1 + c3 * (t - 1) ** 3 + c1 * (t - 1) ** 2
+}
 
 const _v = new THREE.Vector3()
 
@@ -56,6 +61,11 @@ export class Character {
   private nextBlink = 1 + Math.random() * 4
   private blinkT = -1
   private doubleBlink = false
+
+  // entrance: grow up out of the floor with an overshoot, then a landing
+  // jiggle. -1 = not running (fully in).
+  private introDelay = 0
+  private introT = -1
 
   constructor(
     readonly kind: CharacterKind,
@@ -112,6 +122,13 @@ export class Character {
     return this.jumpT >= 0
   }
 
+  /** Start hidden and pop up out of the floor after `delay` seconds. */
+  enter(delay: number): void {
+    this.introDelay = delay
+    this.introT = 0
+    this.root.scale.setScalar(0.0001)
+  }
+
   update(ctx: FrameContext): void {
     const { t, dt, target, excitement: ex, reduced } = ctx
     const face = this.built.face
@@ -138,6 +155,8 @@ export class Character {
     const tiltX = clamp(Math.atan2(_v.y - this.built.height * 0.6, Math.max(0.5, _v.z)) * -0.08 * (1 + ex), -0.12, 0.12)
 
     if (reduced) {
+      this.introT = -1
+      this.root.scale.setScalar(1)
       this.lean.rotation.set(tiltX * 0.5, turnY * 0.5, 0)
       this.hop.position.y = 0
       this.hop.rotation.y = 0
@@ -145,6 +164,23 @@ export class Character {
       for (const eye of face.eyes) eye.lid.scale.set(1, eye.baseScaleY, 1)
       face.mouth.scale.setScalar(1)
       return
+    }
+
+    /* -------- entrance -------- */
+    if (this.introT >= 0) {
+      if (this.introDelay > 0) {
+        this.introDelay -= dt
+      } else {
+        this.introT += dt
+        const p = Math.min(1, this.introT / 0.72)
+        this.root.scale.setScalar(Math.max(0.0001, easeOutBack(p)))
+        if (p >= 1) {
+          this.introT = -1
+          this.root.scale.setScalar(1)
+          this.springV -= 2.6 // landing jiggle
+          this.happyHold = Math.max(this.happyHold, 0.6)
+        }
+      }
     }
 
     /* -------- idle life -------- */
