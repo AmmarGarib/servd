@@ -54,7 +54,9 @@ export function StorefrontNav({ initialBrandSlug = null }: Props) {
   }
 
   const transparent = TRANSPARENT_PATHS.has(pathname) && !scrolledPastHero
-  const onDarkHero  = transparent     // home page is ink-on-dark, nav goes white
+  // The home hero is a light butter-yellow stage (the food crowd), so the
+  // transparent nav stays ink-on-light — no white text, no dark scrim.
+  const onDarkHero  = false
 
   return (
     <nav
@@ -68,7 +70,7 @@ export function StorefrontNav({ initialBrandSlug = null }: Props) {
         top: 0, left: 0, right: 0,
         zIndex: 50,
         padding: '0.95rem clamp(1rem, 4vw, 2rem)',
-        background: transparent ? 'linear-gradient(to bottom, rgba(0,0,0,0.55) 0%, rgba(0,0,0,0.12) 60%, rgba(0,0,0,0) 100%)' : 'rgba(255,255,255,0.88)',
+        background: transparent ? 'transparent' : 'rgba(255,255,255,0.88)',
         backdropFilter: transparent ? undefined : 'blur(16px) saturate(160%)',
         WebkitBackdropFilter: transparent ? undefined : 'blur(16px) saturate(160%)',
         borderBottom: transparent ? 'none' : '1px solid var(--servd-line)',

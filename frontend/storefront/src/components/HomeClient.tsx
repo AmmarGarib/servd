@@ -1,7 +1,7 @@
 'use client'
 import Link from 'next/link'
 import { MagneticLink } from './ui/MagneticButton'
-import { LandingScrollHero } from './LandingScrollHero'
+import { PartyHero } from './party/PartyHero'
 import type { HeroConfig } from '../lib/heroConfig'
 
 import type { Concept } from '../lib/concept'
@@ -56,11 +56,11 @@ export function HomeClient({ concepts, heroConfig }: Props) {
   return (
     <div ref={pageRef} style={{ background: 'var(--servd-bg)', color: 'var(--servd-ink)', display: 'flex', flexDirection: 'column' }}>
 
-      {/* ── HERO ─ the scroll-expansion media hero. Background image + the
-            expanding photo/video are operator-editable via Admin → Marketing
-            → Landing Hero (SiteLayout slug `servd:hero`); food placeholders
-            until the operator sets them. */}
-      <LandingScrollHero config={heroConfig} />
+      {/* ── HERO ─ the food crowd: 3D food characters on a butter-yellow
+            stage that watch the cursor and cheer the order CTA. Headline and
+            overview stay operator-editable via Admin → Marketing → Landing
+            Hero (SiteLayout slug `servd:hero`). */}
+      <PartyHero config={heroConfig} />
 
       {/* ── BRAND CARDS ─ Each one is a full-bleed food block leading
             into the order flow. */}

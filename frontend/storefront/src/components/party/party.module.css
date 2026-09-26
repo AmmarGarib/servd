@@ -1,0 +1,246 @@
+/* Playful "food crowd" direction — the home hero stage.
+   Palette checked for contrast: plum on butter 8.35:1, ink on butter
+   11.52:1, cream on plum 10.84:1. Tomato is decoration only (2.96:1 on
+   butter — never text). */
+
+.hero {
+  --party-butter: #FFD447;
+  --party-butter-deep: #F4C22E;
+  --party-cream: #FFF4D6;
+  --party-plum: #4E2A4F;
+  --party-ink: #2A1A2B;
+  --party-ink-mute: #5C4A3D;
+  --party-tomato: #FF5A3C;
+
+  position: relative;
+  /* The crowd must be in the FIRST screen — copy takes its natural height
+     and the stage fills whatever is left of the viewport. */
+  height: max(100svh, 680px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  isolation: isolate;
+  background:
+    radial-gradient(ellipse 70% 55% at 50% 38%, rgba(255, 250, 225, 0.75) 0%, rgba(255, 250, 225, 0) 70%),
+    var(--party-butter);
+  color: var(--party-ink);
+}
+
+/* ── Copy ──────────────────────────────────────────────────────────────── */
+.copy {
+  position: relative;
+  z-index: 2;
+  flex-shrink: 0;
+  text-align: center;
+  padding: clamp(5.5rem, 11vh, 6.75rem) clamp(1.25rem, 5vw, 3rem) 0;
+  max-width: 64rem;
+  margin: 0 auto;
+}
+
+.eyebrow {
+  margin: 0 0 1rem;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 0.8rem;
+  letter-spacing: 0.26em;
+  text-transform: uppercase;
+  color: var(--party-plum);
+}
+
+.title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: clamp(2.8rem, 7.2vw, 6.4rem);
+  line-height: 0.92;
+  letter-spacing: -0.045em;
+  color: var(--party-plum);
+  text-wrap: balance;
+}
+
+.word {
+  display: inline-block;
+  margin: 0 0.12em;
+  animation: wordDrop 900ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  animation-delay: calc(var(--i) * 90ms + 120ms);
+}
+
+@keyframes wordDrop {
+  0%   { opacity: 0; transform: translateY(-70%) rotate(-6deg) scale(0.9); }
+  60%  { opacity: 1; transform: translateY(6%) rotate(2deg) scale(1.02); }
+  100% { opacity: 1; transform: none; }
+}
+
+.tail {
+  position: relative;
+  display: inline-block;
+  font-style: italic;
+  color: var(--party-ink);
+}
+
+.underline {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -0.12em;
+  width: 100%;
+  height: 0.28em;
+  fill: none;
+  stroke: var(--party-tomato);
+  stroke-width: 7;
+  stroke-linecap: round;
+  stroke-dasharray: 340;
+  stroke-dashoffset: 340;
+  animation: drawLine 900ms ease-out 900ms forwards;
+}
+
+@keyframes drawLine { to { stroke-dashoffset: 0; } }
+
+.lead {
+  margin: 1.2rem auto 0;
+  max-width: 44rem;
+  font-size: clamp(1.02rem, 1.4vw, 1.2rem);
+  line-height: 1.6;
+  color: var(--party-ink-mute);
+  animation: fadeUp 700ms ease-out 500ms both;
+}
+
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* ── CTAs — chunky 3D pill, the diner-button feel ─────────────────────── */
+.ctas {
+  margin-top: 1.6rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.9rem;
+  justify-content: center;
+  animation: fadeUp 700ms ease-out 650ms both;
+}
+
+.cta,
+.ctaGhost {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6rem;
+  min-height: 56px;
+  padding: 0.9rem 1.9rem;
+  border-radius: 999px;
+  border: 2.5px solid var(--party-ink);
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 1.08rem;
+  letter-spacing: -0.01em;
+  text-decoration: none;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: transform 160ms cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 160ms ease, background-color 160ms ease;
+}
+
+.cta {
+  background: var(--party-plum);
+  color: var(--party-cream);
+  box-shadow: 0 6px 0 var(--party-ink);
+}
+.cta svg { fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; transition: transform 200ms ease; }
+.cta:hover { transform: translateY(-3px) rotate(-1.5deg); box-shadow: 0 9px 0 var(--party-ink); }
+.cta:hover svg { transform: translateX(4px); }
+.cta:active { transform: translateY(4px); box-shadow: 0 2px 0 var(--party-ink); }
+
+.ctaGhost {
+  background: var(--party-cream);
+  color: var(--party-ink);
+  box-shadow: 0 6px 0 var(--party-ink);
+}
+.ctaGhost:hover { transform: translateY(-3px) rotate(1.5deg); box-shadow: 0 9px 0 var(--party-ink); }
+.ctaGhost:active { transform: translateY(4px); box-shadow: 0 2px 0 var(--party-ink); }
+
+.cta:focus-visible,
+.ctaGhost:focus-visible {
+  outline: 3px solid var(--party-ink);
+  outline-offset: 4px;
+}
+
+/* ── Stage — the crowd stands on this floor ───────────────────────────── */
+.stage {
+  position: relative;
+  z-index: 1;
+  flex: 1;
+  min-height: 15rem;
+  margin-top: clamp(0.25rem, 1.5vh, 1rem);
+}
+
+.floor {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 34%;
+  background: linear-gradient(180deg, rgba(244, 194, 46, 0) 0%, var(--party-butter-deep) 100%);
+  pointer-events: none;
+}
+
+/* ── Doodles ───────────────────────────────────────────────────────────── */
+.doodle {
+  position: absolute;
+  z-index: 0;
+  pointer-events: none;
+}
+.doodleStar {
+  width: clamp(28px, 3.6vw, 48px);
+  top: 22%;
+  left: 10%;
+  fill: var(--party-plum);
+  animation: spin 9s linear infinite;
+}
+.doodleSquiggle {
+  width: clamp(60px, 8vw, 110px);
+  top: 16%;
+  right: 9%;
+  fill: none;
+  stroke: var(--party-tomato);
+  stroke-width: 5;
+  stroke-linecap: round;
+  animation: wiggle 3.2s ease-in-out infinite;
+}
+.doodleDot {
+  width: clamp(14px, 1.6vw, 22px);
+  top: 48%;
+  right: 16%;
+  fill: var(--party-tomato);
+  animation: bob 2.6s ease-in-out infinite;
+}
+
+@keyframes spin   { to { transform: rotate(360deg); } }
+@keyframes wiggle { 0%, 100% { transform: rotate(-6deg); } 50% { transform: rotate(6deg) translateY(-4px); } }
+@keyframes bob    { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-10px); } }
+
+/* Phones: the crowd goes FIRST (it's the hook), in a box near-square
+   enough that the engine shows its 4 big centre characters instead of
+   six tiny ones; the copy follows. The page scrolls naturally here. */
+@media (max-width: 640px) {
+  .hero { height: auto; min-height: 100svh; }
+  .stage {
+    order: -1;
+    flex: none;
+    height: clamp(17rem, 40svh, 22rem);
+    min-height: 0;
+    margin-top: 4.5rem;
+  }
+  /* The copy continues right under the stage, so a floor band would end in
+     a hard seam — the characters' own contact shadows ground them. */
+  .floor { display: none; }
+  .copy { padding-top: 0.5rem; padding-bottom: 3rem; }
+  .doodleSquiggle, .doodleStar { display: none; }
+  .doodleDot { top: 12%; right: 6%; }
+  .ctas { flex-direction: column; align-items: stretch; max-width: 22rem; margin-left: auto; margin-right: auto; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .word, .lead, .ctas, .underline { animation: none; stroke-dashoffset: 0; }
+  .doodle { animation: none; }
+  .cta:hover, .ctaGhost:hover { transform: none; }
+}
