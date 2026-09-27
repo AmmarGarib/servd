@@ -103,6 +103,35 @@ rewritten, trust these corrections:
   runs at boot for every company (and only adds codes that are missing, so
   operator edits survive). `/health` checks the required codes per company.
 
+## Storefront content module (2026-09-28, owner decision 41)
+
+**Admin → Storefront (`/storefront`) is the ONLY place storefront content is
+edited.** It replaced Visual Layout (`Concept.storefrontLayout`, no longer
+read), the Content editor (`/content`), `/storefront-hero`,
+`/storefront-footer` and the `/media` page (now the Library tab). Tabs: Pages
+(page builder, drag-and-drop elements incl. columns/video), Pop-ups (a page +
+display rules), Library (`MediaAsset` kinds image/video/font/copy), Approvals.
+
+- Everything is a `SiteLayout` row keyed by slug: `servd:home`, `servd:hero`,
+  `brand:<slug>`, `brand:<slug>:footer`, `page:<slug>` (served at
+  `/pages/<slug>`), `popup:<key>`. `blocks`/`settings` are LIVE;
+  `draftBlocks`/`draftSettings` are the working copy.
+- **Nothing publishes without the CEO (role `admin`).** Draft → submit →
+  approve (now, or "publish at" → `scheduled`, published by the
+  `sitePublish` worker or lazily on the next public read) / reject with a
+  note. Every publish writes a `SiteLayoutVersion`; rollback republishes an
+  old version as a new one. There is no publish-on-save endpoint — don't add
+  one. Drafting needs module `storefront`.
+- A/B: `settings.ab = { splitPct, blocks }`; the visitor's variant is a hash of
+  the `sv_vid` cookie + slug + version; `SiteLayoutStat` counts views and
+  conversions (first click inside the page / pop-up submit).
+- The `signature` element renders the page's built-in design (the bespoke
+  brand layout, or HomeClient on home), so the owner can build around it.
+- The mobile app renders the same block JSON natively
+  (`mobile/src/content/`). Keep the block schema in step across
+  `frontend/storefront/src/lib/blocks.ts`, `frontend/admin/src/lib/blocks.ts`
+  and `mobile/src/content/types.ts`.
+
 ## Recent additions (2026-09-09)
 
 - **`stackd` (formerly `stax`) is a café and market, NOT a burger brand.**
