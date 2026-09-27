@@ -6,9 +6,20 @@
 //
 // Failure isolation: flagging never blocks the underlying mutation. Errors
 // log a warning and return null so the caller's transaction continues.
+//
+// Company scope (2026-09-27): every flag belongs to ONE company
+// (ExceptionFlag.tenantId) and the inbox only ever shows the operator's
+// companies' flags. Pass `tenantId` resolved from the flagged entity's own
+// company (order → concept.tenantId, shift → shiftTenantId, bill →
+// supplier.tenantId, manual action → the operator's active company). It is
+// optional in the type only while the remaining call sites migrate: a flag
+// without it falls back to its brand's company, and failing that is written
+// company-less — invisible in every inbox — with a warning naming the caller.
 
 import { prisma } from './prisma.js'
 import type { ExceptionSeverity } from '@prisma/client'
+import { tenantForConcept } from './setup-config.js'
+import type { TenantIdWhere } from './tenantScope.js'
 
 export type ExceptionKind =
   | 'receiving_variance'    // GRN qty differs from PO qty above threshold
@@ -33,6 +44,8 @@ export type ExceptionKind =
   | 'food_safety_temperature' // a temperature check outside its limit
 
 export interface FlagInput {
+  /** The company the flagged entity belongs to. Pass it — see the header. */
+  tenantId?:   string | null
   kind:        ExceptionKind
   severity?:   ExceptionSeverity                       // default: 'medium'
   title:       string
@@ -45,10 +58,29 @@ export interface FlagInput {
   amountCents?: number | null                          // monetary impact (if any)
 }
 
+/**
+ * The company a flag is stamped with: the caller's tenantId, else (only when
+ * the caller passed none) its brand's company. Null → a warning, because a
+ * company-less flag is shown in no inbox.
+ */
+async function flagTenantId(input: FlagInput): Promise<string | null> {
+  if (input.tenantId) return input.tenantId
+  const viaBrand = input.tenantId === undefined ? await tenantForConcept(input.conceptId) : null
+  if (viaBrand) return viaBrand
+  const caller = new Error().stack?.split('\n')[3]?.trim() ?? 'unknown caller'
+  console.warn(
+    `[exceptions] ${input.kind} flag has no company (entity ${input.entityType ?? '-'}:${input.entityId ?? '-'}) — `
+    + `it will be invisible in every inbox. Pass tenantId from the entity's company. ${caller}`,
+  )
+  return null
+}
+
 export async function flagException(input: FlagInput): Promise<{ id: string } | null> {
   try {
+    const tenantId = await flagTenantId(input)
     const row = await prisma.exceptionFlag.create({
       data: {
+        tenantId,
         kind: input.kind,
         severity: input.severity ?? 'medium',
         title: input.title,
@@ -70,18 +102,22 @@ export async function flagException(input: FlagInput): Promise<{ id: string } | 
 }
 
 // Acknowledge — owner saw the flag, working on it. Doesn't close the loop.
-export async function acknowledgeException(id: string, userId: string): Promise<void> {
-  await prisma.exceptionFlag.update({
-    where: { id },
+// `scope` is the operator's companies (scopeTenantWhere): a flag outside it
+// is not touched and the call returns false (the route answers 404).
+export async function acknowledgeException(id: string, userId: string, scope: TenantIdWhere): Promise<boolean> {
+  const r = await prisma.exceptionFlag.updateMany({
+    where: { id, ...scope },
     data: { status: 'acknowledged', acknowledgedById: userId, acknowledgedAt: new Date() },
   })
+  return r.count > 0
 }
 
 // Resolve — flag closed with a resolution note. The flag stays in the DB
-// for audit; status filter excludes it from the open inbox.
-export async function resolveException(id: string, userId: string, resolution: string): Promise<void> {
-  await prisma.exceptionFlag.update({
-    where: { id },
+// for audit; status filter excludes it from the open inbox. Scoped as above.
+export async function resolveException(id: string, userId: string, resolution: string, scope: TenantIdWhere): Promise<boolean> {
+  const r = await prisma.exceptionFlag.updateMany({
+    where: { id, ...scope },
     data: { status: 'resolved', resolvedById: userId, resolvedAt: new Date(), resolution },
   })
+  return r.count > 0
 }

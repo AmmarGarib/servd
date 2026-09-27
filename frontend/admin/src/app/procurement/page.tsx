@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { api } from '../../lib/api'
 import { useViewAllTenants } from '../../components/ui/TenantSwitcher'
 import { ApAging } from '../../components/finance/ApAging'
+import { fmtPkrWhole } from '../../lib/money'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -71,9 +72,6 @@ interface PriceHistoryRow {
 type Tab = 'pos' | 'bills' | 'payments' | 'suppliers' | 'aging' | 'reorder' | 'approvals' | 'history'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
-const pkr = (cents: number) =>
-  `PKR ${Math.floor(cents / 100).toLocaleString()}`
 
 const STATUS_COLORS: Record<string, string> = {
   draft: 'text-zinc-400 bg-zinc-800/60',
@@ -252,7 +250,7 @@ function PoTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
                   <td className="px-4 py-3 text-kds-text font-medium">{po.supplier?.name ?? '—'}</td>
                   <td className="px-4 py-3 text-kds-subtext hidden md:table-cell">{fmt(po.createdAt)}</td>
                   <td className="px-4 py-3 text-kds-subtext hidden md:table-cell">{po.expectedDate ? fmt(po.expectedDate) : '—'}</td>
-                  <td className="px-4 py-3 text-kds-text font-semibold text-right">{pkr(po.totalCents)}</td>
+                  <td className="px-4 py-3 text-kds-text font-semibold text-right">{fmtPkrWhole(po.totalCents)}</td>
                   <td className="px-4 py-3"><Badge status={po.status} /></td>
                   <td className="px-4 py-3">
                     <PoActions po={po} onAction={(action, body) => {
@@ -295,8 +293,8 @@ function PoTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
                     <td className="py-1.5 text-kds-text">{l.inventoryItem?.name ?? l.inventoryItemId}</td>
                     <td className="py-1.5 text-right text-kds-text">{l.quantityOrdered} {l.inventoryItem?.unit}</td>
                     <td className="py-1.5 text-right text-kds-subtext">{l.quantityReceived}</td>
-                    <td className="py-1.5 text-right text-kds-subtext">{pkr(l.unitCostCents)}</td>
-                    <td className="py-1.5 text-right text-kds-text font-semibold">{pkr(l.quantityOrdered * l.unitCostCents)}</td>
+                    <td className="py-1.5 text-right text-kds-subtext">{fmtPkrWhole(l.unitCostCents)}</td>
+                    <td className="py-1.5 text-right text-kds-text font-semibold">{fmtPkrWhole(l.quantityOrdered * l.unitCostCents)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -486,7 +484,7 @@ function CreatePoForm({ qc, onClose }: { qc: ReturnType<typeof useQueryClient>; 
       </div>
 
       <div className="flex items-center justify-between pt-2 border-t border-kds-border">
-        <p className="text-sm font-bold text-kds-text">Total: {pkr(totalCents)}</p>
+        <p className="text-sm font-bold text-kds-text">Total: {fmtPkrWhole(totalCents)}</p>
         <div className="flex gap-2">
           <button onClick={() => mut.mutate()} disabled={!valid || mut.isPending}
             className="rounded-xl bg-kds-green text-black font-bold px-4 py-2 text-sm hover:opacity-90 disabled:opacity-50">
@@ -593,9 +591,9 @@ function BillsTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
                     <td className="px-4 py-3 text-kds-text font-medium">{b.supplier?.name ?? '—'}</td>
                     <td className="px-4 py-3 text-kds-subtext hidden md:table-cell">{fmt(b.billDate)}</td>
                     <td className={`px-4 py-3 hidden md:table-cell ${isOverdue ? 'text-kds-red font-semibold' : 'text-kds-subtext'}`}>{fmt(b.dueDate)}</td>
-                    <td className="px-4 py-3 text-kds-text font-semibold text-right">{pkr(b.totalCents)}</td>
+                    <td className="px-4 py-3 text-kds-text font-semibold text-right">{fmtPkrWhole(b.totalCents)}</td>
                     <td className={`px-4 py-3 font-semibold text-right ${billDue(b) > 0 ? 'text-kds-red' : 'text-kds-green'}`}>
-                      {pkr(billDue(b))}
+                      {fmtPkrWhole(billDue(b))}
                     </td>
                     <td className="px-4 py-3"><Badge status={isOverdue ? 'overdue' : b.status} /></td>
                     <td className="px-4 py-3">
@@ -806,9 +804,9 @@ function PaymentsTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
                   <td className="px-4 py-3 text-kds-text font-medium">{p.supplier?.name ?? '—'}</td>
                   <td className="px-4 py-3 text-kds-subtext hidden md:table-cell capitalize">{p.method.replace(/_/g, ' ')}</td>
                   <td className="px-4 py-3 text-kds-subtext font-mono text-xs hidden md:table-cell">{p.reference ?? '—'}</td>
-                  <td className="px-4 py-3 text-kds-text font-semibold text-right">{pkr(p.amountCents)}</td>
+                  <td className="px-4 py-3 text-kds-text font-semibold text-right">{fmtPkrWhole(p.amountCents)}</td>
                   <td className={`px-4 py-3 text-right font-semibold ${p.amountCents - p.appliedCents > 0 ? 'text-amber-400' : 'text-kds-subtext'}`}>
-                    {pkr(p.amountCents - p.appliedCents)}
+                    {fmtPkrWhole(p.amountCents - p.appliedCents)}
                   </td>
                   <td className="px-4 py-3">
                     {p.amountCents - p.appliedCents > 0 && (
@@ -922,7 +920,7 @@ function AllocateModal({ paymentId, qc, onClose }: { paymentId: string; qc: Retu
             <div key={b.id} className="flex items-center gap-3">
               <div className="flex-1 min-w-0">
                 <p className="text-sm text-kds-text font-medium">{b.billNumber}</p>
-                <p className="text-xs text-kds-subtext">Outstanding: {pkr(billDue(b))}</p>
+                <p className="text-xs text-kds-subtext">Outstanding: {fmtPkrWhole(billDue(b))}</p>
               </div>
               <input type="number" placeholder="Amount (PKR)" className="w-32 rounded-lg bg-kds-bg border border-kds-border px-2 py-1.5 text-sm text-kds-text focus:border-kds-green focus:outline-none"
                 value={allocations[b.id] ?? ''}
@@ -1039,13 +1037,13 @@ function SuppliersTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
           <div className="flex gap-6">
             <div>
               <p className="text-xs text-kds-subtext">Outstanding balance</p>
-              <p className={`text-xl font-black ${statement.outstanding > 0 ? 'text-kds-red' : 'text-kds-green'}`}>{pkr(statement.outstanding)}</p>
+              <p className={`text-xl font-black ${statement.outstanding > 0 ? 'text-kds-red' : 'text-kds-green'}`}>{fmtPkrWhole(statement.outstanding)}</p>
             </div>
             <div>
               <p className="text-xs text-kds-subtext">Opening balance (included above)</p>
-              <p className="text-sm font-semibold text-kds-text">{pkr(statement.supplier.openingBalanceCents)}</p>
+              <p className="text-sm font-semibold text-kds-text">{fmtPkrWhole(statement.supplier.openingBalanceCents)}</p>
               {(statement.openingUnpostedCents ?? 0) !== 0 && (
-                <p className="text-[11px] text-amber-400">{pkr(statement.openingUnpostedCents ?? 0)} not yet posted to the ledger, so not in the balance</p>
+                <p className="text-[11px] text-amber-400">{fmtPkrWhole(statement.openingUnpostedCents ?? 0)} not yet posted to the ledger, so not in the balance</p>
               )}
             </div>
           </div>
@@ -1056,7 +1054,7 @@ function SuppliersTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
                 {statement.bills.slice(0, 5).map((b) => (
                   <div key={b.id} className="flex items-center justify-between text-xs">
                     <span className="text-kds-subtext font-mono">{b.billNumber}</span>
-                    <span className="text-kds-text">{pkr(b.totalCents)}</span>
+                    <span className="text-kds-text">{fmtPkrWhole(b.totalCents)}</span>
                     <Badge status={b.status} />
                   </div>
                 ))}
@@ -1069,7 +1067,7 @@ function SuppliersTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
                   <div key={p.id} className="flex items-center justify-between text-xs">
                     <span className="text-kds-subtext">{fmt(p.paymentDate)}</span>
                     <span className="text-kds-text capitalize">{p.method.replace(/_/g, ' ')}</span>
-                    <span className="text-kds-green font-semibold">{pkr(p.amountCents)}</span>
+                    <span className="text-kds-green font-semibold">{fmtPkrWhole(p.amountCents)}</span>
                   </div>
                 ))}
               </div>
@@ -1262,7 +1260,7 @@ function ReorderTab() {
                   <td className="px-4 py-3 text-right text-kds-red font-bold">{item.currentStock} {item.unit}</td>
                   <td className="px-4 py-3 text-right text-kds-subtext">{item.parLevel} {item.unit}</td>
                   <td className="px-4 py-3 text-right text-amber-400 font-semibold">{item.reorderQty} {item.unit}</td>
-                  <td className="px-4 py-3 text-right text-kds-subtext hidden md:table-cell">{estCost != null ? pkr(estCost * 100) : '—'}</td>
+                  <td className="px-4 py-3 text-right text-kds-subtext hidden md:table-cell">{estCost != null ? fmtPkrWhole(estCost * 100) : '—'}</td>
                   <td className="px-4 py-3 text-kds-subtext text-xs hidden md:table-cell">
                     {item.suppliers?.map((s) => s.name).join(', ') ?? '—'}
                   </td>
@@ -1318,7 +1316,7 @@ function ApprovalsTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
         <div>
           <p className="text-xs text-kds-subtext font-medium">Auto-approval threshold</p>
           <p className="text-sm font-bold text-kds-text">
-            {thresholdData ? pkr(thresholdData.thresholdCents) : '…'}
+            {thresholdData ? fmtPkrWhole(thresholdData.thresholdCents) : '…'}
           </p>
           <p className="text-xs text-kds-subtext">POs above this value require manual approval</p>
         </div>
@@ -1357,7 +1355,7 @@ function ApprovalsTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
                     <td className="px-4 py-3 font-mono text-xs text-kds-green">{po.reference ?? po.id.slice(-8)}</td>
                     <td className="px-4 py-3 text-kds-text font-medium">{po.supplier?.name ?? '—'}</td>
                     <td className="px-4 py-3 text-kds-subtext hidden md:table-cell">{fmt(po.createdAt)}</td>
-                    <td className="px-4 py-3 text-kds-text font-bold text-right">{pkr(po.totalCents)}</td>
+                    <td className="px-4 py-3 text-kds-text font-bold text-right">{fmtPkrWhole(po.totalCents)}</td>
                     <td className="px-4 py-3">
                       <div className="flex gap-2">
                         <button onClick={() => approveRejectMut.mutate({ id: po.id, action: 'approve' })}
@@ -1468,8 +1466,8 @@ function PriceHistoryTab() {
                   <tr key={row.id} className="border-b border-kds-border/50 last:border-0 hover:bg-kds-card/30">
                     <td className="px-4 py-3 text-kds-text font-medium">{row.inventoryItem?.name ?? '—'}</td>
                     <td className="px-4 py-3 text-kds-subtext hidden md:table-cell">{row.supplier?.name ?? '—'}</td>
-                    <td className="px-4 py-3 text-right text-kds-subtext hidden md:table-cell">{row.oldCostCents != null ? pkr(row.oldCostCents) : '—'}</td>
-                    <td className="px-4 py-3 text-right text-kds-text font-semibold">{pkr(row.newCostCents)}</td>
+                    <td className="px-4 py-3 text-right text-kds-subtext hidden md:table-cell">{row.oldCostCents != null ? fmtPkrWhole(row.oldCostCents) : '—'}</td>
+                    <td className="px-4 py-3 text-right text-kds-text font-semibold">{fmtPkrWhole(row.newCostCents)}</td>
                     <td className="px-4 py-3 text-right hidden md:table-cell">
                       {pct ? (
                         <span className={`text-xs font-bold ${up ? 'text-kds-red' : 'text-kds-green'}`}>

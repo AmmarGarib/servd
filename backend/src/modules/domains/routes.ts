@@ -5,6 +5,7 @@ import { promises as dns } from 'dns'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, MANAGERS, ADMIN_ONLY } from '../auth/middleware.js'
 import { NotFoundError, AppError } from '../../lib/errors.js'
+import { assertConceptOwned } from '../../lib/tenantScope.js'
 
 const STOREFRONT_TARGET = process.env['SERVD_STOREFRONT_HOST'] ?? 'storefront.servd.pk'
 
@@ -58,14 +59,9 @@ export async function domainRoutes(fastify: FastifyInstance) {
     const dup = await prisma.domain.findUnique({ where: { hostname: body.hostname } })
     if (dup) throw new AppError('HOSTNAME_TAKEN', 'That hostname is already configured', 409)
 
-    // If the operator is attaching to a concept, verify it belongs to the
-    // active tenant so they can't bind a domain to someone else's brand.
-    if (body.conceptId) {
-      const concept = await prisma.concept.findFirst({
-        where: { id: body.conceptId, tenantId: req.staffUser!.tenantFilter, deletedAt: null },
-      })
-      if (!concept) return reply.status(403).send({ error: { code: 'CROSS_TENANT', message: 'Concept does not belong to your active company' } })
-    }
+    // The domain binds to the ACTIVE company, so its brand (if any) must be
+    // one of that company's — not of any company the operator belongs to.
+    if (body.conceptId) await assertConceptOwned(req, body.conceptId, 'create')
 
     const created = await prisma.domain.create({
       data: {
@@ -145,11 +141,14 @@ export async function domainRoutes(fastify: FastifyInstance) {
         where: { id: req.params.id, tenantId: req.staffUser!.tenantId },
       })
       if (!dom) throw new NotFoundError('Domain', req.params.id)
+      // A domain may only point at a brand of the domain's OWN company — not
+      // any company the operator happens to belong to.
       if (body.conceptId) {
         const concept = await prisma.concept.findFirst({
-          where: { id: body.conceptId, tenantId: req.staffUser!.tenantFilter, deletedAt: null },
+          where: { id: body.conceptId, tenantId: dom.tenantId ?? { in: [] }, deletedAt: null },
+          select: { id: true },
         })
-        if (!concept) return reply.status(403).send({ error: { code: 'CROSS_TENANT', message: 'Concept does not belong to your active company' } })
+        if (!concept) return reply.status(422).send({ error: { code: 'BRAND_NOT_IN_COMPANY', message: 'That brand is not part of this domain\'s company' } })
       }
 
       return prisma.domain.update({

@@ -2,6 +2,12 @@
 // loyalty tier + points, last orders, last reservations, lifetime spend.
 // Used by hosts ("are they on the naughty list?") and cashiers (apply loyalty,
 // see preferences).
+//
+// Two real calls, the same the admin CRM makes: GET /crm/customers?search= to
+// find the customer, then GET /crm/customers/:id/context for the profile. The
+// screen used to call /crm/customer-context?q=, which does not exist. (The
+// search is manager-tier on the API; a host without it sees the not-found
+// panel.)
 
 import { useState } from 'react'
 import { View, Text, TextInput, ScrollView, ActivityIndicator } from 'react-native'
@@ -55,13 +61,59 @@ interface CustomerContext {
   }>
 }
 
+// GET /crm/customers/:id/context, as the API returns it.
+interface ApiContext {
+  id: string; name: string; email: string | null; phone: string | null
+  isBlacklisted: boolean; bannedAt: string | null; strikeCount: number
+  totalSpentCents: number; lastVisitAt: string | null
+  noShowCount: number; complaintCount: number; avgReviewRating: number | null
+  firstOrderAt: string | null
+  loyaltyAccount: { tier: string | null; pointsBalance: number } | null
+  recent: {
+    orders: Array<{ id: string; status: string; totalCents: number; placedAt: string; concept: { name: string } }>
+    reservations: Array<{ id: string; status: string; partySize: number; startTime: string; concept: { name: string } }>
+    strikes: Array<{ id: string; kind: string; severity: number; reason: string | null; recordedAt: string; reversedAt: string | null }>
+  }
+}
+
+function toContext(c: ApiContext): CustomerContext {
+  return {
+    customer: {
+      id: c.id, name: c.name, email: c.email, phone: c.phone,
+      createdAt: c.firstOrderAt ?? c.lastVisitAt ?? new Date().toISOString(),
+      isBanned: c.isBlacklisted || !!c.bannedAt,
+      strikeCount: c.strikeCount, bannedAt: c.bannedAt,
+      loyaltyTier: c.loyaltyAccount?.tier ?? null,
+      loyaltyPoints: c.loyaltyAccount?.pointsBalance ?? 0,
+      lifetimeSpendCents: c.totalSpentCents,
+      noShowCount: c.noShowCount, complaintCount: c.complaintCount,
+      avgReviewRating: c.avgReviewRating, lastVisitAt: c.lastVisitAt,
+    },
+    recentOrders: c.recent.orders.map((o) => ({
+      id: o.id, number: o.id.slice(0, 6).toUpperCase(), placedAt: o.placedAt,
+      totalCents: o.totalCents, status: o.status, conceptName: o.concept.name,
+    })),
+    recentReservations: c.recent.reservations.map((r) => ({
+      id: r.id, startTime: r.startTime, partySize: r.partySize, status: r.status, conceptName: r.concept.name,
+    })),
+    recentStrikes: c.recent.strikes,
+  }
+}
+
+async function lookup(term: string): Promise<CustomerContext> {
+  const list = await api.get<{ data: Array<{ id: string }> }>(`/crm/customers?search=${encodeURIComponent(term)}&limit=1`)
+  const hit = list.data[0]
+  if (!hit) throw new Error('not found')
+  return toContext(await api.get<ApiContext>(`/crm/customers/${hit.id}/context`))
+}
+
 export default function CustomerScreen() {
   const [query, setQuery] = useState('')
   const [submitted, setSubmitted] = useState('')
 
   const q = useQuery({
     queryKey: ['customer-lookup', submitted],
-    queryFn:  () => api.get<CustomerContext>(`/crm/customer-context?q=${encodeURIComponent(submitted)}`),
+    queryFn:  () => lookup(submitted),
     enabled:  submitted.length >= 3,
   })
 

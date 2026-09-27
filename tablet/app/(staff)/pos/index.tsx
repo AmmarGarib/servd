@@ -51,12 +51,18 @@ export default function PosScreen() {
 
   const concepts = useQuery({
     queryKey: ['pos', 'concepts'],
-    queryFn:  () => api.get<{ concepts: Concept[] }>('/concepts'),
+    // GET /concepts returns a bare array.
+    queryFn:  async () => ({ concepts: await api.get<Concept[]>('/concepts') }),
   })
 
   const menu = useQuery({
     queryKey: ['pos', 'menu', pos.conceptId],
-    queryFn:  () => api.get<{ items: MenuItem[] }>(`/concepts/${pos.conceptId}/menu`),
+    // GET /menu/:conceptId (the route /concepts/:id/menu never existed)
+    // returns categories with their items; flatten to the grid's shape.
+    queryFn:  async () => {
+      const cats = await api.get<Array<{ name: string; items: Array<Omit<MenuItem, 'category'>> }>>(`/menu/${pos.conceptId}`)
+      return { items: cats.flatMap((c) => c.items.map((i) => ({ ...i, category: c.name }))) }
+    },
     enabled:  !!pos.conceptId,
   })
 

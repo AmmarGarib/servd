@@ -7,10 +7,9 @@ import Link from 'next/link'
 import { EmptyStateGuide } from '../../components/ui/EmptyStateGuide'
 import { TenantChip, useMyTenants } from '../../components/ui/TenantPicker'
 import { useViewAllTenants } from '../../components/ui/TenantSwitcher'
+import { fmtPkrWhole } from '../../lib/money'
 
 interface ConceptTab { id: string; name: string; tenantId?: string | null; tenant?: { id: string; name: string } | null }
-
-function fmt(cents: number) { return `PKR ${(cents / 100).toFixed(0)}` }
 
 export default function MenuPage() {
   const [selectedConceptId, setSelectedConceptId] = useState<string>('')
@@ -208,7 +207,7 @@ export default function MenuPage() {
                   {item.description && (
                     <p className="text-xs text-kds-subtext mt-0.5 line-clamp-2">{item.description}</p>
                   )}
-                  <p className="mt-1 font-bold text-kds-green">{fmt(item.priceCents)}</p>
+                  <p className="mt-1 font-bold text-kds-green">{fmtPkrWhole(item.priceCents)}</p>
                   {!item.isAvailable && <p className="text-xs text-kds-red font-bold mt-1">86&apos;d</p>}
 
                   <div className="mt-3 flex gap-2">

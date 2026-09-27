@@ -63,19 +63,31 @@ export async function runAllocationRule(input: {
   periodStart: Date
   periodEnd: Date
   postedById: string
-  // The company the operator is allocating within. CostAllocationRule has no
-  // company column yet, so the route supplies the active company; the source
-  // account, the eligible brands and the posting all resolve inside it.
+  // The rule's own company (CostAllocationRule.tenantId). The source
+  // account, the eligible brands, the run row and the posting all resolve
+  // inside it — the route passes rule.tenantId, never the caller's active
+  // company, and the rule must belong to it.
   tenantId: string
 }) {
-  const rule = await prisma.costAllocationRule.findUnique({
-    where: { id: input.ruleId },
-    include: { weights: { include: { concept: { select: { slug: true } } } } },
+  const rule = await prisma.costAllocationRule.findFirst({
+    where: { id: input.ruleId, tenantId: input.tenantId },
+    include: { weights: { include: { concept: { select: { slug: true, tenantId: true } } } } },
   })
   if (!rule) throw new NotFoundError('CostAllocationRule', input.ruleId)
   if (!rule.isActive) throw new AppError('RULE_INACTIVE', 'Rule is inactive', 422)
   if (rule.weights.length === 0) {
     throw new AppError('NO_WEIGHTS', 'Rule has no weight rows — add at least one concept', 422)
+  }
+  // Every weighted brand must be the rule's company's. A weight left over from
+  // before rules were per company (or a brand since moved) would otherwise
+  // debit this company's ledger for another company's brand.
+  const foreign = rule.weights.filter((w) => w.concept.tenantId !== input.tenantId)
+  if (foreign.length > 0) {
+    throw new AppError(
+      'WEIGHT_NOT_IN_COMPANY',
+      `Rule weights name brands of another company (${foreign.map((w) => w.concept.slug).join(', ')}) — edit the rule`,
+      422,
+    )
   }
 
   const sourceAccount = await prisma.account.findFirst({ where: { tenantId: input.tenantId, code: rule.sourceAccountCode } })
@@ -163,6 +175,7 @@ export async function runAllocationRule(input: {
 
   const run = await prisma.costAllocationRun.create({
     data: {
+      tenantId: input.tenantId,
       ruleId: rule.id,
       periodStart: input.periodStart,
       periodEnd: input.periodEnd,

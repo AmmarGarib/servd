@@ -217,6 +217,7 @@ export async function crosschecksRoutes(fastify: FastifyInstance) {
     if (yieldVariancePct != null && yieldVariancePct < YIELD_LOW_THRESHOLD) {
       const staffUser = await prisma.user.findUnique({ where: { id: req.staffUser!.id }, select: { name: true } })
       await flagException({
+        tenantId,
         kind: 'yield_low',
         severity: yieldVariancePct < 0.7 ? 'high' : 'medium',
         title: `Low yield: ${body.itemName}`,
@@ -310,7 +311,8 @@ export async function crosschecksRoutes(fastify: FastifyInstance) {
       const variancePct = sysQty > 0 ? (l.physicalQty - sysQty) / sysQty : 0
       if (Math.abs(variancePct) > SHRINKAGE_THRESHOLD && sysQty > 0) {
         await flagException({
-          kind: 'shrinkage',
+        tenantId,
+        kind: 'shrinkage',
           severity: Math.abs(variancePct) > 0.1 ? 'high' : 'medium',
           title: `Shrinkage detected: ${itemName}`,
           description: `System said ${sysQty.toFixed(2)}, physical count ${l.physicalQty.toFixed(2)} (${(variancePct * 100).toFixed(1)}%).`,
@@ -329,10 +331,17 @@ export async function crosschecksRoutes(fastify: FastifyInstance) {
   // EXCEPTION INBOX — owner sees only what's broken
   // ════════════════════════════════════════════════════════════════════════
 
+  // Every read and write here is scoped by ExceptionFlag.tenantId: the inbox
+  // shows the operator's companies' flags only ('read' — view-aware), and a
+  // flag of any other company is 404 on acknowledge / resolve / dismiss
+  // ('write' — every company the operator belongs to). Company-less flags
+  // (legacy rows nothing could attribute) are shown to nobody.
+
   fastify.get('/exceptions', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
     const { status, severity, kind } = req.query as { status?: string; severity?: string; kind?: string }
     return prisma.exceptionFlag.findMany({
       where: {
+        ...(await scopeTenantWhere(req, 'read')),
         ...(status   ? { status: status as never }     : { status: 'open' }),
         ...(severity && { severity: severity as never }),
         ...(kind     && { kind }),
@@ -342,13 +351,14 @@ export async function crosschecksRoutes(fastify: FastifyInstance) {
     })
   })
 
-  fastify.get('/exceptions/stats', { preHandler: requireAuth(...MANAGERS) }, async () => {
+  fastify.get('/exceptions/stats', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
+    const scope = await scopeTenantWhere(req, 'read')
     const [open, ack, last24h, byKind] = await Promise.all([
-      prisma.exceptionFlag.count({ where: { status: 'open' } }),
-      prisma.exceptionFlag.count({ where: { status: 'acknowledged' } }),
-      prisma.exceptionFlag.count({ where: { createdAt: { gte: new Date(Date.now() - 86400_000) } } }),
+      prisma.exceptionFlag.count({ where: { ...scope, status: 'open' } }),
+      prisma.exceptionFlag.count({ where: { ...scope, status: 'acknowledged' } }),
+      prisma.exceptionFlag.count({ where: { ...scope, createdAt: { gte: new Date(Date.now() - 86400_000) } } }),
       prisma.exceptionFlag.groupBy({
-        by: ['kind'], where: { status: 'open' }, _count: { _all: true },
+        by: ['kind'], where: { ...scope, status: 'open' }, _count: { _all: true },
       }),
     ])
     return { open, acknowledged: ack, last24h, byKind: byKind.map((b) => ({ kind: b.kind, count: b._count._all })) }
@@ -357,12 +367,9 @@ export async function crosschecksRoutes(fastify: FastifyInstance) {
   fastify.patch<{ Params: { id: string } }>('/exceptions/:id/acknowledge',
     { preHandler: requireAuth(...MANAGERS) },
     async (req, reply) => {
-      try {
-        await acknowledgeException(req.params.id, req.staffUser!.id)
-        return reply.status(204).send()
-      } catch (err) {
-        throw new NotFoundError('ExceptionFlag', req.params.id)
-      }
+      const ok = await acknowledgeException(req.params.id, req.staffUser!.id, await scopeTenantWhere(req, 'write'))
+      if (!ok) throw new NotFoundError('ExceptionFlag', req.params.id)
+      return reply.status(204).send()
     },
   )
 
@@ -370,32 +377,23 @@ export async function crosschecksRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuth(...MANAGERS) },
     async (req, reply) => {
       const body = z.object({ resolution: z.string().min(1).max(500) }).parse(req.body)
-      try {
-        await resolveException(req.params.id, req.staffUser!.id, body.resolution)
-        return reply.status(204).send()
-      } catch (err) {
-        throw new NotFoundError('ExceptionFlag', req.params.id)
-      }
+      const ok = await resolveException(req.params.id, req.staffUser!.id, body.resolution, await scopeTenantWhere(req, 'write'))
+      if (!ok) throw new NotFoundError('ExceptionFlag', req.params.id)
+      return reply.status(204).send()
     },
   )
 
   fastify.delete<{ Params: { id: string } }>('/exceptions/:id',
     { preHandler: requireAuth(...ADMIN_ONLY) },
     async (req, reply) => {
-      // Brand-scoped flags belong to one company; company-less platform flags
-      // (conceptId null) stay dismissible by anyone who can see them.
-      const owned = await prisma.exceptionFlag.findFirst({
-        where: {
-          id: req.params.id,
-          OR: [
-            { conceptId: null },
-            { conceptId: { in: await conceptIdsInScope(req, 'write') } },
-          ],
-        },
-        select: { id: true },
+      // Dismiss only a flag of one of the operator's companies. (The old
+      // `conceptId: null` branch let anyone dismiss any brand-less flag —
+      // most of them — of any company.)
+      const r = await prisma.exceptionFlag.updateMany({
+        where: { id: req.params.id, ...(await scopeTenantWhere(req, 'write')) },
+        data: { status: 'dismissed' },
       })
-      if (!owned) throw new NotFoundError('ExceptionFlag', req.params.id)
-      await prisma.exceptionFlag.update({ where: { id: owned.id }, data: { status: 'dismissed' } })
+      if (r.count === 0) throw new NotFoundError('ExceptionFlag', req.params.id)
       return reply.status(204).send()
     },
   )

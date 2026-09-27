@@ -1,6 +1,12 @@
 // Host stand day view. Today's bookings in time-slot rows, seat / no-show /
 // arrived buttons inline. Real-time sync via socket so two host iPads stay in
 // lock-step.
+//
+// Same API as the admin /reservations page: GET /reservations?date= (PKT day)
+// and POST /reservations/:id/confirm|seat|cancel|no-show. A no-show goes
+// through the one no-show path (deposit capture, strike, waitlist promotion).
+// This screen used to call /reservations/today and /reservations/:id/transition,
+// neither of which exists.
 
 import { useState } from 'react'
 import { View, Text, ScrollView, Pressable, Alert, TextInput } from 'react-native'
@@ -29,13 +35,59 @@ interface Reservation {
   isBanned?: boolean
 }
 
+interface ApiReservation {
+  id: string
+  startTime: string
+  partySize: number
+  status: 'booked' | 'confirmed' | 'seated' | 'completed' | 'no_show' | 'cancelled'
+  guestName: string
+  guestPhone: string | null
+  notes: string | null
+  tableId: string | null
+  table: { id: string; label: string } | null
+  depositCents: number
+  waitlist: boolean
+  concept?: { name: string } | null
+  customer: { name: string | null } | null
+}
+
+const STATUS_FROM_API: Record<ApiReservation['status'], Reservation['status']> = {
+  booked: 'pending', confirmed: 'confirmed', seated: 'seated',
+  completed: 'completed', no_show: 'no-show', cancelled: 'cancelled',
+}
+
+function toRow(r: ApiReservation): Reservation {
+  return {
+    id: r.id,
+    startTime: r.startTime,
+    partySize: r.partySize,
+    customerName: r.customer?.name ?? r.guestName,
+    customerPhone: r.guestPhone ?? '',
+    conceptName: r.concept?.name ?? '',
+    status: STATUS_FROM_API[r.status] ?? 'pending',
+    notes: r.notes,
+    tableId: r.table?.label ?? null,
+    depositCents: r.depositCents > 0 ? r.depositCents : null,
+    isWaitlist: r.waitlist,
+  }
+}
+
+// PKT calendar day — the API reads ?date= as a Karachi day.
+function todayPkt(): string {
+  return new Date(Date.now() + 5 * 3_600_000).toISOString().slice(0, 10)
+}
+
+const ACTION_PATH: Record<string, string> = {
+  confirmed: 'confirm', seated: 'seat', cancelled: 'cancel', 'no-show': 'no-show',
+}
+
 export default function ReservationsScreen() {
   const qc = useQueryClient()
   const [filter, setFilter] = useState<'all' | 'pending' | 'seated' | 'no-show'>('all')
 
   const q = useQuery({
     queryKey: ['reservations', 'today'],
-    queryFn:  () => api.get<{ reservations: Reservation[] }>('/reservations/today'),
+    queryFn:  async () => (await api.get<ApiReservation[]>(`/reservations?date=${todayPkt()}`)).map(toRow),
     refetchInterval: 60_000,
   })
 
@@ -49,13 +101,13 @@ export default function ReservationsScreen() {
   useSocketEvent('reservation:waitlist-promoted', () => qc.invalidateQueries({ queryKey: ['reservations'] }))
 
   const transition = useMutation({
-    mutationFn: ({ id, to, tableId }: { id: string; to: string; tableId?: string }) =>
-      api.post(`/reservations/${id}/transition`, { to, tableId }),
+    mutationFn: ({ id, to }: { id: string; to: string }) =>
+      api.post(`/reservations/${id}/${ACTION_PATH[to] ?? to}`, {}),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['reservations'] }),
     onError:   (err: Error) => Alert.alert('Hmm', err.message),
   })
 
-  const reservations = (q.data?.reservations ?? []).filter(r =>
+  const reservations = (q.data ?? []).filter(r =>
     filter === 'all' ? true
     : filter === 'pending'  ? r.status === 'pending' || r.status === 'confirmed'
     : r.status === filter,

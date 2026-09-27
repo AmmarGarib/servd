@@ -23,6 +23,7 @@ import Link from 'next/link'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../../lib/api'
 import { MoneyInput } from '../../../components/ui/MoneyInput'
+import { fmtPkrWhole } from '../../../lib/money'
 
 interface Department {
   id: string
@@ -88,10 +89,6 @@ const STATUS_META: Record<Position['status'], { label: string; color: string; bg
   filled:   { label: 'Filled',   color: '#00D4B1', bg: 'rgba(0,212,177,0.10)' },
   frozen:   { label: 'Frozen',   color: '#8E8E93', bg: 'rgba(142,142,147,0.10)' },
   archived: { label: 'Archived', color: '#6B7280', bg: 'rgba(107,114,128,0.10)' },
-}
-
-function fmtPkr(cents: number): string {
-  return `PKR ${(cents / 100).toLocaleString('en-PK')}`
 }
 
 // embedded=true hides:
@@ -281,10 +278,10 @@ export function PositionsView({ embedded = false }: { embedded?: boolean } = {})
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               <StatCard
                 label="Net monthly P&L"
-                value={fmtPkr(summary.netMonthlyCents)}
+                value={fmtPkrWhole(summary.netMonthlyCents)}
                 hint={
                   summary.incomingContributionMonthlyCents > 0 || summary.outgoingContributionMonthlyCents > 0
-                    ? `gross ${fmtPkr(summary.totalTenantShareMonthlyCents)} +/- JV transfers`
+                    ? `gross ${fmtPkrWhole(summary.totalTenantShareMonthlyCents)} +/- JV transfers`
                     : `equals gross (no contributions)`
                 }
                 accent="#00D4B1"
@@ -293,7 +290,7 @@ export function PositionsView({ embedded = false }: { embedded?: boolean } = {})
               />
               <StatCard
                 label="Annualised net"
-                value={fmtPkr(summary.annualisedNetCents)}
+                value={fmtPkrWhole(summary.annualisedNetCents)}
                 hint="net x 12 months"
                 accent="#6366F1"
                 jvPartners={jvPartners}
@@ -338,7 +335,7 @@ export function PositionsView({ embedded = false }: { embedded?: boolean } = {})
                 <div className="px-4 py-3 grid gap-2">
                   <div className="flex justify-between text-xs font-mono">
                     <span className="text-kds-subtext">Position gross ({summary.totalPositions} seats)</span>
-                    <span className="font-bold">{fmtPkr(summary.totalTenantShareMonthlyCents)}</span>
+                    <span className="font-bold">{fmtPkrWhole(summary.totalTenantShareMonthlyCents)}</span>
                   </div>
                   {summary.contributions.map((c) => (
                     <button key={c.id} type="button" onClick={() => setContribModal(c)}
@@ -356,14 +353,14 @@ export function PositionsView({ embedded = false }: { embedded?: boolean } = {})
                         </span>
                         <span className="font-bold"
                           style={{ color: c.direction === 'incoming' ? '#00D4B1' : '#F59E0B' }}>
-                          {c.direction === 'incoming' ? '-' : '+'} {fmtPkr(c.monthlyCents)}
+                          {c.direction === 'incoming' ? '-' : '+'} {fmtPkrWhole(c.monthlyCents)}
                         </span>
                       </div>
                       {c.internalSplit && c.internalSplit.length > 0 && (
                         <div className="pl-5 pt-1 flex gap-3 flex-wrap text-[10px] text-kds-subtext font-mono">
                           {c.internalSplit.map((s, i) => (
                             <span key={i}>
-                              {s.label}: {fmtPkr(s.cents)}
+                              {s.label}: {fmtPkrWhole(s.cents)}
                             </span>
                           ))}
                         </div>
@@ -373,7 +370,7 @@ export function PositionsView({ embedded = false }: { embedded?: boolean } = {})
                   <div className="border-t border-kds-border mt-1 pt-2 flex justify-between text-sm font-mono">
                     <span className="font-bold">Net to this tenant&apos;s P&L</span>
                     <span className="font-black" style={{ color: '#00D4B1' }}>
-                      {fmtPkr(summary.netMonthlyCents)}
+                      {fmtPkrWhole(summary.netMonthlyCents)}
                     </span>
                   </div>
                 </div>
@@ -407,7 +404,7 @@ export function PositionsView({ embedded = false }: { embedded?: boolean } = {})
             <div className="flex items-baseline justify-between gap-3 mb-2">
               <h2 className="text-lg font-black">{concept.title}</h2>
               <p className="text-xs text-kds-subtext font-mono">
-                {concept.headcount} ppl · share {fmtPkr(concept.share)} / month
+                {concept.headcount} ppl · share {fmtPkrWhole(concept.share)} / month
               </p>
             </div>
             <div className="rounded-xl border border-kds-border bg-kds-card overflow-hidden">
@@ -425,9 +422,9 @@ export function PositionsView({ embedded = false }: { embedded?: boolean } = {})
                       )}
                     </p>
                     <p className="text-xs text-kds-subtext font-mono">
-                      {dept.headcount} ppl · {fmtPkr(dept.share)}
+                      {dept.headcount} ppl · {fmtPkrWhole(dept.share)}
                       {dept.gross !== dept.share && (
-                        <span className="opacity-60"> (gross {fmtPkr(dept.gross)})</span>
+                        <span className="opacity-60"> (gross {fmtPkrWhole(dept.gross)})</span>
                       )}
                     </p>
                   </div>
@@ -500,7 +497,7 @@ function StatCard({ label, value, hint, accent, jvPartners, valueCents }: {
           {jvPartners.map((p, i) => (
             <span key={i} className="text-[10px] font-mono rounded px-1.5 py-0.5"
               style={{ background: 'rgba(168,85,247,0.10)', color: '#C4B5FD' }}>
-              {p.label} {p.pct}%: {fmtPkr(Math.round(valueCents * p.pct / 100))}
+              {p.label} {p.pct}%: {fmtPkrWhole(Math.round(valueCents * p.pct / 100))}
             </span>
           ))}
         </div>
@@ -552,9 +549,9 @@ function PositionRow({
           )}
         </div>
         <div className="shrink-0 text-right">
-          <p className="text-sm font-bold font-mono">{fmtPkr(position.tenantCostShareCents)}</p>
+          <p className="text-sm font-bold font-mono">{fmtPkrWhole(position.tenantCostShareCents)}</p>
           {position.tenantCostShareCents !== position.monthlySalaryCents && (
-            <p className="text-[10px] text-kds-subtext font-mono opacity-70">gross {fmtPkr(position.monthlySalaryCents)}</p>
+            <p className="text-[10px] text-kds-subtext font-mono opacity-70">gross {fmtPkrWhole(position.monthlySalaryCents)}</p>
           )}
         </div>
         <span className="shrink-0 text-kds-subtext text-xs"

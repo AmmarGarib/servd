@@ -5,8 +5,7 @@ import { posApi, type ZReport } from '../../../lib/api'
 import { usePosStore } from '../../../store/pos'
 import { useAuthStore } from '../../../store/auth'
 import { useCurrentShift } from '../../../hooks/useCurrentShift'
-
-function fmt(cents: number) { return `PKR ${(cents / 100).toFixed(0)}` }
+import { fmtPkrWhole } from '../../../lib/money'
 
 export default function ShiftPage() {
   const { shiftId, setShiftId } = usePosStore()
@@ -108,16 +107,16 @@ export default function ShiftPage() {
 
 function ZReportView({ report, onClose }: { report: ZReport; onClose: () => void }) {
   const rows: Array<[string, string, string?]> = [
-    ['Cash Sales', fmt(report.cashSales), 'text-kds-text'],
-    ['Card Sales', fmt(report.cardSales), 'text-kds-text'],
-    ['Wallet Sales', fmt(report.walletSales), 'text-kds-text'],
-    ['Discounts', fmt(report.totalDiscounts), 'text-kds-amber'],
-    ['Tax (GST)', fmt(report.totalTax), 'text-kds-subtext'],
-    ['Total Sales', fmt(report.totalSales), 'text-kds-green'],
+    ['Cash Sales', fmtPkrWhole(report.cashSales), 'text-kds-text'],
+    ['Card Sales', fmtPkrWhole(report.cardSales), 'text-kds-text'],
+    ['Wallet Sales', fmtPkrWhole(report.walletSales), 'text-kds-text'],
+    ['Discounts', fmtPkrWhole(report.totalDiscounts), 'text-kds-amber'],
+    ['Tax (GST)', fmtPkrWhole(report.totalTax), 'text-kds-subtext'],
+    ['Total Sales', fmtPkrWhole(report.totalSales), 'text-kds-green'],
     ['Orders', String(report.totalOrders)],
-    ['Expected Cash', fmt(report.expectedCashInDrawer)],
-    ['Actual Cash', fmt(report.actualCashInDrawer ?? 0)],
-    ['Variance', fmt(Math.abs(report.cashVariance ?? 0)),
+    ['Expected Cash', fmtPkrWhole(report.expectedCashInDrawer)],
+    ['Actual Cash', fmtPkrWhole(report.actualCashInDrawer ?? 0)],
+    ['Variance', fmtPkrWhole(Math.abs(report.cashVariance ?? 0)),
       (report.cashVariance ?? 0) === 0 ? 'text-kds-green' : 'text-kds-red'],
   ]
 

@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api } from '../../../lib/api'
 import { useViewAllTenants } from '../../../components/ui/TenantSwitcher'
+import { fmtPkrWhole } from '../../../lib/money'
 
 interface TenantLite { id: string; name: string; slug: string }
 
@@ -52,8 +53,6 @@ const CATEGORY_COLORS: Record<string, string> = {
   dairy:      'bg-yellow-500/20 text-yellow-300',
   'dry-goods':'bg-orange-500/20 text-orange-300',
 }
-
-function fmt(cents: number) { return `PKR ${(cents / 100).toLocaleString('en-PK')}` }
 
 function daysAgo(date: string) {
   const diff = Date.now() - new Date(date).getTime()
@@ -180,7 +179,7 @@ export default function ProcurementMonitorPage() {
                 {pending && pending.count > 0 && (
                   <div className="text-right">
                     <p className="text-sm font-bold text-kds-amber">{pending.count} pending</p>
-                    <p className="text-xs text-kds-subtext">{fmt(pending.totalCents)}</p>
+                    <p className="text-xs text-kds-subtext">{fmtPkrWhole(pending.totalCents)}</p>
                   </div>
                 )}
               </div>
@@ -269,7 +268,7 @@ export default function ProcurementMonitorPage() {
                         {po.status.replace('_', ' ')}
                       </span>
                     </td>
-                    <td className="px-4 py-3 font-mono text-kds-text">{fmt(po.totalCents)}</td>
+                    <td className="px-4 py-3 font-mono text-kds-text">{fmtPkrWhole(po.totalCents)}</td>
                     <td className="px-4 py-3 text-kds-subtext">{daysAgo(po.orderDate)}</td>
                     <td className="px-4 py-3 text-kds-subtext">
                       {po.expectedDate ? new Date(po.expectedDate).toLocaleDateString('en-PK') : '—'}

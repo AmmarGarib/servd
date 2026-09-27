@@ -17,6 +17,7 @@ import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../../lib/api'
+import { fmtPkrWhole } from '../../../lib/money'
 
 interface Concept { id: string; name: string; slug: string; primaryColor: string | null }
 interface BrandInput {
@@ -95,9 +96,6 @@ function fmtPkr(cents: number): string {
   if (Math.abs(v) >= 1_000_000) return `${(v / 1_000_000).toFixed(2)}M`
   if (Math.abs(v) >= 1_000) return `${Math.round(v / 1_000)}k`
   return `${Math.round(v)}`
-}
-function fmtPkrFull(cents: number): string {
-  return `PKR ${Math.round(cents / 100).toLocaleString('en-PK')}`
 }
 
 export default function ProjectionsPage() {
@@ -207,19 +205,19 @@ export default function ProjectionsPage() {
         <section className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <SummaryCard
             label="Year-1 revenue"
-            value={fmtPkrFull(summary.year1TotalRevenueCents)}
+            value={fmtPkrWhole(summary.year1TotalRevenueCents)}
             hint={`across ${brands.length} brand${brands.length === 1 ? '' : 's'}`}
             color="#00D4B1"
           />
           <SummaryCard
             label="Year-1 combined P&L"
-            value={fmtPkrFull(summary.year1CombinedProfitCents)}
+            value={fmtPkrWhole(summary.year1CombinedProfitCents)}
             hint={summary.year1CombinedProfitCents >= 0 ? 'profit (pre-tax)' : 'loss'}
             color={summary.year1CombinedProfitCents >= 0 ? '#00D4B1' : '#FF4D4F'}
           />
           <SummaryCard
             label="Capital ask"
-            value={fmtPkrFull(summary.capitalAskCents)}
+            value={fmtPkrWhole(summary.capitalAskCents)}
             hint={`Capex ${fmtPkr(summary.totalCapexCents)} + 3-mo WC ${fmtPkr(summary.workingCapitalCents)}`}
             color="#6366F1"
           />
@@ -446,11 +444,11 @@ function BrandBlock({ brand: b, months, patchBrand }: {
           )}
           <div className="flex items-baseline gap-2">
             <span className="text-[11px] text-s-muted">Staff (live)</span>
-            <span className="font-mono text-sm text-s-muted" title={fmtPkrFull(b.staffMonthlyCents)}>{fmtPkr(b.staffMonthlyCents)}/mo</span>
+            <span className="font-mono text-sm text-s-muted" title={fmtPkrWhole(b.staffMonthlyCents)}>{fmtPkr(b.staffMonthlyCents)}/mo</span>
           </div>
           <div className="flex items-baseline gap-2">
             <span className="text-[11px] text-s-muted">OpEx (live)</span>
-            <span className="font-mono text-sm text-s-muted" title={fmtPkrFull(b.opexMonthlyCents)}>{fmtPkr(b.opexMonthlyCents)}/mo</span>
+            <span className="font-mono text-sm text-s-muted" title={fmtPkrWhole(b.opexMonthlyCents)}>{fmtPkr(b.opexMonthlyCents)}/mo</span>
           </div>
         </div>
       </div>

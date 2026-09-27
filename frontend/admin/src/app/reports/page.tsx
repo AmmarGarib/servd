@@ -2,8 +2,7 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../../lib/api'
-
-function fmt(cents: number) { return `PKR ${Math.round(cents / 100).toLocaleString()}` }
+import { fmtPkrWhole } from '../../lib/money'
 
 interface SalesData {
   totals: { gross: number; net: number; tax: number; orders: number }
@@ -255,21 +254,21 @@ export default function ReportsPage() {
                   // Sales-register figures: what customers paid, incl. GST
                   // and service charge. The books' revenue is the ledger P&L.
                   label: 'Sales (incl. GST)',
-                  value: fmt(sales.totals.gross),
+                  value: fmtPkrWhole(sales.totals.gross),
                   color: 'text-gradient-brand',
                   sub: 'sales register — not the P&L',
                   delta: compare && prevSales ? computeDelta(sales.totals.gross, prevSales.totals.gross) : null,
                 },
                 {
                   label: 'Register net',
-                  value: fmt(sales.totals.net),
+                  value: fmtPkrWhole(sales.totals.net),
                   color: 'text-s-teal',
                   sub: 'register: sales − discounts',
                   delta: compare && prevSales ? computeDelta(sales.totals.net, prevSales.totals.net) : null,
                 },
                 {
                   label: 'Tax on orders',
-                  value: fmt(sales.totals.tax),
+                  value: fmtPkrWhole(sales.totals.tax),
                   color: 'text-s-amber',
                   sub: 'register — the filed figure is the tax return',
                   delta: compare && prevSales ? computeDelta(sales.totals.tax, prevSales.totals.tax) : null,
@@ -278,7 +277,7 @@ export default function ReportsPage() {
                   label: 'Total Orders',
                   value: String(sales.totals.orders),
                   color: 'text-s-text',
-                  sub: sales.totals.orders > 0 ? `avg ${fmt(Math.round(sales.totals.gross / sales.totals.orders))}` : undefined,
+                  sub: sales.totals.orders > 0 ? `avg ${fmtPkrWhole(Math.round(sales.totals.gross / sales.totals.orders))}` : undefined,
                   delta: compare && prevSales ? computeDelta(sales.totals.orders, prevSales.totals.orders) : null,
                 },
               ].map((s) => (
@@ -401,9 +400,9 @@ export default function ReportsPage() {
                           </div>
                           <div className="flex items-center gap-4 text-xs shrink-0">
                             <span className="text-s-muted">{item.quantity} sold</span>
-                            <span className="font-bold text-s-teal">{fmt(item.revenueCents)}</span>
+                            <span className="font-bold text-s-teal">{fmtPkrWhole(item.revenueCents)}</span>
                             {compare && prevEntry && (
-                              <span className="text-s-dim">{fmt(prevEntry.revenue)} prev</span>
+                              <span className="text-s-dim">{fmtPkrWhole(prevEntry.revenue)} prev</span>
                             )}
                           </div>
                         </div>
@@ -529,8 +528,8 @@ export default function ReportsPage() {
                                 <span className="s-badge s-badge-muted text-[10px] uppercase">{c.source}</span>
                               </td>
                               <td className="text-right text-s-muted">{c.orders}</td>
-                              <td className="text-right text-s-text">{fmt(c.gross)}</td>
-                              <td className="text-right font-bold text-s-teal">{fmt(c.net)}</td>
+                              <td className="text-right text-s-text">{fmtPkrWhole(c.gross)}</td>
+                              <td className="text-right font-bold text-s-teal">{fmtPkrWhole(c.net)}</td>
                               {compare && (
                                 <td className="text-right">
                                   {prev ? <DeltaBadge delta={delta} /> : <span className="text-xs text-s-dim">NEW</span>}

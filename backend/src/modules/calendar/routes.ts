@@ -1,7 +1,10 @@
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
+import type { FastifyRequest } from 'fastify'
 import { requireAuth, MANAGERS, ALL_STAFF } from '../auth/middleware.js'
+import { AppError, NotFoundError } from '../../lib/errors.js'
+import { scopeTenantWhere, assertConceptOwned, type ScopeMode, activeTenantId } from '../../lib/tenantScope.js'
 
 const EVENT_TYPES = ['social_post','menu_change','seasonal_ingredient','deal','shoot','event_promo','reminder','task'] as const
 const EVENT_STATUSES = ['draft','scheduled','live','done','cancelled'] as const
@@ -28,6 +31,34 @@ const socialPostSchema = z.object({
   scheduledFor: z.string().datetime(),
 })
 
+// ── Company scope ────────────────────────────────────────────────────────────
+// A calendar event belongs to ONE company (ContentEvent.tenantId, stamped at
+// create). conceptId narrows it to a brand of that company; a null conceptId
+// means "all brands of ITS company" — never every company. The old filter,
+// `OR: [{ conceptId: null }, { concept: { tenantId } }]`, handed every
+// company's brand-less events (and their social posts) to every other company.
+
+
+/** The event, or 404 when it isn't a row of a company in `mode`. */
+async function findEventInScope(req: FastifyRequest, id: string, mode: ScopeMode) {
+  const event = await prisma.contentEvent.findFirst({ where: { id, ...(await scopeTenantWhere(req, mode)) } })
+  if (!event) throw new NotFoundError('ContentEvent', id)
+  return event
+}
+
+/** 422 unless the assignee is a staff member of `tenantId`. */
+async function assertAssigneeOf(tenantId: string, assigneeId: string): Promise<void> {
+  const u = await prisma.user.findFirst({
+    where: {
+      id: assigneeId,
+      deletedAt: null,
+      OR: [{ tenantId }, { tenantMemberships: { some: { tenantId } } }],
+    },
+    select: { id: true },
+  })
+  if (!u) throw new AppError('ASSIGNEE_NOT_IN_COMPANY', 'That person is not on this company\'s staff', 422)
+}
+
 export async function calendarRoutes(fastify: FastifyInstance) {
   // GET /calendar?from=&to=&department=&conceptId=&assigneeId=
   fastify.get<{
@@ -37,18 +68,15 @@ export async function calendarRoutes(fastify: FastifyInstance) {
     const fromDate = from ? new Date(from) : new Date(Date.now() - 7 * 864e5)
     const toDate   = to   ? new Date(to)   : new Date(Date.now() + 60 * 864e5)
 
-    // Tenant scope: include events scoped to a concept under the active
-    // tenant, or events with no concept (cross-brand internal tasks).
+    // Company scope (view-aware). Brand-less events are the owning company's
+    // cross-brand tasks and are only ever shown to that company.
     return prisma.contentEvent.findMany({
       where: {
+        ...(await scopeTenantWhere(req, 'read')),
         startDate: { gte: fromDate, lte: toDate },
         ...(department  ? { department }  : {}),
         ...(conceptId   ? { conceptId }   : {}),
         ...(assigneeId  ? { assigneeId }  : {}),
-        OR: [
-          { conceptId: null },
-          { concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null } },
-        ],
       },
       include: {
         assignee:   { select: { id: true, name: true } },
@@ -62,15 +90,14 @@ export async function calendarRoutes(fastify: FastifyInstance) {
   // POST /calendar
   fastify.post('/', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
     const body = eventSchema.parse(req.body)
-    // If a concept is referenced, verify it's in the active tenant.
-    if (body.conceptId) {
-      const concept = await prisma.concept.findFirst({
-        where: { id: body.conceptId, tenantId: req.staffUser!.tenantFilter, deletedAt: null },
-      })
-      if (!concept) return reply.status(403).send({ error: { code: 'CROSS_TENANT', message: 'Concept does not belong to your active company' } })
-    }
+    // A new event binds to the ACTIVE company; its brand (if any) and its
+    // assignee must both be of that company.
+    const tenantId = activeTenantId(req)
+    if (body.conceptId) await assertConceptOwned(req, body.conceptId, 'create')
+    if (body.assigneeId) await assertAssigneeOf(tenantId, body.assigneeId)
     const event = await prisma.contentEvent.create({
       data: {
+        tenantId,
         title:       body.title,
         description: body.description,
         type:        body.type,
@@ -98,18 +125,16 @@ export async function calendarRoutes(fastify: FastifyInstance) {
   fastify.patch<{ Params: { id: string } }>(
     '/:id',
     { preHandler: requireAuth(...MANAGERS) },
-    async (req, reply) => {
+    async (req) => {
       const body = eventSchema.partial().parse(req.body)
-      const existing = await prisma.contentEvent.findFirst({
-        where: {
-          id: req.params.id,
-          OR: [
-            { conceptId: null },
-            { concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null } },
-          ],
-        },
-      })
-      if (!existing) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Event not found in your active company' } })
+      const existing = await findEventInScope(req, req.params.id, 'write')
+      // conceptId is not writable here (the data block below never sets it),
+      // so the event cannot be moved to another company's brand. The assignee
+      // must be staff of the event's OWN company.
+      if (body.assigneeId) {
+        if (!existing.tenantId) throw new NotFoundError('ContentEvent', req.params.id)
+        await assertAssigneeOf(existing.tenantId, body.assigneeId)
+      }
 
       return prisma.contentEvent.update({
         where: { id: req.params.id },
@@ -140,16 +165,7 @@ export async function calendarRoutes(fastify: FastifyInstance) {
     '/:id',
     { preHandler: requireAuth(...MANAGERS) },
     async (req, reply) => {
-      const existing = await prisma.contentEvent.findFirst({
-        where: {
-          id: req.params.id,
-          OR: [
-            { conceptId: null },
-            { concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null } },
-          ],
-        },
-      })
-      if (!existing) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Event not found in your active company' } })
+      await findEventInScope(req, req.params.id, 'write')
       await prisma.contentEvent.delete({ where: { id: req.params.id } })
       return reply.status(204).send()
     },
@@ -161,16 +177,7 @@ export async function calendarRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuth(...MANAGERS) },
     async (req, reply) => {
       const body = socialPostSchema.parse(req.body)
-      const event = await prisma.contentEvent.findFirst({
-        where: {
-          id: req.params.id,
-          OR: [
-            { conceptId: null },
-            { concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null } },
-          ],
-        },
-      })
-      if (!event) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Event not found in your active company' } })
+      await findEventInScope(req, req.params.id, 'write')
 
       const post = await prisma.socialPost.upsert({
         where:  { eventId: req.params.id },
@@ -202,14 +209,7 @@ export async function calendarRoutes(fastify: FastifyInstance) {
   // GET /calendar/social/status — social posts under the active tenant
   fastify.get('/social/status', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
     const posts = await prisma.socialPost.findMany({
-      where: {
-        event: {
-          OR: [
-            { conceptId: null },
-            { concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null } },
-          ],
-        },
-      },
+      where: { event: await scopeTenantWhere(req, 'read') },
       include: { event: { select: { id: true, title: true, startDate: true } } },
       orderBy: { scheduledFor: 'desc' },
       take: 100,
@@ -225,12 +225,7 @@ export async function calendarRoutes(fastify: FastifyInstance) {
       const post = await prisma.socialPost.findFirst({
         where: {
           id: req.params.id,
-          event: {
-            OR: [
-              { conceptId: null },
-              { concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null } },
-            ],
-          },
+          event: await scopeTenantWhere(req, 'write'),
         },
       })
       if (!post) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Social post not found in your active company' } })

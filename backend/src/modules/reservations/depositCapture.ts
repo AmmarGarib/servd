@@ -1,5 +1,5 @@
-// Reservation deposit capture — shared helper used by both the manual
-// "deposit-capture" route AND the auto-no-show worker.
+// Reservation deposit capture. Called only from markNoShow (noShow.ts), which
+// both the manual no-show route and the auto-no-show worker use (D4).
 //
 // Capture = the guest didn't show up, so we forfeit their hold as a no-show
 // fee. We post a journal entry:
@@ -60,6 +60,7 @@ export async function captureReservationDeposit(args: CaptureArgs): Promise<Depo
     entity: 'Reservation',
     entityId: r.id,
     userId: args.staffUser?.id ?? null,
+    tenantId: r.concept.tenantId,
     userEmail: args.staffUser?.email ?? null,
     before: { depositCents: r.depositCents, status: r.status },
     after:  { status: 'no_show', captured: r.depositCents },

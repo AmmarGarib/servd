@@ -6,8 +6,9 @@ import { z } from 'zod'
 import { serviceClient as prisma } from '../../lib/prisma.js'
 import { requireAuth, FINANCIALS_VIEWERS } from '../auth/middleware.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
-import { scopeTenantWhere, assertConceptOwned } from '../../lib/tenantScope.js'
+import { scopeTenantWhere, assertConceptOwned, activeTenantId } from '../../lib/tenantScope.js'
 import { audit } from '../../lib/audit.js'
+import { assertLocationOfCompany } from '../financePlanning/companyRefs.js'
 import {
   ASSET_CATEGORIES, FUNDING, postAcquisition, runDepreciation, disposeAsset, periodOf,
   type AssetCategory, type Funding,
@@ -29,11 +30,6 @@ const createSchema = z.object({
   notes: z.string().max(1000).optional(),
 }).refine((d) => d.salvageCents < d.costCents, { message: 'Salvage value must be less than cost', path: ['salvageCents'] })
 
-function activeTenant(req: { staffUser?: { tenantId: string | null } }): string {
-  const t = req.staffUser?.tenantId
-  if (!t) throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company first — the ledger is per company', 422)
-  return t
-}
 
 export async function fixedAssetRoutes(fastify: FastifyInstance) {
   // GET /accounting/fixed-assets — the register, with book values.
@@ -73,8 +69,10 @@ export async function fixedAssetRoutes(fastify: FastifyInstance) {
   // POST /accounting/fixed-assets — add to the register and capitalise it.
   fastify.post('/', { preHandler: requireAuth(...FINANCIALS_VIEWERS) }, async (req, reply) => {
     const body = createSchema.parse(req.body)
-    const tenantId = activeTenant(req)
+    const tenantId = activeTenantId(req, 'the ledger is per company')
     if (body.conceptId) await assertConceptOwned(req, body.conceptId, 'create')
+    // The asset sits in one of THIS company's kitchens, never another's.
+    if (body.locationId) await assertLocationOfCompany(tenantId, body.locationId)
 
     const asset = await prisma.fixedAsset.create({
       data: {
@@ -124,13 +122,14 @@ export async function fixedAssetRoutes(fastify: FastifyInstance) {
     }).parse(req.body)
     const found = await prisma.fixedAsset.findFirst({ where: { id: req.params.id, ...(await scopeTenantWhere(req, 'write')) } })
     if (!found) throw new NotFoundError('FixedAsset', req.params.id)
+    if (body.locationId) await assertLocationOfCompany(found.tenantId, body.locationId)
     return prisma.fixedAsset.update({ where: { id: found.id }, data: body })
   })
 
   // POST /accounting/fixed-assets/depreciate — charge a month. Idempotent.
   fastify.post('/depreciate', { preHandler: requireAuth(...FINANCIALS_VIEWERS) }, async (req) => {
     const body = z.object({ period: z.string().regex(/^\d{4}-\d{2}$/) }).parse(req.body)
-    const tenantId = activeTenant(req)
+    const tenantId = activeTenantId(req, 'the ledger is per company')
     const result = await runDepreciation(tenantId, body.period, req.staffUser!.id)
     await audit({
       category: 'accounting', action: 'fixed_asset.depreciate', entity: 'FixedAssetDepreciation', entityId: body.period,

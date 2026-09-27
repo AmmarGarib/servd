@@ -25,14 +25,12 @@ interface Station { id: string; name: string; concept: { name: string } }
 // Staff accounts are managed on /workforce only. The old 'Staff' tab here
 // threw away the one-time password it generated, offered only legacy roles and
 // could not set companies — it was removed rather than kept as a second editor.
-type Section = 'concepts' | 'stations' | 'location' | 'shifts' | 'preferences'
+type Section = 'concepts' | 'stations' | 'preferences'
 
 const SECTIONS: { id: Section; label: string; icon: string; desc: string }[] = [
   { id: 'concepts',    label: 'Concepts',     icon: '🏷',  desc: 'Brands, tax, visibility' },
   { id: 'stations',    label: 'Stations',     icon: '🍳',  desc: 'Kitchen + KDS stations' },
-  { id: 'location',    label: 'Location',     icon: '📍',  desc: 'On-site sign-in enforcement' },
-  { id: 'shifts',      label: 'Shift Report', icon: '🕐',  desc: 'Clock-in / out logs' },
-  { id: 'preferences', label: 'Preferences',  icon: '⚙️',  desc: 'Language, printer, display' },
+  { id: 'preferences', label: 'Preferences',  icon: '⚙️',  desc: 'Language' },
 ]
 
 export default function SettingsPage() {
@@ -42,7 +40,7 @@ export default function SettingsPage() {
     <div className="h-screen flex flex-col bg-kds-bg overflow-hidden">
       <header className="border-b border-kds-border px-4 py-3 md:px-6 md:py-4">
         <h1 className="text-xl md:text-2xl font-black text-kds-text mt-0.5">Settings</h1>
-        <p className="text-xs md:text-sm text-kds-subtext">Concepts, stations, sign-in location and shift report. Staff accounts live in <Link href="/workforce" className="text-kds-green font-semibold">Workforce</Link>.</p>
+        <p className="text-xs md:text-sm text-kds-subtext">Concepts, stations and language. Staff accounts live in <Link href="/workforce" className="text-kds-green font-semibold">Workforce</Link>; the clock-in geofence in <Link href="/configuration/operations" className="text-kds-green font-semibold">Operations</Link>; punches in <Link href="/hr/attendance" className="text-kds-green font-semibold">HR → Attendance</Link>; the receipt printer in <Link href="/configuration/receipts" className="text-kds-green font-semibold">Receipts</Link>.</p>
       </header>
 
       {/* ── Mobile tab strip ── */}
@@ -81,8 +79,6 @@ export default function SettingsPage() {
         <div className="flex-1 overflow-y-auto p-4 md:p-6">
           {section === 'concepts'    && <ConceptsSection />}
           {section === 'stations'    && <StationsSection />}
-          {section === 'location'    && <LocationSection />}
-          {section === 'shifts'      && <ShiftsSection />}
           {section === 'preferences' && <PreferencesSection />}
         </div>
       </div>
@@ -371,291 +367,12 @@ function StationsSection() {
   )
 }
 
-// ─── Location ─────────────────────────────────────────────────────────────────
-
-interface LocationConfig {
-  enabled: boolean
-  lat: number | null
-  lng: number | null
-  radiusMeters: number
-}
-
-function LocationSection() {
-  const qc = useQueryClient()
-  const [gettingLoc, setGettingLoc] = useState(false)
-  const [locError,   setLocError]   = useState('')
-
-  const { data, isLoading } = useQuery({
-    queryKey: ['location-config'],
-    queryFn:  () => api.get<LocationConfig>('/auth/location-config'),
-  })
-
-  const [form, setForm] = useState<LocationConfig>({
-    enabled: false, lat: null, lng: null, radiusMeters: 200,
-  })
-
-  // Sync form once data loads
-  const [synced, setSynced] = useState(false)
-  if (data && !synced) { setForm(data); setSynced(true) }
-
-  const saveMut = useMutation({
-    mutationFn: () => api.put<LocationConfig>('/auth/location-config', form),
-    onSuccess:  () => void qc.invalidateQueries({ queryKey: ['location-config'] }),
-  })
-
-  function useCurrentLocation() {
-    if (!navigator.geolocation) { setLocError('Geolocation not supported by this browser'); return }
-    setGettingLoc(true); setLocError('')
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        setForm((f) => ({ ...f, lat: pos.coords.latitude, lng: pos.coords.longitude }))
-        setGettingLoc(false)
-      },
-      (err) => {
-        setLocError(err.code === 1 ? 'Location access denied — allow it in your browser settings' : 'Could not get location')
-        setGettingLoc(false)
-      },
-      { timeout: 10000, enableHighAccuracy: true },
-    )
-  }
-
-  if (isLoading) return <div className="skeleton h-40 rounded-xl" />
-
-  const hasCoords = form.lat !== null && form.lng !== null
-
-  return (
-    <div className="max-w-lg space-y-5">
-      <div>
-        <p className="text-sm text-kds-subtext">
-          When enabled, staff must be physically on-site to sign in using their PIN.
-          Admins and managers are always exempt.
-        </p>
-      </div>
-
-      {/* Enable toggle */}
-      <div className="rounded-xl border border-kds-border bg-kds-card p-4 flex items-center justify-between">
-        <div>
-          <p className="text-sm font-semibold text-kds-text">Enforce on-site sign-in</p>
-          <p className="text-xs text-kds-subtext mt-0.5">
-            Blocks PIN login if staff are outside the allowed radius
-          </p>
-        </div>
-        <Toggle value={form.enabled} onChange={(v) => setForm((f) => ({ ...f, enabled: v }))} />
-      </div>
-
-      {/* Location picker */}
-      <div className="rounded-xl border border-kds-border bg-kds-card p-4 space-y-4">
-        <div className="flex items-center justify-between">
-          <p className="text-sm font-semibold text-kds-text">Restaurant Location</p>
-          <button
-            onClick={useCurrentLocation}
-            disabled={gettingLoc}
-            className="text-xs px-3 py-1.5 rounded-lg font-semibold transition-colors disabled:opacity-50"
-            style={{ background: 'rgba(0,212,177,0.1)', border: '1px solid rgba(0,212,177,0.25)', color: '#00D4B1' }}
-            onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(0,212,177,0.18)')}
-            onMouseLeave={(e) => (e.currentTarget.style.background = 'rgba(0,212,177,0.1)')}>
-            {gettingLoc ? 'Getting location…' : '📍 Use my current location'}
-          </button>
-        </div>
-
-        {locError && <p className="text-xs text-red-400">{locError}</p>}
-
-        <Row2>
-          <F label="Latitude">
-            <input
-              type="number" step="any" placeholder="e.g. 33.7215"
-              value={form.lat ?? ''}
-              onChange={(e) => setForm((f) => ({ ...f, lat: e.target.value ? parseFloat(e.target.value) : null }))}
-              className={fi} />
-          </F>
-          <F label="Longitude">
-            <input
-              type="number" step="any" placeholder="e.g. 73.0433"
-              value={form.lng ?? ''}
-              onChange={(e) => setForm((f) => ({ ...f, lng: e.target.value ? parseFloat(e.target.value) : null }))}
-              className={fi} />
-          </F>
-        </Row2>
-
-        <F label="Allowed radius (metres)">
-          <div className="flex items-center gap-3">
-            <input
-              type="range" min={25} max={2000} step={25}
-              value={form.radiusMeters}
-              onChange={(e) => setForm((f) => ({ ...f, radiusMeters: parseInt(e.target.value) }))}
-              className="flex-1 accent-kds-green" />
-            <span className="text-sm font-bold text-kds-text w-16 text-right">{form.radiusMeters}m</span>
-          </div>
-          <p className="text-[10px] text-kds-subtext mt-1">
-            {form.radiusMeters <= 50  && 'Very tight — GPS must be right on-site'}
-            {form.radiusMeters > 50  && form.radiusMeters <= 150  && 'Tight — suitable for a single building'}
-            {form.radiusMeters > 150 && form.radiusMeters <= 400  && 'Standard — recommended for most restaurants'}
-            {form.radiusMeters > 400 && form.radiusMeters <= 1000 && 'Loose — covers a full block or complex'}
-            {form.radiusMeters > 1000 && 'Very loose — almost no restriction'}
-          </p>
-        </F>
-
-        {hasCoords && (
-          <div className="rounded-lg p-3 text-xs space-y-1"
-            style={{ background: 'rgba(0,212,177,0.06)', border: '1px solid rgba(0,212,177,0.15)' }}>
-            <p className="font-semibold text-kds-green">Location configured</p>
-            <p className="text-kds-subtext">
-              {form.lat!.toFixed(6)}, {form.lng!.toFixed(6)} · {form.radiusMeters}m radius
-            </p>
-            <a
-              href={`https://www.google.com/maps?q=${form.lat},${form.lng}`}
-              target="_blank" rel="noreferrer"
-              className="text-kds-green hover:underline">
-              View on Google Maps →
-            </a>
-          </div>
-        )}
-      </div>
-
-      {/* Save */}
-      {saveMut.isError && (
-        <p className="text-xs text-red-400">{(saveMut.error as Error).message}</p>
-      )}
-      {saveMut.isSuccess && (
-        <p className="text-xs text-kds-green">Saved ✓</p>
-      )}
-      <button
-        onClick={() => saveMut.mutate()}
-        disabled={saveMut.isPending || (form.enabled && !hasCoords)}
-        className="rounded-xl bg-kds-green text-black font-bold px-5 py-2 text-sm hover:opacity-90 disabled:opacity-50">
-        {saveMut.isPending ? 'Saving…' : 'Save Location Settings'}
-      </button>
-      {form.enabled && !hasCoords && (
-        <p className="text-xs text-red-400">Set a location before enabling enforcement.</p>
-      )}
-    </div>
-  )
-}
-
-// ─── Shifts ───────────────────────────────────────────────────────────────────
-
-interface ClockLog {
-  id: string
-  type: 'in' | 'out'
-  recordedAt: string
-  lat: number | null
-  lng: number | null
-  user: { id: string; name: string; role: string }
-}
-
-function ShiftsSection() {
-  const today = new Date().toISOString().slice(0, 10)
-  const [date, setDate] = useState(today)
-
-  const { data = [], isLoading, refetch } = useQuery({
-    queryKey: ['clock-logs', date],
-    queryFn:  () => api.get<ClockLog[]>(`/auth/clock-logs?date=${date}`),
-  })
-
-  // Group by user
-  const byUser = new Map<string, { name: string; role: string; logs: ClockLog[] }>()
-  for (const log of data) {
-    const existing = byUser.get(log.user.id)
-    if (existing) {
-      existing.logs.push(log)
-    } else {
-      byUser.set(log.user.id, { name: log.user.name, role: log.user.role, logs: [log] })
-    }
-  }
-
-  const fmt = (iso: string) =>
-    new Date(iso).toLocaleTimeString('en-PK', { hour: '2-digit', minute: '2-digit', hour12: true })
-
-  return (
-    <div className="max-w-2xl mx-auto space-y-4">
-      <div className="flex items-center gap-3">
-        <p className="text-sm text-kds-subtext flex-1">Staff clock-in and clock-out records.</p>
-        <input
-          type="date"
-          value={date}
-          max={today}
-          onChange={(e) => setDate(e.target.value)}
-          className={`${fi} w-44`}
-        />
-        <button onClick={() => void refetch()}
-          className="text-xs px-3 py-2 rounded-lg font-semibold"
-          style={{ background: 'rgba(0,212,177,0.1)', border: '1px solid rgba(0,212,177,0.2)', color: '#00D4B1' }}>
-          Refresh
-        </button>
-      </div>
-
-      {isLoading ? (
-        <p className="text-sm text-kds-subtext">Loading…</p>
-      ) : byUser.size === 0 ? (
-        <div className="text-center py-16 rounded-xl border border-kds-border">
-          <p className="text-3xl mb-2">🕐</p>
-          <p className="font-semibold text-kds-text text-sm">No clock records for this date</p>
-          <p className="text-xs text-kds-subtext mt-1">Staff clock in automatically when they sign in via PIN</p>
-        </div>
-      ) : (
-        <div className="space-y-3">
-          {[...byUser.values()].map(({ name, role, logs }) => {
-            const ins  = logs.filter((l) => l.type === 'in').sort((a, b) => a.recordedAt.localeCompare(b.recordedAt))
-            const outs = logs.filter((l) => l.type === 'out').sort((a, b) => a.recordedAt.localeCompare(b.recordedAt))
-            const firstIn  = ins[0]
-            const lastOut  = outs[outs.length - 1]
-
-            let hoursWorked: string | null = null
-            if (firstIn && lastOut) {
-              const ms = new Date(lastOut.recordedAt).getTime() - new Date(firstIn.recordedAt).getTime()
-              const h = Math.floor(ms / 3_600_000)
-              const m = Math.floor((ms % 3_600_000) / 60_000)
-              hoursWorked = `${h}h ${m}m`
-            }
-
-            return (
-              <div key={name} className="rounded-xl border border-kds-border bg-kds-card overflow-hidden">
-                <div className="flex items-center justify-between px-4 py-3"
-                  style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
-                  <div className="flex items-center gap-2.5">
-                    <div className="h-8 w-8 rounded-full flex items-center justify-center text-xs font-black shrink-0"
-                      style={{ background: 'rgba(0,212,177,0.15)', color: '#00D4B1', border: '1px solid rgba(0,212,177,0.2)' }}>
-                      {name.charAt(0).toUpperCase()}
-                    </div>
-                    <div>
-                      <p className="text-sm font-semibold text-kds-text">{name}</p>
-                      <p className="text-xs text-kds-subtext capitalize">{role}</p>
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    {hoursWorked && (
-                      <p className="text-sm font-bold text-kds-green">{hoursWorked}</p>
-                    )}
-                    {!lastOut && ins.length > 0 && (
-                      <p className="text-xs font-semibold text-yellow-400">Still clocked in</p>
-                    )}
-                  </div>
-                </div>
-                <div className="divide-y divide-kds-border/30">
-                  {logs.sort((a, b) => a.recordedAt.localeCompare(b.recordedAt)).map((log) => (
-                    <div key={log.id} className="flex items-center gap-3 px-4 py-2.5">
-                      <span className={`text-xs font-bold w-10 shrink-0 uppercase ${log.type === 'in' ? 'text-kds-green' : 'text-red-400'}`}>
-                        {log.type === 'in' ? '→ IN' : '← OUT'}
-                      </span>
-                      <span className="text-sm font-semibold text-kds-text">{fmt(log.recordedAt)}</span>
-                      {log.lat && log.lng && (
-                        <a href={`https://www.google.com/maps?q=${log.lat},${log.lng}`}
-                          target="_blank" rel="noreferrer"
-                          className="text-xs text-kds-subtext hover:text-kds-green ml-auto">
-                          📍 {log.lat.toFixed(4)}, {log.lng.toFixed(4)}
-                        </a>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )
-          })}
-        </div>
-      )}
-    </div>
-  )
-}
+// The 'Location' (geofence) and 'Shift Report' tabs are gone (D6). The
+// geofence is company config at Configuration → Operations (anchored on each
+// location's map pin, /setup/operations-config) — the tab here called an
+// /auth/location-config route that never existed. Punches are read on
+// HR → Attendance (GET /time-clock/logs, PKT day boundaries), which replaced
+// the old /auth/clock-logs report this tab used.
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -693,32 +410,12 @@ function Toggle({ value, onChange }: { value: boolean; onChange: (v: boolean) =>
 // ─── Preferences ──────────────────────────────────────────────────────────────
 
 function PreferencesSection() {
-  const qc = useQueryClient()
   const [locale, setLocale] = useState('en')
-  const [printerIp, setPrinterIp] = useState('')
-  const [saved, setSaved] = useState(false)
 
   useEffect(() => {
     const cookieLocale = document.cookie.split('; ').find(r => r.startsWith('NEXT_LOCALE='))?.split('=')[1]
     if (cookieLocale) setLocale(cookieLocale)
   }, [])
-
-  const { data: printerSetting } = useQuery({
-    queryKey: ['setting', 'printer_ip'],
-    queryFn: () => api.get<{ key: string; value: string }>('/settings/printer_ip').catch(() => null),
-  })
-
-  useEffect(() => {
-    if (printerSetting?.value) setPrinterIp(printerSetting.value)
-  }, [printerSetting])
-
-  const savePrinterMutation = useMutation({
-    mutationFn: () => api.post('/settings', { key: 'printer_ip', value: printerIp }),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ['setting', 'printer_ip'] })
-      setSaved(true); setTimeout(() => setSaved(false), 2000)
-    },
-  })
 
   function changeLocale(newLocale: string) {
     setLocale(newLocale)
@@ -730,7 +427,7 @@ function PreferencesSection() {
     <div className="space-y-6 max-w-lg">
       <div>
         <h2 className="text-base font-bold text-kds-text mb-1">Preferences</h2>
-        <p className="text-sm text-kds-subtext">Language, printer, and display settings</p>
+        <p className="text-sm text-kds-subtext">Language. The receipt printer is set up in <Link href="/configuration/receipts" className="text-kds-green font-semibold">Configuration → Receipts</Link>.</p>
       </div>
 
       {/* Language */}
@@ -750,22 +447,6 @@ function PreferencesSection() {
           ))}
         </div>
         <p className="text-xs text-kds-subtext">Changing language reloads the page. KDS and POS interfaces will use the selected language.</p>
-      </div>
-
-      {/* Printer IP */}
-      <div className="rounded-xl border border-kds-border bg-kds-card p-4 space-y-3">
-        <h3 className="text-sm font-bold text-kds-text">Network Receipt Printer</h3>
-        <p className="text-xs text-kds-subtext">IP address of your Epson / Star network receipt printer (optional). Leave blank to use browser print.</p>
-        <div className="flex gap-2">
-          <input type="text" value={printerIp} onChange={e => setPrinterIp(e.target.value)}
-            placeholder="192.168.1.100"
-            className={fi + ' flex-1'} />
-          <button onClick={() => savePrinterMutation.mutate()}
-            disabled={savePrinterMutation.isPending}
-            className="rounded-lg bg-kds-green px-4 py-2 text-sm font-bold text-white disabled:opacity-50">
-            {savePrinterMutation.isPending ? '…' : saved ? '✓' : 'Save'}
-          </button>
-        </div>
       </div>
     </div>
   )

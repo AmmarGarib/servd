@@ -117,7 +117,7 @@ function Section({ title, rows, loading, severity }: { title: string; rows: Inve
                   </div>
                 </td>
                 <td className="px-4 py-2 text-right">
-                  <Link href={`/inventory/${r.id}`} className="text-xs text-s-teal hover:underline">Adjust →</Link>
+                  <Link href="/inventory/count" className="text-xs text-s-teal hover:underline">Count →</Link>
                 </td>
               </tr>
             )

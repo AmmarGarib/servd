@@ -13,6 +13,9 @@ import { z } from 'zod'
 import { serviceClient as prisma } from '../../lib/prisma.js'
 import { requireAuth, ALL_STAFF, MANAGERS } from '../auth/middleware.js'
 import { AppError, NotFoundError, ForbiddenError } from '../../lib/errors.js'
+import { activeTenantId } from '../../lib/tenantScope.js'
+import { normalisePhone } from '../auth/otp.js'
+import { csv } from '../accounting/csv.js'
 import { audit } from '../../lib/audit.js'
 import {
   HR_SECTIONS, RECORD_SECTIONS, ESS_SECTIONS, sectionByKey, validateAgainst, checkFormat, ORG_UNIT_KINDS, DOCUMENT_TYPES,
@@ -56,11 +59,7 @@ type Tx = Prisma.TransactionClient
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
-function activeTenant(req: FastifyRequest): string {
-  const t = req.staffUser?.tenantId
-  if (!t) throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company first — HR records belong to one company', 422)
-  return t
-}
+const activeTenant = (req: FastifyRequest): string => activeTenantId(req, 'HR records belong to one company')
 /** Companies this operator can read HR for. Portfolio view spans all of them. */
 function readTenants(req: FastifyRequest): string[] {
   const su = req.staffUser!
@@ -95,10 +94,10 @@ async function ownEmployee(req: FastifyRequest): Promise<HrEmployee | null> {
     ?? mine[0]!
 }
 
-/** Digits only, last 10 — enough to match 0300… with +92300…. */
+/** Canonical phone key (auth/otp normalisePhone — 0300…, +92300… and 92300… all agree); null when too short to match on. */
 const phoneKey = (p: string | null | undefined) => {
-  const d = (p ?? '').replace(/\D/g, '')
-  return d.length >= 10 ? d.slice(-10) : null
+  const n = normalisePhone(p ?? '')
+  return n.length >= 10 ? n : null
 }
 
 function recordSection(key: string) {
@@ -289,17 +288,9 @@ async function finalApproval(tx: Tx, rec: HrRecord, extra: { approvedHours?: num
   }
 }
 
-export function csv(rows: Array<Array<unknown>>): string {
-  const cell = (v: unknown) => {
-    const s = v == null ? '' : Array.isArray(v) ? v.join('; ') : v instanceof Date ? v.toISOString().slice(0, 10) : String(v)
-    // Guard against formula injection when the file is opened in Excel — but
-    // not a plain number: a negative amount must stay a number a total adds up.
-    const numeric = typeof v === 'number' || /^-?\d+(\.\d+)?$/.test(s)
-    const safe = !numeric && /^[=+\-@\t\r]/.test(s) ? `'${s}` : s
-    return /[",\n\r]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe
-  }
-  return rows.map((r) => r.map(cell).join(',')).join('\n')
-}
+// The CSV writer (with the formula-injection guard) is accounting/csv.ts — one
+// copy for HR and the accountant exports (D16). Re-exported for existing callers.
+export { csv }
 
 async function createRecord(req: FastifyRequest, tenantId: string, section: string, input: Record<string, unknown>, opts: { submit: boolean; forEmployeeId?: string }) {
   const sec = recordSection(section)

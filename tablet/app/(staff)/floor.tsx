@@ -80,7 +80,8 @@ export default function FloorScreen() {
 
   const concepts = useQuery({
     queryKey: ['concepts'],
-    queryFn:  () => api.get<{ concepts: Concept[] }>('/concepts'),
+    // GET /concepts returns a bare array.
+    queryFn:  async () => ({ concepts: await api.get<Concept[]>('/concepts') }),
   })
 
   if (!conceptId && concepts.data?.concepts[0]) setConceptId(concepts.data.concepts[0].id)

@@ -31,7 +31,7 @@ interface LoginResp {
   user: { id: string; name: string; role: string; email?: string }
 }
 
-interface UploadUrlResp { url: string; key: string; publicUrl: string }
+interface UploadUrlResp { uploadUrl: string; key: string; publicUrl: string; assetId?: string }
 
 export default function LoginScreen() {
   const router = useRouter()
@@ -46,20 +46,30 @@ export default function LoginScreen() {
     if (!cameraPerm?.granted) requestCameraPerm()
   }, [cameraPerm?.granted])
 
-  async function uploadSelfie(): Promise<string | null> {
+  // The photo is taken before sign-in (the camera is already up on this
+  // screen) but uploaded after it: GET /media/upload-url — the one presigner,
+  // shared with admin — needs a signed-in user. This used to POST (the route
+  // is GET) before any token existed, so every selfie upload failed.
+  async function takeSelfie(): Promise<string | null> {
     if (!cameraRef.current) return null
     try {
       const photo = await cameraRef.current.takePictureAsync({ quality: 0.5, skipProcessing: true })
-      if (!photo?.uri) return null
+      return photo?.uri ?? null
+    } catch (err) {
+      console.warn('Selfie capture failed:', err)
+      return null
+    }
+  }
 
+  async function uploadSelfie(uri: string): Promise<string | null> {
+    try {
       // 1. ask backend for a presigned upload URL
-      const presign = await api.post<UploadUrlResp>('/media/upload-url', {
-        contentType: 'image/jpeg',
-        purpose: 'clockin-selfie',
-      })
+      const presign = await api.get<UploadUrlResp>(
+        `/media/upload-url?filename=clockin-${Date.now()}.jpg&contentType=image/jpeg&category=clockin`,
+      )
 
       // 2. PUT the file directly to R2 — FileSystem.uploadAsync streams it
-      const upload = await FileSystem.uploadAsync(presign.url, photo.uri, {
+      const upload = await FileSystem.uploadAsync(presign.uploadUrl, uri, {
         httpMethod: 'PUT',
         headers: { 'Content-Type': 'image/jpeg' },
         uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
@@ -83,12 +93,12 @@ export default function LoginScreen() {
 
       // Selfie if backend / config wants it. We always try; backend ignores
       // selfieUrl if config has selfieRequiredAtClockIn=false.
-      let selfieUrl: string | null = null
+      let selfieUri: string | null = null
       if (cameraPerm?.granted) {
         setShowSelfie(true)
         // Give the camera ~250ms to actually start streaming.
         await new Promise(r => setTimeout(r, 350))
-        selfieUrl = await uploadSelfie()
+        selfieUri = await takeSelfie()
         setShowSelfie(false)
       }
 
@@ -106,6 +116,8 @@ export default function LoginScreen() {
       }
 
       await sessionStore.getState().setSession(resp.accessToken, resp.user, resp.refreshToken ?? null)
+
+      const selfieUrl = selfieUri ? await uploadSelfie(selfieUri) : null
 
       // Clock in as a separate, authenticated action. A failure here must not
       // undo the sign-in: being unable to clock in is a problem to fix at the
@@ -207,7 +219,7 @@ export default function LoginScreen() {
             <Text style={{ color: theme.textDim }}>Signing in…</Text>
           </View>
         ) : (
-          <Button title="Sign in & clock in" onPress={() => void submit()} />
+          <Button label="Sign in & clock in" onPress={() => void submit()} />
         )}
 
         <Pressable onPress={() => Alert.alert(

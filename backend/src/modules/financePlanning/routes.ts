@@ -9,6 +9,10 @@ import { prisma } from '../../lib/prisma.js'
 import { requireAuth, MANAGERS, ADMIN_ONLY } from '../auth/middleware.js'
 import { NotFoundError } from '../../lib/errors.js'
 import { flagException } from '../../lib/exceptions.js'
+import {
+  requireActiveCompany, assertConceptAttachable, assertLocationOfCompany,
+  assertMemberOfCompany, assertCapexProjectOfCompany,
+} from './companyRefs.js'
 
 const STATUS_ENUM = ['not_quoted', 'quoted', 'ordered', 'partial_paid', 'delivered', 'installed', 'commissioned', 'snag', 'done'] as const
 
@@ -101,6 +105,8 @@ async function maybeFireOverBudgetFlag(projectId: string, lineId: string): Promi
   if (existing) return
   await flagException({
     kind: 'high_value_void',
+    tenantId: project.tenantId,
+    conceptId: project.conceptId,
     severity: overBy > project.budgetEnvelopeCents * 0.1 ? 'high' : 'medium',
     title: `CapEx project over budget: ${project.name}`,
     description: `Committed PKR ${(committed / 100).toLocaleString()} on a PKR ${(project.budgetEnvelopeCents / 100).toLocaleString()} envelope. Over by PKR ${(overBy / 100).toLocaleString()}.`,
@@ -152,15 +158,13 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
         conceptId:   z.string().uuid().optional(),
         projectId:   z.string().optional(),
       }).parse(req.body)
-      // If a concept is referenced, verify it belongs to active tenant.
-      if (body.conceptId) {
-        const concept = await prisma.concept.findFirst({
-          where: { id: body.conceptId, tenantId: req.staffUser!.tenantFilter, deletedAt: null },
-        })
-        if (!concept) return reply.status(403).send({ error: { code: 'CROSS_TENANT', message: 'Concept does not belong to your active company' } })
-      }
+      // A new entry binds to the ACTIVE company; any brand or capex project
+      // it names must be that company's.
+      const tenantId = requireActiveCompany(req)
+      if (body.conceptId) await assertConceptAttachable(req, body.conceptId)
+      if (body.projectId) await assertCapexProjectOfCompany(tenantId, body.projectId)
       const entry = await prisma.capitalLedgerEntry.create({
-        data: { ...body, date: new Date(body.date), tenantId: req.staffUser!.tenantId!, createdById: req.staffUser!.id },
+        data: { ...body, date: new Date(body.date), tenantId, createdById: req.staffUser!.id },
       })
       return reply.status(201).send(entry)
     },
@@ -258,15 +262,14 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
         pct:   z.number().min(0).max(100),
       })).nullable().optional(),
     }).parse(req.body)
-    if (body.conceptId) {
-      const concept = await prisma.concept.findFirst({
-        where: { id: body.conceptId, tenantId: req.staffUser!.tenantFilter, deletedAt: null },
-      })
-      if (!concept) return reply.status(403).send({ error: { code: 'CROSS_TENANT', message: 'Concept does not belong to your active company' } })
-    }
+    // Bound to the ACTIVE company; brand, location and owner must all be its.
+    const tenantId = requireActiveCompany(req)
+    if (body.conceptId)  await assertConceptAttachable(req, body.conceptId)
+    if (body.locationId) await assertLocationOfCompany(tenantId, body.locationId)
+    if (body.ownerId)    await assertMemberOfCompany(tenantId, body.ownerId)
     const project = await prisma.capexProject.create({
       data: {
-        ...body, tenantId: req.staffUser!.tenantId!,
+        ...body, tenantId,
         targetOpeningDate: body.targetOpeningDate ? new Date(body.targetOpeningDate) : null,
         jvPartners: body.jvPartners ?? undefined,
       },
@@ -314,6 +317,9 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
         where: { id: req.params.id, tenantId: req.staffUser!.tenantFilter, deletedAt: null },
       })
       if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'CapEx project not found in your active company' } })
+      // Re-pointing the location or owner: must be the PROJECT's company's.
+      if (body.locationId) await assertLocationOfCompany(owned.tenantId, body.locationId)
+      if (body.ownerId)    await assertMemberOfCompany(owned.tenantId, body.ownerId)
       const { scopeConfig, jvPartners, ...rest } = body
       return prisma.capexProject.update({
         where: { id: req.params.id },
@@ -360,6 +366,7 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
         where: { id: req.params.id, tenantId: req.staffUser!.tenantFilter, deletedAt: null },
       })
       if (!project) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'CapEx project not found in your active company' } })
+      if (body.assignedToId) await assertMemberOfCompany(project.tenantId, body.assignedToId)
       const line = await prisma.capexLine.create({
         data: {
           ...body,
@@ -390,8 +397,10 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
           id: req.params.lineId,
           project: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
         },
+        include: { project: { select: { tenantId: true } } },
       })
       if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'CapEx line not found in your active company' } })
+      if (body.assignedToId) await assertMemberOfCompany(owned.project.tenantId, body.assignedToId)
       const updated = await prisma.capexLine.update({
         where: { id: req.params.lineId },
         data: {
@@ -726,15 +735,11 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
       tradingDaysPerMonth:     z.number().int().min(1).max(31).default(26),
       notes:     z.string().optional(),
     }).parse(req.body)
-    if (body.conceptId) {
-      const concept = await prisma.concept.findFirst({
-        where: { id: body.conceptId, tenantId: req.staffUser!.tenantFilter, deletedAt: null },
-      })
-      if (!concept) return reply.status(403).send({ error: { code: 'CROSS_TENANT', message: 'Concept does not belong to your active company' } })
-    }
+    const tenantId = requireActiveCompany(req)
+    if (body.conceptId) await assertConceptAttachable(req, body.conceptId)
     const created = await prisma.proForma.create({
       data: {
-        ...body, tenantId: req.staffUser!.tenantId!,
+        ...body, tenantId,
         createdById: req.staffUser!.id,
         // Default 12 months at 100% steady state â€” operator tunes after creation
         months: { create: Array.from({ length: 12 }, (_, i) => ({ monthIndex: i + 1, rampPct: 1.0 })) },

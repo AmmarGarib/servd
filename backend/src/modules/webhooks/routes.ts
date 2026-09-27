@@ -2,10 +2,11 @@
 // Each verifies HMAC signature, normalises payload, queues for ingestion.
 // Also: outbound webhook subscription management (MANAGERS).
 
-import type { FastifyInstance } from 'fastify'
+import type { FastifyInstance, FastifyRequest } from 'fastify'
 import crypto from 'crypto'
 import { z } from 'zod'
 import { AppError } from '../../lib/errors.js'
+import { scopeTenantWhere } from '../../lib/tenantScope.js'
 import { serviceClient as prisma } from '../../lib/prisma.js'
 import { redis } from '../../lib/redis.js'
 import { requireAuth, MANAGERS } from '../auth/middleware.js'
@@ -470,10 +471,20 @@ export async function webhookManagementRoutes(fastify: FastifyInstance) {
     'reservation.confirmed', 'reservation.no_show', 'payment.completed', 'payment.failed',
   ]
 
+  // Company scope: a subscription is company master data (tenantId, migration
+  // 20260907130000). Lists are view-aware ('read'); an existing endpoint is
+  // found in any company the operator belongs to ('write') and a foreign id
+  // is 404; a new one is bound to the ACTIVE company ('create'). This module
+  // uses the service client (no RLS), so these filters are the only guard.
+  const findOwnedEndpoint = async (req: FastifyRequest, id: string) =>
+    prisma.webhookSubscription.findFirst({
+      where: { id, deletedAt: null, ...(await scopeTenantWhere(req, 'write')) },
+    })
+
   // GET /webhooks/endpoints — list active subscriptions
-  fastify.get('/endpoints', { preHandler: requireAuth(...MANAGERS) }, async () => {
+  fastify.get('/endpoints', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
     const list = await prisma.webhookSubscription.findMany({
-      where: { deletedAt: null },
+      where: { deletedAt: null, ...(await scopeTenantWhere(req, 'read')) },
       orderBy: { createdAt: 'desc' },
       select: {
         id: true, url: true, events: true, isActive: true,
@@ -493,11 +504,17 @@ export async function webhookManagementRoutes(fastify: FastifyInstance) {
       notes:  z.string().max(200).nullable().optional(),
     }).parse(req.body)
 
+    const tenantId = req.staffUser?.tenantId
+    if (!tenantId) {
+      throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company before registering a webhook endpoint', 422)
+    }
+
     await assertSafeOutboundUrl(body.url)
 
     const secret = body.secret ?? crypto.randomBytes(32).toString('hex')
     const endpoint = await prisma.webhookSubscription.create({
       data: {
+        tenantId,
         url: body.url,
         events: body.events,
         secret,
@@ -521,14 +538,12 @@ export async function webhookManagementRoutes(fastify: FastifyInstance) {
         notes:    z.string().max(200).nullable().optional(),
       }).parse(req.body)
 
-      if (body.url) await assertSafeOutboundUrl(body.url)
-
-      const existing = await prisma.webhookSubscription.findFirst({
-        where: { id: req.params.id, deletedAt: null },
-      })
+      const existing = await findOwnedEndpoint(req, req.params.id)
       if (!existing) {
         return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Endpoint not found' } })
       }
+
+      if (body.url) await assertSafeOutboundUrl(body.url)
 
       const updated = await prisma.webhookSubscription.update({
         where: { id: req.params.id },
@@ -547,9 +562,7 @@ export async function webhookManagementRoutes(fastify: FastifyInstance) {
     '/endpoints/:id',
     { preHandler: requireAuth(...MANAGERS) },
     async (req, reply) => {
-      const existing = await prisma.webhookSubscription.findFirst({
-        where: { id: req.params.id, deletedAt: null },
-      })
+      const existing = await findOwnedEndpoint(req, req.params.id)
       if (!existing) {
         return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Endpoint not found' } })
       }
@@ -566,9 +579,7 @@ export async function webhookManagementRoutes(fastify: FastifyInstance) {
     '/endpoints/:id/test',
     { preHandler: requireAuth(...MANAGERS) },
     async (req, reply) => {
-      const sub = await prisma.webhookSubscription.findFirst({
-        where: { id: req.params.id, deletedAt: null },
-      })
+      const sub = await findOwnedEndpoint(req, req.params.id)
       if (!sub) {
         return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Endpoint not found' } })
       }
@@ -660,8 +671,13 @@ export async function webhookManagementRoutes(fastify: FastifyInstance) {
     const { subscriptionId, limit } = (req.query as { subscriptionId?: string; limit?: string })
     const take = Math.min(Number(limit ?? 50), 200)
 
+    // Scoped through the owning subscription's company — a foreign
+    // subscriptionId simply matches nothing.
     const records = await prisma.webhookDelivery.findMany({
-      where: subscriptionId ? { subscriptionId } : undefined,
+      where: {
+        ...(subscriptionId ? { subscriptionId } : {}),
+        subscription: await scopeTenantWhere(req, 'read'),
+      },
       orderBy: { attemptedAt: 'desc' },
       take,
       select: {

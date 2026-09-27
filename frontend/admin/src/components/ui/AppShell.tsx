@@ -139,12 +139,12 @@ const NAV: NavSection[] = [
       { href: '/reservations', label: 'Reservations', icon: '🍽', module: 'reservations', children: [
         { href: '/reservations/week',      label: 'Week view',            module: 'reservations' },
         { href: '/reservations/blockouts', label: 'Closures & blockouts', module: 'reservations_admin' },
-        { href: '/reservations/hours',     label: 'Service hours',        module: 'reservations_admin' },
+        { href: '/configuration/hours',    label: 'Service hours',        module: 'reservations_admin' },
         { href: '/reservations/analytics', label: 'Analytics',            module: 'reservations_admin' },
         { href: '/kds/reservations',       label: 'Kitchen tracker',      module: 'kds_all' },
       ]},
       { href: '/orders/curbside', label: 'Curbside',   icon: '🚗', module: 'curbside' },
-      { href: '/tables',          label: 'Floor Plan', icon: '🪑', module: 'tables' },
+      { href: '/floorplan',       label: 'Floor Plan', icon: '🪑', module: 'tables' },
       { href: '/dispatch',        label: 'Dispatch',   icon: '🛵', module: 'dispatch', children: [
         { href: '/riders', label: 'Riders', module: 'riders' },
       ]},
@@ -251,7 +251,7 @@ const NAV: NavSection[] = [
   // worth keeping (Integrations, Notifications, Help) moved up into Executive.
 ]
 
-const FULL_SCREEN_PREFIXES = ['/kds', '/pos', '/login', '/supplier', '/mobile']
+const FULL_SCREEN_PREFIXES = ['/kds', '/pos', '/login', '/supplier']
 
 function isActive(pathname: string, href: string): boolean {
   if (href === '/dashboard') return pathname === '/dashboard' || pathname === '/'

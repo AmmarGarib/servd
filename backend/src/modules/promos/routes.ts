@@ -1,9 +1,10 @@
-import type { FastifyInstance } from 'fastify'
+import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, MANAGERS } from '../auth/middleware.js'
 import { verifyCustomerToken } from '../auth/service.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
+import { scopeTenantWhere, assertConceptOwned, type ScopeMode, activeTenantId } from '../../lib/tenantScope.js'
 
 const createPromoSchema = z.object({
   code: z.string().min(1).max(50).toUpperCase(),
@@ -21,19 +22,30 @@ const createPromoSchema = z.object({
   isActive: z.boolean().default(true),
 })
 
+// ── Company scope ────────────────────────────────────────────────────────────
+// A promo code belongs to ONE company (PromoCode.tenantId, stamped at create).
+// conceptId narrows it to one brand of that company; a null conceptId means
+// "every brand of ITS company", never every company. Before tenantId existed,
+// a brand-less promo was listed, editable and redeemable across companies —
+// one company could mint a 100%-off code valid at another company's brands.
+// (Promo maths — what the percentage applies to — is a separate batch.)
+
+
+async function findPromoInScope(req: FastifyRequest, id: string, mode: ScopeMode) {
+  const promo = await prisma.promoCode.findFirst({ where: { id, ...(await scopeTenantWhere(req, mode)) } })
+  if (!promo) throw new NotFoundError('PromoCode', id)
+  return promo
+}
+
 export async function promoRoutes(fastify: FastifyInstance) {
-  // GET /promos — scoped to the active tenant via concept.
+  // GET /promos — the companies in view.
   fastify.get<{ Querystring: { conceptId?: string; active?: string } }>(
     '/',
     { preHandler: requireAuth(...MANAGERS) },
     async (req) => {
       return prisma.promoCode.findMany({
         where: {
-          // Cross-tenant null-conceptId promos are still surfaced (tenant-portable).
-          OR: [
-            { conceptId: null },
-            { concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null } },
-          ],
+          ...(await scopeTenantWhere(req, 'read')),
           ...(req.query.conceptId && { conceptId: req.query.conceptId }),
           ...(req.query.active === 'true' && { isActive: true }),
         },
@@ -49,13 +61,10 @@ export async function promoRoutes(fastify: FastifyInstance) {
     if (new Date(body.startAt) >= new Date(body.endAt)) {
       throw new AppError('INVALID_DATES', 'startAt must be before endAt', 400)
     }
-    if (body.conceptId) {
-      const concept = await prisma.concept.findFirst({
-        where: { id: body.conceptId, tenantId: req.staffUser!.tenantFilter, deletedAt: null },
-      })
-      if (!concept) return reply.status(403).send({ error: { code: 'CROSS_TENANT', message: 'Concept does not belong to your active company' } })
-    }
-    const promo = await prisma.promoCode.create({ data: { ...body, startAt: new Date(body.startAt), endAt: new Date(body.endAt) } })
+    // New promos bind to the ACTIVE company; a brand, if named, must be its.
+    const tenantId = activeTenantId(req)
+    if (body.conceptId) await assertConceptOwned(req, body.conceptId, 'create')
+    const promo = await prisma.promoCode.create({ data: { ...body, tenantId, startAt: new Date(body.startAt), endAt: new Date(body.endAt) } })
     return reply.status(201).send(promo)
   })
 
@@ -63,18 +72,17 @@ export async function promoRoutes(fastify: FastifyInstance) {
   fastify.patch<{ Params: { id: string } }>(
     '/:id',
     { preHandler: requireAuth(...MANAGERS) },
-    async (req, reply) => {
+    async (req) => {
       const body = createPromoSchema.partial().parse(req.body)
-      const owned = await prisma.promoCode.findFirst({
-        where: {
-          id: req.params.id,
-          OR: [
-            { conceptId: null },
-            { concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null } },
-          ],
-        },
-      })
-      if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Promo not found in your active company' } })
+      const owned = await findPromoInScope(req, req.params.id, 'write')
+      // Re-pointing the promo at a brand: only a brand of the promo's OWN
+      // company. The promo never changes company.
+      if (body.conceptId) {
+        const concept = owned.tenantId
+          ? await prisma.concept.findFirst({ where: { id: body.conceptId, tenantId: owned.tenantId, deletedAt: null }, select: { id: true } })
+          : null
+        if (!concept) throw new AppError('BRAND_NOT_IN_COMPANY', 'That brand is not part of this promo\'s company', 422)
+      }
       const data: Record<string, unknown> = { ...body }
       if (body.startAt) data.startAt = new Date(body.startAt)
       if (body.endAt) data.endAt = new Date(body.endAt)
@@ -87,16 +95,7 @@ export async function promoRoutes(fastify: FastifyInstance) {
     '/:id',
     { preHandler: requireAuth(...MANAGERS) },
     async (req, reply) => {
-      const owned = await prisma.promoCode.findFirst({
-        where: {
-          id: req.params.id,
-          OR: [
-            { conceptId: null },
-            { concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null } },
-          ],
-        },
-      })
-      if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Promo not found in your active company' } })
+      await findPromoInScope(req, req.params.id, 'write')
       await prisma.promoCode.delete({ where: { id: req.params.id } })
       return reply.status(204).send()
     },
@@ -125,9 +124,17 @@ export async function promoRoutes(fastify: FastifyInstance) {
         try { customerId = verifyCustomerToken(bearer.slice(7)).sub } catch { /* anonymous */ }
       }
 
-      const promo = await prisma.promoCode.findUnique({ where: { code: code.toUpperCase() } })
+      // The brand must be named and real: a promo only applies at brands of
+      // the company that issued it, and another company's code answers
+      // exactly like an unknown one (no cross-company oracle).
+      const concept = typeof conceptId === 'string' && conceptId
+        ? await prisma.concept.findFirst({ where: { id: conceptId, deletedAt: null }, select: { id: true, tenantId: true } })
+        : null
+      const promo = typeof code === 'string' ? await prisma.promoCode.findUnique({ where: { code: code.toUpperCase() } }) : null
 
-      if (!promo || !promo.isActive) throw new AppError('INVALID_PROMO', 'Promo code not found or inactive', 400)
+      if (!promo || !promo.isActive || !concept?.tenantId || promo.tenantId !== concept.tenantId) {
+        throw new AppError('INVALID_PROMO', 'Promo code not found or inactive', 400)
+      }
       if (promo.startAt > now) throw new AppError('PROMO_NOT_STARTED', 'Promo code is not yet active', 400)
       if (promo.endAt < now) throw new AppError('PROMO_EXPIRED', 'Promo code has expired', 400)
       if (promo.conceptId && promo.conceptId !== conceptId) throw new AppError('PROMO_WRONG_CONCEPT', 'Promo code not valid for this brand', 400)
@@ -170,7 +177,7 @@ export async function promoRoutes(fastify: FastifyInstance) {
       return prisma.promoCodeUsage.findMany({
         where: {
           ...(req.query.promoCodeId ? { promoCodeId: req.query.promoCodeId } : {}),
-          order: { concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null } },
+          order: { concept: { ...(await scopeTenantWhere(req, 'read')), deletedAt: null } },
         },
         include: { promoCode: { select: { code: true } }, order: { select: { id: true, placedAt: true } } },
         orderBy: { usedAt: 'desc' },

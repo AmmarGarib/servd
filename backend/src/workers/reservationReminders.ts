@@ -86,9 +86,10 @@ async function runReminderSweep(): Promise<void> {
   }
 
   // No-show sweep — confirmed/booked, endTime > 30 min ago, never seated.
-  // For any row with depositCents > 0, ALSO auto-capture the deposit (posts
-  // a journal entry crediting Service Charge Revenue). For zero-deposit
-  // rows, just flip the status.
+  // Each row goes through markNoShow — the same path as a host's manual
+  // no-show — so deposit capture, the strike, rollups, waitlist promotion and
+  // the socket event are identical either way (D4). markNoShow claims the row
+  // conditionally, so a host marking it in the same minute is not doubled.
   const noShowCutoff = new Date(now.getTime() - 30 * 60_000)
   const stale = await prisma.reservation.findMany({
     where: {
@@ -96,65 +97,16 @@ async function runReminderSweep(): Promise<void> {
       seatedAt: null,
       endTime: { lt: noShowCutoff },
     },
-    select: { id: true, depositCents: true },
+    select: { id: true },
   })
-
   if (stale.length === 0) return
 
-  const withDeposit    = stale.filter((r) => r.depositCents > 0)
-  const withoutDeposit = stale.filter((r) => r.depositCents <= 0)
-
-  // Bulk-flip the cheap ones in one query.
-  if (withoutDeposit.length > 0) {
-    await prisma.reservation.updateMany({
-      where: { id: { in: withoutDeposit.map((r) => r.id) } },
-      data: { status: 'no_show', cancelReason: 'Auto: no-show after window' },
-    })
-    // Notify any open admin clients + try to promote waitlist into the
-    // freed slots + record a strike on the customer's account. All
-    // best-effort; failures don't block the sweep.
-    const { emitReservationEvent } = await import('../lib/ws.js')
-    const { tryPromoteWaitlist } = await import('../modules/reservations/waitlistPromotion.js')
-    const { recordStrike } = await import('../lib/strikes.js')
-    for (const r of withoutDeposit) {
-      const full = await prisma.reservation.findUnique({ where: { id: r.id } })
-      if (!full) continue
-      emitReservationEvent('reservation:no-show', {
-        reservationId: full.id, conceptId: full.conceptId,
-        startTime: full.startTime.toISOString(), status: full.status,
-      })
-      tryPromoteWaitlist(full).catch(() => {})
-      if (full.customerId) {
-        recordStrike({
-          customerId: full.customerId,
-          kind: 'reservation_no_show',
-          sourceType: 'reservation',
-          sourceId: full.id,
-          reason: 'Auto-detected no-show — booking expired without seating.',
-        }).catch(() => {})
-      }
-    }
-  }
-
-  // Capture deposits one-by-one — each posts a journal entry, which we want
-  // attributed individually for traceability. Failures don't block the sweep
-  // for the remaining rows.
-  for (const r of withDeposit) {
+  const { markNoShow } = await import('../modules/reservations/noShow.js')
+  for (const r of stale) {
     try {
-      const { captureReservationDeposit } = await import('../modules/reservations/depositCapture.js')
-      await captureReservationDeposit({
-        reservationId: r.id,
-        postedBy: 'system',
-        reason: 'Auto: no-show after window — deposit captured',
-      })
+      await markNoShow(r.id, { reason: 'Auto: no-show after window', actorId: null, auto: true })
     } catch (err) {
-      console.error(`[reservationReminders] auto-capture failed for ${r.id}:`, (err as Error).message)
-      // Even if capture fails (e.g. accounting glitch), still flip status so
-      // we don't keep retrying capture forever and the floor sees correct state.
-      await prisma.reservation.update({
-        where: { id: r.id },
-        data: { status: 'no_show', cancelReason: 'Auto: no-show after window (capture failed)' },
-      }).catch(() => {})
+      console.error(`[reservationReminders] auto no-show failed for ${r.id}:`, (err as Error).message)
     }
   }
 }

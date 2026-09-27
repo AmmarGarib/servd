@@ -17,6 +17,7 @@
 // the current tenant's P&L bears. /summary returns totals using cost-share
 // (what shows up in OpEx) and gross (what gets paid out to humans).
 
+import { scopeTenantWhere } from '../../lib/tenantScope.js'
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
@@ -29,11 +30,6 @@ import { contributionRoutes } from './contributions.js'
 // Prisma's where clause (TS rejects it). In practice tenantFilter is only
 // null for orphan users without any tenant â€” in that case we fail closed by
 // returning a filter that matches nothing (`{ in: [] }`).
-function tenantWhere(req: FastifyRequest): string | { in: string[] } {
-  const f = req.staffUser!.tenantFilter
-  if (f === null) return { in: [] }
-  return f
-}
 
 const positionSchema = z.object({
   conceptId:            z.string().uuid().nullable().optional(),
@@ -108,7 +104,7 @@ export async function positionRoutes(fastify: FastifyInstance) {
         archivedAt: z.string().nullable().optional(),
       }).parse(req.body)
       return prisma.shiftBand.update({
-        where: { id: req.params.id, tenantId: tenantWhere(req) },
+        where: { id: req.params.id, ...(await scopeTenantWhere(req, 'read')) },
         data: {
           ...body,
           archivedAt: body.archivedAt === undefined ? undefined : body.archivedAt ? new Date(body.archivedAt) : null,
@@ -126,7 +122,7 @@ export async function positionRoutes(fastify: FastifyInstance) {
       const { conceptId, departmentId, status } = req.query
       return prisma.position.findMany({
         where: {
-          tenantId: tenantWhere(req),
+          ...(await scopeTenantWhere(req, 'read')),
           ...(conceptId ? { conceptId } : {}),
           ...(departmentId ? { departmentId } : {}),
           // By default hide archived; opt in with status=archived or status=all
@@ -153,7 +149,7 @@ export async function positionRoutes(fastify: FastifyInstance) {
   // pro-forma and projections use: frozen seats are left out of the budget and
   // inter-company contributions net off.
   fastify.get('/summary', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
-    const f = tenantWhere(req)
+    const f = (await scopeTenantWhere(req, 'read')).tenantId
     const tenantIds = typeof f === 'string' ? [f] : f.in
     const b = await budgetedLabour(tenantIds)
     return {
@@ -231,7 +227,7 @@ export async function positionRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuth(...MANAGERS) },
     async (req) => {
       const { designationId, ...body } = positionSchema.partial().parse(req.body)
-      const seat = await prisma.position.findFirst({ where: { id: req.params.id, tenantId: tenantWhere(req) }, select: { id: true, tenantId: true } })
+      const seat = await prisma.position.findFirst({ where: { id: req.params.id, ...(await scopeTenantWhere(req, 'read')) }, select: { id: true, tenantId: true } })
       if (!seat) throw new NotFoundError('Position', req.params.id)
       await checkSeatRefs(seat.tenantId, body)
       const title = await seatTitle(seat.tenantId, { title: body.title, designationId })
@@ -245,7 +241,7 @@ export async function positionRoutes(fastify: FastifyInstance) {
   fastify.delete<{ Params: { id: string } }>('/:id', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
     // Soft-archive so historical reports still resolve names/salaries.
     await prisma.position.update({
-      where: { id: req.params.id, tenantId: tenantWhere(req) },
+      where: { id: req.params.id, ...(await scopeTenantWhere(req, 'read')) },
       data: { status: 'archived' },
     })
     return { ok: true }

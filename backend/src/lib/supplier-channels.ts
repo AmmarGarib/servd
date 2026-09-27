@@ -143,8 +143,17 @@ export async function findSupplierByEmail(emailAddress: string): Promise<Supplie
   const normalized = emailAddress.trim().toLowerCase()
   if (!normalized) return null
   // Postgres ILIKE for case-insensitive equality; sufficient for our scale.
+  // The same vendor can be on file in more than one company with the same
+  // address. Prefer the one with the most recent thread (that is who the
+  // reply is to), then the oldest row — deterministic, never "whichever
+  // Postgres returns first". A reply-to hint (chat-<id>@) is resolved to its
+  // own thread by findOrCreateInboundConversation.
   const rows = await prisma.$queryRaw<Supplier[]>`
-    SELECT * FROM suppliers WHERE LOWER(email) = ${normalized} AND "deletedAt" IS NULL LIMIT 1
+    SELECT s.* FROM suppliers s
+    WHERE LOWER(s.email) = ${normalized} AND s."deletedAt" IS NULL
+    ORDER BY (SELECT MAX(c."updatedAt") FROM supplier_conversations c WHERE c."supplierId" = s.id) DESC NULLS LAST,
+             s."createdAt" ASC
+    LIMIT 1
   `
   return rows[0] ?? null
 }
@@ -163,13 +172,17 @@ export async function findSupplierByWhatsapp(fromDigits: string): Promise<Suppli
   // on the suppliers table. At realistic sizes (few hundred suppliers per
   // tenant) this is fine; if it ever becomes hot, denormalise to a
   // `whatsappPhoneE164` column and index it.
+  // Same tie-break as findSupplierByEmail when the number is on file in
+  // more than one company.
   const rows = await prisma.$queryRaw<Supplier[]>`
-    SELECT * FROM suppliers
-    WHERE "deletedAt" IS NULL
+    SELECT s.* FROM suppliers s
+    WHERE s."deletedAt" IS NULL
       AND (
-        regexp_replace(COALESCE("whatsappPhone", ''), '[^0-9]', '', 'g') = ${digits}
-        OR regexp_replace(COALESCE("phone", ''), '[^0-9]', '', 'g') = ${digits}
+        regexp_replace(COALESCE(s."whatsappPhone", ''), '[^0-9]', '', 'g') = ${digits}
+        OR regexp_replace(COALESCE(s."phone", ''), '[^0-9]', '', 'g') = ${digits}
       )
+    ORDER BY (SELECT MAX(c."updatedAt") FROM supplier_conversations c WHERE c."supplierId" = s.id) DESC NULLS LAST,
+             s."createdAt" ASC
     LIMIT 1
   `
   return rows[0] ?? null
@@ -193,10 +206,22 @@ export async function findOrCreateInboundConversation(opts: {
   channelHint: 'email' | 'whatsapp'
   initialSubject?: string
 }): Promise<string> {
-  // Prefer the explicit hint (only valid if it's actually for this supplier)
+  // Prefer the explicit hint — only valid if it's actually for this supplier,
+  // or for the same vendor on file in another company (same email address).
+  // The sender lookup picks one row per address; without this a reply to
+  // company B's thread from a vendor both companies use could land in
+  // company A's latest thread with that vendor.
   if (opts.hintedConversationId) {
-    const hinted = await prisma.supplierConversation.findUnique({ where: { id: opts.hintedConversationId } })
-    if (hinted && hinted.supplierId === opts.supplier.id) return hinted.id
+    const hinted = await prisma.supplierConversation.findUnique({
+      where:   { id: opts.hintedConversationId },
+      include: { supplier: { select: { email: true, deletedAt: true } } },
+    })
+    const sameEmail = (a: string | null | undefined, b: string | null | undefined) =>
+      !!a && !!b && a.trim().toLowerCase() === b.trim().toLowerCase()
+    if (hinted && (
+      hinted.supplierId === opts.supplier.id ||
+      (opts.channelHint === 'email' && !hinted.supplier.deletedAt && sameEmail(hinted.supplier.email, opts.supplier.email))
+    )) return hinted.id
   }
 
   // Fallback: latest conversation for this supplier
@@ -206,11 +231,16 @@ export async function findOrCreateInboundConversation(opts: {
   })
   if (latest) return latest.id
 
-  // Brand-new — create one. Try to attach to assignedStaff, else first admin.
+  // Brand-new — create one. Try to attach to assignedStaff, else the first
+  // admin of the supplier's company (never another company's admin).
   let staffId = opts.supplier.assignedStaffId
   if (!staffId) {
+    const tenantId = opts.supplier.tenantId
     const admin = await prisma.user.findFirst({
-      where: { role: 'admin', deletedAt: null },
+      where: {
+        role: 'admin', deletedAt: null,
+        ...(tenantId ? { OR: [{ tenantId }, { tenantMemberships: { some: { tenantId } } }] } : {}),
+      },
       orderBy: { createdAt: 'asc' },
     })
     if (!admin) {

@@ -14,7 +14,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { api } from '../../lib/api'
-import { todayPktIso } from '../../lib/money'
+import { todayPktIso, fmtPkrShort } from '../../lib/money'
 import { useReservationSocket } from '../../hooks/useReservationSocket'
 import { CustomerContextSidebar } from '../../components/customer/CustomerContextSidebar'
 import { useBrandFilter } from '../../store/brandFilter'
@@ -225,7 +225,7 @@ export default function ReservationsPage() {
       <div className="px-6 pb-6 flex flex-wrap items-center gap-3 text-xs text-s-muted">
         <Link href="/reservations/week"      className="text-s-teal hover:underline">📅 Week view</Link>
         <Link href="/reservations/blockouts" className="text-s-teal hover:underline">🚫 Closures & blockouts</Link>
-        <Link href="/reservations/hours"     className="text-s-teal hover:underline">🕐 Service hours</Link>
+        <Link href="/configuration/hours"    className="text-s-teal hover:underline">🕐 Service hours</Link>
         <Link href="/reservations/analytics" className="text-s-teal hover:underline">📊 Analytics</Link>
         <Link href="/floorplan"              className="text-s-teal hover:underline">🪑 Floor plan</Link>
       </div>
@@ -283,7 +283,7 @@ function ReservationRow({
           {r.guestPhone && <span>📞 {r.guestPhone}</span>}
           {r.guestEmail && <span> · ✉ {r.guestEmail}</span>}
           {r.notes && <span className="italic"> · {r.notes}</span>}
-          {r.customer && r.customer.totalSpentCents > 0 && <span> · returning · {fmtMoney(r.customer.totalSpentCents)} LTV</span>}
+          {r.customer && r.customer.totalSpentCents > 0 && <span> · returning · {fmtPkrShort(r.customer.totalSpentCents)} LTV</span>}
         </p>
       </div>
       <div className="flex gap-1.5 flex-wrap justify-end">
@@ -314,12 +314,6 @@ function ReservationRow({
       </div>
     </div>
   )
-}
-
-function fmtMoney(cents: number): string {
-  if (cents >= 1_000_000) return `PKR ${(cents / 100_000_000).toFixed(1)}L`
-  if (cents >= 100_000)   return `PKR ${(cents / 100_000).toFixed(0)}K`
-  return `PKR ${(cents / 100).toFixed(0)}`
 }
 
 // ─── Seat button (table picker dropdown) ──────────────────────────────────

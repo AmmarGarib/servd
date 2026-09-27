@@ -13,6 +13,7 @@ import Link from 'next/link'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../../lib/api'
 import { RecipeTestLog, type DraftAttempt } from '../../../components/recipe/RecipeTestLog'
+import { fmtPkrWhole } from '../../../lib/money'
 
 type Kind = 'plate' | 'component'
 type Category = 'main' | 'side' | 'sauce' | 'sub_recipe'
@@ -41,7 +42,8 @@ interface IngredientRow {
 }
 
 // Component (sub-recipe) option for the ingredient picker. Cost-per-gram is
-// precomputed by GET /recipes/prep (already batch-yield-adjusted).
+// precomputed by GET /par-sheet/preps?for=recipe — the one component picker,
+// company-scoped (already batch-yield-adjusted).
 interface PrepOption { id: string; name: string; costPerGramCents: number }
 
 export type RecipeStatus = 'iteration' | 'pending_approval' | 'production'
@@ -92,9 +94,6 @@ const blankRow = (): IngredientRow => ({
   yieldPctOverride: null,
 })
 
-function fmtPkr(cents: number): string {
-  return `PKR ${Math.round(cents / 100).toLocaleString('en-PK')}`
-}
 // Per-gram cost to 3 decimals (cents → PKR/g). Gram-scale costs are tiny, so
 // whole-rupee rounding would erase them.
 function fmtPkrPerG(cents: number): string { return `PKR ${(cents / 100).toFixed(3)}` }
@@ -206,7 +205,7 @@ export function RecipeForm({ initial, prefillBrandId, prefillCategoryId }: {
   // server-side.
   const { data: prepOptions = [] } = useQuery<PrepOption[]>({
     queryKey: ['recipes', 'prep-options'],
-    queryFn: () => api.get('/recipes/prep'),
+    queryFn: () => api.get('/par-sheet/preps?for=recipe'),
   })
   // Exclude the component being edited from its own picker (no self-reference).
   const availablePreps = useMemo(
@@ -622,7 +621,7 @@ export function RecipeForm({ initial, prefillBrandId, prefillCategoryId }: {
                           )}
                         </td>
                         <td className="px-2 py-1.5 text-right font-mono text-s-muted">
-                          {cr.isCount ? `${fmtPkr(cr.cpgCents)}/u` : fmtPkrPerG(cr.cpgCents)}
+                          {cr.isCount ? `${fmtPkrWhole(cr.cpgCents)}/u` : fmtPkrPerG(cr.cpgCents)}
                         </td>
                         <td className="px-2 py-1.5 text-right">
                           <NumInput value={row.quantity} placeholder="0"
@@ -636,8 +635,8 @@ export function RecipeForm({ initial, prefillBrandId, prefillCategoryId }: {
                         <td className="px-2 py-1.5 text-right font-mono text-s-dim">
                           {cr.rawUsedG ? cr.rawUsedG.toLocaleString('en', { maximumFractionDigits: 0 }) : '—'}
                         </td>
-                        <td className="px-2 py-1.5 text-right font-mono font-bold">{fmtPkr(cr.costCents)}</td>
-                        <td className="px-2 py-1.5 text-right font-mono text-s-muted">{fmtPkr(cr.portionCostCents)}</td>
+                        <td className="px-2 py-1.5 text-right font-mono font-bold">{fmtPkrWhole(cr.costCents)}</td>
+                        <td className="px-2 py-1.5 text-right font-mono text-s-muted">{fmtPkrWhole(cr.portionCostCents)}</td>
                         <td className="px-2 py-1.5">
                           <button onClick={() => setIngs(ings.filter((_, j) => j !== i))}
                             disabled={ings.length === 1}
@@ -664,7 +663,7 @@ export function RecipeForm({ initial, prefillBrandId, prefillCategoryId }: {
               </div>
               <div className="text-[11px]">
                 <p className="text-s-dim">Total recipe cost</p>
-                <p className="font-mono font-bold text-s-text">{fmtPkr(computed.totalRecipe)}</p>
+                <p className="font-mono font-bold text-s-text">{fmtPkrWhole(computed.totalRecipe)}</p>
               </div>
             </div>
             {/* Q factor is a COST input (waste buffer) so it stays on the recipe.
@@ -823,9 +822,9 @@ function CostPanel({ computed, kind, yieldGrams }: {
         <div className="p-4 space-y-3">
           <div>
             <p className="text-[10px] font-bold uppercase tracking-wider text-s-muted mb-1">Batch cost build-up</p>
-            <Line label="Total ingredient" value={fmtPkr(v.totalIngredient)} />
-            <Line label="Q factor" value={fmtPkr(v.qFactorCents)} dim />
-            <Line label="Batch cost" value={fmtPkr(v.totalRecipe)} bold />
+            <Line label="Total ingredient" value={fmtPkrWhole(v.totalIngredient)} />
+            <Line label="Q factor" value={fmtPkrWhole(v.qFactorCents)} dim />
+            <Line label="Batch cost" value={fmtPkrWhole(v.totalRecipe)} bold />
             <Line label="Batch yield" value={yieldGrams && yieldGrams > 0 ? `${yieldGrams.toLocaleString('en')} g` : 'set batch yield'} dim />
             <Line label="Cost per gram" value={cpg != null ? fmtPkrPerG(cpg) : '—'} bold highlight />
           </div>
@@ -841,16 +840,16 @@ function CostPanel({ computed, kind, yieldGrams }: {
     <div className="rounded-xl border border-s-border bg-s-surface overflow-hidden">
       <header className="px-4 py-3 border-b border-s-border" style={{ background: 'rgba(0,212,177,0.08)' }}>
         <p className="text-[10px] uppercase tracking-wider text-s-muted">Recipe cost</p>
-        <p className="text-base font-black mt-0.5" style={{ color: '#5EEAD4' }}>{fmtPkr(v.plateCost)} / plate</p>
+        <p className="text-base font-black mt-0.5" style={{ color: '#5EEAD4' }}>{fmtPkrWhole(v.plateCost)} / plate</p>
       </header>
 
       <div className="p-4 space-y-3">
         <div>
           <p className="text-[10px] font-bold uppercase tracking-wider text-s-muted mb-1">Cost build-up</p>
-          <Line label="Total ingredient" value={fmtPkr(v.totalIngredient)} />
-          <Line label="Q factor" value={fmtPkr(v.qFactorCents)} dim />
-          <Line label="Total recipe" value={fmtPkr(v.totalRecipe)} bold />
-          <Line label="Plate cost" value={fmtPkr(v.plateCost)} highlight />
+          <Line label="Total ingredient" value={fmtPkrWhole(v.totalIngredient)} />
+          <Line label="Q factor" value={fmtPkrWhole(v.qFactorCents)} dim />
+          <Line label="Total recipe" value={fmtPkrWhole(v.totalRecipe)} bold />
+          <Line label="Plate cost" value={fmtPkrWhole(v.plateCost)} highlight />
         </div>
         <p className="text-[10px] text-s-dim">
           Selling price, contribution margin and profitability live in{' '}

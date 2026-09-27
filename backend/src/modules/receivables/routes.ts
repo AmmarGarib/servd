@@ -15,7 +15,7 @@ import { z } from 'zod'
 import { serviceClient as prisma } from '../../lib/prisma.js'
 import { requireAuth, FINANCIALS_VIEWERS } from '../auth/middleware.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
-import { scopeTenantWhere, assertConceptOwned } from '../../lib/tenantScope.js'
+import { scopeTenantWhere, assertConceptOwned, activeTenantId } from '../../lib/tenantScope.js'
 import { audit } from '../../lib/audit.js'
 import { postJournalEntry, reverseJournalEntry } from '../accounting/journal.js'
 
@@ -23,11 +23,7 @@ const RECEIVABLE = '1110'
 const GST_OUTPUT = '2030'
 const PAYMENT_ACCOUNT: Record<string, string> = { bank: '1020', cheque: '1020', card: '1030', cash: '1010' }
 
-function activeTenant(req: { staffUser?: { tenantId: string | null } }): string {
-  const t = req.staffUser?.tenantId
-  if (!t) throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company first — the ledger is per company', 422)
-  return t
-}
+const activeTenant = (req: { staffUser?: { tenantId: string | null } }): string => activeTenantId(req, 'the ledger is per company')
 
 const DAY = 86_400_000
 export function agingBucket(dueDate: Date, now = new Date()): 'current' | '1-30' | '31-60' | '61-90' | '90+' {

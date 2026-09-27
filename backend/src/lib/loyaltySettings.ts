@@ -29,36 +29,34 @@ export const LOYALTY_DEFAULTS: Record<typeof LOYALTY_SETTING_KEYS[number], numbe
   'loyalty.stamp_threshold':       9,
 }
 
-// Small cache so we don't hit Settings on every order — invalidated when the
-// operator saves new values (PATCH /loyalty/settings calls invalidate below).
-let cache: { values: typeof LOYALTY_DEFAULTS; expiresAt: number } | null = null
+// Loyalty values are per company (modules/loyalty/settings.ts). Cached per
+// company for a minute; PATCH /loyalty/settings invalidates.
+const cache = new Map<string, { values: typeof LOYALTY_DEFAULTS; expiresAt: number }>()
 const CACHE_TTL_MS = 60_000
 
-export function invalidateLoyaltySettings(): void { cache = null }
+export function invalidateLoyaltySettings(): void { cache.clear() }
 
-export async function loadLoyaltySettings(): Promise<typeof LOYALTY_DEFAULTS> {
-  if (cache && cache.expiresAt > Date.now()) return cache.values
+export async function loadLoyaltySettings(tenantId: string | null | undefined): Promise<typeof LOYALTY_DEFAULTS> {
+  if (!tenantId) return { ...LOYALTY_DEFAULTS }
+  const hit = cache.get(tenantId)
+  if (hit && hit.expiresAt > Date.now()) return hit.values
   try {
-    const rows = await prisma.setting.findMany({ where: { key: { in: [...LOYALTY_SETTING_KEYS] } } })
-    const out = { ...LOYALTY_DEFAULTS }
-    for (const r of rows) {
-      const n = Number(r.value)
-      if (Number.isFinite(n) && n >= 0) (out as Record<string, number>)[r.key] = n
-    }
-    cache = { values: out, expiresAt: Date.now() + CACHE_TTL_MS }
+    const { loadCompanyLoyaltySettings } = await import('../modules/loyalty/settings.js')
+    const out = await loadCompanyLoyaltySettings(tenantId)
+    cache.set(tenantId, { values: out, expiresAt: Date.now() + CACHE_TTL_MS })
     return out
   } catch {
     return { ...LOYALTY_DEFAULTS }
   }
 }
 
-export async function calculatePointsEarned(totalCents: number): Promise<number> {
-  const s = await loadLoyaltySettings()
+export async function calculatePointsEarned(totalCents: number, tenantId: string | null | undefined): Promise<number> {
+  const s = await loadLoyaltySettings(tenantId)
   const denom = s['loyalty.earn_cents_per_point'] || 100
   return Math.floor(totalCents / denom)
 }
 
-export async function calculatePointsValue(points: number): Promise<number> {
-  const s = await loadLoyaltySettings()
+export async function calculatePointsValue(points: number, tenantId: string | null | undefined): Promise<number> {
+  const s = await loadLoyaltySettings(tenantId)
   return Math.floor(points) * (s['loyalty.point_value_cents'] || 100)
 }

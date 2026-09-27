@@ -13,6 +13,7 @@
 
 import { serviceClient as prisma } from '../../lib/prisma.js'
 import { AppError } from '../../lib/errors.js'
+import { requireTenantId } from '../../lib/tenantScope.js'
 import { recordPunch, attendanceKeys, type PunchEntry, type PunchResult } from '../hr/attendance.js'
 import { verifyKioskPin } from '../hr/kioskPin.js'
 import { getFormat, STANDING_ATTENDANCE } from '../hr/service.js'
@@ -22,10 +23,7 @@ import { enforceClockInPolicy } from './policy.js'
 export interface Actor { id: string; role: string; tenantId: string | null; name?: string | null }
 export interface PunchBody { lat?: number; lng?: number; selfieUrl?: string }
 
-function activeCompany(actor: Actor): string {
-  if (!actor.tenantId) throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company first — a punch belongs to one company', 422)
-  return actor.tenantId
-}
+const activeCompany = (actor: Actor): string => requireTenantId(actor.tenantId, 'a punch belongs to one company')
 
 const attendanceOut = (r: PunchResult | null) => r && r.recordId ? { recordId: r.recordId, status: r.status, lateMinutes: r.lateMinutes, ...(r.skipped && { note: r.skipped }) } : null
 

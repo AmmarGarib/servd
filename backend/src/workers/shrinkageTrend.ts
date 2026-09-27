@@ -8,7 +8,7 @@
 import cron from 'node-cron'
 import { serviceClient as prisma } from '../lib/prisma.js'
 import { flagException } from '../lib/exceptions.js'
-import { getOperationsConfig, primaryTenantId } from '../lib/setup-config.js'
+import { getOperationsConfig } from '../lib/setup-config.js'
 
 const TREND_THRESHOLD_PCT = -0.015        // -1.5% rolling average = chronic shrinkage
 
@@ -19,14 +19,29 @@ export function startShrinkageTrendWorker(): void {
 }
 
 export async function runOnce(): Promise<{ checked: number; flagged: number }> {
-  // Trend window is a company setting; the primary company's applies to the sweep.
-  const ops = await getOperationsConfig(await primaryTenantId())
+  // One sweep per company: each company's counts, judged over that company's
+  // own trend window, flagged into that company's inbox. Counts and items
+  // with no company are nobody's and are skipped.
+  const tenants = await prisma.tenant.findMany({ where: { deletedAt: null }, select: { id: true } })
+  let checked = 0
+  let flagged = 0
+  for (const t of tenants) {
+    const r = await runForTenant(t.id)
+    checked += r.checked
+    flagged += r.flagged
+  }
+  console.log(`[shrinkageTrend] ${tenants.length} companies: checked ${checked} items, flagged ${flagged}`)
+  return { checked, flagged }
+}
+
+export async function runForTenant(tenantId: string): Promise<{ checked: number; flagged: number }> {
+  const ops = await getOperationsConfig(tenantId)
   const weeks = ops?.shrinkage_trend_weeks ?? 4
   const since = new Date(); since.setDate(since.getDate() - weeks * 7)
 
-  // Pull all physical-count lines in the window
+  // This company's physical-count lines in the window, on this company's items.
   const lines = await prisma.physicalCountLine.findMany({
-    where: { count: { countedAt: { gte: since } } },
+    where: { count: { tenantId, countedAt: { gte: since } } },
     select: { inventoryItemId: true, variancePct: true, systemQty: true, physicalQty: true },
   })
 
@@ -47,17 +62,19 @@ export async function runOnce(): Promise<{ checked: number; flagged: number }> {
     const avg = a.sum / a.n
     if (avg >= TREND_THRESHOLD_PCT) continue
 
-    const item = await prisma.inventoryItem.findUnique({
-      where: { id: itemId },
+    const item = await prisma.inventoryItem.findFirst({
+      where: { id: itemId, tenantId },
       select: { name: true, unit: true, unitCostCents: true },
     })
     if (!item) continue
 
     const lossValueCents = item.unitCostCents != null ? Math.round(item.unitCostCents * a.lossQty) : null
 
-    // Don't double-flag — only fire once per item per window if no open flag exists
+    // Don't double-flag — only fire once per item per window if this company
+    // has no open flag for it yet.
     const existing = await prisma.exceptionFlag.findFirst({
       where: {
+        tenantId,
         kind: 'shrinkage_trend', status: 'open',
         entityType: 'InventoryItem', entityId: itemId,
         createdAt: { gte: since },
@@ -67,6 +84,7 @@ export async function runOnce(): Promise<{ checked: number; flagged: number }> {
     if (existing) continue
 
     await flagException({
+      tenantId,
       kind: 'shrinkage_trend',
       severity: avg < -0.05 ? 'high' : 'medium',
       title: `Chronic shrinkage: ${item.name}`,
@@ -79,6 +97,5 @@ export async function runOnce(): Promise<{ checked: number; flagged: number }> {
     flagged++
   }
 
-  console.log(`[shrinkageTrend] checked ${agg.size} items, flagged ${flagged}`)
   return { checked: agg.size, flagged }
 }

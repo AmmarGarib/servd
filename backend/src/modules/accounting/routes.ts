@@ -188,6 +188,7 @@ export async function accountingRoutes(fastify: FastifyInstance) {
     // should have eyes on it. The resolution note is the owner's audit trail.
     const { flagException } = await import('../../lib/exceptions.js')
     await flagException({
+      tenantId,
       kind: 'manual_journal',
       severity: debits >= 100000 ? 'high' : 'medium',           // PKR 1,000+ = high
       title: `Manual journal entry posted: ${body.description}`,

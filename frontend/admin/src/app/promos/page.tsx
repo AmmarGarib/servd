@@ -3,8 +3,7 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../lib/api'
 import Link from 'next/link'
-
-function fmt(cents: number) { return `PKR ${(cents / 100).toLocaleString()}` }
+import { fmtPkrWhole } from '../../lib/money'
 
 interface PromoCode {
   id: string
@@ -239,10 +238,10 @@ export default function PromosPage() {
                     </td>
                     <td className="px-4 py-3 text-kds-subtext">{p.discountType}</td>
                     <td className="px-4 py-3 font-bold text-kds-green">
-                      {p.discountType === 'percentage' ? `${p.discountValue}%` : fmt(p.discountValue)}
+                      {p.discountType === 'percentage' ? `${p.discountValue}%` : fmtPkrWhole(p.discountValue)}
                     </td>
                     <td className="px-4 py-3 text-kds-subtext">
-                      {p.minOrderCents ? fmt(p.minOrderCents) : '—'}
+                      {p.minOrderCents ? fmtPkrWhole(p.minOrderCents) : '—'}
                     </td>
                     <td className="px-4 py-3 text-kds-subtext">
                       {p.usedCount}{p.maxUsageCount ? ` / ${p.maxUsageCount}` : ''}

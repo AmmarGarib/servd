@@ -19,7 +19,7 @@ const STEPS: TourStep[] = [
     emoji: '🖥',
     title: 'Kitchen runs on the KDS',
     body: 'The Kitchen Display System replaces paper tickets. Tap items to bump, hold, or recall. Tap a dish to see cooking steps + ingredient list. Voice control: say "bump 47".',
-    cta: { label: 'Peek at the KDS', href: '/kds/all' },
+    cta: { label: 'Peek at the KDS', href: '/kds' },
   },
   {
     emoji: '💳',

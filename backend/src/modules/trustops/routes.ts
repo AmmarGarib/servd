@@ -15,7 +15,11 @@ import { requireAuth, MANAGERS, ALL_STAFF, ADMIN_ONLY } from '../auth/middleware
 import { flagException } from '../../lib/exceptions.js'
 import { audit } from '../../lib/audit.js'
 import { NotFoundError, AppError } from '../../lib/errors.js'
-import { scopeTenantWhere, conceptWhere, assertConceptOwned, assertShiftOf } from '../../lib/tenantScope.js'
+import type { FastifyRequest } from 'fastify'
+import {
+  scopeTenantWhere, conceptWhere, assertConceptOwned, assertShiftOf, conceptIdsInScope, resolveTenantScope,
+  SHIFT_COMPANY_INCLUDE, shiftTenantId,
+} from '../../lib/tenantScope.js'
 import { cashVarianceLimitCents } from '../../lib/drawer.js'
 
 // 4-digit OTP for rider hand-off
@@ -27,10 +31,76 @@ function generateOtp(): string {
 // owner-decision-7 approvers, and only approvers of the company the action
 // happens in. The local copy here had no company filter, so a manager at
 // company B could approve a company-A staff meal or petty-cash top-up.
-async function companyOfConcept(conceptId: string | null | undefined): Promise<string | null> {
-  if (!conceptId) return null
-  const c = await prisma.concept.findUnique({ where: { id: conceptId }, select: { tenantId: true } })
-  return c?.tenantId ?? null
+
+// ─── Company scope ──────────────────────────────────────────────────────────
+//
+// A delivery order belongs to its brand's company; a petty-cash box carries
+// its own tenantId (stamped on create); a staff meal has no company column
+// yet, so its company is answered by the precedence chain in mealCompanies.
+
+/** The order, or 404 when its brand is not a company the operator belongs to. */
+async function findOrderInScope<S extends Record<string, unknown>>(req: FastifyRequest, id: string, select: S) {
+  const order = await prisma.order.findFirst({
+    where: { id, concept: await scopeTenantWhere(req, 'write') },
+    select: { ...select, concept: { select: { tenantId: true } } },
+  })
+  if (!order) throw new NotFoundError('Order', id)
+  return order
+}
+
+/** The petty-cash box, or 404 when it is not one of the operator's companies'. */
+async function findBoxInScope(req: FastifyRequest, id: string) {
+  const box = await prisma.pettyCashBox.findFirst({
+    where: { id, deletedAt: null, ...(await scopeTenantWhere(req, 'write')) },
+  })
+  if (!box || !box.tenantId) throw new NotFoundError('PettyCashBox', id)
+  return { ...box, tenantId: box.tenantId }
+}
+
+/** True when the user is a member of `tenantId` (primary company or membership). */
+async function isMemberOf(userId: string, tenantId: string): Promise<boolean> {
+  const u = await prisma.user.findFirst({
+    where: { id: userId, deletedAt: null, OR: [{ tenantId }, { tenantMemberships: { some: { tenantId } } }] },
+    select: { id: true },
+  })
+  return !!u
+}
+
+type MealRow = { id: string; conceptId: string | null; shiftId: string | null; staffId: string }
+
+/**
+ * The company of each staff meal. StaffMeal has no tenantId column yet, so
+ * it is a precedence chain — each step applies only when the one above it is
+ * null: the brand's company, else the drawer's company, else the staff
+ * member's company when they belong to exactly one. Null = unattributable,
+ * and an unattributable meal is shown to nobody (fail closed).
+ */
+async function mealCompanies(meals: MealRow[]): Promise<Map<string, string | null>> {
+  const conceptIds = [...new Set(meals.map((m) => m.conceptId).filter((x): x is string => !!x))]
+  const shiftIds = [...new Set(meals.filter((m) => !m.conceptId && m.shiftId).map((m) => m.shiftId!))]
+  const staffIds = [...new Set(meals.filter((m) => !m.conceptId && !m.shiftId).map((m) => m.staffId))]
+  const [concepts, shifts, staff] = await Promise.all([
+    conceptIds.length ? prisma.concept.findMany({ where: { id: { in: conceptIds } }, select: { id: true, tenantId: true } }) : [],
+    shiftIds.length ? prisma.shift.findMany({ where: { id: { in: shiftIds } }, include: SHIFT_COMPANY_INCLUDE }) : [],
+    staffIds.length
+      ? prisma.user.findMany({ where: { id: { in: staffIds } }, select: { id: true, tenantId: true, tenantMemberships: { select: { tenantId: true } } } })
+      : [],
+  ])
+  const byConcept = new Map(concepts.map((c) => [c.id, c.tenantId]))
+  const byShift = new Map(shifts.map((s) => [s.id, shiftTenantId(s)]))
+  const byStaff = new Map(staff.map((u) => {
+    const ids = new Set(u.tenantMemberships.map((m) => m.tenantId))
+    if (u.tenantId) ids.add(u.tenantId)
+    return [u.id, ids.size === 1 ? [...ids][0]! : null] as const
+  }))
+  const out = new Map<string, string | null>()
+  for (const m of meals) {
+    out.set(m.id,
+      m.conceptId ? (byConcept.get(m.conceptId) ?? null)
+      : m.shiftId ? (byShift.get(m.shiftId) ?? null)
+      : (byStaff.get(m.staffId) ?? null))
+  }
+  return out
 }
 
 export async function trustopsRoutes(fastify: FastifyInstance) {
@@ -46,15 +116,12 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
     '/orders/:id/otp',
     { preHandler: requireAuth(...ALL_STAFF) },
     async (req) => {
-      const order = await prisma.order.findUnique({
-        where: { id: req.params.id },
-        select: { id: true, deliveryOtp: true, source: true, status: true },
-      })
-      if (!order) throw new NotFoundError('Order', req.params.id)
+      // Scoped through the order's brand → company: a foreign order is 404.
+      const order = await findOrderInScope(req, req.params.id, { id: true, deliveryOtp: true, source: true, status: true })
       // Generate OTP on first read if missing (defensive)
       if (!order.deliveryOtp) {
         const otp = generateOtp()
-        await prisma.order.update({ where: { id: req.params.id }, data: { deliveryOtp: otp } })
+        await prisma.order.update({ where: { id: order.id }, data: { deliveryOtp: otp } })
         return { otp }
       }
       return { otp: order.deliveryOtp }
@@ -68,20 +135,20 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuth(...ALL_STAFF) },
     async (req, reply) => {
       const body = z.object({ otp: z.string().length(4) }).parse(req.body)
-      const order = await prisma.order.findUnique({
-        where: { id: req.params.id },
-        select: { id: true, deliveryOtp: true, deliveryOtpAttempts: true, riderId: true, customerId: true, customerName: true, totalCents: true },
+      const order = await findOrderInScope(req, req.params.id, {
+        id: true, deliveryOtp: true, deliveryOtpAttempts: true, riderId: true, customerId: true, customerName: true, totalCents: true, conceptId: true,
       })
-      if (!order) throw new NotFoundError('Order', req.params.id)
       if (!order.deliveryOtp) {
         throw new AppError('NO_OTP', 'No OTP set on this order. Customer should refresh their order page.', 400)
       }
 
       if (body.otp !== order.deliveryOtp) {
         const attempts = order.deliveryOtpAttempts + 1
-        await prisma.order.update({ where: { id: req.params.id }, data: { deliveryOtpAttempts: attempts } })
+        await prisma.order.update({ where: { id: order.id }, data: { deliveryOtpAttempts: attempts } })
         if (attempts >= 3) {
           await flagException({
+            tenantId: order.concept.tenantId,
+            conceptId: order.conceptId,
             kind: 'lost_package',
             severity: 'high',
             title: `OTP failed 3+ times on order ${order.id.slice(0, 8)}`,
@@ -98,7 +165,7 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
 
       // OTP matched — mark delivered + verified
       await prisma.order.update({
-        where: { id: req.params.id },
+        where: { id: order.id },
         data: {
           status: 'completed', completedAt: new Date(),
           deliveryOtpVerifiedAt: new Date(),
@@ -112,9 +179,9 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
   // 2. PETTY CASH — float boxes
   // ════════════════════════════════════════════════════════════════════════
 
-  fastify.get('/petty-cash/boxes', { preHandler: requireAuth(...MANAGERS) }, async () => {
+  fastify.get('/petty-cash/boxes', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
     return prisma.pettyCashBox.findMany({
-      where: { deletedAt: null },
+      where: { deletedAt: null, ...(await scopeTenantWhere(req, 'read')) },
       include: {
         movements: { orderBy: { createdAt: 'desc' }, take: 10 },
       },
@@ -130,7 +197,15 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
       floatCents:    z.number().int().min(0).default(0),
       topUpLimitCents: z.number().int().min(0).default(2000000),
     }).parse(req.body)
-    const created = await prisma.pettyCashBox.create({ data: body })
+    // A new box binds to the ACTIVE company: its brand must be one of that
+    // company's brands and its custodian one of that company's people.
+    const tenantId = req.staffUser!.tenantId
+    if (!tenantId) throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company before creating a petty-cash box', 422)
+    if (body.conceptId) await assertConceptOwned(req, body.conceptId, 'create')
+    if (!(await isMemberOf(body.custodianId, tenantId))) {
+      throw new AppError('CUSTODIAN_NOT_IN_COMPANY', 'The custodian must be a member of your active company', 422)
+    }
+    const created = await prisma.pettyCashBox.create({ data: { ...body, conceptId: body.conceptId ?? null, tenantId } })
     return reply.status(201).send(created)
   })
 
@@ -154,22 +229,21 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
       managerOverridePin: z.string().min(4).max(8).optional(),
     }).parse(req.body)
 
-    const box = await prisma.pettyCashBox.findUnique({ where: { id: body.boxId } })
-    if (!box) throw new NotFoundError('PettyCashBox', body.boxId)
+    // The box, scoped: a box of a company the operator doesn't belong to is 404.
+    // Everything below (thresholds, approver, bill, ledger) is the BOX's company.
+    const box = await findBoxInScope(req, body.boxId)
 
-    // The bill must be an open bill of a supplier of the company the operator
-    // is acting in (the payment posts to that company's ledger).
+    // The bill must be an open bill of a supplier of the box's company: the
+    // cash leaves that company's box, so the payment must post to that
+    // company's ledger (postSupplierPayment resolves it from the supplier).
     let bill: { id: string; supplierId: string; billNumber: string; supplierName: string } | null = null
     if (body.supplierBillId) {
       if (body.type !== 'spend') throw new AppError('BILL_ON_NON_SPEND', 'Only a spend can pay a supplier bill', 400)
-      const tenantId = req.staffUser!.tenantId
-      const found = tenantId
-        ? await prisma.supplierBill.findFirst({
-            where: { id: body.supplierBillId, supplier: { tenantId } },
-            select: { id: true, supplierId: true, billNumber: true, status: true, totalCents: true, whtCents: true, paidCents: true, supplier: { select: { name: true } } },
-          })
-        : null
-      if (!found) throw new AppError('BILL_NOT_IN_COMPANY', 'That supplier bill is not in your active company', 422)
+      const found = await prisma.supplierBill.findFirst({
+        where: { id: body.supplierBillId, supplier: { tenantId: box.tenantId } },
+        select: { id: true, supplierId: true, billNumber: true, status: true, totalCents: true, whtCents: true, paidCents: true, supplier: { select: { name: true } } },
+      })
+      if (!found) throw new AppError('BILL_NOT_IN_COMPANY', 'That supplier bill is not one of this box\'s company\'s', 422)
       if (found.status === 'void' || found.status === 'paid') throw new AppError('BILL_NOT_OPEN', `Bill ${found.billNumber} is ${found.status}`, 422)
       // Net of withholding — the one "still due" rule (procurement billDueCents).
       const { billDueCents } = await import('../procurement/service.js')
@@ -181,7 +255,7 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
     }
 
     const { getOperationsConfig } = await import('../../lib/setup-config.js')
-    const ops = await getOperationsConfig(req.staffUser!.tenantId)
+    const ops = await getOperationsConfig(box.tenantId)
     const photoThreshold = ops?.photoRequiredAboveCents ?? 50000
 
     const absAmount = Math.abs(body.amountCents)
@@ -198,10 +272,8 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
     // Top-up limit — above limit requires manager PIN
     let approvedById: string | null = null
     if (body.type === 'topup' && absAmount > box.topUpLimitCents) {
-      // PettyCashBox has no tenantId — the company is its brand's, falling
-      // back to the operator's active company for a brand-less box.
-      const boxTenantId = (await companyOfConcept(box.conceptId)) ?? req.staffUser!.tenantId
-      const approver = await verifyManagerPin(body.managerOverridePin, boxTenantId)
+      // Only an approver of the box's own company may lift its limit.
+      const approver = await verifyManagerPin(body.managerOverridePin, box.tenantId)
       if (!approver) {
         throw new AppError(
           'TOPUP_OVER_LIMIT',
@@ -241,7 +313,7 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
       }
       const m = await tx.pettyCashMovement.create({
         data: {
-          boxId: body.boxId,
+          boxId: box.id,
           type: body.type,
           amountCents: signedAmount,
           category: body.category ?? null,
@@ -254,7 +326,7 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
         },
       })
       await tx.pettyCashBox.update({
-        where: { id: body.boxId },
+        where: { id: box.id },
         data: { floatCents: newFloat },
       })
       return { movement: m, supplierPaymentId }
@@ -271,7 +343,7 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
       action: `petty_cash.${body.type}`,
       entity: 'PettyCashMovement',
       entityId: movement.id,
-      userId: req.staffUser!.id, tenantId: req.staffUser?.tenantId ?? null,
+      userId: req.staffUser!.id, tenantId: box.tenantId,
       userEmail: req.staffUser!.email,
       after: { box: box.name, amount: signedAmount, reason: body.reason, supplierBillId: bill?.id ?? null },
       metadata: { ip: req.ip, approvedById, supplierPaymentId },
@@ -285,8 +357,7 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuth(...MANAGERS) },
     async (req, reply) => {
       const body = z.object({ countedCents: z.number().int().min(0), notes: z.string().max(500).optional() }).parse(req.body)
-      const box = await prisma.pettyCashBox.findUnique({ where: { id: req.params.id } })
-      if (!box) throw new NotFoundError('PettyCashBox', req.params.id)
+      const box = await findBoxInScope(req, req.params.id)
       const variance = body.countedCents - box.floatCents
 
       const movement = await prisma.pettyCashMovement.create({
@@ -297,11 +368,13 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
       })
       await prisma.pettyCashBox.update({ where: { id: box.id }, data: { floatCents: body.countedCents } })
 
-      // Variance flag — beyond the company's cash tolerance (Configuration →
-      // Receipts, the same limit the till drawers use) needs eyes.
-      const limit = await cashVarianceLimitCents(req.staffUser!.tenantId)
+      // Variance flag — beyond the box's company's cash tolerance
+      // (Configuration → Receipts, the same limit the till drawers use).
+      const limit = await cashVarianceLimitCents(box.tenantId)
       if (Math.abs(variance) > limit) {
         await flagException({
+          tenantId: box.tenantId,
+          conceptId: box.conceptId,
           kind: 'cash_variance',
           severity: Math.abs(variance) > 50000 ? 'high' : 'medium',
           title: `Petty cash variance: ${variance >= 0 ? '+' : ''}PKR ${(variance / 100).toFixed(0)}`,
@@ -405,6 +478,8 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
     const limit = await cashVarianceLimitCents(tenantId)
     if (Math.abs(variance) > limit && expected > 0) {
       await flagException({
+        tenantId,
+        conceptId: body.conceptId ?? null,
         kind: 'cash_variance',
         severity: Math.abs(variance) > 100000 ? 'high' : 'medium',
         title: `Deposit drop variance: ${variance >= 0 ? '+' : ''}PKR ${(variance / 100).toFixed(0)}`,
@@ -420,6 +495,8 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
     // Also flag when receipt photo missing on a meaningful drop
     if (body.amountCents >= 100000 && !body.receiptUrl) {
       await flagException({
+        tenantId,
+        conceptId: body.conceptId ?? null,
         kind: 'cash_variance',
         severity: 'medium',
         title: `Deposit drop without bank receipt`,
@@ -438,14 +515,37 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
   // 4. STAFF MEAL — cap + flag
   // ════════════════════════════════════════════════════════════════════════
 
+  // Scoped to the operator's companies (view-aware). A client conceptId is
+  // checked (foreign → 404); without one, brand-tagged meals are narrowed to
+  // the brands in scope and brand-less meals to their company by the
+  // mealCompanies precedence chain — never "every company's meals".
   fastify.get('/staff-meals', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
     const { conceptId, days } = req.query as { conceptId?: string; days?: string }
-    const since = new Date(Date.now() - parseInt(days ?? '30', 10) * 86400_000)
-    return prisma.staffMeal.findMany({
-      where: { consumedAt: { gte: since }, ...(conceptId && { conceptId }) },
+    const d = Math.min(Math.max(parseInt(days ?? '30', 10) || 30, 1), 366)
+    const since = new Date(Date.now() - d * 86400_000)
+    if (conceptId) {
+      return prisma.staffMeal.findMany({
+        where: { consumedAt: { gte: since }, ...(await conceptWhere(req, conceptId, 'read')) },
+        orderBy: { consumedAt: 'desc' },
+        take: 200,
+      })
+    }
+    const scope = await resolveTenantScope(req)
+    if (scope.tenantIds.length === 0) return []
+    const inScope = new Set(scope.tenantIds)
+    const rows = await prisma.staffMeal.findMany({
+      where: {
+        consumedAt: { gte: since },
+        OR: [{ conceptId: { in: await conceptIdsInScope(req, 'read') } }, { conceptId: null }],
+      },
       orderBy: { consumedAt: 'desc' },
-      take: 200,
+      take: 1000,
     })
+    const brandless = rows.filter((m) => !m.conceptId)
+    const company = await mealCompanies(brandless)
+    return rows
+      .filter((m) => m.conceptId || inScope.has(company.get(m.id) ?? ''))
+      .slice(0, 200)
   })
 
   // POST — manager-PIN approval required. Above PKR cap fires flag.
@@ -462,11 +562,18 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
       managerPin:         z.string().min(4).max(8),                      // mandatory
     }).parse(req.body)
 
-    const mealTenantId = (await companyOfConcept(body.conceptId)) ?? req.staffUser!.tenantId
+    // A new meal binds to the ACTIVE company: its brand, its drawer and the
+    // person who ate must all be that company's (foreign → 404 / 422).
+    const mealTenantId = req.staffUser!.tenantId
+    if (!mealTenantId) throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company before logging a staff meal', 422)
+    if (body.conceptId) await assertConceptOwned(req, body.conceptId, 'create')
+    if (!(await isMemberOf(body.staffId, mealTenantId))) {
+      throw new AppError('STAFF_NOT_IN_COMPANY', 'That staff member is not a member of your active company', 422)
+    }
     const approver = await verifyManagerPin(body.managerPin, mealTenantId)
     if (!approver) throw new AppError('MANAGER_PIN_REQUIRED', 'Manager PIN required to log a staff meal.', 403)
     // A new row bound to a drawer: the drawer must be the active company's.
-    if (body.shiftId) await assertShiftOf(req.staffUser!.tenantId, body.shiftId, false)
+    if (body.shiftId) await assertShiftOf(mealTenantId, body.shiftId, false)
 
     const meal = await prisma.staffMeal.create({
       data: {
@@ -481,17 +588,23 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
     })
 
     // Per-staff cumulative check — if this person has consumed > PKR 2,000 in
-    // the last 7 days, flag for review (configurable later via OperationsConfig).
+    // the last 7 days AT THIS COMPANY, flag it for this company's review
+    // (configurable later via OperationsConfig). Meals at another company
+    // are that company's business and never counted into this flag.
     const sevenDaysAgo = new Date(Date.now() - 7 * 86400_000)
-    const recent = await prisma.staffMeal.aggregate({
+    const weekMeals = await prisma.staffMeal.findMany({
       where: { staffId: body.staffId, consumedAt: { gte: sevenDaysAgo } },
-      _sum: { estimatedCostCents: true },
-      _count: { _all: true },
+      select: { id: true, conceptId: true, shiftId: true, staffId: true, estimatedCostCents: true },
     })
-    const cumulative = recent._sum.estimatedCostCents ?? 0
+    const weekCompany = await mealCompanies(weekMeals)
+    const ours = weekMeals.filter((m) => m.id === meal.id || weekCompany.get(m.id) === mealTenantId)
+    const recent = { _sum: { estimatedCostCents: ours.reduce((t, m) => t + m.estimatedCostCents, 0) }, _count: { _all: ours.length } }
+    const cumulative = recent._sum.estimatedCostCents
     if (cumulative >= 200000) {       // PKR 2,000
       const staff = await prisma.user.findUnique({ where: { id: body.staffId }, select: { name: true, role: true } })
       await flagException({
+        tenantId: mealTenantId,
+        conceptId: body.conceptId ?? null,
         kind: 'shrinkage',
         severity: cumulative >= 500000 ? 'high' : 'medium',
         title: `Heavy staff meal log: ${staff?.name ?? 'staff'}`,

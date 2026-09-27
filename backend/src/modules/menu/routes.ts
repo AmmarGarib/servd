@@ -2,7 +2,8 @@ import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, MANAGERS, ADMIN_ONLY, ALL_STAFF } from '../auth/middleware.js'
-import { NotFoundError } from '../../lib/errors.js'
+import { AppError, NotFoundError } from '../../lib/errors.js'
+import { assertConceptOwned } from '../../lib/tenantScope.js'
 import { emitItem86d } from '../../lib/ws.js'
 import { seedAvailability } from '../../lib/reservation.js'
 
@@ -58,6 +59,37 @@ const createModifierGroupSchema = z.object({
     }),
   ),
 })
+
+// ── Brand integrity ──────────────────────────────────────────────────────────
+// A menu item lives under ONE brand, and its category and station must be that
+// brand's own. The item/category schemas used to be written straight through,
+// so a PATCH could move an item (or a category) into another company's brand,
+// or point it at a foreign category or station.
+
+/** 422 unless `categoryId` is a live category of `conceptId`. */
+async function assertCategoryOf(conceptId: string, categoryId: string): Promise<void> {
+  const cat = await prisma.category.findFirst({
+    where: { id: categoryId, conceptId, deletedAt: null },
+    select: { id: true },
+  })
+  if (!cat) throw new AppError('CATEGORY_NOT_IN_BRAND', 'That category is not part of this brand', 422)
+}
+
+/** 422 unless `stationId` is a live station of `conceptId`. */
+async function assertStationOf(conceptId: string, stationId: string): Promise<void> {
+  const st = await prisma.station.findFirst({
+    where: { id: stationId, conceptId, deletedAt: null },
+    select: { id: true },
+  })
+  if (!st) throw new AppError('STATION_NOT_IN_BRAND', 'That station is not part of this brand', 422)
+}
+
+/** A row's brand never changes from an edit; resending the same id is fine. */
+function assertSameConcept(current: string, requested: string | undefined): void {
+  if (requested !== undefined && requested !== current) {
+    throw new AppError('CONCEPT_IMMUTABLE', 'An item or category cannot be moved to another brand — create it there instead', 422)
+  }
+}
 
 export async function menuRoutes(fastify: FastifyInstance) {
   // GET /menu/:conceptId — full menu tree (staff/internal only)
@@ -120,13 +152,13 @@ export async function menuRoutes(fastify: FastifyInstance) {
     },
   )
 
-  // POST /menu/items — verify the concept belongs to the active tenant
+  // POST /menu/items — the brand must be one of the ACTIVE company's, and the
+  // category and station must be that brand's.
   fastify.post('/items', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
     const body = createItemSchema.parse(req.body)
-    const concept = await prisma.concept.findFirst({
-      where: { id: body.conceptId, tenantId: req.staffUser!.tenantFilter, deletedAt: null },
-    })
-    if (!concept) return reply.status(403).send({ error: { code: 'CROSS_TENANT', message: 'Concept does not belong to your active company' } })
+    await assertConceptOwned(req, body.conceptId, 'create')
+    await assertCategoryOf(body.conceptId, body.categoryId)
+    if (body.stationId) await assertStationOf(body.conceptId, body.stationId)
     const item = await prisma.menuItem.create({ data: body })
     return reply.status(201).send(item)
   })
@@ -145,7 +177,13 @@ export async function menuRoutes(fastify: FastifyInstance) {
         },
       })
       if (!item) throw new NotFoundError('MenuItem', req.params.id)
-      const updated = await prisma.menuItem.update({ where: { id: req.params.id }, data: body })
+      // The item stays under its brand; a new category or station must be
+      // that brand's own.
+      const { conceptId, ...data } = body
+      assertSameConcept(item.conceptId, conceptId)
+      if (data.categoryId) await assertCategoryOf(item.conceptId, data.categoryId)
+      if (data.stationId) await assertStationOf(item.conceptId, data.stationId)
+      const updated = await prisma.menuItem.update({ where: { id: req.params.id }, data })
       // Seed Redis availability whenever portionsAvailable is set
       if (typeof body.portionsAvailable === 'number') {
         await seedAvailability(req.params.id, body.portionsAvailable)
@@ -211,14 +249,11 @@ export async function menuRoutes(fastify: FastifyInstance) {
 
   fastify.post('/categories', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
     const body = createCategorySchema.parse(req.body)
-    // CREATE pins to the operator's active tenant; PATCH/DELETE on existing
+    // CREATE pins to the operator's ACTIVE company; PATCH/DELETE on existing
     // rows below use memberTenantIds because the operator might be editing a
     // row in a company that isn't their primary (head-office staff servicing
     // multiple restaurants — common pattern for procurement + finance).
-    const concept = await prisma.concept.findFirst({
-      where: { id: body.conceptId, tenantId: { in: req.staffUser!.memberTenantIds }, deletedAt: null },
-    })
-    if (!concept) return reply.status(403).send({ error: { code: 'CROSS_TENANT', message: 'Concept does not belong to a company you have access to' } })
+    await assertConceptOwned(req, body.conceptId, 'create')
     const category = await prisma.category.create({ data: body })
     return reply.status(201).send(category)
   })
@@ -236,7 +271,9 @@ export async function menuRoutes(fastify: FastifyInstance) {
         },
       })
       if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Category not found in a company you have access to' } })
-      return prisma.category.update({ where: { id: req.params.id }, data: body })
+      const { conceptId, ...data } = body
+      assertSameConcept(owned.conceptId, conceptId)
+      return prisma.category.update({ where: { id: req.params.id }, data })
     },
   )
 
@@ -279,7 +316,7 @@ export async function menuRoutes(fastify: FastifyInstance) {
         concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
       },
     })
-    if (!ownedItem) return reply.status(403).send({ error: { code: 'CROSS_TENANT', message: 'Menu item does not belong to your active company' } })
+    if (!ownedItem) throw new NotFoundError('MenuItem', body.menuItemId)
     const { modifiers, ...groupData } = body
     const group = await prisma.modifierGroup.create({
       data: { ...groupData, modifiers: { create: modifiers } },
@@ -308,17 +345,4 @@ export async function menuRoutes(fastify: FastifyInstance) {
     },
   )
 
-  // ─── Image upload URL ─────────────────────────────────────────────────────
-  // Returns a presigned S3 URL for direct browser → R2 upload
-
-  fastify.get<{ Querystring: { filename: string; contentType: string } }>(
-    '/items/upload-url',
-    { preHandler: requireAuth(...MANAGERS) },
-    async (req) => {
-      const { filename, contentType } = req.query
-      // Dynamic import to avoid startup cost when R2 not configured
-      const { getSignedUploadUrl } = await import('../../lib/storage.js')
-      return getSignedUploadUrl(filename, contentType)
-    },
-  )
 }

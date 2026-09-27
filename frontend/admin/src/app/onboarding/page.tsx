@@ -968,19 +968,18 @@ function HoursStep({ concepts, onDone }: { concepts: Concept[]; onDone: () => vo
   const save = useMutation({
     mutationFn: async () => {
       if (!concept) return
-      try {
-        // Flatten all shifts from open days into one row each (backend accepts
-        // multiple ServiceHours rows per day-of-week → split-shift support).
-        const flat = days.flatMap((d) => d.isOpen
-          ? d.shifts.map((s) => ({
-              dayOfWeek: d.dayOfWeek, openMin: s.openMin, closeMin: s.closeMin, isReservable: true,
-            }))
-          : [],
-        )
-        await api.put(`/reservations/hours/${concept.id}`, { hours: flat })
-      } catch (err) {
-        console.warn('hours save not wired; continuing', err)
-      }
+      // Flatten all shifts from open days into one row each (the API accepts
+      // several ServiceHours rows per day-of-week → split-shift support).
+      // /setup/hours is the one hours writer (same rows /configuration/hours
+      // edits). This used to PUT a path that did not exist and swallow the
+      // 404, so wizard-entered hours were silently lost.
+      const flat = days.flatMap((d) => d.isOpen
+        ? d.shifts.map((s) => ({
+            dayOfWeek: d.dayOfWeek, openMin: s.openMin, closeMin: s.closeMin, isReservable: true,
+          }))
+        : [],
+      )
+      await api.put(`/setup/hours/${concept.id}`, { hours: flat })
     },
     onSuccess: onDone,
   })
@@ -1298,7 +1297,7 @@ function DoneStep({ onGo }: { onGo: () => void }) {
           <li>· Set delivery zones at <Link href="/configuration/delivery-zones" className="text-[#00D4B1] hover:underline">Delivery Zones</Link></li>
           <li>· Customise email/SMS at <Link href="/configuration/templates" className="text-[#00D4B1] hover:underline">Notification Templates</Link></li>
           <li>· Add allergen + dietary tags at <Link href="/configuration/dietary-tags" className="text-[#00D4B1] hover:underline">Dietary Tags</Link></li>
-          <li>· Mark holiday closures at <Link href="/configuration/holidays" className="text-[#00D4B1] hover:underline">Holidays &amp; Closures</Link></li>
+          <li>· Mark holiday closures at <Link href="/reservations/blockouts" className="text-[#00D4B1] hover:underline">Closures &amp; blockouts</Link></li>
         </ul>
       </div>
       <Footer>

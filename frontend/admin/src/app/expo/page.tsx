@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { formatDistanceToNowStrict } from 'date-fns'
 import { api } from '../../lib/api'
+import { fmtPkrWhole } from '../../lib/money'
 
 /**
  * Expo — the pass-station's screen. Three columns:
@@ -86,8 +87,6 @@ interface ExpoQueue {
   ready:        ExpoOrder[]
   stations:     StationLoad[]
 }
-
-function fmt(c: number) { return `PKR ${(c / 100).toFixed(0)}` }
 
 export default function ExpoPage() {
   const qc = useQueryClient()
@@ -237,7 +236,7 @@ export default function ExpoPage() {
                 <div className="flex items-baseline gap-3 mb-2">
                   <p className="font-bold text-white/90">{order.customer?.name ?? order.customerName ?? 'Walk-in'}</p>
                   {order.customer?.phone && <p className="text-[11px] text-white/40">{order.customer.phone}</p>}
-                  <p className="ml-auto text-sm font-black" style={{ color: '#00D4B1' }}>{fmt(order.totalCents)}</p>
+                  <p className="ml-auto text-sm font-black" style={{ color: '#00D4B1' }}>{fmtPkrWhole(order.totalCents)}</p>
                 </div>
 
                 <div className="space-y-1 mb-4">

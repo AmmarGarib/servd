@@ -7,6 +7,7 @@ import { useKdsActions } from '../../hooks/useKdsSocket'
 import { useKdsStore } from '../../store/kds'
 import { useAuthStore } from '../../store/auth'
 import { PhotoBumpModal } from './PhotoBumpModal'
+import { fmtPkrWhole } from '../../lib/money'
 
 // Aggregator sources (ubereats / doordash / deliveroo) are gone. GS Foods
 // runs its own fleet and will never take orders through an aggregator, so the
@@ -47,10 +48,6 @@ function getAgeClass(placedAt: string): string {
   if (minutes < 8) return 'age-fresh'
   if (minutes < 15) return 'age-warm'
   return 'age-hot'
-}
-
-function formatPKR(cents: number): string {
-  return `PKR ${(cents / 100).toFixed(0)}`
 }
 
 // ─── Recipe data fetched on modal open ───────────────────────────────────────
@@ -253,7 +250,7 @@ export function TicketCard({ order, stationId, compact }: TicketCardProps) {
             {age} {isUrdu ? UR.ago : 'ago'}
           </div>
           {!compact && (
-            <div className="text-xs text-kds-subtext">{formatPKR(order.totalCents)}</div>
+            <div className="text-xs text-kds-subtext">{fmtPkrWhole(order.totalCents)}</div>
           )}
         </div>
       </div>

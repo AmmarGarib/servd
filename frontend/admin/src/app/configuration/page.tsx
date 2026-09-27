@@ -93,8 +93,8 @@ export default function ConfigurationHubPage() {
       desc: 'Which areas each role can open — enforced by the API.',
       category: 'core', status: 'ready', hint: 'Per-role defaults, CEO-editable' },
 
-    { href: '/settings',  icon: '📍', title: 'Location & Geofence',
-      desc: 'Force on-site clock-in for floor staff.',
+    { href: '/configuration/operations',  icon: '📍', title: 'Clock-in geofence',
+      desc: 'Force on-site clock-in for floor staff (anchored on each location\'s map pin).',
       category: 'core', status: 'optional', hint: 'Optional but recommended' },
 
     { href: '/menu',  icon: '📝', title: 'Menu & Pricing',
@@ -119,8 +119,8 @@ export default function ConfigurationHubPage() {
       category: 'channels', status: 'optional' },
 
     // ── Finance ───────────────────────────────────────────────────────────
-    { href: '/configuration/tax',  icon: '🧾', title: 'Tax Rates & FBR',
-      desc: 'GST rate per item type, FBR API credentials, e-invoice flow.',
+    { href: '/settings/integrations',  icon: '🧾', title: 'Tax Rates & FBR',
+      desc: 'FBR / SRB credentials and e-invoice status. Cash and card GST rates are set per brand in Settings → Concepts.',
       category: 'finance', status: 'incomplete', hint: 'FBR submission worker active' },
 
     { href: '/configuration/payment-methods',  icon: '💳', title: 'Payment Methods',
@@ -137,21 +137,13 @@ export default function ConfigurationHubPage() {
       category: 'finance', status: 'incomplete' },
 
     // ── Operations ────────────────────────────────────────────────────────
-    { href: '/configuration/printer',  icon: '🖨', title: 'Receipt Printer',
-      desc: 'Network printer IP, ESC/POS settings, paper width.',
-      category: 'operations', status: 'optional', hint: 'Browser print works without setup' },
-
     { href: '/configuration/hours',  icon: '🕒', title: 'Hours of Operation',
-      desc: 'Per-concept open / close hours, holidays, prep time.',
+      desc: 'Per-brand open / close windows (split service supported). Closures live in Reservations → Closures.',
       category: 'operations', status: 'incomplete' },
 
     { href: '/inventory',  icon: '📦', title: 'Inventory & Reorder',
       desc: 'Par levels, reorder points, suppliers per item.',
       category: 'operations', status: 'unknown' },
-
-    { href: '/configuration/notifications',  icon: '🔔', title: 'Notifications',
-      desc: 'Order receipts, status updates, rider alerts, daily digest.',
-      category: 'operations', status: 'incomplete' },
 
     { href: '/configuration/email',  icon: '✉️', title: 'Email',
       desc: 'Backup channel for codes and password resets when WhatsApp is down.',
@@ -172,13 +164,9 @@ export default function ConfigurationHubPage() {
       desc: 'FAQ, WhatsApp support, email, docs.',
       category: 'platform', status: 'ready', hint: 'WhatsApp reply within 1h business hours' },
 
-    { href: '/configuration/language',  icon: '🌐', title: 'Language & Localisation',
-      desc: 'English / اردو, currency display, date format.',
+    { href: '/settings',  icon: '🌐', title: 'Language & Localisation',
+      desc: 'English / اردو (Settings → Preferences).',
       category: 'platform', status: 'ready', hint: 'Bilingual KDS active' },
-
-    { href: '/configuration/backup',  icon: '💾', title: 'Backup & Data Export',
-      desc: 'Periodic DB backups, CSV exports, data residency.',
-      category: 'platform', status: 'optional' },
 
     { href: '/configuration/audit-log',  icon: '📜', title: 'Audit Log',
       desc: 'Who did what, when — compliance + investigations.',
@@ -253,7 +241,7 @@ export default function ConfigurationHubPage() {
       desc: 'Taxonomy your menu items pick from — Vegan, Halal, Gluten-free, etc.',
       category: 'core', status: 'incomplete', hint: 'Defaults included; edit to match your menu' },
 
-    { href: '/configuration/holidays', icon: '📅', title: 'Holidays & closures',
+    { href: '/reservations/blockouts', icon: '📅', title: 'Holidays & closures',
       desc: 'Block out dates the brand is closed or running reduced capacity.',
       category: 'operations', status: 'optional' },
   ]

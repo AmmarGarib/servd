@@ -700,6 +700,8 @@ enum GiftCardStatus {
 
 model GiftCard {
   id                String         @id @default(uuid())
+  // Company that sold the card; a card is spent only at that company's brands (owner decision 14).
+  tenantId          String?
   code              String         @unique // human-readable, e.g. "GS-7K2P-X9MD"
   issuedAmountCents Int
   balanceCents      Int
@@ -725,6 +727,7 @@ model GiftCard {
 
   @@index([status])
   @@index([buyerEmail])
+  @@index([tenantId])
   @@map("gift_cards")
 }
 
@@ -2581,6 +2584,7 @@ enum AllocationDriver {
 
 model CostAllocationRule {
   id                String           @id @default(uuid())
+  tenantId          String?
   name              String // operator-friendly label ("Q4 rent split")
   sourceAccountCode String // 6010, 6020, 6021, …
   driver            AllocationDriver
@@ -2591,7 +2595,7 @@ model CostAllocationRule {
   weights AllocationRuleWeight[]
   runs    CostAllocationRun[]
 
-  @@unique([sourceAccountCode])
+  @@unique([tenantId, sourceAccountCode])
   @@map("cost_allocation_rules")
 }
 
@@ -2618,6 +2622,7 @@ model AllocationRuleWeight {
 
 model CostAllocationRun {
   id               String   @id @default(uuid())
+  tenantId  String?
   ruleId           String
   periodStart      DateTime
   periodEnd        DateTime
@@ -2628,6 +2633,7 @@ model CostAllocationRun {
   rule CostAllocationRule @relation(fields: [ruleId], references: [id])
 
   @@index([ruleId, periodStart(sort: Desc)])
+  @@index([tenantId])
   @@map("cost_allocation_runs")
 }
 
@@ -2826,6 +2832,7 @@ model FinancialEntry {
 
 model Segment {
   id          String   @id @default(uuid())
+  tenantId    String?
   name        String
   description String?
   // filter criteria stored as JSON predicate
@@ -2835,11 +2842,13 @@ model Segment {
 
   campaigns Campaign[]
 
+  @@index([tenantId])
   @@map("segments")
 }
 
 model Campaign {
   id             String          @id @default(uuid())
+  tenantId       String?
   segmentId      String?
   // Brand audience. Empty = every customer we can reach, across all brands.
   // Otherwise customers who ordered from, or prefer, any of these brands.
@@ -2858,6 +2867,7 @@ model Campaign {
   segment Segment?       @relation(fields: [segmentId], references: [id])
   sends   CampaignSend[]
 
+  @@index([tenantId])
   @@map("campaigns")
 }
 
@@ -3064,6 +3074,7 @@ model Setting {
 
 model StorefrontPromo {
   id        String   @id @default(uuid())
+  tenantId  String?
   emoji     String   @default("🔥")
   badge     String
   headline  String
@@ -3075,6 +3086,7 @@ model StorefrontPromo {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@index([tenantId])
   @@map("storefront_promos")
 }
 
@@ -3100,6 +3112,7 @@ model WalletTransaction {
 
 model PromoCode {
   id               String   @id @default(uuid())
+  tenantId         String?
   conceptId        String?
   code             String   @unique
   description      String?
@@ -3121,6 +3134,7 @@ model PromoCode {
   usages  PromoCodeUsage[]
   orders  Order[]
 
+  @@index([tenantId])
   @@map("promo_codes")
 }
 
@@ -3335,6 +3349,7 @@ enum ContentEventStatus {
 
 model ContentEvent {
   id          String             @id @default(cuid())
+  tenantId    String?
   title       String
   description String?
   type        ContentEventType
@@ -3358,6 +3373,7 @@ model ContentEvent {
 
   @@index([startDate])
   @@index([conceptId, startDate])
+  @@index([tenantId, startDate])
   @@map("content_events")
 }
 
@@ -4694,6 +4710,7 @@ model RoleModuleAccess {
 
 model MediaAsset {
   id           String   @id @default(cuid())
+  tenantId     String?
   key          String
   url          String
   filename     String
@@ -4703,6 +4720,7 @@ model MediaAsset {
   createdAt    DateTime @default(now())
 
   @@index([category, createdAt])
+  @@index([tenantId, createdAt])
   @@map("media_assets")
 }
 
@@ -4837,6 +4855,8 @@ enum ExceptionStatus {
 
 model ExceptionFlag {
   id          String            @id @default(cuid())
+  // Company this row belongs to (company separation sweep, 2026-09-27).
+  tenantId    String?
   kind        String // 'receiving_variance' | 'shrinkage' | 'consecutive_voids' | 'cash_variance' | 'route_variance' | 'pii_export' | 'self_approval' | 'price_drift' | 'yield_low' | 'ghost_employee'
   severity    ExceptionSeverity @default(medium)
   title       String
@@ -4861,6 +4881,7 @@ model ExceptionFlag {
   @@index([status, severity, createdAt])
   @@index([kind, status])
   @@index([entityType, entityId])
+  @@index([tenantId, status, createdAt])
   @@map("exception_flags")
 }
 
@@ -4872,6 +4893,7 @@ model ExceptionFlag {
 
 model PettyCashBox {
   id              String    @id @default(cuid())
+  tenantId        String?
   name            String // "Front-of-house till", "Manager pocket"
   conceptId       String?
   custodianId     String // user responsible for the box
@@ -4885,6 +4907,7 @@ model PettyCashBox {
   movements PettyCashMovement[]
 
   @@index([conceptId])
+  @@index([tenantId])
   @@map("petty_cash_boxes")
 }
 
@@ -4947,6 +4970,8 @@ model DepositDrop {
 
 model StaffMeal {
   id                 String   @id @default(cuid())
+  // Company the meal was served by (company separation sweep, 2026-09-27).
+  tenantId           String?
   staffId            String // who ate
   approvedById       String // manager who approved (PIN-verified)
   shiftId            String?
@@ -4958,6 +4983,7 @@ model StaffMeal {
 
   @@index([staffId, consumedAt])
   @@index([conceptId, consumedAt])
+  @@index([tenantId, consumedAt])
   @@map("staff_meals")
 }
 

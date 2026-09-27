@@ -16,10 +16,11 @@
 // ComponentParLevel.recipeId migration in the reconcile notes) and come back
 // with it.
 
-import type { FastifyInstance, FastifyRequest } from 'fastify'
+import type { FastifyInstance } from 'fastify'
 import { prisma } from '../../lib/prisma.js'
-import { requireAuth, ALL_STAFF } from '../auth/middleware.js'
-import { costPerMeasureCents } from '../../lib/recipeCost.js'
+import { requireAuth, ALL_STAFF, MANAGERS } from '../auth/middleware.js'
+import { ForbiddenError } from '../../lib/errors.js'
+import { costPerMeasureCents, loadRecipeGraph, recipeCost, type RecipeCost } from '../../lib/recipeCost.js'
 
 // Midnight UTC of the requested service day (or today if none).
 function dayKey(input?: string): Date {
@@ -112,9 +113,6 @@ async function batchesForDay(tenantId: string, recipeIds: string[], date: Date) 
 }
 
 // The par sheet is one kitchen's day: the active company only.
-function activeCompany(req: FastifyRequest): string | null {
-  return req.staffUser!.tenantId ?? null
-}
 
 export async function parSheetRoutes(fastify: FastifyInstance) {
 
@@ -125,7 +123,7 @@ export async function parSheetRoutes(fastify: FastifyInstance) {
     '/',
     { preHandler: requireAuth(...ALL_STAFF) },
     async (req) => {
-      const tenantId = activeCompany(req)
+      const tenantId = req.staffUser?.tenantId ?? null
       if (!tenantId) return []
       const date = dayKey(req.query.date)
 
@@ -159,10 +157,55 @@ export async function parSheetRoutes(fastify: FastifyInstance) {
   // unit (so a recipe's 200 g of a kg item is drawn as 0.2). A sub-recipe line
   // that points at another company's item is matched to this company's item of
   // the same name; lines with no match come back as `missing`.
-  fastify.get('/preps', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
-    const tenantId = activeCompany(req)
+  //
+  // `?for=recipe` is the recipe builder's ingredient picker (RecipeForm and the
+  // recipes page) — the ONE component picker (D7; GET /recipes/prep, which
+  // listed every company's sub-recipes, is retired). Managers only, because it
+  // carries cost: each option's THE cost-per-gram (lib/recipeCost.ts, nested
+  // sub-recipes included). It lists the company's sub-recipes PLUS components
+  // no recipe uses yet — a new sub-recipe has to be pickable before the first
+  // plate that uses it exists. A sub-recipe only another company's plates use,
+  // or an unused one built from another company's stock items, never appears.
+  fastify.get<{ Querystring: { for?: string } }>('/preps', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
+    const tenantId = req.staffUser?.tenantId ?? null
     if (!tenantId) return []
     const ids = await subRecipeIdsForCompany(tenantId)
+
+    if (req.query.for === 'recipe') {
+      if (!MANAGERS.includes(req.staffUser!.role)) throw new ForbiddenError('Recipe costs are for managers')
+      const candidates = await prisma.recipe.findMany({
+        where: {
+          kind: 'component',
+          isActive: true,
+          OR: [{ id: { in: [...ids] } }, { usedInPlates: { none: {} } }],
+        },
+        select: {
+          id: true, name: true, yieldGrams: true,
+          ingredients: { select: { inventoryItem: { select: { tenantId: true } } } },
+        },
+        orderBy: { name: 'asc' },
+      })
+      // An unused sub-recipe built from another company's stock items is that
+      // company's, not ours (same attribution the recipe library uses).
+      const preps = candidates.filter((p) => {
+        if (ids.has(p.id)) return true
+        const owners = new Set(p.ingredients.map((i) => i.inventoryItem?.tenantId).filter((t): t is string => !!t))
+        return owners.size === 0 || owners.has(tenantId)
+      })
+      const { graph } = await loadRecipeGraph({ id: { in: preps.map((p) => p.id) } })
+      const memo = new Map<string, RecipeCost>()
+      return preps.map((p) => {
+        const cost = recipeCost(graph, p.id, memo)
+        return {
+          id:               p.id,
+          name:             p.name ?? '—',
+          yieldGrams:       p.yieldGrams,
+          batchCostCents:   Math.round(cost.totalCents),
+          costPerGramCents: cost.perGramCents ?? 0,   // sub-cent precision deliberately preserved
+        }
+      })
+    }
+
     const recipes = await prisma.recipe.findMany({
       where: { id: { in: [...ids] }, kind: 'component', isActive: true },
       select: {

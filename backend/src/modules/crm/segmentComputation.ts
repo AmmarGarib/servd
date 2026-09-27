@@ -307,9 +307,12 @@ export async function computeAllSegments(): Promise<{ slug: string; count: numbe
   return results
 }
 
-export async function getSegmentsWithMembers(slug: string, limit = 200) {
+// Memberships are computed platform-wide (the table has no company column),
+// so every read narrows them to the caller's customers via `customerWhere`
+// (crm/customerScope.ts). Omitting it is for internal/system callers only.
+export async function getSegmentsWithMembers(slug: string, limit = 200, customerWhere?: Prisma.CustomerWhereInput) {
   return prisma.customerSegmentMembership.findMany({
-    where: { segment: { slug } },
+    where: { segment: { slug }, ...(customerWhere && { customer: customerWhere }) },
     take: limit,
     include: {
       customer: {

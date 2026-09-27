@@ -24,6 +24,7 @@ import { useViewAsRole } from '../../../store/viewAsRole'
 import type { AppRole } from '../../../lib/appRoles'
 import { LoadingScreen } from '../../../components/ui/Loader'
 import { isExecutive } from '../../../lib/appRoles'
+import { fmtPkrShort } from '../../../lib/money'
 
 type Period = 'today' | 'week' | 'month'
 type Scope = { conceptId: string | null; fromISO: string; toISO: string; fromDate: string; toDate: string; days: number; brandName: string }
@@ -49,13 +50,6 @@ function rangeFor(period: Period): { fromISO: string; toISO: string; fromDate: s
 }
 
 // ─── number helpers ───────────────────────────────────────────────────────────
-function pkr(cents: number | null | undefined): string {
-  if (cents == null || Number.isNaN(cents)) return '—'
-  const n = cents / 100
-  if (Math.abs(n) >= 1_000_000) return `PKR ${(n / 1_000_000).toFixed(2)}M`
-  if (Math.abs(n) >= 10_000)    return `PKR ${(n / 1_000).toFixed(0)}K`
-  return `PKR ${n.toLocaleString()}`
-}
 function pct(n: number | null | undefined, digits = 0): string {
   if (n == null || Number.isNaN(n)) return '—'
   return `${n.toFixed(digits)}%`
@@ -224,7 +218,7 @@ function BrandSelectCard({ label, sublabel, conceptId, selected, onSelect, fromI
         <p style={{ fontSize: '0.85rem', fontWeight: 700, margin: 0, color: selected ? '#00D4B1' : '#E8EAF0' }}>{label}</p>
         {selected && <span style={{ fontSize: '0.6rem', fontWeight: 800, letterSpacing: '0.12em', color: '#00D4B1', textTransform: 'uppercase' }}>viewing</span>}
       </div>
-      <p style={{ fontSize: '1.35rem', fontWeight: 800, margin: '0.45rem 0 0', fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.01em' }}>{pkr(gross)}</p>
+      <p style={{ fontSize: '1.35rem', fontWeight: 800, margin: '0.45rem 0 0', fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.01em' }}>{fmtPkrShort(gross)}</p>
       <p style={{ color: '#6E7186', fontSize: '0.72rem', margin: '0.35rem 0 0', fontVariantNumeric: 'tabular-nums' }}>sales incl. GST · {orders} orders · {sublabel}</p>
     </button>
   )
@@ -282,20 +276,20 @@ function MoneySection({ scope, isCompany }: { scope: Scope; isCompany: boolean }
   return (
     <Section title="The money" hint={isCompany ? 'company-wide P&L' : `${scope.brandName} · shared costs revenue-share allocated`}>
       <Grid>
-        <Scorecard label="Net revenue"  value={pkr(ov.data?.netRevenueCents)} accent="#00D4B1" sub="ledger · ex-GST, after discounts & refunds" tag={tag} />
-        <Scorecard label="Sales"        value={pkr(gross)} accent="#4F8EF7" sub={`register · incl. GST · ${orders} orders`} spark={grossSpark} />
-        <Scorecard label="Avg ticket"   value={pkr(aov)} accent="#4F8EF7" sub="register · per order" spark={ordersSpark} />
-        <Scorecard label="Gross profit" value={pkr(block?.grossProfitCents)} accent="#22C55E" sub="rev − COGS" tag={tag} />
+        <Scorecard label="Net revenue"  value={fmtPkrShort(ov.data?.netRevenueCents)} accent="#00D4B1" sub="ledger · ex-GST, after discounts & refunds" tag={tag} />
+        <Scorecard label="Sales"        value={fmtPkrShort(gross)} accent="#4F8EF7" sub={`register · incl. GST · ${orders} orders`} spark={grossSpark} />
+        <Scorecard label="Avg ticket"   value={fmtPkrShort(aov)} accent="#4F8EF7" sub="register · per order" spark={ordersSpark} />
+        <Scorecard label="Gross profit" value={fmtPkrShort(block?.grossProfitCents)} accent="#22C55E" sub="rev − COGS" tag={tag} />
         <Scorecard label="Gross margin" value={pct(block?.grossMarginPct)} accent="#22C55E" sub="of revenue" tag={tag} />
         <Scorecard label="Food cost"    value={pct(foodPct)} accent="#F59E0B" sub={isCompany ? 'COGS / rev' : 'recipe-weighted'} />
         <Scorecard label="Labour"       value={pct(labourPct)} accent="#F59E0B" sub="wages / rev" tag={tag} />
         <Scorecard label="Prime cost"   value={pct(primePct)} accent="#EF4444" sub="food + labour" />
-        <Scorecard label="Net profit"   value={pkr(block?.netProfitCents)} accent="#00D4B1" sub="bottom line" tag={tag} />
+        <Scorecard label="Net profit"   value={fmtPkrShort(block?.netProfitCents)} accent="#00D4B1" sub="bottom line" tag={tag} />
         <Scorecard label="Net margin"   value={pct(block?.netMarginPct)} accent="#00D4B1" sub="profit / rev" tag={tag} />
-        <Scorecard label="Tax collected" value={pkr(ov.data?.taxCollectedCents)} accent="#A855F7" sub="ledger · FBR + provincial output" tag="co." />
-        <Scorecard label="OpEx"         value={pkr(block?.opexCents)} accent="#6E7186" sub="operating expense" tag={tag} />
-        <Scorecard label="Discounts"    value={pkr(block?.contraCents)} accent="#6E7186" sub="contra-revenue" tag={tag} />
-        <Scorecard label="Cash flow"    value={pkr(ov.data?.cashFlowNetCents)} accent="#4F8EF7" sub="net in − out" tag="co." />
+        <Scorecard label="Tax collected" value={fmtPkrShort(ov.data?.taxCollectedCents)} accent="#A855F7" sub="ledger · FBR + provincial output" tag="co." />
+        <Scorecard label="OpEx"         value={fmtPkrShort(block?.opexCents)} accent="#6E7186" sub="operating expense" tag={tag} />
+        <Scorecard label="Discounts"    value={fmtPkrShort(block?.contraCents)} accent="#6E7186" sub="contra-revenue" tag={tag} />
+        <Scorecard label="Cash flow"    value={fmtPkrShort(ov.data?.cashFlowNetCents)} accent="#4F8EF7" sub="net in − out" tag="co." />
       </Grid>
     </Section>
   )
@@ -333,7 +327,7 @@ function DemandSection({ scope }: { scope: Scope }) {
   return (
     <Section title="Demand & sales" hint="what's selling, where, when">
       <Grid>
-        <Scorecard label="Avg order value" value={pkr(bm.data?.kpis?.aovCents)} accent="#4F8EF7" sub="per order" />
+        <Scorecard label="Avg order value" value={fmtPkrShort(bm.data?.kpis?.aovCents)} accent="#4F8EF7" sub="per order" />
         <Scorecard label="Active customers" value={num(bm.data?.customers?.distinct)} accent="#6366F1" sub="ordered in period" />
         {!!conceptId && <Scorecard label="Menu stars" value={num(quad['star'])} accent="#22C55E" sub={`${quad['dog'] ?? 0} dogs`} />}
         {!!conceptId && <Scorecard label="Forecast (7d)" value={num(forecastTotal)} accent="#A855F7" sub="units predicted" />}
@@ -342,12 +336,12 @@ function DemandSection({ scope }: { scope: Scope }) {
       <div style={{ display: 'grid', gap: '0.85rem', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', marginTop: '0.85rem' }}>
         <Panel title="By channel">
           {sources.length === 0 && <Empty>No channel data.</Empty>}
-          {sources.map((s, i) => <BarRow key={i} label={s.source ?? '—'} value={pkr(s.gross)} pct={pctOf(s.gross, sources.reduce((a, b) => a + (b.gross ?? 0), 0))} />)}
+          {sources.map((s, i) => <BarRow key={i} label={s.source ?? '—'} value={fmtPkrShort(s.gross)} pct={pctOf(s.gross, sources.reduce((a, b) => a + (b.gross ?? 0), 0))} />)}
         </Panel>
         <Panel title="Top sellers">
           {topItems.length === 0 && <Empty>No items sold.</Empty>}
           {topItems.map((it, i) => (
-            <Row key={i} left={`${i + 1}. ${it.name ?? '—'}`} mid={`${num(it.quantity)} sold`} right={pkr(it.revenueCents ?? it.revenue)} />
+            <Row key={i} left={`${i + 1}. ${it.name ?? '—'}`} mid={`${num(it.quantity)} sold`} right={fmtPkrShort(it.revenueCents ?? it.revenue)} />
           ))}
         </Panel>
       </div>
@@ -374,8 +368,8 @@ function CustomersSection({ scope }: { scope: Scope }) {
         <Scorecard label="New customers"  value={num(bm.data?.customers?.new)} accent="#22C55E" sub="first order in period" />
         <Scorecard label="Returning"      value={num(bm.data?.customers?.returning)} accent="#4F8EF7" sub="repeat in period" />
         <Scorecard label="Repeat rate"    value={pct(seg.data?.summary?.repeatRate)} accent="#A855F7" sub="3+ orders" tag="co." />
-        <Scorecard label="LTV"            value={pkr(k?.ltvCents)} accent="#22C55E" sub="lifetime spend" />
-        <Scorecard label="ARPU"           value={pkr(k?.arpuCents)} accent="#A855F7" sub="rev / active user" />
+        <Scorecard label="LTV"            value={fmtPkrShort(k?.ltvCents)} accent="#22C55E" sub="lifetime spend" />
+        <Scorecard label="ARPU"           value={fmtPkrShort(k?.arpuCents)} accent="#A855F7" sub="rev / active user" />
         <Scorecard label="Total customers" value={num(seg.data?.summary?.totalCustomers)} accent="#6366F1" sub="all-time base" tag="co." />
         <Scorecard label="Email CTR"      value={pct(mk.data?.ctr ?? undefined)} accent="#EC4899" sub={`${num(mk.data?.campaignClicks)} clicks`} tag="co." />
         <Scorecard label="Open rate"      value={pct(mk.data?.openRate ?? undefined)} accent="#EC4899" sub={`${num(mk.data?.campaignOpens)} opens`} tag="co." />
@@ -559,7 +553,7 @@ function InventorySection({ scope }: { scope: Scope }) {
     <Section title="Inventory & waste" hint="stock health (company-wide)">
       <Grid>
         <Scorecard label="Low-stock items" value={num(fnb.data?.stock?.lowStockCount)} accent="#F59E0B" sub="below par" tag="co." />
-        <Scorecard label="Waste cost"      value={pkr(fnb.data?.stock?.wasteCostCents)} accent="#EF4444" sub={`${num(fnb.data?.stock?.wasteEvents)} events`} tag="co." />
+        <Scorecard label="Waste cost"      value={fmtPkrShort(fnb.data?.stock?.wasteCostCents)} accent="#EF4444" sub={`${num(fnb.data?.stock?.wasteEvents)} events`} tag="co." />
       </Grid>
       {low.length > 0 && (
         <div style={{ marginTop: '0.85rem' }}>
@@ -600,7 +594,7 @@ function WorkforceCostSection() {
   return (
     <Section title="Workforce cost" hint="payroll run-rate (company-wide)">
       <Grid>
-        <Scorecard label="Payroll / mo"  value={pkr(snap.data?.budget?.grossMonthlyCents ?? snap.data?.budget?.monthlyCents)} accent="#F59E0B" sub="monthly run-rate" tag="co." />
+        <Scorecard label="Payroll / mo"  value={fmtPkrShort(snap.data?.budget?.grossMonthlyCents ?? snap.data?.budget?.monthlyCents)} accent="#F59E0B" sub="monthly run-rate" tag="co." />
         <Scorecard label="Headcount"     value={num(snap.data?.headcount)} accent="#6366F1" sub="filled positions" tag="co." />
         <Scorecard label="Open seats"    value={num(snap.data?.openSeats)} accent="#4F8EF7" sub="unfilled" tag="co." />
       </Grid>

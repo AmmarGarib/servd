@@ -240,18 +240,6 @@ export async function computeDeliveryFee(
   return { feeCents: zone.feeCents, zoneId: zone.id, zoneName: zone.name, meetsMinimum }
 }
 
-/**
- * Haversine distance in km between two lat/lng pairs. Used for delivery zone
- * matching when address geocoding gives us coords but the order doesn't carry
- * a pre-computed distance.
- */
-export function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
-  const toRad = (d: number) => (d * Math.PI) / 180
-  const R = 6371 // km
-  const dLat = toRad(lat2 - lat1)
-  const dLng = toRad(lng2 - lng1)
-  const a =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2
-  return 2 * R * Math.asin(Math.sqrt(a))
-}
+// Haversine lives in lib/geo.ts (D16). Re-exported for existing importers of
+// delivery-zone matching; new code imports from './geo.js' directly.
+export { haversineKm } from './geo.js'

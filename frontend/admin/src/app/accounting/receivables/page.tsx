@@ -9,6 +9,7 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api } from '../../../lib/api'
+import { fmtPkrWhole } from '../../../lib/money'
 
 interface Payment { id: string; amountCents: number; receivedAt: string; method: string; reference: string | null }
 interface Invoice {
@@ -20,7 +21,6 @@ interface Invoice {
 interface Ledger { invoices: Invoice[]; aging: Record<string, number>; outstandingCents: number }
 interface Concept { id: string; name: string }
 
-const rs = (c: number) => `Rs ${(c / 100).toLocaleString('en-PK', { maximumFractionDigits: 0 })}`
 const card = { background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }
 const inp = 'w-full rounded-lg px-3 py-2 text-sm bg-white/[0.04] border border-white/10 text-white/90 focus:outline-none focus:border-kds-green'
 const today = () => new Date().toISOString().slice(0, 10)
@@ -73,7 +73,7 @@ export default function ReceivablesPage() {
               ['31–60', data.aging['31-60'] ?? 0], ['61–90', data.aging['61-90'] ?? 0], ['90+', data.aging['90+'] ?? 0]].map(([l, v], i) => (
               <div key={l as string} className="rounded-2xl p-4" style={card}>
                 <p className="text-[10px] uppercase tracking-wider text-white/40 font-bold">{l}</p>
-                <p className="text-lg font-black mt-1" style={{ color: i >= 4 && (v as number) > 0 ? '#f87171' : 'rgba(255,255,255,0.9)' }}>{rs(v as number)}</p>
+                <p className="text-lg font-black mt-1" style={{ color: i >= 4 && (v as number) > 0 ? '#f87171' : 'rgba(255,255,255,0.9)' }}>{fmtPkrWhole(v as number)}</p>
               </div>
             ))}
           </div>
@@ -107,9 +107,9 @@ export default function ReceivablesPage() {
                     <td className="px-4 py-3"><p className="font-bold text-white/90">{i.number}</p><p className="text-[11px] text-white/40 truncate max-w-[180px]">{i.description}</p></td>
                     <td className="px-4 py-3 text-white/70">{i.customerName}</td>
                     <td className="px-4 py-3 text-white/60">{new Date(i.dueDate).toLocaleDateString()}{i.bucket && i.bucket !== 'current' && <span className="ml-1 text-[10px] text-red-400">{i.bucket}d</span>}</td>
-                    <td className="px-4 py-3 text-white/80">{rs(i.totalCents)}</td>
-                    <td className="px-4 py-3 text-white/60">{rs(i.paidCents)}</td>
-                    <td className="px-4 py-3 font-bold text-white/90">{rs(i.balanceCents)}</td>
+                    <td className="px-4 py-3 text-white/80">{fmtPkrWhole(i.totalCents)}</td>
+                    <td className="px-4 py-3 text-white/60">{fmtPkrWhole(i.paidCents)}</td>
+                    <td className="px-4 py-3 font-bold text-white/90">{fmtPkrWhole(i.balanceCents)}</td>
                     <td className="px-4 py-3"><span className="text-xs font-bold" style={{ color: STATUS_COLOR[i.status] }}>{i.status}</span></td>
                     <td className="px-4 py-3 text-right whitespace-nowrap">
                       {(i.status === 'open' || i.status === 'partial') &&
@@ -172,7 +172,7 @@ function Raise({ concepts, onClose }: { concepts: Concept[]; onClose: () => void
           </div>
         </L>
       </div>
-      <p className="text-sm text-white/60 mt-3">Total: <strong className="text-white/90">{rs(Math.round(total * 100))}</strong></p>
+      <p className="text-sm text-white/60 mt-3">Total: <strong className="text-white/90">{fmtPkrWhole(Math.round(total * 100))}</strong></p>
       {err && <p className="text-xs text-red-400 mt-2">{err}</p>}
       <div className="flex gap-2 mt-5">
         <button onClick={() => save.mutate()} disabled={save.isPending || !f.customerName || !f.amount || !f.description}
@@ -199,7 +199,7 @@ function Pay({ inv, onClose }: { inv: Invoice; onClose: () => void }) {
   })
   return (
     <Modal title={`Payment on ${inv.number}`} onClose={onClose}>
-      <p className="text-sm text-white/60">Balance owed: <strong className="text-white/90">{rs(inv.balanceCents)}</strong></p>
+      <p className="text-sm text-white/60">Balance owed: <strong className="text-white/90">{fmtPkrWhole(inv.balanceCents)}</strong></p>
       <div className="grid grid-cols-2 gap-3 mt-4">
         <L t="Amount (PKR)"><input type="number" min={0} className={inp} value={amount} onChange={(e) => setAmount(e.target.value)} /></L>
         <L t="Received"><input type="date" className={inp} value={date} onChange={(e) => setDate(e.target.value)} /></L>

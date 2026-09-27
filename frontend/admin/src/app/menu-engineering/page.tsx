@@ -17,6 +17,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../lib/api'
 import { recipeStatusMeta } from '../accounting/recipes/RecipeForm'
 import { useBrandFilter } from '../../store/brandFilter'
+import { fmtPkrWhole } from '../../lib/money'
 
 interface Concept { id: string; name: string }
 interface EngRecipe {
@@ -31,9 +32,6 @@ interface EngRecipe {
   pendingMenuItem: { conceptId: string; name: string } | null
 }
 
-function fmtPKR(cents: number) {
-  return `PKR ${Math.round(cents / 100).toLocaleString('en-PK')}`
-}
 function fmtPct(n: number) { return `${n.toFixed(1)}%` }
 
 // Food-cost % health: same thresholds as the old recipe-page badges.
@@ -203,7 +201,7 @@ export default function MenuEngineeringPage() {
                     <div className="flex items-center gap-5 shrink-0">
                       <div className="text-right">
                         <p style={{ fontSize: '9px', letterSpacing: '0.12em' }} className="text-s-muted uppercase">Plate Cost</p>
-                        <p className="text-xs font-bold text-s-text">{plateCost !== null ? fmtPKR(plateCost) : '—'}</p>
+                        <p className="text-xs font-bold text-s-text">{plateCost !== null ? fmtPkrWhole(plateCost) : '—'}</p>
                       </div>
                       <div className="text-right" onClick={(e) => e.stopPropagation()}>
                         <p style={{ fontSize: '9px', letterSpacing: '0.12em' }} className="text-s-muted uppercase">Selling Price</p>
@@ -227,7 +225,7 @@ export default function MenuEngineeringPage() {
                         <p style={{ fontSize: '9px', letterSpacing: '0.12em' }} className="text-s-muted uppercase">Contribution</p>
                         <p className="text-xs font-bold font-mono"
                           style={{ color: cm === null ? 'rgba(255,255,255,0.3)' : cm >= 0 ? '#00D4B1' : '#FF4D4F' }}>
-                          {cm !== null ? `${fmtPKR(cm)}${cmPct !== null ? ` · ${fmtPct(cmPct)}` : ''}` : '—'}
+                          {cm !== null ? `${fmtPkrWhole(cm)}${cmPct !== null ? ` · ${fmtPct(cmPct)}` : ''}` : '—'}
                         </p>
                       </div>
                       <div className="text-right" style={{ minWidth: 60 }}>

@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api } from '../../lib/api'
+import { fmtPkrShort } from '../../lib/money'
 
 interface Concept {
   id: string
@@ -18,12 +19,6 @@ interface SalesTotals {
   orders: number
   tax: number
   commission: number
-}
-
-function fmtPKR(cents: number) {
-  if (cents >= 1_00_000_00) return `PKR ${(cents / 1_00_000_00).toFixed(1)}L`  // lakh
-  if (cents >= 1_000_00)    return `PKR ${(cents / 1_000_00).toFixed(0)}K`
-  return `PKR ${(cents / 100).toFixed(0)}`
 }
 
 const PRESETS = [
@@ -112,10 +107,10 @@ export default function ChainRollupPage() {
           {[
             // Sales-register figures (what customers paid, incl. GST) — the
             // books' revenue is the ledger P&L.
-            { label: 'Sales (incl. GST)', value: fmtPKR(totalGross), color: '#00D4B1' },
-            { label: 'Register net',      value: fmtPKR(totalNet),   color: '#6366F1' },
+            { label: 'Sales (incl. GST)', value: fmtPkrShort(totalGross), color: '#00D4B1' },
+            { label: 'Register net',      value: fmtPkrShort(totalNet),   color: '#6366F1' },
             { label: 'Orders',      value: totalOrders.toLocaleString(), color: '#F59E0B' },
-            { label: 'Avg ticket',  value: fmtPKR(avgTicket),  color: '#FFFFFF' },
+            { label: 'Avg ticket',  value: fmtPkrShort(avgTicket),  color: '#FFFFFF' },
           ].map((k) => (
             <div
               key={k.label}
@@ -174,7 +169,7 @@ export default function ChainRollupPage() {
                           )}
                         </div>
                         <p className="text-xs text-white/40 mt-0.5">
-                          {orders} orders · avg {fmtPKR(orders > 0 ? gross / orders : 0)}
+                          {orders} orders · avg {fmtPkrShort(orders > 0 ? gross / orders : 0)}
                         </p>
                         {/* Bar */}
                         <div className="mt-2 h-1 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
@@ -185,7 +180,7 @@ export default function ChainRollupPage() {
                         </div>
                       </div>
                       <div className="shrink-0 text-right">
-                        <p className="text-xl font-black" style={{ color: '#00D4B1' }}>{fmtPKR(gross)}</p>
+                        <p className="text-xl font-black" style={{ color: '#00D4B1' }}>{fmtPkrShort(gross)}</p>
                         <p className="text-[10px] text-white/35">gross</p>
                       </div>
                     </div>

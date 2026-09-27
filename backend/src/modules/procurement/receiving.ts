@@ -163,7 +163,7 @@ export async function receiveGoods(input: ReceiveGoodsInput): Promise<ReceiveGoo
   const po = input.poId
     ? await prisma.purchaseOrder.findUnique({
         where:   { id: input.poId },
-        include: { lines: { include: { inventoryItem: { select: { name: true, unit: true } } } } },
+        include: { lines: { include: { inventoryItem: { select: { name: true, unit: true, tenantId: true } } } } },
       })
     : null
   if (input.poId && !po) throw new NotFoundError('PurchaseOrder', input.poId)
@@ -178,6 +178,7 @@ export async function receiveGoods(input: ReceiveGoodsInput): Promise<ReceiveGoo
   if (po) {
     assertReceivable(po.status)
     await assertNotSelfApproval({
+      tenantId: supplier.tenantId,
       actor: input.actor, creatorId: po.createdBy,
       action: 'receive goods', entity: 'PurchaseOrder', entityId: po.id,
       message: 'You raised this purchase order, so someone else has to receive it (or the CEO).',
@@ -196,6 +197,11 @@ export async function receiveGoods(input: ReceiveGoodsInput): Promise<ReceiveGoo
       seen.add(l.poLineId)
       const pl = po.lines.find((x) => x.id === l.poLineId)
       if (!pl) throw new AppError('LINE_NOT_FOUND', `Line ${l.poLineId} is not part of this PO`, 400)
+      // createPo refuses another company's item now; a PO raised before that
+      // could still carry one, and receiving it would move that company's stock.
+      if (supplier.tenantId && pl.inventoryItem.tenantId && pl.inventoryItem.tenantId !== supplier.tenantId) {
+        throw new AppError('ITEM_NOT_IN_COMPANY', `${pl.inventoryItem.name} belongs to a different company than ${supplier.name}`, 422)
+      }
       const outstanding = Math.max(0, pl.quantityOrdered - pl.quantityReceived)
       prepared.push({
         poLineId: pl.id, inventoryItemId: pl.inventoryItemId,
@@ -347,6 +353,7 @@ export async function receiveGoods(input: ReceiveGoodsInput): Promise<ReceiveGoo
     const pct  = l.variancePct!
     const kind: ExceptionKind = pct < 0 ? 'short_shipment' : 'receiving_variance'
     await flagException({
+      tenantId: supplier.tenantId,
       kind,
       severity: kind === 'short_shipment' && Math.abs(pct) > 0.15 ? 'high' : 'medium',
       title: `${kind === 'short_shipment' ? 'Short shipment' : 'Receiving variance'}: ${l.description}`,

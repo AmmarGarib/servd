@@ -25,6 +25,7 @@ import { assertConceptOwned, conceptWhere, scopeTenantWhere, type ScopeMode } fr
 import { audit } from '../../lib/audit.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { verifyCustomerToken } from '../auth/service.js'
+import { normalisePhone } from '../auth/otp.js'
 import { sendSms, sendEmail } from '../../lib/notify.js'
 import { emitReservationEvent } from '../../lib/ws.js'
 import { bumpCustomerRollups } from '../../lib/customerRollups.js'
@@ -184,6 +185,7 @@ export async function reservationRoutes(fastify: FastifyInstance) {
         include: {
           table:    { select: { id: true, label: true, capacity: true, floorId: true } },
           customer: { select: { id: true, name: true, totalSpentCents: true, lastOrderAt: true } },
+          concept:  { select: { id: true, name: true } },   // host-stand tablet shows the brand
         },
       })
     },
@@ -263,7 +265,13 @@ export async function reservationRoutes(fastify: FastifyInstance) {
     }
 
     // Auto-link to existing customer by phone or email if we have one
+    // A customer id from another company is dropped (the phone/email match
+    // below still finds the platform customer), never attached blindly.
     let customerId = body.customerId ?? null
+    if (customerId) {
+      const { customerIdsInScope } = await import('../crm/customerScope.js')
+      if (!(await customerIdsInScope(req, [customerId], 'create')).has(customerId)) customerId = null
+    }
     if (!customerId && (body.guestPhone || body.guestEmail)) {
       const match = await prisma.customer.findFirst({
         where: {
@@ -943,18 +951,24 @@ export async function reservationRoutes(fastify: FastifyInstance) {
       //
       // Both are bounded per phone rather than per IP, because the phone is the
       // thing being protected and the thing being spent.
-      const phoneKey = body.guestPhone.replace(/\D/g, '')
+      // One phone key (auth/otp normalisePhone). The cap matches the number as
+      // typed OR any stored spelling ending in the same ten digits, so 0300…,
+      // +92300… and 92300… share one allowance.
+      const phoneKey = normalisePhone(body.guestPhone)
+      const samePhone: Prisma.ReservationWhereInput = phoneKey.length >= 10
+        ? { OR: [{ guestPhone: body.guestPhone }, { guestPhone: { endsWith: phoneKey.slice(-10) } }] }
+        : { guestPhone: body.guestPhone }
       const [upcomingForPhone, recentForPhone] = await Promise.all([
         prisma.reservation.count({
           where: {
-            guestPhone: body.guestPhone,
+            ...samePhone,
             startTime: { gte: new Date() },
             status: { in: ['booked', 'confirmed'] },
           },
         }),
         prisma.reservation.count({
           where: {
-            guestPhone: body.guestPhone,
+            ...samePhone,
             createdAt: { gte: new Date(Date.now() - 3_600_000) },
           },
         }),
@@ -1241,7 +1255,7 @@ export async function reservationRoutes(fastify: FastifyInstance) {
     const created = await prisma.conceptBlockout.create({
       data: {
         conceptId:   body.conceptId,
-        kind:        body.kind as never,
+        kind:        body.kind,   // zod enum mirrors BlockoutKind exactly — no cast
         startTime:   new Date(body.startTime),
         endTime:     new Date(body.endTime),
         capacityCap: body.capacityCap ?? null,
@@ -1267,45 +1281,10 @@ export async function reservationRoutes(fastify: FastifyInstance) {
     },
   )
 
-  // ─── Service hours CRUD ─────────────────────────────────────────────────
-  fastify.get<{ Querystring: { conceptId: string } }>(
-    '/service-hours',
-    { preHandler: requireAuth(...ALL_STAFF) },
-    async (req) => {
-      await assertConceptAccess(req.staffUser!, req.query.conceptId)
-      return prisma.serviceHours.findMany({
-        where: { ...(await conceptWhere(req, req.query.conceptId, 'read')) },
-        orderBy: [{ dayOfWeek: 'asc' }, { openMin: 'asc' }],
-      })
-    },
-  )
-
-  fastify.put<{ Querystring: { conceptId: string } }>(
-    '/service-hours',
-    { preHandler: requireAuth(...MANAGERS) },
-    async (req) => {
-      const body = z.object({
-        windows: z.array(z.object({
-          dayOfWeek: z.number().int().min(0).max(6),
-          openMin:   z.number().int().min(0).max(1440),
-          closeMin:  z.number().int().min(0).max(1440),
-          isReservable: z.boolean().default(true),
-        })).max(50),
-      }).parse(req.body)
-      // Without an id the deleteMany below would match EVERY brand's hours;
-      // with one, it must be a brand of a company the operator belongs to.
-      const conceptId = requireId(req.query.conceptId, 'conceptId')
-      await assertConceptAccess(req.staffUser!, conceptId)
-      await assertConceptOwned(req, conceptId, 'write')
-      await prisma.$transaction([
-        prisma.serviceHours.deleteMany({ where: { conceptId } }),
-        prisma.serviceHours.createMany({
-          data: body.windows.map((w) => ({ conceptId, ...w })),
-        }),
-      ])
-      return { ok: true, count: body.windows.length }
-    },
-  )
+  // Service hours are brand master data with ONE writer: GET/PUT
+  // /setup/hours/:conceptId (admin /configuration/hours). Availability search
+  // below reads the same ServiceHours rows. The old /reservations/service-hours
+  // pair wrote the same table with a different payload shape (D1).
 
   // ─── Guest tags ─────────────────────────────────────────────────────────
   fastify.get<{ Querystring: { customerId: string } }>(
@@ -1365,7 +1344,9 @@ export async function reservationRoutes(fastify: FastifyInstance) {
     },
   )
 
-  // ─── Deposits — hold / release / capture (no-show fee) ─────────────────
+  // ─── Deposits — hold / release ──────────────────────────────────────────
+  // No client calls these yet (the reservations page has no deposit UI); they
+  // are the only writers of depositCents, which markNoShow captures.
   // The actual gateway hold/release call is operator-specific (Keenu doesn't
   // expose pre-auth on all rails). For now we record intent + the gateway
   // ref the operator pasted in; the gateway integration can be added later
@@ -1379,7 +1360,7 @@ export async function reservationRoutes(fastify: FastifyInstance) {
         amountCents: z.number().int().min(100).max(1_000_000),
         gatewayRef:  z.string().min(3).max(120),
       }).parse(req.body)
-      const r = await prisma.reservation.findFirst({ where: { id: req.params.id, concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null } } })
+      const r = await prisma.reservation.findFirst({ where: { id: req.params.id, concept: { deletedAt: null, ...(await scopeTenantWhere(req, 'write')) } } })
       if (!r) throw new NotFoundError('Reservation', req.params.id)
       await assertConceptAccess(req.staffUser!, r.conceptId)
       return prisma.reservation.update({
@@ -1393,7 +1374,7 @@ export async function reservationRoutes(fastify: FastifyInstance) {
     '/:id/deposit-release',
     { preHandler: requireAuth(...MANAGERS) },
     async (req) => {
-      const r = await prisma.reservation.findFirst({ where: { id: req.params.id, concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null } } })
+      const r = await prisma.reservation.findFirst({ where: { id: req.params.id, concept: { deletedAt: null, ...(await scopeTenantWhere(req, 'write')) } } })
       if (!r) throw new NotFoundError('Reservation', req.params.id)
       await assertConceptAccess(req.staffUser!, r.conceptId)
       await audit({ category: 'identity',
@@ -1409,38 +1390,9 @@ export async function reservationRoutes(fastify: FastifyInstance) {
     },
   )
 
-  // Capture = no-show, charge the deposit. Posts a journal entry:
-  // Dr Bank / Cr Service Charges Revenue (4100) since this is forfeit fee
-  // revenue, NOT a sale of food. Implementation lives in depositCapture.ts
-  // so the auto-no-show worker can call the same path.
-  fastify.post<{ Params: { id: string } }>(
-    '/:id/deposit-capture',
-    { preHandler: requireAuth(...MANAGERS) },
-    async (req) => {
-      const r = await prisma.reservation.findFirst({
-        where: {
-          id: req.params.id,
-          concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
-        },
-        select: { id: true, conceptId: true, depositCents: true },
-      })
-      if (!r) throw new NotFoundError('Reservation', req.params.id)
-      if (r.depositCents <= 0) throw new AppError('NO_DEPOSIT', 'No deposit on file', 422)
-      await assertConceptAccess(req.staffUser!, r.conceptId)
-
-      const { captureReservationDeposit } = await import('./depositCapture.js')
-      const result = await captureReservationDeposit({
-        reservationId: r.id,
-        postedBy: req.staffUser?.id ?? 'system',
-        staffUser: req.staffUser ?? null,
-      })
-      if (!result.captured) {
-        // Should be unreachable given the pre-check above, but defensive.
-        throw new AppError('NO_DEPOSIT', 'Deposit not capturable', 422)
-      }
-      return prisma.reservation.findUnique({ where: { id: r.id } })
-    },
-  )
+  // There is no separate deposit-capture route: a held deposit is captured by
+  // the no-show itself (POST /:id/no-show → markNoShow), so capturing can never
+  // happen without the strike / waitlist side effects, or twice (D4).
 }
 
 async function transition(
@@ -1448,38 +1400,41 @@ async function transition(
   status: 'confirmed' | 'no_show',
   req: FastifyRequest,
 ) {
-  // Tenant-scoped lookup — `assertConceptAccess` below bypasses for
+  // Company-scoped lookup — `assertConceptAccess` below bypasses for
   // management roles, so this filter is the real boundary.
   const r = await prisma.reservation.findFirst({
     where: {
       id: reservationId,
-      concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
+      concept: { deletedAt: null, ...(await scopeTenantWhere(req, 'write')) },
     },
   })
   if (!r) throw new NotFoundError('Reservation', reservationId)
   await assertConceptAccess(req.staffUser!, r.conceptId)
+
+  if (status === 'no_show') {
+    // One no-show path for staff and the auto sweep: deposit capture, strike,
+    // rollups, waitlist promotion and the socket event all live in markNoShow.
+    if (r.status === 'no_show') return r
+    const { markNoShow, NO_SHOW_FROM } = await import('./noShow.js')
+    if (!(NO_SHOW_FROM as readonly string[]).includes(r.status) || r.seatedAt) {
+      throw new AppError('RESERVATION_CLOSED', `This reservation is already ${r.status}; it cannot be marked a no-show.`, 422)
+    }
+    const res = await markNoShow(r.id, {
+      reason: 'No-show',
+      actorId: req.staffUser?.id ?? null,
+      actorEmail: req.staffUser?.email ?? null,
+    })
+    if (res.reservation) return res.reservation
+    throw new NotFoundError('Reservation', reservationId)
+  }
+
   const updated = await prisma.reservation.update({
     where: { id: r.id },
-    data: { status, ...(status === 'no_show' && { cancelReason: 'No-show' }) },
+    data: { status },
   })
-  emitReservationEvent(
-    status === 'confirmed' ? 'reservation:confirmed' : 'reservation:no-show',
-    { reservationId: updated.id, conceptId: updated.conceptId, startTime: updated.startTime.toISOString(), status: updated.status },
-  )
-  if (status === 'no_show') {
-    bumpCustomerRollups(updated.customerId)
-    if (updated.customerId) {
-      // Manual no-show — staff explicitly marked it. Strike the customer.
-      const { recordStrike } = await import('../../lib/strikes.js')
-      recordStrike({
-        customerId: updated.customerId,
-        kind: 'reservation_no_show',
-        sourceType: 'reservation',
-        sourceId: updated.id,
-        reason: 'Staff marked as no-show.',
-        recordedById: req.staffUser?.id ?? null,
-      }).catch(() => {})
-    }
-  }
+  emitReservationEvent('reservation:confirmed', {
+    reservationId: updated.id, conceptId: updated.conceptId,
+    startTime: updated.startTime.toISOString(), status: updated.status,
+  })
   return updated
 }

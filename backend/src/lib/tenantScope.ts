@@ -251,3 +251,24 @@ export async function assertShiftOf(tenantId: string | null, shiftId: string, mu
     throw new AppError('SHIFT_NOT_IN_COMPANY', mustBeOpen ? 'That shift is not an open shift of this company' : 'That shift does not belong to this company', 422)
   }
 }
+
+// ─── The active company ──────────────────────────────────────────────────────
+//
+// ONE "which company does this write bind to" helper (D16). There were six
+// copies (activeTenant / activeCompany / activeTenantId) across hr,
+// receivables, fixed assets, food safety, time clock, par sheet and setup,
+// all "req.staffUser.tenantId or 422", with slightly different messages.
+
+/** The operator's ACTIVE company id, or 422 NO_ACTIVE_COMPANY. `reason` completes "Pick a company first — …". */
+export function requireTenantId(tenantId: string | null | undefined, reason = 'this record belongs to one company'): string {
+  if (!tenantId) throw new AppError('NO_ACTIVE_COMPANY', `Pick a company first — ${reason}`, 422)
+  return tenantId
+}
+
+/** `requireTenantId` for a request's signed-in operator. */
+export function activeTenantId(
+  req: { staffUser?: { tenantId: string | null } | null },
+  reason?: string,
+): string {
+  return requireTenantId(req.staffUser?.tenantId, reason)
+}

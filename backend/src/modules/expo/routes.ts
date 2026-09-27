@@ -14,6 +14,7 @@ import { prisma } from '../../lib/prisma.js'
 import { requireAuth, ALL_STAFF, MANAGERS } from '../auth/middleware.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { getIOSafe } from '../../lib/ws.js'
+import { scopeTenantWhere } from '../../lib/tenantScope.js'
 
 export async function expoRoutes(fastify: FastifyInstance) {
 
@@ -29,7 +30,7 @@ export async function expoRoutes(fastify: FastifyInstance) {
     '/queue',
     { preHandler: requireAuth(...ALL_STAFF) },
     async (req) => {
-      const tenantId = req.staffUser!.tenantFilter
+      const tenantId = (await scopeTenantWhere(req, 'read')).tenantId
       const conceptScope = { tenantId, deletedAt: null }
       const orderInclude = {
         concept:  { select: { id: true, name: true, slug: true } },
@@ -122,7 +123,7 @@ export async function expoRoutes(fastify: FastifyInstance) {
     '/orders/:id/fire',
     { preHandler: requireAuth(...ALL_STAFF) },
     async (req, reply) => {
-      const tenantId = req.staffUser!.tenantFilter
+      const tenantId = (await scopeTenantWhere(req, 'write')).tenantId
       const body = z.object({ note: z.string().max(280).optional() }).parse(req.body ?? {})
 
       const order = await prisma.order.findFirst({
@@ -273,7 +274,7 @@ export async function expoRoutes(fastify: FastifyInstance) {
     '/station/:stationId/queue',
     { preHandler: requireAuth(...ALL_STAFF) },
     async (req) => {
-      const tenantId = req.staffUser!.tenantFilter
+      const tenantId = (await scopeTenantWhere(req, 'read')).tenantId
       const stationId = req.params.stationId
 
       const steps = await prisma.orderItemStep.findMany({
@@ -384,11 +385,12 @@ export async function expoRoutes(fastify: FastifyInstance) {
         where: { id: req.params.id },
         include: { orderItem: { include: { order: { include: { concept: true } } } } },
       })
-      if (!step) throw new NotFoundError('OrderItemStep', req.params.id)
-      // Cross-tenant guard — a cook on the Bukhari tenant can't bump a step
-      // on a Clifton order even if they guessed the ID.
-      if (step.orderItem.order.concept.tenantId !== req.staffUser!.tenantId) {
-        return reply.status(403).send({ error: { code: 'CROSS_TENANT', message: 'Not your tenant' } })
+      // Cross-company guard — a cook at one company can't bump a step on
+      // another company's order even with a guessed id. 404, not 403, so a
+      // foreign id doesn't confirm the step exists.
+      const stepTenant = step?.orderItem.order.concept.tenantId ?? null
+      if (!step || !stepTenant || stepTenant !== req.staffUser!.tenantId) {
+        throw new NotFoundError('OrderItemStep', req.params.id)
       }
 
       const result = await bumpStep(req.params.id, req.staffUser!.id)
@@ -421,7 +423,7 @@ export async function expoRoutes(fastify: FastifyInstance) {
     '/orders/:id/handoff',
     { preHandler: requireAuth(...ALL_STAFF) },
     async (req, reply) => {
-      const tenantId = req.staffUser!.tenantFilter
+      const tenantId = (await scopeTenantWhere(req, 'write')).tenantId
       const order = await prisma.order.findFirst({
         where: { id: req.params.id, concept: { tenantId, deletedAt: null }, deletedAt: null },
       })

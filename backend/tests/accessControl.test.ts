@@ -17,6 +17,7 @@
 //
 // Drives the real route handlers through Fastify inject. Needs the disposable
 // test database (DATABASE_URL must contain "test") and Redis.
+import { timeClockRoutes } from '../src/modules/timeclock/routes.js'
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
 import Fastify, { type FastifyInstance } from 'fastify'
 import { ZodError } from 'zod'
@@ -95,6 +96,7 @@ beforeAll(async () => {
   })
   await app.register(authRoutes, { prefix: '/api/v1/auth' })
   await app.register(permissionRoutes, { prefix: '/api/v1/permissions' })
+  await app.register(timeClockRoutes, { prefix: '/api/v1/time-clock' })
   await app.ready()
 })
 
@@ -385,13 +387,15 @@ describe('clock logs', () => {
     const theirs = await makeUser({ role: 'cashier', tenantId: tenantB })
     await prisma.clockLog.createMany({ data: [{ userId: mine.id, type: 'in' }, { userId: theirs.id, type: 'in' }] })
 
-    const r = await app.inject({ method: 'GET', url: '/api/v1/auth/clock-logs', headers: bearer(mgr) })
+    const r = await app.inject({ method: 'GET', url: '/api/v1/time-clock/logs', headers: bearer(mgr) })
     expect(r.statusCode).toBe(200)
-    const ids = (r.json() as Array<{ userId: string }>).map((l) => l.userId)
+    const ids = ((r.json() as { rows: Array<{ userId: string | null }> }).rows).map((l) => l.userId)
     expect(ids).toContain(mine.id)          // was always empty: read a whitelist nobody writes
     expect(ids).not.toContain(theirs.id)
 
-    const probe = await app.inject({ method: 'GET', url: `/api/v1/auth/clock-logs?userId=${theirs.id}`, headers: bearer(mgr) })
-    expect(probe.json()).toEqual([])
+    // The report is company-scoped and takes no per-user filter: there is no
+    // id a manager can pass to reach another company's punches.
+    const probe = await app.inject({ method: 'GET', url: `/api/v1/time-clock/logs?userId=${theirs.id}`, headers: bearer(mgr) })
+    expect(((probe.json() as { rows: Array<{ userId: string | null }> }).rows).map((l) => l.userId)).not.toContain(theirs.id)
   })
 })

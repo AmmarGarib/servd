@@ -23,7 +23,8 @@ export const reachableCustomer: Prisma.CustomerWhereInput = {
 }
 
 /**
- * Brand audience. Empty list = every brand. Otherwise a customer counts for a
+ * Brand audience. Empty list = every brand ON THE PLATFORM (every company) —
+ * so a company-owned send must go through `companyAudience` below. Otherwise a customer counts for a
  * brand if they have ordered from it or have it as their preferred brand — the
  * second matters for people who signed up through a brand's page and have not
  * ordered yet, who are exactly the ones a launch campaign is for.
@@ -36,6 +37,21 @@ export function brandAudience(conceptIds: string[] | null | undefined): Prisma.C
       { orders: { some: { conceptId: { in: conceptIds }, deletedAt: null } } },
     ],
   }
+}
+
+/**
+ * Brand audience bounded to ONE company. `companyConceptIds` is every brand
+ * of the company that owns the campaign; `picked` narrows it to some of those
+ * brands (ids outside the company are dropped, never trusted). An empty pick
+ * means every brand OF THAT COMPANY — never platform-wide — and a company with
+ * no brands reaches nobody. Campaigns must use this, not `brandAudience`,
+ * whose empty list means "everyone".
+ */
+export function companyAudience(companyConceptIds: string[], picked?: string[] | null): Prisma.CustomerWhereInput {
+  const own = new Set(companyConceptIds)
+  const ids = picked && picked.length > 0 ? picked.filter((id) => own.has(id)) : [...own]
+  if (ids.length === 0) return { id: { in: [] } }
+  return brandAudience(ids)
 }
 
 /** The unsubscribe link for one delivered message. */

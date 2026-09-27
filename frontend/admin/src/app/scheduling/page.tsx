@@ -11,6 +11,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../lib/api'
 import { useBrandFilter } from '../../store/brandFilter'
 import { useAuthStore } from '../../store/auth'
+import { fmtPkrWhole } from '../../lib/money'
 
 interface Concept { id: string; name: string }
 interface StaffMember { id: string; name: string; employeeCode: string; designation: string | null; canHaveExceptions: boolean }
@@ -34,7 +35,6 @@ function mondayOf(d: Date) {
 }
 const addDays = (iso: string, n: number) => ymd(new Date(new Date(`${iso}T00:00:00Z`).getTime() + n * 86_400_000))
 const fmtDay = (iso: string) => new Date(`${iso}T00:00:00Z`).toLocaleDateString('en-PK', { month: 'short', day: 'numeric', timeZone: 'UTC' })
-const fmtPKR = (cents: number) => `PKR ${Math.round(cents / 100).toLocaleString()}`
 
 export default function SchedulingPage() {
   const qc = useQueryClient()
@@ -100,7 +100,7 @@ export default function SchedulingPage() {
 
       {conceptId && cost.data && (
         <div className="px-4 py-2.5 rounded-xl text-sm space-y-1" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.55)' }}>
-          <p>Rota cost this week: <strong style={{ color: 'rgba(255,255,255,0.85)' }}>{fmtPKR(cost.data.totalCents)}</strong> · {cost.data.totalHours.toFixed(1)} hrs</p>
+          <p>Rota cost this week: <strong style={{ color: 'rgba(255,255,255,0.85)' }}>{fmtPkrWhole(cost.data.totalCents)}</strong> · {cost.data.totalHours.toFixed(1)} hrs</p>
           <p className="text-[11px]" style={{ color: 'rgba(255,255,255,0.35)' }}>At each person&apos;s HR rate: {cost.data.basis}.</p>
           {cost.data.byEmployee.some((u) => u.rateUnset) && <p className="text-xs" style={{ color: '#F59E0B' }}>Some rostered people have no gross salary in HR — their hours are costed at zero.</p>}
         </div>

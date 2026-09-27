@@ -6,7 +6,7 @@
 // Codes are 12 chars in groups of 4 (GS-XXXX-XXXX), generated from a 32-char
 // alphabet. Looked up case-insensitively.
 
-import type { FastifyInstance } from 'fastify'
+import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { randomBytes } from 'crypto'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
@@ -14,6 +14,7 @@ import { requireAuth, MANAGERS, ALL_STAFF } from '../auth/middleware.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { audit } from '../../lib/audit.js'
 import { postJournalEntry, ACCT } from '../accounting/journal.js'
+import { scopeTenantWhere, assertConceptOwned, activeTenantId } from '../../lib/tenantScope.js'
 
 const ALPHABET = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ'  // no 0/O/1/I confusion
 function generateCode(): string {
@@ -26,25 +27,25 @@ function generateCode(): string {
   return `GS-${block.slice(0, 4)}-${block.slice(4)}`
 }
 
+// ── Company scope (owner decision 14) ───────────────────────────────────────
+// A gift card is sold by ONE company (GiftCard.tenantId, stamped at issue) and
+// is spent at any brand of that company — never at another company's. The
+// card's conceptId records the brand it was sold under; it does not narrow
+// redemption within the company. A null conceptId used to mean "redeemable
+// everywhere", and the list/void filters OR'd those cards in for every
+// company, so any company could read, void or drain another's open cards.
+
+
 export async function giftCardRoutes(fastify: FastifyInstance) {
-  // List — scoped to active tenant (cards bound to one of its concepts, or
-  // unscoped null-concept cards which are tenant-portable by design).
+  // List — the companies in view.
   fastify.get<{ Querystring: { status?: string } }>(
     '/',
     { preHandler: requireAuth(...MANAGERS) },
     async (req) => {
-      const tenantConcepts = await prisma.concept.findMany({
-        where: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
-        select: { id: true },
-      })
-      const tenantConceptIds = tenantConcepts.map((c) => c.id)
       return prisma.giftCard.findMany({
         where: {
+          ...(await scopeTenantWhere(req, 'read')),
           ...(req.query.status && { status: req.query.status as never }),
-          OR: [
-            { conceptId: null },
-            { conceptId: { in: tenantConceptIds } },
-          ],
         },
         orderBy: { createdAt: 'desc' },
         take: 100,
@@ -66,13 +67,10 @@ export async function giftCardRoutes(fastify: FastifyInstance) {
       paymentMethod:     z.enum(['cash', 'card', 'bank_transfer']).default('card'),
     }).parse(req.body)
 
-    // If issuing under a concept, verify it's in the active tenant.
-    if (body.conceptId) {
-      const concept = await prisma.concept.findFirst({
-        where: { id: body.conceptId, tenantId: req.staffUser!.tenantFilter, deletedAt: null },
-      })
-      if (!concept) return reply.status(403).send({ error: { code: 'CROSS_TENANT', message: 'Concept does not belong to your active company' } })
-    }
+    // The card belongs to the ACTIVE company; a brand, if named, must be one
+    // of that company's.
+    const tenantId = activeTenantId(req)
+    if (body.conceptId) await assertConceptOwned(req, body.conceptId, 'create')
 
     // Generate a unique code (loop in the unlikely case of collision)
     let code = generateCode()
@@ -84,6 +82,7 @@ export async function giftCardRoutes(fastify: FastifyInstance) {
 
     const card = await prisma.giftCard.create({
       data: {
+        tenantId,
         code,
         issuedAmountCents: body.issuedAmountCents,
         balanceCents: body.issuedAmountCents,
@@ -98,13 +97,10 @@ export async function giftCardRoutes(fastify: FastifyInstance) {
       },
     })
 
-    // Journal: Dr cash/card, Cr Gift Card Liability (2080). Books belong to
-    // the card's brand, or to the company the operator is selling it in.
-    const jeTenantId = card.conceptId
-      ? (await prisma.concept.findUnique({ where: { id: card.conceptId }, select: { tenantId: true } }))?.tenantId ?? req.staffUser!.tenantId
-      : req.staffUser!.tenantId
+    // Journal: Dr cash/card, Cr Gift Card Liability (2080) in the books of
+    // the company that sold the card (the brand, if any, is of that company).
     await postJournalEntry({
-      tenantId: jeTenantId!,
+      tenantId,
       sourceType: 'giftcard.issue',
       sourceId: card.id,
       description: `Gift card issued · ${card.code}`,
@@ -119,7 +115,7 @@ export async function giftCardRoutes(fastify: FastifyInstance) {
 
     await audit({ category: 'identity',
       action: 'giftcard.issue', entity: 'GiftCard', entityId: card.id,
-      userId: req.staffUser?.id ?? null, tenantId: req.staffUser?.tenantId ?? null, userEmail: req.staffUser?.email ?? null,
+      userId: req.staffUser?.id ?? null, tenantId, userEmail: req.staffUser?.email ?? null,
       after: { code: card.code, amount: card.issuedAmountCents },
     })
 
@@ -153,9 +149,27 @@ export async function giftCardRoutes(fastify: FastifyInstance) {
       }).parse(req.body)
       const code = body.code.trim().toUpperCase()
 
+      // Which company is spending the card: the order's brand's company when
+      // an order is named (and that order must be one the operator can act
+      // on), else the till's active company. The card is looked up by code
+      // AND that company, so another company's card is simply "not found" —
+      // a cashier at one company can never drain another company's card, and
+      // a card never pays for another company's order.
+      let tenantId: string
+      if (body.orderId) {
+        const order = await prisma.order.findFirst({
+          where: { id: body.orderId, concept: { ...(await scopeTenantWhere(req, 'write')) } },
+          select: { concept: { select: { tenantId: true } } },
+        })
+        if (!order?.concept.tenantId) throw new NotFoundError('Order', body.orderId)
+        tenantId = order.concept.tenantId
+      } else {
+        tenantId = activeTenantId(req)
+      }
+
       return prisma.$transaction(async (tx) => {
         // Read first only to surface friendly errors (expired, inactive, not-found).
-        const card = await tx.giftCard.findUnique({ where: { code } })
+        const card = await tx.giftCard.findFirst({ where: { code, tenantId } })
         if (!card) throw new NotFoundError('GiftCard', code)
         if (card.status !== 'active') throw new AppError('GIFTCARD_INACTIVE', `Card is ${card.status}`, 422)
         if (card.expiresAt && card.expiresAt < new Date()) {
@@ -167,7 +181,7 @@ export async function giftCardRoutes(fastify: FastifyInstance) {
         // requested amount. Two concurrent /redeem calls cannot both pass — the
         // second updateMany returns count=0 because the WHERE clause no longer matches.
         const dec = await tx.giftCard.updateMany({
-          where: { id: card.id, status: 'active', balanceCents: { gte: body.amountCents } },
+          where: { id: card.id, tenantId, status: 'active', balanceCents: { gte: body.amountCents } },
           data: { balanceCents: { decrement: body.amountCents } },
         })
         if (dec.count === 0) {
@@ -201,19 +215,8 @@ export async function giftCardRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuth(...MANAGERS) },
     async (req) => {
       const body = z.object({ reason: z.string().min(3).max(300) }).parse(req.body)
-      const tenantConcepts = await prisma.concept.findMany({
-        where: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
-        select: { id: true },
-      })
-      const tenantConceptIds = tenantConcepts.map((c) => c.id)
       const card = await prisma.giftCard.findFirst({
-        where: {
-          id: req.params.id,
-          OR: [
-            { conceptId: null },
-            { conceptId: { in: tenantConceptIds } },
-          ],
-        },
+        where: { id: req.params.id, ...(await scopeTenantWhere(req, 'write')) },
       })
       if (!card) throw new NotFoundError('GiftCard', req.params.id)
       const updated = await prisma.giftCard.update({
@@ -222,7 +225,7 @@ export async function giftCardRoutes(fastify: FastifyInstance) {
       })
       await audit({ category: 'identity',
         action: 'giftcard.void', entity: 'GiftCard', entityId: card.id,
-        userId: req.staffUser?.id ?? null, tenantId: req.staffUser?.tenantId ?? null, userEmail: req.staffUser?.email ?? null,
+        userId: req.staffUser?.id ?? null, tenantId: card.tenantId, userEmail: req.staffUser?.email ?? null,
         before: { status: card.status, balance: card.balanceCents },
         after:  { status: 'voided' },
         metadata: { reason: body.reason },

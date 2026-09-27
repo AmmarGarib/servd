@@ -3,7 +3,8 @@ import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, MANAGERS } from '../auth/middleware.js'
 import { requireCustomerAuth } from '../auth/middleware.js'
-import { AppError, NotFoundError } from '../../lib/errors.js'
+import { findCustomerInScope, customerIdsInScope } from '../crm/customerScope.js'
+import { conceptIdsInScope } from '../../lib/tenantScope.js'
 
 async function creditWallet(customerId: string, amountCents: number, description: string, orderId?: string) {
   return prisma.$transaction(async (tx) => {
@@ -52,8 +53,9 @@ export async function walletRoutes(fastify: FastifyInstance) {
         description: z.string().optional(),
       }).parse(req.body)
 
-      const customer = await prisma.customer.findUnique({ where: { id: customerId } })
-      if (!customer) throw new NotFoundError('Customer', customerId)
+      // Only a customer of the ACTIVE company (ordered or booked at one of its
+      // brands); anyone else is a 404, so a foreign id is not confirmed.
+      await findCustomerInScope(req, customerId, 'create')
 
       const newBalance = await creditWallet(customerId, amountCents, description ?? 'Admin top-up')
       return reply.status(201).send({ newBalance })
@@ -71,8 +73,11 @@ export async function walletRoutes(fastify: FastifyInstance) {
         description: z.string().optional(),
       }).parse(req.body)
 
+      // Customers the active company has never served are skipped, not credited.
+      const allowed = await customerIdsInScope(req, [...new Set(customerIds)], 'create')
       let success = 0
       for (const id of customerIds) {
+        if (!allowed.has(id)) continue
         try {
           await creditWallet(id, amountCents, description ?? 'Bulk top-up')
           success++
@@ -90,16 +95,24 @@ export async function walletRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuth(...MANAGERS) },
     async (req) => {
       const limit = Math.min(parseInt(req.query.limit ?? '50', 10), 200)
-      const customer = await prisma.customer.findUnique({
-        where: { id: req.params.id },
-        select: { walletBalance: true, name: true },
-      })
-      if (!customer) throw new NotFoundError('Customer', req.params.id)
-      const history = await prisma.walletTransaction.findMany({
+      const found = await findCustomerInScope(req, req.params.id, 'read')
+      const customer = { walletBalance: found.walletBalance, name: found.name }
+      // Wallet lines tied to an order show only when that order was at one of
+      // this company's brands; another company's spend is not ours to show.
+      // (Top-ups carry no order and no company column yet — shown as is.)
+      const rows = await prisma.walletTransaction.findMany({
         where: { customerId: req.params.id },
         orderBy: { createdAt: 'desc' },
-        take: limit,
+        take: limit * 2,
       })
+      const orderIds = [...new Set(rows.map((r) => r.orderId).filter((x): x is string => !!x))]
+      const ours = orderIds.length
+        ? new Set((await prisma.order.findMany({
+            where: { id: { in: orderIds }, conceptId: { in: await conceptIdsInScope(req, 'read') } },
+            select: { id: true },
+          })).map((o) => o.id))
+        : new Set<string>()
+      const history = rows.filter((r) => !r.orderId || ours.has(r.orderId)).slice(0, limit)
       return { ...customer, history }
     },
   )

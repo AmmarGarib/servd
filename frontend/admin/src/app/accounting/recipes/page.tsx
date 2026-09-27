@@ -10,12 +10,9 @@ import { recipeStatusMeta } from './RecipeForm'
 import { usePermissions } from '../../../hooks/useCan'
 import { isExecutive } from '../../../lib/appRoles'
 import { useBrandFilter } from '../../../store/brandFilter'
+import { fmtPkr } from '../../../lib/money'
 
 const Q_FACTOR = 0.05
-
-function fmtPKR(cents: number) {
-  return `PKR ${(cents / 100).toLocaleString('en-PK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-}
 
 // (Food-cost % helpers removed — pricing and margin health moved to /menu-engineering.)
 
@@ -172,7 +169,7 @@ export default function RecipesPage() {
   // for now — keeps the costing recursion bounded).
   const { data: prepOptions = [] } = useQuery<PrepOption[]>({
     queryKey: ['prep-recipes'],
-    queryFn:  () => api.get<PrepOption[]>('/recipes/prep'),
+    queryFn:  () => api.get<PrepOption[]>('/par-sheet/preps?for=recipe'),
     enabled:  modal !== null && kind === 'plate',
   })
 
@@ -520,14 +517,14 @@ export default function RecipesPage() {
                     </div>
 
                     <div className="flex items-center gap-5 shrink-0">
-                      <Metric label="Ing. Cost"    value={fmtPKR(r.ingredientCostCents)} />
-                      <Metric label="Q Factor"     value={fmtPKR(r.qFactorCents)}        dim />
-                      <Metric label="Total Cost"   value={fmtPKR(r.totalCostCents)}       bold />
+                      <Metric label="Ing. Cost"    value={fmtPkr(r.ingredientCostCents)} />
+                      <Metric label="Q Factor"     value={fmtPkr(r.qFactorCents)}        dim />
+                      <Metric label="Total Cost"   value={fmtPkr(r.totalCostCents)}       bold />
                       {/* The headline number — different per kind. Plate: the
                           per-portion cost. Component: cost per gram (drives
                           downstream plate costing). Margins live in Menu Engineering. */}
                       {r.kind === 'plate' ? (
-                        <Metric label="Plate Cost"   value={fmtPKR(r.costPerPortionCents ?? 0)} teal />
+                        <Metric label="Plate Cost"   value={fmtPkr(r.costPerPortionCents ?? 0)} teal />
                       ) : (
                         <Metric
                           label="Cost / Gram"
@@ -582,10 +579,10 @@ export default function RecipesPage() {
                             : [
                                 { label: 'BATCH YIELD',  value: r.yieldGrams ? `${r.yieldGrams}g` : '—' },
                               ]),
-                          { label: `Q FACTOR (${r.qFactorPct ?? 10}%)`, value: fmtPKR(r.qFactorCents)                },
-                          { label: 'TOTAL RECIPE COST', value: fmtPKR(r.totalCostCents)                              },
+                          { label: `Q FACTOR (${r.qFactorPct ?? 10}%)`, value: fmtPkr(r.qFactorCents)                },
+                          { label: 'TOTAL RECIPE COST', value: fmtPkr(r.totalCostCents)                              },
                           ...(r.kind === 'plate'
-                            ? [{ label: 'PLATE COST',     value: fmtPKR(r.costPerPortionCents ?? 0) }]
+                            ? [{ label: 'PLATE COST',     value: fmtPkr(r.costPerPortionCents ?? 0) }]
                             : [{ label: 'COST / GRAM',    value: r.costPerGramCents != null ? `PKR ${(r.costPerGramCents / 100).toFixed(3)}/g` : '—' }]),
                         ].map(({ label, value }) => (
                           <div key={label}>
@@ -669,21 +666,21 @@ export default function RecipesPage() {
                                 Ingredient Subtotal
                               </td>
                               <td className="px-4 py-2 font-black" style={{ color: 'rgba(255,255,255,0.65)' }}>
-                                {fmtPKR(r.ingredientCostCents)}
+                                {fmtPkr(r.ingredientCostCents)}
                               </td>
                             </tr>
                             <tr style={{ borderTop: '1px solid rgba(255,255,255,0.04)', background: 'rgba(255,255,255,0.01)' }}>
                               <td colSpan={7} className="px-4 py-1.5 text-right text-s-muted" style={{ fontSize: '10px' }}>
                                 Q Factor — {r.qFactorPct ?? 10}% misc. (salt, oil, unmeasured items)
                               </td>
-                              <td className="px-4 py-1.5 text-s-muted text-xs">{fmtPKR(r.qFactorCents)}</td>
+                              <td className="px-4 py-1.5 text-s-muted text-xs">{fmtPkr(r.qFactorCents)}</td>
                             </tr>
                             {r.laborCostCents > 0 && (
                               <tr style={{ borderTop: '1px solid rgba(255,255,255,0.04)', background: 'rgba(255,255,255,0.01)' }}>
                                 <td colSpan={7} className="px-4 py-1.5 text-right text-s-muted" style={{ fontSize: '10px' }}>
                                   Labor — {r.laborMinutes} min @ PKR 50/hr
                                 </td>
-                                <td className="px-4 py-1.5 text-s-muted text-xs">{fmtPKR(r.laborCostCents)}</td>
+                                <td className="px-4 py-1.5 text-s-muted text-xs">{fmtPkr(r.laborCostCents)}</td>
                               </tr>
                             )}
                             <tr style={{ borderTop: '2px solid rgba(0,212,177,0.2)', background: 'rgba(0,212,177,0.04)' }}>
@@ -691,7 +688,7 @@ export default function RecipesPage() {
                                 style={{ fontSize: '8.5px', letterSpacing: '0.15em' }}>
                                 Total Recipe Cost
                               </td>
-                              <td className="px-4 py-3 font-black text-s-teal">{fmtPKR(r.totalCostCents)}</td>
+                              <td className="px-4 py-3 font-black text-s-teal">{fmtPkr(r.totalCostCents)}</td>
                             </tr>
                           </tfoot>
                         </table>
@@ -705,7 +702,7 @@ export default function RecipesPage() {
                           <>
                             <span className="text-xs">
                               <span className="text-s-muted">Plate cost: </span>
-                              <span className="font-bold text-s-text">{fmtPKR(r.costPerPortionCents ?? 0)}</span>
+                              <span className="font-bold text-s-text">{fmtPkr(r.costPerPortionCents ?? 0)}</span>
                             </span>
                             <span className="text-xs ml-auto text-s-dim italic">
                               Selling price &amp; margins live in{' '}
@@ -718,7 +715,7 @@ export default function RecipesPage() {
                           <>
                             <span className="text-xs">
                               <span className="text-s-muted">Batch cost: </span>
-                              <span className="font-bold text-s-text">{fmtPKR(r.batchCostCents ?? r.totalCostCents)}</span>
+                              <span className="font-bold text-s-text">{fmtPkr(r.batchCostCents ?? r.totalCostCents)}</span>
                             </span>
                             <span className="text-xs">
                               <span className="text-s-muted">Batch yield: </span>
@@ -1076,20 +1073,20 @@ export default function RecipesPage() {
                         <div className="grid grid-cols-4 gap-4 text-xs">
                           <div>
                             <p className="text-s-muted mb-0.5">Ingredients</p>
-                            <p className="font-bold text-s-text">{fmtPKR(ingCents)}</p>
+                            <p className="font-bold text-s-text">{fmtPkr(ingCents)}</p>
                           </div>
                           <div>
                             <p className="text-s-muted mb-0.5">Q Factor (5%)</p>
-                            <p className="font-bold text-s-dim">{fmtPKR(qCents)}</p>
+                            <p className="font-bold text-s-dim">{fmtPkr(qCents)}</p>
                           </div>
                           <div>
                             <p className="text-s-muted mb-0.5">Batch Total</p>
-                            <p className="font-bold text-s-text">{fmtPKR(total)}</p>
+                            <p className="font-bold text-s-text">{fmtPkr(total)}</p>
                           </div>
                           {kind === 'plate' ? (
                             <div>
                               <p className="text-s-muted mb-0.5">Plate cost</p>
-                              <p className="font-bold text-s-teal">{fmtPKR(portCents)}</p>
+                              <p className="font-bold text-s-teal">{fmtPkr(portCents)}</p>
                             </div>
                           ) : (
                             <div>

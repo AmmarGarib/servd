@@ -20,7 +20,7 @@ export default function KDSLoginRedirect() {
   const user   = useAuthStore((s) => s.user)
 
   useEffect(() => {
-    router.replace(user ? '/kds/all' : '/login')
+    router.replace(user ? '/kds' : '/login')
   }, [user, router])
 
   return (

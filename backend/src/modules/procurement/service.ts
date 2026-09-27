@@ -15,19 +15,39 @@ import { AppError, NotFoundError } from '../../lib/errors.js'
 import { sendEmail } from '../../lib/notify.js'
 import { withholdingForBill } from '../accounting/supplierPosting.js'
 import { postedOpeningBalances } from './openingBalance.js'
+import { assertItemsOfCompany } from './scope.js'
 import type { Prisma } from '@prisma/client'
 
 // ─── Settings ────────────────────────────────────────────────────────────────
 
 /**
- * Approval threshold from Settings table. Above this, POs require admin approval.
- * Stored in paisa. Default 50,000 PKR = 5,000,000 paisa.
+ * Approval threshold from the Settings table. Above this, POs require admin
+ * approval. Stored in paisa. Default 50,000 PKR = 5,000,000 paisa.
+ *
+ * Per company: `procurement.approvalThresholdCents:<tenantId>`. The old
+ * company-less key is the read fallback until the company saves its own —
+ * it used to be the one row every company shared, and it is never written
+ * any more.
  */
-async function getApprovalThresholdCents(): Promise<number> {
-  const row = await prisma.setting.findUnique({ where: { key: 'procurement.approvalThresholdCents' } })
-  if (!row?.value) return 5_000_000
+const APPROVAL_THRESHOLD_KEY = 'procurement.approvalThresholdCents'
+const DEFAULT_APPROVAL_THRESHOLD_CENTS = 5_000_000
+
+export async function getApprovalThresholdCents(tenantId: string | null): Promise<number> {
+  const row =
+    (tenantId ? await prisma.setting.findUnique({ where: { key: `${APPROVAL_THRESHOLD_KEY}:${tenantId}` } }) : null) ??
+    (await prisma.setting.findUnique({ where: { key: APPROVAL_THRESHOLD_KEY } }))
+  if (!row?.value) return DEFAULT_APPROVAL_THRESHOLD_CENTS
   const n = parseInt(row.value, 10)
-  return Number.isFinite(n) ? n : 5_000_000
+  return Number.isFinite(n) ? n : DEFAULT_APPROVAL_THRESHOLD_CENTS
+}
+
+export async function setApprovalThresholdCents(tenantId: string, thresholdCents: number): Promise<void> {
+  const key = `${APPROVAL_THRESHOLD_KEY}:${tenantId}`
+  await prisma.setting.upsert({
+    where:  { key },
+    create: { key, value: String(thresholdCents) },
+    update: { value: String(thresholdCents) },
+  })
 }
 
 // ─── PO lifecycle ────────────────────────────────────────────────────────────
@@ -45,6 +65,19 @@ export async function createPo(input: CreatePoInput) {
   if (input.lines.length === 0) {
     throw new AppError('NO_LINES', 'A PO needs at least one line', 400)
   }
+
+  // A PO belongs to its supplier's company, and so must every item on it —
+  // receiving it moves those items' stock and cost. A supplier with no
+  // company can't be ordered from (receiving refuses it for the same reason).
+  const supplier = await prisma.supplier.findUnique({
+    where:  { id: input.supplierId },
+    select: { id: true, name: true, tenantId: true, deletedAt: true },
+  })
+  if (!supplier || supplier.deletedAt) throw new NotFoundError('Supplier', input.supplierId)
+  if (!supplier.tenantId) {
+    throw new AppError('SUPPLIER_HAS_NO_COMPANY', 'Assign this supplier to a company before ordering from it', 422)
+  }
+  await assertItemsOfCompany(input.lines.map((l) => l.inventoryItemId), supplier.tenantId, supplier.name)
 
   const totalCents = input.lines.reduce((s, l) => s + Math.round(l.unitCostCents * l.quantityOrdered), 0)
 
@@ -77,11 +110,12 @@ export async function createPo(input: CreatePoInput) {
 
 /** Submit a draft PO for approval (or auto-approve if under threshold). */
 export async function submitPo(poId: string, userId: string) {
-  const po = await prisma.purchaseOrder.findUnique({ where: { id: poId } })
+  const po = await prisma.purchaseOrder.findUnique({ where: { id: poId }, include: { supplier: { select: { tenantId: true } } } })
   if (!po) throw new NotFoundError('PurchaseOrder', poId)
   if (po.status !== 'draft') throw new AppError('INVALID_STATE', `Cannot submit PO in status ${po.status}`, 400)
 
-  const threshold = await getApprovalThresholdCents()
+  // The PO's company's threshold (its supplier's company).
+  const threshold = await getApprovalThresholdCents(po.supplier.tenantId)
   const needsApproval = po.totalCents >= threshold
 
   return prisma.$transaction(async (tx) => {
@@ -242,6 +276,7 @@ export async function createBill(input: CreateBillInput) {
 
   const supplier = await prisma.supplier.findUnique({ where: { id: input.supplierId } })
   if (!supplier) throw new NotFoundError('Supplier', input.supplierId)
+  await assertBillReferences(input, supplier)
 
   const subtotalCents = input.lines.reduce((s, l) => s + Math.round(l.unitCostCents * l.quantity), 0)
   const taxCents      = input.taxCents ?? 0
@@ -291,6 +326,48 @@ export async function createBill(input: CreateBillInput) {
       throw new AppError('DUPLICATE_BILL', `Bill number ${input.billNumber} already exists for this supplier`, 409)
     }
     throw err
+  }
+}
+
+/**
+ * Everything a new bill points at must be its supplier's: the PO, each PO line
+ * (and on that PO, when one is given), and each inventory item (the supplier's
+ * company's). A bill of company A used to be able to reference company B's
+ * PO lines and items, which then fed B's 3-way match and price history.
+ */
+async function assertBillReferences(
+  input: Pick<CreateBillInput, 'supplierId' | 'poId' | 'lines'>,
+  supplier: { id: string; name: string; tenantId: string | null },
+): Promise<void> {
+  if (input.poId) {
+    const po = await prisma.purchaseOrder.findUnique({ where: { id: input.poId }, select: { supplierId: true } })
+    if (!po) throw new NotFoundError('PurchaseOrder', input.poId)
+    if (po.supplierId !== supplier.id) {
+      throw new AppError('PO_SUPPLIER_MISMATCH', `That purchase order is not from ${supplier.name}`, 422)
+    }
+  }
+
+  const poLineIds = Array.from(new Set(input.lines.map((l) => l.poLineId).filter((x): x is string => !!x)))
+  if (poLineIds.length > 0) {
+    const poLines = await prisma.purchaseOrderLine.findMany({
+      where:  { id: { in: poLineIds } },
+      select: { id: true, purchaseOrderId: true, purchaseOrder: { select: { supplierId: true } } },
+    })
+    for (const id of poLineIds) {
+      const pl = poLines.find((x) => x.id === id)
+      if (!pl) throw new NotFoundError('PurchaseOrderLine', id)
+      if (pl.purchaseOrder.supplierId !== supplier.id || (input.poId && pl.purchaseOrderId !== input.poId)) {
+        throw new AppError('PO_LINE_MISMATCH', `PO line ${id} is not on ${input.poId ? 'this purchase order' : `a purchase order from ${supplier.name}`}`, 422)
+      }
+    }
+  }
+
+  const itemIds = input.lines.map((l) => l.inventoryItemId).filter((x): x is string => !!x)
+  if (itemIds.length > 0) {
+    if (!supplier.tenantId) {
+      throw new AppError('SUPPLIER_HAS_NO_COMPANY', 'Assign this supplier to a company before billing stock items against it', 422)
+    }
+    await assertItemsOfCompany(itemIds, supplier.tenantId, supplier.name)
   }
 }
 
@@ -667,19 +744,23 @@ export async function supplierAging(supplierId: string, asOf = new Date()): Prom
  * Items below par level, grouped by their primary supplier. Each group is a
  * draft PO ready to fire. Considers in-flight POs to avoid double-ordering.
  */
-export async function reorderSuggestions(tenantIds?: string[]) {
-  // Items are company master data: scope by the item's own company.
+export async function reorderSuggestions(tenantIds: string[]) {
+  // Items are company master data: scope by the item's own company. Fails
+  // closed — an empty scope (staff with no company) suggests nothing, never
+  // every company's par sheet.
+  if (tenantIds.length === 0) return []
   const items = await prisma.inventoryItem.findMany({
     where:   {
       deletedAt: null,
-      ...(tenantIds && tenantIds.length > 0 ? { tenantId: { in: tenantIds } } : {}),
+      tenantId: { in: tenantIds },
     },
-    include: { supplier: { select: { id: true, name: true } } },
+    include: { supplier: { select: { id: true, name: true, tenantId: true } } },
   })
 
-  // In-flight: not yet fully received, not cancelled
+  // In-flight: not yet fully received, not cancelled — on these items only.
   const openLines = await prisma.purchaseOrderLine.findMany({
     where: {
+      inventoryItemId: { in: items.map((i) => i.id) },
       purchaseOrder: { status: { in: ['draft', 'pending_approval', 'sent', 'partial'] } },
     },
     include: { purchaseOrder: { select: { status: true } } },
@@ -713,10 +794,13 @@ export async function reorderSuggestions(tenantIds?: string[]) {
     const suggestedQty = Math.ceil(item.parLevel - projected)
     if (suggestedQty <= 0) continue
 
-    const key = item.supplierId ?? '__unassigned__'
+    // A default supplier from another company is not a supplier this item's
+    // company can order from (createPo would refuse it) — list it unassigned.
+    const sup = item.supplier && item.supplier.tenantId === item.tenantId ? item.supplier : null
+    const key = sup?.id ?? '__unassigned__'
     const group = groups.get(key) ?? {
-      supplierId:   item.supplierId,
-      supplierName: item.supplier?.name ?? 'Unassigned',
+      supplierId:   sup?.id ?? null,
+      supplierName: sup?.name ?? 'Unassigned',
       lines: [],
     }
     group.lines.push({

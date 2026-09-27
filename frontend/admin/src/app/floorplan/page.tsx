@@ -3,6 +3,12 @@
 // Floorplan page — top-level container. Loads concepts + floors, lets the
 // operator switch between Edit mode and Live mode, and per-concept floor
 // tabs (Main / Patio / Bar etc.).
+//
+// This is THE table editor (D10). The old list page at /tables edited the same
+// Table rows and now redirects here, so this page also carries what only it
+// had: tables created without a floor (they are listed under "Not on a floor
+// yet" and can be placed), capacity edits that persist, and the status toggle
+// (in the live panel).
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
@@ -15,6 +21,7 @@ import { LayoutsGallery } from '../../components/floorplan/LayoutsGallery'
 import { useBrandFilter } from '../../store/brandFilter'
 
 interface Concept { id: string; name: string; slug: string }
+interface BrandTable { id: string; label: string; capacity: number | null; floorId: string | null }
 
 interface Floor {
   id: string
@@ -70,9 +77,38 @@ export default function FloorplanPage() {
     },
   })
 
+  // Every table of the brand — the ones with no floor were made on the old
+  // /tables list page (or had their floor deleted) and would otherwise be
+  // invisible here.
+  const brandTables = useQuery({
+    queryKey: ['tables', conceptId],
+    queryFn: () => api.get<BrandTable[]>(`/tables?conceptId=${conceptId}`),
+    enabled: !!conceptId,
+  })
+  const unplaced = (brandTables.data ?? []).filter((t) => !t.floorId)
+
+  const placeTable = useMutation({
+    mutationFn: (id: string) => api.patch(`/floors/tables/${id}/position`, { floorId, x: 40, y: 40 }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['floors', conceptId] })
+      void qc.invalidateQueries({ queryKey: ['tables', conceptId] })
+    },
+  })
+
   const saveLayout = useMutation({
-    mutationFn: (tables: FloorTable[]) => api.put('/floors/layout', { floorId, tables }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['floors', conceptId] }),
+    mutationFn: async (tables: FloorTable[]) => {
+      await api.put('/floors/layout', { floorId, tables })
+      // The layout save carries position and shape only; label / capacity
+      // edits go through PATCH /tables/:id (the same call /tables used).
+      const before = new Map((currentFloor?.tables ?? []).map((t) => [t.id, t]))
+      await Promise.all(tables
+        .filter((t) => { const b = before.get(t.id); return b && (b.capacity !== t.capacity || b.label !== t.label) })
+        .map((t) => api.patch(`/tables/${t.id}`, { capacity: t.capacity, label: t.label })))
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['floors', conceptId] })
+      void qc.invalidateQueries({ queryKey: ['tables', conceptId] })
+    },
   })
 
   const addTable = useMutation({
@@ -189,6 +225,31 @@ export default function FloorplanPage() {
             <h3 className="text-lg font-semibold mb-2">No floors yet</h3>
             <p className="text-s-muted text-sm mb-4">Create your first floor — Main, Patio, Bar, whatever you call it.</p>
             <button onClick={() => setShowNewFloor(true)} className="s-btn-primary text-sm">+ Create floor</button>
+          </div>
+        )}
+
+        {/* Tables with no floor — place them on the selected floor. */}
+        {unplaced.length > 0 && (
+          <div className="s-card p-3 mb-4">
+            <p className="text-xs font-semibold text-s-text mb-2">
+              Not on a floor yet <span className="text-s-muted font-normal">— {unplaced.length} table{unplaced.length === 1 ? '' : 's'} of this brand</span>
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {unplaced.map((t) => (
+                <span key={t.id} className="inline-flex items-center gap-2 rounded-full border border-s-border bg-white px-3 py-1 text-xs">
+                  <span className="font-semibold">{t.label}</span>
+                  {t.capacity != null && <span className="text-s-muted">{t.capacity} seats</span>}
+                  {currentFloor ? (
+                    <button onClick={() => placeTable.mutate(t.id)} disabled={placeTable.isPending}
+                      className="text-s-teal hover:underline disabled:opacity-50">
+                      Place on {currentFloor.name}
+                    </button>
+                  ) : (
+                    <span className="text-s-muted">create a floor first</span>
+                  )}
+                </span>
+              ))}
+            </div>
           </div>
         )}
 

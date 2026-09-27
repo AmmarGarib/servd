@@ -320,7 +320,7 @@ export default function ComplaintsPage() {
                   <TenantChip tenant={c.concept.tenant} tenantId={c.concept.tenantId} tenants={tenants} />
                   <span className="text-xs text-kds-subtext capitalize">{c.category.replace('_', ' ')}</span>
                   {c.order?.customer ? (
-                    <Link href={`/crm/${c.order.customer.id}`} className="text-xs text-blue-400 hover:text-blue-300 hover:underline transition-colors">
+                    <Link href={`/crm?customer=${c.order.customer.id}`} className="text-xs text-blue-400 hover:text-blue-300 hover:underline transition-colors">
                       {c.order.customer.name}
                     </Link>
                   ) : c.order?.customerName ? (

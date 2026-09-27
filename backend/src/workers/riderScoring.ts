@@ -17,26 +17,46 @@ export function startRiderScoringWorker(): void {
 }
 
 export async function runOnce(): Promise<{ checked: number; flagged: number }> {
+  // One sweep per company: each company's own riders, scored on that
+  // company's orders only, flagged into that company's inbox. Riders with no
+  // company are nobody's and are skipped. (Thresholds are constants for now;
+  // OperationsConfig has no rider tolerance yet — when it does, read it here
+  // per company, the way shrinkageTrend reads its window.)
+  const tenants = await prisma.tenant.findMany({ where: { deletedAt: null }, select: { id: true } })
+  let checked = 0
+  let flagged = 0
+  for (const t of tenants) {
+    const r = await runForTenant(t.id)
+    checked += r.checked
+    flagged += r.flagged
+  }
+  console.log(`[riderScoring] ${tenants.length} companies: checked ${checked} riders, flagged ${flagged}`)
+  return { checked, flagged }
+}
+
+export async function runForTenant(tenantId: string): Promise<{ checked: number; flagged: number }> {
   const since = new Date(Date.now() - WINDOW_DAYS * 86400_000)
 
   const riders = await prisma.rider.findMany({
-    where: { isActive: true },
+    where: { tenantId, isActive: true, deletedAt: null },
     select: { id: true, name: true },
   })
+  // Only this company's orders count toward its rider's score.
+  const ofCompany = { concept: { tenantId } }
 
   let flagged = 0
   for (const rider of riders) {
     const total = await prisma.order.count({
-      where: { riderId: rider.id, completedAt: { gte: since } },
+      where: { ...ofCompany, riderId: rider.id, completedAt: { gte: since } },
     })
     if (total < 5) continue        // not enough orders to score reliably
 
     const otpFailedOrders = await prisma.order.count({
-      where: { riderId: rider.id, deliveryOtpAttempts: { gte: 3 }, completedAt: { gte: since } },
+      where: { ...ofCompany, riderId: rider.id, deliveryOtpAttempts: { gte: 3 }, completedAt: { gte: since } },
     })
 
     const cancelled = await prisma.order.count({
-      where: { riderId: rider.id, status: 'cancelled', updatedAt: { gte: since } },
+      where: { ...ofCompany, riderId: rider.id, status: 'cancelled', updatedAt: { gte: since } },
     })
 
     const lostRate = total > 0 ? (cancelled + otpFailedOrders) / total : 0
@@ -47,6 +67,7 @@ export async function runOnce(): Promise<{ checked: number; flagged: number }> {
     // Don't double-flag in the same window
     const existing = await prisma.exceptionFlag.findFirst({
       where: {
+        tenantId,
         kind: 'lost_package', status: 'open',
         entityType: 'User', entityId: rider.id,
         createdAt: { gte: since },
@@ -56,6 +77,7 @@ export async function runOnce(): Promise<{ checked: number; flagged: number }> {
     if (existing) continue
 
     await flagException({
+      tenantId,
       kind: 'lost_package',
       severity: lostRate >= 0.10 ? 'high' : 'medium',
       title: `Rider ${rider.name}: ${(lostRate * 100).toFixed(1)}% problem rate (${WINDOW_DAYS}d)`,
@@ -68,6 +90,5 @@ export async function runOnce(): Promise<{ checked: number; flagged: number }> {
     flagged++
   }
 
-  console.log(`[riderScoring] checked ${riders.length} riders, flagged ${flagged}`)
   return { checked: riders.length, flagged }
 }

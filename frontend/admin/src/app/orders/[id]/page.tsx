@@ -6,6 +6,7 @@ import { api, ApiError, ordersApi } from '../../../lib/api'
 import { useAuthStore } from '../../../store/auth'
 import { formatDistanceToNowStrict, format } from 'date-fns'
 import Link from 'next/link'
+import { fmtPkrWhole } from '../../../lib/money'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -62,8 +63,6 @@ interface OrderDetail {
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function fmt(cents: number) { return `PKR ${(cents / 100).toLocaleString('en-PK')}` }
 
 async function reprintReceipt(orderId: string) {
   const token = useAuthStore.getState().token   // F43
@@ -411,7 +410,7 @@ export default function OrderDetailPage() {
               {order.customer ? (
                 <div className="space-y-1">
                   <Link
-                    href={`/crm/${order.customer.id}`}
+                    href={`/crm?customer=${order.customer.id}`}
                     className="text-sm font-semibold text-kds-green hover:underline">
                     {order.customer.name}
                   </Link>
@@ -539,7 +538,7 @@ export default function OrderDetailPage() {
                           {item.modifiers.length > 0 && (
                             <p className="text-xs text-kds-subtext mt-0.5">
                               {item.modifiers.map((m) =>
-                                `${m.name}${m.priceDeltaCents !== 0 ? ` (${m.priceDeltaCents > 0 ? '+' : ''}${fmt(m.priceDeltaCents)})` : ''}`
+                                `${m.name}${m.priceDeltaCents !== 0 ? ` (${m.priceDeltaCents > 0 ? '+' : ''}${fmtPkrWhole(m.priceDeltaCents)})` : ''}`
                               ).join(', ')}
                             </p>
                           )}
@@ -551,8 +550,8 @@ export default function OrderDetailPage() {
                           )}
                         </td>
                         <td className="px-4 py-3 text-kds-subtext">{item.quantity}</td>
-                        <td className="px-4 py-3 font-mono text-xs text-kds-text">{fmt(effectivePrice)}</td>
-                        <td className="px-4 py-3 font-mono text-xs font-bold text-kds-green">{fmt(lineTotal)}</td>
+                        <td className="px-4 py-3 font-mono text-xs text-kds-text">{fmtPkrWhole(effectivePrice)}</td>
+                        <td className="px-4 py-3 font-mono text-xs font-bold text-kds-green">{fmtPkrWhole(lineTotal)}</td>
                         <td className="px-4 py-3">
                           <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${ITEM_STATUS_COLORS[item.status] ?? 'text-kds-subtext'}`}>
                             {item.status}
@@ -582,41 +581,41 @@ export default function OrderDetailPage() {
               <div className="space-y-2 text-sm">
                 <div className="flex justify-between">
                   <span className="text-kds-subtext">Items subtotal</span>
-                  <span className="font-mono text-kds-text">{fmt(itemsSubtotal)}</span>
+                  <span className="font-mono text-kds-text">{fmtPkrWhole(itemsSubtotal)}</span>
                 </div>
                 {order.taxCents > 0 && (
                   <div className="flex justify-between">
                     <span className="text-kds-subtext">Tax</span>
-                    <span className="font-mono text-kds-text">{fmt(order.taxCents)}</span>
+                    <span className="font-mono text-kds-text">{fmtPkrWhole(order.taxCents)}</span>
                   </div>
                 )}
                 {order.tipCents > 0 && (
                   <div className="flex justify-between">
                     <span className="text-kds-subtext">Tip</span>
-                    <span className="font-mono text-kds-text">{fmt(order.tipCents)}</span>
+                    <span className="font-mono text-kds-text">{fmtPkrWhole(order.tipCents)}</span>
                   </div>
                 )}
                 {order.serviceChargeCents > 0 && (
                   <div className="flex justify-between">
                     <span className="text-kds-subtext">Service charge</span>
-                    <span className="font-mono text-kds-text">{fmt(order.serviceChargeCents)}</span>
+                    <span className="font-mono text-kds-text">{fmtPkrWhole(order.serviceChargeCents)}</span>
                   </div>
                 )}
                 {order.discountCents > 0 && (
                   <div className="flex justify-between">
                     <span className="text-kds-subtext">Discount</span>
-                    <span className="font-mono text-kds-red">-{fmt(order.discountCents)}</span>
+                    <span className="font-mono text-kds-red">-{fmtPkrWhole(order.discountCents)}</span>
                   </div>
                 )}
                 {order.walletAmountCents > 0 && (
                   <div className="flex justify-between">
                     <span className="text-kds-subtext">Wallet used</span>
-                    <span className="font-mono text-kds-amber">-{fmt(order.walletAmountCents)}</span>
+                    <span className="font-mono text-kds-amber">-{fmtPkrWhole(order.walletAmountCents)}</span>
                   </div>
                 )}
                 <div className="flex justify-between pt-2 border-t border-kds-border">
                   <span className="font-bold text-kds-text">Total</span>
-                  <span className="font-mono font-bold text-kds-green text-base">{fmt(order.totalCents)}</span>
+                  <span className="font-mono font-bold text-kds-green text-base">{fmtPkrWhole(order.totalCents)}</span>
                 </div>
               </div>
 
@@ -630,9 +629,9 @@ export default function OrderDetailPage() {
                         {p.method.replace('_', ' ')}
                       </span>
                       <div className="text-right">
-                        <span className="font-mono text-sm font-bold text-kds-green">{fmt(p.amountCents)}</span>
+                        <span className="font-mono text-sm font-bold text-kds-green">{fmtPkrWhole(p.amountCents)}</span>
                         {p.changeCents != null && p.changeCents > 0 && (
-                          <p className="text-xs text-kds-subtext">Change: {fmt(p.changeCents)}</p>
+                          <p className="text-xs text-kds-subtext">Change: {fmtPkrWhole(p.changeCents)}</p>
                         )}
                         <p className="text-[10px] text-kds-subtext capitalize">{p.status}</p>
                       </div>

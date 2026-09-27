@@ -16,6 +16,7 @@
 import { prisma } from '../../lib/prisma.js'
 import { NotFoundError } from '../../lib/errors.js'
 import { getReceiptConfig } from '../../lib/setup-config.js'
+import { fmtPkr as fmtPkrShared } from '../accounting/csv.js'
 
 export interface ReceiptData {
   /** The number printed as "Invoice #": our TaxInvoice number, else the order reference. */
@@ -116,9 +117,8 @@ export async function buildReceiptData(orderId: string): Promise<ReceiptData> {
   }
 }
 
-function fmtPkr(cents: number): string {
-  return `PKR ${(cents / 100).toFixed(2)}`
-}
+// The one PKR formatter (accounting/csv.ts), in the receipt's "PKR 1234.56" form.
+const fmtPkr = (cents: number): string => fmtPkrShared(cents, { symbol: true, group: false })
 
 function fmtDate(iso: string): string {
   return new Date(iso).toLocaleString('en-PK', { timeZone: 'Asia/Karachi', hour12: true,

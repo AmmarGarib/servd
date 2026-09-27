@@ -5,6 +5,7 @@
 //            from order completion).
 //   On pay:  Dr 2095 Tips Payable / Cr Bank or Cash for total disbursed.
 
+import { tenantForConcept } from '../../lib/setup-config.js'
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
@@ -277,6 +278,7 @@ export async function tipPoolRoutes(fastify: FastifyInstance) {
       if (big && updated.members.length >= 3) {
         const { flagException } = await import('../../lib/exceptions.js')
         await flagException({
+          tenantId: (pool.conceptId ? await tenantForConcept(pool.conceptId) : null) ?? req.staffUser!.tenantId,
           kind: 'high_value_void',
           severity: 'medium',
           title: `Tip pool: ${big.userName} taking ${((big.shareCents / pool.totalTipsCents) * 100).toFixed(0)}%`,

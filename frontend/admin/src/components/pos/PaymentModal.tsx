@@ -4,6 +4,7 @@ import { useMutation } from '@tanstack/react-query'
 import { posApi, ApiError } from '../../lib/api'
 import { usePosStore } from '../../store/pos'
 import { useAuthStore } from '../../store/auth'
+import { fmtPkrWhole } from '../../lib/money'
 
 interface PaymentModalProps {
   taxRate: number
@@ -32,8 +33,6 @@ export function PaymentModal({ taxRate, onClose }: PaymentModalProps) {
       ? `pos-${crypto.randomUUID()}`
       : `pos-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
   }
-
-  const fmt = (cents: number) => `PKR ${(cents / 100).toFixed(0)}`
 
   const tenderedCents = method === 'cash' ? Math.round(parseFloat(tendered || '0') * 100) : 0
   const changeCents = method === 'cash' ? Math.max(0, tenderedCents - total) : 0
@@ -149,7 +148,7 @@ export function PaymentModal({ taxRate, onClose }: PaymentModalProps) {
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/80 sm:items-center">
       <div className="w-full max-w-sm rounded-t-2xl bg-kds-card p-5 sm:rounded-2xl">
         <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-lg font-bold">Payment — {fmt(total)}</h2>
+          <h2 className="text-lg font-bold">Payment — {fmtPkrWhole(total)}</h2>
           <button onClick={onClose} className="text-kds-subtext text-xl">✕</button>
         </div>
 
@@ -185,7 +184,7 @@ export function PaymentModal({ taxRate, onClose }: PaymentModalProps) {
             />
             {tenderedCents >= total && (
               <p className="mt-2 text-center text-lg font-bold text-kds-amber">
-                Change: {fmt(changeCents)}
+                Change: {fmtPkrWhole(changeCents)}
               </p>
             )}
           </div>
@@ -229,7 +228,7 @@ export function PaymentModal({ taxRate, onClose }: PaymentModalProps) {
               <div className="text-2xl mb-1">✓</div>
               <p className="font-bold text-kds-green">Payment Complete</p>
               {method === 'cash' && changeCents > 0 && (
-                <p className="text-sm text-kds-amber mt-1">Change: {fmt(changeCents)}</p>
+                <p className="text-sm text-kds-amber mt-1">Change: {fmtPkrWhole(changeCents)}</p>
               )}
             </div>
             <div className="grid grid-cols-2 gap-3">
@@ -257,7 +256,7 @@ export function PaymentModal({ taxRate, onClose }: PaymentModalProps) {
               ? 'Processing…'
               : method === 'comp'
               ? 'Mark Complimentary'
-              : `Confirm — ${fmt(total)}`}
+              : `Confirm — ${fmtPkrWhole(total)}`}
           </button>
         )}
       </div>

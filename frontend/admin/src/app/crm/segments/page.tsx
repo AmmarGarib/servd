@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api } from '../../../lib/api'
+import { fmtPkrWhole } from '../../../lib/money'
 
 interface Segment {
   id: string
@@ -27,10 +28,6 @@ interface Member {
     marketingOptIn: boolean
   }
   joinedAt: string
-}
-
-function fmt(cents: number) {
-  return `PKR ${(cents / 100).toLocaleString('en-PK')}`
 }
 
 function timeAgo(iso: string | null) {
@@ -202,7 +199,7 @@ export default function SegmentsPage() {
                           <div className="text-xs text-neutral-400">{c.email ?? ''}</div>
                         </td>
                         <td className="px-4 py-2.5 text-right font-medium text-neutral-900">
-                          {fmt(c.totalSpentCents)}
+                          {fmtPkrWhole(c.totalSpentCents)}
                         </td>
                         <td className="px-4 py-2.5 text-right text-neutral-500">
                           {timeAgo(c.lastOrderAt)}

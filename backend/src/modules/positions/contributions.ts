@@ -14,13 +14,50 @@ import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, MANAGERS } from '../auth/middleware.js'
+import { AppError, ForbiddenError, NotFoundError } from '../../lib/errors.js'
+import { resolveTenantScope } from '../../lib/tenantScope.js'
 
-// Tenant filter narrowing for non-nullable FK columns.
-function tenantIds(req: FastifyRequest): string[] {
-  const f = req.staffUser!.tenantFilter
-  if (f === null) return []
-  if (typeof f === 'string') return [f]
-  return f.in
+// Companies whose contributions this request may SEE (view-aware: the active
+// company, or every member company in "All companies" view).
+async function readableTenantIds(req: FastifyRequest): Promise<string[]> {
+  return (await resolveTenantScope(req)).tenantIds
+}
+
+// A contribution is a capital movement between two companies. Recording or
+// changing one moves money on BOTH sides' books, so the operator must belong
+// to both companies, and one of them must be the active company (the one the
+// operator is acting as). Membership on only one side let GS x Viva finance
+// book a transfer into or out of GS Foods.
+function assertBothSidesOwned(req: FastifyRequest, sourceTenantId: string, destinationTenantId: string): void {
+  const su = req.staffUser!
+  const members = su.memberTenantIds
+  if (sourceTenantId === destinationTenantId) {
+    throw new AppError('SAME_COMPANY', 'A contribution must be between two different companies', 422)
+  }
+  if (!members.includes(sourceTenantId) || !members.includes(destinationTenantId)) {
+    throw new AppError('CONTRIBUTION_NOT_YOURS', 'You must be a member of both the paying and the receiving company', 422)
+  }
+  if (!su.tenantId || (su.tenantId !== sourceTenantId && su.tenantId !== destinationTenantId)) {
+    throw new AppError('CONTRIBUTION_NOT_ACTIVE', 'One side of the contribution must be your active company', 422)
+  }
+}
+
+// An existing contribution the operator may edit: 404 when neither side is
+// one of their companies (it doesn't exist as far as they're concerned),
+// 403 when only one side is.
+async function findEditable(req: FastifyRequest, id: string) {
+  const members = req.staffUser!.memberTenantIds
+  const existing = await prisma.tenantContribution.findFirst({
+    where: {
+      id,
+      OR: [{ sourceTenantId: { in: members } }, { destinationTenantId: { in: members } }],
+    },
+  })
+  if (!existing) throw new NotFoundError('TenantContribution', id)
+  if (!members.includes(existing.sourceTenantId) || !members.includes(existing.destinationTenantId)) {
+    throw new ForbiddenError('You must be a member of both companies to change this contribution')
+  }
+  return existing
 }
 
 const splitItemSchema = z.object({
@@ -43,7 +80,7 @@ export async function contributionRoutes(fastify: FastifyInstance) {
 
   // List both directions for the active tenant.
   fastify.get('/', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
-    const tenants = tenantIds(req)
+    const tenants = await readableTenantIds(req)
     if (tenants.length === 0) return { incoming: [], outgoing: [] }
 
     const all = await prisma.tenantContribution.findMany({
@@ -73,16 +110,10 @@ export async function contributionRoutes(fastify: FastifyInstance) {
     }
   })
 
-  fastify.post('/', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
+  fastify.post('/', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
     const body = contributionSchema.parse(req.body)
-    // Guardrail: at least one side (source or dest) must be a tenant the
-    // operator belongs to. Stops a CEO from manufacturing contributions
-    // between two tenants they don't own.
-    const tenants = tenantIds(req)
-    if (!tenants.includes(body.sourceTenantId) && !tenants.includes(body.destinationTenantId)) {
-      return { error: 'You must be a member of either the source or destination tenant.' }
-    }
-    return prisma.tenantContribution.create({
+    assertBothSidesOwned(req, body.sourceTenantId, body.destinationTenantId)
+    const created = await prisma.tenantContribution.create({
       data: {
         sourceTenantId: body.sourceTenantId,
         destinationTenantId: body.destinationTenantId,
@@ -94,6 +125,7 @@ export async function contributionRoutes(fastify: FastifyInstance) {
         isActive: body.isActive,
       },
     })
+    return reply.status(201).send(created)
   })
 
   fastify.patch<{ Params: { id: string }; Body: Record<string, unknown> }>(
@@ -101,12 +133,15 @@ export async function contributionRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuth(...MANAGERS) },
     async (req) => {
       const body = contributionSchema.partial().parse(req.body)
-      const tenants = tenantIds(req)
-      // Resolve the row to confirm the operator can edit it.
-      const existing = await prisma.tenantContribution.findUnique({ where: { id: req.params.id } })
-      if (!existing) return { error: 'not_found' }
-      if (!tenants.includes(existing.sourceTenantId) && !tenants.includes(existing.destinationTenantId)) {
-        return { error: 'forbidden' }
+      const existing = await findEditable(req, req.params.id)
+      // Re-pointing either side: the resulting pair must still be two of the
+      // operator's companies, one of them active.
+      if (body.sourceTenantId !== undefined || body.destinationTenantId !== undefined) {
+        assertBothSidesOwned(
+          req,
+          body.sourceTenantId ?? existing.sourceTenantId,
+          body.destinationTenantId ?? existing.destinationTenantId,
+        )
       }
       return prisma.tenantContribution.update({
         where: { id: req.params.id },
@@ -119,15 +154,10 @@ export async function contributionRoutes(fastify: FastifyInstance) {
   )
 
   fastify.delete<{ Params: { id: string } }>('/:id', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
-    const tenants = tenantIds(req)
-    const existing = await prisma.tenantContribution.findUnique({ where: { id: req.params.id } })
-    if (!existing) return { error: 'not_found' }
-    if (!tenants.includes(existing.sourceTenantId) && !tenants.includes(existing.destinationTenantId)) {
-      return { error: 'forbidden' }
-    }
+    const existing = await findEditable(req, req.params.id)
     // Soft-end: keep history but stop counting toward live totals.
     await prisma.tenantContribution.update({
-      where: { id: req.params.id },
+      where: { id: existing.id },
       data: { isActive: false, endedAt: new Date() },
     })
     return { ok: true }

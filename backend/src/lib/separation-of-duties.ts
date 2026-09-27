@@ -18,6 +18,8 @@ import { AppError } from './errors.js'
 import { flagException } from './exceptions.js'
 
 export interface SelfApprovalCheck {
+  /** Company the entity belongs to — the inbox the flag lands in. */
+  tenantId?: string | null
   /** Who is attempting the privileged action (usually `req.staffUser!`). */
   actor:     { id: string; role: string }
   /** Who created / submitted the predecessor record. Null = predates tracking: allowed. */
@@ -47,6 +49,7 @@ export async function assertNotSelfApproval(opts: SelfApprovalCheck): Promise<vo
   if (opts.creatorId !== opts.actor.id) return          // different humans, fine
 
   await flagException({
+    tenantId: opts.tenantId ?? null,
     kind: 'self_approval',
     severity: 'high',
     title: `Self-approval blocked: ${opts.action}`,

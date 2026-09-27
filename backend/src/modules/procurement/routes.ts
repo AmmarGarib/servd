@@ -2,43 +2,21 @@ import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, MANAGERS, ADMIN_ONLY, ALL_STAFF, FINANCE_TEAM } from '../auth/middleware.js'
-import { resolveTenantScope } from '../../lib/tenantScope.js'
-import { NotFoundError, ForbiddenError } from '../../lib/errors.js'
+import { resolveTenantScope, scopeTenantWhere } from '../../lib/tenantScope.js'
+import { NotFoundError, AppError, ForbiddenError } from '../../lib/errors.js'
+import { supplierScopeWhere, findSupplierInScope, activeTenantOr422 } from './scope.js'
 
-// Tenant-aware supplier filter. Returns a Prisma where-clause fragment that
-// covers (a) suppliers belonging to one of the operator's tenants AND
-// (b) legacy/orphan suppliers with no tenantId — those still show up so a
-// CEO can transfer them, flagged by a "⚠ No company" badge in the UI.
-async function supplierTenantFilter(req: FastifyRequest) {
-  const scope = await resolveTenantScope(req)
-  if (scope.tenantIds.length === 0) return {}
-  return {
-    OR: [
-      { tenantId: { in: scope.tenantIds } },
-      { tenantId: null },
-    ],
-  }
-}
-
-// Guard for writes against a specific supplier — throws ForbiddenError if the
-// supplier belongs to a tenant the operator can't access. Orphan suppliers
-// (tenantId null) are editable so they can be claimed.
-async function assertSupplierAccess(req: FastifyRequest, supplierId: string) {
-  const scope = await resolveTenantScope(req)
-  const sup = await prisma.supplier.findUnique({
-    where: { id: supplierId },
-    select: { tenantId: true },
-  })
-  if (!sup) throw new NotFoundError('Supplier', supplierId)
-  if (sup.tenantId && scope.tenantIds.length > 0 && !scope.tenantIds.includes(sup.tenantId)) {
-    throw new ForbiddenError('Supplier belongs to a company you don\'t have access to.')
-  }
-}
+// Company scope: every procurement row belongs to its supplier's company, so
+// every route below scopes through the supplier (./scope.ts). Reads use
+// 'read' (view-aware); anything that changes a supplier or attaches a new row
+// to one uses 'write' (a company the operator belongs to). An operator with
+// no company sees and touches nothing. Foreign ids are 404.
 import {
   createPo, submitPo, approvePo, rejectPo, cancelPo, sendPoToSupplier,
   createBill, voidBill, matchBill,
   createPayment, allocatePayment,
   agingReport, supplierAging, reorderSuggestions,
+  getApprovalThresholdCents, setApprovalThresholdCents,
 } from './service.js'
 import { receiveGoods } from './receiving.js'
 import { syncSupplierOpeningBalance } from './openingBalance.js'
@@ -114,7 +92,7 @@ export async function procurementRoutes(fastify: FastifyInstance) {
   fastify.get('/suppliers', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
     const user = req.staffUser!
     const isManager = ['admin', 'manager', 'management', 'foh_management', 'boh_management', 'procurement'].includes(user.role)
-    const tenantWhere = await supplierTenantFilter(req)
+    const tenantWhere = await supplierScopeWhere(req, 'read')
     const scopeWhere = isManager
       ? { deletedAt: null, ...tenantWhere }
       : { deletedAt: null, assignedStaffId: user.id, ...tenantWhere }
@@ -150,17 +128,25 @@ export async function procurementRoutes(fastify: FastifyInstance) {
       tenantId:            z.string().min(1).optional(),
     }).parse(req.body)
 
-    const scope = await resolveTenantScope(req)
-    const tenantId = body.tenantId ?? req.staffUser!.tenantId
-    if (tenantId && scope.tenantIds.length > 0 && !scope.tenantIds.includes(tenantId)) {
-      throw new ForbiddenError('You can only create a supplier inside a company you belong to.')
+    // A new supplier always belongs to a company: the picked one (which must
+    // be one of the operator's) or the active one. Never a company-less row —
+    // that used to happen for staff with no company, and an orphan is visible
+    // to every company.
+    let tenantId: string
+    try {
+      tenantId = activeTenantOr422(req, body.tenantId ?? null)
+    } catch (err) {
+      if ((err as AppError).code === 'COMPANY_NOT_ALLOWED') {
+        throw new ForbiddenError('You can only create a supplier inside a company you belong to.')
+      }
+      throw err
     }
 
     // Strip body.tenantId before spreading — Prisma needs the resolved value,
     // not the body field which may be undefined.
     const { tenantId: _bodyTenantId, ...rest } = body
     const supplier = await prisma.supplier.create({
-      data: { ...rest, ...(tenantId ? { tenantId } : {}) },
+      data: { ...rest, tenantId },
       include: {
         assignedStaff: { select: { id: true, name: true } },
         tenant:        { select: { id: true, name: true, slug: true } },
@@ -174,7 +160,7 @@ export async function procurementRoutes(fastify: FastifyInstance) {
     '/suppliers/:id',
     { preHandler: requireAuth(...MANAGERS) },
     async (req) => {
-      await assertSupplierAccess(req, req.params.id)
+      const existing = await findSupplierInScope(req, req.params.id, 'write')
       const body = z.object({
         name:                z.string().min(1).optional(),
         phone:               z.string().optional(),
@@ -192,11 +178,27 @@ export async function procurementRoutes(fastify: FastifyInstance) {
         leadTimeDays:        z.number().int().min(0).max(365).optional(),
         openingBalanceCents: z.number().int().nonnegative().optional(),
       }).parse(req.body)
-      if (body.tenantId) {
-        const scope = await resolveTenantScope(req)
-        if (!scope.tenantIds.includes(body.tenantId)) {
-          throw new ForbiddenError('You can only transfer a supplier into a company you belong to.')
-        }
+      // A supplier moves between the operator's companies, never out of them:
+      // clearing its company would make it (and its POs, bills and threads)
+      // visible to every company.
+      if (body.tenantId === null) {
+        throw new AppError('SUPPLIER_COMPANY_REQUIRED', 'A supplier must belong to a company', 422)
+      }
+      if (body.tenantId && !req.staffUser!.memberTenantIds.includes(body.tenantId)) {
+        throw new ForbiddenError('You can only transfer a supplier into a company you belong to.')
+      }
+      // The assigned buyer must work for the supplier's company.
+      const targetTenant = body.tenantId ?? existing.tenantId
+      if (body.assignedStaffId && targetTenant) {
+        const staff = await prisma.user.findFirst({
+          where: {
+            id: body.assignedStaffId,
+            deletedAt: null,
+            OR: [{ tenantId: targetTenant }, { tenantMemberships: { some: { tenantId: targetTenant } } }],
+          },
+          select: { id: true },
+        })
+        if (!staff) throw new AppError('STAFF_NOT_IN_COMPANY', 'That staff member does not work for this supplier\'s company', 422)
       }
       const updated = await prisma.supplier.update({
         where: { id: req.params.id },
@@ -218,9 +220,7 @@ export async function procurementRoutes(fastify: FastifyInstance) {
     '/suppliers/:id/statement',
     { preHandler: requireAuth(...MANAGERS) },
     async (req) => {
-      await assertSupplierAccess(req, req.params.id)
-      const supplier = await prisma.supplier.findUnique({ where: { id: req.params.id } })
-      if (!supplier) throw new NotFoundError('Supplier', req.params.id)
+      const supplier = await findSupplierInScope(req, req.params.id, 'read')
       const [bills, payments, aging] = await Promise.all([
         prisma.supplierBill.findMany({ where: { supplierId: req.params.id }, orderBy: { billDate: 'desc' } }),
         prisma.supplierPayment.findMany({ where: { supplierId: req.params.id }, orderBy: { paymentDate: 'desc' }, include: { applications: true } }),
@@ -254,7 +254,7 @@ export async function procurementRoutes(fastify: FastifyInstance) {
       // Scope by supplier.tenantId — that's the single tenant anchor for
       // every procurement entity. PO returns include the supplier so the
       // result already carries the tenant context downstream consumers need.
-      const tenantWhere = await supplierTenantFilter(req)
+      const tenantWhere = await supplierScopeWhere(req, 'read')
       return prisma.purchaseOrder.findMany({
         where: {
           supplier: tenantWhere,
@@ -275,8 +275,8 @@ export async function procurementRoutes(fastify: FastifyInstance) {
     '/purchase-orders/:id',
     { preHandler: requireAuth(...MANAGERS) },
     async (req) => {
-      const po = await prisma.purchaseOrder.findUnique({
-        where: { id: req.params.id },
+      const po = await prisma.purchaseOrder.findFirst({
+        where: { id: req.params.id, supplier: await supplierScopeWhere(req, 'read') },
         include: {
           supplier:    { include: { tenant: { select: { id: true, name: true, slug: true } } } },
           lines:       { include: { inventoryItem: true, discrepancies: true } },
@@ -285,7 +285,6 @@ export async function procurementRoutes(fastify: FastifyInstance) {
         },
       })
       if (!po) throw new NotFoundError('PurchaseOrder', req.params.id)
-      await assertSupplierAccess(req, po.supplierId)
       return po
     },
   )
@@ -293,17 +292,20 @@ export async function procurementRoutes(fastify: FastifyInstance) {
   fastify.post('/purchase-orders', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
     const body = poCreateSchema.parse(req.body)
     // Don't let the operator post a PO against a supplier they can't see.
-    await assertSupplierAccess(req, body.supplierId)
+    // createPo then checks every line's item is the supplier's company's.
+    await findSupplierInScope(req, body.supplierId, 'write', { live: true })
     const po = await createPo({ ...body, createdBy: req.staffUser!.id })
     return reply.status(201).send(po)
   })
 
-  // Helper used by every PO lifecycle endpoint: resolve the PO's supplier
-  // first, then reuse `assertSupplierAccess` so tenant scoping is identical.
+  // Helper used by every PO lifecycle endpoint: the PO, through its
+  // supplier's company, or 404.
   async function guardPo(req: FastifyRequest, poId: string) {
-    const po = await prisma.purchaseOrder.findUnique({ where: { id: poId }, select: { supplierId: true } })
+    const po = await prisma.purchaseOrder.findFirst({
+      where:  { id: poId, supplier: await supplierScopeWhere(req, 'write') },
+      select: { id: true },
+    })
     if (!po) throw new NotFoundError('PurchaseOrder', poId)
-    await assertSupplierAccess(req, po.supplierId)
   }
 
   fastify.post<{ Params: { id: string } }>(
@@ -397,7 +399,7 @@ export async function procurementRoutes(fastify: FastifyInstance) {
     '/bills',
     { preHandler: requireAuth(...MANAGERS) },
     async (req) => {
-      const tenantWhere = await supplierTenantFilter(req)
+      const tenantWhere = await supplierScopeWhere(req, 'read')
       return prisma.supplierBill.findMany({
         where: {
           supplier: tenantWhere,
@@ -419,8 +421,8 @@ export async function procurementRoutes(fastify: FastifyInstance) {
     '/bills/:id',
     { preHandler: requireAuth(...MANAGERS) },
     async (req) => {
-      const bill = await prisma.supplierBill.findUnique({
-        where: { id: req.params.id },
+      const bill = await prisma.supplierBill.findFirst({
+        where: { id: req.params.id, supplier: await supplierScopeWhere(req, 'read') },
         include: {
           supplier: true,
           po:       true,
@@ -429,14 +431,14 @@ export async function procurementRoutes(fastify: FastifyInstance) {
         },
       })
       if (!bill) throw new NotFoundError('SupplierBill', req.params.id)
-      await assertSupplierAccess(req, bill.supplierId)
       return bill
     },
   )
 
   fastify.post('/bills', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
     const body = billCreateSchema.parse(req.body)
-    await assertSupplierAccess(req, body.supplierId)
+    // createBill then checks the PO, PO lines and items are this supplier's.
+    await findSupplierInScope(req, body.supplierId, 'write', { live: true })
     const bill = await createBill({ ...body, createdBy: req.staffUser!.id })
     const { postSupplierBill } = await import('../accounting/supplierPosting.js')
     postSupplierBill(bill.id).catch((err) =>
@@ -446,11 +448,13 @@ export async function procurementRoutes(fastify: FastifyInstance) {
   })
 
   // Bill guard — used by void / match / payment-allocate. Looks up the bill,
-  // hands off to assertSupplierAccess via supplier relation.
+  // scopes it through its supplier's company (404 when foreign).
   async function guardBill(req: FastifyRequest, billId: string) {
-    const bill = await prisma.supplierBill.findUnique({ where: { id: billId }, select: { supplierId: true } })
+    const bill = await prisma.supplierBill.findFirst({
+      where:  { id: billId, supplier: await supplierScopeWhere(req, 'write') },
+      select: { id: true },
+    })
     if (!bill) throw new NotFoundError('SupplierBill', billId)
-    await assertSupplierAccess(req, bill.supplierId)
   }
 
   fastify.post<{ Params: { id: string }; Body: { reason: string } }>(
@@ -480,7 +484,7 @@ export async function procurementRoutes(fastify: FastifyInstance) {
     '/payments',
     { preHandler: requireAuth(...MANAGERS) },
     async (req) => {
-      const tenantWhere = await supplierTenantFilter(req)
+      const tenantWhere = await supplierScopeWhere(req, 'read')
       return prisma.supplierPayment.findMany({
         where: {
           supplier: tenantWhere,
@@ -498,7 +502,8 @@ export async function procurementRoutes(fastify: FastifyInstance) {
 
   fastify.post('/payments', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
     const body = paymentCreateSchema.parse(req.body)
-    await assertSupplierAccess(req, body.supplierId)
+    // createPayment then checks every applied bill is this supplier's.
+    await findSupplierInScope(req, body.supplierId, 'write', { live: true })
     const payment = await createPayment({ ...body, createdBy: req.staffUser!.id })
     const { postSupplierPayment } = await import('../accounting/supplierPosting.js')
     postSupplierPayment(payment.id).catch((err) =>
@@ -511,9 +516,11 @@ export async function procurementRoutes(fastify: FastifyInstance) {
     '/payments/:id/allocate',
     { preHandler: requireAuth(...MANAGERS) },
     async (req) => {
-      const payment = await prisma.supplierPayment.findUnique({ where: { id: req.params.id }, select: { supplierId: true } })
+      const payment = await prisma.supplierPayment.findFirst({
+        where:  { id: req.params.id, supplier: await supplierScopeWhere(req, 'write') },
+        select: { id: true },
+      })
       if (!payment) throw new NotFoundError('SupplierPayment', req.params.id)
-      await assertSupplierAccess(req, payment.supplierId)
       const body = z.object({ applications: z.array(paymentApplicationSchema).min(1) }).parse(req.body)
       return allocatePayment(req.params.id, body.applications)
     },
@@ -531,14 +538,17 @@ export async function procurementRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuth(...MANAGERS) },
     async (req) => {
       const limit = Math.min(parseInt(req.query.limit ?? '100', 10), 500)
-      // Scope via the supplier relation when present. Rows with a null
-      // supplierId (manual price entries unscoped to a vendor) still come
-      // through — those are tenant-agnostic.
-      const tenantWhere = await supplierTenantFilter(req)
+      // Anchored on the item (company master data): only this company's
+      // items' prices, and — when a supplier is on the row — only a supplier
+      // in scope. A row with no supplier (a manual cost edit) is the item's
+      // company's; it used to come through for every company.
+      const itemWhere     = await scopeTenantWhere(req, 'read')
+      const supplierWhere = await supplierScopeWhere(req, 'read')
       return prisma.itemPriceHistory.findMany({
         where: {
+          inventoryItem: itemWhere,
           OR: [
-            { supplier: tenantWhere },
+            { supplier: supplierWhere },
             { supplierId: null },
           ],
           ...(req.query.itemId     && { inventoryItemId: req.query.itemId }),
@@ -557,7 +567,7 @@ export async function procurementRoutes(fastify: FastifyInstance) {
   // ── Approvals queue ────────────────────────────────────────────────────────
 
   fastify.get('/approvals', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req) => {
-    const tenantWhere = await supplierTenantFilter(req)
+    const tenantWhere = await supplierScopeWhere(req, 'read')
     return prisma.purchaseOrder.findMany({
       where: { status: 'pending_approval', supplier: tenantWhere },
       include: {
@@ -570,18 +580,24 @@ export async function procurementRoutes(fastify: FastifyInstance) {
 
   // ── Settings: approval threshold ───────────────────────────────────────────
 
-  fastify.get('/settings/approval-threshold', { preHandler: requireAuth(...ADMIN_ONLY) }, async () => {
-    const row = await prisma.setting.findUnique({ where: { key: 'procurement.approvalThresholdCents' } })
-    return { thresholdCents: row?.value ? parseInt(row.value, 10) : 5_000_000 }
+  // Per company: `procurement.approvalThresholdCents:<tenantId>`, read with
+  // the old company-less key as the fallback until the company saves its own
+  // (service.ts getApprovalThresholdCents). It used to be one global row, so
+  // one company's admin changed every company's approval limit.
+  const thresholdQuery = z.object({ tenantId: z.string().min(1).optional() })
+
+  fastify.get('/settings/approval-threshold', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req) => {
+    const tenantId = activeTenantOr422(req, thresholdQuery.parse(req.query ?? {}).tenantId ?? null)
+    return { tenantId, thresholdCents: await getApprovalThresholdCents(tenantId) }
   })
 
   fastify.put('/settings/approval-threshold', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req) => {
-    const { thresholdCents } = z.object({ thresholdCents: z.number().int().nonnegative() }).parse(req.body)
-    await prisma.setting.upsert({
-      where:  { key: 'procurement.approvalThresholdCents' },
-      create: { key: 'procurement.approvalThresholdCents', value: String(thresholdCents) },
-      update: { value: String(thresholdCents) },
-    })
-    return { thresholdCents }
+    const { thresholdCents, tenantId: picked } = z.object({
+      thresholdCents: z.number().int().nonnegative(),
+      tenantId:       z.string().min(1).optional(),
+    }).parse(req.body)
+    const tenantId = activeTenantOr422(req, picked ?? null)
+    await setApprovalThresholdCents(tenantId, thresholdCents)
+    return { tenantId, thresholdCents }
   })
 }

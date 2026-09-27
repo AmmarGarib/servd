@@ -10,6 +10,7 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api } from '../../../lib/api'
+import { fmtPkrWhole } from '../../../lib/money'
 
 interface Asset {
   id: string; name: string; category: string; categoryLabel: string
@@ -28,7 +29,6 @@ interface Register {
 }
 interface Concept { id: string; name: string }
 
-const rs = (c: number) => `Rs ${(c / 100).toLocaleString('en-PK', { maximumFractionDigits: 0 })}`
 const card = { background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }
 const inp = 'w-full rounded-lg px-3 py-2 text-sm bg-white/[0.04] border border-white/10 text-white/90 focus:outline-none focus:border-kds-green'
 // Typical lives — a starting point the form fills in; change to your policy.
@@ -49,7 +49,7 @@ export default function FixedAssetsPage() {
     onSuccess: (r) => {
       const n = r.results.filter((x) => x.status === 'charged').length
       const already = r.results.filter((x) => x.status === 'already').length
-      setRunMsg(n > 0 ? `Charged ${rs(r.chargedCents)} across ${n} asset${n === 1 ? '' : 's'}.` :
+      setRunMsg(n > 0 ? `Charged ${fmtPkrWhole(r.chargedCents)} across ${n} asset${n === 1 ? '' : 's'}.` :
         already > 0 ? 'Already charged for this month — nothing new to post.' : 'Nothing to charge for this month.')
       void qc.invalidateQueries({ queryKey: ['fixed-assets'] })
     },
@@ -78,7 +78,7 @@ export default function FixedAssetsPage() {
               ['Book value', data.totals.bookValueCents], ['Monthly charge', data.totals.monthlyCents]].map(([l, v]) => (
               <div key={l as string} className="rounded-2xl p-4" style={card}>
                 <p className="text-[10px] uppercase tracking-wider text-white/40 font-bold">{l}</p>
-                <p className="text-lg font-black text-white/90 mt-1">{rs(v as number)}</p>
+                <p className="text-lg font-black text-white/90 mt-1">{fmtPkrWhole(v as number)}</p>
               </div>
             ))}
           </div>
@@ -121,10 +121,10 @@ export default function FixedAssetsPage() {
                     </td>
                     <td className="px-4 py-3 text-white/60">{a.categoryLabel}</td>
                     <td className="px-4 py-3 text-white/60">{new Date(a.acquiredAt).toLocaleDateString()}</td>
-                    <td className="px-4 py-3 text-white/80">{rs(a.costCents)}</td>
-                    <td className="px-4 py-3 text-white/60">{rs(a.accumulatedCents)}</td>
-                    <td className="px-4 py-3 font-bold text-white/90">{rs(a.bookValueCents)}</td>
-                    <td className="px-4 py-3 text-white/60">{rs(a.monthlyCents)}</td>
+                    <td className="px-4 py-3 text-white/80">{fmtPkrWhole(a.costCents)}</td>
+                    <td className="px-4 py-3 text-white/60">{fmtPkrWhole(a.accumulatedCents)}</td>
+                    <td className="px-4 py-3 font-bold text-white/90">{fmtPkrWhole(a.bookValueCents)}</td>
+                    <td className="px-4 py-3 text-white/60">{fmtPkrWhole(a.monthlyCents)}</td>
                     <td className="px-4 py-3 text-white/60">{a.lastChargedPeriod ?? 'not yet'}</td>
                     <td className="px-4 py-3 text-right">
                       {a.status === 'active'
@@ -228,12 +228,12 @@ function Dispose({ asset, onClose }: { asset: Asset; onClose: () => void }) {
   const gl = Math.round(Number(proceeds) * 100) - asset.bookValueCents
   return (
     <Modal title={`Dispose of ${asset.name}`} onClose={onClose}>
-      <p className="text-sm text-white/60">Book value today: <strong className="text-white/90">{rs(asset.bookValueCents)}</strong>. Charge this month&rsquo;s depreciation first if you haven&rsquo;t.</p>
+      <p className="text-sm text-white/60">Book value today: <strong className="text-white/90">{fmtPkrWhole(asset.bookValueCents)}</strong>. Charge this month&rsquo;s depreciation first if you haven&rsquo;t.</p>
       <div className="grid grid-cols-2 gap-3 mt-4">
         <label className="block"><span className="text-[11px] font-bold text-white/50">Date</span><input type="date" className={inp} value={date} onChange={(e) => setDate(e.target.value)} /></label>
         <label className="block"><span className="text-[11px] font-bold text-white/50">Sold for (PKR, 0 if scrapped)</span><input type="number" min={0} className={inp} value={proceeds} onChange={(e) => setProceeds(e.target.value)} /></label>
       </div>
-      <p className="text-xs mt-3" style={{ color: gl >= 0 ? '#34d399' : '#f87171' }}>{gl >= 0 ? `Gain of ${rs(gl)}` : `Loss of ${rs(-gl)}`}</p>
+      <p className="text-xs mt-3" style={{ color: gl >= 0 ? '#34d399' : '#f87171' }}>{gl >= 0 ? `Gain of ${fmtPkrWhole(gl)}` : `Loss of ${fmtPkrWhole(-gl)}`}</p>
       {err && <p className="text-xs text-red-400 mt-2">{err}</p>}
       <div className="flex gap-2 mt-5">
         <button onClick={() => go.mutate()} disabled={go.isPending} className="rounded-lg bg-kds-green px-4 py-2 text-sm font-black text-black disabled:opacity-50">{go.isPending ? 'Posting…' : 'Dispose'}</button>

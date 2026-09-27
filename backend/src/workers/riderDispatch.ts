@@ -18,6 +18,7 @@
 
 import { Queue, Worker } from 'bullmq'
 import { redis } from '../lib/redis.js'
+import { haversineKm } from '../lib/geo.js'
 import { serviceClient as prisma } from '../lib/prisma.js'
 import { assignRider } from '../modules/dispatch/service.js'
 
@@ -120,12 +121,4 @@ export async function runDispatchSweep(): Promise<void> {
       console.warn(`[riderDispatch] could not assign order ${order.id.slice(0, 8)}: ${(err as Error).message}`)
     }
   }
-}
-
-function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const R = 6371
-  const dLat = (lat2 - lat1) * Math.PI / 180
-  const dLon = (lon2 - lon1) * Math.PI / 180
-  const a = Math.sin(dLat/2)**2 + Math.cos(lat1 * Math.PI/180) * Math.cos(lat2 * Math.PI/180) * Math.sin(dLon/2)**2
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a))
 }

@@ -13,6 +13,7 @@ import { useParams, useRouter } from 'next/navigation'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../../lib/api'
 import { recipeStatusMeta, type RecipeStatus } from '../../accounting/recipes/RecipeForm'
+import { fmtPkrWhole } from '../../../lib/money'
 
 interface CostingReadout {
   recipe: {
@@ -37,9 +38,6 @@ interface CostingReadout {
   pricing: { actualSellingPriceCents: number }
 }
 
-function fmtPKR(cents: number) {
-  return `PKR ${Math.round(cents / 100).toLocaleString('en-PK')}`
-}
 function fmtPct(n: number) { return `${n.toFixed(1)}%` }
 function fcColor(pct: number | null) {
   if (pct === null) return 'rgba(255,255,255,0.35)'
@@ -189,11 +187,11 @@ export default function PlatePricingPage() {
         <div className="space-y-4">
           <section className="rounded-xl border border-s-border bg-s-surface p-5">
             <h2 className="text-base font-black mb-2">Plate cost</h2>
-            <Line label="Ingredient subtotal" value={fmtPKR(cost.totalIngredientCents)} />
-            <Line op="+" label={`Q factor (${recipe.qFactorPct}%)`} value={fmtPKR(cost.qFactorCents)} dim />
-            <Line op="=" label="Total recipe cost" value={fmtPKR(cost.totalRecipeCents)} bold />
+            <Line label="Ingredient subtotal" value={fmtPkrWhole(cost.totalIngredientCents)} />
+            <Line op="+" label={`Q factor (${recipe.qFactorPct}%)`} value={fmtPkrWhole(cost.qFactorCents)} dim />
+            <Line op="=" label="Total recipe cost" value={fmtPkrWhole(cost.totalRecipeCents)} bold />
             <Line op="÷" label={`Portions (${recipe.servings})`} value="" dim />
-            <Line op="=" label="Plate cost" value={fmtPKR(plate)} bold color="#5EEAD4" />
+            <Line op="=" label="Plate cost" value={fmtPkrWhole(plate)} bold color="#5EEAD4" />
           </section>
 
           <section className="rounded-xl border border-s-border bg-s-surface p-5">
@@ -202,11 +200,11 @@ export default function PlatePricingPage() {
               Real overheads: brand opex lines + your workforce payroll (last 90 days of posted payroll,
               monthly-ized, this brand&apos;s share by forecast portions).
             </p>
-            <Line label="Opex lines (rent, utilities…)" value={fmtPKR(cost.opexLinesMonthlyCents)} dim />
-            <Line op="+" label="Workforce payroll (brand share)" value={fmtPKR(cost.payrollShareMonthlyCents)} dim />
-            <Line op="=" label="Monthly opex" value={fmtPKR(cost.opexLinesMonthlyCents + cost.payrollShareMonthlyCents)} bold />
+            <Line label="Opex lines (rent, utilities…)" value={fmtPkrWhole(cost.opexLinesMonthlyCents)} dim />
+            <Line op="+" label="Workforce payroll (brand share)" value={fmtPkrWhole(cost.payrollShareMonthlyCents)} dim />
+            <Line op="=" label="Monthly opex" value={fmtPkrWhole(cost.opexLinesMonthlyCents + cost.payrollShareMonthlyCents)} bold />
             <Line op="÷" label={`Forecast portions / month (${cost.brandForecastPortions || '—'})`} value="" dim />
-            <Line op="=" label="OpEx / portion" value={cost.brandForecastPortions > 0 ? fmtPKR(opex) : '—'} bold color="#A5B4FC" />
+            <Line op="=" label="OpEx / portion" value={cost.brandForecastPortions > 0 ? fmtPkrWhole(opex) : '—'} bold color="#A5B4FC" />
             {cost.payrollTenantMonthlyCents === 0 && (
               <p className="text-[10px] text-s-dim mt-2">
                 No posted payroll runs in the last 90 days — run payroll in{' '}
@@ -244,11 +242,11 @@ export default function PlatePricingPage() {
               const coverage  = forecast > 0 ? forecast / beMonthly : null
               return (
                 <>
-                  <Line label="Contribution / plate (at this price)" value={fmtPKR(cm)} />
-                  <Line op="÷" label="into brand overheads / month" value={fmtPKR(overheadMonthly)} dim />
+                  <Line label="Contribution / plate (at this price)" value={fmtPkrWhole(cm)} />
+                  <Line op="÷" label="into brand overheads / month" value={fmtPkrWhole(overheadMonthly)} dim />
                   <Line op="=" label="Plates to break even" bold color="#5EEAD4"
                     value={`${beMonthly.toLocaleString('en')} / month · ~${beDaily < 10 ? beDaily.toFixed(1) : Math.ceil(beDaily)} / day`} />
-                  <Line label="After that, each plate earns" value={`${fmtPKR(cm)} pure margin`} dim />
+                  <Line label="After that, each plate earns" value={`${fmtPkrWhole(cm)} pure margin`} dim />
                   {coverage !== null && (
                     <p className="text-[10px] mt-2" style={{ color: coverage >= 1 ? '#00D4B1' : '#FF6B6B' }}>
                       {coverage >= 1
@@ -280,7 +278,7 @@ export default function PlatePricingPage() {
               </label>
               <div className="flex-1 min-w-[140px]">
                 <p className="text-[10px] font-bold uppercase tracking-wider text-s-muted mb-1">Price that hits it</p>
-                <p className="text-xl font-black" style={{ color: '#5EEAD4' }}>{fmtPKR(fcTargetCents)}</p>
+                <p className="text-xl font-black" style={{ color: '#5EEAD4' }}>{fmtPkrWhole(fcTargetCents)}</p>
               </div>
               <button type="button" onClick={() => setPricePkr(Math.round(fcTargetCents / 100))}
                 className="rounded-lg bg-s-teal text-black px-3 py-2 text-xs font-black hover:opacity-90">
@@ -298,8 +296,8 @@ export default function PlatePricingPage() {
               </label>
             </div>
             <div className="mt-2">
-              <Line label="Break-even price (covers plate + opex + packaging)" value={fmtPKR(breakEvenCents)} dim />
-              <Line label={`Price for ${targetProfit ?? 25}% net profit`} value={fmtPKR(profitTargetCents)} dim />
+              <Line label="Break-even price (covers plate + opex + packaging)" value={fmtPkrWhole(breakEvenCents)} dim />
+              <Line label={`Price for ${targetProfit ?? 25}% net profit`} value={fmtPkrWhole(profitTargetCents)} dim />
             </div>
           </section>
 
@@ -316,14 +314,14 @@ export default function PlatePricingPage() {
                 </p>
               </div>
             </div>
-            <Line label="Selling price" value={fmtPKR(priceCents)} bold />
-            <Line op="−" label="Plate cost" value={fmtPKR(plate)} />
-            <Line op="−" label={`Packaging (${packaging ?? 8}%)`} value={fmtPKR(packagingCost)} dim />
+            <Line label="Selling price" value={fmtPkrWhole(priceCents)} bold />
+            <Line op="−" label="Plate cost" value={fmtPkrWhole(plate)} />
+            <Line op="−" label={`Packaging (${packaging ?? 8}%)`} value={fmtPkrWhole(packagingCost)} dim />
             <Line op="=" label="Contribution margin" bold
-              value={`${fmtPKR(cm)} · ${fmtPct(cmPct)}`} color={cm >= 0 ? '#00D4B1' : '#FF4D4F'} />
-            <Line op="−" label="OpEx / portion" value={fmtPKR(opex)} dim />
+              value={`${fmtPkrWhole(cm)} · ${fmtPct(cmPct)}`} color={cm >= 0 ? '#00D4B1' : '#FF4D4F'} />
+            <Line op="−" label="OpEx / portion" value={fmtPkrWhole(opex)} dim />
             <Line op="=" label="Net profit / portion" bold
-              value={`${fmtPKR(net)} · ${fmtPct(netPct)}`} color={net >= 0 ? '#00D4B1' : '#FF4D4F'} />
+              value={`${fmtPkrWhole(net)} · ${fmtPct(netPct)}`} color={net >= 0 ? '#00D4B1' : '#FF4D4F'} />
 
             <button onClick={() => save.mutate()} disabled={save.isPending}
               className="mt-4 w-full rounded-lg bg-s-teal text-black py-2.5 text-sm font-black hover:opacity-90 disabled:opacity-50">

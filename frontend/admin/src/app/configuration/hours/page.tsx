@@ -17,16 +17,19 @@ interface ServiceHour {
 
 const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
+interface Window { openMin: number; closeMin: number; isReservable: boolean }
 interface DayState {
   dayOfWeek: number
   isOpen: boolean
-  openMin: number
-  closeMin: number
-  isReservable: boolean
+  // Several windows per day are allowed (split lunch / dinner service). This
+  // is the one hours editor (D1) — the old /reservations/hours page, which
+  // supported split windows, now redirects here, so this editor must keep them.
+  windows: Window[]
 }
 
 const DEFAULT_OPEN = 11 * 60
 const DEFAULT_CLOSE = 23 * 60
+const DEFAULT_WINDOW: Window = { openMin: DEFAULT_OPEN, closeMin: DEFAULT_CLOSE, isReservable: true }
 
 export default function HoursPage() {
   const qc = useQueryClient()
@@ -41,27 +44,25 @@ export default function HoursPage() {
   })
 
   const [days, setDays] = useState<DayState[]>(
-    DAY_LABELS.map((_, i) => ({ dayOfWeek: i, isOpen: true, openMin: DEFAULT_OPEN, closeMin: DEFAULT_CLOSE, isReservable: true })),
+    DAY_LABELS.map((_, i) => ({ dayOfWeek: i, isOpen: true, windows: [{ ...DEFAULT_WINDOW }] })),
   )
 
-  // Hydrate from server when hours load — days that aren't in the response
-  // are marked closed.
+  // Hydrate from server when hours load — days with no rows are closed.
   useEffect(() => {
     if (!conceptId) return
-    const map = new Map<number, ServiceHour>()
-    for (const h of hours) map.set(h.dayOfWeek, h)
     setDays(DAY_LABELS.map((_, i) => {
-      const h = map.get(i)
-      if (h) return { dayOfWeek: i, isOpen: true, openMin: h.openMin, closeMin: h.closeMin, isReservable: h.isReservable }
-      return { dayOfWeek: i, isOpen: false, openMin: DEFAULT_OPEN, closeMin: DEFAULT_CLOSE, isReservable: true }
+      const rows = hours.filter((h) => h.dayOfWeek === i)
+      return rows.length > 0
+        ? { dayOfWeek: i, isOpen: true, windows: rows.map((h) => ({ openMin: h.openMin, closeMin: h.closeMin, isReservable: h.isReservable })) }
+        : { dayOfWeek: i, isOpen: false, windows: [{ ...DEFAULT_WINDOW }] }
     }))
   }, [hours, conceptId])
 
   const save = useMutation({
     mutationFn: () => api.put(`/setup/hours/${conceptId}`, {
-      hours: days.filter((d) => d.isOpen).map((d) => ({
-        dayOfWeek: d.dayOfWeek, openMin: d.openMin, closeMin: d.closeMin, isReservable: d.isReservable,
-      })),
+      hours: days.filter((d) => d.isOpen).flatMap((d) => d.windows.map((w) => ({
+        dayOfWeek: d.dayOfWeek, openMin: w.openMin, closeMin: w.closeMin, isReservable: w.isReservable,
+      }))),
     }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['hours', conceptId] }),
   })
@@ -69,8 +70,21 @@ export default function HoursPage() {
   function patch(i: number, p: Partial<DayState>) {
     setDays((prev) => prev.map((d, idx) => idx === i ? { ...d, ...p } : d))
   }
+  function patchWindow(i: number, w: number, p: Partial<Window>) {
+    setDays((prev) => prev.map((d, idx) => idx !== i ? d : { ...d, windows: d.windows.map((x, wi) => wi === w ? { ...x, ...p } : x) }))
+  }
+  function addWindow(i: number) {
+    setDays((prev) => prev.map((d, idx) => idx !== i ? d : { ...d, isOpen: true, windows: [...d.windows, { ...DEFAULT_WINDOW }] }))
+  }
+  function removeWindow(i: number, w: number) {
+    setDays((prev) => prev.map((d, idx) => {
+      if (idx !== i) return d
+      const windows = d.windows.filter((_, wi) => wi !== w)
+      return windows.length > 0 ? { ...d, windows } : { ...d, isOpen: false, windows: [{ ...DEFAULT_WINDOW }] }
+    }))
+  }
   function applyToAll(openMin: number, closeMin: number) {
-    setDays((prev) => prev.map((d) => ({ ...d, openMin, closeMin, isOpen: true })))
+    setDays((prev) => prev.map((d) => ({ ...d, isOpen: true, windows: [{ openMin, closeMin, isReservable: true }] })))
   }
   function fmtMin(min: number) { const h = Math.floor(min / 60); const m = min % 60; return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}` }
   function parseMin(v: string) { const [h, m] = v.split(':').map(Number); return ((h ?? 0) * 60 + (m ?? 0)) }
@@ -83,7 +97,7 @@ export default function HoursPage() {
         <Link href="/configuration" className="text-xs text-white/40 hover:text-white/70">← Configuration Hub</Link>
         <h1 className="text-2xl font-black text-white/90 mt-2">🕒 Hours of operation</h1>
         <p className="text-sm text-white/40 mt-1 max-w-2xl">
-          Per-brand open/close windows. Storefront refuses orders outside these hours; reservations only land in slots marked reservable.
+          Per-brand open/close windows — add a second window for split lunch / dinner service. Storefront refuses orders outside these hours; reservations only land in windows marked reservable.
         </p>
       </header>
 
@@ -125,27 +139,38 @@ export default function HoursPage() {
 
               <div className="space-y-2">
                 {days.map((d, i) => (
-                  <div key={i} className="flex items-center gap-3 rounded-lg p-3"
+                  <div key={i} className="rounded-lg p-3 space-y-2"
                     style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)' }}>
-                    <label className="flex items-center gap-2 cursor-pointer w-20">
-                      <input type="checkbox" checked={d.isOpen} onChange={(e) => patch(i, { isOpen: e.target.checked })} className="accent-kds-green" />
-                      <span className="text-sm font-bold text-white/85">{DAY_LABELS[i]}</span>
-                    </label>
-                    <input type="time" value={fmtMin(d.openMin)} onChange={(e) => patch(i, { openMin: parseMin(e.target.value) })}
-                      disabled={!d.isOpen} className={fieldCls + ' w-32 disabled:opacity-40'} />
-                    <span className="text-white/40 text-sm">→</span>
-                    <input type="time" value={fmtMin(d.closeMin)} onChange={(e) => patch(i, { closeMin: parseMin(e.target.value) })}
-                      disabled={!d.isOpen} className={fieldCls + ' w-32 disabled:opacity-40'} />
-                    {d.isOpen ? (
-                      <label className="flex items-center gap-1.5 ml-auto cursor-pointer">
-                        <input type="checkbox" checked={d.isReservable}
-                          onChange={(e) => patch(i, { isReservable: e.target.checked })}
-                          className="accent-kds-green" />
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-white/50">Reservable</span>
+                    <div className="flex items-center gap-3">
+                      <label className="flex items-center gap-2 cursor-pointer w-20">
+                        <input type="checkbox" checked={d.isOpen} onChange={(e) => patch(i, { isOpen: e.target.checked })} className="accent-kds-green" />
+                        <span className="text-sm font-bold text-white/85">{DAY_LABELS[i]}</span>
                       </label>
-                    ) : (
-                      <span className="text-xs text-white/35 italic ml-auto">Closed</span>
-                    )}
+                      {d.isOpen ? (
+                        <button onClick={() => addWindow(i)}
+                          className="ml-auto text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded border border-white/10 text-white/55 hover:text-white">
+                          + Window
+                        </button>
+                      ) : (
+                        <span className="text-xs text-white/35 italic ml-auto">Closed</span>
+                      )}
+                    </div>
+                    {d.isOpen && d.windows.map((w, wi) => (
+                      <div key={wi} className="flex items-center gap-3 pl-20 flex-wrap">
+                        <input type="time" value={fmtMin(w.openMin)} onChange={(e) => patchWindow(i, wi, { openMin: parseMin(e.target.value) })}
+                          className={fieldCls + ' w-32'} />
+                        <span className="text-white/40 text-sm">→</span>
+                        <input type="time" value={fmtMin(w.closeMin)} onChange={(e) => patchWindow(i, wi, { closeMin: parseMin(e.target.value) })}
+                          className={fieldCls + ' w-32'} />
+                        <label className="flex items-center gap-1.5 cursor-pointer">
+                          <input type="checkbox" checked={w.isReservable}
+                            onChange={(e) => patchWindow(i, wi, { isReservable: e.target.checked })}
+                            className="accent-kds-green" />
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-white/50">Reservable</span>
+                        </label>
+                        <button onClick={() => removeWindow(i, wi)} className="ml-auto text-xs text-red-400/80 hover:text-red-400">Remove</button>
+                      </div>
+                    ))}
                   </div>
                 ))}
               </div>

@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, MANAGERS } from '../auth/middleware.js'
 import { AppError } from '../../lib/errors.js'
+import { assertConceptOwned } from '../../lib/tenantScope.js'
 
 const createDiscountSchema = z.object({
   conceptId: z.string().uuid().optional(),
@@ -16,6 +17,12 @@ const createDiscountSchema = z.object({
   endTime: z.string().regex(/^\d{2}:\d{2}$/),
   isActive: z.boolean().default(true),
 })
+
+/** 422 unless `categoryId` is a live category of `conceptId`. */
+async function assertCategoryOf(conceptId: string, categoryId: string): Promise<void> {
+  const cat = await prisma.category.findFirst({ where: { id: categoryId, conceptId, deletedAt: null }, select: { id: true } })
+  if (!cat) throw new AppError('CATEGORY_NOT_IN_BRAND', 'That category is not part of this brand', 422)
+}
 
 export async function discountRoutes(fastify: FastifyInstance) {
   // GET /discounts/sections — scoped to active tenant
@@ -55,10 +62,10 @@ export async function discountRoutes(fastify: FastifyInstance) {
     if (!body.conceptId) {
       return reply.status(400).send({ error: { code: 'CONCEPT_REQUIRED', message: 'conceptId is required for tenant-scoped discounts' } })
     }
-    const concept = await prisma.concept.findFirst({
-      where: { id: body.conceptId, tenantId: req.staffUser!.tenantFilter, deletedAt: null },
-    })
-    if (!concept) return reply.status(403).send({ error: { code: 'CROSS_TENANT', message: 'Concept does not belong to your active company' } })
+    // New discounts bind to a brand of the ACTIVE company (404 otherwise); a
+    // section discount's category must be that brand's own.
+    await assertConceptOwned(req, body.conceptId, 'create')
+    if (body.categoryId) await assertCategoryOf(body.conceptId, body.categoryId)
     const discount = await prisma.sectionDiscount.create({
       data: { ...body, startDate: new Date(body.startDate), endDate: new Date(body.endDate) },
     })
@@ -78,6 +85,12 @@ export async function discountRoutes(fastify: FastifyInstance) {
       })
       if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Discount not found in your active company' } })
       const body = createDiscountSchema.partial().parse(req.body)
+      // The discount stays on its brand (it could otherwise be re-pointed at
+      // another company's brand); a new category must be that brand's.
+      if (body.conceptId !== undefined && body.conceptId !== owned.conceptId) {
+        throw new AppError('CONCEPT_IMMUTABLE', 'A discount cannot be moved to another brand — create it there instead', 422)
+      }
+      if (body.categoryId && owned.conceptId) await assertCategoryOf(owned.conceptId, body.categoryId)
       const data: Record<string, unknown> = { ...body }
       if (body.startDate) data.startDate = new Date(body.startDate)
       if (body.endDate) data.endDate = new Date(body.endDate)

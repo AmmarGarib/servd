@@ -18,6 +18,7 @@ import { useRoleModules, modulesForRole } from '../../../store/roleModules'
 import { useViewAsRole } from '../../../store/viewAsRole'
 import type { AppRole } from '../../../lib/appRoles'
 import { isExecutive } from '../../../lib/appRoles'
+import { fmtPkrShort } from '../../../lib/money'
 
 type Period = 'today' | 'week' | 'month'
 
@@ -51,14 +52,6 @@ function rangeFor(period: Period): { from: string; to: string; label: string } {
   return { from: `${iso(start)}T00:00:00Z`, to: `${iso(now)}T23:59:59Z`, label: 'this month' }
 }
 
-function pkr(cents: number): string {
-  const n = cents / 100
-  if (n >= 1_000_000) return `PKR ${(n / 1_000_000).toFixed(2)}M`
-  if (n >= 10_000)    return `PKR ${(n / 1_000).toFixed(0)}K`
-  return `PKR ${Math.round(n).toLocaleString()}`
-}
-const dash = (c: number | null | undefined) => (c == null ? '—' : pkr(c))
-
 export default function BrandDashboardPage() {
   const router = useRouter()
   const [period, setPeriod] = useState<Period>('month')
@@ -79,7 +72,7 @@ export default function BrandDashboardPage() {
   useEffect(() => { if (canView === false) router.replace('/dashboard') }, [canView, router])
 
   const { data: concepts } = useQuery({
-    queryKey: ['brand-dash', 'concepts'],
+    queryKey: ['brand-fmtPkrShort', 'concepts'],
     queryFn:  () => api.get<Concept[]>('/concepts'),
     enabled:  canView === true,
   })
@@ -91,7 +84,7 @@ export default function BrandDashboardPage() {
   }, [range, conceptId])
 
   const { data: m } = useQuery({
-    queryKey: ['brand-dash', 'metrics', q],
+    queryKey: ['brand-fmtPkrShort', 'metrics', q],
     queryFn:  () => api.get<BrandMetrics>(`/management/brand-metrics?${q}`),
     refetchInterval: 120_000,
     enabled:  canView === true,
@@ -131,9 +124,9 @@ export default function BrandDashboardPage() {
 
         {/* Hero KPIs */}
         <div style={{ marginTop: '1.2rem', display: 'grid', gap: '0.8rem', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}>
-          <Scorecard label="ARPU"  value={dash(k?.arpuCents)}         accent="#A855F7" sub="revenue / active user" />
-          <Scorecard label="AOV"   value={dash(k?.aovCents)}          accent="#F59E0B" sub="avg order value" />
-          <Scorecard label="LTV"   value={dash(k?.ltvCents)}          accent="#22C55E" sub="avg lifetime spend" />
+          <Scorecard label="ARPU"  value={fmtPkrShort(k?.arpuCents)}         accent="#A855F7" sub="revenue / active user" />
+          <Scorecard label="AOV"   value={fmtPkrShort(k?.aovCents)}          accent="#F59E0B" sub="avg order value" />
+          <Scorecard label="LTV"   value={fmtPkrShort(k?.ltvCents)}          accent="#22C55E" sub="avg lifetime spend" />
         </div>
         <div style={{ marginTop: '0.8rem', display: 'grid', gap: '0.8rem', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}>
           <Scorecard label="New customers"       value={(m?.customers.new ?? 0).toLocaleString()}       accent="#00D4B1" sub={`${range.label}`} />
@@ -143,7 +136,7 @@ export default function BrandDashboardPage() {
         {/* Revenue + customers strip */}
         <Section title="This period" hint={range.label}>
           <div style={{ display: 'grid', gap: '0.7rem', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))' }}>
-            <MiniStat label="Sales (incl. GST)"  value={dash(m?.revenue.grossCents)} />
+            <MiniStat label="Sales (incl. GST)"  value={fmtPkrShort(m?.revenue.grossCents)} />
             <MiniStat label="Orders"   value={(m?.revenue.orders ?? 0).toLocaleString()} />
             <MiniStat label="Active customers" value={(m?.customers.distinct ?? 0).toLocaleString()} />
           </div>

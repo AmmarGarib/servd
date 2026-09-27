@@ -15,10 +15,10 @@ import {
 } from '../../lib/wa-session.js'
 import { ingestOrder } from '../../modules/orders/service.js'
 import { findCustomerByPhone } from '../../lib/customer-channels.js'
+import { fmtPkr as fmtPkrShared } from '../../modules/accounting/csv.js'
 
-function fmtPkr(cents: number) {
-  return `PKR ${(cents / 100).toFixed(0)}`
-}
+// The one PKR formatter (modules/accounting/csv.ts), in the bot's "PKR 1234" form.
+const fmtPkr = (cents: number) => fmtPkrShared(cents, { symbol: true, decimals: 0, group: false })
 
 async function getDefaultConcept() {
   const slug = process.env['WHATSAPP_DEFAULT_CONCEPT']

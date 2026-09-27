@@ -1,3 +1,5 @@
+import { scopeTenantWhere } from '../../lib/tenantScope.js'
+import { primaryTenantId } from '../../lib/setup-config.js'
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
@@ -7,6 +9,7 @@ import {
   LOYALTY_SETTING_KEYS, LOYALTY_DEFAULTS, loadLoyaltySettings,
   calculatePointsEarned, calculatePointsValue, invalidateLoyaltySettings,
 } from '../../lib/loyaltySettings.js'
+import { loadCompanyLoyaltySettings, saveCompanyLoyaltySettings } from './settings.js'
 
 // ─── Points configuration ────────────────────────────────────────────────
 // Live values are read from the Settings table (key-value store) so the
@@ -53,7 +56,9 @@ export async function loyaltyRoutes(fastify: FastifyInstance) {
 
     return {
       ...account,
-      pointsValueCents: await calculatePointsValue(account.pointsBalance),
+      // One loyalty account spans companies; the balance is shown at the
+      // primary company's point value (a per-company account is an owner call).
+      pointsValueCents: await calculatePointsValue(account.pointsBalance, await primaryTenantId()),
     }
   })
 
@@ -64,7 +69,7 @@ export async function loyaltyRoutes(fastify: FastifyInstance) {
       .parse(req.body)
 
     // Verify order belongs to this customer
-    const order = await prisma.order.findFirst({ where: { id: orderId, customerId: req.customer!.id } })
+    const order = await prisma.order.findFirst({ where: { id: orderId, customerId: req.customer!.id }, include: { concept: { select: { tenantId: true } } } })
     if (!order) throw new NotFoundError('Order', orderId)
 
     // The order has to still be open. Ownership was the only check, so a
@@ -88,7 +93,8 @@ export async function loyaltyRoutes(fastify: FastifyInstance) {
       throw new AppError('ALREADY_REDEEMED', 'Points have already been redeemed on this order.', 409)
     }
 
-    const discountCents = await calculatePointsValue(pointsToRedeem)
+    // Points are worth what the brand's company says (settings are per company).
+    const discountCents = await calculatePointsValue(pointsToRedeem, order.concept.tenantId)
 
     // Atomic: conditional update prevents race condition where two concurrent requests
     // both pass a balance check and both decrement, driving balance negative
@@ -150,8 +156,9 @@ export async function loyaltyRoutes(fastify: FastifyInstance) {
         where: {
           id: orderId,
           customerId,
-          concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
+          concept: { ...(await scopeTenantWhere(req, 'write')), deletedAt: null },
         },
+        include: { concept: { select: { tenantId: true } } },
       })
       if (!order) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Order not found in your active company' } })
 
@@ -188,8 +195,8 @@ export async function loyaltyRoutes(fastify: FastifyInstance) {
         })
       }
 
-      const settings = await loadLoyaltySettings()
-      const points = await calculatePointsEarned(order.totalCents)
+      const settings = await loadLoyaltySettings(order.concept.tenantId)
+      const points = await calculatePointsEarned(order.totalCents, order.concept.tenantId)
       const stampThreshold = settings['loyalty.stamp_threshold'] || 9
 
       // Stamp card logic
@@ -232,37 +239,34 @@ export async function loyaltyRoutes(fastify: FastifyInstance) {
     },
   )
 
-  // ─── Admin: loyalty global settings ────────────────────────────────────
-  // GET reads the current values (with defaults filled in for any unset
-  // keys); PATCH accepts a partial object and writes only the keys
-  // present in the body. Cache is busted on PATCH so subsequent earns
-  // pick up the new values immediately.
+  // ─── Admin: loyalty settings (per company) ──────────────────────────────
+  // GET reads the ACTIVE company's values (defaults filled in for unset keys;
+  // the old platform-wide values are copied in the first time); PATCH writes
+  // only the keys present in the body, for the active company only. See
+  // ./settings.ts. The shared cache is busted on PATCH as before.
 
-  fastify.get('/settings', { preHandler: requireAuth(...MANAGERS) }, async () => {
-    const values = await loadLoyaltySettings()
+  const activeCompany = (req: { staffUser?: { tenantId: string | null } }): string => {
+    const t = req.staffUser?.tenantId
+    if (!t) throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company to see its loyalty settings', 422)
+    return t
+  }
+
+  fastify.get('/settings', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
+    const values = await loadCompanyLoyaltySettings(activeCompany(req))
     return { values, defaults: LOYALTY_DEFAULTS }
   })
 
   fastify.patch('/settings', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
+    const tenantId = activeCompany(req)
     const body = z.object(
       Object.fromEntries(
         LOYALTY_SETTING_KEYS.map((k) => [k, z.number().int().min(0).max(1_000_000).optional()]),
       ) as Record<typeof LOYALTY_SETTING_KEYS[number], z.ZodOptional<z.ZodNumber>>,
     ).parse(req.body)
 
-    await prisma.$transaction(
-      Object.entries(body)
-        .filter(([, v]) => typeof v === 'number')
-        .map(([key, value]) =>
-          prisma.setting.upsert({
-            where:  { key },
-            create: { key, value: String(value) },
-            update: { value: String(value) },
-          }),
-        ),
-    )
+    const values = await saveCompanyLoyaltySettings(tenantId, body)
     invalidateLoyaltySettings()    // bust so next earn re-reads
-    return loadLoyaltySettings().then((values) => ({ values }))
+    return { values }
   })
 
   // ─── Admin: tier CRUD ──────────────────────────────────────────────────

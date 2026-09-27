@@ -3,13 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { api } from '../../lib/api'
 import Link from 'next/link'
 import { ActivityFeed } from '../../components/ui/ActivityFeed'
-
-function fmt(cents: number) {
-  const n = cents / 100
-  if (n >= 1_000_000) return `PKR ${(n / 1_000_000).toFixed(1)}M`
-  if (n >= 1_000) return `PKR ${(n / 1_000).toFixed(0)}K`
-  return `PKR ${n.toFixed(0)}`
-}
+import { fmtPkrShort } from '../../lib/money'
 
 interface FoodCostData {
   period: { from: string; to: string }
@@ -108,8 +102,8 @@ export default function AccountingHubPage() {
               // Sales-register figure (what customers paid, incl. GST) — the
               // books' revenue is the P&L.
               label: 'Sales (MTD, register)',
-              value: foodCost ? fmt(foodCost.revenue.grossCents) : '—',
-              sub: foodCost ? `incl. GST · register net ${fmt(foodCost.revenue.netCents)}` : undefined,
+              value: foodCost ? fmtPkrShort(foodCost.revenue.grossCents) : '—',
+              sub: foodCost ? `incl. GST · register net ${fmtPkrShort(foodCost.revenue.netCents)}` : undefined,
               color: 'text-gradient-brand',
               href: '/reports',
             },
@@ -142,7 +136,7 @@ export default function AccountingHubPage() {
           <section className="s-card p-4 lg:col-span-2">
             <p className="text-xs font-semibold text-s-muted uppercase tracking-wider mb-3">Operations</p>
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-sm">
-              <Link href="/live"               className="s-card-hover p-3 rounded border border-s-border text-s-text">⚡ Live orders</Link>
+              <Link href="/orders"             className="s-card-hover p-3 rounded border border-s-border text-s-text">⚡ Live orders</Link>
               <Link href="/floorplan"          className="s-card-hover p-3 rounded border border-s-border text-s-text">🪑 Floor plan</Link>
               <Link href="/reservations"       className="s-card-hover p-3 rounded border border-s-border text-s-text">📅 Reservations</Link>
               <Link href="/gift-cards"         className="s-card-hover p-3 rounded border border-s-border text-s-text">🎁 Gift cards</Link>
@@ -150,7 +144,7 @@ export default function AccountingHubPage() {
               <Link href="/tip-pools"          className="s-card-hover p-3 rounded border border-s-border text-s-text">💰 Tip pools</Link>
               <Link href="/content"            className="s-card-hover p-3 rounded border border-s-border text-s-text">🧱 Content editor</Link>
               <Link href="/analytics"          className="s-card-hover p-3 rounded border border-s-border text-s-text">📊 Sales analytics</Link>
-              <Link href="/customers"          className="s-card-hover p-3 rounded border border-s-border text-s-text">👥 Customers</Link>
+              <Link href="/crm"                className="s-card-hover p-3 rounded border border-s-border text-s-text">👥 Customers</Link>
               <Link href="/refunds"            className="s-card-hover p-3 rounded border border-s-border text-s-text">↩️ Refunds</Link>
               <Link href="/inventory/alerts"   className="s-card-hover p-3 rounded border border-s-border text-s-text">📦 Stock alerts</Link>
               <Link href="/reviews"            className="s-card-hover p-3 rounded border border-s-border text-s-text">⭐ Reviews</Link>
@@ -220,9 +214,9 @@ export default function AccountingHubPage() {
             {/* Cost breakdown */}
             <div className="grid grid-cols-3 gap-3 pt-3 border-t border-s-border">
               {[
-                { label: 'Theoretical Cost', value: fmt(fc.theoreticalCents), color: 'text-s-text' },
-                { label: 'Actual Purchases', value: fmt(fc.actualPurchasesCents), color: 'text-s-amber' },
-                { label: 'Gross Revenue', value: fmt(foodCost!.revenue.grossCents), color: 'text-s-teal' },
+                { label: 'Theoretical Cost', value: fmtPkrShort(fc.theoreticalCents), color: 'text-s-text' },
+                { label: 'Actual Purchases', value: fmtPkrShort(fc.actualPurchasesCents), color: 'text-s-amber' },
+                { label: 'Gross Revenue', value: fmtPkrShort(foodCost!.revenue.grossCents), color: 'text-s-teal' },
               ].map((s) => (
                 <div key={s.label} className="text-center rounded-lg bg-s-elevated border border-s-border p-3">
                   <p className={`text-base font-bold ${s.color}`}>{s.value}</p>
@@ -250,10 +244,10 @@ export default function AccountingHubPage() {
                   <div key={item.menuItemId} className="flex items-center justify-between py-1">
                     <div className="min-w-0 flex-1">
                       <p className="text-sm text-s-text truncate">{item.name}</p>
-                      <p className="text-[11px] text-s-dim">{item.qtySold} sold · {fmt(item.revenue)} revenue</p>
+                      <p className="text-[11px] text-s-dim">{item.qtySold} sold · {fmtPkrShort(item.revenue)} revenue</p>
                     </div>
                     <div className="ml-3 text-right shrink-0">
-                      <p className="text-sm font-bold text-s-text">{fmt(item.totalCost)}</p>
+                      <p className="text-sm font-bold text-s-text">{fmtPkrShort(item.totalCost)}</p>
                       <p className={`text-[11px] font-semibold ${item.foodCostPct > 35 ? 'text-s-red' : item.foodCostPct > 30 ? 'text-s-amber' : 'text-s-teal'}`}>
                         {item.foodCostPct}% FC
                       </p>
@@ -283,7 +277,7 @@ export default function AccountingHubPage() {
                       </p>
                     </div>
                     <div className="ml-3 flex items-center gap-2 shrink-0">
-                      <span className="text-sm font-semibold text-s-text">{fmt(po.totalCents)}</span>
+                      <span className="text-sm font-semibold text-s-text">{fmtPkrShort(po.totalCents)}</span>
                       <span className={`s-badge text-[10px] ${poStatusColor[po.status] ?? 's-badge-muted'}`}>
                         {po.status}
                       </span>

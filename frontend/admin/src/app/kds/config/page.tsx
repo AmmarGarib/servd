@@ -347,7 +347,7 @@ export default function KdsConfigPage() {
           <h1 className="text-2xl font-black text-kds-text">KDS Config</h1>
           <p className="text-sm text-kds-subtext">
             Add, rename and order the kitchen stations. Cooks see the result in <Link href="/kds" className="underline text-kds-green">Kitchen view</Link>;
-            you assign cooks to stations in <Link href="/configuration/users" className="underline text-kds-green">Configuration → Users</Link>.
+            you assign cooks to stations in <Link href="/workforce" className="underline text-kds-green">Workforce</Link>.
           </p>
         </div>
       </header>

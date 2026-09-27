@@ -1,5 +1,7 @@
 // Shared HR types and helpers for the admin. Mirrors backend/src/modules/hr/forms.ts.
 
+import { fmtPkrWhole } from './money'
+
 export type FieldType =
   | 'text' | 'textarea' | 'number' | 'money' | 'percent'
   | 'date' | 'time' | 'datetime'
@@ -117,8 +119,8 @@ export interface PunchRow {
   attendance: { id: string; status: string | null; lateMinutes: number | null; checkIn: string | null; checkOut: string | null; source: string | null } | null
 }
 
-export const rs = (c: number | null | undefined) =>
-  c == null ? '—' : `Rs ${(c / 100).toLocaleString('en-PK', { maximumFractionDigits: 0 })}`
+// Money on HR screens — the admin's one formatter (lib/money.ts, D18).
+export const rs = (c: number | null | undefined) => fmtPkrWhole(c)
 
 export const day = (iso: string | null | undefined) =>
   iso ? new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'

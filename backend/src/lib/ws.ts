@@ -1,7 +1,10 @@
 // WebSocket server — Socket.io with Redis adapter for multi-process fanout
 // Rooms: station:{id}, concept:{id} (both ownership-checked at join),
 // tenant:{id}, tenant:{id}:orders, tenant:{id}:reservations (company-wide
-// fan-out), all-orders (brand-less id+status events only)
+// fan-out). There is no global room any more: the old `all-orders` room
+// carried every company's order/item ids and statuses to every expediter and
+// manager socket, so each event now resolves its company and goes to
+// `tenant:{id}:orders` only.
 // Events match spec §6.3
 
 import { Server as SocketIOServer } from 'socket.io'
@@ -11,11 +14,11 @@ import { isAllowedOrigin } from './corsAllowlist.js'
 import { parseCookieHeader, ACCESS_COOKIE } from './cookies.js'
 import type { FastifyInstance } from 'fastify'
 import { verifyStaffToken } from '../modules/auth/service.js'
-import { prisma } from './prisma.js'
+import { prisma, serviceClient } from './prisma.js'
 import { MANAGEMENT_TIER } from './roles.js'
 // Every management tier (incl. legacy 'manager' until it is migrated away) —
 // the literal ['admin','owner','manager'] left GMs, floor managers and head
-// chefs out of the KDS, all-orders and reservation rooms.
+// chefs out of the KDS, company order and reservation rooms.
 const MANAGER_TIER: readonly string[] = MANAGEMENT_TIER
 
 let io: SocketIOServer | null = null
@@ -38,6 +41,93 @@ export async function tenantOfConcept(conceptId: string): Promise<string | null>
   const tenantId = row?.tenantId ?? null
   conceptTenantCache.set(conceptId, { tenantId, expiresAt: Date.now() + 5 * 60_000 })
   return tenantId
+}
+
+/** The company an order belongs to (its brand's company), or null. */
+async function tenantOfOrder(orderId: string): Promise<string | null> {
+  const o = await serviceClient.order.findUnique({ where: { id: orderId }, select: { conceptId: true } }).catch(() => null)
+  return o ? tenantOfConcept(o.conceptId) : null
+}
+
+/** The company an order line belongs to (via its order's brand), or null. */
+async function tenantOfOrderItem(itemId: string): Promise<string | null> {
+  const it = await serviceClient.orderItem.findUnique({
+    where: { id: itemId },
+    select: { order: { select: { conceptId: true } } },
+  }).catch(() => null)
+  return it?.order ? tenantOfConcept(it.order.conceptId) : null
+}
+
+/** The company a station belongs to (via its brand), or null. */
+async function tenantOfStation(stationId: string): Promise<string | null> {
+  const st = await serviceClient.station.findUnique({ where: { id: stationId }, select: { conceptId: true } }).catch(() => null)
+  return st ? tenantOfConcept(st.conceptId) : null
+}
+
+/**
+ * Register (or refresh) a KDS device for the connecting socket.
+ *
+ * `deviceFingerprint` is globally unique, so a plain upsert on it let any
+ * kitchen/manager socket that presented another company's fingerprint re-home
+ * that company's device row to its own company (and repoint its station).
+ * Now a device keeps the company it was registered under: a socket may only
+ * refresh a device of a company it belongs to, a legacy company-less row is
+ * claimed by the socket's active company, and anything else is refused.
+ * stationId / conceptId from the handshake are written only when they belong
+ * to the device's company.
+ *
+ * Returns the device's company when the socket may heartbeat it, else null.
+ */
+export async function registerKdsDevice(opts: {
+  deviceFingerprint: string
+  deviceName?: string
+  stationId?: string
+  conceptId?: string
+  tenantId: string | null
+  tenantIds: string[]
+  ipAddress: string
+}): Promise<string | null> {
+  const { deviceFingerprint, tenantIds, ipAddress } = opts
+  const existing = await prisma.kdsDevice.findUnique({
+    where: { deviceFingerprint },
+    select: { id: true, tenantId: true },
+  })
+  // The company this registration belongs to: an existing device keeps its
+  // own; a new (or legacy company-less) one takes the socket's active company.
+  const deviceTenant = existing?.tenantId ?? opts.tenantId
+  if (!deviceTenant || !tenantIds.includes(deviceTenant)) return null
+
+  const stationId = opts.stationId && (await tenantOfStation(opts.stationId)) === deviceTenant ? opts.stationId : undefined
+  const conceptId = opts.conceptId && (await tenantOfConcept(opts.conceptId)) === deviceTenant ? opts.conceptId : undefined
+
+  if (!existing) {
+    await prisma.kdsDevice.create({
+      data: {
+        deviceFingerprint,
+        name: opts.deviceName ?? `KDS ${deviceFingerprint.slice(0, 8)}`,
+        stationId: stationId ?? null,
+        conceptId: conceptId ?? null,
+        tenantId: deviceTenant,
+        ipAddress,
+        lastSeenAt: new Date(),
+      },
+    })
+    return deviceTenant
+  }
+
+  // Conditional on the company still being what we checked (or still unset,
+  // for a legacy claim) so a concurrent claim can't be overwritten.
+  const res = await prisma.kdsDevice.updateMany({
+    where: { id: existing.id, tenantId: existing.tenantId },
+    data: {
+      lastSeenAt: new Date(),
+      ipAddress,
+      ...(stationId && { stationId }),
+      ...(conceptId && { conceptId }),
+      ...(existing.tenantId ? {} : { tenantId: deviceTenant }),
+    },
+  })
+  return res.count > 0 ? deviceTenant : null
 }
 
 /**
@@ -183,30 +273,17 @@ export function initWebSocket(fastify: FastifyInstance): SocketIOServer {
         const ipAddress = socket.handshake.address
         void (async () => {
           try {
-            await prisma.kdsDevice.upsert({
-              where: { deviceFingerprint },
-              // Scope by tenantId so two operators on different tenants can
-              // never accidentally share a device registration.
-              create: {
-                deviceFingerprint,
-                name: deviceName ?? `KDS ${deviceFingerprint.slice(0, 8)}`,
-                stationId: stationId ?? null,
-                conceptId: conceptId ?? null,
-                tenantId: tenantId ?? null,
-                ipAddress,
-                lastSeenAt: new Date(),
-              },
-              update: {
-                lastSeenAt: new Date(),
-                ipAddress,
-                ...(stationId && { stationId }),
-                ...(conceptId && { conceptId }),
-                ...(tenantId && { tenantId }),
-              },
+            const deviceTenant = await registerKdsDevice({
+              deviceFingerprint, deviceName, stationId, conceptId,
+              tenantId: tenantId ?? null, tenantIds, ipAddress,
             })
+            if (!deviceTenant) {
+              fastify.log.warn(`[kds-device] registration refused for fingerprint ${deviceFingerprint.slice(0, 8)}… — device belongs to another company (or the socket has none)`)
+              return
+            }
             heartbeatHandle = setInterval(() => {
-              prisma.kdsDevice.update({
-                where: { deviceFingerprint },
+              prisma.kdsDevice.updateMany({
+                where: { deviceFingerprint, tenantId: deviceTenant },
                 data: { lastSeenAt: new Date() },
               }).catch(() => {})
             }, 30_000)
@@ -221,14 +298,12 @@ export function initWebSocket(fastify: FastifyInstance): SocketIOServer {
     // is checked against the companies the socket belongs to before joining —
     // a guessed id must never subscribe a GSX Viva screen to GS Foods'
     // kitchen. Tenant rooms are the fan-out key for company-wide events
-    // (`tenant:{id}:orders`, `tenant:{id}:reservations`); the legacy global
-    // rooms are kept only for events that carry no brand (order:updated,
-    // item:updated — id + status, nothing else).
+    // (`tenant:{id}:orders`, `tenant:{id}:reservations`). There is no global
+    // room: even id + status events are resolved to their company first.
     if (stationId) void joinIfOwned(socket, tenantIds, 'station', stationId)
     if (conceptId) void joinIfOwned(socket, tenantIds, 'concept', conceptId)
     for (const t of tenantIds) void socket.join(`tenant:${t}`)
     if (role === 'expediter' || MANAGER_TIER.includes(role ?? '')) {
-      void socket.join('all-orders')
       for (const t of tenantIds) void socket.join(`tenant:${t}:orders`)
     }
     // Reservation events go to managers, admins, cashiers (the host stand)
@@ -243,19 +318,20 @@ export function initWebSocket(fastify: FastifyInstance): SocketIOServer {
       if (data?.conceptId) void joinIfOwned(socket, tenantIds, 'concept', data.conceptId)
     })
 
-    // Client → Server events (KDS interactions)
-    socket.on('kds:bump', (data: { itemId: string }) => {
-      // Handled in orders module; socket just receives it
-      socket.to('all-orders').emit('kds:bump', data)
-    })
-
-    socket.on('kds:hold', (data: { itemId: string }) => {
-      socket.to('all-orders').emit('kds:hold', data)
-    })
-
-    socket.on('kds:recall', (data: { itemId: string }) => {
-      socket.to('all-orders').emit('kds:recall', data)
-    })
+    // Client → Server events (KDS interactions). Handled in the orders module;
+    // the socket only relays them to the other screens of the item's OWN
+    // company, and only when the sender belongs to that company — a guessed
+    // item id from another company is dropped. Only the item id is relayed.
+    const relayKds = (event: 'kds:bump' | 'kds:hold' | 'kds:recall') => (data: { itemId?: unknown }) => {
+      const itemId = typeof data?.itemId === 'string' ? data.itemId : null
+      if (!itemId) return
+      void tenantOfOrderItem(itemId).then((owner) => {
+        if (owner && tenantIds.includes(owner)) socket.to(`tenant:${owner}:orders`).emit(event, { itemId })
+      })
+    }
+    socket.on('kds:bump', relayKds('kds:bump'))
+    socket.on('kds:hold', relayKds('kds:hold'))
+    socket.on('kds:recall', relayKds('kds:recall'))
 
     socket.on('disconnect', (reason) => {
       if (heartbeatHandle) clearInterval(heartbeatHandle)
@@ -319,15 +395,25 @@ export function emitOrderNew(order: {
 }
 
 export function emitOrderUpdated(orderId: string, status: string) {
-  safeEmit('emitOrderUpdated', (ws) => {
-    ws.to('all-orders').emit('order:updated', { orderId, status })
+  // Company fan-out only: an order whose company can't be resolved is not
+  // broadcast (clients catch up via the polling fallback).
+  void tenantOfOrder(orderId).then((tenantId) => {
+    if (!tenantId) return
+    safeEmit('emitOrderUpdated', (ws) => {
+      ws.to(`tenant:${tenantId}:orders`).emit('order:updated', { orderId, status })
+    })
   })
 }
 
 export function emitItemUpdated(itemId: string, status: string, stationId: string | null) {
   safeEmit('emitItemUpdated', (ws) => {
     if (stationId) ws.to(`station:${stationId}`).emit('item:updated', { itemId, status, stationId })
-    ws.to('all-orders').emit('item:updated', { itemId, status, stationId })
+  })
+  void tenantOfOrderItem(itemId).then((tenantId) => {
+    if (!tenantId) return
+    safeEmit('emitItemUpdated', (ws) => {
+      ws.to(`tenant:${tenantId}:orders`).emit('item:updated', { itemId, status, stationId })
+    })
   })
 }
 

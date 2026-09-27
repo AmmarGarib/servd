@@ -1,10 +1,9 @@
 'use client'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../lib/api'
 import { formatDistanceToNowStrict } from 'date-fns'
-
-function fmt(cents: number) { return `PKR ${(cents / 100).toLocaleString()}` }
+import { fmtPkrWhole } from '../../lib/money'
 
 interface Customer {
   id: string; name: string; phone: string | null; email: string | null
@@ -484,6 +483,15 @@ export default function CRMPage() {
   const [walletAmount, setWalletAmount] = useState('')
   const [activeSegmentKey, setActiveSegmentKey] = useState<string | null>(null)
 
+  // Deep link: /crm?customer=<id> opens that customer's detail pane. There is
+  // no /crm/:id page — orders, complaints and the old /customers list link
+  // here (D11). Read once on mount (window, not useSearchParams, so the page
+  // needs no Suspense boundary).
+  useEffect(() => {
+    const id = new URLSearchParams(window.location.search).get('customer')
+    if (id) { setTab('customers'); setSelectedId(id) }
+  }, [])
+
   const { data: customersResp, isLoading } = useQuery({
     queryKey: ['customers', search],
     queryFn: () => api.get<{ data: Customer[]; cursor: string | null; hasMore: boolean }>(`/crm/customers?search=${encodeURIComponent(search)}&limit=50`),
@@ -532,7 +540,9 @@ export default function CRMPage() {
     },
   })
 
-  const selected = customers.find((c) => c.id === selectedId) ?? null
+  // A deep-linked customer may not be in the first page of the list; the
+  // detail fetch alone is enough to open the pane.
+  const selected = customers.find((c) => c.id === selectedId) ?? customerDetail ?? null
 
   const TIER_COLORS: Record<string, string> = {
     bronze: 'text-orange-400 bg-orange-900/30',
@@ -670,7 +680,7 @@ export default function CRMPage() {
                       )}
                     </div>
                     <p className="text-xs text-kds-subtext truncate">{c.phone ?? c.email ?? 'No contact'}</p>
-                    <p className="text-xs text-kds-subtext">{c._count.orders} orders · {fmt(c.totalSpentCents)}</p>
+                    <p className="text-xs text-kds-subtext">{c._count.orders} orders · {fmtPkrWhole(c.totalSpentCents)}</p>
                   </div>
                 </button>
               ))}
@@ -717,7 +727,7 @@ export default function CRMPage() {
           {tab === 'segments' && smartData && (
             <div className="border-t border-kds-border px-4 py-3 space-y-1">
               <p className="text-xs text-kds-subtext">Repeat rate: <span className="text-kds-text font-bold">{smartData.summary.repeatRate}%</span></p>
-              <p className="text-xs text-kds-subtext">Avg order: <span className="text-kds-text font-bold">{fmt(smartData.summary.avgOrderValueCents)}</span></p>
+              <p className="text-xs text-kds-subtext">Avg order: <span className="text-kds-text font-bold">{fmtPkrWhole(smartData.summary.avgOrderValueCents)}</span></p>
             </div>
           )}
         </aside>
@@ -752,11 +762,11 @@ export default function CRMPage() {
                           <td className="px-4 py-3 font-semibold text-kds-text">{c.name}</td>
                           <td className="px-4 py-3 text-kds-subtext text-xs">{c.phone ?? '—'}</td>
                           <td className="px-4 py-3 text-kds-subtext text-xs">{c.email ?? '—'}</td>
-                          <td className="px-4 py-3 text-kds-green font-bold">{fmt(c.totalSpentCents ?? 0)}</td>
+                          <td className="px-4 py-3 text-kds-green font-bold">{fmtPkrWhole(c.totalSpentCents ?? 0)}</td>
                           <td className="px-4 py-3 text-kds-subtext text-xs">
                             {c.lastOrderAt ? formatDistanceToNowStrict(new Date(c.lastOrderAt)) + ' ago' : '—'}
                           </td>
-                          <td className="px-4 py-3 text-kds-subtext text-xs">{fmt(c.walletBalance ?? 0)}</td>
+                          <td className="px-4 py-3 text-kds-subtext text-xs">{fmtPkrWhole(c.walletBalance ?? 0)}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -782,7 +792,7 @@ export default function CRMPage() {
                       <p className="text-xs text-kds-subtext mt-1">Repeat rate</p>
                     </div>
                     <div className="text-center">
-                      <p className="text-2xl font-black text-kds-amber">{fmt(smartData.summary.avgOrderValueCents)}</p>
+                      <p className="text-2xl font-black text-kds-amber">{fmtPkrWhole(smartData.summary.avgOrderValueCents)}</p>
                       <p className="text-xs text-kds-subtext mt-1">Avg order value</p>
                     </div>
                   </div>
@@ -838,7 +848,7 @@ export default function CRMPage() {
                       <p className="text-xs text-kds-subtext mt-0.5">Orders</p>
                     </div>
                     <div className="text-center">
-                      <p className="text-lg font-black text-kds-green">{fmt(customerDetail.totalSpentCents)}</p>
+                      <p className="text-lg font-black text-kds-green">{fmtPkrWhole(customerDetail.totalSpentCents)}</p>
                       <p className="text-xs text-kds-subtext mt-0.5">Spent</p>
                     </div>
                     <div className="text-center">
@@ -848,7 +858,7 @@ export default function CRMPage() {
                       <p className="text-xs text-kds-subtext mt-0.5">Loyalty pts</p>
                     </div>
                     <div className="text-center">
-                      <p className="text-lg font-black text-kds-blue">{fmt(customerDetail.walletBalance)}</p>
+                      <p className="text-lg font-black text-kds-blue">{fmtPkrWhole(customerDetail.walletBalance)}</p>
                       <p className="text-xs text-kds-subtext mt-0.5">Wallet</p>
                     </div>
                   </div>
@@ -925,7 +935,7 @@ export default function CRMPage() {
                               </p>
                             </div>
                             <div className="text-right shrink-0">
-                              <p className="text-sm font-bold text-kds-green">{fmt(order.totalCents)}</p>
+                              <p className="text-sm font-bold text-kds-green">{fmtPkrWhole(order.totalCents)}</p>
                               <p className="text-xs text-kds-subtext mt-0.5">
                                 {formatDistanceToNowStrict(new Date(order.placedAt))} ago
                               </p>

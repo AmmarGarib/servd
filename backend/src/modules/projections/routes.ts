@@ -11,11 +11,13 @@
 // tenantCostShareCents field on each Position, not via brand-share rules
 // hardcoded in projections.
 
-import type { FastifyInstance } from 'fastify'
+import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, MANAGERS } from '../auth/middleware.js'
-import { resolveTenantScope } from '../../lib/tenantScope.js'
+import { scopeTenantWhere } from '../../lib/tenantScope.js'
+import { AppError, NotFoundError } from '../../lib/errors.js'
+import { requireActiveCompany, assertConceptAttachable, assertConceptOfCompany } from '../financePlanning/companyRefs.js'
 
 const brandInputSchema = z.object({
   conceptId:           z.string(),
@@ -60,10 +62,25 @@ function calcDailyCovers(b: { seats: number; tableTurnHours: number; seatUtiliza
   return Math.round(b.seats * (b.seatUtilizationPct / 100) * (totalHours / b.tableTurnHours))
 }
 
+// One company per scenario (owner decision 25). Projection.tenantId is
+// stamped with the ACTIVE company at create; every later read or write by id
+// resolves the scenario inside the operator's companies first (foreign = 404),
+// and brands, staff, opex and capex are all read from the scenario's own
+// company only.
+async function findProjectionInScope(req: FastifyRequest, id: string, mode: 'read' | 'write') {
+  const projection = await prisma.projection.findFirst({
+    where: { id, ...(await scopeTenantWhere(req, mode)) },
+    select: { id: true, tenantId: true },
+  })
+  if (!projection) throw new NotFoundError('Projection', id)
+  return projection
+}
+
 export async function projectionsRoutes(fastify: FastifyInstance) {
   // ── List all scenarios ────────────────────────────────────────────────
   fastify.get('/', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
     const scenarios = await prisma.projection.findMany({
+      where: await scopeTenantWhere(req, 'read'),
       include: {
         brands: {
           include: { concept: { select: { id: true, name: true, slug: true, primaryColor: true, tenantId: true } } },
@@ -71,12 +88,10 @@ export async function projectionsRoutes(fastify: FastifyInstance) {
       },
       orderBy: { createdAt: 'desc' },
     })
-    // Trim each scenario's brand list to the caller's tenant scope so the
-    // payload doesn't expose other companies' concept names/colors.
-    const scope = await resolveTenantScope(req)
+    // A scenario only ever shows its own company's brands.
     return scenarios.map((s) => ({
       ...s,
-      brands: s.brands.filter((b) => b.concept.tenantId != null && scope.tenantIds.includes(b.concept.tenantId)),
+      brands: s.brands.filter((b) => b.concept.tenantId != null && b.concept.tenantId === s.tenantId),
     }))
   })
 
@@ -85,33 +100,33 @@ export async function projectionsRoutes(fastify: FastifyInstance) {
     '/:id/computed',
     { preHandler: requireAuth(...MANAGERS) },
     async (req, reply) => {
-      const projection = await prisma.projection.findUnique({
-        where: { id: req.params.id },
+      const projection = await prisma.projection.findFirst({
+        where: { id: req.params.id, ...(await scopeTenantWhere(req, 'read')) },
         include: {
           brands: {
             include: { concept: { select: { id: true, name: true, slug: true, primaryColor: true, tenantId: true, deletedAt: true } } },
           },
         },
       })
-      if (!projection) return reply.status(404).send({ error: { code: 'NOT_FOUND' } })
+      if (!projection) throw new NotFoundError('Projection', req.params.id)
+      if (!projection.tenantId) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Projection not found' } })
+      const tenantId = projection.tenantId
 
-      // Scope the view to the active company (or the full portfolio in
-      // "All companies" mode) — same mechanism as /concepts, so the brands
-      // shown here always match the brands shown everywhere else. The
-      // scenario itself stores every brand ever added; we just filter the
-      // response. "Combined" then sums only the visible brands.
-      const scope = await resolveTenantScope(req)
+      // One company per scenario: only the scenario's own company's live
+      // brands, and every actual below is read from that company alone.
+      // "Combined" then sums only those brands.
       const visibleBrandInputs = projection.brands.filter((b) =>
-        !b.concept.deletedAt
-        && b.concept.tenantId != null
-        && scope.tenantIds.includes(b.concept.tenantId),
+        !b.concept.deletedAt && b.concept.tenantId === tenantId,
       )
 
       const conceptIds = visibleBrandInputs.map((b) => b.conceptId)
 
-      // Aggregate staff cost per concept (active positions only)
+      // Aggregate staff cost per concept. Frozen and archived seats are out
+      // (decision 25); tenantCostShareCents is already this company's share
+      // of a shared / JV seat.
       const positions = await prisma.position.findMany({
         where: {
+          tenantId,
           conceptId: { in: conceptIds },
           status: { in: ['open', 'filled'] },
         },
@@ -126,7 +141,7 @@ export async function projectionsRoutes(fastify: FastifyInstance) {
 
       // Aggregate monthly-equivalent opex per concept
       const opexLines = await prisma.opexLine.findMany({
-        where: { conceptId: { in: conceptIds }, isActive: true },
+        where: { conceptId: { in: conceptIds }, isActive: true, category: { tenantId, deletedAt: null } },
         select: { conceptId: true, amountCents: true, cadence: true },
       })
       const opexByBrand = new Map<string, number>()
@@ -142,7 +157,7 @@ export async function projectionsRoutes(fastify: FastifyInstance) {
 
       // Capex total per concept (working-capital buffer reference)
       const capexProjects = await prisma.capexProject.findMany({
-        where: { conceptId: { in: conceptIds } },
+        where: { tenantId, conceptId: { in: conceptIds }, deletedAt: null },
         select: { conceptId: true, totalAskCents: true },
       })
       const capexByBrand = new Map<string, number>()
@@ -284,9 +299,17 @@ export async function projectionsRoutes(fastify: FastifyInstance) {
       name:   z.string().min(1).max(120).default('Default scenario'),
       brands: z.array(brandInputSchema).default([]),
     }).parse(req.body)
+    const tenantId = requireActiveCompany(req)
+    const seen = new Set<string>()
+    for (const b of body.brands) {
+      if (seen.has(b.conceptId)) throw new AppError('DUPLICATE_BRAND', 'Each brand may appear once per scenario', 422)
+      seen.add(b.conceptId)
+      await assertConceptAttachable(req, b.conceptId)
+    }
 
     return prisma.projection.create({
       data: {
+        tenantId,
         name: body.name,
         brands: { create: body.brands },
       },
@@ -300,7 +323,8 @@ export async function projectionsRoutes(fastify: FastifyInstance) {
       name:      z.string().min(1).max(120).optional(),
       rampCurve: z.array(z.number().min(0).max(5)).length(12).optional(),
     }).parse(req.body)
-    return prisma.projection.update({ where: { id: req.params.id }, data: body })
+    const projection = await findProjectionInScope(req, req.params.id, 'write')
+    return prisma.projection.update({ where: { id: projection.id }, data: body })
   })
 
   // ── Upsert one brand's inputs ─────────────────────────────────────────
@@ -309,9 +333,13 @@ export async function projectionsRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuth(...MANAGERS) },
     async (req) => {
       const body = brandInputUpdateSchema.parse(req.body)
+      const projection = await findProjectionInScope(req, req.params.id, 'write')
+      // The brand must be the SCENARIO's company's — never another company's,
+      // even one the operator also belongs to.
+      await assertConceptOfCompany(projection.tenantId, req.params.conceptId)
       return prisma.projectionBrandInput.upsert({
-        where: { projectionId_conceptId: { projectionId: req.params.id, conceptId: req.params.conceptId } },
-        create: { projectionId: req.params.id, conceptId: req.params.conceptId, ...body },
+        where: { projectionId_conceptId: { projectionId: projection.id, conceptId: req.params.conceptId } },
+        create: { projectionId: projection.id, conceptId: req.params.conceptId, ...body },
         update: body,
       })
     },
@@ -322,16 +350,19 @@ export async function projectionsRoutes(fastify: FastifyInstance) {
     '/:id/brands/:conceptId',
     { preHandler: requireAuth(...MANAGERS) },
     async (req) => {
-      await prisma.projectionBrandInput.delete({
-        where: { projectionId_conceptId: { projectionId: req.params.id, conceptId: req.params.conceptId } },
+      const projection = await findProjectionInScope(req, req.params.id, 'write')
+      const { count } = await prisma.projectionBrandInput.deleteMany({
+        where: { projectionId: projection.id, conceptId: req.params.conceptId },
       })
+      if (count === 0) throw new NotFoundError('ProjectionBrandInput', req.params.conceptId)
       return { ok: true }
     },
   )
 
   // ── Delete a scenario ─────────────────────────────────────────────────
   fastify.delete<{ Params: { id: string } }>('/:id', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
-    await prisma.projection.delete({ where: { id: req.params.id } })
+    const projection = await findProjectionInScope(req, req.params.id, 'write')
+    await prisma.projection.delete({ where: { id: projection.id } })
     return { ok: true }
   })
 }

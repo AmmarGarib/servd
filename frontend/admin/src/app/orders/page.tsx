@@ -7,6 +7,7 @@ import { useRoleModules, modulesForRole } from '../../store/roleModules'
 import type { AppRole } from '../../lib/appRoles'
 import { formatDistanceToNowStrict } from 'date-fns'
 import Link from 'next/link'
+import { fmtPkrWhole } from '../../lib/money'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -29,8 +30,6 @@ async function reprintReceipt(orderId: string) {
     URL.revokeObjectURL(url)
   }
 }
-
-function fmt(cents: number) { return `PKR ${(cents / 100).toFixed(0)}` }
 
 const STATUS_COLORS: Record<string, string> = {
   received:  'bg-kds-blue/20 text-kds-blue',
@@ -185,9 +184,9 @@ export default function OrdersPage() {
           <h1 className="text-xl md:text-2xl font-black text-kds-text mt-0.5">Orders</h1>
           <p className="text-xs md:text-sm text-kds-subtext">Live pipeline and history</p>
         </div>
-        <Link href="/kds/all"
+        <Link href="/expo"
           className="shrink-0 rounded-xl border border-kds-border px-3 py-1.5 md:px-4 md:py-2 text-xs md:text-sm text-kds-subtext hover:border-kds-green hover:text-kds-green transition-colors">
-          Open KDS ↗
+          Open Expo ↗
         </Link>
       </header>
 
@@ -294,7 +293,7 @@ export default function OrdersPage() {
                             </p>
                             <div className="flex items-center justify-between mt-1.5">
                               <span className="text-xs text-kds-subtext">{order.items.length} item{order.items.length !== 1 ? 's' : ''}</span>
-                              <span className="text-xs font-bold text-kds-green">{fmt(order.totalCents)}</span>
+                              <span className="text-xs font-bold text-kds-green">{fmtPkrWhole(order.totalCents)}</span>
                             </div>
                             {expandedId === order.id && (
                               <div className="mt-2 pt-2 border-t border-kds-border/50 space-y-1">
@@ -404,7 +403,7 @@ export default function OrdersPage() {
                                   )}
                                 </td>
                                 <td className="px-4 py-3 text-kds-subtext">{order.items.length}</td>
-                                <td className="px-4 py-3 font-bold text-kds-green">{fmt(order.totalCents)}</td>
+                                <td className="px-4 py-3 font-bold text-kds-green">{fmtPkrWhole(order.totalCents)}</td>
                                 <td className="px-4 py-3">
                                   <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${STATUS_COLORS[order.status] ?? ''}`}>
                                     {order.status}
@@ -477,7 +476,7 @@ export default function OrdersPage() {
                                         <div key={item.id} className="flex items-center gap-3 text-xs">
                                           <span className="text-kds-subtext">{item.quantity}×</span>
                                           <span className="text-kds-text">{item.name}</span>
-                                          <span className="ml-auto text-kds-subtext">{fmt(item.unitPriceCents * item.quantity)}</span>
+                                          <span className="ml-auto text-kds-subtext">{fmtPkrWhole(item.unitPriceCents * item.quantity)}</span>
                                         </div>
                                       ))}
                                       {order.deliveryNotes && (

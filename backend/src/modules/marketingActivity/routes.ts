@@ -5,6 +5,7 @@
 import type { FastifyInstance } from 'fastify'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, MARKETING_TEAM, MANAGERS } from '../auth/middleware.js'
+import { scopeTenantWhere } from '../../lib/tenantScope.js'
 
 const MARKETING_ACTIONS = [
   'campaign.create', 'campaign.send', 'campaign.update',
@@ -27,8 +28,11 @@ export async function marketingActivityRoutes(fastify: FastifyInstance) {
       const limit = Math.min(parseInt(req.query.limit ?? '100', 10), 500)
       const since = new Date(Date.now() - days * 86_400_000)
 
+      // Company-scoped: AuditLog.tenantId is the company the actor was working
+      // in. Legacy rows with no company are not shown here.
       const rows = await prisma.auditLog.findMany({
         where: {
+          ...(await scopeTenantWhere(req, 'read')),
           createdAt: { gte: since },
           action: { in: [...MARKETING_ACTIONS] },
           ...(req.query.userId && { userId: req.query.userId }),
@@ -54,9 +58,10 @@ export async function marketingActivityRoutes(fastify: FastifyInstance) {
 
   // GET /marketing/team — list of marketing-role users + their last activity
   fastify.get('/team', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
+    const t = await scopeTenantWhere(req, 'read')
     const users = await prisma.user.findMany({
       // Company-scoped: only the active company's (or portfolio's) marketing staff.
-      where: { role: 'marketing', isActive: true, tenantId: req.staffUser!.tenantFilter },
+      where: { role: 'marketing', isActive: true, ...t },
       select: { id: true, name: true, email: true, role: true, createdAt: true },
       orderBy: { name: 'asc' },
     })
@@ -65,7 +70,7 @@ export async function marketingActivityRoutes(fastify: FastifyInstance) {
     const lastSeen = await Promise.all(
       users.map(async (u) => {
         const last = await prisma.auditLog.findFirst({
-          where: { userId: u.id, action: { in: [...MARKETING_ACTIONS] } },
+          where: { userId: u.id, action: { in: [...MARKETING_ACTIONS] }, ...t },
           orderBy: { createdAt: 'desc' },
           select: { createdAt: true, action: true },
         })
@@ -84,18 +89,18 @@ export async function marketingActivityRoutes(fastify: FastifyInstance) {
       const days = Math.min(parseInt(req.query.days ?? '30', 10), 365)
       const since = new Date(Date.now() - days * 86_400_000)
 
-      // Company scoping where the model allows it: promos + content events are
-      // concept-scoped (null concept = org-wide, always counted). CampaignSend,
-      // MediaAsset, and AuditLog carry no tenant dimension — those counts stay
-      // org-wide by model.
-      const tf = req.staffUser!.tenantFilter
-      const conceptScoped = { OR: [{ concept: { tenantId: tf } }, { conceptId: null }] }
+      // Company-scoped throughout. Campaigns, promos, content events, media and
+      // the audit log carry tenantId; a legacy promo / content event with no
+      // company falls back to its brand's company (only when tenantId is null).
+      // Rows with neither are nobody's and are not counted.
+      const t = await scopeTenantWhere(req, 'read')
+      const conceptScoped = { OR: [t, { AND: [{ tenantId: null }, { concept: t }] }] }
       const [campaigns, clickers, openers, promosCreated, promoUsages, contentEvents, mediaUploads, marketingActions] = await Promise.all([
         // Campaign sends — sentAt is when it actually went out
-        prisma.campaignSend.count({ where: { sentAt: { gte: since } } }).catch(() => 0),
+        prisma.campaignSend.count({ where: { sentAt: { gte: since }, campaign: t } }).catch(() => 0),
         // Unique clickers / openers (for CTR + open rate)
-        prisma.campaignSend.count({ where: { sentAt: { gte: since }, firstClickedAt: { not: null } } }).catch(() => 0),
-        prisma.campaignSend.count({ where: { sentAt: { gte: since }, firstOpenedAt: { not: null } } }).catch(() => 0),
+        prisma.campaignSend.count({ where: { sentAt: { gte: since }, firstClickedAt: { not: null }, campaign: t } }).catch(() => 0),
+        prisma.campaignSend.count({ where: { sentAt: { gte: since }, firstOpenedAt: { not: null }, campaign: t } }).catch(() => 0),
         // Promos
         prisma.promoCode.count({ where: { createdAt: { gte: since }, ...conceptScoped } }).catch(() => 0),
         // Promo redemptions (impact)
@@ -103,9 +108,9 @@ export async function marketingActivityRoutes(fastify: FastifyInstance) {
         // Calendar / content posts
         prisma.contentEvent.count({ where: { createdAt: { gte: since }, ...conceptScoped } }).catch(() => 0),
         // Marketing-category media
-        prisma.mediaAsset.count({ where: { createdAt: { gte: since }, category: { in: ['marketing', 'shoot'] } } }).catch(() => 0),
+        prisma.mediaAsset.count({ where: { createdAt: { gte: since }, category: { in: ['marketing', 'shoot'] }, ...t } }).catch(() => 0),
         // Total marketing actions in audit log
-        prisma.auditLog.count({ where: { createdAt: { gte: since }, action: { in: [...MARKETING_ACTIONS] } } }),
+        prisma.auditLog.count({ where: { createdAt: { gte: since }, action: { in: [...MARKETING_ACTIONS] }, ...t } }),
       ])
 
       return {

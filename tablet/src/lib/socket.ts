@@ -4,14 +4,14 @@
 // screens to subscribe ergonomically.
 //
 // Rooms the backend emits to (see backend/src/lib/ws.ts):
-//   - all-orders           (every order on the venue)
+//   - tenant:{id}:orders   (every order of the signed-in company — the server
+//                           joins us on connect; there is no cross-company room)
 //   - station:{id}         (single KDS station)
 //   - concept:{id}         (single brand)
 //   - reservations:all     (every reservation across all brands)
 //
-// We join `all-orders` and `reservations:all` automatically on connect, then
-// per-station / per-concept rooms are joined imperatively by the screen that
-// needs them.
+// We join `reservations:all` automatically on connect, then per-station /
+// per-concept rooms are joined imperatively by the screen that needs them.
 
 import Constants from 'expo-constants'
 import { io, Socket } from 'socket.io-client'
@@ -36,7 +36,6 @@ export function getSocket(): Socket {
   })
   socket.on('connect', () => {
     // Re-join all rooms we asked for. Server is dumb about reconnects.
-    socket?.emit('join', 'all-orders')
     socket?.emit('join', 'reservations:all')
     for (const room of joinedRooms) socket?.emit('join', room)
   })

@@ -217,7 +217,7 @@ function ReservationRow({ r, first }: { r: Reservation; first: boolean }) {
     : r.status === 'cancelled' || r.status === 'no_show' ? '#6E7186'
     : '#F59E0B'
   return (
-    <Link href={`/reservations/${r.id}`} style={{
+    <Link href="/reservations" style={{
       display: 'grid', gridTemplateColumns: '5rem 1fr 4rem 5rem',
       gap: '0.9rem', alignItems: 'center',
       padding: '0.85rem 1.1rem',

@@ -56,10 +56,12 @@ export default function TimeClockScreen() {
     try {
       const photo = await cameraRef.current.takePictureAsync({ quality: 0.5, skipProcessing: true })
       if (!photo?.uri) return null
-      const presign = await api.post<{ url: string; publicUrl: string }>('/media/upload-url', {
-        contentType: 'image/jpeg', purpose: 'clockin-selfie',
-      })
-      const up = await FileSystem.uploadAsync(presign.url, photo.uri, {
+      // GET /media/upload-url is the one presigner (shared with admin); it
+      // returns { uploadUrl, publicUrl }. This used to POST, which 404'd.
+      const presign = await api.get<{ uploadUrl: string; publicUrl: string }>(
+        `/media/upload-url?filename=clockin-${Date.now()}.jpg&contentType=image/jpeg&category=clockin`,
+      )
+      const up = await FileSystem.uploadAsync(presign.uploadUrl, photo.uri, {
         httpMethod: 'PUT',
         headers: { 'Content-Type': 'image/jpeg' },
         uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,

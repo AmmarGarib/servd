@@ -10,8 +10,25 @@ import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, MANAGERS } from '../auth/middleware.js'
 import { flagException } from '../../lib/exceptions.js'
+import { AppError, NotFoundError } from '../../lib/errors.js'
+import { scopeTenantWhere } from '../../lib/tenantScope.js'
+import { assertConceptOfCompany, assertCapexProjectOfCompany, assertBankAccountOfCompany } from '../financePlanning/companyRefs.js'
 
 const cadenceEnum = z.enum(['monthly', 'quarterly', 'annual', 'per_use'])
+
+// Every id an opex line points at — its category, brand, capex project and
+// paying bank account — must belong to the line's own company (its
+// category's). Checked on create and on every PATCH that sets one, so a
+// partial update can never re-bind a line to another company's rows. Null
+// clears a link and needs no check.
+async function assertLineRefsOfCompany(
+  tenantId: string | null,
+  refs: { conceptId?: string | null; projectId?: string | null; bankAccountId?: string | null },
+): Promise<void> {
+  if (refs.conceptId)     await assertConceptOfCompany(tenantId, refs.conceptId)
+  if (refs.projectId)     await assertCapexProjectOfCompany(tenantId, refs.projectId)
+  if (refs.bankAccountId) await assertBankAccountOfCompany(tenantId, refs.bankAccountId)
+}
 
 const lineSchema = z.object({
   categoryId:    z.string().min(1),
@@ -116,17 +133,14 @@ export async function opexRoutes(fastify: FastifyInstance) {
 
   fastify.post('/lines', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
     const body = lineSchema.parse(req.body)
-    // Verify category belongs to active tenant.
+    // A new line binds to the ACTIVE company: its category must be one of the
+    // active company's, and everything else it names must be that company's.
     const cat = await prisma.opexCategory.findFirst({
-      where: { id: body.categoryId, tenantId: req.staffUser!.tenantFilter, deletedAt: null },
+      where: { id: body.categoryId, deletedAt: null, ...(await scopeTenantWhere(req, 'create')) },
+      select: { tenantId: true },
     })
-    if (!cat) return reply.status(403).send({ error: { code: 'CROSS_TENANT', message: 'Category does not belong to your active company' } })
-    if (body.conceptId) {
-      const concept = await prisma.concept.findFirst({
-        where: { id: body.conceptId, tenantId: req.staffUser!.tenantFilter, deletedAt: null },
-      })
-      if (!concept) return reply.status(403).send({ error: { code: 'CROSS_TENANT', message: 'Concept does not belong to your active company' } })
-    }
+    if (!cat) throw new AppError('CATEGORY_NOT_IN_COMPANY', 'That category does not belong to the active company', 422)
+    await assertLineRefsOfCompany(cat.tenantId, body)
     const line = await prisma.opexLine.create({
       data: {
         ...body,
@@ -141,10 +155,21 @@ export async function opexRoutes(fastify: FastifyInstance) {
     const owned = await prisma.opexLine.findFirst({
       where: {
         id: req.params.id,
-        category: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
+        category: { deletedAt: null, ...(await scopeTenantWhere(req, 'write')) },
       },
+      include: { category: { select: { tenantId: true } } },
     })
-    if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Line not found in your active company' } })
+    if (!owned) throw new NotFoundError('OpexLine', req.params.id)
+    // The line stays in its company: a new category must be the same
+    // company's, and so must any brand / project / bank account being set.
+    const tenantId = owned.category.tenantId
+    if (body.categoryId !== undefined && body.categoryId !== owned.categoryId) {
+      const cat = tenantId
+        ? await prisma.opexCategory.findFirst({ where: { id: body.categoryId, tenantId, deletedAt: null }, select: { id: true } })
+        : null
+      if (!cat) throw new AppError('CATEGORY_NOT_IN_COMPANY', 'That category does not belong to this company', 422)
+    }
+    await assertLineRefsOfCompany(tenantId, body)
     return prisma.opexLine.update({
       where: { id: req.params.id },
       data: {

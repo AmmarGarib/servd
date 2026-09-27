@@ -28,16 +28,13 @@ import { requireAuth, MANAGERS, ADMIN_ONLY, ALL_STAFF, FINANCE_TEAM } from '../a
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import {
   scopeTenantWhere, assertConceptOwned, conceptIdsInScope, conceptWhere, type ScopeMode,
+  activeTenantId as requireActiveTenant,
 } from '../../lib/tenantScope.js'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-/** The company a create binds to. 422 when the operator has no active company. */
-function activeTenantId(req: FastifyRequest): string {
-  const tenantId = req.staffUser?.tenantId
-  if (!tenantId) throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company before saving this setting', 422)
-  return tenantId
-}
+/** The company a create binds to (lib/tenantScope). 422 when the operator has no active company. */
+const activeTenantId = (req: FastifyRequest): string => requireActiveTenant(req, 'settings are saved per company')
 
 /**
  * Where-fragment for brand-optional setup rows (delivery zones, notification
@@ -888,6 +885,7 @@ export async function setupRoutes(fastify: FastifyInstance) {
     if (lock) {
       const { flagException } = await import('../../lib/exceptions.js')
       await flagException({
+        tenantId: lock.tenantId,
         kind: 'period_reopened',
         severity: 'high',
         title: `Period reopened — books unlocked through ${lock.lockedThrough.toISOString().slice(0, 10)}`,
@@ -957,6 +955,9 @@ export async function setupRoutes(fastify: FastifyInstance) {
 
   // ════════════════════════════════════════════════════════════════════════
   // 16. Hours of operation — per-concept day-of-week windows
+  // The ONE writer of ServiceHours (D1). Storefront open/closed and the
+  // reservations availability search both read these rows; a day may carry
+  // several windows (split lunch / dinner service).
   // ════════════════════════════════════════════════════════════════════════
 
   fastify.get<{ Params: { conceptId: string } }>('/hours/:conceptId',
@@ -979,7 +980,7 @@ export async function setupRoutes(fastify: FastifyInstance) {
           openMin:      z.number().int().min(0).max(1440),
           closeMin:     z.number().int().min(0).max(1440),
           isReservable: z.boolean().default(true),
-        })),
+        })).max(50),   // several windows per day (split lunch / dinner) are allowed
       }).parse(req.body)
       await assertConceptOwned(req, req.params.conceptId, 'write')
       // Replace-all so the editor's "uncheck a day" actually removes it.
@@ -994,51 +995,11 @@ export async function setupRoutes(fastify: FastifyInstance) {
   )
 
   // ════════════════════════════════════════════════════════════════════════
-  // 17. Holidays / closures — concept blackout windows
+  // 17. Holidays / closures live in /reservations/blockouts (D2): one writer
+  // for ConceptBlockout, validated against the BlockoutKind enum. The old
+  // /setup/holidays writer accepted a 'special_hours' kind the enum does not
+  // have (cast `as never`), so those rows never saved.
   // ════════════════════════════════════════════════════════════════════════
-
-  fastify.get('/holidays', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
-    const conceptId = (req.query as { conceptId?: string }).conceptId
-    return prisma.conceptBlockout.findMany({
-      where: await conceptWhere(req, conceptId, 'read'),
-      orderBy: { startTime: 'desc' },
-      include: { concept: { select: { id: true, name: true, slug: true } } },
-    })
-  })
-
-  fastify.post('/holidays', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
-    const body = z.object({
-      conceptId:   z.string().uuid(),
-      kind:        z.enum(['closure', 'reduced_capacity', 'special_hours']).default('closure'),
-      startTime:   z.string(),                 // ISO date or datetime
-      endTime:     z.string(),
-      capacityCap: z.number().int().min(0).nullable().optional(),
-      reason:      z.string().max(200).nullable().optional(),
-    }).parse(req.body)
-    await assertConceptOwned(req, body.conceptId, 'create')
-    const created = await prisma.conceptBlockout.create({
-      data: {
-        conceptId:   body.conceptId,
-        kind:        body.kind as never,
-        startTime:   new Date(body.startTime),
-        endTime:     new Date(body.endTime),
-        capacityCap: body.capacityCap ?? null,
-        reason:      body.reason ?? null,
-        createdById: req.staffUser!.id,
-      },
-    })
-    return reply.status(201).send(created)
-  })
-
-  fastify.delete<{ Params: { id: string } }>('/holidays/:id', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
-    const existing = await prisma.conceptBlockout.findFirst({
-      where: { id: req.params.id, concept: { deletedAt: null, ...(await scopeTenantWhere(req, 'write')) } },
-      select: { id: true },
-    })
-    if (!existing) throw new NotFoundError('ConceptBlockout', req.params.id)
-    await prisma.conceptBlockout.delete({ where: { id: existing.id } })
-    return reply.status(204).send()
-  })
 
   // ════════════════════════════════════════════════════════════════════════
   // 18. Brand identity — logo / hero / palette / fonts (per concept)

@@ -8,18 +8,12 @@ import { verifyCustomerToken } from '../auth/service.js'
 import { ingestOrder } from '../orders/service.js'
 import { NotFoundError, AppError } from '../../lib/errors.js'
 import { reserveItem, settleCart, getAvailability, getBatchAvailability } from '../../lib/reservation.js'
-import { computeServiceCharge, computeDeliveryFee, tenantForConcept, haversineKm as zoneHaversineKm } from '../../lib/setup-config.js'
+import { computeServiceCharge, computeDeliveryFee, tenantForConcept } from '../../lib/setup-config.js'
+import { haversineKm } from '../../lib/geo.js'
 import type { OrderDTO } from '@servd/types'
 import { redis } from '../../lib/redis.js'
+import { scopeTenantWhere, conceptWhere } from '../../lib/tenantScope.js'
 
-function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
-  const R = 6371
-  const dLat = (lat2 - lat1) * Math.PI / 180
-  const dLng = (lng2 - lng1) * Math.PI / 180
-  const a = Math.sin(dLat / 2) ** 2
-    + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLng / 2) ** 2
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
-}
 
 // Snap rider coordinates to a ~110m grid before returning to customers.
 // 3 decimal places of latitude = ~111m; same in longitude at Karachi's
@@ -545,7 +539,7 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
       }
     }
     if (body.type === 'delivery' && body.deliveryLat != null && body.deliveryLng != null && concept.latitude != null && concept.longitude != null) {
-      const distKm = zoneHaversineKm(concept.latitude, concept.longitude, body.deliveryLat, body.deliveryLng)
+      const distKm = haversineKm(concept.latitude, concept.longitude, body.deliveryLat, body.deliveryLng)
       const zone = await computeDeliveryFee(itemTotal, distKm, concept.id)
       if (zone.zoneId && !zone.meetsMinimum) {
         throw new AppError('BELOW_ZONE_MINIMUM', `Order does not meet the delivery minimum for ${zone.zoneName}`, 400)
@@ -565,7 +559,9 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
     // row exists (or on the error paths below).
     let promoLock: string | null = null
     if (body.promoCode) {
-      const promo = await prisma.promoCode.findUnique({ where: { code: body.promoCode.toUpperCase() } })
+      // A code from another company is an unknown code: promos belong to the
+      // brand's company (owner decision, company separation sweep).
+      const promo = await prisma.promoCode.findFirst({ where: { code: body.promoCode.toUpperCase(), tenantId: concept.tenantId } })
       const now = new Date()
       if (!promo || !promo.isActive || promo.startAt > now || promo.endAt < now) {
         throw new AppError('INVALID_PROMO', 'Promo code is invalid or expired', 400)
@@ -752,7 +748,9 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
       // Apply up to the (post-tip) total, decrement balance, derecognise liability.
       const total = order.totalCents + (body.tipCents > 0 ? body.tipCents : 0)
       try {
-        const card = await prisma.giftCard.findUnique({ where: { code: body.giftCardCode.toUpperCase() } })
+        // A card from another company is "not found": cards are spent only at
+        // the selling company's brands (owner decision 14).
+        const card = await prisma.giftCard.findFirst({ where: { code: body.giftCardCode.toUpperCase(), tenantId: concept.tenantId } })
         // Expiry is enforced on the redeem endpoint; it has to be enforced
         // here too or an expired card still pays for a checkout.
         const expired = !!card?.expiresAt && card.expiresAt.getTime() < Date.now()
@@ -886,8 +884,14 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
     }
 
     // QR conversion tracking
+    // Only a QR code of THIS order's brand is credited — a client-supplied id
+    // for another brand's (or another company's) code is ignored rather than
+    // skewing that brand's conversion numbers.
     if (body.qrCodeId) {
-      await prisma.qrCode.update({ where: { id: body.qrCodeId }, data: { conversions: { increment: 1 } } }).catch(() => {})
+      await prisma.qrCode.updateMany({
+        where: { id: body.qrCodeId, conceptId: concept.id },
+        data: { conversions: { increment: 1 } },
+      }).catch(() => {})
     }
 
     return reply.status(201).send({ ...order, promoDiscountCents, walletAmountCents, loyaltyPointsRedeemed, loyaltyDiscountCents })
@@ -1417,15 +1421,20 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
 
       // Resolve concept (optional — promo may be brand-wide)
       let conceptId: string | null = null
+      let tenantId: string | null = null
       if (conceptSlug) {
-        const concept = await prisma.concept.findFirst({ where: { slug: conceptSlug, isActive: true }, select: { id: true } })
+        const concept = await prisma.concept.findFirst({ where: { slug: conceptSlug, isActive: true }, select: { id: true, tenantId: true } })
         conceptId = concept?.id ?? null
+        tenantId = concept?.tenantId ?? null
       }
+      // Without a brand there is no company to look the code up in.
+      if (!tenantId) return reply.send({ valid: false, reason: 'This code isn’t valid' })
 
       const promo = await prisma.promoCode.findFirst({
         where: {
           code,
           isActive: true,
+          tenantId,
           ...(conceptId ? { OR: [{ conceptId }, { conceptId: null }] } : {}),
         },
       })
@@ -1468,17 +1477,32 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
   )
 
   // GET /storefront/promos — public, active promos for homepage deals strip
-  fastify.get('/promos', async () => {
+  fastify.get<{ Querystring: { concept?: string } }>('/promos', async (req) => {
+    // The strip is a company's: with a brand slug it shows that company's
+    // promos, without one it shows nothing rather than every company's.
+    const concept = req.query.concept
+      ? await prisma.concept.findFirst({ where: { slug: req.query.concept, isActive: true }, select: { tenantId: true } })
+      : null
+    if (!concept?.tenantId) return []
     return prisma.storefrontPromo.findMany({
-      where: { isActive: true },
+      where: { isActive: true, tenantId: concept.tenantId },
       orderBy: { sortOrder: 'asc' },
       select: { id: true, emoji: true, badge: true, headline: true, sub: true, bg: true, shadow: true },
     })
   })
 
-  // GET /storefront/admin/promos — all promos (auth required)
-  fastify.get('/admin/promos', { preHandler: requireAuth(...MANAGERS) }, async () => {
-    return prisma.storefrontPromo.findMany({ orderBy: { sortOrder: 'asc' } })
+  // ── Admin: homepage deals strip ────────────────────────────────────────────
+  // StorefrontPromo rows belong to ONE company (tenantId, stamped with the
+  // ACTIVE company at create). The admin list shows the companies in view;
+  // edit/delete are 404 for another company's row. These used to be global —
+  // any manager at any company edited every company's strip.
+
+  // GET /storefront/admin/promos — the companies in view (auth required)
+  fastify.get('/admin/promos', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
+    return prisma.storefrontPromo.findMany({
+      where: await scopeTenantWhere(req, 'read'),
+      orderBy: { sortOrder: 'asc' },
+    })
   })
 
   // POST /storefront/admin/promos — create
@@ -1493,7 +1517,9 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
       sortOrder: z.number().int().default(0),
       isActive:  z.boolean().default(true),
     }).parse(req.body)
-    const promo = await prisma.storefrontPromo.create({ data: body })
+    const tenantId = req.staffUser?.tenantId
+    if (!tenantId) throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company first', 422)
+    const promo = await prisma.storefrontPromo.create({ data: { ...body, tenantId } })
     return reply.status(201).send(promo)
   })
 
@@ -1512,7 +1538,12 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
         sortOrder: z.number().int().optional(),
         isActive:  z.boolean().optional(),
       }).parse(req.body)
-      return prisma.storefrontPromo.update({ where: { id: req.params.id }, data: body })
+      const owned = await prisma.storefrontPromo.findFirst({
+        where: { id: req.params.id, ...(await scopeTenantWhere(req, 'write')) },
+        select: { id: true },
+      })
+      if (!owned) throw new NotFoundError('StorefrontPromo', req.params.id)
+      return prisma.storefrontPromo.update({ where: { id: owned.id }, data: body })
     },
   )
 
@@ -1521,7 +1552,12 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
     '/admin/promos/:id',
     { preHandler: requireAuth(...MANAGERS) },
     async (req, reply) => {
-      await prisma.storefrontPromo.delete({ where: { id: req.params.id } })
+      const owned = await prisma.storefrontPromo.findFirst({
+        where: { id: req.params.id, ...(await scopeTenantWhere(req, 'write')) },
+        select: { id: true },
+      })
+      if (!owned) throw new NotFoundError('StorefrontPromo', req.params.id)
+      await prisma.storefrontPromo.delete({ where: { id: owned.id } })
       return reply.status(204).send()
     },
   )
@@ -1531,10 +1567,18 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
     '/abandoned-carts/metrics',
     { preHandler: requireAuth(...MANAGERS) },
     async (req) => {
+      // Never unscoped: a named brand must be in view (404 otherwise), and no
+      // brand means every brand of the companies in view — not every company.
+      // (dateFrom/dateTo are merged into one range; the second used to
+      // overwrite the first.)
       const where = {
-        ...(req.query.conceptId && { conceptId: req.query.conceptId }),
-        ...(req.query.dateFrom && { abandonedAt: { gte: new Date(req.query.dateFrom) } }),
-        ...(req.query.dateTo && { abandonedAt: { lte: new Date(req.query.dateTo) } }),
+        ...(await conceptWhere(req, req.query.conceptId, 'read')),
+        ...((req.query.dateFrom || req.query.dateTo) && {
+          abandonedAt: {
+            ...(req.query.dateFrom && { gte: new Date(req.query.dateFrom) }),
+            ...(req.query.dateTo && { lte: new Date(req.query.dateTo) }),
+          },
+        }),
       }
       const [total, abandoned, recovered] = await Promise.all([
         prisma.abandonedCart.count({ where }),

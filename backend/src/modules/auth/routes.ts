@@ -95,19 +95,6 @@ const STAFF_ROLE_WITH_ADMIN = z.enum(ASSIGNABLE_ROLES_WITH_ADMIN as [UserRole, .
 export { isWeakPin } from './managerPin.js'
 import { clockIn, clockOut } from '../timeclock/service.js'
 
-function haversineMeters(lat1: number, lng1: number, lat2: number, lng2: number): number {
-  const R = 6_371_000
-  const toRad = (d: number) => (d * Math.PI) / 180
-  const dLat = toRad(lat2 - lat1)
-  const dLng = toRad(lng2 - lng1)
-  const a =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
-}
-
-
-
 export async function authRoutes(fastify: FastifyInstance) {
   // POST /auth/login — staff email+password login (brute-force protected)
   fastify.post('/login', async (req, reply) => {
@@ -601,45 +588,8 @@ export async function authRoutes(fastify: FastifyInstance) {
     return reply.status(204).send()
   })
 
-  // GET /auth/clock-logs — shift report for managers.
-  //
-  // Scoped by COMPANY: a manager sees the punches of staff who belong to the
-  // company (or companies, in portfolio view) they are looking at — primary
-  // company or a membership. It used to scope by the User.conceptIds brand
-  // whitelist, which nothing in the app writes and which was read off the
-  // session (where it never exists), so every non-admin got an empty report
-  // or a 403. Per owner decision 35 company membership is the scope; the
-  // whitelist column is kept but no longer read. Staff with no company are
-  // the CEO's to see, nobody else's.
-  fastify.get<{ Querystring: { date?: string; userId?: string } }>(
-    '/clock-logs',
-    { preHandler: requireAuth(...MANAGERS) },
-    async (req) => {
-      const date  = req.query.date ? new Date(req.query.date) : new Date()
-      const start = new Date(date); start.setHours(0, 0, 0, 0)
-      const end   = new Date(date); end.setHours(23, 59, 59, 999)
-
-      const scope = await resolveTenantScope(req)
-      const inScope = {
-        OR: [
-          { tenantId: { in: scope.tenantIds } },
-          { tenantMemberships: { some: { tenantId: { in: scope.tenantIds } } } },
-          ...(req.staffUser!.role === 'admin' ? [{ tenantId: null }] : []),
-        ],
-      }
-
-      return prisma.clockLog.findMany({
-        where: {
-          recordedAt: { gte: start, lte: end },
-          ...(req.query.userId && { userId: req.query.userId }),
-          // A userId outside the scope simply returns nothing — no oracle.
-          user: inScope,
-        },
-        include: { user: { select: { id: true, name: true, role: true } } },
-        orderBy: { recordedAt: 'desc' },
-      })
-    },
-  )
+  // The punch report is GET /time-clock/logs (admin /hr/attendance) — PKT day
+  // boundaries, attendance joined. The old /auth/clock-logs copy is gone (D6).
 
   // POST /auth/refresh — refresh access token
   fastify.post('/refresh', async (req, reply) => {

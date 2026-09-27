@@ -18,7 +18,7 @@ import { z } from 'zod'
 import { serviceClient as prisma } from '../../lib/prisma.js'
 import { requireAuth, KITCHEN_STAFF, MANAGERS } from '../auth/middleware.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
-import { scopeTenantWhere } from '../../lib/tenantScope.js'
+import { scopeTenantWhere, activeTenantId } from '../../lib/tenantScope.js'
 
 const KINDS = ['fridge', 'freezer', 'hot_hold', 'cooking', 'delivery', 'other'] as const
 
@@ -51,10 +51,16 @@ export function withinRange(readingC: number, minC: number | null, maxC: number 
 
 const WINDOW_MS = { daily: 86_400_000, weekly: 7 * 86_400_000, monthly: 30 * 86_400_000 } as const
 
-function activeTenant(req: { staffUser?: { tenantId: string | null } }): string {
-  const t = req.staffUser?.tenantId
-  if (!t) throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company first', 422)
-  return t
+
+/**
+ * A unit or cleaning task may only sit at a location of its OWN company. The
+ * client's locationId used to be stored unchecked, so a unit could be filed
+ * against another company's kitchen. 422, and never confirms the id exists.
+ */
+async function assertLocationOf(tenantId: string, locationId: string | null | undefined): Promise<void> {
+  if (!locationId) return
+  const loc = await prisma.location.findFirst({ where: { id: locationId, tenantId, deletedAt: null }, select: { id: true } })
+  if (!loc) throw new AppError('LOCATION_NOT_IN_COMPANY', 'That location is not part of this company', 422)
 }
 
 export async function foodSafetyRoutes(fastify: FastifyInstance) {
@@ -112,12 +118,14 @@ export async function foodSafetyRoutes(fastify: FastifyInstance) {
 
   fastify.post('/units', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
     const body = unitSchema.parse(req.body)
-    const unit = await prisma.foodSafetyUnit.create({ data: { ...body, locationId: body.locationId ?? null, tenantId: activeTenant(req) } })
+    const tenantId = activeTenantId(req)
+    await assertLocationOf(tenantId, body.locationId)
+    const unit = await prisma.foodSafetyUnit.create({ data: { ...body, locationId: body.locationId ?? null, tenantId } })
     return reply.status(201).send(unit)
   })
 
   fastify.post('/units/presets', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
-    const tenantId = activeTenant(req)
+    const tenantId = activeTenantId(req)
     const existing = new Set((await prisma.foodSafetyUnit.findMany({ where: { tenantId }, select: { name: true } })).map((u) => u.name))
     const toAdd = PRESETS.filter((p) => !existing.has(p.name))
     if (toAdd.length) await prisma.foodSafetyUnit.createMany({ data: toAdd.map((p) => ({ ...p, tenantId })) })
@@ -130,9 +138,11 @@ export async function foodSafetyRoutes(fastify: FastifyInstance) {
       minC: z.number().min(-50).max(300).nullable().optional(),
       maxC: z.number().min(-50).max(300).nullable().optional(),
       isActive: z.boolean().optional(),
+      locationId: z.string().uuid().nullable().optional(),
     }).parse(req.body)
     const unit = await prisma.foodSafetyUnit.findFirst({ where: { id: req.params.id, ...(await scopeTenantWhere(req, 'write')) } })
     if (!unit) throw new NotFoundError('FoodSafetyUnit', req.params.id)
+    await assertLocationOf(unit.tenantId, body.locationId)
     return prisma.foodSafetyUnit.update({ where: { id: unit.id }, data: body })
   })
 
@@ -198,14 +208,16 @@ export async function foodSafetyRoutes(fastify: FastifyInstance) {
       frequency: z.enum(['daily', 'weekly', 'monthly']),
       locationId: z.string().uuid().nullable().optional(),
     }).parse(req.body)
+    const tenantId = activeTenantId(req)
+    await assertLocationOf(tenantId, body.locationId)
     const task = await prisma.cleaningTask.create({
-      data: { ...body, area: body.area || null, locationId: body.locationId ?? null, tenantId: activeTenant(req) },
+      data: { ...body, area: body.area || null, locationId: body.locationId ?? null, tenantId },
     })
     return reply.status(201).send(task)
   })
 
   fastify.post('/cleaning/presets', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
-    const tenantId = activeTenant(req)
+    const tenantId = activeTenantId(req)
     const existing = new Set((await prisma.cleaningTask.findMany({ where: { tenantId }, select: { name: true } })).map((t) => t.name))
     const toAdd = CLEANING_PRESETS.filter((p) => !existing.has(p.name))
     if (toAdd.length) await prisma.cleaningTask.createMany({ data: toAdd.map((p) => ({ ...p, tenantId })) })
@@ -218,9 +230,11 @@ export async function foodSafetyRoutes(fastify: FastifyInstance) {
       area: z.string().max(80).nullable().optional(),
       frequency: z.enum(['daily', 'weekly', 'monthly']).optional(),
       isActive: z.boolean().optional(),
+      locationId: z.string().uuid().nullable().optional(),
     }).parse(req.body)
     const task = await prisma.cleaningTask.findFirst({ where: { id: req.params.id, ...(await scopeTenantWhere(req, 'write')) } })
     if (!task) throw new NotFoundError('CleaningTask', req.params.id)
+    await assertLocationOf(task.tenantId, body.locationId)
     return prisma.cleaningTask.update({ where: { id: task.id }, data: body })
   })
 

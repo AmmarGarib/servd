@@ -4,16 +4,7 @@ import { useQuery } from '@tanstack/react-query'
 import { api } from '../../../lib/api'
 import Link from 'next/link'
 import { useBrandFilter } from '../../../store/brandFilter'
-
-function fmt(cents: number) {
-  return `PKR ${Math.round(cents / 100).toLocaleString()}`
-}
-function fmtK(cents: number) {
-  const n = cents / 100
-  if (n >= 1_000_000) return `PKR ${(n / 1_000_000).toFixed(1)}M`
-  if (n >= 1_000)     return `PKR ${(n / 1_000).toFixed(0)}K`
-  return `PKR ${n.toFixed(0)}`
-}
+import { fmtPkrShort, fmtPkrWhole } from '../../../lib/money'
 
 interface Concept { id: string; name: string }
 interface FoodCostData {
@@ -157,13 +148,13 @@ export default function FoodCostPage() {
               </div>
               <div className="s-card p-4">
                 <p className="metric-label">Gross Revenue</p>
-                <p className="text-xl font-black text-gradient-brand">{fmtK(data!.revenue.grossCents)}</p>
-                <p className="text-[11px] text-s-dim mt-1">Net: {fmtK(data!.revenue.netCents)}</p>
+                <p className="text-xl font-black text-gradient-brand">{fmtPkrShort(data!.revenue.grossCents)}</p>
+                <p className="text-[11px] text-s-dim mt-1">Net: {fmtPkrShort(data!.revenue.netCents)}</p>
               </div>
               <div className="s-card p-4">
                 <p className="metric-label">Theoretical Cost</p>
-                <p className="text-xl font-black text-s-text">{fmtK(fc.theoreticalCents)}</p>
-                <p className="text-[11px] text-s-dim mt-1">Purchases: {fmtK(fc.actualPurchasesCents)}</p>
+                <p className="text-xl font-black text-s-text">{fmtPkrShort(fc.theoreticalCents)}</p>
+                <p className="text-[11px] text-s-dim mt-1">Purchases: {fmtPkrShort(fc.actualPurchasesCents)}</p>
               </div>
             </div>
 
@@ -172,7 +163,7 @@ export default function FoodCostPage() {
               <div className="flex items-center justify-between mb-3">
                 <p className="text-xs font-semibold text-s-muted uppercase tracking-wider">Food Cost Formula</p>
                 <p className="text-xs text-s-dim font-mono">
-                  {fmt(fc.theoreticalCents)} ÷ {fmtK(data!.revenue.grossCents)} × 100 = {fc.theoreticalFoodCostPct}%
+                  {fmtPkrWhole(fc.theoreticalCents)} ÷ {fmtPkrShort(data!.revenue.grossCents)} × 100 = {fc.theoreticalFoodCostPct}%
                 </p>
               </div>
               <div className="stat-bar-track h-4 relative mb-2">
@@ -239,9 +230,9 @@ export default function FoodCostPage() {
                             <p className="text-s-text font-medium">{item.name}</p>
                           </td>
                           <td className="text-right text-s-muted">{item.qtySold.toLocaleString()}</td>
-                          <td className="text-right text-s-muted">{fmt(item.costPerPortion)}</td>
-                          <td className="text-right font-semibold text-s-text">{fmt(item.totalCost)}</td>
-                          <td className="text-right text-s-muted">{fmt(item.revenue)}</td>
+                          <td className="text-right text-s-muted">{fmtPkrWhole(item.costPerPortion)}</td>
+                          <td className="text-right font-semibold text-s-text">{fmtPkrWhole(item.totalCost)}</td>
+                          <td className="text-right text-s-muted">{fmtPkrWhole(item.revenue)}</td>
                           <td className={`text-right font-bold ${fcHigh ? 'text-s-red' : fcWarn ? 'text-s-amber' : 'text-s-teal'}`}>
                             {item.foodCostPct}%
                           </td>

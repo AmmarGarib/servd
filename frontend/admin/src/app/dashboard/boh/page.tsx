@@ -129,7 +129,7 @@ export default function BohDashboardPage() {
                     const pct = (s.liveLoad / max) * 100
                     const accent = s.liveLoad >= 8 ? '#EF4444' : s.liveLoad >= 4 ? '#F59E0B' : '#4F8EF7'
                     return (
-                      <Link key={s.id} href={`/kds/station/${s.id}`} style={{
+                      <Link key={s.id} href={`/kds/${s.id}`} style={{
                         display: 'grid', gridTemplateColumns: '12rem 1fr 2rem',
                         gap: '0.9rem', alignItems: 'center',
                         textDecoration: 'none', color: 'inherit', padding: '0.2rem 0',
@@ -199,10 +199,10 @@ export default function BohDashboardPage() {
         {/* Footer pills */}
         <Section title="Jump in" hint="kitchen surfaces">
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.6rem' }}>
-            <Pill href="/kds/all"     label="Open KDS →"        accent="#4F8EF7" />
+            <Pill href="/kds"         label="Open KDS →"        accent="#4F8EF7" />
             <Pill href="/menu"        label="Menu editor →"     accent="#A855F7" />
             <Pill href="/inventory"   label="Inventory →"       accent="#F59E0B" />
-            <Pill href="/recipes"     label="Recipes →"         accent="#22C55E" />
+            <Pill href="/accounting/recipes" label="Recipes →"         accent="#22C55E" />
           </div>
         </Section>
       </div>

@@ -111,7 +111,7 @@ export default function KdsKitchenDashboard() {
               <p className="text-3xl mb-2">🍳</p>
               <p className="text-base font-bold text-kds-text">No stations assigned to you yet</p>
               <p className="text-sm text-kds-subtext mt-1">
-                Ask your manager to add you in <Link href="/configuration/users" className="text-kds-green underline">Configuration → Users</Link>.
+                Ask your manager to add you in <Link href="/workforce" className="text-kds-green underline">Workforce</Link>.
               </p>
             </div>
           ) : (
@@ -120,7 +120,7 @@ export default function KdsKitchenDashboard() {
               <p className="text-base font-bold text-kds-text">No active stations yet</p>
               <p className="text-sm text-kds-subtext mt-1">
                 Open <Link href="/kds/config" className="text-kds-green underline">KDS Config</Link> to add stations,
-                then assign cooks in <Link href="/configuration/users" className="text-kds-green underline">Configuration → Users</Link>.
+                then assign cooks in <Link href="/workforce" className="text-kds-green underline">Workforce</Link>.
               </p>
             </div>
           )

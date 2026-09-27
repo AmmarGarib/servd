@@ -16,6 +16,7 @@ import { useRoleModules, modulesForRole } from '../../../store/roleModules'
 import { useViewAsRole } from '../../../store/viewAsRole'
 import type { AppRole } from '../../../lib/appRoles'
 import { isExecutive } from '../../../lib/appRoles'
+import { fmtPkrShort } from '../../../lib/money'
 
 type Period = 'today' | 'week' | 'month'
 
@@ -56,13 +57,6 @@ function rangeFor(period: Period): { from: string; to: string; label: string } {
   return { from: `${iso(start)}T00:00:00Z`, to: `${iso(now)}T23:59:59Z`, label: 'this month' }
 }
 
-function pkr(cents: number): string {
-  const n = cents / 100
-  if (n >= 1_000_000) return `PKR ${(n / 1_000_000).toFixed(2)}M`
-  if (n >= 10_000)    return `PKR ${(n / 1_000).toFixed(0)}K`
-  return `PKR ${Math.round(n).toLocaleString()}`
-}
-const dash = (c: number | null | undefined) => (c == null ? '—' : pkr(c))
 const CAT_LABEL: Record<string, string> = { wrong_item: 'Wrong item', missing_item: 'Missing item', quality: 'Quality', service: 'Service', delivery: 'Delivery', other: 'Other' }
 
 export default function FnbDashboardPage() {
@@ -84,7 +78,7 @@ export default function FnbDashboardPage() {
   useEffect(() => { if (canView === false) router.replace('/dashboard') }, [canView, router])
 
   const { data: concepts } = useQuery({
-    queryKey: ['fnb-dash', 'concepts'],
+    queryKey: ['fnb-fmtPkrShort', 'concepts'],
     queryFn:  () => api.get<Concept[]>('/concepts'),
     enabled:  canView === true,
   })
@@ -96,7 +90,7 @@ export default function FnbDashboardPage() {
   }, [range, conceptId])
 
   const { data: m } = useQuery({
-    queryKey: ['fnb-dash', 'metrics', q],
+    queryKey: ['fnb-fmtPkrShort', 'metrics', q],
     queryFn:  () => api.get<FnbMetrics>(`/management/fnb-metrics?${q}`),
     refetchInterval: 60_000,
     enabled:  canView === true,
@@ -133,8 +127,8 @@ export default function FnbDashboardPage() {
 
         {/* Hero */}
         <div style={{ marginTop: '1.2rem', display: 'grid', gap: '0.8rem', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}>
-          <Scorecard label="Sales"        value={dash(m?.sales.grossCents)} accent="#00D4B1" sub={`incl. GST · ${(m?.sales.orders ?? 0).toLocaleString()} orders`} />
-          <Scorecard label="Avg ticket"   value={dash(m?.sales.aovCents)}   accent="#4F8EF7" sub="per order" />
+          <Scorecard label="Sales"        value={fmtPkrShort(m?.sales.grossCents)} accent="#00D4B1" sub={`incl. GST · ${(m?.sales.orders ?? 0).toLocaleString()} orders`} />
+          <Scorecard label="Avg ticket"   value={fmtPkrShort(m?.sales.aovCents)}   accent="#4F8EF7" sub="per order" />
           <Scorecard label="Kitchen speed" value={m?.kitchen.avgTicketMinutes != null ? `${m.kitchen.avgTicketMinutes} min` : '—'} accent="#A855F7" sub="fire → bump avg" />
           <Scorecard label="Food complaints" value={(m?.quality.foodComplaints ?? 0).toLocaleString()} accent={(m?.quality.foodComplaints ?? 0) > 0 ? '#FF4D4F' : '#F59E0B'} sub="quality · wrong · missing" />
         </div>
@@ -151,7 +145,7 @@ export default function FnbDashboardPage() {
                 </div>
                 <div style={{ display: 'flex', alignItems: 'baseline', gap: '1.4rem', flexShrink: 0 }}>
                   <span style={{ color: '#6E7186', fontSize: '0.8rem', fontVariantNumeric: 'tabular-nums' }}>{it.quantity} sold</span>
-                  <span style={{ fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{pkr(it.revenueCents)}</span>
+                  <span style={{ fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{fmtPkrShort(it.revenueCents)}</span>
                 </div>
               </div>
             ))}
@@ -181,7 +175,7 @@ export default function FnbDashboardPage() {
         <Section title="Stock health" hint="low stock + waste cost">
           <div style={{ display: 'grid', gap: '0.7rem', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))' }}>
             <MiniStat label="Low stock items" value={lowStock.toLocaleString()} accent={lowStock > 0 ? '#F59E0B' : undefined} />
-            <MiniStat label="Waste cost"   value={dash(m?.stock.wasteCostCents)} sub={`${(m?.stock.wasteEvents ?? 0)} events · ${range.label}`} accent={(m?.stock.wasteCostCents ?? 0) > 0 ? '#FF4D4F' : undefined} />
+            <MiniStat label="Waste cost"   value={fmtPkrShort(m?.stock.wasteCostCents)} sub={`${(m?.stock.wasteEvents ?? 0)} events · ${range.label}`} accent={(m?.stock.wasteCostCents ?? 0) > 0 ? '#FF4D4F' : undefined} />
             <MiniStat label="Avg food rating" value={m?.quality.avgRating != null ? `${m.quality.avgRating.toFixed(1)} ★` : '—'} sub={`${m?.quality.reviewCount ?? 0} reviews`} />
           </div>
           {(m?.stock.lowStockItems ?? []).length > 0 && (

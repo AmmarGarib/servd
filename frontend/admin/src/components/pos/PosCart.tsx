@@ -1,5 +1,6 @@
 'use client'
 import { usePosStore } from '../../store/pos'
+import { fmtPkrWhole } from '../../lib/money'
 
 interface PosCartProps {
   taxRate: number
@@ -11,10 +12,6 @@ export function PosCart({ taxRate, onCheckout }: PosCartProps) {
   const sub = subtotalCents()
   const total = totalCents(taxRate)
   const tax = total - sub
-
-  function fmt(cents: number) {
-    return `PKR ${(cents / 100).toFixed(0)}`
-  }
 
   return (
     <div className="flex h-full flex-col">
@@ -42,7 +39,7 @@ export function PosCart({ taxRate, onCheckout }: PosCartProps) {
                     ))}
                   </div>
                   <div className="text-right text-sm font-bold text-kds-green">
-                    {fmt((item.unitPriceCents + item.modifiers.reduce((s, m) => s + m.priceDeltaCents, 0)) * item.quantity)}
+                    {fmtPkrWhole((item.unitPriceCents + item.modifiers.reduce((s, m) => s + m.priceDeltaCents, 0)) * item.quantity)}
                   </div>
                 </div>
 
@@ -91,21 +88,21 @@ export function PosCart({ taxRate, onCheckout }: PosCartProps) {
       <div className="border-t border-kds-border px-4 py-3 space-y-1">
         <div className="flex justify-between text-sm text-kds-subtext">
           <span>Subtotal</span>
-          <span>{fmt(sub)}</span>
+          <span>{fmtPkrWhole(sub)}</span>
         </div>
         {discountCents > 0 && (
           <div className="flex justify-between text-sm text-kds-amber">
             <span>Discount</span>
-            <span>−{fmt(discountCents)}</span>
+            <span>−{fmtPkrWhole(discountCents)}</span>
           </div>
         )}
         <div className="flex justify-between text-sm text-kds-subtext">
           <span>Tax (GST {taxRate}%)</span>
-          <span>{fmt(tax)}</span>
+          <span>{fmtPkrWhole(tax)}</span>
         </div>
         <div className="flex justify-between font-bold text-kds-text text-base">
           <span>Total</span>
-          <span className="text-kds-green">{fmt(total)}</span>
+          <span className="text-kds-green">{fmtPkrWhole(total)}</span>
         </div>
       </div>
 
@@ -116,7 +113,7 @@ export function PosCart({ taxRate, onCheckout }: PosCartProps) {
           disabled={cart.length === 0}
           className="w-full rounded-xl bg-kds-green py-4 text-lg font-bold text-white disabled:opacity-30 active:scale-95"
         >
-          Charge {fmt(total)}
+          Charge {fmtPkrWhole(total)}
         </button>
       </div>
     </div>

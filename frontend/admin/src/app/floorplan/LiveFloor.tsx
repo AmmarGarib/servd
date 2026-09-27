@@ -4,7 +4,7 @@
 // each table by status, lets the host click a table to see who's seated /
 // what's on the bill / when the next reservation arrives.
 
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useMutation } from '@tanstack/react-query'
 import { useState } from 'react'
 import { api } from '../../lib/api'
 import { FloorCanvas } from '../../components/floorplan/FloorCanvas'
@@ -87,7 +87,7 @@ export function LiveFloor({ floor, conceptId }: { floor: Floor; conceptId: strin
 
       <aside>
         {selected ? (
-          <TableDetailPanel table={selected} />
+          <TableDetailPanel table={selected} onChanged={() => void refetch()} />
         ) : (
           <div className="s-card p-6 text-center text-sm text-s-muted">
             Click a table for details.<br />
@@ -99,9 +99,17 @@ export function LiveFloor({ floor, conceptId }: { floor: Floor; conceptId: strin
   )
 }
 
-function TableDetailPanel({ table }: { table: LiveTable }) {
+// The statuses PATCH /tables/:id accepts — the manual toggle the old /tables
+// page had (e.g. clearing a table back to available after it was bussed).
+const SETTABLE_STATUSES = ['available', 'seated', 'ordered', 'eating', 'check', 'reserved'] as const
+
+function TableDetailPanel({ table, onChanged }: { table: LiveTable; onChanged: () => void }) {
   const status = statusOf(table)
   const stat = STATUS_COLORS[status] ?? STATUS_COLORS.available!
+  const setStatus = useMutation({
+    mutationFn: (next: string) => api.patch(`/tables/${table.id}`, { status: next }),
+    onSuccess: onChanged,
+  })
   return (
     <div className="s-card overflow-hidden">
       <div className="px-4 py-3 border-b border-s-border" style={{ background: stat.fill }}>
@@ -149,6 +157,17 @@ function TableDetailPanel({ table }: { table: LiveTable }) {
         {table.openOrders.length === 0 && table.reservations.length === 0 && (
           <p className="text-xs text-s-muted text-center py-4">Nothing booked, nothing ordering. Free.</p>
         )}
+
+        <Section title="Set status">
+          <div className="flex flex-wrap gap-1.5 pt-1">
+            {SETTABLE_STATUSES.map((st) => (
+              <button key={st} onClick={() => setStatus.mutate(st)} disabled={setStatus.isPending || table.status === st}
+                className="rounded-full border border-s-border px-2.5 py-1 text-[11px] font-semibold capitalize disabled:opacity-40 hover:bg-s-bg-soft">
+                {STATUS_COLORS[st]?.label ?? st}
+              </button>
+            ))}
+          </div>
+        </Section>
       </div>
     </div>
   )

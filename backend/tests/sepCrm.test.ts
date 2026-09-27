@@ -1,0 +1,312 @@
+// Company separation — CRM, campaigns, segments, wallet, strikes/bans,
+// conversations, loyalty settings, marketing activity.
+//
+// Customers are global rows; a company owns its relationship with a customer
+// through the orders/reservations placed at its brands. Two companies, A and
+// B, each with one brand and one customer, plus a customer shared by both.
+// Company B's manager must get a 404 on everything of A's, and every create
+// must bind to the active company.
+import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import Fastify, { type FastifyInstance } from 'fastify'
+import { ZodError } from 'zod'
+import bcrypt from 'bcryptjs'
+import { serviceClient as prisma } from '../src/lib/prisma.js'
+import { issueStaffSession } from '../src/modules/auth/service.js'
+import { AppError } from '../src/lib/errors.js'
+import { crmRoutes } from '../src/modules/crm/routes.js'
+import { walletRoutes } from '../src/modules/wallet/routes.js'
+import { loyaltyRoutes } from '../src/modules/loyalty/routes.js'
+import { marketingActivityRoutes } from '../src/modules/marketingActivity/routes.js'
+
+const RUN = Math.random().toString(36).slice(2, 8)
+let app: FastifyInstance
+let tenantA: string, tenantB: string, conceptA: string, conceptB: string
+let custA: string, custB: string, custShared: string
+const users: Record<string, { id: string; token: string }> = {}
+
+async function mkUser(key: string, primary: string, members: string[]) {
+  const u = await prisma.user.create({
+    data: { name: key, email: `${key}.${RUN}@sepcrm.test`, password: await bcrypt.hash('x-Password-1', 4), role: 'admin', isActive: true, accountStatus: 'active', tenantId: primary } as never,
+  })
+  for (const t of members) await prisma.tenantMember.create({ data: { tenantId: t, userId: u.id } })
+  users[key] = { id: u.id, token: (issueStaffSession(u) as { accessToken: string }).accessToken }
+}
+
+const call = (who: string, method: 'GET' | 'POST' | 'PATCH', url: string, payload?: unknown) =>
+  app.inject({ method, url, payload: payload as never, headers: { authorization: `Bearer ${users[who]!.token}` } })
+
+async function customerWithOrders(key: string, conceptIds: string[], totalCents = 10_000) {
+  const c = await prisma.customer.create({ data: { name: key, email: `${key}.${RUN}@sepcrm.test`, phone: `+92300${Math.floor(Math.random() * 1e7)}` } })
+  for (const conceptId of conceptIds) {
+    await prisma.order.create({
+      data: {
+        conceptId, customerId: c.id, source: 'pos', status: 'completed', totalCents, completedAt: new Date(),
+        items: { create: [{ name: 'Latte', quantity: 1, unitPriceCents: totalCents }] },
+      } as never,
+    })
+  }
+  return c.id
+}
+
+beforeAll(async () => {
+  tenantA = (await prisma.tenant.create({ data: { name: 'Sep A', slug: `sep-a-${RUN}` } })).id
+  tenantB = (await prisma.tenant.create({ data: { name: 'Sep B', slug: `sep-b-${RUN}` } })).id
+  conceptA = (await prisma.concept.create({ data: { name: 'Brand A', slug: `sep-brand-a-${RUN}`, type: 'restaurant', tenantId: tenantA } as never })).id
+  conceptB = (await prisma.concept.create({ data: { name: 'Brand B', slug: `sep-brand-b-${RUN}`, type: 'restaurant', tenantId: tenantB } as never })).id
+  await mkUser('mgrA', tenantA, [tenantA])
+  await mkUser('mgrB', tenantB, [tenantB])
+  custA = await customerWithOrders('custA', [conceptA], 6_000_000)   // A's VIP (PKR 60k)
+  custB = await customerWithOrders('custB', [conceptB])
+  custShared = await customerWithOrders('custShared', [conceptA, conceptB])
+
+  app = Fastify()
+  app.setErrorHandler((err, _req, reply) => {
+    if (err instanceof AppError) return reply.status(err.statusCode).send({ error: { code: err.code, message: err.message } })
+    if (err instanceof ZodError) return reply.status(400).send({ error: { code: 'VALIDATION_ERROR', issues: err.issues } })
+    return reply.status(500).send({ error: { code: 'INTERNAL', message: (err as Error).message } })
+  })
+  await app.register(crmRoutes, { prefix: '/crm' })
+  await app.register(walletRoutes, { prefix: '/wallet' })
+  await app.register(loyaltyRoutes, { prefix: '/loyalty' })
+  await app.register(marketingActivityRoutes, { prefix: '/marketing' })
+  await app.ready()
+})
+
+afterAll(async () => {
+  await app?.close()
+})
+
+const ids = (rows: Array<{ id?: string; customerId?: string | null; customer?: { id: string } }>) =>
+  rows.map((r) => r.id ?? r.customerId ?? r.customer?.id)
+
+// ─── #19 / #20 smart segments ───────────────────────────────────────────────
+
+describe('smart segments are per company', () => {
+  it("B's lists never contain A's customers (vip, one_time, repeat, zero, cart_abandoners)", async () => {
+    await prisma.abandonedCart.create({ data: { cartId: `cart-${RUN}`, conceptId: conceptA, customerId: custA, customerPhone: '+923001', items: [], subtotalCents: 100 } })
+    for (const key of ['vip', 'one_time', 'repeat', 'frequent', 'zero', 'dormant', 'new', 'cart_abandoners']) {
+      const r = await call('mgrB', 'GET', `/crm/smart-segments/${key}`)
+      expect(r.statusCode, key).toBe(200)
+      expect(ids(r.json()), key).not.toContain(custA)
+    }
+    const vipA = await call('mgrA', 'GET', '/crm/smart-segments/vip')
+    expect(ids(vipA.json())).toContain(custA)
+    const cartsA = await call('mgrA', 'GET', '/crm/smart-segments/cart_abandoners')
+    expect(ids(cartsA.json())).toContain(custA)
+  })
+
+  it("spend is measured at the company's own brands (the shared customer is one-time for each)", async () => {
+    const r = await call('mgrB', 'GET', '/crm/smart-segments/one_time')
+    const shared = (r.json() as Array<{ id: string; totalSpentCents: number }>).find((x) => x.id === custShared)
+    expect(shared?.totalSpentCents).toBe(10_000)
+  })
+
+  it("counts are the company's own", async () => {
+    const r = await call('mgrB', 'GET', '/crm/smart-segments')
+    const seg = Object.fromEntries((r.json().segments as Array<{ key: string; count: number }>).map((x) => [x.key, x.count]))
+    expect(seg['vip']).toBe(0)
+    expect(seg['cart_abandoners']).toBe(0)
+    expect(seg['one_time']).toBe(2)            // custB + custShared
+    expect(r.json().summary.totalCustomers).toBe(2)
+  })
+})
+
+// ─── #21 segments, #22–#25 campaigns ─────────────────────────────────────────
+
+describe('segments and campaigns belong to one company', () => {
+  let segA: string, campA: string
+
+  it('a segment binds to the active company and is listed only there', async () => {
+    const r = await call('mgrA', 'POST', '/crm/segments', { name: `vip-${RUN}`, filters: { minSpendCents: 100 } })
+    expect(r.statusCode).toBe(201)
+    expect(r.json().tenantId).toBe(tenantA)
+    segA = r.json().id
+    expect(ids((await call('mgrB', 'GET', '/crm/segments')).json())).not.toContain(segA)
+    expect(ids((await call('mgrA', 'GET', '/crm/segments')).json())).toContain(segA)
+  })
+
+  it("a segment filter naming another company's brand is refused", async () => {
+    const r = await call('mgrB', 'POST', '/crm/segments', { name: 'x', filters: { preferredConceptId: conceptA } })
+    expect(r.statusCode).toBe(404)
+  })
+
+  it("a campaign naming another company's brand is a 404", async () => {
+    const r = await call('mgrB', 'POST', '/crm/campaigns', { name: 'steal', channel: 'email', subject: 's', body: 'b', conceptIds: [conceptA] })
+    expect(r.statusCode).toBe(404)
+  })
+
+  it("a campaign using another company's segment is a 404", async () => {
+    const r = await call('mgrB', 'POST', '/crm/campaigns', { name: 'steal', channel: 'email', subject: 's', body: 'b', segmentId: segA })
+    expect(r.statusCode).toBe(404)
+  })
+
+  it('a campaign binds to the active company; empty brands = that company only', async () => {
+    const r = await call('mgrA', 'POST', '/crm/campaigns', { name: `camp-${RUN}`, channel: 'email', subject: 's', body: 'hello', conceptIds: [] })
+    expect(r.statusCode).toBe(201)
+    expect(r.json().tenantId).toBe(tenantA)
+    campA = r.json().id
+  })
+
+  it("the audience preview counts only the active company's customers", async () => {
+    const a = await call('mgrA', 'GET', '/crm/campaigns/audience?channel=email')
+    expect(a.json().total).toBe(2)             // custA + custShared
+    const b = await call('mgrB', 'GET', `/crm/campaigns/audience?channel=email&conceptIds=${conceptA}`)
+    expect(b.statusCode).toBe(404)
+    const seg = await call('mgrA', 'GET', `/crm/campaigns/audience?channel=email&segmentId=${segA}`)
+    expect(seg.json().total).toBe(2)
+  })
+
+  it("B cannot list or send A's campaign", async () => {
+    expect(ids((await call('mgrB', 'GET', '/crm/campaigns')).json())).not.toContain(campA)
+    expect(ids((await call('mgrA', 'GET', '/crm/campaigns')).json())).toContain(campA)
+    const send = await call('mgrB', 'POST', `/crm/campaigns/${campA}/send`)
+    expect(send.statusCode).toBe(404)
+  })
+
+  it("A's send reaches only A's customers", async () => {
+    const r = await call('mgrA', 'POST', `/crm/campaigns/${campA}/send`)
+    expect(r.statusCode).toBe(200)
+    expect(r.json().recipientCount).toBe(2)
+    const until = Date.now() + 5000
+    while (Date.now() < until) {
+      const c = await prisma.campaign.findUnique({ where: { id: campA } })
+      if (c?.status === 'sent') break
+      await new Promise((res) => setTimeout(res, 50))
+    }
+    const sends = await prisma.campaignSend.findMany({ where: { campaignId: campA }, select: { customerId: true } })
+    expect(sends.map((x) => x.customerId).sort()).toEqual([custA, custShared].sort())
+  })
+
+  it('a legacy campaign with no company cannot be sent by anyone', async () => {
+    const legacy = await prisma.campaign.create({ data: { name: 'legacy', channel: 'email', body: 'x' } })
+    expect((await call('mgrA', 'POST', `/crm/campaigns/${legacy.id}/send`)).statusCode).toBe(404)
+  })
+})
+
+// ─── #26 behavioural segments ────────────────────────────────────────────────
+
+describe('behavioural segment members are per company', () => {
+  it("B sees only its own members and counts", async () => {
+    const seg = await prisma.customerSegment.create({ data: { slug: `sep-seg-${RUN}`, name: 'Sep seg', memberCount: 3 } })
+    await prisma.customerSegmentMembership.createMany({
+      data: [custA, custB, custShared].map((customerId) => ({ customerId, segmentId: seg.id })),
+    })
+    const m = await call('mgrB', 'GET', `/crm/behavioral-segments/sep-seg-${RUN}/members`)
+    const members = (m.json() as Array<{ customer: { id: string } }>).map((x) => x.customer.id).sort()
+    expect(members).toEqual([custB, custShared].sort())
+    const list = await call('mgrB', 'GET', '/crm/behavioral-segments')
+    expect((list.json() as Array<{ slug: string; memberCount: number }>).find((x) => x.slug === `sep-seg-${RUN}`)?.memberCount).toBe(2)
+  })
+})
+
+// ─── #18 notes, #27 / #28 conversations ──────────────────────────────────────
+
+describe('customer notes and conversations', () => {
+  it("B cannot write notes on A's customer", async () => {
+    expect((await call('mgrB', 'PATCH', `/crm/customers/${custA}/notes`, { staffNotes: 'x' })).statusCode).toBe(404)
+    expect((await call('mgrA', 'PATCH', `/crm/customers/${custA}/notes`, { staffNotes: 'allergy' })).statusCode).toBe(200)
+  })
+
+  it("B cannot open a thread with A's customer, nor read or reply to A's thread", async () => {
+    expect((await call('mgrB', 'POST', '/crm/conversations', { customerId: custA, message: 'hi' })).statusCode).toBe(404)
+    const conv = await call('mgrA', 'POST', '/crm/conversations', { customerId: custA, message: 'hi' })
+    expect(conv.statusCode).toBe(201)
+    const id = conv.json().id
+    expect((await call('mgrB', 'GET', `/crm/conversations/${id}/messages`)).statusCode).toBe(404)
+    expect((await call('mgrB', 'POST', `/crm/conversations/${id}/messages`, { body: 'x' })).statusCode).toBe(404)
+    expect((await call('mgrA', 'GET', `/crm/conversations/${id}/messages`)).statusCode).toBe(200)
+  })
+
+  it("A's thread with a SHARED customer is not B's", async () => {
+    const conv = await call('mgrA', 'POST', '/crm/conversations', { customerId: custShared, message: 'hi' })
+    const id = conv.json().id
+    expect((await call('mgrB', 'GET', `/crm/conversations/${id}/messages`)).statusCode).toBe(404)
+    expect(ids((await call('mgrB', 'GET', '/crm/conversations')).json())).not.toContain(id)
+  })
+})
+
+// ─── #29 strikes and bans (decision 15) ──────────────────────────────────────
+
+describe('strikes and bans belong to the company that raised them', () => {
+  it("B cannot strike or ban A's customer", async () => {
+    expect((await call('mgrB', 'POST', '/crm/strikes', { customerId: custA, kind: 'other', reason: 'x' })).statusCode).toBe(404)
+    expect((await call('mgrB', 'POST', '/crm/bans', { customerId: custA, reason: 'nope' })).statusCode).toBe(404)
+  })
+
+  it("A's strike on a shared customer is invisible to B and not reversible by B", async () => {
+    expect((await call('mgrA', 'POST', '/crm/strikes', { customerId: custShared, kind: 'other', reason: 'rude' })).statusCode).toBe(201)
+    const strike = await prisma.customerStrike.findFirst({ where: { customerId: custShared } })
+    const nlB = await call('mgrB', 'GET', '/crm/naughty-list')
+    expect(ids(nlB.json())).not.toContain(custShared)
+    const nlA = await call('mgrA', 'GET', '/crm/naughty-list')
+    expect(ids(nlA.json())).toContain(custShared)
+    expect((await call('mgrB', 'POST', `/crm/strikes/${strike!.id}/reverse`, { reason: 'x' })).statusCode).toBe(404)
+    expect((await call('mgrA', 'POST', `/crm/strikes/${strike!.id}/reverse`, { reason: 'ok' })).statusCode).toBe(200)
+  })
+
+  it("A's ban on a shared customer is not listed or liftable by B", async () => {
+    const ban = await call('mgrA', 'POST', '/crm/bans', { customerId: custShared, reason: 'dine and dash' })
+    expect(ban.statusCode).toBe(201)
+    const id = ban.json().id
+    expect(ids((await call('mgrB', 'GET', '/crm/bans')).json())).not.toContain(id)
+    expect(ids((await call('mgrA', 'GET', '/crm/bans')).json())).toContain(id)
+    const nlB = await call('mgrB', 'GET', '/crm/naughty-list')
+    expect(ids(nlB.json())).not.toContain(custShared)
+    expect((await call('mgrB', 'POST', `/crm/bans/${id}/lift`, { reason: 'x' })).statusCode).toBe(404)
+    expect((await call('mgrA', 'POST', `/crm/bans/${id}/lift`, { reason: 'paid up' })).statusCode).toBe(200)
+  })
+})
+
+// ─── #84 wallet ──────────────────────────────────────────────────────────────
+
+describe('wallet top-ups and reads', () => {
+  it("B cannot credit or read A's customer's wallet", async () => {
+    expect((await call('mgrB', 'POST', '/wallet/topup', { customerId: custA, amountCents: 500 })).statusCode).toBe(404)
+    expect((await call('mgrB', 'GET', `/wallet/customers/${custA}`)).statusCode).toBe(404)
+    const bulk = await call('mgrB', 'POST', '/wallet/bulk-topup', { customerIds: [custA, custB], amountCents: 500 })
+    expect(bulk.json().success).toBe(1)
+    const a = await prisma.customer.findUnique({ where: { id: custA }, select: { walletBalance: true } })
+    expect(a!.walletBalance).toBe(0)
+  })
+
+  it('A can credit its own customer', async () => {
+    expect((await call('mgrA', 'POST', '/wallet/topup', { customerId: custA, amountCents: 500 })).statusCode).toBe(201)
+    expect((await call('mgrA', 'GET', `/wallet/customers/${custA}`)).json().walletBalance).toBe(500)
+  })
+})
+
+// ─── #43 loyalty settings ────────────────────────────────────────────────────
+
+describe('loyalty settings are per company', () => {
+  it('inherit the old global value once, then change independently', async () => {
+    await prisma.setting.upsert({
+      where: { key: 'loyalty.stamp_threshold' },
+      create: { key: 'loyalty.stamp_threshold', value: '7' },
+      update: { value: '7' },
+    })
+    const a0 = await call('mgrA', 'GET', '/loyalty/settings')
+    expect(a0.json().values['loyalty.stamp_threshold']).toBe(7)
+    const p = await call('mgrA', 'PATCH', '/loyalty/settings', { 'loyalty.stamp_threshold': 11 })
+    expect(p.statusCode).toBe(200)
+    expect(p.json().values['loyalty.stamp_threshold']).toBe(11)
+    const b = await call('mgrB', 'GET', '/loyalty/settings')
+    expect(b.json().values['loyalty.stamp_threshold']).toBe(7)
+    const global = await prisma.setting.findUnique({ where: { key: 'loyalty.stamp_threshold' } })
+    expect(global!.value).toBe('7')
+  })
+})
+
+// ─── #44 / #45 marketing activity ────────────────────────────────────────────
+
+describe('marketing activity is per company', () => {
+  it("B does not see A's marketing actions or campaign sends", async () => {
+    await prisma.auditLog.create({ data: { tenantId: tenantA, action: 'campaign.create', entity: 'Campaign', entityId: `a-${RUN}`, userEmail: 'agency@a' } })
+    await prisma.auditLog.create({ data: { tenantId: tenantB, action: 'campaign.create', entity: 'Campaign', entityId: `b-${RUN}`, userEmail: 'agency@b' } })
+    const b = await call('mgrB', 'GET', '/marketing/activity')
+    const entityIds = (b.json() as Array<{ entityId: string }>).map((x) => x.entityId)
+    expect(entityIds).toContain(`b-${RUN}`)
+    expect(entityIds).not.toContain(`a-${RUN}`)
+    const perfB = await call('mgrB', 'GET', '/marketing/performance')
+    expect(perfB.json().campaigns).toBe(0)
+  })
+})

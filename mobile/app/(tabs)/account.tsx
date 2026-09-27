@@ -12,11 +12,27 @@ interface Customer {
   loyaltyPoints: number
 }
 
+// GET /storefront/account — the signed-in customer's profile (the same call
+// the storefront /account page makes). This screen used to call
+// /customers/me, which does not exist, so it always showed "Sign in".
+interface AccountResp {
+  id: string
+  name: string
+  email: string | null
+  phone: string | null
+  loyaltyAccount: { pointsBalance: number } | null
+}
+
 export default function AccountScreen() {
   const router = useRouter()
   const { data: me } = useQuery({
     queryKey: ['me'],
-    queryFn: () => api.get<Customer>('/customers/me').catch(() => null),
+    queryFn: () => api.get<AccountResp>('/storefront/account')
+      .then((a): Customer => ({
+        id: a.id, name: a.name, email: a.email ?? '', phone: a.phone,
+        loyaltyPoints: a.loyaltyAccount?.pointsBalance ?? 0,
+      }))
+      .catch(() => null),
   })
 
   async function signOut() {

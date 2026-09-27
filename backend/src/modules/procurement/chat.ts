@@ -1,10 +1,37 @@
-import type { FastifyInstance } from 'fastify'
+import type { FastifyInstance, FastifyRequest } from 'fastify'
+import type { ScopeMode } from '../../lib/tenantScope.js'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, MANAGERS, ALL_STAFF } from '../auth/middleware.js'
 import { NotFoundError, AppError } from '../../lib/errors.js'
 import { randomUUID } from 'crypto'
 import { deliverToSupplier } from '../../lib/supplier-channels.js'
+import { supplierScopeWhere, findSupplierInScope } from './scope.js'
+
+// Company scope: a conversation and a portal token belong to their supplier's
+// company, so both scope through the supplier (./scope.ts) — reads 'read',
+// replies/new threads/tokens 'write'. Non-managers only ever see their own
+// threads. Foreign ids are 404. The public /supplier-portal/:token routes are
+// scoped by the token itself (one supplier's threads).
+
+/**
+ * The conversation, through its supplier's company, or 404. Non-managers
+ * only reach their own threads (the list only ever showed them those).
+ */
+async function findConversationInScope(req: FastifyRequest, id: string, mode: ScopeMode) {
+  const user = req.staffUser!
+  const isManager = (MANAGERS as string[]).includes(user.role)
+  const conv = await prisma.supplierConversation.findFirst({
+    where: {
+      id,
+      supplier: await supplierScopeWhere(req, mode),
+      ...(isManager ? {} : { staffId: user.id }),
+    },
+    include: { supplier: true },
+  })
+  if (!conv) throw new NotFoundError('Conversation', id)
+  return conv
+}
 
 export async function supplierChatRoutes(fastify: FastifyInstance) {
   // ─── Conversations ──────────────────────────────────────────────────────────
@@ -15,7 +42,10 @@ export async function supplierChatRoutes(fastify: FastifyInstance) {
     const isManager = (MANAGERS as string[]).includes(user.role)
 
     return prisma.supplierConversation.findMany({
-      where: isManager ? {} : { staffId: user.id },
+      where: {
+        supplier: await supplierScopeWhere(req, 'read'),
+        ...(isManager ? {} : { staffId: user.id }),
+      },
       include: {
         supplier: { select: { id: true, name: true, category: true } },
         staff:    { select: { id: true, name: true } },
@@ -40,8 +70,9 @@ export async function supplierChatRoutes(fastify: FastifyInstance) {
         message:    z.string().min(1).max(5000),
       }).parse(req.body)
 
-      const supplier = await prisma.supplier.findUnique({ where: { id: body.supplierId } })
-      if (!supplier || supplier.deletedAt) throw new NotFoundError('Supplier', body.supplierId)
+      // Messaging a supplier emails/WhatsApps it on this company's behalf —
+      // only a supplier of a company the operator belongs to.
+      const supplier = await findSupplierInScope(req, body.supplierId, 'write', { live: true })
 
       const conversation = await prisma.supplierConversation.create({
         data: {
@@ -85,17 +116,16 @@ export async function supplierChatRoutes(fastify: FastifyInstance) {
     '/conversations/:id/messages',
     { preHandler: requireAuth(...ALL_STAFF) },
     async (req) => {
-      const conv = await prisma.supplierConversation.findUnique({ where: { id: req.params.id } })
-      if (!conv) throw new NotFoundError('Conversation', req.params.id)
+      const conv = await findConversationInScope(req, req.params.id, 'read')
 
       // Mark supplier messages seen
       await prisma.supplierMessage.updateMany({
-        where: { conversationId: req.params.id, fromStaff: false, seenAt: null },
+        where: { conversationId: conv.id, fromStaff: false, seenAt: null },
         data:  { seenAt: new Date() },
       })
 
       return prisma.supplierMessage.findMany({
-        where:   { conversationId: req.params.id },
+        where:   { conversationId: conv.id },
         orderBy: { createdAt: 'asc' },
       })
     },
@@ -111,11 +141,7 @@ export async function supplierChatRoutes(fastify: FastifyInstance) {
         mediaUrl: z.string().url().optional(),
       }).parse(req.body)
 
-      const conv = await prisma.supplierConversation.findUnique({
-        where: { id: req.params.id },
-        include: { supplier: true },
-      })
-      if (!conv) throw new NotFoundError('Conversation', req.params.id)
+      const conv = await findConversationInScope(req, req.params.id, 'write')
 
       const message = await prisma.supplierMessage.create({
         data: {
@@ -153,8 +179,9 @@ export async function supplierChatRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuth(...MANAGERS) },
     async (req, reply) => {
       const body = z.object({ label: z.string().optional() }).parse(req.body ?? {})
-      const supplier = await prisma.supplier.findUnique({ where: { id: req.params.id } })
-      if (!supplier || supplier.deletedAt) throw new NotFoundError('Supplier', req.params.id)
+      // A token opens the supplier's threads to anyone holding the link —
+      // only for a supplier of a company the operator belongs to.
+      await findSupplierInScope(req, req.params.id, 'write', { live: true })
 
       const token = await prisma.supplierPortalToken.create({
         data: { supplierId: req.params.id, label: body.label },
@@ -168,6 +195,8 @@ export async function supplierChatRoutes(fastify: FastifyInstance) {
     '/suppliers/:id/portal-tokens',
     { preHandler: requireAuth(...MANAGERS) },
     async (req) => {
+      // The tokens are live secrets: only for a supplier in scope.
+      await findSupplierInScope(req, req.params.id, 'read')
       return prisma.supplierPortalToken.findMany({
         where: { supplierId: req.params.id },
         orderBy: { createdAt: 'desc' },

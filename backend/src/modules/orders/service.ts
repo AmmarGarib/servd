@@ -7,6 +7,7 @@ import type { OrderDTO } from '@servd/types'
 import { Prisma } from '@prisma/client'
 import type { OrderStatus, ItemStatus } from '@prisma/client'
 import { calculatePointsEarned } from '../../lib/loyaltySettings.js'
+import { tenantIdOfConcept } from '../../lib/webhook-events.js'
 import { consumptionForSoldLines } from '../../lib/recipeCost.js'
 
 // ─── Inventory deduction (recipe-driven) ─────────────────────────────────────
@@ -643,7 +644,7 @@ async function transitionOrder(
       status === 'ready'     ? 'order.dispatched' :
       null
     if (eventName) {
-      emitDomainEvent(eventName, { orderId: id, status, conceptId: order.conceptId, totalCents: order.totalCents })
+      emitDomainEvent(eventName, { orderId: id, status, conceptId: order.conceptId, totalCents: order.totalCents }, await tenantIdOfConcept(order.conceptId))
     }
   })()
 
@@ -657,7 +658,7 @@ async function transitionOrder(
     // Use the operator's configured earn rate (admin → Loyalty), not a
     // hardcoded 1 point per PKR 1 — changing the rate on the settings page had
     // no effect on what customers actually earned.
-    const pointsToEarn = await calculatePointsEarned(order.totalCents)
+    const pointsToEarn = await calculatePointsEarned(order.totalCents, await tenantIdOfConcept(order.conceptId))
     if (pointsToEarn > 0) {
       void (async () => {
         try {
