@@ -1,0 +1,1385 @@
+/* KitchenDoors — the living error page.
+   Tints come from the world tokens (--world-*) stamped per day-part on <html>;
+   kitchen state comes from html[data-k-<slug>] (and, once React knows, a
+   data-state on the door as a fallback). Fallback values below are the lunch
+   set, so the scene still reads if the world layer is missing. */
+
+/* ═══ Shared scene ════════════════════════════════════════════════════════ */
+
+.scene,
+.offline {
+  position: relative;
+  min-height: 100vh;
+  min-height: 100svh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+.scene,
+.offline[data-brand='servd'] {
+  background: linear-gradient(180deg, var(--world-sky-a, #FFE58A) 0%, var(--world-sky-b, #FFD447) 100%);
+  color: var(--world-ink, #4E2A4F);
+}
+
+.sky {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+
+.ambient { position: absolute; inset: 0; }
+
+/* Sun by day, moon at night: the crescent is a sky-coloured disc slid over it. */
+.orb {
+  position: absolute;
+  left: var(--world-orb-x, 50%);
+  top: var(--world-orb-y, 10%);
+  width: clamp(56px, 8vw, 112px);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: var(--world-orb, #FFF1B8);
+  box-shadow: 0 0 70px 22px color-mix(in srgb, var(--world-orb, #FFF1B8) 45%, transparent);
+  transform: translate(-50%, -50%);
+  overflow: hidden;
+}
+
+.orb::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: var(--world-sky-a, #FFE58A);
+  transform: translate(32%, -22%);
+  opacity: 0;
+}
+
+:global(html[data-world-dark='1']) .orb { box-shadow: 0 0 50px 8px color-mix(in srgb, var(--world-orb, #F4EEDC) 30%, transparent); }
+:global(html[data-world-dark='1']) .orb::after { opacity: 1; }
+
+/* ── Mini header (the global nav hides on /[slug]) ───────────────────────── */
+.mini {
+  position: relative;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: max(10px, env(safe-area-inset-top)) clamp(16px, 4vw, 40px) 6px;
+}
+
+.mark {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  font-family: var(--font-wordmark);
+  font-weight: 800;
+  font-size: 1.5rem;
+  letter-spacing: -0.03em;
+  line-height: 1;
+  color: inherit;
+  text-decoration: none;
+}
+
+.markDot { color: var(--world-accent, #FF5A3C); }
+.offline[data-brand='stackd'] .markDot { color: #9BD3DD; }
+.offline[data-brand='flipd'] .markDot { color: #294375; }
+.offline[data-brand='simmer'] .markDot { color: inherit; }
+
+.mark:focus-visible,
+.miniLink:focus-visible { outline: 3px solid currentColor; outline-offset: 3px; border-radius: 8px; }
+
+.clock {
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  color: var(--world-ink-soft, rgba(78, 42, 79, 0.74));
+  white-space: nowrap;
+}
+
+.miniLink {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-height: 44px;
+  font-size: 0.86rem;
+  font-weight: 700;
+  color: inherit;
+  text-decoration: none;
+  opacity: 0.9;
+}
+
+.miniLink:hover { opacity: 1; text-decoration: underline; text-underline-offset: 4px; }
+
+/* ═══ wrong-door ══════════════════════════════════════════════════════════ */
+
+.stage {
+  position: relative;
+  z-index: 2;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: clamp(8px, 3vh, 36px) 16px clamp(28px, 6vh, 64px);
+}
+
+.title {
+  margin: 0 0 0.45rem;
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: clamp(2.1rem, 6.2vw, 4.2rem);
+  line-height: 0.98;
+  letter-spacing: -0.04em;
+  color: var(--world-ink, #4E2A4F);
+  text-wrap: balance;
+}
+
+.body {
+  margin: 0 0 clamp(26px, 6vh, 56px);
+  max-width: 34rem;
+  font-size: clamp(1rem, 1.5vw, 1.2rem);
+  font-weight: 600;
+  line-height: 1.45;
+  color: var(--world-ink-soft, rgba(78, 42, 79, 0.74));
+}
+
+/* The street: three doors on one floor line. Door metrics are CSS vars so
+   the floor, the stoops and the sleepers all line up at every width. */
+.street {
+  position: relative;
+  width: 100%;
+  max-width: 820px;
+  --dw: 180px;
+  --dh: 280px;
+  --k: 1;
+  --gap: clamp(28px, 5vw, 64px);
+  --lamp-h: 38px;
+  --stoop-h: 12px;
+  --jamb: 8px;
+}
+
+@media (max-width: 719px) {
+  .street { --dw: 140px; --dh: 218px; --k: 0.78; --gap: 20px; --lamp-h: 32px; --stoop-h: 10px; --jamb: 7px; }
+}
+
+@media (max-width: 479px) {
+  .street { --dw: min(104px, 27vw); --dh: calc(var(--dw) * 1.64); --k: 0.56; --gap: 12px; --lamp-h: 26px; --stoop-h: 8px; --jamb: 5px; }
+}
+
+.floor {
+  position: absolute;
+  left: 50%;
+  width: 200vw;
+  top: calc(var(--lamp-h) + var(--dh) + var(--stoop-h));
+  height: 100vh;
+  transform: translateX(-50%);
+  border-top: 3px solid color-mix(in srgb, var(--world-ink, #4E2A4F) 55%, transparent);
+  background: color-mix(in srgb, var(--world-ink, #4E2A4F) 7%, transparent);
+  pointer-events: none;
+}
+
+.doors {
+  position: relative;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  gap: var(--gap);
+}
+
+/* ── One door ────────────────────────────────────────────────────────────── */
+.slot {
+  position: relative;
+  width: var(--dw);
+  flex: none;
+  /* Kitchen state knobs — open is the default. */
+  --ajar: 12deg;
+  --swing: 38deg;
+  --bulb: #FFE7A8;
+  --bulb-glow: rgba(255, 196, 102, 0.78);
+  --bulb-anim: lampHum 3.2s ease-in-out infinite;
+  --room-o: 1;
+  --peek-o: 1;
+  --sleep-o: 0;
+  --dot: #3FAE6A;
+  --dot-anim: livePulse 1.8s ease-out infinite;
+  animation: settle 360ms cubic-bezier(0.34, 1.4, 0.64, 1) backwards;
+  animation-delay: calc(var(--i, 0) * 45ms);
+}
+
+@keyframes settle {
+  from { transform: translateY(12px); }
+  to   { transform: none; }
+}
+
+/* closing: amber lamp, still ajar */
+:global(html[data-k-stackd='closing']) .slot[data-door='stackd'],
+:global(html[data-k-simmer='closing']) .slot[data-door='simmer'],
+:global(html[data-k-flipd='closing']) .slot[data-door='flipd'],
+.slot[data-state='closing'] {
+  --bulb: #FFB347;
+  --bulb-glow: rgba(245, 140, 40, 0.72);
+  --bulb-anim: lampAmber 1.6s ease-in-out infinite;
+  --dot: #F59A2A;
+}
+
+/* opening: the lamp warming up, door pulled to */
+:global(html[data-k-stackd='opening']) .slot[data-door='stackd'],
+:global(html[data-k-simmer='opening']) .slot[data-door='simmer'],
+:global(html[data-k-flipd='opening']) .slot[data-door='flipd'],
+.slot[data-state='opening'] {
+  --ajar: 4deg;
+  --swing: 18deg;
+  --bulb: #F3D193;
+  --bulb-glow: rgba(255, 196, 102, 0.34);
+  --bulb-anim: lampWarm 2.4s steps(1, end) infinite;
+  --room-o: 0.55;
+  --port: #C9B98A;
+  --dot: #F3D193;
+  --dot-anim: none;
+}
+
+/* closed: shut, dark, and the cast member naps on the step */
+:global(html[data-k-stackd='closed']) .slot[data-door='stackd'],
+:global(html[data-k-simmer='closed']) .slot[data-door='simmer'],
+:global(html[data-k-flipd='closed']) .slot[data-door='flipd'],
+.slot[data-state='closed'] {
+  --ajar: 0deg;
+  --swing: 5deg;
+  --bulb: #3A2C33;
+  --bulb-glow: transparent;
+  --bulb-anim: none;
+  --room-o: 0;
+  --port: #14203A;
+  --peek-o: 0;
+  --sleep-o: 1;
+  --dot: color-mix(in srgb, var(--world-ink, #4E2A4F) 40%, transparent);
+  --dot-anim: none;
+}
+
+/* The html[data-k-*] stamp is the authority (WorldSync keeps it live); the
+   data-state selectors above are only a fallback for when it is missing. */
+
+.door {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  color: inherit;
+  text-decoration: none;
+  -webkit-tap-highlight-color: transparent;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.door:focus-visible { outline: none; }
+.door:focus-visible .frame { box-shadow: 0 0 0 3px var(--world-sky-a, #FFE58A), 0 0 0 6px var(--world-ink, #4E2A4F); }
+
+/* Lamp over the door */
+.lamp {
+  position: relative;
+  width: calc(40px * var(--k) + 8px);
+  height: var(--lamp-h);
+}
+
+.bracket {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  width: 2px;
+  height: 34%;
+  transform: translateX(-50%);
+  background: color-mix(in srgb, var(--world-ink, #4E2A4F) 70%, transparent);
+}
+
+.shade {
+  position: absolute;
+  left: 50%;
+  top: 30%;
+  width: 78%;
+  height: 34%;
+  transform: translateX(-50%);
+  border-radius: 999px 999px 3px 3px;
+  background: #2A1A2B;
+  z-index: 1;
+}
+
+.bulb {
+  position: absolute;
+  left: 50%;
+  top: 56%;
+  width: 40%;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  transform: translateX(-50%);
+  background: var(--bulb);
+  box-shadow: 0 0 calc(22px * var(--k) + 6px) calc(8px * var(--k) + 2px) var(--bulb-glow);
+  animation: var(--bulb-anim);
+  transition: background-color 400ms ease, box-shadow 400ms ease;
+}
+
+@keyframes lampHum   { 0%, 100% { opacity: 1; } 50% { opacity: 0.86; } }
+@keyframes lampAmber { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
+@keyframes lampWarm  { 0% { opacity: 0.55; } 12% { opacity: 1; } 16% { opacity: 0.4; } 40% { opacity: 0.9; } 70% { opacity: 0.6; } }
+
+/* Frame (jamb) + doorway */
+.frame {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: var(--dh);
+  padding: var(--jamb) var(--jamb) 0;
+  background: var(--jamb-c, #2A1A2B);
+  border-radius: var(--frame-r, 10px 10px 0 0);
+  transition: box-shadow 160ms ease;
+}
+
+.way {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: var(--way-r, 6px 6px 0 0);
+}
+
+.room {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: #1B1419;
+  overflow: hidden;
+}
+
+.roomLight {
+  position: absolute;
+  inset: 0;
+  background: var(--room-c, #FFE3B0);
+  opacity: var(--room-o);
+  transition: opacity 400ms ease;
+}
+
+/* The leaf: hinged on the left, ajar by default, swings on hover/focus/tap. */
+.leaf {
+  position: absolute;
+  inset: 0;
+  display: block;
+  border-radius: inherit;
+  background: var(--leaf-c, #7C2946);
+  box-shadow: inset 0 0 0 1.5px rgba(0, 0, 0, 0.14);
+  transform-origin: left center;
+  transform: perspective(800px) rotateY(var(--ajar));
+  transition: transform 320ms cubic-bezier(0.3, 1.25, 0.5, 1);
+  animation: creak 420ms cubic-bezier(0.3, 1.25, 0.5, 1) backwards;
+  animation-delay: calc(var(--i, 0) * 45ms + 60ms);
+  overflow: hidden;
+}
+
+@keyframes creak { from { transform: perspective(800px) rotateY(0deg); } }
+
+.door:hover .leaf,
+.door:focus-visible .leaf,
+.slot[data-active='1'] .leaf {
+  transform: perspective(800px) rotateY(var(--swing));
+}
+
+/* The peeker leans out past the leaf's free edge. The part that would sit
+   in front of the leaf is clipped, so it reads as being behind the door. */
+.peek {
+  position: absolute;
+  z-index: 2;
+  bottom: 0;
+  left: 64%;
+  width: calc(130px * var(--k));
+  height: calc(130px * var(--k));
+  clip-path: inset(-60% -60% 0 38%);
+  opacity: var(--peek-o);
+  visibility: visible;
+  transition: transform 320ms cubic-bezier(0.3, 1.25, 0.5, 1), clip-path 320ms ease, opacity 300ms ease;
+  pointer-events: none;
+}
+
+.peekInner {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 130px;
+  height: 130px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  transform: scale(var(--k));
+  transform-origin: bottom left;
+}
+
+.door:hover .peek,
+.door:focus-visible .peek,
+.slot[data-active='1'] .peek {
+  transform: translateX(calc(-24px * var(--k)));
+  clip-path: inset(-60% -60% 0 26%);
+}
+
+.stoop {
+  display: block;
+  width: calc(100% + 18px * var(--k) + 6px);
+  height: var(--stoop-h);
+  border-radius: 3px 3px 0 0;
+  background: color-mix(in srgb, var(--world-ink, #4E2A4F) 28%, transparent);
+}
+
+/* simmer's light: no character, just the room's glow spilling through the
+   gap onto the pavement. Flat colour, no gradient — the viewport's one
+   orange signal near simmer. */
+.spill {
+  position: absolute;
+  z-index: 0;
+  left: 78%;
+  top: calc(var(--lamp-h) + var(--dh) + var(--stoop-h) + 3px);
+  width: calc(var(--dw) * 0.46);
+  height: calc(var(--dw) * 0.16);
+  background: rgba(233, 78, 27, 0.26);
+  clip-path: polygon(0 0, 22% 0, 100% 100%, 30% 100%);
+  opacity: var(--room-o);
+  transition: opacity 400ms ease;
+  pointer-events: none;
+}
+
+/* A closed kitchen: the cast member sleeps on the step. */
+.sleeper {
+  position: absolute;
+  z-index: 3;
+  left: 58%;
+  top: calc(var(--lamp-h) + var(--dh) + var(--stoop-h));
+  width: calc(70px * var(--k) + 6px);
+  height: calc(70px * var(--k) + 6px);
+  transform: translateY(-100%);
+  opacity: var(--sleep-o);
+  transition: opacity 300ms ease;
+  pointer-events: none;
+}
+
+.sleeperInner {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 70px;
+  height: 70px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  transform: scale(calc(var(--k) + 0.08));
+  transform-origin: bottom left;
+}
+
+/* Name plate under the floor line */
+.plate {
+  position: relative;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.2rem;
+  margin-top: calc(10px * var(--k) + 6px);
+  max-width: calc(var(--dw) + var(--gap) - 4px);
+}
+
+.name {
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: calc(1.1rem * var(--k) + 0.4rem);
+  line-height: 1.05;
+  letter-spacing: -0.02em;
+  color: var(--world-ink, #4E2A4F);
+}
+
+.name[data-brand='simmer'] { font-family: var(--simmer-display, 'Amarante', serif); font-weight: 400; letter-spacing: 0; }
+.name[data-brand='flipd'] { font-family: var(--flipd-display, 'Alfa Slab One', serif); font-weight: 400; letter-spacing: 0; }
+
+.status {
+  display: inline-flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 0.3rem;
+  font-size: calc(0.2rem * var(--k) + 0.62rem);
+  font-weight: 700;
+  line-height: 1.3;
+  color: var(--world-ink-soft, rgba(78, 42, 79, 0.74));
+  text-wrap: balance;
+}
+
+.statusDot {
+  flex: none;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--dot);
+  animation: var(--dot-anim);
+  transform: translateY(-0.05rem);
+}
+
+@keyframes livePulse {
+  0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--dot, #3FAE6A) 60%, transparent); }
+  100% { box-shadow: 0 0 0 7px transparent; }
+}
+
+/* Speech bubble — the kitchen's own voice, on hover / focus / tap */
+.bubble {
+  position: absolute;
+  z-index: 6;
+  bottom: calc(100% - var(--lamp-h) * 0.2);
+  left: 50%;
+  width: max-content;
+  max-width: min(220px, calc(var(--dw) + 70px));
+  padding: 0.5rem 0.75rem;
+  border-radius: 14px;
+  background: #FFF4D6;
+  color: #2A1A2B;
+  border: 2px solid #2A1A2B;
+  box-shadow: 0 3px 0 #2A1A2B;
+  font-size: 0.8rem;
+  font-weight: 700;
+  line-height: 1.3;
+  text-align: center;
+  opacity: 0;
+  transform: translate(-50%, 6px) scale(0.94);
+  transition: opacity 180ms ease, transform 220ms cubic-bezier(0.34, 1.56, 0.64, 1);
+  pointer-events: none;
+}
+
+.bubble::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: -7px;
+  width: 11px;
+  height: 11px;
+  background: #FFF4D6;
+  border-right: 2px solid #2A1A2B;
+  border-bottom: 2px solid #2A1A2B;
+  transform: translateX(-50%) rotate(45deg);
+}
+
+.slot:first-child .bubble { left: 0; transform: translate(0, 6px) scale(0.94); }
+.slot:first-child .bubble::after { left: calc(var(--dw) / 2); }
+.slot:last-child .bubble { left: auto; right: 0; transform: translate(0, 6px) scale(0.94); }
+.slot:last-child .bubble::after { left: auto; right: calc(var(--dw) / 2 - 11px); transform: rotate(45deg); }
+
+.door:hover .bubble,
+.door:focus-visible .bubble,
+.slot[data-active='1'] .bubble { opacity: 1; transform: translate(-50%, 0) scale(1); }
+.slot:first-child .door:hover .bubble,
+.slot:first-child .door:focus-visible .bubble,
+.slot:first-child[data-active='1'] .bubble,
+.slot:last-child .door:hover .bubble,
+.slot:last-child .door:focus-visible .bubble,
+.slot:last-child[data-active='1'] .bubble { transform: translate(0, 0) scale(1); }
+
+/* ── Door skins ──────────────────────────────────────────────────────────── */
+
+/* stackd: plum, arched café door, cream sticker sign */
+.slot[data-door='stackd'] {
+  --jamb-c: #FCE8CE;
+  --leaf-c: #7C2946;
+  --room-c: #FFE3B0;
+  --frame-r: calc(var(--dw) * 0.5) calc(var(--dw) * 0.5) 0 0;
+  --way-r: calc(var(--dw) * 0.5 - var(--jamb)) calc(var(--dw) * 0.5 - var(--jamb)) 0 0;
+}
+.slot[data-door='stackd'] .frame { box-shadow: inset 0 0 0 2px rgba(46, 25, 34, 0.35); }
+
+.stackdWindow {
+  position: absolute;
+  left: 18%;
+  right: 18%;
+  top: 9%;
+  height: 26%;
+  border-radius: 999px 999px 8px 8px;
+  background: #9BD3DD;
+  box-shadow: inset 0 0 0 calc(3px * var(--k) + 1px) #FCE8CE;
+  opacity: 0.9;
+}
+
+.stackdSticker {
+  position: absolute;
+  left: 50%;
+  top: 44%;
+  padding: calc(0.3rem * var(--k) + 0.1rem) calc(0.7rem * var(--k) + 0.2rem);
+  border-radius: 999px;
+  background: #FCE8CE;
+  color: #7C2946;
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: calc(1.05rem * var(--k) + 0.15rem);
+  letter-spacing: -0.02em;
+  line-height: 1;
+  transform: translateX(-50%) rotate(-5deg);
+  box-shadow: 0 2px 0 rgba(46, 25, 34, 0.5);
+  white-space: nowrap;
+}
+
+.stackdDot {
+  position: absolute;
+  right: 16%;
+  top: 60%;
+  width: calc(18px * var(--k) + 4px);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: #9BD3DD;
+  transform: rotate(10deg);
+  box-shadow: 0 2px 0 rgba(46, 25, 34, 0.5);
+}
+
+.knob {
+  position: absolute;
+  right: 10%;
+  top: 70%;
+  width: calc(12px * var(--k) + 3px);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: #FCE8CE;
+  box-shadow: 0 1px 0 rgba(46, 25, 34, 0.5);
+}
+
+/* simmer: tiber, tall and quiet, a bone hairline, the lowercase Amarante word */
+.slot[data-door='simmer'] {
+  --jamb-c: #0E2C25;
+  --leaf-c: #06392F;
+  --room-c: #E9793F;
+  --frame-r: 3px 3px 0 0;
+  --way-r: 1px 1px 0 0;
+}
+.slot[data-door='simmer'] .frame { box-shadow: inset 0 0 0 1px rgba(237, 230, 211, 0.5); }
+
+.simmerHair {
+  position: absolute;
+  inset: 7% 11% 7% 11%;
+  border: 1px solid rgba(237, 230, 211, 0.75);
+}
+
+.simmerWord {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 22%;
+  text-align: center;
+  font-family: var(--simmer-display, 'Amarante', serif);
+  font-size: calc(1.2rem * var(--k) + 0.2rem);
+  color: #EDE6D3;
+  letter-spacing: 0.02em;
+}
+
+.simmerPull {
+  position: absolute;
+  right: 17%;
+  top: 46%;
+  width: 2px;
+  height: 18%;
+  background: #EDE6D3;
+  opacity: 0.85;
+}
+
+/* Flipd: diner blue, porthole, push bar, checker kickplate */
+.slot[data-door='flipd'] {
+  --jamb-c: #1D3159;
+  --leaf-c: #294375;
+  --room-c: #FFE9A8;
+  --frame-r: 14px 14px 0 0;
+  --way-r: 9px 9px 0 0;
+}
+.slot[data-door='flipd'] .frame { box-shadow: inset 0 0 0 2px rgba(254, 213, 97, 0.55); }
+
+.flipdPort {
+  position: absolute;
+  left: 50%;
+  top: 10%;
+  width: 46%;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  transform: translateX(-50%);
+  background: var(--port, #FFE9A8);
+  box-shadow: inset 0 0 0 calc(4px * var(--k) + 2px) #F9F0E1, 0 0 0 2px #1D3159;
+  transition: background-color 400ms ease;
+}
+
+.flipdSign {
+  position: absolute;
+  left: 50%;
+  top: 46%;
+  padding: calc(0.18rem * var(--k) + 0.1rem) calc(0.55rem * var(--k) + 0.15rem);
+  border-radius: 6px;
+  background: #FED561;
+  color: #294375;
+  font-family: var(--flipd-display, 'Alfa Slab One', serif);
+  font-size: calc(1.05rem * var(--k) + 0.15rem);
+  line-height: 1.1;
+  transform: translateX(-50%) rotate(-3deg);
+  box-shadow: 0 2px 0 #1D3159;
+  white-space: nowrap;
+}
+
+.flipdBar {
+  position: absolute;
+  left: 12%;
+  right: 12%;
+  top: 64%;
+  height: calc(6px * var(--k) + 2px);
+  border-radius: 999px;
+  background: #F9F0E1;
+  box-shadow: 0 2px 0 #1D3159;
+}
+
+.flipdKick {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 17%;
+  background-image: var(--flipd-checker);
+  background-size: calc(20px * var(--k) + 4px) calc(20px * var(--k) + 4px);
+  border-top: 2px solid #1D3159;
+}
+
+/* Under the doors */
+.after {
+  position: relative;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  margin-top: clamp(20px, 4vh, 36px);
+}
+
+.count {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0;
+  font-weight: 800;
+  font-size: 0.95rem;
+  color: var(--world-ink, #4E2A4F);
+}
+
+.countDot {
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 50%;
+  background: #3FAE6A;
+  animation: livePulse 1.8s ease-out infinite;
+  --dot: #3FAE6A;
+}
+.countDot[data-open='0'] { background: color-mix(in srgb, var(--world-ink, #4E2A4F) 45%, transparent); animation: none; }
+
+.cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-height: 50px;
+  padding: 0.75rem 1.5rem;
+  border-radius: 999px;
+  background: var(--world-cta-bg, #4E2A4F);
+  color: var(--world-cta-ink, #FFF4D6);
+  border: 2.5px solid var(--world-cta-bg, #4E2A4F);
+  box-shadow: 0 5px 0 color-mix(in srgb, var(--world-cta-bg, #4E2A4F) 55%, #000);
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 1rem;
+  text-decoration: none;
+  transition: transform 160ms cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 160ms ease;
+}
+
+.cta:hover { transform: translateY(-2px); }
+.cta:active { transform: translateY(3px); box-shadow: 0 2px 0 color-mix(in srgb, var(--world-cta-bg, #4E2A4F) 55%, #000); }
+.cta:focus-visible { outline: 3px solid var(--world-ink, #4E2A4F); outline-offset: 3px; }
+
+/* ═══ menu-offline ════════════════════════════════════════════════════════ */
+
+.offline[data-brand='stackd'] {
+  background: #7C2946;
+  color: #FCE8CE;
+  font-family: var(--stackd-body, 'Inter', system-ui, sans-serif);
+  --o-soft: rgba(252, 232, 206, 0.82);
+  --o-line: rgba(252, 232, 206, 0.45);
+  --o-btn-bg: #FCE8CE;
+  --o-btn-ink: #7C2946;
+  --o-shadow: #2E1922;
+  --o-dot: #9BD3DD;
+}
+
+.offline[data-brand='flipd'] {
+  background: #FED561;
+  color: #294375;
+  font-family: var(--flipd-body, 'Poppins', system-ui, sans-serif);
+  --o-soft: #1D3159;
+  --o-line: rgba(41, 67, 117, 0.55);
+  --o-btn-bg: #294375;
+  --o-btn-ink: #F9F0E1;
+  --o-shadow: #1D3159;
+  --o-dot: #294375;
+}
+
+.offline[data-brand='flipd']::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 14px;
+  background-image: var(--flipd-checker);
+  background-size: 14px 14px;
+  z-index: 1;
+}
+
+.offline[data-brand='simmer'] {
+  background: #06392F;
+  color: #EDE6D3;
+  font-family: var(--simmer-body, 'Times New Roman', Times, serif);
+  --o-soft: rgba(237, 230, 211, 0.8);
+  --o-line: rgba(237, 230, 211, 0.5);
+  --o-btn-bg: #EDE6D3;
+  --o-btn-ink: #06392F;
+  --o-shadow: transparent;
+  --o-dot: #E94E1B;
+}
+
+.offline[data-brand='servd'] {
+  --o-soft: var(--world-ink-soft, rgba(78, 42, 79, 0.74));
+  --o-line: color-mix(in srgb, var(--world-ink, #4E2A4F) 45%, transparent);
+  --o-btn-bg: var(--world-cta-bg, #4E2A4F);
+  --o-btn-ink: var(--world-cta-ink, #FFF4D6);
+  --o-shadow: color-mix(in srgb, var(--world-cta-bg, #4E2A4F) 55%, #000);
+  --o-dot: #3FAE6A;
+}
+
+.offline[data-brand='flipd'] .mini { padding-top: max(20px, env(safe-area-inset-top)); }
+
+.counter {
+  position: relative;
+  z-index: 2;
+  flex: 1;
+  width: 100%;
+  max-width: 1180px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
+  align-items: center;
+  gap: clamp(20px, 5vw, 72px);
+  padding: clamp(8px, 3vh, 40px) clamp(16px, 5vw, 48px) clamp(32px, 6vh, 64px);
+}
+
+@media (max-width: 820px) {
+  .counter { grid-template-columns: minmax(0, 1fr); align-content: start; }
+  .art { order: -1; }
+}
+
+.copy { min-width: 0; animation: rise 380ms cubic-bezier(0.22, 1, 0.36, 1) backwards; }
+@keyframes rise { from { transform: translateY(10px); } to { transform: none; } }
+
+.statusLine {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  margin: 0 0 1rem;
+  padding: 0.4rem 0.85rem 0.4rem 0.7rem;
+  border-radius: 999px;
+  border: 1.5px solid var(--o-line);
+  font-size: 0.84rem;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.statusName { font-weight: 800; }
+
+.liveDot {
+  flex: none;
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+  background: var(--o-dot);
+  --dot: var(--o-dot);
+  animation: livePulse 1.8s ease-out infinite;
+}
+
+.statusLine[data-state='closing'] .liveDot { background: #F59A2A; --dot: #F59A2A; }
+.statusLine[data-state='closed'] .liveDot,
+.statusLine[data-state='opening'] .liveDot { animation: none; opacity: 0.6; }
+/* simmer keeps its one orange dot in every state — it just stops pulsing. */
+.offline[data-brand='simmer'] .statusLine[data-state='closing'] .liveDot { background: #E94E1B; }
+
+.offTitle {
+  margin: 0 0 0.7rem;
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: clamp(2.1rem, 5.2vw, 3.8rem);
+  line-height: 1;
+  letter-spacing: -0.035em;
+  text-wrap: balance;
+}
+
+.offline[data-brand='stackd'] .offTitle { font-family: var(--stackd-display, 'Playfair Display', Georgia, serif); font-weight: 800; letter-spacing: -0.02em; }
+.offline[data-brand='flipd'] .offTitle { font-family: var(--flipd-display, 'Alfa Slab One', serif); font-weight: 400; letter-spacing: -0.01em; line-height: 1.02; }
+.offline[data-brand='simmer'] .offTitle { font-family: var(--simmer-display, 'Amarante', serif); font-weight: 400; letter-spacing: 0; line-height: 1.08; }
+
+.offBody {
+  margin: 0 0 0.6rem;
+  max-width: 34rem;
+  font-size: clamp(1.02rem, 1.4vw, 1.18rem);
+  font-weight: 600;
+  line-height: 1.45;
+  color: var(--o-soft);
+}
+
+.help {
+  margin: 0 0 1.4rem;
+  max-width: 32rem;
+  font-size: 0.95rem;
+  line-height: 1.55;
+  color: var(--o-soft);
+}
+
+.offline[data-brand='simmer'] .offBody,
+.offline[data-brand='simmer'] .help { font-weight: 400; }
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 50px;
+  padding: 0.75rem 1.45rem;
+  border-radius: 999px;
+  font-weight: 800;
+  font-size: 0.98rem;
+  text-decoration: none;
+  transition: transform 160ms cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 160ms ease, background-color 160ms ease;
+}
+
+.btn:focus-visible { outline: 3px solid currentColor; outline-offset: 3px; }
+
+.btnPrimary {
+  background: var(--o-btn-bg);
+  color: var(--o-btn-ink);
+  border: 2px solid var(--o-btn-bg);
+  box-shadow: 0 4px 0 var(--o-shadow);
+}
+
+.btnGhost {
+  background: transparent;
+  color: inherit;
+  border: 2px solid currentColor;
+}
+
+.btn:hover { transform: translateY(-2px); }
+.btn:active { transform: translateY(2px); }
+
+/* stackd: sticker buttons, slightly off-square */
+.offline[data-brand='stackd'] .btnPrimary { transform: rotate(-1.2deg); }
+.offline[data-brand='stackd'] .btnGhost { transform: rotate(1deg); }
+.offline[data-brand='stackd'] .btn:hover { transform: rotate(0deg) translateY(-2px); }
+
+/* Flipd: chunky diner buttons */
+.offline[data-brand='flipd'] .btn { border-radius: 12px; text-transform: uppercase; letter-spacing: 0.04em; font-size: 0.9rem; }
+.offline[data-brand='flipd'] .btnGhost { background: #F9F0E1; border-color: #294375; box-shadow: 0 4px 0 #1D3159; }
+
+/* simmer: quiet, hairline, no shadow */
+.offline[data-brand='simmer'] .btn { border-radius: 2px; font-weight: 400; font-size: 1.02rem; letter-spacing: 0.02em; box-shadow: none; }
+.offline[data-brand='simmer'] .btnGhost { border-width: 1px; }
+.offline[data-brand='simmer'] .btn:hover { transform: none; text-decoration: underline; text-underline-offset: 4px; }
+
+.orTry {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 1.5rem;
+}
+
+.orTryLabel {
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  color: var(--o-soft);
+  margin-right: 0.15rem;
+}
+
+.offline[data-brand='simmer'] .orTryLabel { font-weight: 400; letter-spacing: 0.08em; }
+
+.tryPill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-height: 42px;
+  padding: 0.45rem 1rem;
+  border-radius: 999px;
+  border: 1.5px solid var(--o-line);
+  color: inherit;
+  font-weight: 700;
+  font-size: 0.9rem;
+  text-decoration: none;
+  transition: background-color 160ms ease, transform 160ms ease;
+}
+
+.tryPill:hover { background: color-mix(in srgb, currentColor 10%, transparent); transform: translateY(-1px); }
+.tryPill:focus-visible { outline: 3px solid currentColor; outline-offset: 2px; }
+.tryPill[data-door='simmer'] { font-family: var(--simmer-display, 'Amarante', serif); font-weight: 400; }
+.tryPill[data-door='flipd'] { font-family: var(--flipd-display, 'Alfa Slab One', serif); font-weight: 400; }
+
+.tryDot {
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 50%;
+  background: #3FAE6A;
+}
+
+:global(html[data-k-stackd='closing']) .tryPill[data-door='stackd'] .tryDot,
+:global(html[data-k-simmer='closing']) .tryPill[data-door='simmer'] .tryDot,
+:global(html[data-k-flipd='closing']) .tryPill[data-door='flipd'] .tryDot { background: #F59A2A; }
+
+:global(html[data-k-stackd='closed']) .tryPill[data-door='stackd'] .tryDot,
+:global(html[data-k-simmer='closed']) .tryPill[data-door='simmer'] .tryDot,
+:global(html[data-k-flipd='closed']) .tryPill[data-door='flipd'] .tryDot,
+:global(html[data-k-stackd='opening']) .tryPill[data-door='stackd'] .tryDot,
+:global(html[data-k-simmer='opening']) .tryPill[data-door='simmer'] .tryDot,
+:global(html[data-k-flipd='opening']) .tryPill[data-door='flipd'] .tryDot { background: transparent; box-shadow: inset 0 0 0 1.5px currentColor; }
+
+/* simmer shows exactly one orange signal: its own live dot. Pill dots go bone. */
+.offline[data-brand='simmer'] .tryDot { background: transparent !important; box-shadow: inset 0 0 0 1px currentColor; }
+
+.art {
+  position: relative;
+  min-width: 0;
+  animation: rise 420ms cubic-bezier(0.22, 1, 0.36, 1) 40ms backwards;
+}
+
+/* ── stackd counter ──────────────────────────────────────────────────────── */
+.stackdArt {
+  --s: 1.22;
+  position: relative;
+  height: clamp(250px, 36vw, 440px);
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+
+@media (max-width: 820px) { .stackdArt { --s: 0.78; height: 262px; } }
+@media (max-width: 400px) { .stackdArt { --s: 0.66; height: 236px; } }
+
+.stackdSun {
+  position: absolute;
+  top: 2%;
+  right: 4%;
+  z-index: 3;
+  display: grid;
+  place-items: center;
+  width: calc(128px * var(--s));
+  aspect-ratio: 1;
+  padding: 0.6rem;
+  border-radius: 50%;
+  background: #9BD3DD;
+  color: #7C2946;
+  font-family: var(--stackd-display, 'Playfair Display', Georgia, serif);
+  font-style: italic;
+  font-weight: 700;
+  font-size: calc(0.86rem * var(--s) + 0.08rem);
+  line-height: 1.15;
+  text-align: center;
+  transform: rotate(9deg);
+  box-shadow: 0 3px 0 #2E1922;
+  animation: stickerSway 5.5s ease-in-out infinite;
+}
+
+@keyframes stickerSway { 0%, 100% { transform: rotate(9deg); } 50% { transform: rotate(4deg) translateY(-3px); } }
+
+.stackdCast {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: flex-end;
+  gap: calc(6px * var(--s));
+  padding: 0 4%;
+  margin-bottom: -4px;
+}
+
+.stackdCoffee,
+.stackdCroissant,
+.flipdBurger,
+.flipdFries {
+  position: relative;
+  display: block;
+  flex: none;
+  transform-origin: bottom center;
+  line-height: 0;
+}
+
+.stackdCoffee { width: calc(150px * var(--s)); height: calc(150px * var(--s)); }
+.stackdCroissant { width: calc(112px * var(--s)); height: calc(112px * var(--s)); }
+
+.castScale {
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  display: block;
+  transform: translateX(-50%) scale(var(--s));
+  transform-origin: bottom center;
+}
+
+.stackdSteam { position: absolute; left: 20%; right: 20%; top: -22%; height: 40%; z-index: 1; }
+
+.vessels {
+  flex: 1;
+  min-width: 0;
+  max-width: calc(210px * var(--s));
+  height: auto;
+  margin-left: auto;
+}
+
+.stackdTop {
+  position: relative;
+  z-index: 1;
+  height: calc(20px * var(--s) + 4px);
+  border-radius: 12px 12px 4px 4px;
+  background: #FCE8CE;
+  box-shadow: 0 3px 0 #2E1922;
+}
+
+.stackdFront {
+  position: relative;
+  height: calc(64px * var(--s) + 10px);
+  margin: 0 3%;
+  border-radius: 0 0 14px 14px;
+  background: #F1D9B8;
+  display: grid;
+  place-items: center;
+  box-shadow: inset 0 6px 0 rgba(46, 25, 34, 0.12);
+}
+
+.stackdChalk {
+  padding: 0.35rem 0.9rem;
+  border-radius: 999px;
+  background: #7C2946;
+  color: #FCE8CE;
+  font-weight: 700;
+  font-size: calc(0.78rem * var(--s) + 0.12rem);
+  transform: rotate(-2deg);
+}
+
+/* ── Flipd pass ──────────────────────────────────────────────────────────── */
+.flipdArt {
+  --s: 1.22;
+  position: relative;
+  height: clamp(270px, 34vw, 430px);
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+
+@media (max-width: 820px) { .flipdArt { --s: 0.78; height: 290px; } }
+@media (max-width: 400px) { .flipdArt { --s: 0.66; height: 262px; } }
+
+.rail {
+  position: absolute;
+  top: 2%;
+  left: 2%;
+  right: 2%;
+  height: calc(12px * var(--s) + 4px);
+  border-radius: 999px;
+  background: #294375;
+  box-shadow: 0 3px 0 #1D3159;
+  z-index: 3;
+}
+
+.clip {
+  position: absolute;
+  top: 60%;
+  width: calc(16px * var(--s) + 4px);
+  height: calc(14px * var(--s) + 4px);
+  border-radius: 3px;
+  background: #F9F0E1;
+  border: 2px solid #1D3159;
+  transform: translateX(-50%);
+}
+
+.ticket {
+  position: absolute;
+  top: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: calc(0.85rem * var(--s) + 0.2rem) calc(0.8rem * var(--s) + 0.2rem) calc(1.1rem * var(--s) + 0.3rem);
+  background: #F9F0E1;
+  color: #294375;
+  border: 2px solid #1D3159;
+  border-top: none;
+  font-family: var(--stackd-mono, 'JetBrains Mono', 'Courier New', monospace);
+  font-weight: 700;
+  font-size: calc(0.78rem * var(--s) + 0.12rem);
+  letter-spacing: 0.06em;
+  line-height: 1.25;
+  transform-origin: top center;
+  clip-path: polygon(0 0, 100% 0, 100% 92%, 90% 100%, 80% 92%, 70% 100%, 60% 92%, 50% 100%, 40% 92%, 30% 100%, 20% 92%, 10% 100%, 0 92%);
+  animation: ticketSway 3.4s ease-in-out infinite;
+}
+
+.ticketMain { left: 40%; width: calc(190px * var(--s) + 20px); transform: translateX(-50%); }
+.ticketSide { left: 82%; width: calc(120px * var(--s) + 16px); transform: translateX(-50%) rotate(3deg); font-size: calc(0.62rem * var(--s) + 0.12rem); animation-delay: -1.2s; }
+
+.ticketNo { font-size: 0.7em; opacity: 0.75; border-bottom: 1.5px dashed rgba(41, 67, 117, 0.5); padding-bottom: 0.3rem; margin-bottom: 0.2rem; }
+.ticketBig { font-family: var(--flipd-display, 'Alfa Slab One', serif); font-weight: 400; font-size: 1.6em; letter-spacing: 0.02em; }
+
+@keyframes ticketSway {
+  0%, 100% { transform: translateX(-50%) rotate(-2deg); }
+  50%      { transform: translateX(-50%) rotate(2deg); }
+}
+
+.flipdCast {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: calc(22px * var(--s));
+  margin-bottom: -4px;
+}
+
+.flipdBurger { width: calc(150px * var(--s)); height: calc(150px * var(--s)); }
+.flipdFries { width: calc(120px * var(--s)); height: calc(120px * var(--s)); }
+
+/* The patty rides the burger's 1.6 s cheer: up, over, back on the grill. */
+.patty {
+  position: absolute;
+  z-index: 2;
+  left: 50%;
+  top: -6%;
+  width: calc(54px * var(--s));
+  height: auto;
+  margin-left: calc(-27px * var(--s));
+  animation: pattyFlip 1.6s cubic-bezier(0.3, 0.7, 0.4, 1) infinite;
+  transform-origin: center;
+}
+
+@keyframes pattyFlip {
+  0%, 12%  { transform: translateY(0) rotateX(0deg); }
+  45%      { transform: translateY(calc(-58px * var(--s))) rotateX(180deg); }
+  78%, 100% { transform: translateY(0) rotateX(360deg); }
+}
+
+.flatTop {
+  position: relative;
+  z-index: 1;
+  height: calc(22px * var(--s) + 4px);
+  margin: 0 2%;
+  border-radius: 8px 8px 2px 2px;
+  background: #294375;
+  box-shadow: inset 0 -5px 0 #1D3159;
+}
+
+.checkerBand {
+  height: calc(30px * var(--s) + 6px);
+  background-image: var(--flipd-checker);
+  background-size: calc(24px * var(--s) + 4px) calc(24px * var(--s) + 4px);
+  border: 2px solid #1D3159;
+  border-top: none;
+  border-radius: 0 0 10px 10px;
+}
+
+/* ── simmer card ─────────────────────────────────────────────────────────── */
+.simmerArt {
+  position: relative;
+  height: clamp(250px, 36vw, 400px);
+  display: grid;
+  place-items: center;
+}
+
+@media (max-width: 820px) { .simmerArt { height: 250px; } }
+
+.simmerCard,
+.simmerCardBack {
+  width: min(250px, 62%);
+  aspect-ratio: 3 / 4.1;
+  border: 1px solid rgba(237, 230, 211, 0.75);
+}
+
+.simmerCardBack {
+  position: absolute;
+  transform: translate(14px, 10px) rotate(4deg);
+  border-color: rgba(237, 230, 211, 0.3);
+}
+
+.simmerCard {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 11% 10%;
+  background: #06392F;
+  transform: rotate(-2deg);
+}
+
+@media (max-width: 820px) {
+  .simmerCard, .simmerCardBack { width: auto; height: 220px; }
+}
+
+.simmerCardMark { font-family: var(--simmer-display, 'Amarante', serif); font-size: clamp(1.5rem, 3vw, 2.1rem); line-height: 1; color: #EDE6D3; }
+.simmerCardTag { font-family: var(--simmer-body, 'Times New Roman', serif); font-style: italic; font-size: 0.82rem; color: rgba(237, 230, 211, 0.8); }
+.simmerRule { width: 30%; height: 1px; background: rgba(237, 230, 211, 0.6); margin: 0.35rem 0; }
+.simmerLine { display: block; height: 1px; background: rgba(237, 230, 211, 0.42); margin-top: 0.35rem; }
+.simmerCardFoot { margin-top: auto; font-family: var(--simmer-body, 'Times New Roman', serif); font-size: 0.7rem; letter-spacing: 0.18em; color: rgba(237, 230, 211, 0.7); }
+
+/* ── servd fallback ──────────────────────────────────────────────────────── */
+.servdArt {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  min-height: clamp(200px, 30vw, 320px);
+}
+
+.servdFloor {
+  width: 90%;
+  height: 3px;
+  margin-top: -2px;
+  background: color-mix(in srgb, var(--world-ink, #4E2A4F) 50%, transparent);
+  border-radius: 2px;
+}
+
+/* ═══ Reduced motion: a still picture, doors ajar, no swing ═══════════════ */
+@media (prefers-reduced-motion: reduce) {
+  .slot,
+  .leaf,
+  .bulb,
+  .statusDot,
+  .countDot,
+  .liveDot,
+  .copy,
+  .art,
+  .stackdSun,
+  .ticket,
+  .patty {
+    animation: none !important;
+  }
+  .door:hover .leaf,
+  .door:focus-visible .leaf,
+  .slot[data-active='1'] .leaf { transform: perspective(800px) rotateY(var(--ajar)); }
+  .leaf,
+  .peek,
+  .bubble,
+  .cta,
+  .btn,
+  .tryPill { transition: none !important; }
+  .door:hover .peek,
+  .door:focus-visible .peek,
+  .slot[data-active='1'] .peek { transform: none; clip-path: inset(-60% -60% 0 38%); }
+  .ticketMain { transform: translateX(-50%) rotate(-1deg); }
+}

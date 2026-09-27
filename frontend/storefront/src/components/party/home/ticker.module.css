@@ -5,8 +5,10 @@
   display: grid;
   place-items: center;
   height: clamp(9rem, 15vw, 12.5rem);
-  /* Top half continues the hero floor, bottom half is the kitchens' cream. */
-  background: linear-gradient(180deg, #F4C22E 0 50%, #FFF4D6 50% 100%);
+  /* Top half continues the hero floor (which follows the hour); the bottom
+     half is the kitchens' cream. */
+  --seam-top: color-mix(in srgb, var(--world-sky-b, #FFD447) 94%, #2A1A2B);
+  background: linear-gradient(180deg, var(--seam-top) 0 50%, #FFF4D6 50% 100%);
   overflow: hidden;
 }
 
@@ -57,6 +59,22 @@
   white-space: nowrap;
   line-height: 1;
 }
+
+/* ── Words by the hour (see Ticker.tsx) ──────────────────────────────────
+   Hidden by default, shown for the stamped day-part (lunch if unstamped),
+   then dropped again for a kitchen that is closed. */
+.item[data-dp] { display: none; }
+:global(html:not([data-daypart])) .item[data-dp~='lunch'],
+:global(html[data-daypart='morning']) .item[data-dp~='morning'],
+:global(html[data-daypart='lunch']) .item[data-dp~='lunch'],
+:global(html[data-daypart='afternoon']) .item[data-dp~='afternoon'],
+:global(html[data-daypart='dinner']) .item[data-dp~='dinner'],
+:global(html[data-daypart='late']) .item[data-dp~='late'],
+:global(html[data-daypart='night']) .item[data-dp~='night'] { display: inline-flex; }
+:global(html[data-k-stackd='closed']) .item[data-k='stackd'],
+:global(html[data-k-simmer='closed']) .item[data-k='simmer'],
+:global(html[data-k-flipd='closed']) .item[data-k='flipd'] { display: none; }
+
 .tapeFront .item { font-size: clamp(1.6rem, 3.6vw, 3rem); }
 .tapeBack .item  { font-size: clamp(1rem, 1.8vw, 1.4rem); text-transform: uppercase; letter-spacing: 0.08em; }
 
@@ -83,7 +101,7 @@
 /* Phones: the hero has no floor band there (it ends in plain butter), and
    the tapes need a steeper cross to both read at 375px. */
 @media (max-width: 640px) {
-  .seam { background: linear-gradient(180deg, #FFD447 0 50%, #FFF4D6 50% 100%); height: 8.5rem; }
+  .seam { --seam-top: var(--world-sky-b, #FFD447); height: 8.5rem; }
   .tapeFront { transform: rotate(-5deg); }
   .tapeBack { transform: rotate(4.5deg); }
 }

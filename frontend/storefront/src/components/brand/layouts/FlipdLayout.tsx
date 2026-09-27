@@ -87,7 +87,7 @@ function Checker() {
 }
 
 function Mission({ long }: { long: string }) {
-  const ref = useSectionMotion<HTMLElement>(0.2)
+  const ref = useSectionMotion<HTMLElement>()
   return (
     <section ref={ref} className={l.section} aria-labelledby="flipd-mission-title">
       <div className={`${l.inner} ${l.mission}`}>
@@ -125,8 +125,12 @@ function Mission({ long }: { long: string }) {
   )
 }
 
+// Reveal hygiene: the server render is the finished band; the stickers and
+// the heading only hold back once JS has mounted AND the band is still below
+// the fold, trigger on a 2% sliver, and land within 450 ms — so a jump
+// straight to this band never photographs an empty blue slab.
 function Values() {
-  const ref = useSectionMotion<HTMLElement>(0.15)
+  const ref = useSectionMotion<HTMLElement>()
   return (
     <section ref={ref} className={`${l.section} ${l.blue}`} aria-labelledby="flipd-values-title">
       <div className={l.inner}>
@@ -154,7 +158,7 @@ function Values() {
 }
 
 function SignOff({ badge, badgeIsFallback, address }: { badge: string; badgeIsFallback: boolean; address: string }) {
-  const ref = useSectionMotion<HTMLElement>(0.3)
+  const ref = useSectionMotion<HTMLElement>()
   return (
     <section ref={ref} className={l.signoff} aria-label="Sign-off">
       <div className={l.badgeWrap}>

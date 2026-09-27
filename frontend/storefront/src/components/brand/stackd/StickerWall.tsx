@@ -3,10 +3,16 @@
 // scroll in. Each seal carries a small moving drawing in the brand's ink:
 // a pan that steams, a sandwich that stacks itself, a glass being poured,
 // a bag swinging on its way out. Loops run only while the wall is on screen.
+//
+// They are stickers, so they behave like stickers: hover or focus one and it
+// lifts off the wall with a tilt and a harder shadow; tap one and a corner
+// peels up and slaps back down. The coffee from the servd crowd is peeking
+// over the edge of one of them (and waves when you pick that one).
 
-import { useEffect, useState, type CSSProperties } from 'react'
+import { useEffect, useRef, useState, type CSSProperties } from 'react'
+import { CrowdCameo } from '../../world/cast/CrowdCameo'
 import { Die } from './Die'
-import { useInView } from './hooks'
+import { useArmed, useInView } from './hooks'
 import s from './stickers.module.css'
 import ui from './ui.module.css'
 
@@ -102,18 +108,30 @@ function Vignette({ kind }: { kind: Kind }) {
   }
 }
 
-export function StickerWall({ highlights }: { highlights: string[] }) {
-  // Seen once -> the slap plays. On screen now -> the loops run.
-  const { ref, inView } = useInView<HTMLElement>({ rootMargin: '0px 0px -15% 0px' })
-  const [seen, setSeen] = useState(false)
-  const [armed, setArmed] = useState(false)
-  useEffect(() => {
-    // Only hide-until-seen once JS is here, so no-JS readers see the wall.
-    if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) setArmed(true)
-  }, [])
-  useEffect(() => { if (inView) setSeen(true) }, [inView])
+/** Which sticker the coffee peeks over: the second, or the only one. */
+const PEEK_AT = 1
 
-  const cls = [s.wall, armed ? s.armed : '', seen ? s.seen : '', inView ? s.live : ''].filter(Boolean).join(' ')
+export function StickerWall({ highlights }: { highlights: string[] }) {
+  // Seen once -> the slap plays (armed after mount only, so the server's
+  // stuck-on wall is what a screenshot sees). On screen now -> loops run.
+  const { ref, inView } = useInView<HTMLElement>()
+  const armed = useArmed()
+  const [seen, setSeen] = useState(false)
+  const [picked, setPicked] = useState(-1)
+  const [peel, setPeel] = useState(-1)
+  const peelTimer = useRef<number | undefined>(undefined)
+  useEffect(() => { if (inView && armed) setSeen(true) }, [inView, armed])
+  useEffect(() => () => window.clearTimeout(peelTimer.current), [])
+
+  const doPeel = (i: number) => {
+    setPeel(-1)
+    requestAnimationFrame(() => setPeel(i))
+    window.clearTimeout(peelTimer.current)
+    peelTimer.current = window.setTimeout(() => setPeel(-1), 560)
+  }
+
+  const peekAt = Math.min(PEEK_AT, highlights.length - 1)
+  const cls = [s.wall, seen ? s.seen : '', inView ? s.live : ''].filter(Boolean).join(' ')
 
   return (
     <section ref={ref} className={cls} aria-labelledby="stackd-what">
@@ -124,12 +142,32 @@ export function StickerWall({ highlights }: { highlights: string[] }) {
         </div>
         <ul className={s.grid}>
           {highlights.map((h, i) => (
-            <li key={h} className={s.sticker} style={{ '--i': i } as CSSProperties}>
-              <Die className={s.die} face={i % 2 ? '#FFFFFF' : '#FCE8CE'} />
-              <div className={s.inner}>
-                <Vignette kind={kindFor(h)} />
-                <span className={s.num}>{String(i + 1).padStart(2, '0')}</span>
-                <p className={s.label}>{h}</p>
+            <li
+              key={h}
+              className={s.sticker}
+              tabIndex={0}
+              data-picked={picked === i ? 'true' : undefined}
+              data-peel={peel === i ? 'true' : undefined}
+              style={{ '--i': i, '--dir': i % 2 ? 1 : -1 } as CSSProperties}
+              onPointerEnter={(e) => { if (e.pointerType === 'mouse') setPicked(i) }}
+              onPointerLeave={(e) => { if (e.pointerType === 'mouse') setPicked((p) => (p === i ? -1 : p)) }}
+              onFocus={() => setPicked(i)}
+              onBlur={() => setPicked((p) => (p === i ? -1 : p))}
+              onClick={() => doPeel(i)}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); doPeel(i) } }}
+            >
+              {i === peekAt && (
+                <span className={s.peeker} aria-hidden>
+                  <CrowdCameo kind="coffee" size={72} pose={picked === i ? 'wave' : 'peek'} look="down" animate={inView} />
+                </span>
+              )}
+              <div className={s.body}>
+                <Die className={s.die} face={i % 2 ? '#FFFFFF' : '#FCE8CE'} />
+                <div className={s.inner}>
+                  <Vignette kind={kindFor(h)} />
+                  <span className={s.num}>{String(i + 1).padStart(2, '0')}</span>
+                  <p className={s.label}>{h}</p>
+                </div>
               </div>
             </li>
           ))}

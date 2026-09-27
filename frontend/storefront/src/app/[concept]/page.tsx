@@ -10,14 +10,18 @@
 //
 // Uses the public storefront API: /storefront/concepts and /storefront/:slug/menu.
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { MagneticButton, MagneticLink } from '@/components/ui/MagneticButton'
+import { MagneticButton } from '@/components/ui/MagneticButton'
 import { useCart } from '../../store/cart'
-import { conceptHeroImage } from '../../lib/concept'
+import { conceptHeroImage, formatBrandName } from '../../lib/concept'
 import { useBrandSlug, getServdHost } from '../../lib/host'
 import { encodeCartToken } from '../../lib/cartHandoff'
+import { KitchenDoors } from '../../components/world/doors/KitchenDoors'
+import { BrandLoader } from '../../components/party/loader/BrandLoader'
+import { emitCrowd } from '../../components/characters/crowdBus'
+import { kindForDish } from '../../components/characters/types'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -78,14 +82,31 @@ function fmtFor(slug: string | null | undefined) {
   }
 }
 
+// The three kitchens servd runs. A slug on this list is a real kitchen even
+// when the API is down, so a failed menu shows its counter scene, never the
+// "wrong door".
+const KITCHEN_SLUGS = ['stackd', 'simmer', 'flipd'] as const
+const KITCHEN_NAMES: Record<string, string> = { stackd: 'stackd', simmer: 'simmer', flipd: 'Flipd' }
+
 // Slug → display name: "garnish-station" → "Garnish Station".
 // Used as a placeholder when the /concepts lookup hiccups but we still want
-// to render a usable page from just the URL slug.
+// to render a usable page from just the URL slug. Known kitchens keep their
+// house casing (simmer and stackd are always lowercase).
 function prettifySlug(slug: string): string {
-  return slug
-    .split('-')
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-    .join(' ')
+  const known = KITCHEN_NAMES[slug]
+  if (known) return formatBrandName(known)
+  return formatBrandName(
+    slug
+      .split('-')
+      .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+      .join(' '),
+  )
+}
+
+/** Centre of the element that triggered an add, for the buddy's catch. */
+function centreOf(r: DOMRect | null | undefined): { x: number; y: number } | null {
+  if (!r || (r.width === 0 && r.height === 0)) return null
+  return { x: r.left + r.width / 2, y: r.top + r.height / 2 }
 }
 
 export default function ConceptOrderPage() {
@@ -95,6 +116,9 @@ export default function ConceptOrderPage() {
   const [concept, setConcept] = useState<Concept | null>(null)
   const [categories, setCategories] = useState<Category[] | null>(null)
   const [error, setError] = useState<string | null>(null)
+  // Is this slug a kitchen we know? Decides between the brand's counter
+  // scene ("menu offline") and the doors scene ("that's not a kitchen").
+  const [knownSlug, setKnownSlug] = useState<boolean>(() => (KITCHEN_SLUGS as readonly string[]).includes(slug))
   const [activeCategory, setActiveCategory] = useState<string | null>(null)
   const [openItem, setOpenItem] = useState<MenuItem | null>(null)
   const [cartOpen, setCartOpen] = useState(false)
@@ -116,7 +140,19 @@ export default function ConceptOrderPage() {
           fetch(`${API_URL}/api/v1/storefront/${slug}/menu`),
         ])
 
+        // Read the concept list up front: it also decides which scene an
+        // error shows (a known kitchen's counter vs the wrong door).
+        let all: Concept[] | null = null
+        if (conceptsRes && conceptsRes.ok) {
+          try { all = await conceptsRes.json() as Concept[] } catch { all = null }
+        }
+        const isKitchen = (KITCHEN_SLUGS as readonly string[]).includes(slug)
+        const inList = Array.isArray(all) && all.some((x) => x.slug === slug)
+
         if (!menuRes.ok) {
+          // A 404 means the API has no such brand: that's the wrong door,
+          // unless it's one of our own kitchens (then its menu is just offline).
+          if (!cancelled) setKnownSlug(isKitchen || (inList && menuRes.status !== 404))
           throw new Error(menuRes.status === 404 ? 'Brand not found' : `Menu API returned ${menuRes.status}`)
         }
         // Backend returns { concept, categories } — pull the array out.
@@ -126,8 +162,7 @@ export default function ConceptOrderPage() {
         // Try to enrich with real concept data; otherwise build a placeholder
         // from the slug so the page still renders with brand colour/name.
         let resolved: Concept
-        if (conceptsRes && conceptsRes.ok) {
-          const all: Concept[] = await conceptsRes.json()
+        if (Array.isArray(all)) {
           const found = all.find((x) => x.slug === slug)
           if (found) {
             resolved = found
@@ -151,13 +186,32 @@ export default function ConceptOrderPage() {
         if (cart.conceptSlug && cart.conceptSlug !== slug) cart.clearCart()
         cart.setConceptSlug(slug)
       } catch (e) {
-        if (!cancelled) setError((e as Error).message)
+        if (!cancelled) setError((e as Error).message || 'Menu unavailable')
       }
     }
     void load()
     return () => { cancelled = true }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [slug])
+
+  // While the floating basket pill shows on a phone, lift the buddy (A3's
+  // Companion reads --companion-lift) so the two never overlap.
+  const pillVisible = !error && !!concept && !!categories && cart.itemCount() > 0 && !cartOpen
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const root = document.documentElement
+    const mq = window.matchMedia('(max-width: 640px)')
+    const apply = () => {
+      if (pillVisible && mq.matches) root.style.setProperty('--companion-lift', '76px')
+      else root.style.removeProperty('--companion-lift')
+    }
+    apply()
+    mq.addEventListener('change', apply)
+    return () => {
+      mq.removeEventListener('change', apply)
+      root.style.removeProperty('--companion-lift')
+    }
+  }, [pillVisible])
 
   // Track active category as the user scrolls
   useEffect(() => {
@@ -176,52 +230,18 @@ export default function ConceptOrderPage() {
   }, [categories])
 
   if (error) {
-    return (
-      <div className="min-h-dvh flex items-center justify-center p-6 text-center">
-        <div style={{ maxWidth: '28rem' }}>
-          <h1 className="text-2xl font-bold mb-2">Tableside ordering isn&rsquo;t live yet.</h1>
-          <p className="text-s-muted text-sm mb-4">
-            The kitchen hasn&rsquo;t published a menu to the order system. Flag down your server — they&rsquo;ll take the order from the printed card. Reservations are open below.
-          </p>
-          <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center', flexWrap: 'wrap' }}>
-            <MagneticLink href={`/brand/${slug}/menu`} className="servd-btn-primary">See the menu</MagneticLink>
-            <MagneticLink href={`/reserve/${slug}`} className="servd-btn-primary" style={{ background: 'var(--servd-mute)', color: 'white' }}>Reserve a table</MagneticLink>
-          </div>
-        </div>
-      </div>
-    )
+    // The old flat white page is now a scene: a known kitchen whose menu
+    // failed gets its own counter (menu, reserve/visit, live status, the
+    // other kitchens); anything else — /checkout, a typo — gets the doors.
+    const wrongDoor = !knownSlug || (error === 'Brand not found' && !(KITCHEN_SLUGS as readonly string[]).includes(slug))
+    return <KitchenDoors mode={wrongDoor ? 'wrong-door' : 'menu-offline'} slug={slug} />
   }
 
   if (!concept || !categories) {
-    // Menu skeleton — same hero stripe + category nav strip + 4 item rows
-    // as the real page, just shimmer-tinted. Reserves the layout so the
-    // real menu doesn't push content around on hydrate (avoids CLS).
-    return (
-      <div role="status" aria-label="Loading menu" style={{ background: '#fff', minHeight: '100dvh' }}>
-        <div style={{ height: '260px', background: 'linear-gradient(90deg, var(--servd-surface), #f0f0f0, var(--servd-surface))', backgroundSize: '200% 100%', animation: 'skeletonShimmer 1.4s ease-in-out infinite' }} />
-        <div style={{ padding: '1rem 1rem 0', display: 'flex', gap: '0.5rem', overflowX: 'hidden' }}>
-          {Array.from({ length: 4 }).map((_, i) => (
-            <span key={i} style={{ width: '4.5rem', height: '2rem', borderRadius: '999px', background: 'var(--servd-surface)', flex: 'none' }} />
-          ))}
-        </div>
-        <div style={{ padding: '1.25rem', display: 'grid', gap: '0.85rem' }}>
-          {Array.from({ length: 5 }).map((_, i) => (
-            <div key={i} style={{
-              display: 'grid', gridTemplateColumns: '1fr 5rem', gap: '0.75rem',
-              padding: '0.85rem', borderRadius: '1rem',
-              background: 'var(--servd-surface)', border: '1px solid var(--servd-line)',
-            }}>
-              <div>
-                <div style={{ height: '0.95rem', width: '60%', background: '#eaeaea', borderRadius: '4px', marginBottom: '0.4rem' }} />
-                <div style={{ height: '0.75rem', width: '90%', background: '#f1f1f1', borderRadius: '4px' }} />
-              </div>
-              <div style={{ height: '4rem', borderRadius: '0.6rem', background: '#eaeaea' }} />
-            </div>
-          ))}
-        </div>
-        <span className="sr-only">Loading menu…</span>
-      </div>
-    )
+    // While the menu loads, keep the same brand loader the route's loading.tsx
+    // painted, so there is no white shimmer flash between the two (a white,
+    // gradient skeleton also broke simmer's no-white / no-gradient rule).
+    return <BrandLoader slug={slug.toLowerCase()} />
   }
 
   const accent = concept.primaryColor ?? 'var(--servd-green-dark)'
@@ -258,7 +278,7 @@ export default function ConceptOrderPage() {
         <div className="container" style={{ position: 'relative', zIndex: 1, paddingTop: '5rem', paddingBottom: '2rem' }}>
           <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
             <Link href={`/brand/${concept.slug}`} style={{ color: 'rgba(255,255,255,0.85)', textDecoration: 'none', fontSize: '0.85rem' }}>
-              ← {concept.name}
+              ← {formatBrandName(concept.name)}
             </Link>
             <Link href="/browse" style={{ color: 'rgba(255,255,255,0.85)', textDecoration: 'none', fontSize: '0.85rem' }}>
               Other brands →
@@ -266,7 +286,7 @@ export default function ConceptOrderPage() {
           </div>
           <h1 style={{ fontSize: 'clamp(2rem, 5vw, 3.25rem)', fontWeight: 900, letterSpacing: '-0.04em', marginBottom: '0.5rem' }}>
             {/* simmer brand rule: the wordmark is always lowercase. */}
-            {slug === 'simmer' ? concept.name.toLowerCase() : concept.name}
+            {formatBrandName(concept.name)}
           </h1>
           {concept.description && (
             <p style={{ color: 'rgba(255,255,255,0.85)', maxWidth: '36rem', fontSize: '1rem' }}>
@@ -329,7 +349,7 @@ export default function ConceptOrderPage() {
         {categories.length === 0 && (
           <div className="text-center py-12">
             <h3 className="text-lg font-semibold mb-2">No menu yet</h3>
-            <p className="text-s-muted">{concept.name} hasn&rsquo;t published a menu. Check back soon.</p>
+            <p className="text-s-muted">{formatBrandName(concept.name)} hasn&rsquo;t published a menu. Check back soon.</p>
           </div>
         )}
 
@@ -351,7 +371,14 @@ export default function ConceptOrderPage() {
           accent={accent}
           fmt={fmt}
           onClose={() => setOpenItem(null)}
-          onAdd={(item, qty, modifiers, finalPriceCents, notes) => {
+          onAdd={(item, qty, modifiers, finalPriceCents, notes, origin) => {
+            // The catch: tell the buddy where the dish left from. The rect
+            // was read from the Add button before the modal closes.
+            const at = centreOf(origin)
+            if (at) {
+              const kind = kindForDish(item.name, concept.slug)
+              emitCrowd({ type: 'catch', x: at.x, y: at.y, label: item.name, ...(kind ? { kind } : {}) })
+            }
             for (let i = 0; i < qty; i++) {
               cart.addItem({
                 menuItemId: item.id,
@@ -513,6 +540,7 @@ function ItemDetailModal({
     modifiers: { modifierId: string; name: string; priceDeltaCents: number }[],
     finalPriceCents: number,
     notes: string,
+    origin: DOMRect | null,
   ) => void
 }) {
   const [qty, setQty] = useState(1)
@@ -707,7 +735,7 @@ function ItemDetailModal({
               style={{ width: '2rem', height: '2rem', borderRadius: '999px', border: 'none', background: 'transparent', fontSize: '1.1rem', cursor: 'pointer' }}>+</button>
           </div>
           <button
-            onClick={() => canAdd && onAdd(item, qty, pickedModifiers, lineUnitPriceCents, notes.trim())}
+            onClick={(e) => canAdd && onAdd(item, qty, pickedModifiers, lineUnitPriceCents, notes.trim(), e.currentTarget.getBoundingClientRect())}
             disabled={!canAdd}
             className="servd-btn-primary"
             style={{ flex: 1, padding: '0.85rem 1rem', opacity: canAdd ? 1 : 0.5, cursor: canAdd ? 'pointer' : 'not-allowed' }}

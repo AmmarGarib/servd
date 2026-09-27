@@ -127,16 +127,42 @@
   100% { translate: 0 0; rotate: 0deg; }
 }
 
+/* One slot per part, in the stack's layout. The slot holds the part's ghost
+   (the spec, drawn faint in navy before the part arrives) and the part
+   itself, which falls into it. --t is set on the slot. */
+.slot {
+  position: relative;
+  width: 100%;
+  display: flex;
+  justify-content: center;
+}
+.slot + .slot { margin-top: -2.6%; }
+
+.ghost {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: var(--w, 100%);
+  transform: translateX(-50%);
+  background: var(--flipd-blue);
+  -webkit-mask: var(--src) center / 100% 100% no-repeat;
+  mask: var(--src) center / 100% 100% no-repeat;
+  opacity: calc(0.17 * (1 - var(--t, 0)));
+  pointer-events: none;
+}
+.ghost img { display: block; width: 100%; height: auto; visibility: hidden; }
+
 .part {
   position: relative;
   width: 100%;
   display: flex;
   justify-content: center;
   transform: translateY(calc((1 - var(--t, 0) * var(--t, 0)) * var(--fw) * var(--drop, -1)));
-  opacity: calc(var(--t, 0) * 6);
+  /* Full ink the moment it leaves the top — a part is either not yet fired
+     (its ghost holds the slot) or solid. Never half-faded mid-air. */
+  opacity: min(1, calc(var(--t, 0) * 60));
   will-change: transform, opacity;
 }
-.part + .part { margin-top: -2.6%; }
 
 /* Motion streaks above a falling part: on in mid-air, off when seated. */
 .part::before {
@@ -208,8 +234,8 @@
 }
 .letter {
   display: inline-block;
-  animation: letterDrop 950ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
-  animation-delay: calc(var(--i) * 85ms + 150ms);
+  animation: letterDrop 420ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  animation-delay: calc(min(var(--i), 4) * 40ms + 40ms);
 }
 .letterIn {
   display: inline-block;
@@ -218,7 +244,7 @@
   animation-delay: calc(var(--i) * 110ms + 1.6s);
 }
 @keyframes letterDrop {
-  0%   { opacity: 0; transform: translateY(-110%) rotate(-12deg); }
+  0%   { opacity: 0.4; transform: translateY(-60%) rotate(-10deg); }
   55%  { opacity: 1; transform: translateY(8%) rotate(4deg) scaleY(0.88); }
   75%  { transform: translateY(-3%) rotate(-1deg); }
   100% { opacity: 1; transform: none; }
@@ -248,7 +274,7 @@
   white-space: nowrap;
   color: var(--flipd-blue);
   rotate: -3deg;
-  animation: hintIn 700ms cubic-bezier(0.34, 1.56, 0.64, 1) 900ms both;
+  animation: hintIn 380ms cubic-bezier(0.34, 1.56, 0.64, 1) 320ms both;
 }
 .hint svg {
   width: 14px;
@@ -260,7 +286,7 @@
   stroke-linejoin: round;
   animation: nudge 1.3s ease-in-out infinite;
 }
-@keyframes hintIn { from { opacity: 0; transform: scale(0.4); } to { opacity: 1; transform: none; } }
+@keyframes hintIn { from { opacity: 0.4; transform: scale(0.6); } to { opacity: 1; transform: none; } }
 @keyframes nudge { 0%, 100% { transform: translateY(-2px); } 50% { transform: translateY(3px); } }
 
 /* ── Steam off the finished burger ─────────────────────────────────────── */
@@ -494,8 +520,13 @@
   }
   .stamp { left: calc(100% - 3.6rem); top: -1.6rem; }
 }
+/* Touch and narrow screens: a short track. One flick covers a lot of it, so
+   the build is squeezed to finish by 80% (see FlipdSpecHero) and every stop
+   along the way is a composed sheet. The pin is one small-viewport tall. */
+@media (pointer: coarse), (max-width: 820px) {
+  .hero { height: calc(100svh + 120svh); }
+}
 @media (max-width: 820px) {
-  .hero { height: calc(100svh + min(180vh, 1500px)); }
   .field { --fw: min(15rem, 30vh); }
   .title { gap: 0.6rem; }
   .titleNo { font-size: 0.56rem; letter-spacing: 0.18em; }
@@ -514,6 +545,7 @@
   .stage, .part, .art, .spread { transform: none; }
   .part { opacity: 1; }
   .part::before { display: none; }
+  .ghost { display: none; }
   .jiggle { animation: none; }
   /* The wordmark moves above the finished burger instead of fading out. */
   .intro { position: static; order: -1; transform: none; opacity: 1; margin-bottom: 1.25rem; }

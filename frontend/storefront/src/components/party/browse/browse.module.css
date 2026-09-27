@@ -35,15 +35,53 @@
   border: 0;
 }
 
-/* ── Header — butter stage, same energy as the home hero ────────────────── */
+/* ── Header — the day-part sky, same world as the home hero ─────────────
+   Tints come from the --world-* tokens stamped on <html> per day-part (the
+   fallbacks are the lunch set, i.e. the old butter stage). */
 .header {
   position: relative;
   overflow: hidden;
   isolation: isolate;
   background:
-    radial-gradient(ellipse 70% 60% at 50% 0%, rgba(255, 250, 225, 0.55) 0%, rgba(255, 250, 225, 0) 70%),
-    var(--party-butter);
+    radial-gradient(ellipse 70% 60% at 50% 0%, color-mix(in srgb, var(--world-glow, #FFF4D6) 55%, transparent) 0%, transparent 70%),
+    linear-gradient(180deg, var(--world-sky-a, #FFE58A) 0%, var(--world-sky-b, #FFD447) 100%);
+  color: var(--world-ink, var(--party-ink));
   padding: clamp(3.5rem, 9vw, 5.5rem) 0 clamp(2.5rem, 6vw, 3.5rem);
+}
+
+.ambient { position: absolute; inset: 0; z-index: 0; pointer-events: none; }
+
+/* Sun by day; a crescent (a sky-coloured disc slid over it) after dark. */
+.orb {
+  position: absolute;
+  z-index: 0;
+  left: var(--world-orb-x, 84%);
+  top: var(--world-orb-y, 18%);
+  width: clamp(54px, 7vw, 96px);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: var(--world-orb, #FFF1B8);
+  box-shadow: 0 0 60px 18px color-mix(in srgb, var(--world-orb, #FFF1B8) 42%, transparent);
+  transform: translate(-50%, -50%);
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.orb::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: var(--world-sky-a, #FFE58A);
+  transform: translate(32%, -22%);
+  opacity: 0;
+}
+
+:global(html[data-world-dark='1']) .orb::after { opacity: 1; }
+:global(html[data-world-dark='1']) .orb { box-shadow: 0 0 44px 8px color-mix(in srgb, var(--world-orb, #F4EEDC) 30%, transparent); }
+
+@media (max-width: 640px) {
+  .orb { left: 86%; top: 7%; width: 48px; }
 }
 
 .headerInner {
@@ -61,7 +99,7 @@
   font-size: 0.8rem;
   letter-spacing: 0.24em;
   text-transform: uppercase;
-  color: var(--party-plum);
+  color: var(--world-ink-soft, var(--party-plum));
 }
 
 .title {
@@ -71,19 +109,21 @@
   font-size: clamp(2.3rem, 6.2vw, 4.4rem);
   line-height: 0.98;
   letter-spacing: -0.04em;
-  color: var(--party-ink);
+  color: var(--world-ink, var(--party-ink));
   text-wrap: balance;
 }
 
+/* Entrances finish inside ~450 ms and never start fully transparent, so a
+   screenshot a beat after load always has the headline. */
 .titleWord {
   display: inline-block;
   margin: 0 0.1em;
-  animation: wordDrop 700ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
-  animation-delay: calc(var(--i) * 70ms + 80ms);
+  animation: wordDrop 380ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  animation-delay: calc(var(--i) * 40ms + 20ms);
 }
 
 @keyframes wordDrop {
-  0%   { opacity: 0; transform: translateY(-60%) rotate(-5deg) scale(0.92); }
+  0%   { opacity: 0.4; transform: translateY(-40%) rotate(-5deg) scale(0.94); }
   60%  { opacity: 1; transform: translateY(5%) rotate(2deg) scale(1.02); }
   100% { opacity: 1; transform: none; }
 }
@@ -92,12 +132,12 @@
   position: relative;
   display: inline-block;
   font-style: italic;
-  color: var(--party-plum);
-  animation: tailPop 620ms cubic-bezier(0.34, 1.56, 0.64, 1) 420ms both;
+  color: var(--world-cta-bg, var(--party-plum));
+  animation: tailPop 360ms cubic-bezier(0.34, 1.56, 0.64, 1) 120ms both;
 }
 
 @keyframes tailPop {
-  0%   { opacity: 0; transform: scale(0.85) translateY(6px); }
+  0%   { opacity: 0.4; transform: scale(0.88) translateY(6px); }
   100% { opacity: 1; transform: none; }
 }
 
@@ -109,12 +149,45 @@
   width: 100%;
   height: 0.3em;
   fill: none;
-  stroke: var(--party-tomato);
+  stroke: var(--world-accent, var(--party-tomato));
   stroke-width: 6;
   stroke-linecap: round;
   stroke-dasharray: 260;
   stroke-dashoffset: 260;
-  animation: drawLine 700ms ease-out 900ms forwards;
+  animation: drawLine 420ms ease-out 260ms forwards;
+}
+
+/* Live line under the title: how many kitchens are cooking right now. */
+.liveLine {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  margin: 0 0 1rem;
+  padding: 0.35rem 0.85rem 0.35rem 0.7rem;
+  border-radius: 999px;
+  border: 2px solid var(--world-ink, var(--party-ink));
+  background: color-mix(in srgb, var(--world-glow, #FFF4D6) 70%, transparent);
+  color: var(--world-ink, var(--party-ink));
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 0.9rem;
+}
+
+:global(html[data-world-dark='1']) .liveLine { background: color-mix(in srgb, var(--world-sky-b, #140C20) 60%, transparent); }
+
+.liveDot {
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 50%;
+  background: #3FAE6A;
+  animation: livePulse 1.8s ease-out infinite;
+}
+
+.liveDot[data-open='0'] { background: color-mix(in srgb, var(--world-ink, #2A1A2B) 40%, transparent); animation: none; }
+
+@keyframes livePulse {
+  0%   { box-shadow: 0 0 0 0 rgba(63, 174, 106, 0.6); }
+  100% { box-shadow: 0 0 0 8px rgba(63, 174, 106, 0); }
 }
 
 @keyframes drawLine { to { stroke-dashoffset: 0; } }
@@ -124,12 +197,12 @@
   max-width: 40rem;
   font-size: clamp(1rem, 1.3vw, 1.12rem);
   line-height: 1.6;
-  color: var(--party-ink-mute);
-  animation: fadeUp 600ms ease-out 300ms both;
+  color: var(--world-ink-soft, var(--party-ink-mute));
+  animation: fadeUp 360ms ease-out 80ms both;
 }
 
 @keyframes fadeUp {
-  from { opacity: 0; transform: translateY(10px); }
+  from { opacity: 0.4; transform: translateY(10px); }
   to   { opacity: 1; transform: none; }
 }
 
@@ -227,6 +300,13 @@
 
 .chipActive:hover { background: var(--party-plum); }
 
+/* After dark the sky is plum-indigo: the active chip turns butter so it still reads. */
+:global(html[data-world-dark='1']) .chipActive,
+:global(html[data-world-dark='1']) .chipActive:hover {
+  background: var(--world-cta-bg, #FFD447);
+  color: var(--world-cta-ink, #2A1630);
+}
+
 .chip:focus-visible { outline: 3px solid var(--party-ink); outline-offset: 2px; }
 
 /* ── Doodles ──────────────────────────────────────────────────────────── */
@@ -236,7 +316,7 @@
   width: clamp(24px, 3vw, 40px);
   top: 12%;
   right: 9%;
-  fill: var(--party-plum);
+  fill: var(--world-ink, var(--party-plum));
   animation: spin 10s linear infinite;
 }
 
@@ -245,7 +325,7 @@
   bottom: 10%;
   right: 20%;
   fill: none;
-  stroke: var(--party-tomato);
+  stroke: var(--world-accent, var(--party-tomato));
   stroke-width: 5;
   stroke-linecap: round;
   animation: wiggle 3.2s ease-in-out infinite;
@@ -255,7 +335,7 @@
   width: clamp(12px, 1.4vw, 18px);
   bottom: 16%;
   left: 6%;
-  fill: var(--party-tomato);
+  fill: var(--world-accent, var(--party-tomato));
   animation: bob 2.6s ease-in-out infinite;
 }
 
@@ -331,19 +411,55 @@
 .hitPrice { margin: 0; font-size: 0.85rem; font-weight: 800; color: var(--party-plum); }
 
 /* ── Brand grid ───────────────────────────────────────────────────────── */
-.gridSection { padding: 2.5rem 0 5rem; }
+.gridSection { padding: 3.6rem 0 5rem; }
 
+/* Row gap leaves room for the cast member peeking over each card. */
 .grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr));
-  gap: 1.6rem 1.4rem;
+  gap: 3.4rem 1.4rem;
 }
 
 .cardWrap { height: 100%; }
 .cardWrap:nth-child(odd) .card  { transform: rotate(-1.1deg); }
 .cardWrap:nth-child(even) .card { transform: rotate(1.1deg); }
 
+/* Reveal (armed only after mount, only below the fold): never below .4. */
+.armed { opacity: 0.4; transform: translateY(18px); }
+.shown {
+  opacity: 1;
+  transform: none;
+  transition:
+    opacity 320ms ease var(--d, 0ms),
+    transform 320ms cubic-bezier(0.34, 1.3, 0.64, 1) var(--d, 0ms);
+}
+
+.cardShell {
+  position: relative;
+  height: 100%;
+}
+
+/* The cast member stands behind the card, head over the top edge. */
+.cardCameo {
+  position: absolute;
+  z-index: 0;
+  top: 0;
+  right: 1.6rem;
+  line-height: 0;
+  transform: translateY(-56%);
+  transition: transform 260ms cubic-bezier(0.34, 1.56, 0.64, 1);
+  pointer-events: none;
+}
+
+.cardWrap:nth-child(even) .cardCameo { right: auto; left: 1.6rem; }
+
+.cardShell:hover .cardCameo,
+.cardShell:focus-within .cardCameo,
+.cardShell[data-active='1'] .cardCameo { transform: translateY(-74%); }
+
 .card {
+  position: relative;
+  z-index: 1;
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -357,7 +473,8 @@
   transition: transform 220ms cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 220ms ease;
 }
 
-.card:hover, .card:focus-visible {
+.card:hover, .card:focus-visible,
+.cardShell[data-active='1'] .card {
   transform: translateY(-6px) rotate(0deg);
   box-shadow: 0 10px 0 var(--party-ink);
 }
@@ -406,25 +523,45 @@
   border-radius: 999px;
 }
 
-.statusPill {
+/* Live status sticker, in the kitchen's own voice. */
+.statusSticker {
   position: absolute;
-  top: 0.75rem;
-  right: 0.75rem;
+  left: 0.75rem;
+  bottom: 0.75rem;
+  max-width: calc(100% - 1.5rem);
   display: inline-flex;
   align-items: center;
-  gap: 0.35rem;
-  font-size: 0.66rem;
+  gap: 0.45rem;
+  font-size: 0.78rem;
   font-weight: 800;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  padding: 0.32rem 0.7rem;
+  line-height: 1.25;
+  padding: 0.38rem 0.8rem 0.38rem 0.65rem;
   border-radius: 999px;
   border: 1.5px solid var(--party-ink);
+  background: var(--party-butter);
+  color: var(--party-ink);
+  box-shadow: 0 3px 0 var(--party-ink);
+  transform: rotate(-1.5deg);
 }
 
-.statusOpen   { background: var(--party-butter); color: var(--party-ink); }
-.statusClosed { background: var(--party-ink);    color: var(--party-cream); }
-.statusDot    { width: 0.4rem; height: 0.4rem; border-radius: 999px; background: currentColor; display: inline-block; }
+.statusSticker[data-phase='closing'] { background: #FFB347; }
+.statusSticker[data-phase='opening'] { background: var(--party-cream); }
+.statusSticker[data-phase='closed']  { background: var(--party-ink); color: var(--party-cream); border-color: var(--party-cream); box-shadow: 0 3px 0 rgba(0, 0, 0, 0.4); }
+.statusSticker[data-brand='simmer']  { font-family: var(--simmer-body, 'Times New Roman', serif); font-weight: 700; }
+
+.statusDot {
+  flex: none;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 999px;
+  background: #2F9E5B;
+  display: inline-block;
+  animation: livePulse 1.8s ease-out infinite;
+}
+
+.statusSticker[data-phase='closing'] .statusDot { background: #B45309; animation-duration: 1.1s; }
+.statusSticker[data-phase='opening'] .statusDot,
+.statusSticker[data-phase='closed'] .statusDot { background: currentColor; opacity: 0.6; animation: none; }
 
 .cardBody {
   padding: 1.15rem 1.25rem 1.3rem;
@@ -442,6 +579,9 @@
   letter-spacing: -0.01em;
   color: var(--party-ink);
 }
+
+.cardName[data-brand='simmer'] { font-family: var(--simmer-display, 'Amarante', serif); font-weight: 400; font-size: 1.35rem; letter-spacing: 0; }
+.cardName[data-brand='flipd'] { font-family: var(--flipd-display, 'Alfa Slab One', serif); font-weight: 400; letter-spacing: 0; }
 
 .cardDesc {
   margin: 0;
@@ -484,9 +624,11 @@
   gap: 1rem;
 }
 
-.emptyIcon { color: var(--party-plum); }
+.emptyCameo { margin-bottom: 0.25rem; }
 
-.emptyTitle { margin: 0; font-size: 1.1rem; font-weight: 700; color: var(--party-ink); }
+.emptyTitle { margin: 0; font-family: var(--font-display); font-size: clamp(1.25rem, 2.4vw, 1.6rem); font-weight: 800; letter-spacing: -0.02em; color: var(--party-ink); }
+
+.emptyBody { margin: -0.5rem 0 0.5rem; max-width: 28rem; font-size: 0.98rem; line-height: 1.5; color: var(--party-ink-mute); }
 
 .clearAllBtn {
   display: inline-flex;
@@ -516,10 +658,11 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .titleWord, .titleTail, .lead, .underline { animation: none; }
+  .titleWord, .titleTail, .lead, .underline, .liveDot, .statusDot { animation: none; }
   .underline { stroke-dashoffset: 0; }
   .doodle { animation: none; }
-  .card, .chip, .clearAllBtn, .hitCard, .searchInput, .clearBtn, .photo {
+  .card, .chip, .clearAllBtn, .hitCard, .searchInput, .clearBtn, .photo, .cardCameo, .shown {
     transition: none;
   }
+  .armed { opacity: 1; transform: none; }
 }

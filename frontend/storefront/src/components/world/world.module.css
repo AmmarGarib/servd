@@ -1,0 +1,149 @@
+/* World kit: ambient life (Stars, Motes, Steam) and the route curtain.
+   Layout rules sit inside :where() so a consumer's className always wins on
+   placement and size. Motion is transform/opacity only (the curtain's cover
+   also animates clip-path — one short, full-panel move). */
+
+/* ── Ambient layers ───────────────────────────────────────────────────────── */
+
+:where(.layer) {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+/* Stars: only under a dark sky. */
+.stars {
+  opacity: 0;
+  transition: opacity 0.8s ease;
+}
+:global(html[data-world-dark='1']) .stars { opacity: 1; }
+
+.star {
+  position: absolute;
+  border-radius: 50%;
+  background: #FFF4D6;
+  box-shadow: 0 0 6px rgba(255, 244, 214, 0.75);
+  opacity: 0.3;
+  will-change: opacity, transform;
+  animation: twinkle var(--dur, 3.2s) ease-in-out var(--delay, 0s) infinite;
+}
+/* The few big ones get a soft cross-glint. */
+.starBig::before,
+.starBig::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 360%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(255, 244, 214, 0.8), transparent);
+  transform: translate(-50%, -50%);
+}
+.starBig::after { transform: translate(-50%, -50%) rotate(90deg); }
+
+@keyframes twinkle {
+  0%, 100% { opacity: 0.25; transform: scale(0.7); }
+  50%      { opacity: var(--peak, 1); transform: scale(1); }
+}
+
+/* Motes: warm dust in the daylight, gone at night. */
+.motes {
+  --mote: rgba(255, 214, 140, 0.85);
+  opacity: 1;
+  transition: opacity 0.8s ease;
+}
+:global(html[data-world-dark='1']) .motes { opacity: 0; }
+
+.mote {
+  position: absolute;
+  border-radius: 50%;
+  background: radial-gradient(circle, var(--mote) 0%, transparent 70%);
+  opacity: 0;
+  will-change: opacity, transform;
+  animation: drift var(--dur, 12s) linear var(--delay, 0s) infinite;
+}
+
+@keyframes drift {
+  0%   { opacity: 0;    transform: translate3d(0, 0, 0); }
+  15%  { opacity: 0.85; }
+  80%  { opacity: 0.6; }
+  100% { opacity: 0;    transform: translate3d(var(--dx, 0px), var(--rise, -140px), 0); }
+}
+
+/* Steam: three wisps rising off something hot. */
+:where(.steam) {
+  position: absolute;
+  left: 50%;
+  bottom: 100%;
+  width: 3rem;
+  height: 4.5rem;
+  margin-left: -1.5rem;
+  overflow: visible;
+  pointer-events: none;
+}
+.steam { --steam: rgba(255, 248, 236, 0.75); }
+
+.wisp {
+  fill: none;
+  stroke: var(--steam);
+  stroke-width: 3;
+  stroke-linecap: round;
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: 50% 100%;
+  will-change: opacity, transform;
+  animation: rise var(--dur, 3.2s) ease-out var(--delay, 0s) infinite;
+}
+
+@keyframes rise {
+  0%   { opacity: 0;    transform: translate3d(0, 12px, 0) scaleY(0.8); }
+  30%  { opacity: 0.85; }
+  100% { opacity: 0;    transform: translate3d(0, -18px, 0) scaleY(1.08); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .star, .mote, .wisp { animation: none; }
+  .star { opacity: 0.35; transform: none; }
+  .motes .mote { opacity: 0.28; }
+  .wisp { opacity: 0.35; transform: none; }
+  .stars, .motes { transition: none; }
+}
+
+/* ── Route curtain ────────────────────────────────────────────────────────── */
+
+.curtain {
+  position: fixed;
+  inset: 0;
+  z-index: 9990;
+  background: var(--curtain-ground, var(--world-sky-b, #FFD447));
+  pointer-events: none;
+  contain: strict;
+}
+/* The hub gets its own sky; kitchens get a flat ground (simmer: always flat). */
+.curtainHub {
+  background: linear-gradient(180deg, var(--world-sky-a, #FFE58A), var(--world-sky-b, #FFD447));
+}
+
+.covering {
+  pointer-events: auto;
+  clip-path: circle(150vmax at var(--cx, 50%) var(--cy, 50%));
+  animation: curtainCover 200ms cubic-bezier(0.55, 0, 0.35, 1) both;
+}
+@keyframes curtainCover {
+  from { clip-path: circle(0 at var(--cx, 50%) var(--cy, 50%)); }
+  to   { clip-path: circle(150vmax at var(--cx, 50%) var(--cy, 50%)); }
+}
+
+.revealing {
+  pointer-events: none;
+  animation: curtainReveal 260ms cubic-bezier(0.65, 0, 0.35, 1) both;
+}
+@keyframes curtainReveal {
+  from { transform: translate3d(0, 0, 0); }
+  to   { transform: translate3d(0, -100%, 0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .curtain { display: none; }
+}

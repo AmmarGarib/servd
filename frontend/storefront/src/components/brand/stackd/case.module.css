@@ -75,15 +75,20 @@
   background: var(--stackd-plum);
   box-shadow: inset 0 3px 0 rgba(255, 255, 255, 0.2), 0 12px 16px -8px rgba(61, 17, 34, 0.55);
 }
-.plank:nth-last-child(2) { margin-bottom: 1.8rem; }
+.shelf + .shelf .plank { margin-bottom: 1.8rem; }
 
 .item {
   position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
-  cursor: default;
+  cursor: pointer;
+  outline: none;
+  border-radius: 1rem;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
 }
+.item:focus-visible .tag { outline: 3px solid var(--stackd-sky); outline-offset: 3px; }
 .lift {
   position: relative;
   width: 100%;
@@ -92,7 +97,8 @@
 }
 .art { width: 100%; display: flex; justify-content: center; align-items: flex-end; height: clamp(4.25rem, 10vw, 7rem); }
 .art svg, .art img { display: block; max-width: 100%; max-height: 100%; width: auto; height: 100%; object-fit: contain; }
-.item:hover .lift { transform: translateY(-26%) rotate(-5deg) scale(1.08); }
+.item[data-lift='true'] .lift { transform: translateY(-26%) rotate(-5deg) scale(1.08); }
+@media (hover: hover) { .item:hover .lift { transform: translateY(-26%) rotate(-5deg) scale(1.08); } }
 .item[data-hop='true'] .lift { animation: hop 860ms cubic-bezier(0.34, 1.56, 0.64, 1); }
 @keyframes hop {
   0%, 100% { transform: none; }
@@ -112,7 +118,7 @@
   background: rgba(61, 17, 34, 0.28);
   transition: transform 460ms cubic-bezier(0.34, 1.56, 0.64, 1), opacity 300ms ease;
 }
-.item:hover .shadow { transform: scale(0.6); opacity: 0.5; }
+.item[data-lift='true'] .shadow { transform: scale(0.6); opacity: 0.5; }
 
 /* The kraft-style tag, hanging off the front of the shelf on a string. */
 .tag {
@@ -154,7 +160,7 @@
   height: 1.05rem;
   background: var(--stackd-plum-dark);
 }
-.item:hover .tag { animation: tagSwing 1100ms ease-out; }
+.item[data-lift='true'] .tag { animation: tagSwing 1100ms ease-out; }
 @keyframes tagSwing {
   0% { transform: rotate(0deg); }
   20% { transform: rotate(14deg); }
@@ -181,13 +187,140 @@
   100% { opacity: 0; transform: translateY(-45%) scaleX(1.3); }
 }
 
-/* Settle: pastries drop onto the shelves the first time the case is seen. */
-.settled .art { animation: settle 800ms cubic-bezier(0.34, 1.56, 0.64, 1) both; animation-delay: calc(var(--n) * 90ms); }
+/* Settle: pastries drop onto the shelves the first time the case is seen.
+   Armed after mount only; ≤450 ms including the stagger, from 40% opacity,
+   so a jump-scroll never lands on empty shelves. */
+.entered .art {
+  animation: settle 360ms cubic-bezier(0.34, 1.56, 0.64, 1) backwards;
+  animation-delay: calc(min(var(--n), 3) * 30ms);
+}
 @keyframes settle {
-  0% { opacity: 0; transform: translateY(-40%); }
-  60% { opacity: 1; transform: translateY(4%) scale(1.04, 0.94); }
+  0% { opacity: 0.4; transform: translateY(-22%); }
+  60% { opacity: 1; transform: translateY(3%) scale(1.03, 0.95); }
   100% { opacity: 1; transform: none; }
 }
+
+/* ── Kitchen state ─────────────────────────────────────────────────────
+   Driven by html[data-k-stackd], which the server stamps — so the first
+   paint already has the lights on or off. No attribute = open. */
+
+/* Open: the lamp flickers on as the case first comes into view — three
+   blinks in 600 ms, the way a real case light catches. */
+.entered .lamp { animation: lampOn 600ms linear; }
+.entered .dim { animation: dimOn 600ms linear; }
+.entered .bulb { animation: bulbOn 600ms linear, hum 3.6s ease-in-out 600ms infinite; }
+@keyframes lampOn {
+  0% { opacity: 0; } 12% { opacity: 1; } 22% { opacity: 0.1; } 40% { opacity: 1; }
+  52% { opacity: 0.2; } 70%, 100% { opacity: 1; }
+}
+@keyframes dimOn {
+  0% { opacity: 0.8; } 12% { opacity: 0; } 22% { opacity: 0.7; } 40% { opacity: 0; }
+  52% { opacity: 0.6; } 70%, 100% { opacity: 0; }
+}
+@keyframes bulbOn {
+  0% { opacity: 0.25; } 12% { opacity: 1; } 22% { opacity: 0.3; } 40% { opacity: 1; }
+  52% { opacity: 0.35; } 70%, 100% { opacity: 1; }
+}
+
+/* The dimmer: a plum veil over the glass, off while the case is lit. */
+.dim {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  background: rgba(34, 8, 18, 0.45);
+  opacity: 0;
+  transition: opacity 600ms ease;
+}
+
+/* The hanging tag on the glass — only when the lights are (nearly) off. */
+.closedTag {
+  position: absolute;
+  z-index: 3;
+  top: 0;
+  left: 50%;
+  display: none;
+  margin: 0;
+  padding-top: 1.6rem;
+  translate: -50% 0;
+  transform-origin: 50% 0;
+  rotate: -3deg;
+  animation: tagHang 5.2s ease-in-out infinite;
+  pointer-events: none;
+}
+.closedTag::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 1.5px;
+  height: 1.7rem;
+  background: var(--stackd-plum-dark);
+}
+.closedTagText {
+  display: block;
+  max-width: min(17rem, 70vw);
+  padding: 0.55rem 0.9rem 0.6rem 1.25rem;
+  border-radius: 0.4rem 1rem 1rem 0.4rem;
+  background: var(--stackd-cream);
+  border: 2px solid var(--stackd-plum-dark);
+  box-shadow: 0 0 0 4px var(--stackd-sky), 0 10px 18px -8px rgba(20, 6, 12, 0.6);
+  font-family: var(--stackd-display);
+  font-style: italic;
+  font-weight: 700;
+  font-size: clamp(0.92rem, 1.6vw, 1.08rem);
+  line-height: 1.2;
+  text-align: center;
+  text-wrap: balance;
+  color: var(--stackd-plum-dark);
+}
+@keyframes tagHang {
+  0%, 100% { transform: rotate(-2deg); }
+  50% { transform: rotate(2.5deg); }
+}
+
+/* Closed: lamp off, bulb dark, glass at 55%, steam gone, tag up. */
+:global(html[data-k-stackd='closed']) .lamp { opacity: 0; animation: none; }
+:global(html[data-k-stackd='closed']) .bulb {
+  background: #5A2238;
+  box-shadow: 0 0 0 3px rgba(252, 232, 206, 0.12);
+  animation: none;
+}
+:global(html[data-k-stackd='closed']) .dim { opacity: 1; animation: none; }
+:global(html[data-k-stackd='closed']) .closedTag { display: block; }
+:global(html[data-k-stackd='closed']) .caseSteam,
+:global(html[data-k-stackd='closed']) .steam { opacity: 0; }
+:global(html[data-k-stackd='closed']) .item[data-hop='true'] .lift { animation: none; }
+
+/* Closing: still lit, but the tag is up. */
+:global(html[data-k-stackd='closing']) .closedTag { display: block; }
+
+/* Opening: the ovens are on and the lamp is warming up — half-lit, catching
+   now and then. The tag says how long. */
+:global(html[data-k-stackd='opening']) .lamp { opacity: 0.5; animation: warming 4.8s linear infinite; }
+:global(html[data-k-stackd='opening']) .dim { opacity: 0.45; animation: none; }
+:global(html[data-k-stackd='opening']) .bulb { animation: warming 4.8s linear infinite; }
+:global(html[data-k-stackd='opening']) .closedTag { display: block; }
+/* …and when the case first comes into view the lamp catches: three blinks,
+   then it settles back into warming up. */
+:global(html[data-k-stackd='opening']) .entered .lamp,
+:global(html[data-k-stackd='opening']) .entered .bulb { animation: lampOn 600ms linear, warming 4.8s linear 600ms infinite; }
+@keyframes warming {
+  0%, 80%, 100% { opacity: 0.5; }
+  83% { opacity: 1; } 86% { opacity: 0.3; } 90% { opacity: 0.9; } 94% { opacity: 0.5; }
+}
+
+/* Steam above the case, rising off the morning's bake. */
+.caseSteam {
+  position: absolute;
+  left: 30%;
+  right: 30%;
+  bottom: 100%;
+  height: clamp(4rem, 9vw, 6rem);
+  pointer-events: none;
+  transition: opacity 600ms ease;
+}
+.caseSteam > * { position: absolute; inset: 0; width: 100%; height: 100%; }
 
 /* The glass: two glints that slide as the case scrolls past. */
 .glass {
@@ -224,9 +357,10 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .lift, .shadow { transition: none; }
-  .item:hover .lift, .item[data-hop='true'] .lift { transform: none; animation: none; }
-  .item:hover .tag, .settled .art, .bulb { animation: none; }
+  .lift, .shadow, .dim, .caseSteam { transition: none; }
+  .item:hover .lift, .item[data-hop='true'] .lift, .item[data-lift='true'] .lift { transform: none; animation: none; }
+  .item:hover .tag, .item[data-lift='true'] .tag, .entered .art, .bulb, .entered .bulb,
+  .lamp, .entered .lamp, .entered .dim, .closedTag { animation: none !important; }
   .steam path { animation: none; opacity: 0.5; }
   .steam path:nth-child(2) { opacity: 0; }
 }

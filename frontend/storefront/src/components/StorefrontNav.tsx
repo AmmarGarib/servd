@@ -4,6 +4,8 @@ import { usePathname } from 'next/navigation'
 import { useEffect, useState } from 'react'
 import { useCustomerAuth } from '../store/customerAuth'
 import { useOnBrandMicrosite } from '../lib/host'
+import { useKitchens } from '../lib/world/kitchens'
+import s from './world/companion.module.css'
 
 // Pages that manage their own header (full-screen splashes, brand
 // microsites with their own nav, the per-concept ordering experience).
@@ -28,6 +30,14 @@ export function StorefrontNav({ initialBrandSlug = null }: Props) {
   // Stands down on a brand microsite; see useOnBrandMicrosite for why this
   // cannot be answered by the path alone, or once in a layout.
   const onBrandMicrosite = useOnBrandMicrosite(initialBrandSlug)
+
+  // Live kitchen state for the "right now" chip. Server + first client render
+  // agree on the fallback states, then the live hours land.
+  const { openCount, total } = useKitchens()
+  const nowShort = openCount === 0 ? 'all asleep' : `${openCount} cooking`
+  const nowAria = openCount === 0
+    ? 'right now: all kitchens are closed'
+    : `right now: ${openCount} of ${total} kitchens cooking`
 
   // On dark-hero pages, the sticky nav is transparent and renders white
   // text. Once the user scrolls past the hero into the white sections,
@@ -54,9 +64,12 @@ export function StorefrontNav({ initialBrandSlug = null }: Props) {
   }
 
   const transparent = TRANSPARENT_PATHS.has(pathname) && !scrolledPastHero
-  // The home hero is a light butter-yellow stage (the food crowd), so the
-  // transparent nav stays ink-on-light — no white text, no dark scrim.
-  const onDarkHero  = false
+  // The home hero is the world sky: butter at lunch, plum-indigo at night. The
+  // transparent nav follows the sky's ink (--world-ink, stamped per day-part on
+  // <html>) so it reads at every hour; elsewhere it's ink on glass.
+  const worldInk = transparent && pathname === '/'
+  const ink  = worldInk ? 'var(--world-ink, var(--servd-black))' : 'var(--servd-black)'
+  const soft = worldInk ? 'var(--world-ink-soft, var(--servd-mute))' : 'var(--servd-mute)'
 
   return (
     <nav
@@ -107,20 +120,21 @@ export function StorefrontNav({ initialBrandSlug = null }: Props) {
           fontWeight: 800,
           letterSpacing: '-0.03em',
           lineHeight: 1,
-          color: onDarkHero ? 'white' : 'var(--servd-black)',
+          color: ink,
+          transition: 'color 400ms ease',
         }}>
-          servd<span style={{ color: 'var(--servd-green)' }}>.</span>
+          servd<span style={{ color: worldInk ? 'var(--world-accent, var(--servd-green))' : 'var(--servd-green)' }}>.</span>
         </span>
       </Link>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+      <div className={s.navActions}>
         <Link
           href="/browse"
+          className={s.navLink}
           style={{
-            color: onDarkHero ? 'rgba(255,255,255,0.75)' : 'var(--servd-mute)',
+            color: soft,
             fontWeight: 600,
             fontSize: '0.92rem',
-            padding: '0.7rem 0.95rem',
             textDecoration: 'none',
             borderRadius: '0.6rem',
             transition: 'color 160ms ease',
@@ -132,50 +146,60 @@ export function StorefrontNav({ initialBrandSlug = null }: Props) {
           Browse
         </Link>
 
+        {/* Right now: the same live kitchen state the board, the buddy and
+            every brand's lamp obey. Dot-only on phones. */}
+        <Link
+          href="/#right-now"
+          className={s.nowChip}
+          aria-label={nowAria}
+          title={nowAria}
+          style={{ color: soft, marginRight: '0.25rem' }}
+        >
+          <span className={s.nowDot} data-open={openCount > 0 ? '1' : '0'} aria-hidden="true" />
+          <span className={s.nowLabel} aria-hidden="true">{nowShort}</span>
+        </Link>
+
         {token ? (
           <Link
             href="/account"
+            className={s.navAccount}
             style={{
               display: 'inline-flex',
               alignItems: 'center',
               gap: '0.5rem',
-              padding: '0.6rem 1rem',
               minHeight: '44px',
               borderRadius: '999px',
-              background: onDarkHero ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.04)',
-              border: onDarkHero ? '1px solid rgba(255,255,255,0.18)' : '1px solid var(--servd-line)',
-              color: onDarkHero ? 'white' : 'var(--servd-ink)',
+              background: worldInk ? 'transparent' : 'rgba(0,0,0,0.04)',
+              border: worldInk ? '1.5px solid var(--world-ink, var(--servd-line))' : '1px solid var(--servd-line)',
+              color: worldInk ? ink : 'var(--servd-ink)',
               fontWeight: 600,
               fontSize: '0.88rem',
               textDecoration: 'none',
             }}
           >
-            <span
-              aria-hidden="true"
-              style={{
-                width: '1.4rem',
-                height: '1.4rem',
-                borderRadius: '50%',
-                background: 'var(--servd-green)', color: 'white',
-                display: 'inline-flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                fontSize: '0.7rem',
-                fontWeight: 900,
-              }}
-            >A</span>
-            Account
+            {/* No name is stored client-side, so no invented initial: a
+                plain person mark. */}
+            <span aria-hidden="true" className={s.avatar}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="8" r="4" />
+                <path d="M4 21c0-4.4 3.6-8 8-8s8 3.6 8 8" />
+              </svg>
+            </span>
+            <span className={s.navAccountLabel}>Account</span>
           </Link>
         ) : (
           /* Single Sign in button — the login page already has a "create
              account" path, so a separate Sign up CTA is redundant. */
           <Link
             href="/login"
-            className="brand-pill"
+            className={`brand-pill ${s.navSignIn}`}
             style={{
-              ['--brand-accent' as string]: 'var(--servd-green)',
-              ['--brand-ink' as string]:    'white',
-              padding: '0.7rem 1.3rem',
+              // On the home sky the pill takes the day-part's CTA pair (plum on
+              // cream by day, butter on plum at night) so it never sinks into
+              // the sky.
+              ['--brand-accent' as string]: worldInk ? 'var(--world-cta-bg, var(--servd-green))' : 'var(--servd-green)',
+              ['--brand-ink' as string]:    worldInk ? 'var(--world-cta-ink, white)' : 'white',
               fontSize: '0.92rem',
               minHeight: '44px',
             }}

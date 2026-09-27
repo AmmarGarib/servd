@@ -1,6 +1,15 @@
+/**
+ * @deprecated Use `lib/world/kitchenCore` (computeOpen / kitchenState) — the
+ * one rule set for "is this kitchen open?", which handles windows that cross
+ * midnight and the live per-brand hours. This file keeps its exports only for
+ * callers not yet moved (BrowseCard); do not add new ones.
+ */
+
 // Lightweight "open now" calculation. Until brands have configurable hours
 // stored on the Concept, we use a sane default keyed off concept type. PKT
 // timezone (UTC+5) — operators in Karachi/Lahore see local hours.
+
+import { karachiNow } from './world/clock'
 
 export interface HoursWindow { openH: number; openM: number; closeH: number; closeM: number }
 
@@ -10,13 +19,14 @@ const DEFAULT_BY_TYPE: Record<string, HoursWindow> = {
   cart:       { openH: 16, openM: 0, closeH: 23, closeM: 0 },
 }
 
+// Karachi wall-clock time. The old version added getTimezoneOffset() and then
+// read UTC fields, which double-counted the host's offset everywhere but UTC.
 function pktNow(): { hour: number; minute: number } {
-  const now = new Date()
-  const utcMs = now.getTime() + now.getTimezoneOffset() * 60_000
-  const pkt = new Date(utcMs + 5 * 3600_000)
-  return { hour: pkt.getUTCHours(), minute: pkt.getUTCMinutes() }
+  const { hour, minute } = karachiNow()
+  return { hour, minute }
 }
 
+/** @deprecated Use `kitchenState` from `lib/world/kitchenCore`. */
 export function isOpenNow(conceptType: string): { open: boolean; window?: HoursWindow } {
   const window = DEFAULT_BY_TYPE[conceptType] ?? DEFAULT_BY_TYPE.digital
   if (!window) return { open: true }

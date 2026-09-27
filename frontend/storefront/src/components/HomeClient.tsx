@@ -13,19 +13,32 @@ import { InsidersPass } from './party/home/InsidersPass'
 import { Divider } from './party/home/Divider'
 import s from './party/home/home.module.css'
 
-// servd home — the playful "food crowd" hub.
+// servd home: the playful "food crowd" hub, one inhabited place that runs on
+// Karachi time.
 //
-// Flow after the hero, each band a different ground so the page has rhythm
-// (butter → cream → plum → butter → cream), joined by drifting wavy /
-// scalloped seams:
-//   hero (butter)          — the 3D food crowd; "Meet the kitchens" → #brands
-//   ticker                 — crossed tapes over the seam, speed with scroll
-//   #brands (cream)        — trading-card deck, two links per card
-//   right now (plum)       — departures board: live open sign, area, hours,
-//                            order + WhatsApp
-//   how servd works (butter) — second (last) crowd + 3 steps + the
-//                            "Every kitchen, one order" /browse ticket
-//   insiders (cream)       — swinging VIP pass + three perk stickers
+// After the hero, each band has a different ground so the page has rhythm
+// (sky → cream → plum → butter → cream). The bands are joined by slowly
+// drifting wavy or scalloped seams:
+//   hero (sky)             the sky knows the hour (sun/moon, stars/motes).
+//                          An instant SVG crowd cross-fades into the 3D one,
+//                          and it dozes at night. "Meet the kitchens" → #brands,
+//                          or "see who opens first" → #right-now once every
+//                          kitchen is closed.
+//   ticker                 crossed tapes over the seam, with the food words
+//                          of the hour; speed follows scroll.
+//   #brands (cream)        trading-card deck, live status stickers, cast
+//                          cameos peeking over stackd and Flipd.
+//   #right-now (plum)      the kitchen board: live neon per phase and the
+//                          live count. Its ground follows the day
+//                          (--home-board).
+//   how servd works (butter) the second crowd, 3 steps acted out by the cast,
+//                          and the "Every kitchen, one order" /browse ticket.
+//   insiders (cream)       swinging VIP pass (tap to flash) and three perk
+//                          stickers, fronted by cast faces.
+//
+// Every section follows the same reveal hygiene (useReveal): the SSR state is
+// the final state, and only blocks below the fold are armed at opacity .4,
+// settling in ≤ 450 ms.
 //
 // Graceful degradation: if the api hiccups and concepts comes back empty,
 // we render the three live brands from hardcoded data so the home page
@@ -48,7 +61,9 @@ const FALLBACK_BRANDS = [
 const ORDER = ['stackd', 'simmer', 'flipd']
 
 const CREAM = '#FFF4D6'
-const PLUM = '#4E2A4F'
+// The board's ground follows the day-part (home.module.css), so the seams
+// either side of it read the same token.
+const BOARD = 'var(--home-board)'
 const BUTTER = '#FFD447'
 
 export function HomeClient({ concepts, heroConfig }: Props) {
@@ -77,30 +92,30 @@ export function HomeClient({ concepts, heroConfig }: Props) {
   return (
     <div style={{ background: 'var(--servd-bg)', color: 'var(--servd-ink)', display: 'flex', flexDirection: 'column' }}>
 
-      {/* ── HERO ─ the food crowd: 3D food characters on a butter-yellow
-            stage that watch the cursor and cheer the order CTA. Headline and
-            overview stay operator-editable via Admin → Marketing → Landing
-            Hero (SiteLayout slug `servd:hero`). */}
+      {/* HERO: the food crowd under a sky that knows the hour. The
+            characters watch the cursor and cheer the order CTA. The headline
+            and overview stay operator-editable via Admin → Marketing →
+            Landing Hero (SiteLayout slug `servd:hero`). */}
       <PartyHero config={heroConfig} />
 
       {/* Everything below the hero. reducedMotion="user" makes framer skip
-          transform animations for reduced-motion users; each section also
-          renders its final state directly in that case. */}
+          transform animations for reduced-motion users, and useReveal never
+          arms anything for them either. */}
       <MotionConfig reducedMotion="user">
         <div className={s.root}>
           <Ticker />
           <BrandDeck brands={brands} />
-          <Divider from={CREAM} to={PLUM} variant="wave" />
+          <Divider from={CREAM} to={BOARD} variant="wave" />
           <KitchenBoard brands={brands} />
-          <Divider from={PLUM} to={BUTTER} variant="scallop" flip />
+          <Divider from={BOARD} to={BUTTER} variant="scallop" flip />
           <HowItWorks />
           <Divider from={BUTTER} to={CREAM} variant="wave" />
           <InsidersPass />
         </div>
       </MotionConfig>
 
-      {/* Global StorefrontFooter has its own "Hungry now? Let's go"
-          plus order CTA — we don't double up here. */}
+      {/* The global StorefrontFooter has its own "Hungry now? Let's go" and
+          order CTA, so we don't double up here. */}
     </div>
   )
 }

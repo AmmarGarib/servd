@@ -1,4 +1,4 @@
-/* How servd works — butter ground, the second crowd on a counter. */
+/* How servd works: butter ground, with the second crowd on a counter. */
 .section {
   position: relative;
   padding: clamp(3.5rem, 7vw, 6rem) 0 clamp(4.5rem, 8vw, 7rem);
@@ -14,6 +14,7 @@
 
 .stage {
   position: relative;
+  z-index: 1;
   width: min(1040px, 100%);
   height: clamp(220px, 24vw, 320px);
   margin: clamp(0.5rem, 2vw, 1.5rem) auto 0;
@@ -36,6 +37,7 @@
 
 .arrow {
   position: absolute;
+  overflow: visible;
   z-index: 2;
   top: 22%;
   right: calc(-0.5 * clamp(1.25rem, 3vw, 2.5rem) - 32px);
@@ -60,18 +62,62 @@
   gap: clamp(1.25rem, 3vw, 2.5rem);
 }
 
+/* The li carries the reveal; the card inside carries the tilt and the lift. */
+.stepSlot { position: relative; }
+.stepSlot:nth-child(1) { z-index: 3; }
+.stepSlot:nth-child(2) { z-index: 2; }
+
 .step {
   position: relative;
+  height: 100%;
+  box-sizing: border-box;
   padding: 2.4rem 1.5rem 1.6rem;
   border: 2.5px solid #2A1A2B;
   border-radius: 24px;
   background: #FFF4D6;
   box-shadow: 8px 8px 0 #2A1A2B;
+  rotate: var(--tilt, 0deg);
+  outline: none;
   transition: translate 240ms cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 200ms ease;
 }
-.step:nth-child(1) { z-index: 3; }
-.step:nth-child(2) { z-index: 2; }
-.step:hover { translate: 0 -6px; box-shadow: 10px 14px 0 #2A1A2B; }
+.step:hover,
+.step:focus,
+.step:active { translate: 0 -6px; box-shadow: 10px 14px 0 #2A1A2B; }
+
+/* The arrows draw themselves (400 ms) as their step settles. */
+.arrowPath,
+.arrowHead { stroke-dasharray: 1; stroke-dashoffset: 0; }
+.stepSlot[data-reveal='shown'] .arrowPath { animation: drawArrow 300ms ease-out 60ms backwards; }
+.stepSlot[data-reveal='shown'] .arrowHead { animation: drawArrow 100ms ease-out 360ms backwards; }
+@keyframes drawArrow { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
+
+/* ── The step's actor, standing on the card's top edge ─────────────────── */
+.actor {
+  position: absolute;
+  right: 14px;
+  bottom: calc(100% - 18px);
+  display: flex;
+  align-items: flex-end;
+  pointer-events: none;
+  transform-origin: 50% 100%;
+  transition: translate 300ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.step:hover .actor,
+.step:focus .actor,
+.step:active .actor { translate: 0 -6px; }
+
+.bag {
+  width: 30px;
+  height: 32px;
+  margin: 0 0 14px -10px;
+  rotate: -8deg;
+  overflow: visible;
+}
+.bagHandle { fill: none; stroke: #2A1A2B; stroke-width: 2.4; stroke-linecap: round; }
+.bagBody { fill: #D9A066; stroke: #2A1A2B; stroke-width: 2.2; stroke-linejoin: round; }
+.bagMark { fill: none; stroke: #4E2A4F; stroke-width: 2.4; stroke-linecap: round; }
+/* At night the bag is set down too. */
+:global(html[data-world-dark='1']) .bag { rotate: 0deg; margin-bottom: 0; }
 
 .num {
   position: absolute;
@@ -93,26 +139,9 @@
   transform: rotate(-8deg);
 }
 
-.icon {
-  position: absolute;
-  top: 1rem;
-  right: 1rem;
-  display: grid;
-  place-items: center;
-  width: 48px;
-  height: 48px;
-  border-radius: 14px;
-  background: #FFD447;
-  border: 2px solid #2A1A2B;
-  color: #2A1A2B;
-  transform: rotate(6deg);
-  transition: transform 300ms cubic-bezier(0.34, 1.56, 0.64, 1);
-}
-.step:hover .icon { transform: rotate(-8deg) scale(1.12); }
-
 .stepTitle {
   margin: 0.4rem 0 0.5rem;
-  padding-right: 3.5rem;
+  padding-right: 0.5rem;
   font-family: var(--font-display);
   font-weight: 800;
   font-size: clamp(1.35rem, 2vw, 1.65rem);
@@ -128,7 +157,9 @@
 }
 
 /* ── Explore ticket ───────────────────────────────────────────────────── */
+.ticketSlot { position: relative; }
 .ticket {
+  rotate: -1deg;
   position: relative;
   display: flex;
   flex-wrap: wrap;
@@ -204,7 +235,7 @@
 @keyframes wiggle { 0%, 100% { transform: rotate(-6deg); } 50% { transform: rotate(6deg) translateY(-4px); } }
 
 @media (max-width: 860px) {
-  .steps { grid-template-columns: minmax(0, 1fr); gap: 2.6rem; max-width: 30rem; margin-inline: auto; }
+  .steps { grid-template-columns: minmax(0, 1fr); gap: 3.4rem; max-width: 30rem; margin-inline: auto; }
   .arrow { top: auto; bottom: -46px; right: auto; left: 50%; margin-left: -32px; transform: rotate(90deg); }
 }
 
@@ -217,6 +248,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .doodle { animation: none; }
-  .step:hover { translate: none; }
-  .step:hover .icon { transform: rotate(6deg); }
+  .step:hover, .step:focus, .step:active { translate: none; }
+  .step:hover .actor, .step:focus .actor, .step:active .actor { translate: none; }
+  .stepSlot[data-reveal] .arrowPath, .stepSlot[data-reveal] .arrowHead { animation: none; }
 }

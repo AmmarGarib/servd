@@ -9,6 +9,8 @@ import type { CSSProperties, ReactNode, MouseEvent as ReactMouseEvent } from 're
 import { emitCrowd } from '../../characters/crowdBus'
 import type { CharacterKind } from '../../characters/types'
 import { useSectionMotion } from './useFlipdMotion'
+import { useKitchen } from '../../../lib/world/kitchens'
+import { useWorld } from '../../../lib/world/useWorld'
 import s from './flipd.module.css'
 
 // three.js is client-only and code-split: the page is complete and usable
@@ -24,6 +26,11 @@ export const FLIPD_CAST: CharacterKind[] = ['fries', 'burger', 'shake']
  * The court-side crowd, standing on a diner counter. Decorative
  * (aria-hidden, no pointer events); the parent box sets the size — wide and
  * short suits it.
+ *
+ * The crowd keeps Flipd's hours: while the grill is cold they doze on the
+ * counter (a real poke — hovering Order, a cheer — still wakes them), and
+ * while it is on they are awake, with the lunch and dinner rushes lifting
+ * their energy. Same kitchen state as the neon sign and the home board.
  */
 export function FlipdCrowd({
   excitement = 0,
@@ -36,13 +43,24 @@ export function FlipdCrowd({
   style?: CSSProperties
   counter?: boolean
 }) {
+  const kitchen = useKitchen('flipd')
+  const world = useWorld()
+  const cold = !kitchen.open
+  const rush = kitchen.open && (world.dayPart === 'lunch' || world.dayPart === 'dinner')
+  // A deliberate wind-up (≥ .9, hovering Order) always gets through; the
+  // ambient level follows the grill.
+  const level = excitement >= 0.9
+    ? excitement
+    : cold
+      ? Math.min(excitement, 0.12)
+      : Math.max(excitement, rush ? world.energy * 0.5 : 0)
   return (
-    <div aria-hidden className={`${s.crowdWrap} ${className ?? ''}`} style={style}>
+    <div aria-hidden className={`${s.crowdWrap} ${className ?? ''}`} style={style} data-grill={cold ? 'cold' : 'hot'}>
       {/* The box must have a DEFINITE height: the canvas sizes itself to its
           host, so a content-sized box grows to the canvas's own intrinsic
           height and the crowd spills out of the bottom. */}
       <div className={s.crowdBox}>
-        <FoodCrowd cast={FLIPD_CAST} excitement={excitement} />
+        <FoodCrowd cast={FLIPD_CAST} excitement={level} world sleepy={cold ? 0.85 : 0} />
       </div>
       {counter && (
         <>

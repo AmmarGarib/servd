@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from 'next'
-import { headers } from 'next/headers'
+import { cookies, headers } from 'next/headers'
 import 'lenis/dist/lenis.css'
 import './globals.css'
 import { StorefrontNav } from '../components/StorefrontNav'
@@ -7,6 +7,19 @@ import { StorefrontFooter } from '../components/StorefrontFooter'
 import { FeedbackWidget } from '../components/feedback/FeedbackWidget'
 import { SmoothScroll } from '../components/ui/SmoothScroll'
 import { SERVD_ORIGIN, BRAND_HOST_HEADER } from '../lib/brandDomains'
+import { WorldSync } from '../components/world/WorldSync'
+import { RouteCurtain } from '../components/world/RouteCurtain'
+import { Companion } from '../components/world/Companion'
+import { dayPartFor, karachiNow, moodFor, parseDayPart, type DayPart } from '../lib/world/clock'
+import { fallbackKitchens } from '../lib/world/kitchenCore'
+
+/** The ?daypart= override, as the middleware forwarded it (header) or
+ *  remembered it (session cookie). 'live' in the header clears the cookie's. */
+function dayPartOverride(): DayPart | null {
+  const h = headers().get('x-servd-daypart')
+  if (h === 'live') return null
+  return parseDayPart(h) ?? parseDayPart(cookies().get('servd_daypart')?.value)
+}
 
 export const metadata: Metadata = {
   // Absolute base for og:image / canonical resolution. SERVD_ORIGIN is the one
@@ -58,8 +71,26 @@ export default function StorefrontLayout({ children }: { children: React.ReactNo
   // app: it is a live ordering storefront, and the brand pages already opt out
   // of static rendering anyway (see the fetch-caching note in CLAUDE.md).
   const initialBrandSlug = headers().get(BRAND_HOST_HEADER)
+
+  // The world, as of this request: Karachi day-part and which kitchens are
+  // cooking, stamped on <html> so the very first paint is tinted right.
+  // WorldSync takes over on the client (and may correct the kitchens once the
+  // live hours land) — hence suppressHydrationWarning on <html>.
+  const now = new Date()
+  const dayPart = dayPartOverride() ?? dayPartFor(karachiNow(now).mins)
+  const kitchens = fallbackKitchens(now)
+  const openCount = kitchens.filter((k) => k.open).length
+  const kitchenAttrs: Record<string, string> = {}
+  for (const k of kitchens) kitchenAttrs[`data-k-${k.slug}`] = k.phase
   return (
-    <html lang="en">
+    <html
+      lang="en"
+      suppressHydrationWarning
+      data-daypart={dayPart}
+      data-world-dark={moodFor(dayPart, openCount).dark ? '1' : '0'}
+      data-kitchens-open={String(openCount)}
+      {...kitchenAttrs}
+    >
       <body>
         <a
           href="#main"
@@ -70,8 +101,11 @@ export default function StorefrontLayout({ children }: { children: React.ReactNo
         <StorefrontNav initialBrandSlug={initialBrandSlug} />
         <main id="main">{children}</main>
         <StorefrontFooter initialBrandSlug={initialBrandSlug} />
+        <Companion initialBrandSlug={initialBrandSlug} />
         <FeedbackWidget />
         <SmoothScroll />
+        <WorldSync />
+        <RouteCurtain />
       </body>
     </html>
   )

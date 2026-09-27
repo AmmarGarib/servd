@@ -5,6 +5,11 @@ import Link from 'next/link'
 import { fmt, isLight } from '../../../../lib/ui'
 import { useCustomerAuth } from '../../../../store/customerAuth'
 import { LoadingScreen } from '../../../../components/ui/Loader'
+import { formatBrandName } from '../../../../lib/concept'
+import { CrowdCameo, type CameoPose } from '../../../../components/world/cast/CrowdCameo'
+import { Steam } from '../../../../components/world/Ambient'
+import { emitCrowd } from '../../../../components/characters/crowdBus'
+import type { CharacterKind } from '../../../../components/characters/types'
 
 // /<concept>/order/[id] — live order tracker.
 // Restyled onto the on-system --servd-* tokens. Status icons are inline
@@ -42,6 +47,45 @@ const STEP_INDEX: Record<string, number> = {
 // Headline + sub copy moved to lib/orderStatus.ts so all three order
 // surfaces (/orders, /account, this tracker) share the same wording.
 import { statusFor } from '../../../../lib/orderStatus'
+
+// ── Brand skin + cast for the status hero ─────────────────────────────────
+// stackd plum/cream, Flipd mustard/blue, simmer tiber/bone (and never a
+// character). Anything else keeps the servd wash from the brand colour.
+interface HeroSkin {
+  bg: string; ink: string; soft: string; border: string; icon: string
+  chipBg: string; chipLine: string; font: string; lower: boolean; checker: boolean
+}
+const HERO_SKINS: Record<string, HeroSkin> = {
+  stackd: {
+    bg: '#7C2946', ink: '#FCE8CE', soft: 'rgba(252,232,206,0.82)', border: '2px solid #2E1922', icon: '#9BD3DD',
+    chipBg: 'rgba(252,232,206,0.12)', chipLine: 'rgba(252,232,206,0.4)', font: 'var(--stackd-display)', lower: true, checker: false,
+  },
+  flipd: {
+    bg: '#FED561', ink: '#294375', soft: '#1D3159', border: '2px solid #294375', icon: '#294375',
+    chipBg: '#F9F0E1', chipLine: '#294375', font: 'var(--flipd-display)', lower: false, checker: true,
+  },
+  simmer: {
+    bg: '#06392F', ink: '#EDE6D3', soft: 'rgba(237,230,211,0.8)', border: '1px solid rgba(237,230,211,0.4)', icon: '#EDE6D3',
+    chipBg: 'transparent', chipLine: 'rgba(237,230,211,0.4)', font: 'var(--simmer-display)', lower: true, checker: false,
+  },
+}
+
+/** Who stands beside the status: stackd's coffee, Flipd's burger, the servd
+ *  fries for anything else — and nobody at simmer. */
+function trackerKind(slug: string): CharacterKind | null {
+  if (slug === 'simmer') return null
+  if (slug === 'stackd') return 'coffee'
+  if (slug === 'flipd') return 'burger'
+  return 'fries'
+}
+
+function trackerPose(status: string, kind: CharacterKind, onTheWay: boolean): CameoPose {
+  if (status === 'cancelled' || status === 'refunded') return 'worried'
+  if (onTheWay) return 'wave'
+  if (status === 'preparing') return kind === 'coffee' ? 'sip' : 'point'
+  if (status === 'ready' || status === 'completed') return 'cheer'
+  return 'idle'
+}
 
 export default function OrderStatusPage() {
   const { concept: slug, id } = useParams<{ concept: string; id: string }>()
@@ -100,6 +144,21 @@ export default function OrderStatusPage() {
     return () => stop()
   }, [id, token, router, pathname, slug])
 
+  // The cast reacts when the kitchen moves the order along.
+  const seenStatus = useRef<string | null>(null)
+  const liveStatus = order?.status ?? null
+  const liveSlug = order?.concept.slug ?? slug
+  useEffect(() => {
+    if (!liveStatus) return
+    const before = seenStatus.current
+    seenStatus.current = liveStatus
+    if (!before || before === liveStatus) return
+    const kind = trackerKind(liveSlug)
+    const k = kind ? { kind } : {}
+    if (liveStatus === 'ready' || liveStatus === 'completed') emitCrowd({ type: 'cheer', ...k })
+    else emitCrowd({ type: 'react', mood: liveStatus === 'cancelled' || liveStatus === 'refunded' ? 'concerned' : 'happy', ...k })
+  }, [liveStatus, liveSlug])
+
   if (notFound) return (
     <main className="flex min-h-dvh flex-col items-center justify-center gap-5 px-4" style={{ background: 'var(--servd-bg)' }}>
       <SearchIcon size={48} stroke="var(--servd-mute)" />
@@ -134,8 +193,18 @@ export default function OrderStatusPage() {
   const isDone      = order.status === 'completed' || isCancelled
   const cfg         = statusFor(order.status)
 
-  const heroBg     = isCancelled ? 'rgba(239,68,68,0.06)' : `color-mix(in srgb, ${color} 8%, white)`
-  const heroBorder = isCancelled ? '1px solid rgba(239,68,68,0.22)' : `1px solid color-mix(in srgb, ${color} 25%, transparent)`
+  const brandSlug  = order.concept.slug || slug
+  const brandName  = formatBrandName(order.concept.name)
+  const skin       = !isCancelled ? HERO_SKINS[brandSlug] ?? null : null
+  const castKind   = trackerKind(brandSlug)
+  const onTheWay   = !!order.rider && !isDone
+  const castPose   = castKind ? trackerPose(order.status, castKind, onTheWay) : 'idle'
+
+  const heroBg     = skin ? skin.bg : isCancelled ? 'rgba(239,68,68,0.06)' : `color-mix(in srgb, ${color} 8%, white)`
+  const heroBorder = skin ? skin.border : isCancelled ? '1px solid rgba(239,68,68,0.22)' : `1px solid color-mix(in srgb, ${color} 25%, transparent)`
+  const heroInk    = skin?.ink ?? 'var(--servd-ink)'
+  const heroSoft   = skin?.soft ?? 'var(--servd-mute)'
+  const heroCase   = skin?.lower ? ('lowercase' as const) : undefined
 
   return (
     <main className="min-h-dvh pb-16" style={{ background: 'var(--servd-bg)' }}>
@@ -159,7 +228,7 @@ export default function OrderStatusPage() {
         )}
         <span style={{ color: 'var(--servd-dim)' }}>·</span>
         <span className="font-display text-sm font-semibold" style={{ fontFamily: 'var(--font-display)', color: 'var(--servd-ink)' }}>
-          {order.concept.name}
+          {brandName}
         </span>
         {!isDone && !isCancelled && (
           <div className="ml-auto flex items-center gap-1.5">
@@ -173,39 +242,61 @@ export default function OrderStatusPage() {
 
         {/* ── Status hero ── */}
         <div className="rounded-3xl p-7 text-center relative overflow-hidden"
-          style={{ background: heroBg, border: heroBorder }}>
+          style={{ background: heroBg, border: heroBorder, ...(skin?.checker ? { paddingTop: '2.4rem' } : {}) }}>
+          {skin?.checker && (
+            <div aria-hidden className="absolute left-0 right-0 top-0 pointer-events-none"
+              style={{ height: 12, backgroundImage: 'var(--flipd-checker)', backgroundSize: '12px 12px' }} />
+          )}
           {isReady && (
             <div className="absolute inset-0 rounded-3xl pointer-events-none"
-              style={{ border: `1.5px solid color-mix(in srgb, ${color} 40%, transparent)`, animation: 'glowPulse 2s ease-in-out infinite' }} />
+              style={{ border: `1.5px solid color-mix(in srgb, ${skin ? skin.ink : color} 40%, transparent)`, animation: 'glowPulse 2s ease-in-out infinite' }} />
           )}
 
-          <div className="mb-5 flex justify-center" style={{ color }}>
-            <StatusIcon status={order.status} animated={isPreparing} />
-          </div>
+          {castKind && !isCancelled ? (
+            // The brand's cast member stands beside the status, posed by it:
+            // idle on arrival, sipping or pointing with steam while it cooks,
+            // cheering when it's ready, waving when it's on its way.
+            <div className="mb-4 flex justify-center items-end gap-3" style={{ color: skin?.icon ?? color, minHeight: 112 }}>
+              <span className="relative inline-block" style={{ lineHeight: 0 }}>
+                {isPreparing && (
+                  <Steam count={3} seed={`tracker-${brandSlug}`} color={skin ? skin.ink : 'rgba(42,26,43,0.35)'}
+                    className="absolute left-1/4 right-1/4 -top-6 h-10" />
+                )}
+                <CrowdCameo kind={castKind} pose={castPose} size={108} />
+              </span>
+              <span className="mb-2 inline-flex" style={{ transform: 'scale(0.62)', transformOrigin: 'bottom left', marginRight: -24 }}>
+                <StatusIcon status={order.status} animated={isPreparing} />
+              </span>
+            </div>
+          ) : (
+            <div className="mb-5 flex justify-center" style={{ color: skin?.icon ?? color }}>
+              <StatusIcon status={order.status} animated={isPreparing} />
+            </div>
+          )}
 
           {order.customerName && (
-            <p className="text-sm font-medium mb-1" style={{ color: 'var(--servd-mute)' }}>
+            <p className="text-sm font-medium mb-1" style={{ color: heroSoft }}>
               Hi, {order.customerName}.
             </p>
           )}
 
-          <h1 className="font-display font-black text-3xl leading-tight tracking-tight" style={{ fontFamily: 'var(--font-display)', color: 'var(--servd-ink)', letterSpacing: '-0.03em' }}>
+          <h1 className="font-display font-black text-3xl leading-tight tracking-tight" style={{ fontFamily: skin?.font ?? 'var(--font-display)', fontWeight: skin && brandSlug !== 'stackd' ? 400 : undefined, color: heroInk, letterSpacing: skin ? '-0.01em' : '-0.03em', textTransform: heroCase }}>
             {cfg.headline}
           </h1>
-          <p className="text-sm mt-2 font-medium" style={{ color: 'var(--servd-mute)' }}>
+          <p className="text-sm mt-2 font-medium" style={{ color: heroSoft, textTransform: heroCase }}>
             {cfg.sub}
           </p>
 
           {!isDone && !isReady && (
-            <p className="text-xs mt-3" style={{ color: 'var(--servd-dim)' }}>
+            <p className="text-xs mt-3" style={{ color: skin ? heroSoft : 'var(--servd-dim)', opacity: skin ? 0.8 : 1 }}>
               Updates automatically · checking every 10s
             </p>
           )}
 
           <div className="mt-5 inline-flex items-center gap-1.5 rounded-full px-3 py-1.5"
-            style={{ background: 'var(--servd-surface)', border: '1px solid var(--servd-line)' }}>
-            <span className="text-[9px] font-black uppercase tracking-[0.2em]" style={{ color: 'var(--servd-mute)' }}>Order</span>
-            <span className="text-[11px] font-black font-mono" style={{ color: 'var(--servd-ink)' }}>
+            style={{ background: skin?.chipBg ?? 'var(--servd-surface)', border: `1px solid ${skin?.chipLine ?? 'var(--servd-line)'}` }}>
+            <span className="text-[9px] font-black uppercase tracking-[0.2em]" style={{ color: heroSoft }}>Order</span>
+            <span className="text-[11px] font-black font-mono" style={{ color: heroInk }}>
               #{order.id.slice(-8).toUpperCase()}
             </span>
           </div>
@@ -232,7 +323,7 @@ export default function OrderStatusPage() {
                           transform: current ? 'scale(1.15)' : 'scale(1)',
                         }}>
                         {current && isPreparing
-                          ? <span style={{ display: 'inline-block', animation: 'spin 1.2s linear infinite' }} aria-hidden>⏳</span>
+                          ? <PanTiny />
                           : done
                             ? <CheckSmall />
                             : <span className="text-[11px]" style={{ color: 'var(--servd-dim)' }}>{i + 1}</span>
@@ -260,7 +351,7 @@ export default function OrderStatusPage() {
           <div className="px-4 py-3.5"
             style={{ borderBottom: '1px solid var(--servd-line)' }}>
             <p className="font-display font-black text-sm" style={{ fontFamily: 'var(--font-display)', color: 'var(--servd-ink)' }}>
-              {order.concept.name}
+              {brandName}
             </p>
           </div>
 
@@ -413,6 +504,17 @@ function StatusIcon({ status, animated }: { status: string; animated: boolean })
     case 'cancelled': return <svg {...props}><circle cx="32" cy="32" r="22"/><path d="M22 22l20 20M42 22L22 42"/></svg>
     default:          return <svg {...props}><circle cx="32" cy="32" r="22"/></svg>
   }
+}
+
+/** The "cooking now" step marker: a little pan with a sizzle. No emoji. */
+function PanTiny() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M2 9h9v1.5a2.5 2.5 0 0 1-2.5 2.5h-4A2.5 2.5 0 0 1 2 10.5z" />
+      <path d="M11 9.5h3" />
+      <path className="motion-safe:animate-pulse" d="M5 6.5c-.6-.8.6-1.4 0-2.3M8 6.5c-.6-.8.6-1.4 0-2.3" />
+    </svg>
+  )
 }
 
 function CheckSmall() {

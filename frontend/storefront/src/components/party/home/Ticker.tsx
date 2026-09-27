@@ -1,8 +1,16 @@
 'use client'
-// Ticker — two crossed "tape" strips over the seam between the hero floor
-// and the kitchens. They drift on their own and speed up (and flip
-// direction) with scroll velocity. Decorative: the words are aria-hidden;
-// everything they say is said properly elsewhere on the page.
+// Ticker: two crossed "tape" strips over the seam between the hero floor
+// and the kitchens. They drift on their own, and speed up (and flip
+// direction) with scroll velocity. They're decorative: the words are
+// aria-hidden, and everything they say is said properly elsewhere on the page.
+//
+// The food tape knows the hour. Every word is tagged with the day-parts it
+// belongs to and, where it has one, its kitchen. CSS on the server-stamped
+// html[data-daypart] and html[data-k-<slug>] attributes hides whatever
+// doesn't fit right now: morning pastries, lunch sandwiches, dinner smash
+// burgers, and at night "kitchens asleep", with a closed kitchen's words
+// dropped. It's right on the first paint and needs no re-render. Each
+// day-part keeps one kitchen-less word, so the tape is never empty.
 import { useRef, type ReactNode } from 'react'
 import {
   motion,
@@ -17,8 +25,30 @@ import {
 } from 'framer-motion'
 import t from './ticker.module.css'
 
-const FOOD = ['smash burgers', 'sandwiches', 'small plates', 'pastries', 'triple-cooked fries', 'craft mocktails', 'desserts', 'light bites']
+type Part = 'morning' | 'lunch' | 'afternoon' | 'dinner' | 'late' | 'night'
+type Word = { w: string; k?: 'stackd' | 'simmer' | 'flipd'; dp: Part[] }
+
+// stackd: pastries, coffee, sandwiches, mocktails. Flipd: burgers, fries.
+// simmer: small plates. No brand names on the tape.
+const FOOD: Word[] = [
+  { w: 'warm pastries', k: 'stackd', dp: ['morning', 'afternoon'] },
+  { w: 'first coffee', k: 'stackd', dp: ['morning'] },
+  { w: 'good morning karachi', dp: ['morning'] },
+  { w: 'sandwiches', k: 'stackd', dp: ['morning', 'lunch', 'afternoon'] },
+  { w: 'smash burgers', k: 'flipd', dp: ['lunch', 'afternoon', 'dinner', 'late'] },
+  { w: 'lunch, sorted', dp: ['lunch'] },
+  { w: 'fries', k: 'flipd', dp: ['lunch', 'afternoon'] },
+  { w: 'iced coffee', k: 'stackd', dp: ['afternoon'] },
+  { w: 'triple-cooked fries', k: 'flipd', dp: ['dinner', 'late'] },
+  { w: 'craft mocktails', k: 'stackd', dp: ['afternoon', 'dinner', 'late'] },
+  { w: 'small plates', k: 'simmer', dp: ['dinner', 'late'] },
+  { w: 'dinner rush', dp: ['dinner'] },
+  { w: 'late night', dp: ['late'] },
+  { w: 'kitchens asleep', dp: ['night'] },
+  { w: 'back at 8am', dp: ['night'] },
+]
 const PROMISE = ['three kitchens', 'one bag', 'one checkout', 'made in karachi', 'hot stays hot', 'cold stays cold']
+const PROMISE_WORDS: Word[] = PROMISE.map((w) => ({ w, dp: ['morning', 'lunch', 'afternoon', 'dinner', 'late', 'night'] }))
 
 function wrapPct(min: number, max: number, v: number) {
   const r = max - min
@@ -39,7 +69,7 @@ const Heart = () => (
 )
 const DOODLES = [Star, Squiggle, Dot, Heart]
 
-function Row({ words, baseVelocity, className }: { words: string[]; baseVelocity: number; className: string }) {
+function Row({ words, baseVelocity, className, reps = 2 }: { words: Word[]; baseVelocity: number; className: string; reps?: number }) {
   const reduce = useReducedMotion()
   const ref = useRef<HTMLDivElement>(null)
   const inView = useInView(ref, { margin: '120px 0px' })
@@ -60,15 +90,16 @@ function Row({ words, baseVelocity, className }: { words: string[]; baseVelocity
     baseX.set(baseX.get() + move)
   })
 
-  // One "half" holds the words twice so it is always wider than the viewport;
-  // the track holds two halves and wraps at -50%.
+  // One "half" repeats the words so it is always wider than the viewport,
+  // even at night when only a few are showing. The track holds two halves
+  // and wraps at -50%.
   const half: ReactNode[] = []
-  for (let rep = 0; rep < 2; rep++) {
+  for (let rep = 0; rep < reps; rep++) {
     words.forEach((w, i) => {
       const D = DOODLES[(i + rep) % DOODLES.length] ?? Star
       half.push(
-        <span key={`${rep}-${i}`} className={t.item}>
-          <span className={i % 2 ? t.italic : undefined}>{w}</span>
+        <span key={`${rep}-${i}`} className={t.item} data-dp={w.dp.join(' ')} data-k={w.k}>
+          <span className={i % 2 ? t.italic : undefined}>{w.w}</span>
           <D />
         </span>,
       )
@@ -88,8 +119,8 @@ function Row({ words, baseVelocity, className }: { words: string[]; baseVelocity
 export function Ticker() {
   return (
     <div aria-hidden className={t.seam}>
-      <Row words={PROMISE} baseVelocity={2.2} className={t.tapeBack ?? ''} />
-      <Row words={FOOD} baseVelocity={-3} className={t.tapeFront ?? ''} />
+      <Row words={PROMISE_WORDS} baseVelocity={2.2} className={t.tapeBack ?? ''} />
+      <Row words={FOOD} baseVelocity={-3} className={t.tapeFront ?? ''} reps={4} />
     </div>
   )
 }

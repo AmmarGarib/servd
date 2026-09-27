@@ -112,9 +112,9 @@
   rotate: -12deg;
   box-shadow: 3px 3px 0 var(--flipd-blue);
 }
-[data-in] .soldOut { animation: soldSlap 520ms cubic-bezier(0.34, 1.56, 0.64, 1) 700ms both; }
+[data-armed][data-in] .soldOut { animation: soldSlap 340ms cubic-bezier(0.34, 1.56, 0.64, 1) 100ms both; }
 @keyframes soldSlap {
-  0%   { opacity: 0; transform: scale(2); }
+  0%   { opacity: 0.4; transform: scale(1.6); }
   60%  { opacity: 1; transform: scale(0.92); }
   100% { opacity: 1; transform: none; }
 }
@@ -122,5 +122,5 @@
 @media (prefers-reduced-motion: reduce) {
   .price, .order, .order svg { transition: none; }
   .wrap:hover .price { rotate: -3deg; scale: 1; }
-  [data-in] .soldOut { animation: none; }
+  [data-armed][data-in] .soldOut { animation: none; }
 }

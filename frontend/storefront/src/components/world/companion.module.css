@@ -1,0 +1,477 @@
+/* ────────────────────────────────────────────────────────────────────────────
+   The buddy (Companion), the nav's "right now" chip, and the Feedback trigger.
+   Sticker look: cream paper, plum ink, 2px border, small offset shadow.
+   Everything animates transform/opacity only.
+   ──────────────────────────────────────────────────────────────────────────── */
+
+.root {
+  --buddy-ink: #4E2A4F;
+  --buddy-paper: #FFF4D6;
+  --buddy-scale: 1;
+  --buddy-w: 76px;
+  --buddy-h: 84px;
+  position: fixed;
+  left: calc(14px + env(safe-area-inset-left, 0px));
+  bottom: calc(14px + env(safe-area-inset-bottom, 0px) + var(--companion-lift, 0px));
+  z-index: 45;
+  width: var(--buddy-w);
+  transition: bottom 240ms ease;
+  pointer-events: none;
+}
+.root[data-brand='stackd'] { --buddy-ink: #7C2946; --buddy-paper: #FCE8CE; }
+.root[data-brand='flipd']  { --buddy-ink: #090D17; --buddy-paper: #EDE6D3; }
+
+@media (max-width: 640px) {
+  .root {
+    --buddy-scale: 0.7143; /* 84 → 60px */
+    --buddy-w: 56px;
+    --buddy-h: 60px;
+  }
+}
+
+/* The hop: in / out (below the fold) / tucked (mobile fast-scroll). */
+.hop {
+  position: relative;
+  transform: translate3d(0, 0, 0);
+  transition: transform 520ms cubic-bezier(0.34, 1.56, 0.64, 1), visibility 0s linear 0s;
+  visibility: visible;
+  pointer-events: auto;
+}
+.hop[data-state='out'] {
+  transform: translate3d(0, 135%, 0);
+  visibility: hidden;
+  pointer-events: none;
+  transition: transform 360ms cubic-bezier(0.5, 0, 0.75, 0), visibility 0s linear 360ms;
+}
+.hop[data-state='tucked'] {
+  transform: translate3d(0, 64%, 0);
+  transition: transform 200ms ease-out;
+}
+
+/* ── the buddy button ───────────────────────────────────────────────────── */
+.buddy {
+  position: relative;
+  display: block;
+  width: var(--buddy-w);
+  height: var(--buddy-h);
+  padding: 0;
+  margin: 0;
+  border: 0;
+  border-radius: 20px;
+  background: transparent;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  outline: none;
+}
+.buddy:focus-visible {
+  box-shadow: 0 0 0 3px var(--buddy-paper), 0 0 0 6px var(--buddy-ink);
+}
+
+.squash,
+.sway {
+  position: absolute;
+  inset: 0;
+  transform-origin: 50% 100%;
+}
+
+.scaleBox {
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  display: block;
+  line-height: 0;
+  transform: translateX(-50%) scale(var(--buddy-scale));
+  transform-origin: 50% 100%;
+}
+
+.swapIn {
+  animation: swapIn 360ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+@keyframes swapIn {
+  from { transform: translateX(-50%) scale(calc(var(--buddy-scale) * 0.4)); opacity: 0.4; }
+  to   { transform: translateX(-50%) scale(var(--buddy-scale)); opacity: 1; }
+}
+
+/* Busy hours: a little extra sway on top of the cameo's own idle bob. */
+.buddy[data-lively] .sway {
+  animation: sway 2.2s ease-in-out infinite;
+}
+@keyframes sway {
+  0%, 100% { transform: rotate(-2.5deg); }
+  50%      { transform: rotate(2.5deg); }
+}
+
+/* ── speech bubble ──────────────────────────────────────────────────────── */
+.bubble {
+  position: absolute;
+  left: 4px;
+  bottom: calc(100% + 10px);
+  max-width: min(260px, calc(100vw - 40px));
+  padding: 6px 12px 7px;
+  border: 2px solid var(--buddy-ink);
+  border-radius: 16px 16px 16px 5px;
+  background: var(--buddy-paper);
+  color: var(--buddy-ink);
+  box-shadow: 2px 2px 0 var(--buddy-ink);
+  font-family: var(--font-display, inherit);
+  font-size: 13.5px;
+  font-weight: 800;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  transform-origin: 12px 100%;
+  animation: bubbleIn 280ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+@keyframes bubbleIn {
+  from { transform: scale(0.6) translateY(6px); opacity: 0.4; }
+  to   { transform: none; opacity: 1; }
+}
+
+/* ── the "right now" card ───────────────────────────────────────────────── */
+.card {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 12px);
+  width: min(300px, calc(100vw - 28px));
+  padding: 14px 12px 8px;
+  border: 2px solid var(--buddy-ink);
+  border-radius: 24px 24px 24px 8px;
+  background: var(--buddy-paper);
+  color: var(--buddy-ink);
+  box-shadow: 4px 4px 0 var(--buddy-ink);
+  transform-origin: 20px 100%;
+  animation: cardIn 240ms cubic-bezier(0.34, 1.4, 0.64, 1) both;
+}
+@keyframes cardIn {
+  from { transform: scale(0.85) translateY(8px); opacity: 0.4; }
+  to   { transform: none; opacity: 1; }
+}
+.cardEyebrow {
+  margin: 0 6px 2px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: lowercase;
+  opacity: 0.72;
+}
+.cardTitle {
+  margin: 0 6px 8px;
+  font-family: var(--font-display, inherit);
+  font-size: 17px;
+  font-weight: 800;
+  line-height: 1.2;
+  letter-spacing: -0.015em;
+}
+.rows {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 7px 6px;
+  border-radius: 14px;
+  color: inherit;
+  text-decoration: none;
+  outline: none;
+}
+.row:hover,
+.row:focus-visible {
+  background: rgba(78, 42, 79, 0.08);
+}
+.row:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--buddy-ink);
+}
+.rowText {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+.rowName {
+  font-size: 15px;
+  font-weight: 800;
+  line-height: 1.15;
+}
+.rowLine {
+  font-size: 12.5px;
+  line-height: 1.3;
+  opacity: 0.8;
+}
+.rowArrow {
+  flex: none;
+  opacity: 0.6;
+}
+
+/* Status dots: open pulses green, closing is amber, closed is a hollow ring. */
+.dot {
+  position: relative;
+  flex: none;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  border: 2px solid rgba(78, 42, 79, 0.5);
+  background: transparent;
+}
+.dot[data-phase='open'] {
+  border-color: #3DBE7A;
+  background: #3DBE7A;
+}
+.dot[data-phase='open']::after {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  border-radius: 50%;
+  background: #3DBE7A;
+  animation: pulse 1.8s ease-out infinite;
+}
+.dot[data-phase='closing'] {
+  border-color: #FFB020;
+  background: #FFB020;
+}
+.dot[data-phase='opening'] {
+  border-color: #FFB020;
+}
+@keyframes pulse {
+  from { transform: scale(1); opacity: 0.55; }
+  to   { transform: scale(2.4); opacity: 0; }
+}
+
+.hideBtn {
+  display: block;
+  margin: 4px 0 0 auto;
+  min-height: 36px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  opacity: 0.72;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.hideBtn:hover { opacity: 1; }
+.hideBtn:focus-visible {
+  opacity: 1;
+  outline: 2px solid var(--buddy-ink);
+  outline-offset: 1px;
+}
+
+/* ── the catch: flying sticker tokens ───────────────────────────────────── */
+.tokenLayer {
+  position: fixed;
+  inset: 0;
+  z-index: 46;
+  pointer-events: none;
+  overflow: hidden;
+}
+.token {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border: 2px solid #4E2A4F;
+  border-radius: 50%;
+  background: #FFF4D6;
+  box-shadow: 2px 2px 0 #4E2A4F;
+  line-height: 0;
+  will-change: transform;
+}
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ── nav: the "right now" chip ──────────────────────────────────────────── */
+.nowChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 14px;
+  border: 1.5px solid currentColor;
+  border-color: color-mix(in srgb, currentColor 32%, transparent);
+  border-radius: 999px;
+  color: inherit;
+  font-size: 0.84rem;
+  font-weight: 700;
+  line-height: 1;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: transform 160ms ease, border-color 160ms ease;
+}
+.nowChip:hover { transform: translateY(-1px); border-color: currentColor; }
+.nowChip:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
+.nowDot {
+  position: relative;
+  flex: none;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  border: 2px solid currentColor;
+  opacity: 0.8;
+}
+.nowDot[data-open='1'] {
+  border-color: #3DBE7A;
+  background: #3DBE7A;
+  opacity: 1;
+}
+.nowDot[data-open='1']::after {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  border-radius: 50%;
+  background: #3DBE7A;
+  animation: pulse 1.8s ease-out infinite;
+}
+.nowLabel { display: inline; }
+
+.avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: 50%;
+  background: var(--servd-green, #4E2A4F);
+  color: #FFF4D6;
+}
+
+@media (max-width: 640px) {
+  .nowChip {
+    width: 44px;
+    padding: 0;
+    justify-content: center;
+  }
+  .nowLabel { display: none; }
+}
+
+/* ── Feedback trigger ───────────────────────────────────────────────────── */
+.fb {
+  position: fixed;
+  right: calc(1rem + env(safe-area-inset-right, 0px));
+  bottom: calc(1rem + env(safe-area-inset-bottom, 0px) + var(--companion-lift, 0px));
+  z-index: 50;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  min-height: 44px;
+  padding: 0 1.1rem;
+  border-radius: 999px;
+  font-size: 0.85rem;
+  font-weight: 800;
+  line-height: 1;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: transform 160ms ease, box-shadow 160ms ease, bottom 240ms ease;
+}
+.fb:focus-visible { outline: 3px solid currentColor; outline-offset: 3px; }
+.fb[data-skin='servd'] {
+  background: #FFF4D6;
+  color: #4E2A4F;
+  border: 2px solid #4E2A4F;
+  box-shadow: 3px 3px 0 #4E2A4F;
+}
+.fb[data-skin='servd']:hover { transform: translate(-1px, -1px); box-shadow: 4px 4px 0 #4E2A4F; }
+.fb[data-skin='servd']:active { transform: translate(2px, 2px); box-shadow: 1px 1px 0 #4E2A4F; }
+.fb[data-skin='simmer'] {
+  background: #06392F;
+  color: #EDE6D3;
+  border: 1px solid rgba(237, 230, 211, 0.6);
+  box-shadow: none;
+  font-family: var(--simmer-body, 'Times New Roman', Times, serif);
+  font-weight: 400;
+  font-size: 0.95rem;
+  letter-spacing: 0.02em;
+  text-transform: lowercase;
+}
+.fb[data-skin='stackd'] {
+  background: #5A1E33;
+  color: #FCE8CE;
+  border: 2px solid #FCE8CE;
+  box-shadow: 0 0 0 2px #5A1E33, 3px 3px 0 2px rgba(90, 30, 51, 0.35);
+}
+.fb[data-skin='stackd']:hover { transform: rotate(-2deg) scale(1.03); }
+.fb[data-skin='flipd'] {
+  background: #EDE6D3;
+  color: #2092E9;
+  border: 2px solid #2092E9;
+  box-shadow: 3px 3px 0 #090D17;
+}
+.fb[data-skin='flipd']:hover { transform: translate(-1px, -1px); box-shadow: 4px 4px 0 #090D17; }
+
+@media (max-width: 640px) {
+  .fb {
+    width: 44px;
+    height: 44px;
+    padding: 0;
+  }
+  .fbLabel { display: none; }
+}
+
+/* ── reduced motion: final states, no loops, instant state changes ─────── */
+@media (prefers-reduced-motion: reduce) {
+  .root,
+  .hop,
+  .hop[data-state='out'],
+  .hop[data-state='tucked'],
+  .fb,
+  .nowChip {
+    transition: none;
+  }
+  .swapIn,
+  .bubble,
+  .card,
+  .buddy[data-lively] .sway,
+  .dot[data-phase='open']::after,
+  .nowDot[data-open='1']::after {
+    animation: none;
+  }
+  .fb:hover,
+  .nowChip:hover {
+    transform: none;
+  }
+}
+
+/* ── nav layout (kept tight so 360px fits logo + browse + chip + sign in) ─ */
+.navActions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.navLink { padding: 0.7rem 0.95rem; }
+.navAccount { padding: 0.6rem 1rem; }
+.navSignIn { padding: 0.7rem 1.3rem !important; }
+
+@media (max-width: 640px) {
+  .navActions { gap: 0.25rem; }
+  .navLink { padding: 0.7rem 0.55rem; }
+  .navAccount { width: 44px; padding: 0; justify-content: center; }
+  .navAccountLabel { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .navSignIn { padding: 0.7rem 0.95rem !important; }
+}

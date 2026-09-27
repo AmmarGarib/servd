@@ -1,29 +1,95 @@
-/* Playful "food crowd" direction — the home hero stage.
-   Palette checked for contrast: plum on butter 8.35:1, ink on butter
-   11.52:1, cream on plum 10.84:1. Tomato is decoration only (2.96:1 on
-   butter — never text). */
+/* The home hero: a sky that knows the hour.
+   Every colour is a --world-* token that the server stamps per day-part on
+   <html> (globals.css), so the first paint is already right for the hour.
+   The fallbacks are the lunch values. A1 verifies contrast: world-ink on
+   both sky stops is ≥ 4.5:1 at every day-part. The CTA pair is chosen per
+   day-part for the same. */
 
 .hero {
-  --party-butter: #FFD447;
-  --party-butter-deep: #F4C22E;
-  --party-cream: #FFF4D6;
-  --party-plum: #4E2A4F;
   --party-ink: #2A1A2B;
-  --party-ink-mute: #5C4A3D;
-  --party-tomato: #FF5A3C;
+  --party-cream: #FFF4D6;
+  --sky-a: var(--world-sky-a, #FFE58A);
+  --sky-b: var(--world-sky-b, #FFD447);
+  --glow: var(--world-glow, #FFF4D6);
+  --ink: var(--world-ink, #4E2A4F);
+  --ink-soft: var(--world-ink-soft, rgba(78, 42, 79, 0.74));
+  --accent: var(--world-accent, #FF5A3C);
+  --hero-floor: color-mix(in srgb, var(--sky-b) 94%, #2A1A2B);
 
   position: relative;
-  /* The crowd must be in the FIRST screen — copy takes its natural height
-     and the stage fills whatever is left of the viewport. */
+  /* The crowd must be in the FIRST screen. The copy takes its natural
+     height and the stage fills whatever is left of the viewport. */
   height: max(100svh, 680px);
   display: flex;
   flex-direction: column;
   overflow: hidden;
   isolation: isolate;
   background:
-    radial-gradient(ellipse 70% 55% at 50% 38%, rgba(255, 250, 225, 0.75) 0%, rgba(255, 250, 225, 0) 70%),
-    var(--party-butter);
-  color: var(--party-ink);
+    /* warm pool of light the crowd stands in */
+    radial-gradient(ellipse 60% 42% at 50% 80%, color-mix(in srgb, var(--glow) 70%, transparent) 0%, transparent 72%),
+    /* soft halo behind the headline */
+    radial-gradient(ellipse 70% 55% at 50% 34%, color-mix(in srgb, var(--glow) 62%, transparent) 0%, transparent 70%),
+    linear-gradient(180deg, var(--sky-a) 0%, var(--sky-b) 100%);
+  color: var(--ink);
+  transition: color 1.2s ease;
+}
+
+/* After dark the halo behind the words goes out, and only a low lamp-pool
+   stays where the crowd sleeps. */
+:global(html[data-world-dark='1']) .hero {
+  background:
+    radial-gradient(ellipse 56% 36% at 50% 84%, color-mix(in srgb, var(--glow) 26%, transparent) 0%, transparent 72%),
+    linear-gradient(180deg, var(--sky-a) 0%, var(--sky-b) 100%);
+}
+
+/* ── Sky: orb, stars, motes ────────────────────────────────────────────── */
+.orb {
+  position: absolute;
+  z-index: 0;
+  left: var(--world-orb-x, 50%);
+  top: var(--world-orb-y, 10%);
+  width: 120px;
+  height: 120px;
+  translate: -50% -50%;
+  pointer-events: none;
+  transition: left 1.2s cubic-bezier(0.22, 1, 0.36, 1), top 1.2s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.orbGlow {
+  position: absolute;
+  inset: -70%;
+  border-radius: 50%;
+  background: radial-gradient(circle, color-mix(in srgb, var(--world-orb, #FFF1B8) 70%, transparent) 0%, transparent 62%);
+  filter: blur(8px);
+  opacity: 0.9;
+  transition: opacity 1.2s ease;
+}
+.orbDisc {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background-color: var(--world-orb, #FFF1B8);
+  box-shadow: inset -10px -12px 0 color-mix(in srgb, var(--world-orb, #FFF1B8) 82%, #2A1A2B);
+  transition: background-color 1.2s ease, box-shadow 1.2s ease;
+  animation: orbBreathe 7s ease-in-out infinite;
+}
+/* The moon: a crescent cut from the disc, and a cooler, smaller glow. */
+:global(html[data-world-dark='1']) .orbDisc {
+  box-shadow: none;
+  -webkit-mask: radial-gradient(ellipse 40% 40% at 72% 30%, transparent 97%, #000 100%);
+  mask: radial-gradient(ellipse 40% 40% at 72% 30%, transparent 97%, #000 100%);
+}
+:global(html[data-world-dark='1']) .orbGlow { opacity: 0.45; inset: -45%; }
+
+@keyframes orbBreathe {
+  0%, 100% { scale: 1; }
+  50% { scale: 1.035; }
+}
+
+.skyLayer {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
 }
 
 /* ── Copy ──────────────────────────────────────────────────────────────── */
@@ -38,14 +104,24 @@
 }
 
 .eyebrow {
+  display: inline-grid;
   margin: 0 0 1rem;
   font-family: var(--font-display);
   font-weight: 700;
   font-size: 0.8rem;
   letter-spacing: 0.26em;
   text-transform: uppercase;
-  color: var(--party-plum);
+  color: var(--ink);
+  text-wrap: balance;
 }
+.eyebrowStatic,
+.eyebrowLive {
+  grid-area: 1 / 1;
+  transition: opacity 180ms ease;
+}
+.eyebrowLive { opacity: 0; }
+.eyebrow[data-live='1'] .eyebrowStatic { opacity: 0; }
+.eyebrow[data-live='1'] .eyebrowLive { opacity: 1; }
 
 .title {
   margin: 0;
@@ -54,20 +130,20 @@
   font-size: clamp(2.8rem, 7.2vw, 6.4rem);
   line-height: 0.92;
   letter-spacing: -0.045em;
-  color: var(--party-plum);
+  color: var(--ink);
   text-wrap: balance;
 }
 
 .word {
   display: inline-block;
   margin: 0 0.12em;
-  animation: wordDrop 900ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
-  animation-delay: calc(var(--i) * 90ms + 120ms);
+  animation: wordDrop 620ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  animation-delay: calc(var(--i) * 60ms + 60ms);
 }
 
 @keyframes wordDrop {
-  0%   { opacity: 0; transform: translateY(-70%) rotate(-6deg) scale(0.9); }
-  60%  { opacity: 1; transform: translateY(6%) rotate(2deg) scale(1.02); }
+  0%   { opacity: 0; transform: translateY(-60%) rotate(-6deg) scale(0.9); }
+  55%  { opacity: 1; transform: translateY(6%) rotate(2deg) scale(1.02); }
   100% { opacity: 1; transform: none; }
 }
 
@@ -75,7 +151,7 @@
   position: relative;
   display: inline-block;
   font-style: italic;
-  color: var(--party-ink);
+  color: var(--ink);
 }
 
 .underline {
@@ -86,12 +162,13 @@
   width: 100%;
   height: 0.28em;
   fill: none;
-  stroke: var(--party-tomato);
+  stroke: var(--accent);
   stroke-width: 7;
   stroke-linecap: round;
   stroke-dasharray: 340;
   stroke-dashoffset: 340;
-  animation: drawLine 900ms ease-out 900ms forwards;
+  animation: drawLine 600ms ease-out 480ms forwards;
+  transition: stroke 1.2s ease;
 }
 
 @keyframes drawLine { to { stroke-dashoffset: 0; } }
@@ -101,8 +178,8 @@
   max-width: 44rem;
   font-size: clamp(1.02rem, 1.4vw, 1.2rem);
   line-height: 1.6;
-  color: var(--party-ink-mute);
-  animation: fadeUp 700ms ease-out 500ms both;
+  color: var(--ink-soft);
+  animation: fadeUp 480ms ease-out 220ms both;
 }
 
 @keyframes fadeUp {
@@ -110,14 +187,14 @@
   to   { opacity: 1; transform: none; }
 }
 
-/* ── CTAs — chunky 3D pill, the diner-button feel ─────────────────────── */
+/* ── CTAs: the chunky 3D pill, the diner-button feel ──────────────────── */
 .ctas {
   margin-top: 1.6rem;
   display: flex;
   flex-wrap: wrap;
   gap: 0.9rem;
   justify-content: center;
-  animation: fadeUp 700ms ease-out 650ms both;
+  animation: fadeUp 480ms ease-out 320ms both;
 }
 
 .cta,
@@ -137,17 +214,19 @@
   text-decoration: none;
   cursor: pointer;
   white-space: nowrap;
-  transition: transform 160ms cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 160ms ease, background-color 160ms ease;
+  transition: transform 160ms cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 160ms ease, background-color 1.2s ease, color 1.2s ease;
 }
 
 .cta {
-  background: var(--party-plum);
-  color: var(--party-cream);
+  background: var(--world-cta-bg, #4E2A4F);
+  color: var(--world-cta-ink, #FFF4D6);
   box-shadow: 0 6px 0 var(--party-ink);
 }
 .cta svg { fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; transition: transform 200ms ease; }
-.cta:hover { transform: translateY(-3px) rotate(-1.5deg); box-shadow: 0 9px 0 var(--party-ink); }
-.cta:hover svg { transform: translateX(4px); }
+.cta:hover,
+.cta:focus-visible { transform: translateY(-3px) rotate(-1.5deg); box-shadow: 0 9px 0 var(--party-ink); }
+.cta:hover svg,
+.cta:focus-visible svg { transform: translateX(4px); }
 .cta:active { transform: translateY(4px); box-shadow: 0 2px 0 var(--party-ink); }
 
 .ctaGhost {
@@ -155,16 +234,22 @@
   color: var(--party-ink);
   box-shadow: 0 6px 0 var(--party-ink);
 }
-.ctaGhost:hover { transform: translateY(-3px) rotate(1.5deg); box-shadow: 0 9px 0 var(--party-ink); }
+.ctaGhost:hover,
+.ctaGhost:focus-visible { transform: translateY(-3px) rotate(1.5deg); box-shadow: 0 9px 0 var(--party-ink); }
 .ctaGhost:active { transform: translateY(4px); box-shadow: 0 2px 0 var(--party-ink); }
+
+/* Every kitchen closed → nudge to the board instead of the deck. */
+.ghostNight { display: none; }
+:global(html[data-kitchens-open='0']) .ghostDay { display: none; }
+:global(html[data-kitchens-open='0']) .ghostNight { display: inline-flex; }
 
 .cta:focus-visible,
 .ctaGhost:focus-visible {
-  outline: 3px solid var(--party-ink);
+  outline: 3px solid var(--ink);
   outline-offset: 4px;
 }
 
-/* ── Stage — the crowd stands on this floor ───────────────────────────── */
+/* ── Stage: the crowd stands on this floor ────────────────────────────── */
 .stage {
   position: relative;
   z-index: 1;
@@ -179,11 +264,80 @@
   right: 0;
   bottom: 0;
   height: 34%;
-  background: linear-gradient(180deg, rgba(244, 194, 46, 0) 0%, var(--party-butter-deep) 100%);
+  background: linear-gradient(180deg, transparent 0%, var(--hero-floor) 100%);
   pointer-events: none;
 }
 
-/* ── Doodles ───────────────────────────────────────────────────────────── */
+/* ── CrowdStage: instant SVG cast → 3D crowd ──────────────────────────── */
+.crowdHost {
+  position: absolute;
+  inset: 0;
+}
+
+.instant {
+  position: absolute;
+  left: var(--cspan-in, 8%);
+  right: var(--cspan-in, 8%);
+  bottom: var(--cb, 14%);
+  z-index: 2;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-evenly;
+  transition: opacity 400ms ease;
+}
+.live {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  opacity: 0;
+  transition: opacity 400ms ease;
+}
+.crowdHost[data-live='1'] .instant { opacity: 0; pointer-events: none; }
+.crowdHost[data-live='1'] .live { opacity: 1; }
+
+/* SSR sizing per variant; the ResizeObserver refines --ck/--cb after mount. */
+.crowdHero { --ck: 2.8; --cspan-in: 8%; }
+.crowdHow { --ck: 2.3; --cspan-in: 24%; }
+
+.pal {
+  position: relative;
+  display: inline-flex;
+  flex-shrink: 0;
+  zoom: var(--ck, 1);
+  transform-origin: 50% 100%;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.pal[data-shown='0'] { display: none; }
+.pal[data-shown='1'] { display: inline-flex; }
+
+/* The cast hops along when the CTA is hovered or focused. */
+.crowdHost[data-excited='1'] .pal {
+  animation: palBounce 460ms cubic-bezier(0.34, 1.56, 0.64, 1) infinite alternate;
+  animation-delay: calc(var(--pi, 0) * 70ms);
+}
+.pal[data-poked='1'] { animation: palPoke 620ms cubic-bezier(0.34, 1.56, 0.64, 1) both; }
+.pal[data-flinch='1'] { animation: palFlinch 420ms ease-out 110ms both; }
+
+@keyframes palBounce {
+  from { translate: 0 0; }
+  to { translate: 0 -8%; }
+}
+@keyframes palPoke {
+  0% { translate: 0 0; scale: 1 1; }
+  18% { translate: 0 2%; scale: 1.08 0.9; }
+  48% { translate: 0 -22%; scale: 0.95 1.07; rotate: -4deg; }
+  78% { translate: 0 0; scale: 1.05 0.95; rotate: 2deg; }
+  100% { translate: 0 0; scale: 1 1; rotate: 0deg; }
+}
+@keyframes palFlinch {
+  0%, 100% { translate: 0 0; rotate: 0deg; }
+  40% { translate: 0 -4%; rotate: -3deg; }
+  70% { rotate: 2deg; }
+}
+
+/* ── Doodles, tinted by the hour ──────────────────────────────────────── */
 .doodle {
   position: absolute;
   z-index: 0;
@@ -193,7 +347,7 @@
   width: clamp(28px, 3.6vw, 48px);
   top: 22%;
   left: 10%;
-  fill: var(--party-plum);
+  fill: var(--accent);
   animation: spin 9s linear infinite;
 }
 .doodleSquiggle {
@@ -201,7 +355,7 @@
   top: 16%;
   right: 9%;
   fill: none;
-  stroke: var(--party-tomato);
+  stroke: var(--accent);
   stroke-width: 5;
   stroke-linecap: round;
   animation: wiggle 3.2s ease-in-out infinite;
@@ -210,7 +364,7 @@
   width: clamp(14px, 1.6vw, 22px);
   top: 48%;
   right: 16%;
-  fill: var(--party-tomato);
+  fill: var(--accent);
   animation: bob 2.6s ease-in-out infinite;
 }
 
@@ -218,9 +372,9 @@
 @keyframes wiggle { 0%, 100% { transform: rotate(-6deg); } 50% { transform: rotate(6deg) translateY(-4px); } }
 @keyframes bob    { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-10px); } }
 
-/* Phones: the crowd goes FIRST (it's the hook), in a box near-square
-   enough that the engine shows its 4 big centre characters instead of
-   six tiny ones; the copy follows. The page scrolls naturally here. */
+/* Phones: the crowd goes FIRST (it's the hook), in a box that is near-square
+   enough for the engine to show its 4 big centre characters instead of six
+   tiny ones. The copy follows, and the page scrolls naturally here. */
 @media (max-width: 640px) {
   .hero { height: auto; min-height: 100svh; }
   .stage {
@@ -231,16 +385,26 @@
     margin-top: 4.5rem;
   }
   /* The copy continues right under the stage, so a floor band would end in
-     a hard seam — the characters' own contact shadows ground them. */
+     a hard seam. The characters' own contact shadows ground them. */
   .floor { display: none; }
   .copy { padding-top: 0.5rem; padding-bottom: 3rem; }
   .doodleSquiggle, .doodleStar { display: none; }
   .doodleDot { top: 12%; right: 6%; }
   .ctas { flex-direction: column; align-items: stretch; max-width: 22rem; margin-left: auto; margin-right: auto; }
+  .orb { width: 72px; height: 72px; }
+
+  .crowdHero { --ck: 1.36; --cb: 30%; --cspan-in: 4%; }
+  .crowdHero .pal[data-edge='1'] { display: none; }
+  .crowdHero .pal[data-shown='1'] { display: inline-flex; }
+  .crowdHow { --ck: 1.5; --cspan-in: 10%; }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .word, .lead, .ctas, .underline { animation: none; stroke-dashoffset: 0; }
-  .doodle { animation: none; }
-  .cta:hover, .ctaGhost:hover { transform: none; }
+  .doodle, .orbDisc { animation: none; }
+  .orb, .orbDisc, .orbGlow { transition: none; }
+  .cta:hover, .ctaGhost:hover, .cta:focus-visible, .ctaGhost:focus-visible { transform: none; }
+  .crowdHost[data-excited='1'] .pal,
+  .pal[data-poked='1'],
+  .pal[data-flinch='1'] { animation: none; }
 }

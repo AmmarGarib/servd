@@ -160,7 +160,7 @@
   color: var(--flipd-blue);
   transition: transform 500ms cubic-bezier(0.34, 1.56, 0.64, 1);
 }
-.value:hover .valueNo { transform: rotate(360deg) scale(1.12); }
+.value:hover .valueNo, .value:active .valueNo { transform: rotate(360deg) scale(1.12); }
 .valueTitle {
   margin: 0;
   font-family: var(--flipd-display);
@@ -201,17 +201,67 @@
   padding: 0 4%;
 }
 .stool {
+  position: relative;
   width: clamp(44px, 7vw, 68px);
   pointer-events: auto;
   cursor: grab;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
 }
 .stool svg { display: block; width: 100%; height: auto; overflow: visible; }
 .stoolStripes { animation: stoolSpin 2.4s linear infinite; }
-.stool:hover .stoolStripes { animation-duration: 0.35s; }
 .stool:nth-child(2) .stoolStripes { animation-direction: reverse; animation-duration: 3.1s; }
 .stool:nth-child(3) .stoolStripes { animation-duration: 2s; }
 .stool:nth-child(4) .stoolStripes { animation-direction: reverse; }
 @keyframes stoolSpin { from { transform: translateX(0); } to { transform: translateX(-16px); } }
+
+/* Hover or tap: the seat swivels 20° and back on its post, stripes whirring,
+   and whoever is sitting on it rides along. */
+.seat { transform-box: view-box; transform-origin: 50% 20%; }
+.stool[data-spin] .seat { animation: swivel 620ms cubic-bezier(0.34, 1.56, 0.64, 1); }
+.stool[data-spin] .stoolStripes { animation-duration: 0.3s; }
+.stool[data-spin] .rider { animation: ride 620ms cubic-bezier(0.34, 1.56, 0.64, 1); }
+@keyframes swivel {
+  0%   { transform: none; }
+  35%  { transform: rotate(20deg) scaleX(0.86); }
+  70%  { transform: rotate(-6deg) scaleX(0.96); }
+  100% { transform: none; }
+}
+@keyframes ride {
+  0%   { transform: translateX(-50%); }
+  35%  { transform: translateX(-50%) rotate(20deg) translateY(-6px); }
+  70%  { transform: translateX(-50%) rotate(-6deg); }
+  100% { transform: translateX(-50%); }
+}
+
+/* The regular: sits on the seat top (the seat band is the top ~20% of the
+   stool drawing). */
+.rider {
+  position: absolute;
+  left: 50%;
+  bottom: 84%;
+  z-index: 1;
+  display: block;
+  width: max-content;
+  transform: translateX(-50%);
+  transform-origin: 50% 100%;
+  line-height: 0;
+}
+@media (max-width: 560px) {
+  .rider { scale: 0.8; }
+}
+
+/* Grill cold: the counter is shut — the rally slows to a lazy knock-up and
+   the stools stop idling. Keyed on the server-stamped html[data-k-flipd] so
+   the first paint is already right, and on the hook's data-grill so it stays
+   live (and still works where the attribute is missing). */
+:global(html[data-k-flipd='closed']) .stand .ballX,
+:global(html[data-k-flipd='closed']) .stand .ballY,
+.stand[data-grill='cold'] .ballX,
+.stand[data-grill='cold'] .ballY { animation-duration: 6s; }
+:global(html[data-k-flipd='closed']) .stand .stoolStripes,
+.stand[data-grill='cold'] .stoolStripes { animation-play-state: paused; }
+.stand .stool[data-spin] .stoolStripes { animation-play-state: running; }
 
 /* The ball: X runs linear back and forth, Y is a parabola per crossing
    (ease-out up, ease-in down), and a shadow tracks it along the counter. */
@@ -276,11 +326,19 @@
   line-height: 1.05;
   color: var(--flipd-blue);
 }
-/* The door sign. Hangs from two strings and flips over on its hooks when
-   the section arrives. Lit side: blue board, mustard type (6.92:1). */
+/* The diner neon. Hangs from two strings; flips over on its hooks when the
+   section arrives (armed after mount only, ≤ 450 ms, never from invisible).
+   A blue board with chase bulbs and one tube:
+     open     mustard tube, lit, a rare flicker        (mustard on blue 6.92:1)
+     closing  amber LAST CALL, buzzing                 (#FFB547 on blue 6.3:1)
+     opening  the tube stuttering on
+     closed   the tube is dark glass; the line says when it fires up
+   data-phase comes from useOpenStatus, which renders on the server from the
+   same kitchen state the html[data-k-*] attributes are stamped from. */
 .signHang {
   position: relative;
   display: inline-block;
+  max-width: 100%;
   padding-top: 18px;
   margin: 0.2rem 0 0.4rem;
   transform-origin: 50% 0;
@@ -296,61 +354,103 @@
   border-bottom: 0;
   border-radius: 999px 999px 0 0;
 }
-[data-armed]:not([data-in]) .signHang { opacity: 0; }
-[data-in] .signHang { animation: signFlip 1.1s cubic-bezier(0.3, 1.3, 0.5, 1) 300ms both; }
+[data-armed]:not([data-in]) .signHang { opacity: 0.4; transform: perspective(500px) rotateX(-40deg); }
+[data-armed][data-in] .signHang { animation: signFlip 440ms cubic-bezier(0.3, 1.3, 0.5, 1) both; }
 @keyframes signFlip {
-  0%   { opacity: 0; transform: perspective(500px) rotateX(-110deg); }
-  35%  { opacity: 1; transform: perspective(500px) rotateX(24deg); }
-  60%  { transform: perspective(500px) rotateX(-10deg); }
-  80%  { transform: perspective(500px) rotateX(4deg); }
+  0%   { opacity: 0.4; transform: perspective(500px) rotateX(-40deg); }
+  45%  { opacity: 1; transform: perspective(500px) rotateX(16deg); }
+  75%  { transform: perspective(500px) rotateX(-5deg); }
   100% { opacity: 1; transform: none; }
 }
-.sign {
+
+.neon {
+  --tube: var(--flipd-mustard);
+  --tube-glow: rgba(254, 213, 97, 0.55);
   position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 0.1rem;
+  gap: 0.35rem;
   margin: 0;
-  padding: 0.6rem 1.3rem 0.65rem;
-  border-radius: 0.8rem;
+  max-width: 100%;
+  padding: 0.85rem 1.4rem 0.8rem;
+  border-radius: 0.9rem;
   border: 3px solid var(--flipd-blue);
-  background: var(--flipd-bone);
-  color: var(--flipd-blue);
-  box-shadow: 3px 4px 0 var(--flipd-blue);
-  text-align: center;
-}
-.signOpen {
-  background: var(--flipd-blue);
-  color: var(--flipd-mustard);
-  /* Chase bulbs round the board, inset so they never touch the letters. */
-  background-image:
-    radial-gradient(circle, var(--flipd-mustard) 0 2.5px, transparent 3px);
+  background-color: var(--flipd-blue);
+  /* Chase bulbs round the board's edge. */
+  background-image: radial-gradient(circle, rgba(254, 213, 97, 0.9) 0 2px, transparent 2.5px);
   background-size: 12px 12px;
   background-position: -3px -3px;
-  padding: 0.75rem 1.5rem 0.8rem;
+  box-shadow: 3px 4px 0 var(--flipd-blue-deep, #1D3159);
+  color: var(--flipd-mustard);
+  text-align: center;
 }
-.signOpen::before {
+.neon::before {
   content: '';
   position: absolute;
   inset: 6px;
-  border-radius: 0.5rem;
+  border-radius: 0.55rem;
   background: var(--flipd-blue);
 }
-.signHead, .signSub { position: relative; }
-.signHead {
+.tube, .neonLine { position: relative; }
+.tube {
   font-family: var(--flipd-display);
-  font-size: 1.35rem;
-  line-height: 1.05;
-}
-.signSub {
-  font-size: 0.72rem;
-  font-weight: 700;
-  letter-spacing: 0.12em;
+  font-size: clamp(1.5rem, 4vw, 1.9rem);
+  line-height: 1;
+  letter-spacing: 0.04em;
   text-transform: uppercase;
+  color: var(--tube);
+  text-shadow:
+    0 0 2px var(--tube),
+    0 0 10px var(--tube-glow),
+    0 0 22px var(--tube-glow);
+  animation: neonFlicker 7.3s steps(1) infinite;
 }
-.signOpen .signHead { animation: flicker 5s steps(1) infinite; }
-@keyframes flicker { 0%, 92%, 96% { opacity: 1; } 94% { opacity: 0.55; } }
+.neonLine {
+  max-width: 22ch;
+  font-size: 0.8rem;
+  font-weight: 700;
+  line-height: 1.35;
+  letter-spacing: 0.04em;
+  color: var(--flipd-bone);
+  text-wrap: balance;
+}
+/* Open: steady, with the odd buzz-drop. */
+@keyframes neonFlicker {
+  0%, 88%, 90.5%, 93%, 100% { opacity: 1; }
+  89%   { opacity: 0.45; }
+  92%   { opacity: 0.7; }
+}
+
+/* Closing: amber tube, a slow buzz. */
+.neon[data-phase='closing'] {
+  --tube: #FFB547;
+  --tube-glow: rgba(255, 181, 71, 0.55);
+}
+.neon[data-phase='closing'] .tube { animation: neonBuzz 1.6s ease-in-out infinite; }
+@keyframes neonBuzz {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.72; }
+}
+
+/* Opening: the tube trying to catch. */
+.neon[data-phase='opening'] .tube { animation: neonWarm 3.4s steps(1) infinite; }
+@keyframes neonWarm {
+  0%, 12%, 30%, 100% { opacity: 1; }
+  6%, 18%            { opacity: 0.25; text-shadow: none; }
+  40%, 62%           { opacity: 0.35; text-shadow: none; }
+}
+
+/* Closed: dark glass — the tube is drawn but carries no light. */
+.neon[data-phase='closed'] .tube {
+  color: transparent;
+  -webkit-text-stroke: 1.5px rgba(249, 240, 225, 0.55);
+  text-shadow: none;
+  animation: none;
+}
+.neon[data-phase='closed'] {
+  background-image: radial-gradient(circle, rgba(254, 213, 97, 0.28) 0 2px, transparent 2.5px);
+}
 
 /* Hours as a counter board: one row per day, today lit. */
 .hours {
@@ -409,9 +509,9 @@
 [data-in] .routeDraw { animation: routeDash 1.8s linear infinite; }
 @keyframes routeDash { to { stroke-dashoffset: -22; } }
 .pin { transform-box: fill-box; transform-origin: 50% 100%; }
-[data-in] .pin { animation: pinDrop 800ms cubic-bezier(0.34, 1.56, 0.64, 1) 500ms both; }
+[data-armed][data-in] .pin { animation: pinDrop 380ms cubic-bezier(0.34, 1.56, 0.64, 1) 60ms both; }
 @keyframes pinDrop {
-  0%   { opacity: 0; transform: translateY(-40px) scaleY(1.2); }
+  0%   { opacity: 0.4; transform: translateY(-24px) scaleY(1.2); }
   60%  { opacity: 1; transform: translateY(0) scaleY(0.8); }
   100% { opacity: 1; transform: none; }
 }
@@ -448,10 +548,10 @@
   transition: transform 400ms cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 .badgeWrap:hover .badge { transform: rotate(-6deg) scale(1.05); }
-[data-armed]:not([data-in]) .badge { opacity: 0; }
-[data-in] .badge { animation: badgeSlam 700ms cubic-bezier(0.34, 1.56, 0.64, 1) 150ms both; }
+[data-armed]:not([data-in]) .badge { opacity: 0.4; transform: scale(1.2); }
+[data-armed][data-in] .badge { animation: badgeSlam 420ms cubic-bezier(0.34, 1.56, 0.64, 1) both; }
 @keyframes badgeSlam {
-  0%   { opacity: 0; transform: scale(2.4) rotate(-24deg); }
+  0%   { opacity: 0.4; transform: scale(1.6) rotate(-16deg); }
   55%  { opacity: 1; transform: scale(0.88) rotate(4deg); }
   78%  { transform: scale(1.04) rotate(-1deg); }
   100% { opacity: 1; transform: none; }
@@ -474,10 +574,11 @@
 @media (prefers-reduced-motion: reduce) {
   .valueNo, .badge { transition: none; }
   .value:hover .valueNo, .badgeWrap:hover .badge { transform: none; }
-  .ballX, .ballY, .ball, .stoolStripes, .badgeRing, .swipeHint svg, .signOpen .signHead { animation: none; }
-  [data-armed]:not([data-in]) .signHang { opacity: 1; }
-  [data-in] .routeDraw, [data-in] .pin { animation: none; }
-  [data-in] .signHang { animation: none; }
-  [data-armed]:not([data-in]) .badge { opacity: 1; }
-  [data-in] .badge { animation: none; }
+  .ballX, .ballY, .ball, .stoolStripes, .badgeRing, .swipeHint svg, .tube,
+  .stool[data-spin] .seat, .stool[data-spin] .rider, .neon[data-phase] .tube { animation: none; }
+  [data-armed]:not([data-in]) .signHang { opacity: 1; transform: none; }
+  [data-in] .routeDraw, [data-armed][data-in] .pin { animation: none; }
+  [data-armed][data-in] .signHang { animation: none; }
+  [data-armed]:not([data-in]) .badge { opacity: 1; transform: none; }
+  [data-armed][data-in] .badge { animation: none; }
 }

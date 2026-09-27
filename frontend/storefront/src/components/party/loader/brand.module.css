@@ -1,6 +1,6 @@
 /* BrandLoader — per-brand route loading. Each brand in its own palette;
    the servd butter party never appears here. Contrast: bone on forest
-   green ~10:1, cream on red plum ~8:1, Flipd Blue on mustard ~7:1. */
+   green ~10:1, cream on red plum ~8:1, Flipd navy on mustard ~7:1. */
 
 /* Fills the whole screen in the brand's own ground, so the page turns into
    that brand the instant you navigate. */
@@ -11,48 +11,39 @@
   justify-content: center;
   padding: 3rem 16px;
   text-align: center;
+  overflow: hidden;
 }
-/* Ground instantly, content after a beat — no flicker on fast loads. */
+/* Ground instantly, content a beat later (no flicker on fast loads).
+   Capped: fully in by 400ms. */
 .col {
-  display: flex; flex-direction: column; align-items: center;
-  animation: brandReveal 560ms cubic-bezier(0.22, 1, 0.36, 1) 220ms both;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  max-width: 100%;
+  animation: brandReveal 280ms cubic-bezier(0.22, 1, 0.36, 1) 100ms both;
 }
 @keyframes brandReveal {
-  from { opacity: 0; transform: translateY(14px); }
+  from { opacity: 0; transform: translateY(12px); }
   to   { opacity: 1; transform: none; }
 }
-@media (prefers-reduced-motion: reduce) {
-  .col { animation: none; }
-}
 .col p { margin: 0; }
-.art { display: block; width: 84px; height: auto; overflow: visible; margin-bottom: 1.1rem; }
 
-/* ── simmer: one candle, one orange signal, no gradients ─────────────── */
+/* The rotating line (DayLines renders one <p> per day-part voice). */
+.wrap .lines {
+  width: 20rem;
+  max-width: calc(100vw - 32px);
+  margin-top: 0.6rem;
+  color: inherit;
+}
+
+/* ── simmer: flat tiber, one orange signal, no gradients, no characters ── */
 .simmer { background: #06392F; color: #EDE6D3; }
-.simmer .art { width: 60px; }
-.flame {
-  transform-box: fill-box;
-  transform-origin: 50% 100%;
-  animation: flicker 2.2s ease-in-out infinite;
+.simmerMark {
+  font-family: var(--simmer-display, 'Amarante', serif);
+  font-size: 2.8rem;
+  line-height: 1;
+  text-transform: lowercase;
 }
-@keyframes flicker {
-  0%, 100% { transform: none; }
-  20% { transform: scale(0.95, 1.07) skewX(-3deg); }
-  45% { transform: scale(1.03, 0.94) skewX(2deg); }
-  70% { transform: scale(0.97, 1.05) skewX(-1deg); }
-}
-.smoke {
-  opacity: 0;
-  stroke-dasharray: 40;
-  stroke-dashoffset: 40;
-  animation: smoke 4.4s ease-out infinite;
-}
-@keyframes smoke {
-  0% { opacity: 0; stroke-dashoffset: 40; transform: none; }
-  25% { opacity: 0.4; }
-  100% { opacity: 0; stroke-dashoffset: 0; transform: translateY(-8px); }
-}
-.simmerMark { font-family: var(--simmer-display, 'Amarante', serif); font-size: 2.6rem; line-height: 1; }
 .simmerTag {
   margin-top: 0.5rem !important;
   font-family: var(--simmer-body, 'Times New Roman', Times, serif);
@@ -61,50 +52,126 @@
   letter-spacing: 0.04em;
   opacity: 0.78;
 }
+.simmerRow {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.7rem;
+  margin-top: 1.8rem;
+}
+.simmer .lines {
+  width: 16rem;
+  margin-top: 0;
+  text-align: center;
+  font-family: var(--simmer-body, 'Times New Roman', Times, serif);
+  font-weight: 400;
+  font-style: italic;
+  font-size: 1rem;
+  letter-spacing: 0.02em;
+  text-transform: lowercase;
+  color: rgba(237, 230, 211, 0.82);
+}
+.simmerDot {
+  flex: none;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #E94E1B;
+  animation: ember 3.2s ease-in-out infinite;
+}
+@keyframes ember {
+  0%, 100% { opacity: 0.45; transform: scale(0.85); }
+  50% { opacity: 1; transform: scale(1.1); }
+}
 
-/* ── stackd: the layers drop in and stack ────────────────────────────── */
+/* ── stackd: the coffee cup sips on a cream sticker ──────────────────── */
 .stackd { background: #7C2946; color: #FCE8CE; }
-.stackd .art { width: 112px; }
-.stack { animation: clear 3.4s infinite; }
-@keyframes clear { 0%, 84% { opacity: 1; transform: none; } 94% { opacity: 0; transform: translateY(6px); } 100% { opacity: 0; } }
-.l0, .l1, .l2, .l3 { animation: 3.4s infinite; }
-.l0 { animation-name: d0; }
-.l1 { animation-name: d1; }
-.l2 { animation-name: d2; }
-.l3 { animation-name: d3; }
-@keyframes d0 { 0% { transform: translateY(-70px); opacity: 0; animation-timing-function: cubic-bezier(0.34, 1.56, 0.64, 1); } 12%, 100% { transform: none; opacity: 1; } }
-@keyframes d1 { 0%, 9% { transform: translateY(-70px); opacity: 0; animation-timing-function: cubic-bezier(0.34, 1.56, 0.64, 1); } 21%, 100% { transform: none; opacity: 1; } }
-@keyframes d2 { 0%, 18% { transform: translateY(-70px); opacity: 0; animation-timing-function: cubic-bezier(0.34, 1.56, 0.64, 1); } 30%, 100% { transform: none; opacity: 1; } }
-@keyframes d3 { 0%, 27% { transform: translateY(-70px); opacity: 0; animation-timing-function: cubic-bezier(0.34, 1.56, 0.64, 1); } 40%, 100% { transform: none; opacity: 1; } }
-.stackdMark { font-family: var(--stackd-display, 'Playfair Display', Georgia, serif); font-weight: 700; font-size: 2.5rem; line-height: 1; letter-spacing: -0.01em; }
-.stackdLine { margin-top: 0.6rem !important; font-family: var(--stackd-body, 'Inter', system-ui, sans-serif); font-size: 0.95rem; color: rgba(252, 232, 206, 0.8); }
+.sticker {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 176px;
+  height: 150px;
+  margin-bottom: 1.1rem;
+  border-radius: 44% 56% 52% 48% / 58% 50% 50% 42%;
+  background: #FCE8CE;
+  box-shadow: 0 0 0 4px #7C2946, 0 0 0 6px #9BD3DD;
+  rotate: -4deg;
+  color: #7C2946; /* steam */
+}
+.stackdCup { margin-top: 8px; height: 128px; width: auto; }
+.stackdMark {
+  font-family: var(--stackd-display, 'Playfair Display', Georgia, serif);
+  font-weight: 700;
+  font-size: 2.5rem;
+  line-height: 1;
+  letter-spacing: -0.01em;
+  text-transform: lowercase;
+}
+.stackd .lines {
+  font-family: var(--stackd-body, 'Inter', system-ui, sans-serif);
+  font-weight: 500;
+  font-size: 0.98rem;
+  text-transform: lowercase;
+  color: rgba(252, 232, 206, 0.86);
+}
 
-/* ── Flipd: a patty flips over the griddle ───────────────────────────── */
-.flipd { background: #FED561; color: #294375; }
-.flipd .art { width: 104px; }
-.patty {
-  transform-box: fill-box;
-  transform-origin: center;
-  animation: flip 1.8s infinite;
+/* ── Flipd: mustard, diner checker, burger + fries on the counter ────── */
+.flipd {
+  position: relative;
+  background: #FED561;
+  color: #294375;
 }
-@keyframes flip {
-  0%, 100% { transform: none; }
-  10% { transform: scale(1.1, 0.8); animation-timing-function: cubic-bezier(0.2, 0.7, 0.3, 1); }
-  30% { transform: translateY(-46px) scaleY(0.15) rotate(-8deg); animation-timing-function: linear; }
-  45% { transform: translateY(-54px) scaleY(-1); animation-timing-function: linear; }
-  60% { transform: translateY(-30px) scaleY(0.15) rotate(8deg); animation-timing-function: cubic-bezier(0.6, 0, 0.9, 0.5); }
-  72% { transform: scale(1.14, 0.78); animation-timing-function: cubic-bezier(0.34, 1.56, 0.64, 1); }
-  84% { transform: none; }
+.flipd::before,
+.flipd::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 28px;
+  background: repeating-conic-gradient(#294375 0 25%, #F9F0E1 0 50%) 0 0 / 28px 28px;
 }
-.sizzle { opacity: 0; animation: sizzle 1.05s ease-out infinite; }
-@keyframes sizzle {
-  0% { opacity: 0; transform: none; }
-  30% { opacity: 0.85; }
-  100% { opacity: 0; transform: translateY(-10px); }
+.flipd::before { top: 0; }
+.flipd::after { bottom: 0; }
+.counter {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 22px 10px;
+  margin-bottom: 1.1rem;
+  color: #294375;
 }
-.flipdMark { font-family: var(--flipd-display, 'Alfa Slab One', Georgia, serif); font-size: 2.6rem; line-height: 1; }
-.flipdLine { margin-top: 0.55rem !important; font-family: var(--flipd-body, 'Poppins', system-ui, sans-serif); font-weight: 600; font-size: 0.95rem; }
+.counter::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 4px;
+  height: 7px;
+  border-radius: 4px;
+  background: #294375;
+}
+.flipdCast { height: 116px; width: auto; }
+.flipdMark {
+  font-family: var(--flipd-display, 'Alfa Slab One', Georgia, serif);
+  font-size: 2.6rem;
+  line-height: 1;
+}
+.flipd .lines {
+  font-family: var(--flipd-body, 'Poppins', system-ui, sans-serif);
+  font-weight: 600;
+  font-size: 0.98rem;
+}
+
+@media (max-width: 380px) {
+  .flipdCast { height: 96px; }
+  .stackdCup { height: 112px; }
+  .sticker { width: 156px; height: 134px; }
+}
 
 @media (prefers-reduced-motion: reduce) {
   .wrap * { animation: none !important; }
+  .wrap .lines span:first-child { opacity: 1; transform: none; }
 }

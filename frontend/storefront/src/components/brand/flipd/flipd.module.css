@@ -264,18 +264,20 @@
   color: var(--flipd-blue);
 }
 
-/* Entrance: dropped onto the rail, then a damped swing. */
-[data-armed]:not([data-in]) .ticketWrap { opacity: 0; }
-[data-in] .ticketWrap {
-  animation: swingIn 1.25s cubic-bezier(0.3, 1.2, 0.5, 1) both;
-  animation-delay: calc(var(--i, 0) * 110ms);
+/* Entrance: dropped onto the rail, then a damped swing. Reveal hygiene: the
+   held-back state is never invisible (opacity .4, nudged up), the entrance is
+   armed only after mount, and the whole swing plus stagger lands in ≤ 450 ms.
+   Once hung, a live ticket keeps a slow sway on its clip. */
+[data-armed]:not([data-in]) .ticketWrap { opacity: 0.4; transform: translateY(-14px); }
+[data-armed][data-in] .ticketWrap {
+  animation: swingIn 390ms cubic-bezier(0.3, 1.2, 0.5, 1) both;
+  animation-delay: calc(min(var(--i, 0), 3) * 20ms);
 }
 @keyframes swingIn {
-  0%   { opacity: 0; transform: translateY(-46px) rotate(-16deg); }
-  30%  { opacity: 1; transform: translateY(0) rotate(10deg); }
-  50%  { transform: rotate(-6deg); }
-  68%  { transform: rotate(3deg); }
-  84%  { transform: rotate(-1.2deg); }
+  0%   { opacity: 0.4; transform: translateY(-14px) rotate(-9deg); }
+  40%  { opacity: 1; transform: translateY(0) rotate(6deg); }
+  65%  { transform: rotate(-3deg); }
+  85%  { transform: rotate(1deg); }
   100% { opacity: 1; transform: none; }
 }
 
@@ -290,15 +292,15 @@
   transition: rotate 380ms cubic-bezier(0.34, 1.56, 0.64, 1), translate 380ms cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 .sticker:hover { rotate: calc(var(--r) * -1); translate: 0 -5px; }
-[data-armed]:not([data-in]) .sticker { opacity: 0; }
-[data-in] .sticker {
-  animation: slap 620ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
-  animation-delay: calc(var(--i, 0) * 140ms + 120ms);
+[data-armed]:not([data-in]) .sticker { opacity: 0.4; transform: scale(1.08); }
+[data-armed][data-in] .sticker {
+  animation: slap 340ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  animation-delay: calc(min(var(--i, 0), 4) * 25ms);
 }
 @keyframes slap {
-  0%   { opacity: 0; transform: scale(1.7) rotate(14deg); }
-  55%  { opacity: 1; transform: scale(0.93) rotate(-2deg); }
-  78%  { transform: scale(1.03) rotate(1deg); }
+  0%   { opacity: 0.4; transform: scale(1.3) rotate(8deg); }
+  55%  { opacity: 1; transform: scale(0.95) rotate(-2deg); }
+  78%  { transform: scale(1.02) rotate(1deg); }
   100% { opacity: 1; transform: none; }
 }
 
@@ -307,14 +309,14 @@
   display: inline-block;
   white-space: pre;
 }
-[data-armed]:not([data-in]) .word { opacity: 0; }
-[data-in] .word {
-  animation: wordDrop 850ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
-  animation-delay: calc(var(--i, 0) * 85ms + 60ms);
+[data-armed]:not([data-in]) .word { opacity: 0.4; transform: translateY(-30%); }
+[data-armed][data-in] .word {
+  animation: wordDrop 320ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  animation-delay: calc(min(var(--i, 0), 4) * 30ms);
 }
 @keyframes wordDrop {
-  0%   { opacity: 0; transform: translateY(-75%) rotate(-7deg); }
-  60%  { opacity: 1; transform: translateY(7%) rotate(2deg); }
+  0%   { opacity: 0.4; transform: translateY(-30%) rotate(-5deg); }
+  60%  { opacity: 1; transform: translateY(6%) rotate(1.5deg); }
   100% { opacity: 1; transform: none; }
 }
 
@@ -332,7 +334,7 @@
   stroke-dashoffset: 0;
 }
 [data-armed]:not([data-in]) .scribble { stroke-dashoffset: 340; }
-[data-in] .scribble { animation: draw 900ms ease-out 500ms both; }
+[data-armed][data-in] .scribble { animation: draw 360ms ease-out 80ms both; }
 @keyframes draw { from { stroke-dashoffset: 340; } to { stroke-dashoffset: 0; } }
 
 /* ── Marker doodles ────────────────────────────────────────────────────── */
@@ -409,8 +411,11 @@
   [data-armed]:not([data-in]) .ticketWrap,
   [data-armed]:not([data-in]) .sticker,
   [data-armed]:not([data-in]) .word { opacity: 1; }
-  [data-in] .ticketWrap, [data-in] .sticker, [data-in] .word { animation: none; }
+  [data-armed]:not([data-in]) .ticketWrap,
+  [data-armed]:not([data-in]) .sticker,
+  [data-armed]:not([data-in]) .word { transform: none; }
+  [data-armed][data-in] .ticketWrap, [data-armed][data-in] .sticker, [data-armed][data-in] .word { animation: none; }
   [data-armed]:not([data-in]) .scribble { stroke-dashoffset: 0; }
-  [data-in] .scribble { animation: none; }
+  [data-armed][data-in] .scribble { animation: none; }
   .ticketWrap:hover, .ticketWrap:focus-within, .sticker:hover { translate: none; }
 }

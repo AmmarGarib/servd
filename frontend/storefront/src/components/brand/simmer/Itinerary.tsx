@@ -15,30 +15,43 @@
 // Frames are flat walnut with a hard offset shadow (no wood-grain gradient,
 // no blurred shadow). Reduced motion: frames hang still, pictures don't
 // drift, the ember sits at the first stop, sketches are drawn already.
+//
+// Touch and narrow screens (pointer: coarse, or ≤ 820px) get that same
+// static treatment: a plain vertical list — no scrubbed ember, no parallax,
+// no held-back frames — because one flick of a thumb covers the whole rail
+// and a scrubbed or masked frame is just an empty box in passing.
+//
+// No slot is ever a blank box. "the space" is a photograph when there is one
+// and it loads; underneath it, always, is a hairline blueprint of the room
+// (bone line on tiber, like the plate and the coupe), so a missing or slow
+// photograph still leaves a drawing in the frame.
 
-import { useRef, type CSSProperties, type ReactNode } from 'react'
+import { useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { motion, useScroll, useTransform } from 'framer-motion'
-import { Reveal, useReducedMotionAfterMount } from './reveal'
+import { Reveal, useMediaAfterMount, useReducedMotionAfterMount } from './reveal'
 import s from './simmer.module.css'
 
-function Parallax({ children }: { children: ReactNode }) {
+/** Where the itinerary is a static list rather than a scrubbed rail. */
+const STATIC_QUERY = '(pointer: coarse), (max-width: 820px)'
+
+function Parallax({ still, children }: { still: boolean, children: ReactNode }) {
   const ref = useRef<HTMLDivElement | null>(null)
-  const reduce = useReducedMotionAfterMount()
   const { scrollYProgress } = useScroll({ target: ref, offset: ['start end', 'end start'] })
   const y = useTransform(scrollYProgress, [0, 1], ['-7%', '7%'])
   return (
     <div ref={ref} className={s.picture}>
-      <motion.div className={s.parallax} style={{ y: reduce ? 0 : y }}>
+      <motion.div className={s.parallax} style={{ y: still ? 0 : y }}>
         {children}
       </motion.div>
     </div>
   )
 }
 
-function Stop({ side, label, children }: { side: 'left' | 'right', label: string, children: ReactNode }) {
+function Stop({ side, label, still, children }: { side: 'left' | 'right', label: string, still: boolean, children: ReactNode }) {
   return (
     <Reveal
       className={s.stop}
+      staticQuery={STATIC_QUERY}
       style={{ alignItems: side === 'right' ? 'flex-end' : 'flex-start' }}
     >
       {/* Frame zone is full width so the stop dot (left: 50%) lands on the
@@ -47,7 +60,7 @@ function Stop({ side, label, children }: { side: 'left' | 'right', label: string
         <span aria-hidden="true" className={s.stopDot} />
         <div className={s.frame}>
           <div className={s.mat}>
-            <Parallax>{children}</Parallax>
+            <Parallax still={still}>{children}</Parallax>
           </div>
         </div>
       </div>
@@ -119,9 +132,79 @@ function CoupeSketch() {
   )
 }
 
+// ─── The room, as a hairline blueprint ──────────────────────────────────
+// The placeholder under "the space": one-point perspective of the room below
+// stackd — the stair coming down, three pendants (unlit: the only orange on
+// this ground is the rail's ember), the long table with an unlit candle, and
+// the sheet's own dimension line. Bone hairlines on tiber; no white, no fill
+// but the ground.
+function RoomSketch() {
+  const ink = (i: number): CSSProperties => ({ ['--i' as string]: i } as CSSProperties)
+  return (
+    <svg aria-hidden="true" focusable="false" viewBox="0 0 200 160" preserveAspectRatio="xMidYMid slice"
+         style={{ width: '100%', height: '100%', display: 'block' }}>
+      <rect width="200" height="160" fill="var(--simmer-green)" />
+      <g fill="none" stroke="var(--simmer-bone)" strokeLinecap="round" strokeLinejoin="round">
+        {/* Back wall and the four corner runs */}
+        <path className={s.ink} style={ink(0)} pathLength={1} d="M62 38 H138 V104 H62 Z" strokeWidth="0.8" strokeOpacity="0.7" />
+        <path className={s.ink} style={ink(1)} pathLength={1} d="M0 6 L62 38 M200 6 L138 38 M0 158 L62 104 M200 158 L138 104" strokeWidth="0.6" strokeOpacity="0.45" />
+        {/* The stair down the left wall */}
+        <path className={s.ink} style={ink(1)} pathLength={1}
+              d="M14 44 L22 48 V56 L30 60 V68 L38 72 V80 L46 84 V92 L54 96 V100"
+              strokeWidth="0.7" strokeOpacity="0.6" />
+        <path className={s.ink} style={ink(2)} pathLength={1} d="M10 38 L50 90" strokeWidth="0.5" strokeOpacity="0.35" />
+        {/* Three pendants, unlit */}
+        <path className={s.ink} style={ink(2)} pathLength={1}
+              d="M84 38 V56 M100 38 V60 M116 38 V56 M78 62 Q 84 54, 90 62 Z M94 66 Q 100 58, 106 66 Z M110 62 Q 116 54, 122 62 Z"
+              strokeWidth="0.7" strokeOpacity="0.7" />
+        {/* The long table, its legs, two stools */}
+        <path className={s.ink} style={ink(3)} pathLength={1}
+              d="M70 112 H130 L142 124 H58 Z M64 124 V140 M136 124 V140 M88 124 V134 M112 124 V134"
+              strokeWidth="0.8" strokeOpacity="0.75" />
+        <path className={s.ink} style={ink(3)} pathLength={1}
+              d="M40 130 h14 M47 130 v14 M146 130 h14 M153 130 v14"
+              strokeWidth="0.7" strokeOpacity="0.5" />
+        {/* An unlit candle on the table */}
+        <path className={s.ink} style={ink(4)} pathLength={1} d="M98 104 h4 v8 h-4 Z M100 104 v-3" strokeWidth="0.7" strokeOpacity="0.8" />
+        {/* Dimension line */}
+        <path className={s.ink} style={ink(4)} pathLength={1} d="M62 150 H138 M62 146 v8 M138 146 v8" strokeWidth="0.5" strokeOpacity="0.45" />
+      </g>
+      <text x="100" y="147" textAnchor="middle" fill="var(--simmer-bone)" fillOpacity="0.55"
+            fontFamily="Times, 'Times New Roman', serif" fontSize="6" letterSpacing="1.4">6.4 m</text>
+      <text x="138" y="30" textAnchor="end" fill="var(--simmer-bone)" fillOpacity="0.5"
+            fontFamily="Times, 'Times New Roman', serif" fontSize="5.5" letterSpacing="1.2">the room · below stackd</text>
+    </svg>
+  )
+}
+
+/** The photograph over its blueprint. A photograph that fails is removed, so
+ *  the frame shows the drawing rather than a broken image. */
+function Space({ src }: { src: string }) {
+  const [failed, setFailed] = useState(false)
+  return (
+    <>
+      <RoomSketch />
+      {src && !failed && (
+        // Decorative — the label names it. Lazy: it sits below a tall hero.
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={src}
+          alt=""
+          loading="lazy"
+          decoding="async"
+          onError={() => setFailed(true)}
+          style={{ position: 'absolute', inset: 0 }}
+        />
+      )}
+    </>
+  )
+}
+
 export function Itinerary({ spaceImage }: { spaceImage: string }) {
   const ref = useRef<HTMLDivElement | null>(null)
   const reduce = useReducedMotionAfterMount()
+  const narrow = useMediaAfterMount(STATIC_QUERY)
+  const still = reduce || narrow
   const { scrollYProgress } = useScroll({ target: ref, offset: ['start 75%', 'end 45%'] })
   const top = useTransform(scrollYProgress, [0, 1], ['4%', '96%'])
   // The ember burns out at the end of the rail, so it never shares a screen
@@ -130,17 +213,15 @@ export function Itinerary({ spaceImage }: { spaceImage: string }) {
   return (
     <div ref={ref} style={{ position: 'relative', padding: '0.5rem 0' }}>
       <div aria-hidden="true" className={s.rail} />
-      <motion.span aria-hidden="true" className={s.railEmber} style={{ top: reduce ? '4%' : top, opacity: reduce ? 1 : opacity }} />
+      <motion.span aria-hidden="true" className={s.railEmber} style={{ top: still ? '4%' : top, opacity: still ? 1 : opacity }} />
 
-      <Stop side="left" label="the space">
-        {/* Decorative — the label names it. Lazy: it sits below a tall hero. */}
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={spaceImage} alt="" loading="lazy" decoding="async" />
+      <Stop side="left" label="the space" still={still}>
+        <Space src={spaceImage} />
       </Stop>
-      <Stop side="right" label="the plate">
+      <Stop side="right" label="the plate" still={still}>
         <PlateSketch />
       </Stop>
-      <Stop side="left" label="the pour">
+      <Stop side="left" label="the pour" still={still}>
         <CoupeSketch />
       </Stop>
     </div>

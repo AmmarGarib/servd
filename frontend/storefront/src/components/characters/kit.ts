@@ -41,6 +41,12 @@ export class Kit {
     return m
   }
 
+  /** Every material this kit owns (cached physical + tracked extras). */
+  forEachMaterial(fn: (m: THREE.Material) => void): void {
+    this.mats.forEach(fn)
+    this.extraMats.forEach(fn)
+  }
+
   dispose(): void {
     this.geos.forEach((g) => g.dispose())
     this.mats.forEach((m) => m.dispose())
@@ -122,6 +128,29 @@ export function organic(
 }
 
 /* ------------------------------------------------------------------ */
+/* Level of detail                                                     */
+/* ------------------------------------------------------------------ */
+
+let detail = 1
+
+/**
+ * Runs `fn` (a synchronous character build) with lathe and sweep resolution
+ * scaled by `d` (1 = full, ~0.55 on phones). Scoped, so two crowds on one
+ * page never leak their setting into each other.
+ */
+export function withDetail<T>(d: number, fn: () => T): T {
+  const prev = detail
+  detail = Math.min(1, Math.max(0.3, d))
+  try {
+    return fn()
+  } finally {
+    detail = prev
+  }
+}
+
+const lod = (n: number, min: number) => Math.max(min, Math.round(n * detail))
+
+/* ------------------------------------------------------------------ */
 /* Geometry helpers                                                    */
 /* ------------------------------------------------------------------ */
 
@@ -138,11 +167,11 @@ export function smoothLathe(
       false,
       'centripetal',
     )
-    profile = curve.getPoints(samples).map((v) => new THREE.Vector2(Math.max(0, v.x), v.y))
+    profile = curve.getPoints(lod(samples, 16)).map((v) => new THREE.Vector2(Math.max(0, v.x), v.y))
   } else {
     profile = pts.map(([r, y]) => new THREE.Vector2(r, y))
   }
-  return new THREE.LatheGeometry(profile, segments, phiStart, Math.PI * 2)
+  return new THREE.LatheGeometry(profile, lod(segments, 24), phiStart, Math.PI * 2)
 }
 
 /** Rounded polygon outline as a Shape (corners filleted with quadratic curves). */
@@ -176,6 +205,8 @@ export function sweep(
   radial = 48,
   color?: (t: number, theta: number, out: THREE.Color) => void,
 ): THREE.BufferGeometry {
+  tubular = lod(tubular, 48)
+  radial = lod(radial, 16)
   const positions: number[] = []
   const colors: number[] = []
   const indices: number[] = []
@@ -240,6 +271,50 @@ export function radialTexture(kit: Kit, falloff = 0.5): THREE.CanvasTexture | nu
   })
 }
 
+/**
+ * A hand-drawn "z" for the sleep sprites: a stroked PATH (no font glyph, no
+ * emoji), a plum outline under a cream stroke so it reads on the butter day
+ * sky and the plum night sky alike.
+ */
+export function zTexture(kit: Kit): THREE.CanvasTexture | null {
+  return canvasTexture(kit, 128, 128, (ctx) => {
+    const path = () => {
+      ctx.beginPath()
+      ctx.moveTo(34, 36)
+      ctx.quadraticCurveTo(64, 30, 94, 34)
+      ctx.lineTo(38, 94)
+      ctx.quadraticCurveTo(66, 99, 96, 92)
+    }
+    ctx.lineCap = 'round'
+    ctx.lineJoin = 'round'
+    path()
+    ctx.strokeStyle = 'rgba(46,21,48,0.85)'
+    ctx.lineWidth = 26
+    ctx.stroke()
+    path()
+    ctx.strokeStyle = '#FFF4D6'
+    ctx.lineWidth = 13
+    ctx.stroke()
+  })
+}
+
+/** Soft, slightly lopsided wisp for coffee steam. */
+export function wispTexture(kit: Kit): THREE.CanvasTexture | null {
+  return canvasTexture(kit, 64, 128, (ctx) => {
+    for (const [cx, cy, r, a] of [
+      [32, 84, 26, 0.55],
+      [28, 56, 20, 0.45],
+      [36, 30, 15, 0.35],
+    ] as const) {
+      const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, r)
+      g.addColorStop(0, `rgba(255,255,255,${a})`)
+      g.addColorStop(1, 'rgba(255,255,255,0)')
+      ctx.fillStyle = g
+      ctx.fillRect(0, 0, 64, 128)
+    }
+  })
+}
+
 /* ------------------------------------------------------------------ */
 /* Faces                                                               */
 /* ------------------------------------------------------------------ */
@@ -247,11 +322,29 @@ export function radialTexture(kit: Kit, falloff = 0.5): THREE.CanvasTexture | nu
 export interface EyeRig {
   /** Positioned on the face, never rotated/scaled: the look-at reference frame. */
   anchor: THREE.Group
-  /** Blink / squint / widen scale lives here. */
+  /** Eye scale (widen / narrow) lives here; the lids ride along with it. */
   lid: THREE.Group
   /** Rotated to look at the target. */
   ball: THREE.Group
+  /** Upper eyelid shell: rotation.x from `lidAngle(closure)`. */
+  upper: THREE.Object3D
+  /** Lower eyelid shell: rotation.x from `lowerLidAngle(raise)`. */
+  lower: THREE.Object3D
+  /** Specular dots that poke past the lids; hidden while the lid is down. */
+  glints: THREE.Object3D[]
+  /** -1 = screen-left eye, 1 = screen-right. */
+  side: number
   baseScaleY: number
+}
+
+export interface BrowRig {
+  /** On the surface, oriented to its normal. */
+  pivot: THREE.Group
+  /** Lift (position.y) and angle (rotation.z) live here. */
+  bar: THREE.Object3D
+  side: number
+  /** Eye radius the brow was sized from; lifts are in these units. */
+  r: number
 }
 
 export interface FaceSpec {
@@ -263,11 +356,20 @@ export interface FaceSpec {
   mouth: { x: number; y: number; w: number; depth?: number; thick?: number; open?: boolean }
   cheeks?: { x: number; y: number; r: number }[]
   cheekColor?: string
+  /** Eyelid skin, close to the body colour around the eyes. */
+  lidColor?: string
+  browColor?: string
 }
 
 export interface FaceRig {
   eyes: EyeRig[]
+  brows: BrowRig[]
+  /** The smile / grin. Pivot sits on its centre so scaling stays put. */
   mouth: THREE.Object3D
+  /** The surprised 'O'; scale 0 when unused. */
+  mouthO: THREE.Object3D
+  /** true = the open "D" grin (never flipped into a frown). */
+  openMouth: boolean
   group: THREE.Group
 }
 
@@ -276,6 +378,12 @@ export interface SharedFace {
   iris: THREE.SphereGeometry
   pupil: THREE.SphereGeometry
   glint: THREE.SphereGeometry
+  lidTop: THREE.SphereGeometry
+  lidBottom: THREE.SphereGeometry
+  lash: THREE.TorusGeometry
+  brow: THREE.CapsuleGeometry
+  oDisc: THREE.CircleGeometry
+  oRim: THREE.TorusGeometry
   whiteMat: THREE.MeshPhysicalMaterial
   irisMat: THREE.MeshPhysicalMaterial
   pupilMat: THREE.MeshPhysicalMaterial
@@ -283,23 +391,43 @@ export interface SharedFace {
   mouthMat: THREE.MeshPhysicalMaterial
   mouthInMat: THREE.MeshPhysicalMaterial
   tongueMat: THREE.MeshPhysicalMaterial
+  lashMat: THREE.MeshPhysicalMaterial
   blushTex: THREE.Texture | null
 }
 
 export function sharedFace(kit: Kit): SharedFace {
   // Unit-radius eye parts, scaled per eye. Caps are built around +Y then
   // turned to face +Z so they hug the eyeball exactly.
-  const white = kit.geo(new THREE.SphereGeometry(1, 48, 32))
-  const iris = kit.geo(new THREE.SphereGeometry(1.012, 48, 16, 0, Math.PI * 2, 0, 0.66))
+  const hi = detail > 0.8
+  const white = kit.geo(new THREE.SphereGeometry(1, hi ? 48 : 28, hi ? 32 : 18))
+  const iris = kit.geo(new THREE.SphereGeometry(1.012, hi ? 48 : 28, 16, 0, Math.PI * 2, 0, 0.66))
   iris.rotateX(Math.PI / 2)
-  const pupil = kit.geo(new THREE.SphereGeometry(1.02, 48, 12, 0, Math.PI * 2, 0, 0.4))
+  const pupil = kit.geo(new THREE.SphereGeometry(1.02, hi ? 48 : 28, 12, 0, Math.PI * 2, 0, 0.4))
   pupil.rotateX(Math.PI / 2)
   const glint = kit.geo(new THREE.SphereGeometry(1, 16, 12))
+  // Eyelids: hemispherical shells just outside the eyeball. The rim lies in
+  // the lid's local XZ plane; rotating about X swings it over the eye.
+  const lidTop = kit.geo(new THREE.SphereGeometry(1.09, hi ? 32 : 20, 10, 0, Math.PI * 2, 0, Math.PI / 2))
+  const lidBottom = kit.geo(new THREE.SphereGeometry(1.08, hi ? 32 : 20, 10, 0, Math.PI * 2, Math.PI / 2, Math.PI / 2))
+  // The upper lid's front edge (a half ring from +x through +z to -x) is the lash line.
+  const lash = kit.geo(new THREE.TorusGeometry(1.09, 0.075, 6, 24, Math.PI))
+  lash.rotateX(Math.PI / 2)
+  // Brows are sized in eye radii: a short flattened capsule lying along X.
+  const brow = kit.geo(new THREE.CapsuleGeometry(0.17, 0.85, 4, 10))
+  brow.rotateZ(Math.PI / 2)
+  const oDisc = kit.geo(new THREE.CircleGeometry(1, 24))
+  const oRim = kit.geo(new THREE.TorusGeometry(1, 0.2, 8, 28))
   return {
     white,
     iris,
     pupil,
     glint,
+    lidTop,
+    lidBottom,
+    lash,
+    brow,
+    oDisc,
+    oRim,
     whiteMat: kit.physical('eye-white', { color: '#FFFFFF', roughness: 0.12, clearcoat: 1, clearcoatRoughness: 0.04, envMapIntensity: 0.9 }),
     irisMat: kit.physical('eye-iris', { color: '#3A2116', roughness: 0.2, clearcoat: 1, clearcoatRoughness: 0.05, envMapIntensity: 1 }),
     pupilMat: kit.physical('eye-pupil', { color: '#0E0908', roughness: 0.15, clearcoat: 1, clearcoatRoughness: 0.03, envMapIntensity: 1 }),
@@ -307,8 +435,23 @@ export function sharedFace(kit: Kit): SharedFace {
     mouthMat: kit.physical('mouth', { color: '#3B1712', roughness: 0.35, clearcoat: 0.6 }),
     mouthInMat: kit.physical('mouth-in', { color: '#4A140F', roughness: 0.4, clearcoat: 0.8, clearcoatRoughness: 0.1, side: THREE.DoubleSide }),
     tongueMat: kit.physical('tongue', { color: '#FF6B7A', roughness: 0.35, clearcoat: 0.6, side: THREE.DoubleSide }),
+    lashMat: kit.physical('lash', { color: '#2A140E', roughness: 0.45, clearcoat: 0.4 }),
     blushTex: radialTexture(kit, 0.35),
   }
+}
+
+/**
+ * Upper-lid rotation for a closure in 0..1 (0 = wide open, 1 = shut). The
+ * lid's front edge sits at eye-height `1 - 2c` (in eye radii), so 0.8 reads
+ * as "80% closed", not a lookup-table guess.
+ */
+export function lidAngle(c: number): number {
+  return Math.asin(Math.min(1, Math.max(-1, (2 * c - 1) * 0.93)))
+}
+
+/** Lower-lid rotation for a raise in 0..1 (0 = tucked away, 1 = up to the top). */
+export function lowerLidAngle(l: number): number {
+  return Math.asin(Math.min(1, Math.max(-1, (1 - 2 * l) * 0.93)))
 }
 
 function surfaceNormal(f: (x: number, y: number) => number, x: number, y: number): THREE.Vector3 {
@@ -322,6 +465,15 @@ export function buildFace(kit: Kit, shared: SharedFace, spec: FaceSpec): FaceRig
   const group = new THREE.Group()
   group.name = 'face'
   const protrude = spec.protrude ?? 0.3
+  const lidMat = kit.physical(`lid:${spec.lidColor ?? '#E7B071'}`, {
+    color: spec.lidColor ?? '#E7B071',
+    roughness: 0.42,
+    clearcoat: 0.5,
+    clearcoatRoughness: 0.25,
+    side: THREE.DoubleSide,
+  })
+  const browMat = kit.physical(`brow:${spec.browColor ?? '#3B1F14'}`, { color: spec.browColor ?? '#3B1F14', roughness: 0.5, clearcoat: 0.3 })
+
   const eyes: EyeRig[] = spec.eyes.map((e) => {
     const n = surfaceNormal(spec.surfaceZ, e.x, e.y)
     const anchor = new THREE.Group()
@@ -345,10 +497,34 @@ export function buildFace(kit: Kit, shared: SharedFace, spec: FaceSpec): FaceRig
     glint2.position.set(0.24, -0.2, 0.95).normalize().multiplyScalar(e.r * 1.02)
     for (const m of [white, iris, pupil]) m.castShadow = true
     ball.add(white, iris, pupil, glint, glint2)
-    lid.add(ball)
+
+    const upper = new THREE.Mesh(shared.lidTop, lidMat)
+    upper.scale.setScalar(e.r)
+    upper.rotation.x = lidAngle(0.1)
+    upper.add(new THREE.Mesh(shared.lash, shared.lashMat))
+    const lower = new THREE.Mesh(shared.lidBottom, lidMat)
+    lower.scale.setScalar(e.r)
+    lower.rotation.x = lowerLidAngle(0)
+    lid.add(ball, upper, lower)
     anchor.add(lid)
     group.add(anchor)
-    return { anchor, lid, ball, baseScaleY }
+    return { anchor, lid, ball, upper, lower, glints: [glint, glint2], side: Math.sign(e.x) || 1, baseScaleY }
+  })
+
+  // Brows: a capsule above each eye, on the surface, following its normal.
+  const brows: BrowRig[] = spec.eyes.map((e) => {
+    const stretch = e.stretch ?? 1.12
+    const bx = e.x + (Math.sign(e.x) || 1) * e.r * 0.08
+    const by = e.y + e.r * stretch + e.r * (0.42 + protrude * 0.25)
+    const n = surfaceNormal(spec.surfaceZ, bx, by)
+    const pivot = new THREE.Group()
+    pivot.position.set(bx, by, spec.surfaceZ(bx, by)).addScaledVector(n, e.r * 0.12)
+    pivot.lookAt(pivot.position.x + n.x, pivot.position.y + n.y, pivot.position.z + n.z)
+    const bar = new THREE.Mesh(shared.brow, browMat)
+    bar.scale.set(e.r, e.r, e.r * 0.7)
+    pivot.add(bar)
+    group.add(pivot)
+    return { pivot, bar, side: Math.sign(e.x) || 1, r: e.r }
   })
 
   const { x: mx, y: my, w, depth = 0.38, thick = 0.019, open = false } = spec.mouth
@@ -403,6 +579,20 @@ export function buildFace(kit: Kit, shared: SharedFace, spec: FaceSpec): FaceRig
   }
   group.add(mouth)
 
+  // The surprised 'O': a dark disc with a lip ring, laid on the surface.
+  const oy = open ? my - w * 0.22 : my - w * depth * 0.25
+  const on = surfaceNormal(spec.surfaceZ, mx, oy)
+  const mouthO = new THREE.Group()
+  mouthO.position.set(mx, oy, spec.surfaceZ(mx, oy)).addScaledVector(on, 0.008)
+  mouthO.lookAt(mouthO.position.x + on.x, mouthO.position.y + on.y, mouthO.position.z + on.z)
+  const oScale = new THREE.Group()
+  oScale.scale.set(w * 0.28, w * 0.36, w * 0.28)
+  oScale.add(new THREE.Mesh(shared.oDisc, shared.mouthInMat), new THREE.Mesh(shared.oRim, shared.mouthMat))
+  mouthO.add(oScale)
+  mouthO.scale.setScalar(0.0001)
+  mouthO.visible = false
+  group.add(mouthO)
+
   if (spec.cheeks && shared.blushTex) {
     const mat = kit.material(
       new THREE.MeshBasicMaterial({
@@ -426,7 +616,7 @@ export function buildFace(kit: Kit, shared: SharedFace, spec: FaceSpec): FaceRig
       group.add(m)
     }
   }
-  return { eyes, mouth, group }
+  return { eyes, brows, mouth, mouthO, openMouth: open, group }
 }
 
 /* ------------------------------------------------------------------ */

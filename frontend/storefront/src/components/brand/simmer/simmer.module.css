@@ -140,9 +140,14 @@
 
 /* ── Reveal: line by line ────────────────────────────────────────────────── */
 /* Three states, set by useReveal on [data-reveal]:
-     (none)   — server render / no JS / reduced motion: fully visible.
+     (none)   — server render / no JS / reduced motion / on screen at mount:
+                fully visible.
      armed    — below the fold on mount: lines sit under their mask.
-     shown    — scrolled into view: lines rise, staggered by --i. */
+     shown    — its first sliver is in view: lines rise, staggered by --i.
+   The screenshot rule: every entrance below lands within 450 ms of "shown",
+   stagger included (stagger ≤ 20 ms a line, capped at the fourth), and a
+   held-back block is never below .35 opacity — only a masked line is fully
+   hidden, and only for those 450 ms. */
 
 .line {
   display: block;
@@ -158,17 +163,17 @@
 }
 [data-reveal='shown'] .line > span {
   transform: translateY(0);
-  transition: transform 1150ms var(--s-ease);
-  transition-delay: calc(var(--i, 0) * 150ms);
+  transition: transform 360ms var(--s-ease);
+  transition-delay: calc(min(var(--i, 0), 4) * 20ms);
 }
 
 /* Fade-rise for blocks (paragraphs, rows, frames). */
-[data-reveal='armed'] .rise { opacity: 0; transform: translateY(18px); }
+[data-reveal='armed'] .rise { opacity: 0.4; transform: translateY(12px); }
 [data-reveal='shown'] .rise {
   opacity: 1;
   transform: none;
-  transition: opacity 900ms ease, transform 1100ms var(--s-ease);
-  transition-delay: calc(var(--i, 0) * 140ms);
+  transition: opacity 340ms ease, transform 360ms var(--s-ease);
+  transition-delay: calc(min(var(--i, 0), 4) * 20ms);
 }
 
 /* A hairline that draws across. */
@@ -180,16 +185,17 @@
   transform-origin: left center;
 }
 [data-reveal='armed'] .rule { transform: scaleX(0); }
-[data-reveal='shown'] .rule { transform: scaleX(1); transition: transform 1300ms var(--s-ease); }
+[data-reveal='shown'] .rule { transform: scaleX(1); transition: transform 420ms var(--s-ease); }
 
 /* Letters of the title wordmark surface one at a time, like a title card. */
 .letter { display: inline-block; }
-[data-reveal='armed'] .letter { opacity: 0; transform: translateY(0.08em); }
+/* 12 ms a letter, the whole word inside 400 ms. */
+[data-reveal='armed'] .letter { opacity: 0.35; transform: translateY(0.08em); }
 [data-reveal='shown'] .letter {
   opacity: 1;
   transform: none;
-  transition: opacity 1400ms ease, transform 1600ms var(--s-ease);
-  transition-delay: calc(300ms + var(--i, 0) * 170ms);
+  transition: opacity 300ms ease, transform 320ms var(--s-ease);
+  transition-delay: calc(min(var(--i, 0), 6) * 12ms);
 }
 
 /* ── Candle ──────────────────────────────────────────────────────────────── */
@@ -281,6 +287,83 @@
   20%  { opacity: 0.5; }
   70%  { opacity: 0.22; }
   100% { opacity: 0;    transform: translate(8px, -40px) scale(1.2, 1.2); }
+}
+
+/* The candle as a whole: the drawing, then (when it is out) one line of the
+   room's status under it. */
+.candleWrap {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.1rem;
+  line-height: 1;
+}
+.candleWrap > .candle { line-height: 0; }
+
+/* Out: one thin wisp off the wick, slow, never above .5. */
+.wisp {
+  transform-box: fill-box;
+  transform-origin: 50% 100%;
+  opacity: 0;
+  animation: wisp 8.5s ease-in-out infinite;
+}
+@keyframes wisp {
+  0%   { opacity: 0;    transform: translate(0, 4px) scale(0.9, 0.8); }
+  25%  { opacity: 0.45; }
+  70%  { opacity: 0.2; }
+  100% { opacity: 0;    transform: translate(6px, -34px) scale(1.15, 1.2); }
+}
+
+/* Out, with no status line to carry it: the wick keeps one dying ember —
+   that viewport's single orange. */
+.wickEmber {
+  transform-box: fill-box;
+  transform-origin: 50% 50%;
+  animation: pilot 3.2s ease-in-out infinite;
+}
+
+/* Lit, on entering view: the wick catches over 600 ms — a small flare that
+   settles into the flame. Armed only below the fold; SSR is lit. */
+.candle[data-ignite='armed'] .flame,
+.candle[data-ignite='armed'] .core,
+.candle[data-ignite='armed'] .halo { opacity: 0; }
+.candle[data-ignite='go'] .flameGroup { animation: ignite 600ms cubic-bezier(0.2, 0.9, 0.3, 1.2) both; }
+.candle[data-ignite='go'] .halo { animation: igniteHalo 600ms ease-out both, breathe 2.3s ease-in-out 600ms infinite; }
+@keyframes ignite {
+  0%   { opacity: 0; transform: scale(0.1, 0.05); }
+  30%  { opacity: 1; transform: scale(0.7, 1.35); }
+  60%  { transform: scale(1.08, 0.92); }
+  100% { opacity: 1; transform: none; }
+}
+@keyframes igniteHalo {
+  0%   { opacity: 0; }
+  100% { opacity: 1; }
+}
+.flameGroup { transform-box: fill-box; transform-origin: 50% 100%; }
+
+.candleLine {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  max-width: 16rem;
+  font-family: var(--simmer-body);
+  font-size: 0.8rem;
+  letter-spacing: 0.22em;
+  text-transform: lowercase;
+  line-height: 1.5;
+  color: var(--s-bone);
+  text-align: center;
+}
+.bone .candleLine { color: var(--s-green); }
+/* The live dot: the single orange once the candle is out. A light, never
+   text — 8px, flat, breathing. */
+.liveDot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--s-orange);
+  animation: pilot 2.8s ease-in-out infinite;
 }
 
 /* ── Soft bone ring cursor ──────────────────────────────────────────────── */
@@ -390,11 +473,11 @@
   display: block;
 }
 
-[data-reveal='armed'] .frame { opacity: 0; transform: translateY(26px) rotate(-1.6deg); }
+[data-reveal='armed'] .frame { opacity: 0.4; transform: translateY(14px) rotate(-1.2deg); }
 [data-reveal='shown'] .frame {
   opacity: 1;
   transform: none;
-  transition: opacity 900ms ease, transform 1500ms cubic-bezier(0.25, 1.35, 0.4, 1);
+  transition: opacity 320ms ease, transform 430ms cubic-bezier(0.25, 1.35, 0.4, 1);
 }
 
 /* Sketches draw themselves in once their frame is shown. */
@@ -405,8 +488,8 @@
 [data-reveal='armed'] .ink { stroke-dashoffset: 1; }
 [data-reveal='shown'] .ink {
   stroke-dashoffset: 0;
-  transition: stroke-dashoffset 2200ms var(--s-ease);
-  transition-delay: calc(500ms + var(--i, 0) * 180ms);
+  transition: stroke-dashoffset 400ms var(--s-ease);
+  transition-delay: calc(min(var(--i, 0), 4) * 10ms);
 }
 .steam {
   transform-box: fill-box;
@@ -477,11 +560,11 @@
 }
 /* Sentences surface one after another, in place — opacity only, so the
    paragraph never reflows. */
-[data-reveal='armed'] .sentence { opacity: 0; }
+[data-reveal='armed'] .sentence { opacity: 0.4; }
 [data-reveal='shown'] .sentence {
   opacity: 1;
-  transition: opacity 1400ms ease;
-  transition-delay: calc(400ms + var(--i, 0) * 650ms);
+  transition: opacity 360ms ease;
+  transition-delay: calc(min(var(--i, 0), 5) * 15ms);
 }
 
 /* ── Find the door ───────────────────────────────────────────────────────── */
@@ -658,10 +741,13 @@
 /* ── Reduced motion: final states, no loops ──────────────────────────────── */
 @media (prefers-reduced-motion: reduce) {
   .flame, .core, .halo, .ember, .steam, .bubble, .surface, .pilot, .pilotBone,
-  .railEmber::before {
+  .railEmber::before, .wickEmber, .liveDot, .flameGroup {
     animation: none !important;
   }
-  .smoke, .snuff { animation: none !important; opacity: 0.3; }
+  .smoke, .snuff, .wisp { animation: none !important; opacity: 0.3; }
+  .candle[data-ignite] .flame,
+  .candle[data-ignite] .core,
+  .candle[data-ignite] .halo { opacity: 1; }
   .ember, .steam, .bubble { opacity: 0 !important; }
   .card { animation: none !important; }
   .cursor { display: none; }

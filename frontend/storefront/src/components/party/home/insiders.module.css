@@ -1,6 +1,7 @@
-/* Insiders — cream ground, a swinging VIP pass and three perk stickers. */
+/* Insiders: cream ground, a swinging VIP pass and three perk stickers. */
 .section {
   position: relative;
+  isolation: isolate;
   padding: clamp(3.5rem, 7vw, 6rem) 0 clamp(5rem, 9vw, 7.5rem);
   background:
     radial-gradient(circle, rgba(78, 42, 79, 0.09) 1.4px, transparent 1.6px) 0 0 / 22px 22px,
@@ -175,7 +176,11 @@
   opacity: 0;
   transition: opacity 250ms ease;
 }
-.lanyard:hover .holo { opacity: 1; }
+.lanyard:hover .holo,
+.lanyard[data-flash='1'] .holo { opacity: 1; }
+.pass { cursor: pointer; touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+/* Tap flash: one fast sweep of light across the pass. */
+.lanyard[data-flash='1'] .pass::after { animation: flashSweep 650ms ease-out both; }
 /* Idle shimmer sweep for touch / before the pointer arrives. */
 .pass::after {
   content: '';
@@ -197,21 +202,29 @@
   gap: clamp(1.25rem, 3vw, 2rem);
   align-items: stretch;
 }
+/* The li carries the reveal; the card inside carries the tilt and the lift. */
+.perkSlot { position: relative; display: flex; }
 .perk {
   position: relative;
+  flex: 1;
   padding: 1.6rem 1.5rem 1.7rem;
   border: 2.5px solid #2A1A2B;
   border-radius: 24px;
   box-shadow: 8px 8px 0 #2A1A2B;
+  rotate: var(--tilt, 0deg);
+  outline: none;
   transition: translate 240ms cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 200ms ease;
 }
-.perk:hover { translate: 0 -6px; box-shadow: 10px 14px 0 #2A1A2B; }
+.perk:hover,
+.perk:focus,
+.perk:active { translate: 0 -6px; box-shadow: 10px 14px 0 #2A1A2B; }
 
 .simmer { background: #06392F; color: #F3ECDE; }
 .stackd { background: #7C2946; color: #FCE8CE; }
 .flipd  { background: #294375; color: #FED561; }
 
-.featured::before {
+.featured { top: -14px; }
+.featured .perk::before {
   content: 'most loved';
   position: absolute;
   top: -16px;
@@ -230,17 +243,32 @@
   box-shadow: 0 3px 0 #2A1A2B;
 }
 
-.perkIcon {
-  display: inline-grid;
-  place-items: center;
-  width: 46px;
-  height: 46px;
-  margin-bottom: 1rem;
+/* The kitchen's own cast face, popping out of a sticker disc. */
+.perkFace {
+  display: inline-flex;
+  align-items: flex-end;
+  justify-content: center;
+  width: 64px;
+  height: 64px;
+  margin: -0.4rem 0 0.9rem;
   border-radius: 999px;
   border: 2px solid currentColor;
+  background: rgba(255, 244, 214, 0.12);
+  line-height: 0;
   transition: transform 300ms cubic-bezier(0.34, 1.56, 0.64, 1);
 }
-.perk:hover .perkIcon { transform: rotate(-12deg) scale(1.1); }
+.perk:hover .perkFace,
+.perk:focus .perkFace,
+.perk:active .perkFace { transform: rotate(-8deg) scale(1.08); }
+
+/* simmer: typographic, a bone hairline where the others have a face. */
+.perkRule {
+  display: block;
+  width: 3rem;
+  height: 1px;
+  margin: 0.6rem 0 1.6rem;
+  background: rgba(243, 236, 222, 0.75);
+}
 .perkTag {
   margin: 0 0 0.45rem;
   font-family: var(--font-display);
@@ -267,12 +295,15 @@
 .simmer .perkTag { font-family: var(--simmer-body); font-weight: 400; letter-spacing: 0.24em; text-transform: lowercase; }
 .simmer .perkHead { font-family: var(--simmer-display); font-weight: 400; letter-spacing: 0.01em; }
 .simmer .perkBody { font-family: var(--simmer-body); font-size: 1.02rem; }
-.simmer .perkIcon { border-width: 1px; color: #E94E1B; }
-.simmer:hover .perkIcon { transform: none; }
+
 
 @keyframes sway {
   0%, 100% { transform: rotate(-1.6deg); }
   50% { transform: rotate(1.6deg); }
+}
+@keyframes flashSweep {
+  from { transform: translateX(-70%); }
+  to { transform: translateX(70%); }
 }
 @keyframes sweep {
   0% { transform: translateX(-70%); }
@@ -292,8 +323,8 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .swing, .pass::after { animation: none; }
+  .swing, .pass::after, .lanyard[data-flash='1'] .pass::after { animation: none; }
   .holo { display: none; }
-  .perk:hover { translate: none; }
-  .perk:hover .perkIcon { transform: none; }
+  .perk:hover, .perk:focus, .perk:active { translate: none; }
+  .perk:hover .perkFace, .perk:focus .perkFace, .perk:active .perkFace { transform: none; }
 }

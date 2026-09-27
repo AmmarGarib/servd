@@ -54,13 +54,16 @@
   position: relative;
   margin: clamp(1rem, 3vh, 1.75rem) 0 clamp(1rem, 3vh, 1.5rem);
   max-width: min(34rem, 100%);
-  animation: press 1000ms cubic-bezier(0.34, 1.56, 0.64, 1) 120ms both;
+  /* Entrances here run on first paint (no JS needed) and are all done by
+     ~450 ms, from ≥40% opacity: a screenshot at 900 ms sees the finished
+     hero. */
+  animation: press 440ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
   transform-origin: 30% 80%;
 }
 .wordmark img { display: block; width: 100%; height: auto; }
 @keyframes press {
-  0% { opacity: 0; transform: translateY(-18%) scale(1.12) rotate(-3deg); }
-  55% { opacity: 1; transform: translateY(2%) scale(0.98) rotate(0.6deg); }
+  0% { opacity: 0.4; transform: translateY(-10%) scale(1.08) rotate(-2deg); }
+  60% { opacity: 1; transform: translateY(2%) scale(0.99) rotate(0.5deg); }
   100% { opacity: 1; transform: none; }
 }
 
@@ -86,7 +89,7 @@
   opacity: calc(1 - var(--swap, 0) * 2);
   transform: translateY(calc(var(--swap, 0) * 0.8em)) rotate(calc(var(--swap, 0) * -7deg));
   transform-origin: 0 100%;
-  animation: rise 800ms cubic-bezier(0.34, 1.56, 0.64, 1) 520ms both;
+  animation: rise 380ms cubic-bezier(0.34, 1.56, 0.64, 1) 60ms both;
 }
 .lineB {
   opacity: calc(var(--swap, 0) * 2 - 1);
@@ -94,7 +97,7 @@
   color: var(--stackd-sky);
 }
 @keyframes rise {
-  from { opacity: 0; translate: 0 0.6em; }
+  from { opacity: 0.4; translate: 0 0.5em; }
   to { translate: 0 0; }
 }
 
@@ -104,17 +107,17 @@
   font-size: clamp(0.95rem, 1.2vw, 1.05rem);
   line-height: 1.6;
   color: rgba(252, 232, 206, 0.88);
-  animation: fade 700ms ease 700ms both;
+  animation: fade 320ms ease 80ms both;
 }
 .ctas {
   display: flex;
   flex-wrap: wrap;
   gap: 0.8rem 0.9rem;
   margin-top: clamp(1.25rem, 3.5vh, 2rem);
-  animation: fade 700ms ease 820ms both;
+  animation: fade 320ms ease 110ms both;
 }
-.status { margin-top: 1.1rem; min-height: 1.2rem; animation: fade 700ms ease 950ms both; }
-@keyframes fade { from { opacity: 0; } }
+.status { margin-top: 1.1rem; min-height: 1.2rem; animation: fade 320ms ease 140ms both; }
+@keyframes fade { from { opacity: 0.4; } }
 
 /* ── Stage ────────────────────────────────────────────────────────────── */
 .stage {
@@ -126,41 +129,42 @@
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
   /* --w: the mascot's width. The whole figure is ~1.34w tall. */
-  --w: min(56cqh, 62cqw);
-  --floor: 13cqh;
+  --w: min(58cqh, 62cqw);
+  --floor: 12cqh;
 }
 .stage:focus-visible { outline: 3px solid var(--stackd-sky); outline-offset: -6px; border-radius: 2rem; }
 
-/* The coaster: the brand's die, at size, behind him. Cream, because he is
-   plum line art on transparent and vanishes on the plum field without it. */
+/* The coaster: the brand's die as the floor he stands on — a small,
+   squashed seal under his shoes, not a backdrop. (His own cream backing
+   makes him read on the plum; see .backing.) */
 .coaster {
   position: absolute;
   left: 50%;
-  bottom: calc(var(--floor) - var(--w) * 0.17);
-  width: min(calc(var(--w) * 1.85), 98cqw);
-  height: calc(var(--w) * 1.12);
-  transform: translateX(-50%) scaleY(calc(1 - var(--impact, 0) * 0.07));
+  bottom: calc(var(--floor) - var(--w) * 0.2);
+  width: min(calc(var(--w) * 1.3), 94cqw);
+  height: calc(var(--w) * 0.46);
+  transform: translateX(-50%) scaleY(calc(1 - var(--impact, 0) * 0.1));
   transform-origin: 50% 100%;
-  filter: drop-shadow(0 22px 30px rgba(28, 8, 16, 0.45));
-  animation: coasterIn 900ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  filter: drop-shadow(0 18px 22px rgba(28, 8, 16, 0.45));
+  animation: coasterIn 420ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
 }
 .coasterDie { position: absolute; inset: 0; width: 100%; height: 100%; }
 @keyframes coasterIn {
-  from { opacity: 0; scale: 0.6; rotate: -8deg; }
+  from { opacity: 0.4; scale: 0.8; rotate: -5deg; }
 }
 
 /* The stamp — a small seal slapped onto the coaster on arrival. */
 .stamp {
   position: absolute;
-  right: 4%;
-  top: -6%;
-  width: clamp(4.8rem, calc(var(--w) * 0.36), 8.5rem);
+  right: -3%;
+  top: -46%;
+  width: clamp(4.2rem, calc(var(--w) * 0.3), 7.5rem);
   aspect-ratio: 1;
   display: grid;
   place-items: center;
   rotate: 12deg;
   translate: 0 calc(var(--impact, 0) * -22px);
-  animation: slap 700ms cubic-bezier(0.34, 1.56, 0.64, 1) 1100ms both;
+  animation: slap 400ms cubic-bezier(0.34, 1.56, 0.64, 1) 300ms both;
   filter: drop-shadow(0 8px 10px rgba(28, 8, 16, 0.35));
 }
 .stamp svg { position: absolute; inset: 0; width: 100%; height: 100%; }
@@ -181,7 +185,7 @@
   100% { opacity: 1; transform: none; }
 }
 /* The coaster flinches when the stamp lands. */
-.coasterDie { animation: thud 420ms ease-out 1480ms both; transform-origin: 50% 100%; }
+.coasterDie { animation: thud 320ms ease-out 560ms both; transform-origin: 50% 100%; }
 @keyframes thud {
   0% { transform: none; }
   30% { transform: scale(0.985, 0.97) rotate(-0.4deg); }
@@ -195,10 +199,10 @@
   width: var(--w);
   aspect-ratio: 338 / 453;
   transform: translateX(-50%);
-  animation: figureIn 1100ms cubic-bezier(0.34, 1.56, 0.64, 1) 250ms both;
+  animation: figureIn 440ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
 }
 @keyframes figureIn {
-  0% { opacity: 0; translate: 0 -30%; }
+  0% { opacity: 0.4; translate: 0 -12%; }
   60% { opacity: 1; translate: 0 2%; }
   100% { opacity: 1; translate: 0 0; }
 }
@@ -235,7 +239,20 @@
     rotate(calc(var(--s, 0) * -79deg))
     scaleY(calc(1 - var(--impact, 0) * 0.07));
 }
-.guyIdle { transform-origin: 50% 100%; animation: breathe 3.4s ease-in-out infinite; }
+.guyIdle { position: relative; transform-origin: 50% 100%; animation: breathe 3.4s ease-in-out infinite; }
+/* The cream sticker-backing behind his see-through trousers and hands. */
+.backing {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  fill: #FCE8CE;
+  stroke: #FCE8CE;
+  stroke-width: 6;
+  stroke-linejoin: round;
+}
+.guyIdle img { position: relative; }
 .guy img, .custom img { display: block; width: 100%; height: auto; -webkit-user-select: none; user-select: none; -webkit-user-drag: none; }
 /* Same die-cut cream edge as the loaf, so the plum tray still reads where
    it overhangs the coaster onto the plum field. */
@@ -275,6 +292,13 @@
     drop-shadow(0 3px 0 #FCE8CE) drop-shadow(0 -3px 0 #FCE8CE)
     drop-shadow(0 10px 14px rgba(28, 8, 16, 0.45));
 }
+.breadBacking {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  fill: #FCE8CE;
+}
 .breadHop { transform-origin: 50% 100%; }
 .hopping .breadHop { animation: breadHop 820ms cubic-bezier(0.34, 1.56, 0.64, 1); }
 @keyframes breadHop {
@@ -298,35 +322,19 @@
   75% { transform: translateY(-1.5%) rotate(0.2deg); }
 }
 
-/* Steam off the fresh loaf. Fades as the bread is thrown. */
+/* Steam off the fresh loaf (the world's shared Steam). Fades as the bread
+   is thrown; after hours the loaf is cold and there is none. */
 .steam {
   position: absolute;
   left: 18%;
   right: 18%;
   bottom: 86%;
-  height: 70%;
-  overflow: visible;
+  height: 80%;
   opacity: calc(1 - var(--toss, 0) * 4);
   pointer-events: none;
 }
-.steam path {
-  fill: none;
-  stroke: var(--stackd-cream);
-  stroke-width: 3.2;
-  stroke-linecap: round;
-  opacity: 0;
-  animation: steam 3.2s ease-in-out infinite;
-  transform-box: fill-box;
-  transform-origin: 50% 100%;
-}
-.steam path:nth-child(2) { animation-delay: 1.05s; }
-.steam path:nth-child(3) { animation-delay: 2.1s; }
-@keyframes steam {
-  0% { opacity: 0; transform: translateY(18%) scaleX(0.8); }
-  25% { opacity: 0.85; }
-  70% { opacity: 0.35; }
-  100% { opacity: 0; transform: translateY(-35%) scaleX(1.25) skewX(-8deg); }
-}
+.steam > * { position: absolute; inset: 0; width: 100%; height: 100%; }
+:global(html[data-k-stackd='closed']) .steam { display: none; }
 
 /* Crumbs that shake loose now and then. */
 .crumb {
@@ -396,7 +404,7 @@
 
 /* ── Narrow screens: copy on top, stage below ─────────────────────────── */
 @media (max-width: 860px) {
-  .hero { height: 215vh; }
+  .hero { height: 210vh; height: 210svh; }
   .pin {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: auto minmax(0, 1fr);
@@ -407,13 +415,14 @@
   .wordmark { max-width: min(19rem, 72vw); margin: 0.75rem 0 0.6rem; }
   .line { font-size: clamp(1.3rem, 5.6vw, 1.6rem); }
   .sub { display: none; }
-  .status { display: none; }
   .ctas { margin-top: 0.9rem; gap: 0.6rem; flex-wrap: nowrap; }
   .ctas > * { flex: 1 1 0; min-width: 0; padding-inline: 0.6rem; letter-spacing: 0.06em; font-size: 0.7rem; gap: 0.4rem; }
   .kicker > :first-child { display: none; }
   .status { margin-top: 0.7rem; }
-  .stage { --w: min(56cqh, 58cqw); --floor: 14cqh; }
-  .hint { display: none; }
+  .stage { --w: min(58cqh, 62cqw); --floor: 13cqh; }
+  /* The one line that sets up the gag — keep it on phones, at the top of
+     the stage where the gap under the CTAs would otherwise be empty. */
+  .hint { top: 0.35rem; font-size: 0.66rem; letter-spacing: 0.2em; }
 }
 
 /* Reduced motion: he stands, holding it. Nothing loops, nothing pins. */
@@ -434,7 +443,5 @@
     animation: none;
   }
   .lean { transition: none; transform: none; }
-  .steam path { animation: none; opacity: 0.6; transform: none; }
-  .steam path:nth-child(3) { opacity: 0; }
   .crumb, .seals, .hint { display: none; }
 }

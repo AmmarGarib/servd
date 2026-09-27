@@ -1,0 +1,248 @@
+/* CrowdCameo — pose engine for the SVG cast.
+   Everything is keyed on data attributes on the root <svg>:
+     data-pose   idle | wave | cheer | sleep | peek | catch | worried | point | sip
+     data-look   center | left | right | up | down
+     data-night  sleep | point | idle  (takes over under html[data-world-dark='1'])
+     data-lantern, data-animate
+   Only transform and opacity animate. Every animated group has its origin at
+   the character's feet (the viewBox origin) unless it sets fill-box.
+   Hooks for consumers (stable, not hashed): [data-cast-part='shadow' | 'body' |
+   'armL' | 'armR' | 'lantern'], plus --cast-z (sleep z colour) and
+   currentColor (steam). */
+
+.root {
+  display: inline-block;
+  flex-shrink: 0;
+  overflow: visible;
+  vertical-align: bottom;
+}
+
+.row {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  flex-wrap: nowrap;
+}
+
+/* ── Base = idle ───────────────────────────────────────────────────────── */
+.act { animation: cBob var(--cast-bob, 1.9s) ease-in-out var(--cast-delay, 0ms) infinite; }
+@keyframes cBob {
+  0%, 100% { transform: none; }
+  50% { transform: translateY(-3.4px) scale(1.012, 0.99); }
+}
+
+.armL { transform: rotate(16deg); }
+.armR { transform: rotate(-16deg); }
+
+.eyes {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: cBlink var(--cast-blink, 4s) linear var(--cast-delay, 0ms) infinite;
+}
+@keyframes cBlink {
+  0%, 94%, 100% { transform: none; }
+  97% { transform: scaleY(0.08); }
+}
+.wide { transform-box: fill-box; transform-origin: center; }
+
+.pupil { transition: transform 220ms ease; }
+.root[data-look='left'] .pupil { transform: translate(-2.4px, 0); }
+.root[data-look='right'] .pupil { transform: translate(2.4px, 0); }
+.root[data-look='up'] .pupil { transform: translate(0, -2.4px); }
+.root[data-look='down'] .pupil { transform: translate(0, 2.2px); }
+
+.shadow { transform-box: fill-box; transform-origin: center; }
+
+.shut, .brows, .oMouth, .rest, .zz, .steam, .lantern { display: none; }
+
+/* sleep z's: drawn paths that rise and fade */
+.z {
+  fill: none;
+  stroke: var(--cast-z, currentColor);
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0.85;
+  /* Negative delays: all three are already mid-flight on the first frame. */
+  animation: cZ 3.3s ease-out -0.4s infinite both;
+}
+.z2 { transform: translate(4px, -8px); animation-delay: -1.5s; }
+.z3 { transform: translate(6px, -12px); animation-delay: -2.6s; }
+@keyframes cZ {
+  0% { opacity: 0; transform: translate(0, 0) scale(0.6); }
+  22% { opacity: 0.95; }
+  70% { opacity: 0.7; }
+  100% { opacity: 0; transform: translate(9px, -20px) scale(1.15); }
+}
+
+/* coffee steam */
+.steam { opacity: 0.55; }
+.puff1, .puff2 {
+  transform-box: fill-box;
+  transform-origin: 50% 100%;
+  animation: cPuff 2.4s ease-out -0.5s infinite both;
+}
+.puff2 { animation-delay: -1.7s; }
+@keyframes cPuff {
+  0% { opacity: 0; transform: translateY(4px) scale(0.8); }
+  30% { opacity: 0.9; }
+  100% { opacity: 0; transform: translateY(-12px) scale(1.15); }
+}
+
+/* lantern */
+.lantern { animation: cSway 2.8s ease-in-out infinite; }
+@keyframes cSway {
+  0%, 100% { transform: rotate(-5deg); }
+  50% { transform: rotate(5deg); }
+}
+.flame {
+  transform-box: fill-box;
+  transform-origin: 50% 100%;
+  animation: cFlicker 1.3s ease-in-out infinite;
+}
+@keyframes cFlicker {
+  0%, 100% { opacity: 1; transform: none; }
+  40% { opacity: 0.78; transform: scale(0.9, 1.1); }
+  70% { opacity: 0.92; transform: scale(1.05, 0.94); }
+}
+
+/* ── wave: the right arm swings ────────────────────────────────────────── */
+.root[data-pose='wave'] .armR {
+  transform: rotate(-140deg);
+  animation: cWave 0.95s ease-in-out var(--cast-delay, 0ms) infinite;
+}
+@keyframes cWave {
+  0%, 100% { transform: rotate(-126deg); }
+  50% { transform: rotate(-168deg); }
+}
+
+/* ── cheer: hop, squash on landing, arms up (700ms) ───────────────────── */
+.root[data-pose='cheer'] .act { animation: cHop 700ms var(--cast-delay, 0ms) infinite; }
+@keyframes cHop {
+  0%, 100% { transform: none; animation-timing-function: cubic-bezier(0.2, 0.7, 0.3, 1); }
+  14% { transform: scale(1.12, 0.86); animation-timing-function: ease-out; }
+  46% { transform: translateY(-15px) scale(0.95, 1.06); animation-timing-function: cubic-bezier(0.6, 0, 0.9, 0.5); }
+  76% { transform: translateY(0) scale(1.14, 0.84); animation-timing-function: cubic-bezier(0.34, 1.56, 0.64, 1); }
+  88% { transform: scale(0.97, 1.04); }
+}
+.root[data-pose='cheer'] .armL { transform: rotate(150deg); animation: cUpL 700ms var(--cast-delay, 0ms) infinite; }
+.root[data-pose='cheer'] .armR { transform: rotate(-150deg); animation: cUpR 700ms var(--cast-delay, 0ms) infinite; }
+@keyframes cUpL { 0%, 100% { transform: rotate(138deg); } 46% { transform: rotate(166deg); } }
+@keyframes cUpR { 0%, 100% { transform: rotate(-138deg); } 46% { transform: rotate(-166deg); } }
+.root[data-pose='cheer'] .shadow { animation: cShadowHop 700ms var(--cast-delay, 0ms) infinite; }
+@keyframes cShadowHop {
+  0%, 100% { transform: none; opacity: 0.16; }
+  46% { transform: scale(0.6); opacity: 0.07; }
+  76% { transform: scaleX(1.15); opacity: 0.2; }
+}
+
+/* ── peek: sunk 45% behind the edge, rising a little ──────────────────── */
+.root[data-pose='peek'] { clip-path: inset(-60% -60% 0 -60%); }
+.root[data-pose='peek'] .pos {
+  transform: translateY(45%);
+  animation: cPeek 2.6s ease-in-out var(--cast-delay, 0ms) infinite;
+}
+@keyframes cPeek {
+  0%, 100% { transform: translateY(45%); }
+  45%, 62% { transform: translateY(37%); }
+}
+.root[data-pose='peek'] .act { animation: none; }
+.root[data-pose='peek'] .shadow { display: none; }
+
+/* ── catch: both arms forward and up, eyes wide ───────────────────────── */
+.root[data-pose='catch'] .armL { transform: rotate(128deg); animation: cCatchL 1.2s ease-in-out var(--cast-delay, 0ms) infinite; }
+.root[data-pose='catch'] .armR { transform: rotate(-128deg); animation: cCatchR 1.2s ease-in-out var(--cast-delay, 0ms) infinite; }
+@keyframes cCatchL { 0%, 100% { transform: rotate(124deg); } 50% { transform: rotate(140deg); } }
+@keyframes cCatchR { 0%, 100% { transform: rotate(-124deg); } 50% { transform: rotate(-140deg); } }
+.root[data-pose='catch'] .wide { transform: scale(1.22); }
+.root[data-pose='catch'] .act { animation: cCatch 1.2s ease-out var(--cast-delay, 0ms) infinite; }
+@keyframes cCatch {
+  0%, 45%, 100% { transform: none; }
+  12% { transform: scale(1.08, 0.92); }
+  28% { transform: scale(0.97, 1.03); }
+}
+
+/* ── worried: brows up, small o, a shiver every 3s ────────────────────── */
+.root[data-pose='worried'] .brows,
+.root[data-pose='worried'] .oMouth { display: inline; }
+.root[data-pose='worried'] .smile { display: none; }
+.root[data-pose='worried'] .armL { transform: rotate(34deg); }
+.root[data-pose='worried'] .armR { transform: rotate(-34deg); }
+.root[data-pose='worried'] .act { animation: cShake 3s linear var(--cast-delay, 0ms) infinite; }
+@keyframes cShake {
+  0%, 12%, 100% { transform: none; }
+  2% { transform: translateX(-1.6px); }
+  4% { transform: translateX(1.6px); }
+  6% { transform: translateX(-1.4px); }
+  8% { transform: translateX(1.2px); }
+  10% { transform: translateX(-0.6px); }
+}
+
+/* ── sip (coffee only): the cup tilts, steam puffs ────────────────────── */
+.root[data-pose='sip'] .act { animation: cSip 2.8s ease-in-out var(--cast-delay, 0ms) infinite; }
+@keyframes cSip {
+  0%, 100% { transform: none; }
+  30%, 62% { transform: rotate(-7deg) translateY(-1px); }
+}
+.root[data-pose='sip'] .armL { transform: rotate(40deg); }
+.root[data-pose='sip'] .armR { transform: rotate(-40deg); }
+.root[data-pose='sip'] .steam { display: inline; }
+
+/* ── Night reset: when the world is dark, a cameo with data-night drops
+      its day pose back to idle before its night pose applies. ─────────── */
+:global(html[data-world-dark='1']) .root[data-night] { clip-path: none; }
+:global(html[data-world-dark='1']) .root[data-night] .pos { transform: none; animation: none; }
+:global(html[data-world-dark='1']) .root[data-night] .act { transform: none; animation: cBob var(--cast-bob, 1.9s) ease-in-out var(--cast-delay, 0ms) infinite; }
+:global(html[data-world-dark='1']) .root[data-night] .armL { transform: rotate(16deg); animation: none; }
+:global(html[data-world-dark='1']) .root[data-night] .armR { transform: rotate(-16deg); animation: none; }
+:global(html[data-world-dark='1']) .root[data-night] .wide { transform: none; }
+:global(html[data-world-dark='1']) .root[data-night] .eyes,
+:global(html[data-world-dark='1']) .root[data-night] .smile,
+:global(html[data-world-dark='1']) .root[data-night] .shadow { display: inline; }
+:global(html[data-world-dark='1']) .root[data-night] .shadow { transform: none; animation: none; }
+:global(html[data-world-dark='1']) .root[data-night] .shut,
+:global(html[data-world-dark='1']) .root[data-night] .brows,
+:global(html[data-world-dark='1']) .root[data-night] .oMouth,
+:global(html[data-world-dark='1']) .root[data-night] .rest,
+:global(html[data-world-dark='1']) .root[data-night] .zz,
+:global(html[data-world-dark='1']) .root[data-night] .steam,
+:global(html[data-world-dark='1']) .root[data-night] .lantern { display: none; }
+
+/* ── sleep (day pose or night pose) ────────────────────────────────────── */
+.root[data-pose='sleep'] .act,
+:global(html[data-world-dark='1']) .root[data-night='sleep'] .act {
+  transform: rotate(-3deg);
+  animation: cBreathe 3.6s ease-in-out var(--cast-delay, 0ms) infinite;
+}
+@keyframes cBreathe {
+  0%, 100% { transform: rotate(-3deg); }
+  50% { transform: rotate(-3deg) scale(1.025, 0.975); }
+}
+.root[data-pose='sleep'] .armL,
+:global(html[data-world-dark='1']) .root[data-night='sleep'] .armL { transform: rotate(7deg); animation: none; }
+.root[data-pose='sleep'] .armR,
+:global(html[data-world-dark='1']) .root[data-night='sleep'] .armR { transform: rotate(-7deg); animation: none; }
+.root[data-pose='sleep'] .eyes,
+.root[data-pose='sleep'] .smile,
+:global(html[data-world-dark='1']) .root[data-night='sleep'] .eyes,
+:global(html[data-world-dark='1']) .root[data-night='sleep'] .smile { display: none; }
+.root[data-pose='sleep'] .shut,
+.root[data-pose='sleep'] .rest,
+.root[data-pose='sleep'] .zz,
+:global(html[data-world-dark='1']) .root[data-night='sleep'] .shut,
+:global(html[data-world-dark='1']) .root[data-night='sleep'] .rest,
+:global(html[data-world-dark='1']) .root[data-night='sleep'] .zz { display: inline; }
+
+/* ── point (day pose or night pose): one arm out to the side ──────────── */
+.root[data-pose='point'] .armR,
+:global(html[data-world-dark='1']) .root[data-night='point'] .armR { transform: rotate(-90deg); animation: none; }
+.root[data-pose='point'][data-lantern='1'] .lantern,
+:global(html[data-world-dark='1']) .root[data-night='point'][data-lantern='1'] .lantern { display: inline; }
+
+/* ── Static: animate={false} or reduced motion ─────────────────────────── */
+.root[data-animate='0'],
+.root[data-animate='0'] * { animation: none !important; }
+@media (prefers-reduced-motion: reduce) {
+  .root,
+  .root * { animation: none !important; transition: none !important; }
+}

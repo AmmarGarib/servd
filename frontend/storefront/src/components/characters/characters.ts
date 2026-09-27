@@ -18,6 +18,7 @@ import {
   roundedPolygon,
   smoothLathe,
   sweep,
+  withDetail,
   type FaceRig,
   type LimbShared,
   type SharedFace,
@@ -32,12 +33,39 @@ export interface BuiltCharacter {
   height: number
   /** Arm rest angle (radians, outward). */
   armRest: number
+  /** Eye height in model space: where neighbours look when they glance over. */
+  headY: number
+  /** Pieces the persona quirks animate. */
+  parts: {
+    /** fries: the sticks, jiggled by the "twitch" quirk. */
+    wiggle?: THREE.Object3D
+    /** coffee: the lid pivot, tilted by the "sip" quirk. */
+    lid?: THREE.Object3D
+    /** coffee: where the steam wisps start, in model space. */
+    steam?: THREE.Vector3
+  }
+}
+
+/**
+ * Layout footprint per kind, known before anything is built, so the stage
+ * can frame the whole cast on the first frame and drop each character into
+ * its slot as it finishes building. Builders return these same numbers.
+ */
+export const FOOTPRINT: Record<CharacterKind, { width: number; height: number }> = {
+  burger: { width: 1.3, height: 1.185 },
+  fries: { width: 1.0, height: 1.23 },
+  coffee: { width: 0.95, height: 1.19 },
+  sandwich: { width: 1.2, height: 1.17 },
+  shake: { width: 0.9, height: 1.56 },
+  croissant: { width: 1.35, height: 0.91 },
 }
 
 export interface BuildContext {
   kit: Kit
   face: SharedFace
   limbs: LimbShared
+  /** Geometry resolution, 1 = full; phones build at ~0.55. */
+  detail?: number
 }
 
 const mesh = (g: THREE.BufferGeometry, m: THREE.Material | THREE.Material[]) => {
@@ -298,6 +326,7 @@ function buildBurger({ kit, face, limbs }: BuildContext): BuiltCharacter {
       { x: -0.3, y: fy - 0.12, r: 0.06 },
       { x: 0.3, y: fy - 0.12, r: 0.06 },
     ],
+    lidColor: '#CF8036',
   })
   g.add(faceRig.group)
 
@@ -308,7 +337,7 @@ function buildBurger({ kit, face, limbs }: BuildContext): BuiltCharacter {
   ])
   addLegs(g, limbs, limbMat, [-0.2, 0.2], legH + 0.03)
 
-  return { model: g, face: faceRig, arms, width: 1.3, height: topY + base + Bh, armRest: 0.45 }
+  return { model: g, face: faceRig, arms, ...FOOTPRINT.burger, armRest: 0.45, headY: fy, parts: {} }
 }
 
 /* ================================================================== */
@@ -471,6 +500,8 @@ function buildFries({ kit, face, limbs }: BuildContext): BuiltCharacter {
       { x: 0.25, y: fy - 0.12, r: 0.055 },
     ],
     cheekColor: '#FF9AA0',
+    lidColor: '#D9302A',
+    browColor: '#4A1210',
   })
   g.add(faceRig.group)
 
@@ -480,7 +511,7 @@ function buildFries({ kit, face, limbs }: BuildContext): BuiltCharacter {
     [0.36, legH + 0.4, 0],
   ])
   addLegs(g, limbs, limbMat, [-0.16, 0.16], legH + 0.03)
-  return { model: g, face: faceRig, arms, width: 1.0, height: legH + H + 0.3, armRest: 0.3 }
+  return { model: g, face: faceRig, arms, ...FOOTPRINT.fries, armRest: 0.3, headY: fy, parts: { wiggle: sticks } }
 }
 
 /* ================================================================== */
@@ -566,12 +597,17 @@ function buildCoffee({ kit, face, limbs }: BuildContext): BuiltCharacter {
     ),
     lidMat,
   )
-  lid.position.y = legH
-  g.add(lid)
+  // The lid hangs off a pivot on its screen-left rim so the "sip" quirk can
+  // tip it up like someone lifting the lid for a slurp.
+  const lidPivot = new THREE.Group()
+  lidPivot.position.set(-0.44, legH + 0.87, 0)
+  lid.position.set(0.44, -0.87, 0)
+  lidPivot.add(lid)
+  g.add(lidPivot)
   const sip = mesh(kit.geo(new RoundedBoxGeometry(0.12, 0.03, 0.05, 3, 0.014)), kit.physical('sip', { color: '#1B0F0D', roughness: 0.5 }))
-  sip.position.set(0, legH + 1.04, 0.2)
+  sip.position.set(0.44, 1.04 - 0.87, 0.2)
   sip.rotation.x = 0.12
-  g.add(sip)
+  lidPivot.add(sip)
 
   const surfaceZ = (x: number, yy: number) => {
     const rr = r(Math.min(0.86, Math.max(0, yy - legH)))
@@ -590,6 +626,7 @@ function buildCoffee({ kit, face, limbs }: BuildContext): BuiltCharacter {
       { x: -0.23, y: fy - 0.09, r: 0.05 },
       { x: 0.23, y: fy - 0.09, r: 0.05 },
     ],
+    lidColor: '#F1E3CF',
   })
   g.add(faceRig.group)
 
@@ -598,7 +635,15 @@ function buildCoffee({ kit, face, limbs }: BuildContext): BuiltCharacter {
     [0.355, legH + 0.42, 0],
   ])
   addLegs(g, limbs, lidMat, [-0.13, 0.13], legH + 0.03)
-  return { model: g, face: faceRig, arms, width: 0.95, height: legH + 1.05, armRest: 0.3 }
+  return {
+    model: g,
+    face: faceRig,
+    arms,
+    ...FOOTPRINT.coffee,
+    armRest: 0.3,
+    headY: fy,
+    parts: { lid: lidPivot, steam: new THREE.Vector3(0.02, legH + 1.1, 0.08) },
+  }
 }
 
 /* ================================================================== */
@@ -694,6 +739,7 @@ function buildSandwich({ kit, face, limbs }: BuildContext): BuiltCharacter {
       { x: -0.26, y: fy - 0.11, r: 0.055 },
       { x: 0.26, y: fy - 0.11, r: 0.055 },
     ],
+    lidColor: '#EFCF8C',
   })
   inner.add(faceRig.group)
 
@@ -703,7 +749,7 @@ function buildSandwich({ kit, face, limbs }: BuildContext): BuiltCharacter {
     [0.47, 0.26, 0.04],
   ])
   addLegs(g, limbs, limbMat, [-0.2, 0.2], legH + 0.05)
-  return { model: g, face: faceRig, arms, width: 1.2, height: legH + 1.02, armRest: 0.5 }
+  return { model: g, face: faceRig, arms, ...FOOTPRINT.sandwich, armRest: 0.5, headY: legH + fy, parts: {} }
 }
 
 /* ================================================================== */
@@ -845,6 +891,7 @@ function buildShake({ kit, face, limbs }: BuildContext): BuiltCharacter {
       { x: 0.21, y: fy - 0.09, r: 0.045 },
     ],
     cheekColor: '#FF4F7E',
+    lidColor: '#EE6394',
   })
   g.add(faceRig.group)
 
@@ -854,7 +901,7 @@ function buildShake({ kit, face, limbs }: BuildContext): BuiltCharacter {
     [0.31, legH + 0.4, 0],
   ])
   addLegs(g, limbs, limbMat, [-0.12, 0.12], legH + 0.03)
-  return { model: g, face: faceRig, arms, width: 0.9, height: legH + 1.42, armRest: 0.28 }
+  return { model: g, face: faceRig, arms, ...FOOTPRINT.shake, armRest: 0.28, headY: fy, parts: {} }
 }
 
 /* ================================================================== */
@@ -926,6 +973,7 @@ function buildCroissant({ kit, face, limbs }: BuildContext): BuiltCharacter {
       { x: -0.22, y: fy - 0.1, r: 0.05 },
       { x: 0.22, y: fy - 0.1, r: 0.05 },
     ],
+    lidColor: '#E0994A',
   })
   g.add(faceRig.group)
 
@@ -934,7 +982,7 @@ function buildCroissant({ kit, face, limbs }: BuildContext): BuiltCharacter {
     [-0.5, 0.44, 0.08],
     [0.5, 0.44, 0.08],
   ])
-  return { model: g, face: faceRig, arms, width: 1.35, height: cy + R + rMax, armRest: 0.35 }
+  return { model: g, face: faceRig, arms, ...FOOTPRINT.croissant, armRest: 0.35, headY: fy, parts: {} }
 }
 
 const BUILDERS: Record<CharacterKind, (ctx: BuildContext) => BuiltCharacter> = {
@@ -947,5 +995,5 @@ const BUILDERS: Record<CharacterKind, (ctx: BuildContext) => BuiltCharacter> = {
 }
 
 export function buildCharacter(kind: CharacterKind, ctx: BuildContext): BuiltCharacter {
-  return BUILDERS[kind](ctx)
+  return withDetail(ctx.detail ?? 1, () => BUILDERS[kind](ctx))
 }

@@ -1,15 +1,20 @@
 'use client'
-// Visit — the door sign swinging on its nail, the hours printed out on a till
-// receipt, and where to find us. Replaces the shared OpenStatusBadge/HoursGrid
-// here because their red/white-on-tint colours fail contrast on plum.
+// Visit — the door sign swinging on its nail (with the croissant from the
+// servd crowd leaning on it: waving while we're open, asleep against it after
+// hours), the hours printed out on a till receipt, and where to find us — a
+// map pin that drops in and pulses a sky ring. Replaces the shared
+// OpenStatusBadge/HoursGrid here because their red/white-on-tint colours fail
+// contrast on plum.
 
 import Link from 'next/link'
 import { useEffect, useState } from 'react'
 import type { HoursData } from '../parts/OpenStatusBadge'
 import { addressLine, locationFor } from '../../../lib/brandLocations'
+import { CrowdCameo } from '../../world/cast/CrowdCameo'
+import { useKitchen } from '../../../lib/world/kitchens'
 import { DAY_LABELS, formatMins, pktNow, type OpenStatus } from './hours'
 import { OpenSign } from './OpenSign'
-import { useInView } from './hooks'
+import { useArmed, useInView } from './hooks'
 import s from './visit.module.css'
 import ui from './ui.module.css'
 
@@ -41,7 +46,14 @@ function mapsUrl(address: string | null, locality: string | null, lat: number | 
 }
 
 export function Visit({ slug, hoursData, status, fallbackHours, address, locality, latitude, longitude, phone, reservations }: Props) {
-  const { ref, inView } = useInView<HTMLDivElement>({ once: true, rootMargin: '0px 0px -15% 0px' })
+  const armed = useArmed()
+  // The receipt prints and the pin drops the first time they arrive.
+  const { ref, inView } = useInView<HTMLDivElement>({ once: true })
+  const pin = useInView<HTMLDivElement>({ once: true })
+  // The croissant only moves while the sign is on screen.
+  const sign = useInView<HTMLDivElement>()
+  const kitchen = useKitchen('stackd')
+  const asleep = kitchen.phase === 'closed'
   const [today, setToday] = useState<number | null>(null)
   useEffect(() => setToday(pktNow().day), [])
 
@@ -60,9 +72,14 @@ export function Visit({ slug, hoursData, status, fallbackHours, address, localit
           <h2 id="stackd-visit" className={ui.h2}>When we&rsquo;re <em>on.</em></h2>
 
           <div className={s.pair}>
-            <OpenSign status={status} fallback={hours.length === 0 ? fallbackHours : undefined} />
+            <div ref={sign.ref} className={s.signWrap}>
+              <OpenSign status={status} fallback={hours.length === 0 ? fallbackHours : undefined} />
+              <span className={s.leaner} data-asleep={asleep ? 'true' : undefined} aria-hidden>
+                <CrowdCameo kind="croissant" size={84} pose={asleep ? 'sleep' : 'wave'} look="right" animate={sign.inView} delay={400} />
+              </span>
+            </div>
 
-            <div ref={ref} className={`${s.receipt} ${inView ? s.printed : ''}`}>
+            <div ref={ref} className={`${s.receipt} ${armed && inView ? s.printed : ''}`}>
               <p className={s.rHead}>stackd &amp; servd</p>
               <p className={s.rSub}>opening hours</p>
               <hr className={s.rRule} />
@@ -97,12 +114,15 @@ export function Visit({ slug, hoursData, status, fallbackHours, address, localit
         <div className={s.where}>
           <p className={ui.spec}>Where</p>
           <h2 className={ui.h2}>Find <em>us.</em></h2>
-          <div className={s.pin} aria-hidden>
+          <div ref={pin.ref} className={`${s.pin} ${armed && pin.inView ? s.dropped : ''}`} aria-hidden>
+            <span className={s.ring} />
+            <span className={s.ring} />
+            <span className={s.pinShadow} />
             <svg viewBox="0 0 48 60" focusable="false">
               <path d="M24 58 C 24 58, 44 36, 44 22 C 44 10, 35 2, 24 2 C 13 2, 4 10, 4 22 C 4 36, 24 58, 24 58 Z" />
               <circle cx="24" cy="22" r="8" />
             </svg>
-            <span className={s.pinShadow} />
+            <span className={s.here}>we&rsquo;re here.</span>
           </div>
           <address className={s.address}>{shownAddress ?? 'Karachi · address to be announced'}</address>
           {phone && (

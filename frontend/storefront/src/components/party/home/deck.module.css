@@ -1,4 +1,4 @@
-/* The kitchens — trading-card deck on a cream ground. */
+/* The kitchens: trading-card deck on a cream ground. */
 .section {
   position: relative;
   padding: clamp(3rem, 6vw, 5rem) 0 clamp(4.5rem, 8vw, 7rem);
@@ -60,6 +60,7 @@
 /* ── One card ─────────────────────────────────────────────────────────── */
 .slot {
   position: relative;
+  rotate: var(--tilt, 0deg);
   /* Stagger the hand so it doesn't read as a template row. */
 }
 .slot:nth-child(2) { margin-top: 2.5rem; }
@@ -75,7 +76,8 @@
   isolation: isolate;
 }
 .slot:hover .card,
-.slot:focus-within .card {
+.slot:focus-within .card,
+.slot[data-touched='1'] .card {
   translate: 0 -8px;
   box-shadow: 14px 18px 0 #2A1A2B;
 }
@@ -112,7 +114,8 @@
   display: block;
   transition: transform 700ms cubic-bezier(0.22, 1, 0.36, 1);
 }
-.slot:hover .photo img { transform: scale(1.07) rotate(-0.6deg); }
+.slot:hover .photo img,
+.slot[data-touched='1'] .photo img { transform: scale(1.07) rotate(-0.6deg); }
 
 .num,
 .kind {
@@ -135,7 +138,7 @@
 }
 .kind {
   left: 10px;
-  bottom: 12px;
+  top: 46px;
   padding: 0.45rem 0.8rem;
   font-size: 0.85rem;
   background: #FFF4D6;
@@ -160,7 +163,8 @@
   transform: rotate(14deg);
   filter: drop-shadow(0 4px 0 rgba(42, 26, 43, 0.55));
 }
-.slot:hover .stickerBadge { transform: rotate(-4deg) scale(1.12); }
+.slot:hover .stickerBadge,
+.slot[data-touched='1'] .stickerBadge { transform: rotate(-4deg) scale(1.12); }
 /* stackd's walking-bread mascot on a die-cut cream disc. */
 .stickerMascot {
   width: clamp(84px, 8vw, 104px);
@@ -183,8 +187,96 @@
   animation: strut 1.4s ease-in-out infinite;
   animation-play-state: paused;
 }
-.slot:hover .stickerMascot { transform: rotate(-6deg) scale(1.1); }
-.slot:hover .stickerMascot img { animation-play-state: running; }
+.slot:hover .stickerMascot,
+.slot[data-touched='1'] .stickerMascot { transform: rotate(-6deg) scale(1.1); }
+.slot:hover .stickerMascot img,
+.slot[data-touched='1'] .stickerMascot img { animation-play-state: running; }
+
+/* ── Cast cameo peeking over the top edge (stackd, Flipd) ─────────────────
+   The cast's `peek` pose sinks the character behind its own bottom edge,
+   and that edge sits on the card's top edge. Hover, focus or tap: a curious
+   lean. At night it climbs out and naps on the card (nightPose sleep). */
+.peek {
+  position: absolute;
+  bottom: calc(100% + 1px);
+  left: 44%;
+  z-index: 0;
+  display: flex;
+  line-height: 0;
+  pointer-events: none;
+}
+.peekCameo {
+  transform-origin: 50% 100%;
+  transition: rotate 320ms cubic-bezier(0.34, 1.56, 0.64, 1), scale 320ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.slot:hover .peekCameo,
+.slot:focus-within .peekCameo,
+.slot[data-touched='1'] .peekCameo { rotate: -7deg; scale: 1.08; }
+
+/* ── Live status sticker ───────────────────────────────────────────────── */
+.status {
+  position: absolute;
+  z-index: 3;
+  right: 10px;
+  bottom: 12px;
+  max-width: calc(100% - 20px);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.42rem 0.75rem;
+  border: 2px solid #2A1A2B;
+  border-radius: 999px;
+  background: #FFF4D6;
+  color: #2A1A2B;
+  box-shadow: 0 3px 0 #2A1A2B;
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 0.8rem;
+  line-height: 1.2;
+  rotate: 2deg;
+  pointer-events: none;
+}
+.statusText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.statusDot {
+  flex-shrink: 0;
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  background: #9A8A7C;
+}
+.status[data-phase='open'] .statusDot {
+  background: #1F9D55;
+  box-shadow: 0 0 0 0 rgba(31, 157, 85, 0.6);
+  animation: dotPulse 1.6s ease-out infinite;
+}
+.status[data-phase='closing'] .statusDot { background: #E08A00; animation: dotPulse 1.1s ease-out infinite; }
+.status[data-phase='opening'] .statusDot { background: #E08A00; }
+
+/* simmer: typographic, no dot, no tilt. The orange signal lives by the
+   hairline instead. */
+.statusQuiet {
+  rotate: none;
+  border: 1px solid rgba(243, 236, 222, 0.7);
+  background: #06392F;
+  color: #F3ECDE;
+  box-shadow: none;
+  font-family: var(--simmer-body);
+  font-weight: 400;
+  font-style: italic;
+  font-size: 0.86rem;
+  letter-spacing: 0.04em;
+  text-transform: lowercase;
+}
+
+@keyframes dotPulse {
+  0% { box-shadow: 0 0 0 0 rgba(31, 157, 85, 0.6); }
+  100% { box-shadow: 0 0 0 9px rgba(31, 157, 85, 0); }
+}
 
 @keyframes strut {
   0%, 100% { transform: rotate(-5deg); }
@@ -275,7 +367,8 @@
   color: var(--text);
   transition: transform 300ms cubic-bezier(0.34, 1.56, 0.64, 1);
 }
-.slot:hover .visit { transform: rotate(45deg) scale(1.08); }
+.slot:hover .visit,
+.slot[data-touched='1'] .visit { transform: rotate(45deg) scale(1.08); }
 
 .glare {
   position: absolute;
@@ -287,7 +380,8 @@
   transition: opacity 250ms ease;
   mix-blend-mode: soft-light;
 }
-.slot:hover .glare { opacity: 1; }
+.slot:hover .glare,
+.slot[data-touched='1'] .glare { opacity: 1; }
 
 /* ── simmer: the quiet card in the set ────────────────────────────────── */
 .elegant .name {
@@ -310,25 +404,46 @@
 .elegant .photo img { filter: saturate(0.85) contrast(1.05); }
 .elegant .glare { mix-blend-mode: overlay; }
 
+/* A thin bone hairline; the one orange dot at its end lights only while
+   simmer is really in service (html[data-k-simmer] open or closing). */
 .hairline {
+  position: relative;
   display: block;
   width: 3.5rem;
-  height: 2px;
+  height: 1px;
   margin-top: 0.9rem;
-  background: #E94E1B;
-  transform-origin: left;
-  animation: drawRule 1.6s cubic-bezier(0.22, 1, 0.36, 1) both;
+  background: rgba(243, 236, 222, 0.75);
 }
-@keyframes drawRule { from { transform: scaleX(0); } }
+.hairDot {
+  position: absolute;
+  right: -12px;
+  top: -2.5px;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: #E94E1B;
+  opacity: 0;
+  transition: opacity 600ms ease;
+}
+:global(html[data-k-simmer='open']) .hairDot,
+:global(html[data-k-simmer='closing']) .hairDot { opacity: 1; }
 
-/* Slow candle light over the photo — the only motion simmer gets. */
+/* Slow candle light over the photo, the only motion simmer gets. */
 .candle {
   position: absolute;
   inset: 0;
   pointer-events: none;
   background:
-    radial-gradient(ellipse 70% 60% at 30% 85%, rgba(233, 78, 27, 0.28), transparent 70%),
+    /* warm candlelight in amber-bone, not orange: the hairline dot is
+       simmer's one orange signal. */
+    radial-gradient(ellipse 70% 60% at 30% 85%, rgba(243, 206, 150, 0.26), transparent 70%),
     linear-gradient(180deg, rgba(6, 57, 47, 0) 45%, rgba(6, 57, 47, 0.55) 100%);
+  opacity: 0.35;
+  transition: opacity 1.2s ease;
+}
+/* The candle only burns during service. */
+:global(html[data-k-simmer='open']) .candle,
+:global(html[data-k-simmer='closing']) .candle {
   animation: candle 5.5s ease-in-out infinite alternate;
 }
 @keyframes candle {
@@ -357,7 +472,8 @@
   text-decoration: none;
   transition: background-color 400ms ease, color 400ms ease;
 }
-.orderQuiet:hover { background: #F3ECDE; color: #06392F; }
+.orderQuiet:hover,
+.slot[data-touched='1'] .orderQuiet { background: #F3ECDE; color: #06392F; }
 .orderQuiet:focus-visible { outline: 3px solid #2A1A2B; outline-offset: 4px; }
 
 @keyframes spin { to { transform: rotate(360deg); } }
@@ -376,14 +492,17 @@
   .card { box-shadow: 7px 7px 0 #2A1A2B; }
   .stickerBadge { right: -8px; top: -30px; width: 88px; }
   .stickerMascot { right: -6px; top: -26px; width: 80px; }
+  .peek { left: 40%; }
   .actions .order { width: auto; flex: 1; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .bgStar, .stickerMascot img, .candle, .hairline { animation: none; }
+  .bgStar, .stickerMascot img, .candle, .statusDot { animation: none !important; }
   .glare { display: none; }
-  .slot:hover .card, .slot:focus-within .card { translate: none; }
-  .slot:hover .photo img, .slot:hover .visit { transform: none; }
-  .slot:hover .stickerBadge { transform: rotate(14deg); }
-  .slot:hover .stickerMascot { transform: rotate(10deg); }
+  .slot:hover .card, .slot:focus-within .card, .slot[data-touched='1'] .card { translate: none; }
+  .slot:hover .photo img, .slot:hover .visit,
+  .slot[data-touched='1'] .photo img, .slot[data-touched='1'] .visit { transform: none; }
+  .slot:hover .stickerBadge, .slot[data-touched='1'] .stickerBadge { transform: rotate(14deg); }
+  .slot:hover .stickerMascot, .slot[data-touched='1'] .stickerMascot { transform: rotate(10deg); }
+  .peekCameo { transition: none; }
 }

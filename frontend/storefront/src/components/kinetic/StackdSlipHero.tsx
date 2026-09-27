@@ -3,6 +3,7 @@ import Link from 'next/link'
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { useScrollProgress } from './motionHooks'
 import { Die } from '../brand/stackd/Die'
+import { Steam } from '../world/Ambient'
 import s from '../brand/stackd/slip.module.css'
 import ui from '../brand/stackd/ui.module.css'
 
@@ -18,15 +19,22 @@ import ui from '../brand/stackd/ui.module.css'
  * exactly along its top edge. Above it, the bread; below it, the guy. See
  * public/brand/stackd/.
  *
- * Choreography, in scroll progress (section is 250vh):
+ * At rest he has to read as a character, not a shape: he stands on a small
+ * die-cut coaster (a floor, not a backdrop), and his striped trousers and
+ * hands are backed in cream like a die-cut sticker of him, so the plum line
+ * art holds up on the plum field without a big cream blob behind him.
+ *
+ * Choreography, in scroll progress (section is 250vh; 210svh on phones).
+ * Everything is finished by 0.8, and every frame in between is a pose:
  *   0.00-0.10  standing, alive — idle breathing, cursor lean, steam
  *   0.10-0.32  the slip: he rotates back and drops; the bread holds a beat
- *   0.34-0.44  landing — the coaster squashes, the seals jump off
- *   0.14-1.00  the bread climbs and tumbles out of frame
- *   0.18-0.36  the tagline tips over into "we'll make another."
+ *   0.33-0.45  landing — the coaster squashes, the seals jump off
+ *   0.14-0.77  the bread climbs and tumbles out of frame
+ *   0.17-0.31  the tagline tips over into "we'll make another."
  *
  * The CTAs are always visible and reachable — nothing here is gated behind
  * the gag. Reduced motion: he stands still, holding it, and nothing pins.
+ * After hours (html[data-k-stackd='closed']) the loaf stops steaming.
  */
 
 interface Props {
@@ -119,7 +127,7 @@ export function StackdSlipHero({
 
   const pinVars = {
     '--s': ramp(0.1, 4.5),
-    '--toss': ramp(0.14, 1.2),
+    '--toss': ramp(0.14, 1.6),
     '--impact': pulse(0.33, 20, 0.37, 12),
     '--swap': ramp(0.17, 7),
     '--hintOut': ramp(0.02, 14),
@@ -221,6 +229,13 @@ export function StackdSlipHero({
                   <>
                     <div className={s.guy}>
                       <div className={s.guyIdle}>
+                        {/* Cream behind the see-through trousers and hands,
+                            traced from guy.png (326x274): the sticker of him. */}
+                        <svg className={s.backing} viewBox="0 0 326 274" aria-hidden focusable="false">
+                          <path d="M118 26 H 223 V 140 C 223 172, 209 196, 191 222 L 178 236 H 150 L 128 224 C 122 180, 116 140, 118 26 Z" />
+                          <ellipse cx="70" cy="25" rx="22" ry="9" />
+                          <ellipse cx="256" cy="25" rx="19" ry="9" />
+                        </svg>
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img src="/brand/stackd/guy.png" alt={mascotAlt} width={326} height={274} />
                       </div>
@@ -232,10 +247,14 @@ export function StackdSlipHero({
                       <div className={s.breadHop}>
                         <div className={s.breadWobble}>
                           <div className={s.breadIdle}>
-                            <svg className={s.steam} viewBox="0 0 100 70" preserveAspectRatio="none">
-                              <path d="M28 68 C 18 54, 38 44, 28 30 S 34 10, 26 2" />
-                              <path d="M52 68 C 42 52, 62 42, 52 28 S 58 8, 50 0" />
-                              <path d="M74 68 C 66 56, 84 46, 74 32 S 80 12, 72 4" />
+                            <div className={s.steam}>
+                              <Steam count={3} seed={5} color="#FCE8CE" />
+                            </div>
+                            {/* The loaf's crumb is see-through in the PNG; a cream
+                                fill traced from its silhouette keeps it a solid
+                                loaf on the plum field. */}
+                            <svg className={s.breadBacking} viewBox="0 0 197 167" aria-hidden focusable="false">
+                              <path d="M88 5 L 164 9 L 178 38 L 184 60 L 189 72 L 189 160 L 8 161 L 7 90 L 5 68 L 13 48 L 23 32 L 47 16 Z" />
                             </svg>
                             {/* eslint-disable-next-line @next/next/no-img-element */}
                             <img src="/brand/stackd/bread.png" alt="" width={197} height={167} />

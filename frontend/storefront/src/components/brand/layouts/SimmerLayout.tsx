@@ -22,7 +22,10 @@
 //   3. tonight's service  — bone ground; three walnut frames hung off a rail,
 //                           a live service date. orange: one ember on the rail.
 //   4. what's next        — the kitchen's note, by candlelight, sentence by
-//                           sentence. orange: the candle.
+//                           sentence. orange: the candle — lit only while
+//                           the room is serving; out of hours it is out,
+//                           with the room's status under it and the orange
+//                           moves to that line's live dot.
 //   5. find the door      — address, hours, live service status, directions,
 //                           the elsewhere links. no orange.
 //   6. other kitchens + sign-off — the candle is out; a curl of smoke over
@@ -30,6 +33,12 @@
 //
 // Menu items are intentionally absent from this surface — /brand/simmer/menu
 // renders the menu as a printed card.
+//
+// Reveal hygiene: every block is final on the server and on screen at mount;
+// only blocks still below the fold hold back, and each lands within 450 ms of
+// its first sliver arriving (reveal.tsx + simmer.module.css). A jump to any
+// depth is never an empty tiber or bone screen. No companion, cast or
+// character ever appears on this surface.
 
 import Link from 'next/link'
 import type { CSSProperties, ReactNode } from 'react'
@@ -192,7 +201,8 @@ export function SimmerLayout({ concept, concepts }: Props) {
 
       {/* ── 4. WHAT'S NEXT ───────────────────────────────────────────────
           A short note from the kitchen, read by candlelight. The candle is
-          the one orange here. */}
+          the one orange here — or, when the room is closed, the live dot in
+          the status line under the snuffed candle. */}
       <section aria-labelledby="simmer-next" style={{ padding: `clamp(5rem, 12vh, 8rem) ${pad}` }}>
         <div style={{ maxWidth: '52rem', margin: '0 auto' }}>
           <Eyebrow id="simmer-next" title="what's next" aside={service.stamp} />

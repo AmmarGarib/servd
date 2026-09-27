@@ -1,16 +1,27 @@
 'use client'
-// The pastry case — this morning's bake on lit shelves behind glass. Hover a
-// pastry and it lifts off the shelf as if picked up with tongs, its tag
-// swinging; left alone, one of them hops now and then. The glass glint slides
-// as you scroll past.
+// The pastry case — this morning's bake on lit shelves behind glass. Hover,
+// focus or tap a pastry and it lifts off the shelf as if picked up with tongs,
+// its tag swinging; left alone, one of them hops now and then. The glass glint
+// slides as you scroll past.
+//
+// The case keeps the café's real hours (html[data-k-stackd], stamped by the
+// server so the first paint is right): open, the lamp and bulb glow and the
+// lamp flickers on as the case comes into view; closing, a tag says so;
+// opening, the lamp is warming up; closed, the lights are off, the glass dims
+// and a tag hangs on the front saying when the bake is back.
 //
 // The line-up is illustrative — the menu API does not yet expose per-brand
 // items, so this is the case's character, not a price list. The CTA goes to
 // the real menu.
 
 import Link from 'next/link'
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
-import { useInView, useViewProgress, prefersReducedMotion } from './hooks'
+import { useEffect, useRef, useState, type CSSProperties, type FocusEvent as ReactFocusEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
+import { Steam } from '../../world/Ambient'
+import { useKitchen } from '../../../lib/world/kitchens'
+import { kitchenLine } from '../../../lib/world/voice'
+import { useWorld } from '../../../lib/world/useWorld'
+import { backWithTheBake } from './hours'
+import { useArmed, useInView, useViewProgress, prefersReducedMotion } from './hooks'
 import s from './case.module.css'
 import ui from './ui.module.css'
 
@@ -101,73 +112,81 @@ interface Item {
   fresh?: boolean
 }
 
-const TOP: Item[] = [
+const ITEMS: Item[] = [
   { name: 'croissant', art: <Croissant /> },
   { name: 'sourdough', art: <Sourdough /> },
   { name: 'cinnamon roll', art: <CinnamonRoll />, fresh: true },
-]
-const BOTTOM: Item[] = [
   { name: 'cookie', art: <Cookie /> },
   { name: 'banana bread', art: <BananaBread /> },
   { name: 'focaccia', art: <Focaccia /> },
 ]
+const SHELVES: Item[][] = [ITEMS.slice(0, 3), ITEMS.slice(3)]
 
-function Shelf({ items, offset, hop }: { items: Item[]; offset: number; hop: number }) {
-  return (
-    <>
-      <ul className={s.row}>
-        {items.map((it, i) => {
-          const n = offset + i
-          return (
-            <li key={it.name} className={s.item} data-hop={hop === n ? 'true' : undefined} style={{ '--n': n } as CSSProperties}>
-              <div className={s.lift}>
-                {it.fresh && (
-                  <svg className={s.steam} viewBox="0 0 60 40" aria-hidden focusable="false">
-                    <path d="M16 38 C 10 28, 22 20, 16 8" />
-                    <path d="M32 38 C 26 26, 38 18, 32 2" />
-                    <path d="M46 38 C 40 28, 52 20, 46 8" />
-                  </svg>
-                )}
-                <div className={s.art}>{it.art}</div>
-              </div>
-              <span className={s.shadow} aria-hidden />
-              <span className={s.tag}>{it.name}</span>
-            </li>
-          )
-        })}
-      </ul>
-      <div className={s.plank} aria-hidden />
-    </>
-  )
+/** Only a keyboard focus lifts on focus — a tap focuses too, and toggles. */
+function isKeyboardFocus(el: Element): boolean {
+  try {
+    return el.matches(':focus-visible')
+  } catch {
+    return true
+  }
 }
 
 export function PastryCase({ menuHref }: { menuHref: string }) {
   const glassRef = useViewProgress<HTMLDivElement>({ start: 1, end: 0 })
-  const { ref, inView } = useInView<HTMLElement>({ rootMargin: '0px 0px -10% 0px' })
+  const { ref, inView } = useInView<HTMLElement>()
+  const armed = useArmed()
+  const kitchen = useKitchen('stackd')
+  const world = useWorld()
   const [hop, setHop] = useState(-1)
-  const [settled, setSettled] = useState(false)
+  const [active, setActive] = useState(-1)
+  const [entered, setEntered] = useState(false)
   const timer = useRef<number | undefined>(undefined)
+  const pointer = useRef<string>('')
 
-  // Items drop onto the shelves the first time the case is seen.
-  useEffect(() => { if (inView) setSettled(true) }, [inView])
+  // The first time the case arrives: pastries drop onto the shelves and the
+  // lamp flickers on. Both are armed only after mount, so the server's
+  // lit, stocked case is what a screenshot or a no-JS reader sees.
+  useEffect(() => { if (inView && armed) setEntered(true) }, [inView, armed])
 
-  // Idle life: while the case is on screen, a random pastry hops.
+  // Idle life: while the case is on screen and nobody is choosing, a random
+  // pastry hops.
   useEffect(() => {
-    if (!inView || prefersReducedMotion()) return
+    if (!inView || active !== -1 || prefersReducedMotion()) return
     let last = -1
     const id = window.setInterval(() => {
-      let n = Math.floor(Math.random() * 6)
-      if (n === last) n = (n + 1) % 6
+      let n = Math.floor(Math.random() * ITEMS.length)
+      if (n === last) n = (n + 1) % ITEMS.length
       last = n
       setHop(n)
       window.clearTimeout(timer.current)
       timer.current = window.setTimeout(() => setHop(-1), 900)
     }, 2600)
     return () => { window.clearInterval(id); window.clearTimeout(timer.current) }
-  }, [inView])
+  }, [inView, active])
+
+  const release = (n: number) => setActive((a) => (a === n ? -1 : a))
+  const handlers = (n: number) => ({
+    onPointerDown: (e: ReactPointerEvent) => { pointer.current = e.pointerType },
+    onPointerEnter: (e: ReactPointerEvent) => { if (e.pointerType === 'mouse') setActive(n) },
+    onPointerLeave: (e: ReactPointerEvent) => { if (e.pointerType === 'mouse') release(n) },
+    onFocus: (e: ReactFocusEvent<HTMLLIElement>) => { if (isKeyboardFocus(e.currentTarget)) setActive(n) },
+    onBlur: () => release(n),
+    onClick: () => {
+      // Touch and pen: a tap picks it up, a second tap puts it back.
+      if (pointer.current && pointer.current !== 'mouse') setActive((a) => (a === n ? -1 : n))
+      pointer.current = ''
+    },
+  })
+
+  // The tag on the glass (shown by CSS only when closed, opening or closing):
+  // after hours it says when the bake is back; either side of it, the world's
+  // stackd voice line ("ovens on in 20 min").
+  const tagLine = kitchen.phase === 'closed' || kitchen.phase === 'open'
+    ? backWithTheBake(kitchen.opensAt)
+    : kitchenLine(kitchen, world.dayPart)
 
   return (
-    <section ref={ref} className={`${s.section} ${settled ? s.settled : ''}`} aria-labelledby="stackd-case">
+    <section ref={ref} className={`${s.section} ${entered ? s.entered : ''}`} aria-labelledby="stackd-case">
       <div className={`${ui.wrap} ${s.grid}`}>
         <div className={s.copy}>
           <p className={ui.spec}>The pastry case</p>
@@ -185,6 +204,9 @@ export function PastryCase({ menuHref }: { menuHref: string }) {
         </div>
 
         <div className={s.case}>
+          <div className={s.caseSteam} aria-hidden>
+            <Steam count={3} seed={31} color="#FCE8CE" />
+          </div>
           <div className={s.crown} aria-hidden>
             <span>fresh</span>
             <span className={s.bulb} />
@@ -192,9 +214,45 @@ export function PastryCase({ menuHref }: { menuHref: string }) {
           </div>
           <div ref={glassRef} className={s.window}>
             <div className={s.lamp} aria-hidden />
-            <Shelf items={TOP} offset={0} hop={hop} />
-            <Shelf items={BOTTOM} offset={3} hop={hop} />
+            {SHELVES.map((items, shelf) => (
+              <div key={shelf} className={s.shelf}>
+                <ul className={s.row}>
+                  {items.map((it, i) => {
+                    const n = shelf * 3 + i
+                    return (
+                      <li
+                        key={it.name}
+                        className={s.item}
+                        tabIndex={0}
+                        data-hop={hop === n && active === -1 ? 'true' : undefined}
+                        data-lift={active === n ? 'true' : undefined}
+                        style={{ '--n': n } as CSSProperties}
+                        {...handlers(n)}
+                      >
+                        <div className={s.lift}>
+                          {it.fresh && (
+                            <svg className={s.steam} viewBox="0 0 60 40" aria-hidden focusable="false">
+                              <path d="M16 38 C 10 28, 22 20, 16 8" />
+                              <path d="M32 38 C 26 26, 38 18, 32 2" />
+                              <path d="M46 38 C 40 28, 52 20, 46 8" />
+                            </svg>
+                          )}
+                          <div className={s.art}>{it.art}</div>
+                        </div>
+                        <span className={s.shadow} aria-hidden />
+                        <span className={s.tag}>{it.name}</span>
+                      </li>
+                    )
+                  })}
+                </ul>
+                <div className={s.plank} aria-hidden />
+              </div>
+            ))}
             <div className={s.glass} aria-hidden />
+            <div className={s.dim} aria-hidden />
+            <p className={s.closedTag}>
+              <span className={s.closedTagText}>{tagLine}</span>
+            </p>
           </div>
           <div className={s.base} aria-hidden>
             <span>baked here</span>

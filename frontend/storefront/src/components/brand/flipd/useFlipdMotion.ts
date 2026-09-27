@@ -78,14 +78,26 @@ export function useBuildProgress<T extends HTMLElement>(
 /**
  * Reveal-once + live-while-visible, for a whole section.
  *
- *  - `data-in` is set the first time the section is meaningfully on screen
+ *  - `data-in` is set the first time any sliver of the section is on screen
  *    and never removed: CSS keys every entrance (ticket swings, sticker slaps,
- *    word drops) off it.
+ *    word drops) off `[data-armed][data-in]`.
  *  - `data-live` is set only while the section is on screen, so looping
  *    decoration (marquees, steam, bulbs, doodles) can pause off-screen with
  *    `animation-play-state`.
+ *
+ * Reveal hygiene (the screenshot test: jump anywhere, wait 900 ms, nothing in
+ * view may still be hidden):
+ *  - The server / no-JS render is the final state. `data-armed` — the only
+ *    thing that lets CSS hold an element back — is set after mount.
+ *  - A section already on screen at mount is never armed: it gets `data-in`
+ *    straight away and simply stays as it was painted.
+ *  - The trigger is a sliver (threshold ≤ 0.05) with the root grown 12% below
+ *    the fold, so a section starts its ≤ 450 ms entrance just before it
+ *    arrives rather than after a quarter of it is already showing.
  */
-export function useSectionMotion<T extends HTMLElement>(threshold = 0.2) {
+const MAX_THRESHOLD = 0.05
+
+export function useSectionMotion<T extends HTMLElement>(threshold = 0.02) {
   const ref = useRef<T | null>(null)
   useEffect(() => {
     const el = ref.current
@@ -95,10 +107,15 @@ export function useSectionMotion<T extends HTMLElement>(threshold = 0.2) {
       el.dataset.live = '1'
       return
     }
-    // "Armed" is what lets CSS hide things BEFORE their entrance. It is only
-    // set once JS is running, so without JS (or before hydration) every
-    // section renders in its final, readable state rather than invisible.
-    el.dataset.armed = '1'
+    const r = el.getBoundingClientRect()
+    const vh = window.innerHeight || document.documentElement.clientHeight
+    const onScreen = r.bottom > 0 && r.top < vh
+    if (onScreen) {
+      el.dataset.in = '1'
+      el.dataset.live = '1'
+    } else if (!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+      el.dataset.armed = '1'
+    }
     const io = new IntersectionObserver(
       ([e]) => {
         if (!e) return
@@ -109,12 +126,26 @@ export function useSectionMotion<T extends HTMLElement>(threshold = 0.2) {
           delete el.dataset.live
         }
       },
-      { threshold, rootMargin: '0px 0px -8% 0px' },
+      { threshold: Math.min(Math.max(threshold, 0), MAX_THRESHOLD), rootMargin: '0px 0px 12% 0px' },
     )
     io.observe(el)
     return () => io.disconnect()
   }, [threshold])
   return ref
+}
+
+/** True on touch-first devices (coarse primary pointer). SSR-safe (false). */
+export function useCoarsePointer(): boolean {
+  const [coarse, setCoarse] = useState(false)
+  useEffect(() => {
+    const mq = window.matchMedia?.('(pointer: coarse)')
+    if (!mq) return
+    const on = () => setCoarse(mq.matches)
+    on()
+    mq.addEventListener?.('change', on)
+    return () => mq.removeEventListener?.('change', on)
+  }, [])
+  return coarse
 }
 
 /**

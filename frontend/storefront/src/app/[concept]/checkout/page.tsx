@@ -7,6 +7,11 @@ import { useCustomerAuth } from '../../../store/customerAuth'
 import { fmt } from '../../../lib/ui'
 import { decodeCartToken } from '../../../lib/cartHandoff'
 import { trackCheckoutStarted, trackCheckoutAbandoned, trackOrderPlaced, trackPromoApplied, trackPromoFailed } from '../../../lib/analytics'
+import { formatBrandName } from '../../../lib/concept'
+import { CrowdCameo } from '../../../components/world/cast/CrowdCameo'
+
+// Empty-cart kitchen names: simmer and stackd stay lowercase, Flipd keeps its capital.
+const kitchenName = (s: string): string => formatBrandName(s === 'flipd' ? 'Flipd' : s)
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -195,23 +200,28 @@ export default function CheckoutPage() {
   if (itemCount() === 0) return (
     <main className={`flex min-h-dvh flex-col items-center justify-center gap-5 px-4${brandSkinClass ? ' ' + brandSkinClass : ''}`}
       style={{ background: 'transparent' }}>
+      {/* A worried cast member for the casual kitchens; simmer gets no characters. */}
+      {(slug === 'stackd' || slug === 'flipd') ? (
+        <CrowdCameo kind={slug === 'stackd' ? 'coffee' : 'fries'} pose="worried" size={96} />
+      ) : (
       <svg width="80" height="80" viewBox="0 0 24 24" fill="none" stroke="var(--servd-mute)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
         <circle cx="9" cy="21" r="1"/>
         <circle cx="20" cy="21" r="1"/>
         <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/>
       </svg>
+      )}
       <div className="text-center space-y-2">
         <p className="font-black text-2xl tracking-tight" style={{ color: 'var(--servd-ink)' }}>
           Your cart&rsquo;s empty
         </p>
         <p className="text-sm" style={{ color: 'var(--servd-mute)' }}>
-          Pick something from {slug ? slug.charAt(0).toUpperCase() + slug.slice(1) : 'the menu'} to get going.
+          Pick something from {slug ? kitchenName(slug) : 'the menu'} to get going.
         </p>
       </div>
       <Link href={`/${slug}`}
         className="mt-1 rounded-2xl font-black px-8 py-4 text-sm transition-all hover:scale-[1.02] active:scale-[0.98]"
         style={{ background: 'var(--servd-green)', color: 'white', boxShadow: '0 6px 18px rgba(58,14,105,0.28)' }}>
-        See the {slug ? slug.charAt(0).toUpperCase() + slug.slice(1) : ''} menu
+        See the {slug ? kitchenName(slug) : ''} menu
       </Link>
       {/* Quick switch to the other brands so an empty-cart visitor doesn't
           have to back out to the home page to change kitchens. */}
@@ -228,7 +238,7 @@ export default function CheckoutPage() {
                 color: 'var(--servd-ink)',
                 border: '1px solid var(--servd-line)',
               }}>
-              {s.charAt(0).toUpperCase() + s.slice(1)}
+              {kitchenName(s)}
             </Link>
           ))}
         </div>
@@ -711,7 +721,7 @@ export default function CheckoutPage() {
                   color: giftCardStatus === 'valid' ? '#fff' : 'var(--servd-ink)',
                   border: '1px solid rgba(0,0,0,0.08)',
                 }}>
-                {giftCardStatus === 'checking' ? '…' : giftCardStatus === 'valid' ? '✓' : 'Check'}
+                {giftCardStatus === 'checking' ? '…' : giftCardStatus === 'valid' ? 'Valid' : 'Check'}
               </button>
             </div>
             {giftCardStatus === 'valid' && (
@@ -786,12 +796,12 @@ export default function CheckoutPage() {
                   className="shrink-0 rounded-xl px-4 py-3 text-sm font-black transition-all disabled:opacity-40"
                   style={{ background: 'var(--servd-green-dark)', color: '#fff' }}
                 >
-                  {promoStatus === 'checking' ? '…' : promoStatus === 'valid' ? '✓' : 'Apply'}
+                  {promoStatus === 'checking' ? '…' : promoStatus === 'valid' ? 'Applied' : 'Apply'}
                 </button>
               </div>
               {promoStatus === 'valid' && promoMessage && (
                 <p className="text-xs font-semibold mt-1.5" style={{ color: 'var(--servd-green-dark)' }}>
-                  ✓ {promoMessage} · saving {fmt(promoDiscountCents)}
+                  {promoMessage} · saving {fmt(promoDiscountCents)}
                 </p>
               )}
               {promoStatus === 'invalid' && promoMessage && (

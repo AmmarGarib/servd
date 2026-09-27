@@ -1,11 +1,16 @@
 'use client'
 import Link from 'next/link'
-import { useEffect, useMemo, useState, type CSSProperties } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { motion, useReducedMotion } from 'framer-motion'
-import { Search, X, UtensilsCrossed } from 'lucide-react'
+import { Search, X } from 'lucide-react'
 import type { Concept } from '../../lib/concept'
 import { formatBrandName } from '../../lib/concept'
-import { trackSearch, trackFilterApplied, track } from '../../lib/analytics'
+import { trackSearch, trackFilterApplied } from '../../lib/analytics'
+import { useKitchens } from '../../lib/world/kitchens'
+import { useWorld } from '../../lib/world/useWorld'
+import { emptyLine, openCountLine } from '../../lib/world/voice'
+import { emitCrowd } from '../../components/characters/crowdBus'
+import { CrowdCameo } from '../../components/world/cast/CrowdCameo'
 import { BrowseCard } from '../../components/party/browse/BrowseCard'
 import { Doodles } from '../../components/party/browse/Doodles'
 import s from '../../components/party/browse/browse.module.css'
@@ -18,6 +23,19 @@ const FILTERS = [
   { key: 'digital',    label: 'Delivery' },
   { key: 'cart',       label: 'Walk-up' },
 ] as const
+
+// When the API is down (or returns nothing) the page still shows the three
+// kitchens — mirrors HomeClient's FALLBACK_BRANDS. Browse must never say
+// "0 kitchens". Descriptions stay null so each card falls back to its
+// brand story one-liner.
+const FALLBACK_CONCEPTS: Concept[] = [
+  { id: 'fallback-stackd', name: formatBrandName('stackd'), slug: 'stackd', type: 'restaurant', description: null, logoUrl: null, primaryColor: null },
+  { id: 'fallback-simmer', name: formatBrandName('simmer'), slug: 'simmer', type: 'restaurant', description: null, logoUrl: null, primaryColor: null },
+  { id: 'fallback-flipd',  name: formatBrandName('Flipd'),  slug: 'flipd',  type: 'restaurant', description: null, logoUrl: null, primaryColor: null },
+]
+
+/** The crowd gets curious while you type — at most once every two seconds. */
+const CURIOUS_EVERY_MS = 2000
 
 interface Props {
   concepts: Concept[]
@@ -42,15 +60,62 @@ function BouncyWords({ text }: { text: string }) {
   )
 }
 
+// Reveal hygiene: the server render is the final frame. A card that is
+// already on screen at mount is never touched; one below the fold is armed
+// after mount (opacity .4, a little low) and settles in ≤ 440 ms as it nears
+// the viewport — so a jump-scroll never lands on an empty grid.
+function Reveal({ index, children }: { index: number; children: ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null)
+  const [state, setState] = useState<'idle' | 'armed' | 'shown'>('idle')
+
+  useEffect(() => {
+    const el = ref.current
+    if (!el || typeof IntersectionObserver === 'undefined') return
+    try {
+      if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+    } catch { /* ignore */ }
+    if (el.getBoundingClientRect().top < window.innerHeight + 40) return
+    setState('armed')
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          setState('shown')
+          io.disconnect()
+        }
+      },
+      { rootMargin: '0px 0px 120px 0px', threshold: 0 },
+    )
+    io.observe(el)
+    return () => io.disconnect()
+  }, [])
+
+  return (
+    <div
+      ref={ref}
+      className={`${s.cardWrap} ${state === 'armed' ? s.armed : ''} ${state === 'shown' ? s.shown : ''}`}
+      style={{ '--d': `${Math.min(index % 4, 3) * 40}ms` } as CSSProperties}
+    >
+      {children}
+    </div>
+  )
+}
+
 export function BrowseClient({ concepts }: Props) {
   const [filter, setFilter] = useState<typeof FILTERS[number]['key']>('all')
   const [query, setQuery] = useState('')
   const [menuHits, setMenuHits] = useState<MenuHit[]>([])
   const [searching, setSearching] = useState(false)
   const reduceMotion = useReducedMotion()
+  const lastCurious = useRef(0)
+
+  const { openCount, total } = useKitchens()
+  const world = useWorld()
+
+  const list = concepts.length > 0 ? concepts : FALLBACK_CONCEPTS
 
   // Debounced cross-menu search. Only fires when there's a query — otherwise
-  // we leave the static brand grid alone.
+  // we leave the static brand grid alone. A search that finds nothing (or
+  // can't reach the kitchen) makes the crowd look concerned.
   useEffect(() => {
     const q = query.trim()
     if (q.length < 2) { setMenuHits([]); setSearching(false); return }
@@ -59,16 +124,34 @@ export function BrowseClient({ concepts }: Props) {
     const t = setTimeout(() => {
       fetch(`${API_URL}/api/v1/storefront/search?q=${encodeURIComponent(q)}`, { signal: ctrl.signal })
         .then((r) => r.ok ? r.json() : { items: [] })
-        .then((d: { items: MenuHit[] }) => { setMenuHits(d.items ?? []); trackSearch(q, d.items?.length ?? 0) })
-        .catch(() => { /* ignore — falls back to no menu hits */ })
-        .finally(() => setSearching(false))
+        .then((d: { items?: MenuHit[] }) => {
+          const items = d.items ?? []
+          setMenuHits(items)
+          trackSearch(q, items.length)
+          if (items.length === 0) emitCrowd({ type: 'react', mood: 'concerned' })
+        })
+        .catch(() => {
+          if (ctrl.signal.aborted) return
+          setMenuHits([])
+          emitCrowd({ type: 'react', mood: 'concerned' })
+        })
+        .finally(() => { if (!ctrl.signal.aborted) setSearching(false) })
     }, 250)
     return () => { ctrl.abort(); clearTimeout(t) }
   }, [query])
 
+  function onType(v: string) {
+    setQuery(v)
+    const now = Date.now()
+    if (v.trim() && now - lastCurious.current > CURIOUS_EVERY_MS) {
+      lastCurious.current = now
+      emitCrowd({ type: 'react', mood: 'curious' })
+    }
+  }
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
-    return concepts.filter((c) => {
+    return list.filter((c) => {
       if (filter !== 'all' && c.type !== filter) return false
       if (!q) return true
       return (
@@ -77,10 +160,12 @@ export function BrowseClient({ concepts }: Props) {
         (c.description ?? '').toLowerCase().includes(q)
       )
     })
-  }, [concepts, filter, query])
+  }, [list, filter, query])
 
   const trimmedQuery = query.trim()
   const isSearchingDishes = trimmedQuery.length >= 2
+  const hasFilters = filter !== 'all' || trimmedQuery.length > 0
+  const kitchenCount = list.length
 
   const liveMessage = isSearchingDishes
     ? (searching
@@ -93,10 +178,16 @@ export function BrowseClient({ concepts }: Props) {
     setQuery('')
   }
 
+  const noMatch = emptyLine('no-match')
+  const noKitchens = emptyLine('no-kitchens')
+  // Dishes found but no brand matched the words: the dishes are the answer,
+  // so don't follow them with a "nothing here" block.
+  const showEmpty = filtered.length === 0 && !(isSearchingDishes && menuHits.length > 0)
+
   return (
     <div className={s.page}>
 
-      {/* Header — butter stage, same energy as the home hero */}
+      {/* Header — the day-part sky, same world as the home hero */}
       <section className={s.header}>
         <Doodles />
         <div className={s.headerInner}>
@@ -104,12 +195,16 @@ export function BrowseClient({ concepts }: Props) {
           <h1 className={s.title}>
             <BouncyWords text="Pick your craving." />
             <span className={s.titleTail}>
-              {concepts.length} kitchen{concepts.length === 1 ? '' : 's'}.
+              {kitchenCount} kitchen{kitchenCount === 1 ? '' : 's'}.
               <svg aria-hidden className={s.underline} viewBox="0 0 220 20" preserveAspectRatio="none">
                 <path d="M4 14 C 44 4, 88 18, 132 9 S 204 6, 216 12" />
               </svg>
             </span>
           </h1>
+          <p className={s.liveLine}>
+            <span aria-hidden className={s.liveDot} data-open={openCount > 0 ? '1' : '0'} />
+            {openCountLine(openCount, total, world.dayPart)}
+          </p>
           <p className={s.lead}>
             One app, one delivery bag. Mix and match — pick from one, two, or all of them, and we figure out the timing.
           </p>
@@ -121,7 +216,7 @@ export function BrowseClient({ concepts }: Props) {
               id="browse-search"
               type="text"
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
+              onChange={(e) => onType(e.target.value)}
               placeholder="Search brands, cuisines, dishes…"
               className={s.searchInput}
             />
@@ -208,28 +303,36 @@ export function BrowseClient({ concepts }: Props) {
           {isSearchingDishes && filtered.length > 0 && (
             <h2 className={s.sectionLabel}>Brands matching "{trimmedQuery}"</h2>
           )}
-          {filtered.length === 0 ? (
-            <div className={s.empty}>
-              <UtensilsCrossed aria-hidden size={40} className={s.emptyIcon} />
-              <p className={s.emptyTitle}>No brands match — try another craving.</p>
-              <button type="button" onClick={clearAll} className={s.clearAllBtn}>Clear filters</button>
-            </div>
-          ) : (
+          {filtered.length > 0 ? (
             <div className={s.grid}>
               {filtered.map((c, i) => (
-                <motion.div
-                  key={c.id}
-                  className={s.cardWrap}
-                  initial={reduceMotion ? false : { opacity: 0, y: 26 }}
-                  whileInView={{ opacity: 1, y: 0 }}
-                  viewport={{ once: true, margin: '0px 0px -80px 0px' }}
-                  transition={{ type: 'spring', stiffness: 220, damping: 20, delay: reduceMotion ? 0 : (i % 6) * 0.06 }}
-                >
-                  <BrowseCard concept={c} />
-                </motion.div>
+                <Reveal key={c.id} index={i}>
+                  <BrowseCard concept={c} index={i} />
+                </Reveal>
               ))}
             </div>
-          )}
+          ) : showEmpty ? (
+            list.length > 0 ? (
+              // (a) there are kitchens, the filters just hid them all
+              <div className={s.empty}>
+                <CrowdCameo kind="fries" pose="worried" size={104} className={s.emptyCameo} />
+                <p className={s.emptyTitle}>{noMatch.title}</p>
+                <p className={s.emptyBody}>{noMatch.body}</p>
+                {hasFilters && (
+                  <button type="button" onClick={clearAll} className={s.clearAllBtn}>
+                    {filter !== 'all' ? 'Clear filters' : 'Clear search'}
+                  </button>
+                )}
+              </div>
+            ) : (
+              // (b) no kitchens at all — unreachable with the fallbacks, kept graceful
+              <div className={s.empty}>
+                <CrowdCameo kind="coffee" pose="sleep" size={104} className={s.emptyCameo} />
+                <p className={s.emptyTitle}>{noKitchens.title}</p>
+                <p className={s.emptyBody}>{noKitchens.body}</p>
+              </div>
+            )
+          ) : null}
         </div>
       </section>
     </div>

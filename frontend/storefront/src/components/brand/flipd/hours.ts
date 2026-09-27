@@ -1,20 +1,33 @@
 'use client'
 // Open/closed status for Flipd's diner sign.
 //
-// Same rules as computeStatus/pktNow in ../parts/OpenStatusBadge.tsx (PKT,
-// windows per weekday, no published hours = open, inactive = closed), which
-// are not exported. Flipd renders its own sign because the shared badge's
-// red-on-tint (#dc2626) fails 4.5:1 on every Flipd ground — mustard, bone and
-// blue alike. If those helpers get exported, import them here instead.
+// There is ONE rule set for "is this kitchen open" on servd now:
+// lib/world/kitchenCore (computeOpen, via kitchenState) (PKT, windows per weekday, windows that cross
+// midnight, yesterday's late window). This file keeps its old exports so the
+// Flipd pages don't change shape, but the computation is delegated there —
+// the diner neon, the home kitchen board, the buddy and the doors scenes all
+// agree about whether the grill is on.
+//
+// Flipd still renders its own sign (the shared badge's red-on-tint fails
+// 4.5:1 on every Flipd ground), so this also builds the KitchenState the
+// voice layer needs for the sign's line.
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { HoursData, ServiceHourRow } from '../parts/OpenStatusBadge'
+import { kitchenState, type KitchenPhase, type KitchenState } from '../../../lib/world/kitchenCore'
+import { useKitchen } from '../../../lib/world/kitchens'
 
 export interface OpenStatus {
   open: boolean
   inactive: boolean
   closesAt: string | null
   opensAt: string | null
+  /** open · closing (≤ 45 min left) · opening (≤ 60 min to go) · closed */
+  phase: KitchenPhase
+  closesInMin: number | null
+  opensInMin: number | null
+  /** The same status as a world KitchenState, for kitchenLine(). */
+  kitchen: KitchenState
 }
 
 export const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
@@ -38,39 +51,45 @@ export function windowsFor(hours: ServiceHourRow[], day: number) {
   return hours.filter((h) => h.dayOfWeek === day).sort((a, b) => a.openMin - b.openMin)
 }
 
-function computeStatus(hours: ServiceHourRow[], day: number, mins: number) {
-  const today = windowsFor(hours, day)
-  for (const w of today) {
-    if (mins >= w.openMin && mins < w.closeMin) return { open: true, closesAt: formatMins(w.closeMin), opensAt: null }
-  }
-  const later = today.find((w) => w.openMin > mins)
-  if (later) return { open: false, closesAt: null, opensAt: `today ${formatMins(later.openMin)}` }
-  for (let offset = 1; offset <= 6; offset++) {
-    const d = (day + offset) % 7
-    const w = windowsFor(hours, d)
-    if (w.length > 0) {
-      return { open: false, closesAt: null, opensAt: `${offset === 1 ? 'tomorrow' : DAY_LABELS[d]} ${formatMins(w[0]!.openMin)}` }
-    }
-  }
-  return { open: false, closesAt: null, opensAt: null }
+/** Status from the brand's published hours, on kitchenCore's rules (which
+ *  also cover inactive = closed and no published hours = open). */
+function statusFromHours(data: HoursData, now: Date): OpenStatus {
+  return { ...statusFromKitchen(kitchenState('flipd', data.hours, data.isActive, now)), inactive: !data.isActive }
 }
 
-/** Live status, re-evaluated every minute. Null while hours are loading. */
-export function useOpenStatus(hoursData: HoursData | null): OpenStatus | null {
-  const [status, setStatus] = useState<OpenStatus | null>(null)
+/** Status from the world's kitchen store (its fallback hours until live). */
+function statusFromKitchen(k: KitchenState): OpenStatus {
+  return {
+    open: k.open, inactive: false, closesAt: k.closesAt, opensAt: k.opensAt,
+    phase: k.phase, closesInMin: k.closesInMin, opensInMin: k.opensInMin,
+    kitchen: k,
+  }
+}
+
+/**
+ * Live status, re-evaluated every 30 s. Never null: until the brand's own
+ * hours arrive (or when the API is down) it reads the world's kitchen state
+ * for Flipd, so the sign is never blank and always agrees with the rest of
+ * the site.
+ */
+export function useOpenStatus(hoursData: HoursData | null): OpenStatus {
+  const kitchen = useKitchen('flipd')
+  const [now, setNow] = useState<Date | null>(null)
   useEffect(() => {
-    if (!hoursData) { setStatus(null); return }
-    const tick = () => {
-      if (!hoursData.isActive) return setStatus({ open: false, inactive: true, closesAt: null, opensAt: null })
-      if (hoursData.hours.length === 0) return setStatus({ open: true, inactive: false, closesAt: null, opensAt: null })
-      const { day, mins } = pktNow()
-      setStatus({ ...computeStatus(hoursData.hours, day, mins), inactive: false })
+    if (!hoursData) return
+    setNow(new Date())
+    const id = window.setInterval(() => setNow(new Date()), 30_000)
+    const onVis = () => { if (document.visibilityState === 'visible') setNow(new Date()) }
+    document.addEventListener('visibilitychange', onVis)
+    return () => {
+      window.clearInterval(id)
+      document.removeEventListener('visibilitychange', onVis)
     }
-    tick()
-    const id = window.setInterval(tick, 60_000)
-    return () => window.clearInterval(id)
   }, [hoursData])
-  return status
+  return useMemo(
+    () => (hoursData && now ? statusFromHours(hoursData, now) : statusFromKitchen(kitchen)),
+    [hoursData, now, kitchen],
+  )
 }
 
 /** Today's weekday in PKT, client-only (null during SSR to avoid a mismatch). */

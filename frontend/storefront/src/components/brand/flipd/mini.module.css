@@ -39,7 +39,10 @@
 }
 .part {
   width: var(--w);
-  --d: calc(var(--step) * 0.26s);
+  /* Started 3s into the cycle, so a paused plate (off-screen, before
+     hydration, or never hydrated) shows the finished burger, not an empty
+     plate. */
+  --d: calc(var(--step) * 0.26s - 3s);
   animation: build 7.2s infinite backwards;
   animation-delay: var(--d);
   transform-origin: 50% 100%;
@@ -60,7 +63,7 @@
 
 .flip {
   animation: flip 7.2s infinite backwards;
-  animation-delay: 0.26s;
+  animation-delay: calc(0.26s - 3s);
   transform-origin: 50% 50%;
 }
 @keyframes flip {

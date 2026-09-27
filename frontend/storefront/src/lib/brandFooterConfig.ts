@@ -34,6 +34,26 @@ export function defaultBrandFooter(concept: { name: string; slug?: string; descr
       social: {},
     }
   }
+  // stackd is lowercase everywhere and speaks like the café it is.
+  if (concept.slug === 'stackd' || concept.slug === 'stax') {
+    return {
+      ctaEyebrow: 'stackd · the ovens are on',
+      ctaHeadline: 'hungry?',
+      ctaAccent: 'we\u2019ll wrap it up.',
+      tagline: concept.description ?? '',
+      social: {},
+    }
+  }
+  // Flipd is the loud diner: capitals, a grill that is always hot.
+  if (concept.slug === 'flipd') {
+    return {
+      ctaEyebrow: 'FLIPD · GRILL\u2019S HOT',
+      ctaHeadline: 'Hungry?',
+      ctaAccent: 'Let\u2019s flip one.',
+      tagline: concept.description ?? '',
+      social: {},
+    }
+  }
   return {
     ctaEyebrow: `${concept.name.toLowerCase()} · ready when you are`,
     ctaHeadline: 'Hungry?',

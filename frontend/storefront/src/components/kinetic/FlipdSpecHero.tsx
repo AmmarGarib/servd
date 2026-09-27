@@ -46,6 +46,16 @@ import s from '../brand/flipd/hero.module.css'
  * crosses a mark (a part seats, the burger lands) — a handful of renders per
  * pass, not one per frame.
  *
+ * Every frame is a drawing. The whole build — five parts, the drop, three
+ * bounces — is finished by 80% of the track, and the last fifth holds the
+ * finished, stamped burger. (On touch the track is shorter, ~120svh, and one
+ * flick can cover most of it; wherever it lands, it lands on a composed
+ * sheet.) Parts still to come are drawn on the sheet as faint navy
+ * silhouettes in their slots — the spec before the build — so a mid-build
+ * frame reads as a build sheet in progress, never as parts floating
+ * half-faded on an empty field. A falling part is at full ink from the moment
+ * it leaves the top.
+ *
  * prefers-reduced-motion: the whole thing renders built, landed and static,
  * with every callout and the stamp visible, and the pinned scroll removed.
  */
@@ -80,21 +90,32 @@ interface Part {
   cheer: CharacterKind
 }
 
+/**
+ * The build was choreographed on a 0..0.918 timeline (bounces settle at
+ * 0.918). It is squeezed so the last bounce settles at exactly 0.8, leaving
+ * the final fifth of the track as a hold on the finished burger.
+ */
+const SCALE = 0.8 / 0.918
+/** A progress mark on the original timeline, squeezed. */
+const at = (p: number) => +(p * SCALE).toFixed(4)
+/** A rate (1 / window length) on the original timeline, squeezed. */
+const per = (r: number) => +(r / SCALE).toFixed(3)
+
 // Crown-first for the vertical layout; built heel-first (the numbers are
 // build steps). Every spec line is a fact already published on the menu
 // sheet or in the brand book — the voice rule is "names the ingredient,
 // skips the adjective".
 const PARTS: Part[] = [
-  { no: '05', name: 'Crown', spec: 'Brioche.',                       art: 'crown',   side: 'left',  fire: 0.460, w: 0.884, drop: -0.34, tilt: -9,  cheer: 'burger' },
-  { no: '04', name: 'Jam',   spec: 'Shroom & onion. House made.',    art: 'lettuce', side: 'right', fire: 0.355, w: 0.957, drop: -0.50, tilt: 11,  cheer: 'shake' },
-  { no: '03', name: 'Aioli', spec: 'Chimichurri. Roasted garlic.',   art: 'wing',    side: 'left',  fire: 0.250, w: 1.000, drop: -0.61, tilt: -7,  cheer: 'fries' },
-  { no: '02', name: 'Patty', spec: 'Salt and pepper. Nothing else.', art: 'patty',   side: 'right', fire: 0.145, w: 0.803, drop: -0.68, tilt: 6,   cheer: 'burger', flip: 540 },
-  { no: '01', name: 'Heel',  spec: 'Brioche.',                       art: 'heel',    side: 'left',  fire: 0.040, w: 0.861, drop: -0.75, tilt: -5,  cheer: 'fries' },
+  { no: '05', name: 'Crown', spec: 'Brioche.',                       art: 'crown',   side: 'left',  fire: at(0.460), w: 0.884, drop: -0.34, tilt: -9,  cheer: 'burger' },
+  { no: '04', name: 'Jam',   spec: 'Shroom & onion. House made.',    art: 'lettuce', side: 'right', fire: at(0.355), w: 0.957, drop: -0.50, tilt: 11,  cheer: 'shake' },
+  { no: '03', name: 'Aioli', spec: 'Chimichurri. Roasted garlic.',   art: 'wing',    side: 'left',  fire: at(0.250), w: 1.000, drop: -0.61, tilt: -7,  cheer: 'fries' },
+  { no: '02', name: 'Patty', spec: 'Salt and pepper. Nothing else.', art: 'patty',   side: 'right', fire: at(0.145), w: 0.803, drop: -0.68, tilt: 6,   cheer: 'burger', flip: 540 },
+  { no: '01', name: 'Heel',  spec: 'Brioche.',                       art: 'heel',    side: 'left',  fire: at(0.040), w: 0.861, drop: -0.75, tilt: -5,  cheer: 'fries' },
 ]
 const BUILD_ORDER = [...PARTS].reverse()
 
 /** Each part's fall spans 1/RATE of the scroll. */
-const RATE = 6
+const RATE = per(6)
 
 /** 0..1 for one window of the scroll, as a CSS expression. */
 const seat = (fire: number, rate = RATE) =>
@@ -110,23 +131,24 @@ const hump = (from: number, to: number) => {
   return `(4 * ${r} * (1 - ${r}))`
 }
 
-// The drop and the bounce. The crown seats at 0.627; nothing moves until 0.76
-// — a beat looking at a finished burger — then it falls, hits at 0.8267 and
-// bounces three times, each smaller, each with its own squash.
-const FALL_AT = 0.76
-const HIT_AT = 0.8267
-const fall = seat(FALL_AT, 15)
-const b1 = hump(HIT_AT, 0.868)
-const b2 = hump(0.868, 0.898)
-const b3 = hump(0.898, 0.918)
+// The drop and the bounce (original-timeline numbers, squeezed by at/per).
+// The crown seats at 0.627; nothing moves until 0.76 — a beat looking at a
+// finished burger — then it falls, hits at 0.8267 and bounces three times,
+// each smaller, each with its own squash, settling at 0.918 (0.8 squeezed).
+const FALL_AT = at(0.76)
+const HIT_AT = at(0.8267)
+const fall = seat(FALL_AT, per(15))
+const b1 = hump(HIT_AT, at(0.868))
+const b2 = hump(at(0.868), at(0.898))
+const b3 = hump(at(0.898), at(0.918))
 const bounce = `calc(${b1} * 0.38 + ${b2} * 0.15 + ${b3} * 0.055)`
 const stretch = `calc(${b1} * 0.55 + ${b2} * 0.3 + ${b3} * 0.12)`
-const squash = `calc(${pulse(0.82, 150, HIT_AT, 26)} + ${pulse(0.8635, 220, 0.868, 40)} * 0.45 + ${pulse(0.8955, 400, 0.898, 70)} * 0.18)`
-const hit = pulse(0.82, 150, HIT_AT, 26)
+const hit = pulse(at(0.82), per(150), HIT_AT, per(26))
+const squash = `calc(${hit} + ${pulse(at(0.8635), per(220), at(0.868), per(40))} * 0.45 + ${pulse(at(0.8955), per(400), at(0.898), per(70))} * 0.18)`
 /** Runs 0 → 1 once, starting at impact: drives the grease spray. */
-const spray = seat(HIT_AT, 11)
+const spray = seat(HIT_AT, per(11))
 /** The wordmark clears before the heel reaches it. */
-const markGone = seat(0.02, 14)
+const markGone = seat(0.02, per(14))
 
 /** Where each part has fully seated, in build order (heel → crown). */
 const SEAT_MARKS = BUILD_ORDER.map((p) => p.fire + 1 / RATE)
@@ -236,39 +258,53 @@ export function FlipdSpecHero({ brandName, orderHref, menuHref, tagline }: Props
             >
               {PARTS.map((part, i) => {
                 const seatEnd = part.fire + 1 / RATE
+                const src = `/brand/parts/${part.art}.png`
                 return (
                   <div
                     key={part.no}
-                    className={`${s.part} ${part.side === 'left' ? s.left : s.right}`}
+                    className={s.slot}
                     style={{
                       ['--t' as string]: seat(part.fire),
                       ['--w' as string]: `${(part.w * 100).toFixed(1)}%`,
-                      ['--drop' as string]: part.drop,
-                      ['--land' as string]: pulse(seatEnd - 0.012, 84, seatEnd, 28),
                       // Upper layers paint over lower ones.
                       zIndex: PARTS.length - i,
                     }}
                   >
-                    <div className={s.callout} aria-hidden>
-                      <span className={s.no}>{part.no}</span>
-                      <span className={s.lead} />
-                      <span className={s.text}>
-                        <span className={s.name}>{part.name}</span>
-                        <span className={s.sub}>{part.spec}</span>
-                      </span>
-                    </div>
-                    {/* Hover spreads the finished stack into an exploded view:
-                        crown furthest, heel not at all. */}
-                    <div className={s.spread} style={{ ['--k' as string]: PARTS.length - 1 - i }}>
-                      <div
-                        className={s.art}
-                        style={{
-                          ['--flip' as string]: `${part.flip ?? 0}deg`,
-                          ['--tilt' as string]: `${part.tilt}deg`,
-                        }}
-                      >
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img src={`/brand/parts/${part.art}.png`} alt="" aria-hidden="true" />
+                    {/* The spec, drawn before the build: a faint navy
+                        silhouette of the part in its slot, fading as the part
+                        arrives. */}
+                    <span aria-hidden className={s.ghost} style={{ ['--src' as string]: `url(${src})` }}>
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={src} alt="" aria-hidden="true" />
+                    </span>
+                    <div
+                      className={`${s.part} ${part.side === 'left' ? s.left : s.right}`}
+                      style={{
+                        ['--drop' as string]: part.drop,
+                        ['--land' as string]: pulse(seatEnd - at(0.012), per(84), seatEnd, per(28)),
+                      }}
+                    >
+                      <div className={s.callout} aria-hidden>
+                        <span className={s.no}>{part.no}</span>
+                        <span className={s.lead} />
+                        <span className={s.text}>
+                          <span className={s.name}>{part.name}</span>
+                          <span className={s.sub}>{part.spec}</span>
+                        </span>
+                      </div>
+                      {/* Hover spreads the finished stack into an exploded view:
+                          crown furthest, heel not at all. */}
+                      <div className={s.spread} style={{ ['--k' as string]: PARTS.length - 1 - i }}>
+                        <div
+                          className={s.art}
+                          style={{
+                            ['--flip' as string]: `${part.flip ?? 0}deg`,
+                            ['--tilt' as string]: `${part.tilt}deg`,
+                          }}
+                        >
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img src={src} alt="" aria-hidden="true" />
+                        </div>
                       </div>
                     </div>
                   </div>

@@ -1,9 +1,14 @@
 'use client'
 // The sign-off: the lockup on the deepest plum, and a stackd paper bag with
-// the food crowd peeking out of it — the takeaway, still watching you. No
-// order button on purpose: BrandShell's own CTA sits immediately below.
+// the food crowd peeking out of it — the takeaway, still watching you — while
+// the sandwich stands beside the bag waving you off. After hours the crowd in
+// the bag is asleep. No order button on purpose: BrandShell's own CTA sits
+// immediately below.
 
+import { CrowdCameo, CrowdRow } from '../../world/cast/CrowdCameo'
+import { useKitchen } from '../../../lib/world/kitchens'
 import { LazyCrowd } from './LazyCrowd'
+import { useInView } from './hooks'
 import s from './signoff.module.css'
 import ui from './ui.module.css'
 
@@ -13,7 +18,13 @@ interface Props {
   address: string
 }
 
+const CAST = ['croissant', 'coffee', 'sandwich'] as const
+
 export function SignOff({ wordmarkSrc, wordmarkDims, address }: Props) {
+  const kitchen = useKitchen('stackd')
+  const closed = kitchen.phase === 'closed'
+  const { ref, inView } = useInView<HTMLDivElement>()
+
   return (
     <section className={s.section} aria-labelledby="stackd-signoff">
       <h2 id="stackd-signoff" className={s.mark}>
@@ -22,8 +33,14 @@ export function SignOff({ wordmarkSrc, wordmarkDims, address }: Props) {
         <img src={wordmarkSrc} alt="" aria-hidden="true" {...wordmarkDims} loading="lazy" decoding="async" />
       </h2>
 
-      <div className={s.stage} aria-hidden>
-        <LazyCrowd className={s.crowd} cast={['croissant', 'coffee', 'sandwich']} />
+      <div ref={ref} className={s.stage} aria-hidden>
+        <LazyCrowd
+          className={s.crowd}
+          cast={[...CAST]}
+          sleepy={closed ? 1 : undefined}
+          stageId="stackd-signoff"
+          fallback={<CrowdRow kinds={[...CAST]} size={120} pose={closed ? 'sleep' : 'peek'} gap={14} stagger={260} />}
+        />
         <div className={s.bag}>
           <div className={s.fold} />
           {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -31,6 +48,9 @@ export function SignOff({ wordmarkSrc, wordmarkDims, address }: Props) {
           <span className={s.bagMark}>stackd.</span>
           <span className={s.bagLine}>cooked here</span>
         </div>
+        <span className={s.waver}>
+          <CrowdCameo kind="sandwich" size={96} pose="wave" look="left" animate={inView} delay={250} />
+        </span>
       </div>
 
       <p className={s.addr}>{address}</p>

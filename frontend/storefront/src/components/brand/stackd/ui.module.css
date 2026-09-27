@@ -113,6 +113,32 @@
   padding: 0 clamp(1rem, 5vw, 3rem);
 }
 
+/* ── The room: ambient life between sections ──────────────────────────
+   A band that wraps neighbouring sections so crumbs (Motes), steam and, at
+   night, stars drift behind them — the plum field is never fully still. */
+.room { position: relative; isolation: isolate; }
+.ambient {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+/* The SVG stand-in under a lazy 3D crowd. It paints on the first byte and
+   fades out once the WebGL crowd has drawn a frame on top of it. */
+.crowdStandIn {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  pointer-events: none;
+  transition: opacity 360ms ease;
+}
+.crowdStandInOut { opacity: 0; }
+
 @media (prefers-reduced-motion: reduce) {
   .btn, .btn:hover, .btn:active { transition: none; transform: none; }
+  .crowdStandIn { transition: none; }
 }

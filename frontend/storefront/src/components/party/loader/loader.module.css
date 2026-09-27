@@ -1,5 +1,8 @@
-/* PartyLoader — servd hub route loader. Palette per design-system party.md:
-   plum on butter 8.35:1, ink on butter 11.52:1. Tomato = decoration only.
+/* PartyLoader — servd hub route loader, under the hour's sky.
+   Day: the classic butter stage (lunch sky-b is #FFD447), plum ink 8.35:1.
+   Dark (late/night): the world sky gradient with cream ink; the crowd dozes
+   (CrowdCameo nightPose) and the stadium wave stops. Tokens --world-* come
+   from globals (html[data-daypart]); every one has a lunch fallback here.
    One 2.6s beat drives the wave; --i staggers each character. */
 
 .screen,
@@ -15,7 +18,7 @@
   align-items: center;
   justify-content: center;
   text-align: center;
-  color: var(--ink);
+  color: var(--world-ink, var(--plum));
 }
 
 .screen {
@@ -24,18 +27,149 @@
   gap: clamp(0.4rem, 2vh, 1.2rem);
   overflow: hidden;
   isolation: isolate;
-  background:
-    radial-gradient(ellipse 60% 45% at 50% 45%, rgba(255, 250, 225, 0.8) 0%, rgba(255, 250, 225, 0) 70%),
-    #FFD447;
+  background: var(--world-sky-b, #FFD447);
+}
+:global(html[data-world-dark='1']) .screen {
+  background: linear-gradient(180deg, var(--world-sky-a, #231633) 0%, var(--world-sky-b, #140C20) 100%);
 }
 
-.inline { padding: 2rem 16px; gap: 0.4rem; }
+.inline { padding: 2rem 16px; gap: 0.4rem; color: inherit; }
+
+/* Warm glow behind the crowd (a lamp at night). */
+.glow {
+  position: absolute;
+  z-index: -1;
+  left: 50%;
+  top: 45%;
+  width: min(120vw, 1200px);
+  height: min(90vh, 760px);
+  translate: -50% -50%;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, var(--world-glow, #FFF4D6) 0%, transparent 100%);
+  opacity: 0.75;
+  pointer-events: none;
+}
+:global(html[data-world-dark='1']) .glow { opacity: 0.16; }
+
+/* Sun by day, moon by night, where the hour puts it. */
+.orb {
+  position: absolute;
+  z-index: -1;
+  left: var(--world-orb-x, 50%);
+  top: var(--world-orb-y, 10%);
+  width: clamp(44px, 6vw, 72px);
+  aspect-ratio: 1;
+  translate: -50% -50%;
+  border-radius: 50%;
+  background: var(--world-orb, #FFF1B8);
+  box-shadow: 0 0 0 10px color-mix(in srgb, var(--world-orb, #FFF1B8) 22%, transparent), 0 0 0 22px color-mix(in srgb, var(--world-orb, #FFF1B8) 10%, transparent);
+  pointer-events: none;
+}
 
 .stage { position: relative; width: min(100%, 900px); }
-.inline .stage { width: min(100%, 340px); }
-.crowd { position: relative; display: block; width: 100%; height: auto; overflow: visible; }
 
-/* Retro diner sunburst — slow spin behind the crowd. */
+/* ── The crowd row ─────────────────────────────────────────────────────── */
+.crowd {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: clamp(4px, 1.6vw, 22px);
+  padding-top: 3.5rem; /* room for the hop + sparkles */
+}
+.inline .crowd { gap: 8px; padding-top: 1.6rem; }
+
+.floor {
+  position: absolute;
+  left: 50%;
+  bottom: -10px;
+  width: min(100%, 860px);
+  height: 30px;
+  translate: -50% 0;
+  border-radius: 50%;
+  background: #F4C22E;
+  background: color-mix(in srgb, var(--world-sky-b, #FFD447) 86%, #8A4A00);
+}
+:global(html[data-world-dark='1']) .floor { background: rgba(255, 244, 214, 0.08); }
+.inline .floor { display: none; }
+
+.member {
+  position: relative;
+  display: block;
+  line-height: 0;
+  transform-origin: 50% 100%;
+  animation: hop var(--beat) infinite;
+  animation-delay: calc(var(--i) * 120ms);
+}
+.cameo { height: clamp(96px, 12.5vw, 176px); width: auto; }
+.inline .cameo { height: 60px; }
+.inline .edge { display: none; }
+
+@keyframes hop {
+  0%, 44%, 100% { transform: none; }
+  7%  { transform: scale(1.13, 0.85); animation-timing-function: cubic-bezier(0.2, 0.7, 0.3, 1); }
+  21% { transform: translateY(-26%) scale(0.93, 1.09); animation-timing-function: ease-in-out; }
+  25% { transform: translateY(-27%) scale(1); animation-timing-function: cubic-bezier(0.6, 0, 0.9, 0.5); }
+  33% { transform: translateY(0) scale(1.16, 0.83); animation-timing-function: var(--spring); }
+  39% { transform: scale(0.96, 1.05); }
+}
+
+/* The wave drives the cast's arms and shadow through its stable hooks. */
+.member :global([data-cast-part='armL']) { animation: armL var(--beat) infinite; animation-delay: calc(var(--i) * 120ms); }
+.member :global([data-cast-part='armR']) { animation: armR var(--beat) infinite; animation-delay: calc(var(--i) * 120ms); }
+@keyframes armL {
+  0%, 44%, 100% { transform: rotate(18deg); }
+  9%  { transform: rotate(48deg); }
+  19%, 29% { transform: rotate(158deg); }
+  37% { transform: rotate(8deg); }
+}
+@keyframes armR {
+  0%, 44%, 100% { transform: rotate(-18deg); }
+  9%  { transform: rotate(-48deg); }
+  19%, 29% { transform: rotate(-158deg); }
+  37% { transform: rotate(-8deg); }
+}
+.member :global([data-cast-part='shadow']) { animation: shadow var(--beat) infinite; animation-delay: calc(var(--i) * 120ms); }
+@keyframes shadow {
+  0%, 44%, 100% { transform: none; opacity: 0.16; }
+  7%  { transform: scaleX(1.12); }
+  23% { transform: scale(0.5); opacity: 0.06; }
+  33% { transform: scaleX(1.18); opacity: 0.2; }
+}
+
+.spark {
+  position: absolute;
+  left: 50%;
+  top: -2.2rem;
+  width: 22px;
+  margin-left: -11px;
+  opacity: 0;
+  animation: spark var(--beat) infinite;
+  animation-delay: calc(var(--i) * 120ms);
+}
+.member:nth-child(odd) .spark { margin-left: 8px; }
+.member:nth-child(even) .spark { margin-left: -30px; }
+@keyframes spark {
+  0%, 17%  { opacity: 0; transform: scale(0) rotate(0); }
+  24% { opacity: 1; transform: scale(1.3) rotate(45deg); }
+  34% { opacity: 1; transform: scale(0.9) rotate(90deg); }
+  42%, 100% { opacity: 0; transform: scale(0) rotate(120deg); }
+}
+
+/* Night: the crowd dozes. The wave stops; the cast's own nightPose takes over. */
+:global(html[data-world-dark='1']) .member { animation: none; }
+/* Room for the night cook's lantern. */
+:global(html[data-world-dark='1']) .lamp { margin-right: clamp(14px, 3vw, 40px); }
+:global(html[data-world-dark='1']) .spark { display: none; }
+
+/* Phones: the middle four, faces big. */
+@media (max-width: 560px) {
+  .screen .edge { display: none; }
+  .screen .cameo { height: 104px; }
+  .crowd { gap: 10px; }
+}
+
+/* ── Retro diner sunburst — slow spin behind the crowd (day only) ─────── */
 .burst {
   position: absolute;
   z-index: -1;
@@ -51,98 +185,9 @@
   animation: spin 60s linear infinite;
 }
 @keyframes spin { to { rotate: 360deg; } }
+:global(html[data-world-dark='1']) .burst { display: none; }
 
-/* Phones: crop the row to the middle four so every face stays big. */
-@media (max-width: 560px) {
-  .screen .stage {
-    overflow: hidden;
-    -webkit-mask-image: linear-gradient(90deg, transparent, #000 14%, #000 86%, transparent);
-    mask-image: linear-gradient(90deg, transparent, #000 14%, #000 86%, transparent);
-  }
-  .screen .crowd { width: 150%; margin-left: -25%; }
-}
-
-/* ── Characters ─────────────────────────────────────────────────────── */
-.hop {
-  animation: hop var(--beat) infinite;
-  animation-delay: calc(var(--i) * 120ms);
-}
-@keyframes hop {
-  0%, 44%, 100% { transform: none; }
-  7%  { transform: scale(1.13, 0.85); animation-timing-function: cubic-bezier(0.2, 0.7, 0.3, 1); }
-  21% { transform: translateY(-46px) scale(0.93, 1.09); animation-timing-function: ease-in-out; }
-  25% { transform: translateY(-48px) scale(1); animation-timing-function: cubic-bezier(0.6, 0, 0.9, 0.5); }
-  33% { transform: translateY(0) scale(1.16, 0.83); animation-timing-function: var(--spring); }
-  39% { transform: scale(0.96, 1.05); }
-}
-
-.armL { transform: rotate(18deg); animation: armL var(--beat) infinite; }
-.armR { transform: rotate(-18deg); animation: armR var(--beat) infinite; }
-.armL, .armR { animation-delay: calc(var(--i) * 120ms); }
-@keyframes armL {
-  0%, 44%, 100% { transform: rotate(18deg); }
-  9%  { transform: rotate(48deg); }
-  19%, 29% { transform: rotate(158deg); }
-  37% { transform: rotate(8deg); }
-}
-@keyframes armR {
-  0%, 44%, 100% { transform: rotate(-18deg); }
-  9%  { transform: rotate(-48deg); }
-  19%, 29% { transform: rotate(-158deg); }
-  37% { transform: rotate(-8deg); }
-}
-
-.shadow {
-  transform-box: fill-box;
-  transform-origin: center;
-  animation: shadow var(--beat) infinite;
-  animation-delay: calc(var(--i) * 120ms);
-}
-@keyframes shadow {
-  0%, 44%, 100% { transform: none; opacity: 0.16; }
-  7%  { transform: scaleX(1.12); }
-  23% { transform: scale(0.5); opacity: 0.06; }
-  33% { transform: scaleX(1.18); opacity: 0.2; }
-}
-
-.spark {
-  opacity: 0;
-  transform-box: fill-box;
-  transform-origin: center;
-  animation: spark var(--beat) infinite;
-  animation-delay: calc(var(--i) * 120ms);
-}
-@keyframes spark {
-  0%, 17%  { opacity: 0; transform: scale(0) rotate(0); }
-  24% { opacity: 1; transform: scale(1.3) rotate(45deg); }
-  34% { opacity: 1; transform: scale(0.9) rotate(90deg); }
-  42%, 100% { opacity: 0; transform: scale(0) rotate(120deg); }
-}
-
-/* Eyes: blink on each character's own clock; glance follows the wave. */
-.blink {
-  transform-box: fill-box;
-  transform-origin: center;
-  animation: blink var(--b) infinite;
-  animation-delay: calc(var(--i) * -0.7s);
-}
-@keyframes blink {
-  0%, 93%, 100% { transform: none; }
-  96% { transform: scaleY(0.08); }
-}
-.look { animation: look var(--beat) infinite ease-in-out; }
-@keyframes look {
-  0%, 18%, 100% { transform: translateX(-3px); }
-  50%, 62% { transform: translateX(3px); }
-  70%, 90% { transform: translate(0, 1px); }
-}
-.up { animation: up var(--beat) infinite; animation-delay: calc(var(--i) * 120ms); }
-@keyframes up {
-  0%, 40%, 100% { transform: none; }
-  14%, 30% { transform: translateY(-2.6px); }
-}
-
-/* ── Wordmark + status ──────────────────────────────────────────────── */
+/* ── Wordmark + status ──────────────────────────────────────────────────── */
 .brand { display: grid; justify-items: center; gap: 0.5rem; }
 
 .wordmark {
@@ -152,9 +197,9 @@
   font-size: clamp(3rem, 10vw, 5rem);
   line-height: 1;
   letter-spacing: -0.04em;
-  color: var(--plum);
+  color: var(--world-ink, var(--plum));
 }
-.inline .wordmark { font-size: 1.9rem; }
+.inline .wordmark { font-size: 1.9rem; color: inherit; }
 .wordmark span {
   display: inline-block;
   animation: letter var(--beat) infinite;
@@ -170,7 +215,7 @@
   height: 0.2em;
   margin-left: 0.05em;
   border-radius: 50%;
-  background: var(--tomato);
+  background: var(--world-accent, var(--tomato));
   animation-name: dot;
 }
 @keyframes dot {
@@ -179,9 +224,11 @@
   21% { transform: scale(1.3, 0.7); animation-timing-function: var(--spring); }
   27% { transform: translateY(-40%); }
 }
+:global(html[data-world-dark='1']) .wordmark span { animation: none; }
 
 .status {
   position: relative;
+  display: block;
   margin: 0;
   width: 22rem;
   max-width: 100%;
@@ -191,24 +238,36 @@
   font-weight: 700;
   font-size: 1.05rem;
   letter-spacing: -0.01em;
-  color: var(--plum);
+  color: var(--world-ink, var(--plum));
 }
+.inline .status { color: inherit; }
 .status span {
   position: absolute;
   inset: 0;
   white-space: nowrap;
   opacity: 0;
-  animation: line 7s infinite backwards;
+  animation: line 5.6s infinite backwards;
   animation-delay: calc(var(--n) * 1.4s - 0.25s);
 }
 .status .fixed { opacity: 1; animation: none; }
 @keyframes line {
   0%   { opacity: 0; transform: translateY(80%); }
-  3.6%, 17% { opacity: 1; transform: none; animation-timing-function: ease-in; }
-  20%, 100% { opacity: 0; transform: translateY(-80%); }
+  4.5%, 21.25% { opacity: 1; transform: none; animation-timing-function: ease-in; }
+  25%, 100% { opacity: 0; transform: translateY(-80%); }
 }
 
-/* ── Doodles ────────────────────────────────────────────────────────── */
+/* Day-part line sets: exactly one shows, chosen by the server-stamped hour
+   (lunch when nothing is stamped). */
+.dayLines { display: none; }
+:global(html:not([data-daypart])) .dayLines[data-dp~='lunch'],
+:global(html[data-daypart='morning']) .dayLines[data-dp~='morning'],
+:global(html[data-daypart='lunch']) .dayLines[data-dp~='lunch'],
+:global(html[data-daypart='afternoon']) .dayLines[data-dp~='afternoon'],
+:global(html[data-daypart='dinner']) .dayLines[data-dp~='dinner'],
+:global(html[data-daypart='late']) .dayLines[data-dp~='late'],
+:global(html[data-daypart='night']) .dayLines[data-dp~='night'] { display: block; }
+
+/* ── Doodles (day only) ────────────────────────────────────────────────── */
 .doodle { position: absolute; animation: float 5s ease-in-out infinite; }
 .dStar { top: 16%; left: 9%; width: clamp(28px, 4vw, 46px); fill: var(--plum); }
 .dDot { top: 24%; right: 12%; width: 18px; fill: var(--tomato); animation-delay: -2s; }
@@ -221,24 +280,66 @@
   0%, 100% { transform: translateY(0) rotate(0); }
   50% { transform: translateY(-12px) rotate(10deg); }
 }
+:global(html[data-world-dark='1']) .doodle { display: none; }
+
+/* The ground paints instantly (no blank flash between pages); the crowd and
+   wordmark follow a beat later, so a fast navigation never flickers the
+   loader on and off. Capped: everything is in by 400ms. */
+.screen .stage,
+.screen .brand {
+  animation: loaderReveal 280ms cubic-bezier(0.22, 1, 0.36, 1) 80ms both;
+}
+.screen .brand { animation-delay: 110ms; }
+@keyframes loaderReveal {
+  from { opacity: 0; transform: translateY(12px) scale(0.98); }
+  to   { opacity: 1; transform: none; }
+}
 
 @media (prefers-reduced-motion: reduce) {
   .screen *, .inline * { animation: none !important; }
   .status span:first-child { opacity: 1; transform: none; }
+  .screen .stage, .screen .brand { animation: none; }
 }
 
-/* The butter ground paints instantly (no blank flash between pages); the
-   crowd and wordmark wait a beat, then rise in — so a fast navigation never
-   flickers the loader on and off. */
-.screen .stage,
-.screen .brand {
-  animation: loaderReveal 560ms cubic-bezier(0.22, 1, 0.36, 1) 220ms both;
+/* ── ui/Loader: the small cameo spinner ────────────────────────────────── */
+.mini {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+  color: inherit; /* sits on any surface: take that surface's text colour */
 }
-.screen .brand { animation-delay: 320ms; }
-@keyframes loaderReveal {
-  from { opacity: 0; transform: translateY(16px) scale(0.98); }
-  to   { opacity: 1; transform: none; }
+.miniStage { position: relative; display: inline-flex; line-height: 0; }
+.miniCameo { display: none; }
+:global(html:not([data-daypart])) .miniCameo[data-dp~='lunch'],
+:global(html[data-daypart='morning']) .miniCameo[data-dp~='morning'],
+:global(html[data-daypart='lunch']) .miniCameo[data-dp~='lunch'],
+:global(html[data-daypart='afternoon']) .miniCameo[data-dp~='afternoon'],
+:global(html[data-daypart='dinner']) .miniCameo[data-dp~='dinner'],
+:global(html[data-daypart='late']) .miniCameo[data-dp~='late'],
+:global(html[data-daypart='night']) .miniCameo[data-dp~='night'] { display: inline-block; }
+.mini .status {
+  width: min(16rem, calc(100vw - 32px));
+  max-width: none;
+  flex: none;
+  font-size: 0.85rem;
+  color: inherit;
+  text-align: center;
+}
+/* simmer: no character, one slow orange dot. */
+.miniDot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #E94E1B;
+  animation: miniPulse 2.4s ease-in-out infinite;
+}
+@keyframes miniPulse {
+  0%, 100% { transform: scale(0.8); opacity: 0.55; }
+  50% { transform: scale(1.1); opacity: 1; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .screen .stage, .screen .brand { animation: none; }
+  .mini * { animation: none !important; }
+  .mini .status span:first-child { opacity: 1; transform: none; }
 }

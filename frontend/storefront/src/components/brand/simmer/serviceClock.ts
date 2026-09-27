@@ -8,6 +8,14 @@
 //
 // Computed per render (the stamp used to be a module constant that froze at
 // server start), re-read on mount, then once a minute.
+//
+// These hours are the same rule set as the world's simmer fallback in
+// lib/world/kitchenCore (FALLBACK_HOURS.simmer: tue–sun 19:00 → 02:30 the
+// next morning, monday dark, sunday's late service running into monday's
+// small hours). This file stays because it owns simmer's "service date" — the
+// night a table belongs to — which the world clock has no notion of. If the
+// hours change, change both: the candle, the doors scenes and the home board
+// must agree about whether the room is on.
 
 import { useEffect, useState } from 'react'
 
@@ -80,7 +88,13 @@ export function useService(): Service {
   useEffect(() => {
     setSvc(serviceNow())
     const id = window.setInterval(() => setSvc(serviceNow()), 60_000)
-    return () => window.clearInterval(id)
+    // A tab left in the background comes back to tonight's real state.
+    const onVis = () => { if (document.visibilityState === 'visible') setSvc(serviceNow()) }
+    document.addEventListener('visibilitychange', onVis)
+    return () => {
+      window.clearInterval(id)
+      document.removeEventListener('visibilitychange', onVis)
+    }
   }, [])
   return svc
 }

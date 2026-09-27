@@ -13,13 +13,22 @@
 //
 // "Cooked here. Wrapped, not plated." — the page walks through the room:
 //   1. the slip       — he breathes, leans after you, steams; scroll, he slips
-//   2. stickers       — what we do, slapped on as they arrive, each one moving
+//   2. stickers       — what we do, slapped on as they arrive, each one moving;
+//                       pick one up, peel one; the coffee peeks over an edge
 //   3. the pastry case — this morning's bake on lit shelves; lift to look
 //   4. the chiller    — grab-and-go; the door swings open on scroll, the fog
 //                       clears, and the food crowd is inside
 //   5. wrapped        — a parcel that unwraps as you read the story
-//   6. visit          — the door sign, the hours on a till receipt, the map
+//   6. visit          — the door sign (the croissant leaning on it), the hours
+//                       on a till receipt, the map pin
 //   7. other brands, then the sign-off: the crowd peeking out of a stackd bag
+//
+// The café keeps real hours. The server stamps html[data-k-stackd] (open ·
+// closing · opening · closed) and WorldSync keeps it live, so the case lamp,
+// the chiller LED, the sign and the crowd's sleep all read one truth
+// (lib/world/kitchenCore) from the first paint. Between the set-pieces the
+// room is never still: cream crumbs drift through the air by day, and at
+// night a few stars show through the plum.
 //
 // Component CSS lives in components/brand/stackd/*.module.css. globals.css
 // still owns the --stackd-* tokens and the fixed plum field (.stackd-bg-fixed).
@@ -37,6 +46,8 @@ import { Chiller } from '../stackd/Chiller'
 import { Parcel } from '../stackd/Parcel'
 import { Visit } from '../stackd/Visit'
 import { SignOff } from '../stackd/SignOff'
+import { Motes, Stars } from '../../world/Ambient'
+import ui from '../stackd/ui.module.css'
 
 interface Props {
   concept: Concept
@@ -106,9 +117,16 @@ export function StackdLayout({ concept, concepts }: Props) {
           customMascotDims={mascotDims}
         />
 
-        <StickerWall highlights={story.highlights} />
-
-        <PastryCase menuHref={menuHref} />
+        {/* One room: the stickers on the wall and the case beneath them, with
+            crumbs in the air between (stars instead, after dark). */}
+        <div className={ui.room}>
+          <div className={ui.ambient} aria-hidden>
+            <Motes count={12} seed={7} color="#FCE8CE" />
+            <Stars count={14} seed={11} />
+          </div>
+          <StickerWall highlights={story.highlights} />
+          <PastryCase menuHref={menuHref} />
+        </div>
 
         <Chiller orderHref={orderHref} />
 

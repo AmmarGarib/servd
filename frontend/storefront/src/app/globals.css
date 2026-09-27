@@ -85,6 +85,109 @@
         app-router server boundaries reliably) ─────────────────────────── */
 }
 
+/* ── World tokens: the sky knows what time it is ──────────────────────────
+   The root layout stamps html[data-daypart] on the server (Karachi time, or
+   the ?daypart= override) and WorldSync keeps it live, so anything tinted
+   with these is right on the very first paint. :root holds the lunch values
+   (the default when no attribute is present).
+
+   Contrast (WCAG, ink on both sky stops): --world-ink is >= 7.5:1 on every
+   sky. --world-ink-soft was specified at rgba(78,42,79,.74) for morning,
+   lunch and afternoon, which measured 4.42 / 4.48 / 4.21:1 on sky-b — under
+   4.5. Raised minimally: .80 for morning and lunch (now >= 5.1:1), .82 for
+   afternoon (now >= 5.0:1). Dinner, late and night pass as specified. */
+:root {
+  --world-sky-a:    #FFE58A;
+  --world-sky-b:    #FFD447;
+  --world-glow:     #FFF4D6;
+  --world-ink:      #4E2A4F;
+  --world-ink-soft: rgba(78,42,79,.8);
+  --world-accent:   #FF5A3C;
+  --world-orb:      #FFF1B8;
+  --world-orb-x:    50%;
+  --world-orb-y:    10%;
+  --world-cta-bg:   #4E2A4F;
+  --world-cta-ink:  #FFF4D6;
+}
+html[data-daypart='morning'] {
+  --world-sky-a:    #FFE9C2;
+  --world-sky-b:    #FFD27A;
+  --world-glow:     #FFF7E6;
+  --world-ink:      #4E2A4F;
+  --world-ink-soft: rgba(78,42,79,.8);
+  --world-accent:   #FF7A45;
+  --world-orb:      #FFB35C;
+  --world-orb-x:    16%;
+  --world-orb-y:    64%;
+  --world-cta-bg:   #4E2A4F;
+  --world-cta-ink:  #FFF4D6;
+}
+html[data-daypart='lunch'] {
+  --world-sky-a:    #FFE58A;
+  --world-sky-b:    #FFD447;
+  --world-glow:     #FFF4D6;
+  --world-ink:      #4E2A4F;
+  --world-ink-soft: rgba(78,42,79,.8);
+  --world-accent:   #FF5A3C;
+  --world-orb:      #FFF1B8;
+  --world-orb-x:    50%;
+  --world-orb-y:    10%;
+  --world-cta-bg:   #4E2A4F;
+  --world-cta-ink:  #FFF4D6;
+}
+html[data-daypart='afternoon'] {
+  --world-sky-a:    #FFDC8C;
+  --world-sky-b:    #FFC53D;
+  --world-glow:     #FFF1CF;
+  --world-ink:      #4E2A4F;
+  --world-ink-soft: rgba(78,42,79,.82);
+  --world-accent:   #FF5A3C;
+  --world-orb:      #FFE08A;
+  --world-orb-x:    74%;
+  --world-orb-y:    26%;
+  --world-cta-bg:   #4E2A4F;
+  --world-cta-ink:  #FFF4D6;
+}
+html[data-daypart='dinner'] {
+  --world-sky-a:    #FFC27A;
+  --world-sky-b:    #F59A4A;
+  --world-glow:     #FFE3BD;
+  --world-ink:      #2E1530;
+  --world-ink-soft: rgba(46,21,48,.8);
+  --world-accent:   #C2272D;
+  --world-orb:      #FF7A45;
+  --world-orb-x:    86%;
+  --world-orb-y:    60%;
+  --world-cta-bg:   #2E1530;
+  --world-cta-ink:  #FFE3BD;
+}
+html[data-daypart='late'] {
+  --world-sky-a:    #4A2A5E;
+  --world-sky-b:    #2E1B3F;
+  --world-glow:     #FFB86B;
+  --world-ink:      #FFF4D6;
+  --world-ink-soft: rgba(255,244,214,.8);
+  --world-accent:   #FFD447;
+  --world-orb:      #FFE9B0;
+  --world-orb-x:    80%;
+  --world-orb-y:    18%;
+  --world-cta-bg:   #FFD447;
+  --world-cta-ink:  #2A1630;
+}
+html[data-daypart='night'] {
+  --world-sky-a:    #231633;
+  --world-sky-b:    #140C20;
+  --world-glow:     #FFD447;
+  --world-ink:      #FFF4D6;
+  --world-ink-soft: rgba(255,244,214,.76);
+  --world-accent:   #9BD3DD;
+  --world-orb:      #F4EEDC;
+  --world-orb-x:    22%;
+  --world-orb-y:    14%;
+  --world-cta-bg:   #FFD447;
+  --world-cta-ink:  #2A1630;
+}
+
 /* ── Global a11y: focus-visible rings + reduced-motion ────────────────────
    The storefront uses focus:outline-none on inputs and replaces with a
    custom box-shadow, but buttons + links had no replacement — keyboard
@@ -433,6 +536,39 @@ summary:focus-visible {
   background-position: center, center;
 }
 
+/* Grain: a fine paper/cement tooth over the plum so the field reads as a
+   surface, not a flat fill. Static, so it costs nothing per frame. */
+.stackd-bg-fixed::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  opacity: .07;
+  mix-blend-mode: soft-light;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-size: 180px 180px;
+}
+
+/* The track lighting obeys the real kitchen: with the café closed the pool
+   at the top dims by ~40%, and under a night sky it runs cooler (the one pale
+   blue, not cream). html[data-k-stackd] / [data-world-dark] are stamped by
+   the root layout and kept live by WorldSync. */
+html[data-k-stackd='closed'] .stackd-bg-fixed {
+  background-image:
+    radial-gradient(120% 80% at 50% -10%, rgba(252,232,206,0.06), transparent 60%),
+    radial-gradient(90% 60% at 50% 110%, rgba(61,17,34,0.55), transparent 65%);
+}
+html[data-world-dark='1'] .stackd-bg-fixed {
+  background-image:
+    radial-gradient(120% 80% at 50% -10%, rgba(155,211,221,0.10), transparent 60%),
+    radial-gradient(90% 60% at 50% 110%, rgba(61,17,34,0.55), transparent 65%);
+}
+html[data-world-dark='1'][data-k-stackd='closed'] .stackd-bg-fixed {
+  background-image:
+    radial-gradient(120% 80% at 50% -10%, rgba(155,211,221,0.06), transparent 60%),
+    radial-gradient(90% 60% at 50% 110%, rgba(61,17,34,0.55), transparent 65%);
+}
+
 /* Panels that lift off the plum field — micro-cement, very slightly warmer. */
 .stackd-page .stackd-grid-live { background-color: rgba(61,17,34,0.45); }
 
@@ -580,6 +716,7 @@ summary:focus-visible {
   position: sticky;
   top: 0;
   height: 100vh;
+  height: 100svh;
   overflow: hidden;
   /* Two rows: the fall happens in the first, the copy sits in the second, so
      they cannot occupy the same space at any viewport height. */
@@ -728,13 +865,20 @@ summary:focus-visible {
 }
 
 @media (max-width: 820px) {
-  .stackd-page .stackd-slip { height: 340vh; }
+  /* Touch-native: a thumb-flick travels much further than a wheel notch, so
+     the pinned track is short on phones (was 340vh). */
+  .stackd-page .stackd-slip { height: 210vh; height: 210svh; }
   .stackd-page .stackd-slip-guy { width: clamp(10rem, 54vw, 15rem); }
   .stackd-page .stackd-slip-bread {
     bottom: calc(2.1rem + clamp(10rem, 54vw, 15rem) * 0.74);
     width: calc(clamp(10rem, 54vw, 15rem) * 0.60);
   }
   .stackd-page .stackd-slip-floor { width: 88vw; height: 3rem; }
+}
+/* Any coarse pointer (tablets, touch laptops) gets the short track too. Sits
+   before the reduced-motion block below, which must still win. */
+@media (pointer: coarse) {
+  .stackd-page .stackd-slip { height: 210vh; height: 210svh; }
 }
 
 /* Reduced motion: he is standing, holding it, nothing moves. The drawing is
@@ -1089,6 +1233,7 @@ html:has(.simmer-page) {
   position: sticky;
   top: 0;
   height: 100vh;
+  height: 100svh;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
   justify-items: center;
@@ -1415,11 +1560,17 @@ html:has(.simmer-page) {
   }
 }
 @media (max-width: 820px) {
-  .flipd-page .flipd-spec { height: calc(100vh + min(180vh, 1500px)); }
+  /* Touch-native: one screen of pin plus 120svh of build (was +180vh). */
+  .flipd-page .flipd-spec { height: calc(100vh + 120vh); height: calc(100svh + 120svh); }
   .flipd-page .flipd-spec-field { --fw: min(15rem, 34vh); }
   .flipd-page .flipd-spec-hint { display: none; }
   .flipd-page .flipd-spec-title { gap: 0.6rem; }
   .flipd-page .flipd-spec-titleno { font-size: 0.55rem; letter-spacing: 0.18em; }
+}
+/* Coarse pointers at any width: the same short track. Before the reduced-
+   motion block, which must still win. */
+@media (pointer: coarse) {
+  .flipd-page .flipd-spec { height: calc(100vh + 120vh); height: calc(100svh + 120svh); }
 }
 
 /* Reduced motion: the drawing is the point, the movement is only how it is

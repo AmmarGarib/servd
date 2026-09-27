@@ -1,23 +1,41 @@
 'use client'
-// BrandDeck — the kitchens as a hand of oversized trading cards.
+// BrandDeck: the kitchens as a hand of oversized trading cards.
 //
-// Each card is its brand's own colours (brandSurface) framed in the servd
-// ink border + offset shadow so the three still read as one set. Cards slap
-// in with a springy entrance, tilt toward the pointer, and hovering a
-// playful one makes its crowd character cheer (coffee → stackd, burger →
-// Flipd). simmer is the deliberate contrast: night-green, Amarante, one
-// orange hairline, a slow candle glow — no stickers, no cartoon.
+// Each card is its brand's own colours (brandSurface), framed in the servd
+// ink border and offset shadow so the three still read as one set. Cards
+// tilt toward the pointer. Hovering or tapping lifts a card and makes its
+// crowd character cheer (coffee → stackd, burger → Flipd).
 //
-// Two links per card, stretched-link pattern: the name link's ::after
-// covers the card (→ /brand/<slug>), and "Order from X" sits above it
-// (→ /<slug>).
+// Each card also wears a live status sticker from useKitchens, written in the
+// brand's own voice, with a pulsing dot while the kitchen is open. A cast
+// member peeks over the top edge of the stackd card (coffee) and the Flipd
+// card (burger), and dozes at night.
+//
+// simmer is the deliberate contrast: night-green, Amarante, a thin bone
+// hairline and, only while simmer is really open, one small orange dot. It
+// has no stickers and no character, and its candle only glows during
+// service.
+//
+// There are two links per card, using the stretched-link pattern: the name
+// link's ::after covers the card (→ /brand/<slug>), and "Order from X" sits
+// above it (→ /<slug>).
+//
+// Reveal hygiene: SSR is final. Cards mounted below the fold are armed at
+// opacity .4 / 24px and settle in ≤ 450 ms (useReveal).
 import Link from 'next/link'
 import { useRef, type CSSProperties, type PointerEvent } from 'react'
 import { motion, useMotionTemplate, useMotionValue, useReducedMotion, useSpring, useTransform } from 'framer-motion'
 import { ArrowRight, ArrowUpRight } from 'lucide-react'
 import { brandSurface } from '../../../lib/concept'
+import { useKitchens } from '../../../lib/world/kitchens'
+import { useWorld } from '../../../lib/world/useWorld'
+import { kitchenLine } from '../../../lib/world/voice'
+import { asKitchenSlug } from '../../../lib/world/kitchenCore'
 import { emitCrowd } from '../../characters/crowdBus'
 import type { CharacterKind } from '../../characters/types'
+import { Motes } from '../../world/Ambient'
+import { DozyCameo } from '../PartyHero'
+import { useReveal } from './Divider'
 import s from './home.module.css'
 import d from './deck.module.css'
 
@@ -67,13 +85,30 @@ const META: Record<string, CardMeta> = {
 
 const FALLBACK_META: CardMeta = { kind: 'kitchen', tab: { bg: '#FFF4D6', fg: '#4E2A4F' }, tilt: 0 }
 
+function StatusSticker({ slug, elegant }: { slug: string; elegant: boolean }) {
+  const kitchens = useKitchens()
+  const world = useWorld()
+  const ks = asKitchenSlug(slug)
+  const k = ks ? kitchens.bySlug[ks] : undefined
+  if (!k) return null
+  const line = world.ready ? kitchenLine(k, world.dayPart) : k.label
+  return (
+    <span className={`${d.status} ${elegant ? d.statusQuiet : ''}`} data-phase={k.phase}>
+      {!elegant && <span className={d.statusDot} aria-hidden />}
+      <span className={d.statusText}>{line}</span>
+    </span>
+  )
+}
+
 function BrandCard({ b, index }: { b: HomeBrand; index: number }) {
   const reduce = useReducedMotion()
   const meta = META[b.slug] ?? FALLBACK_META
   const surface = brandSurface(b.slug)
   const cardRef = useRef<HTMLDivElement>(null)
+  const [slotRef, reveal] = useReveal<HTMLElement>()
+  const touchTimer = useRef<number | undefined>(undefined)
 
-  // Pointer tilt — springy, only for fine pointers and full motion.
+  // Pointer tilt: springy, fine pointers and full motion only.
   const px = useMotionValue(0.5)
   const py = useMotionValue(0.5)
   const sx = useSpring(px, { stiffness: 220, damping: 18 })
@@ -99,22 +134,24 @@ function BrandCard({ b, index }: { b: HomeBrand; index: number }) {
   function onEnter(e: PointerEvent<HTMLDivElement>) {
     if (e.pointerType === 'mouse' && meta.cheer) emitCrowd({ type: 'cheer', kind: meta.cheer })
   }
-
-  const entrance = meta.elegant
-    ? { initial: { opacity: 0, y: 40 }, transition: { duration: 1.1, ease: [0.22, 1, 0.36, 1], delay: 0.15 + index * 0.12 } }
-    : {
-        initial: { opacity: 0, y: 90, rotate: meta.tilt * 4, scale: 0.88 },
-        transition: { type: 'spring' as const, stiffness: 170, damping: 13, delay: index * 0.12 },
-      }
+  // Touch parity: a tap gets the same lift (and cheer) that hover does.
+  function onDown(e: PointerEvent<HTMLDivElement>) {
+    if (e.pointerType === 'mouse') return
+    const el = slotRef.current
+    if (!el) return
+    el.setAttribute('data-touched', '1')
+    window.clearTimeout(touchTimer.current)
+    touchTimer.current = window.setTimeout(() => el.removeAttribute('data-touched'), 900)
+    if (meta.cheer) emitCrowd({ type: 'cheer', kind: meta.cheer })
+  }
 
   return (
-    <motion.article
-      className={`${d.slot} ${meta.elegant ? d.elegant : ''}`}
-      style={{ '--tilt': `${meta.tilt}deg` } as CSSProperties}
-      initial={entrance.initial}
-      whileInView={{ opacity: 1, y: 0, rotate: meta.tilt, scale: 1 }}
-      viewport={{ once: true, amount: 0.25 }}
-      transition={reduce ? { duration: 0 } : entrance.transition}
+    <article
+      ref={slotRef}
+      className={`${d.slot} ${s.rv} ${meta.elegant ? d.elegant : ''}`}
+      data-reveal={reveal}
+      data-slug={b.slug}
+      style={{ '--tilt': `${meta.tilt}deg`, '--ri': Math.min(index, 2) } as CSSProperties}
     >
       <motion.div
         ref={cardRef}
@@ -122,6 +159,7 @@ function BrandCard({ b, index }: { b: HomeBrand; index: number }) {
         onPointerMove={onMove}
         onPointerLeave={onLeave}
         onPointerEnter={onEnter}
+        onPointerDown={onDown}
         style={{
           rotateX,
           rotateY,
@@ -135,11 +173,19 @@ function BrandCard({ b, index }: { b: HomeBrand; index: number }) {
           /{b.slug}
         </span>
 
+        {/* A cast member peeking over the top edge (never on simmer). */}
+        {meta.cheer && !meta.elegant && (
+          <span className={d.peek} aria-hidden>
+            <DozyCameo kind={meta.cheer} pose="peek" size={76} delay={index * 400} className={d.peekCameo} />
+          </span>
+        )}
+
         <div className={d.photo}>
           <img src={b.img} alt="" loading="lazy" decoding="async" width={1200} height={960} />
           <span className={d.num} aria-hidden>No. 0{index + 1}</span>
           <span className={d.kind} aria-hidden>{meta.kind}</span>
           {meta.elegant && <span aria-hidden className={d.candle} />}
+          <StatusSticker slug={b.slug} elegant={!!meta.elegant} />
         </div>
 
         {meta.sticker && (
@@ -165,7 +211,11 @@ function BrandCard({ b, index }: { b: HomeBrand; index: number }) {
               )}
             </Link>
           </h3>
-          {meta.elegant && <span aria-hidden className={d.hairline} />}
+          {meta.elegant && (
+            <span aria-hidden className={d.hairline}>
+              <span className={d.hairDot} />
+            </span>
+          )}
           <p className={d.tagline}>{b.tagline}</p>
           {b.highlights.length > 0 && (
             <ul className={d.chips} aria-label={`${b.name} highlights`}>
@@ -190,23 +240,18 @@ function BrandCard({ b, index }: { b: HomeBrand; index: number }) {
 
         <motion.span aria-hidden className={d.glare} style={{ background: glare }} />
       </motion.div>
-    </motion.article>
+    </article>
   )
 }
 
 export function BrandDeck({ brands }: { brands: HomeBrand[] }) {
-  const reduce = useReducedMotion()
+  const [headRef, headReveal] = useReveal<HTMLElement>()
   return (
     <section id="brands" className={d.section} aria-labelledby="brands-title">
+      <Motes className={s.motes} count={8} seed={21} color="rgba(78, 42, 79, 0.28)" />
       <svg aria-hidden className={d.bgStar} viewBox="0 0 40 40"><path d="M20 2 L24 16 L38 20 L24 24 L20 38 L16 24 L2 20 L16 16 Z" /></svg>
       <div className={s.wrap}>
-        <motion.header
-          className={d.head}
-          initial={{ opacity: 0, y: 30 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true, amount: 0.5 }}
-          transition={{ type: 'spring', stiffness: 160, damping: 16 }}
-        >
+        <header ref={headRef} className={`${d.head} ${s.rv}`} data-reveal={headReveal}>
           <div>
             <p className={s.eyebrow}>The kitchens</p>
             <h2 id="brands-title" className={s.h2}>
@@ -221,7 +266,7 @@ export function BrandDeck({ brands }: { brands: HomeBrand[] }) {
             <span>tap a card to meet the kitchen</span>
             <svg viewBox="0 0 120 80"><path d="M8 10 C 40 4, 88 14, 96 46 M84 36 L97 50 L108 34" /></svg>
           </p>
-        </motion.header>
+        </header>
 
         <div className={d.grid}>
           {brands.map((b, i) => <BrandCard key={b.id} b={b} index={i} />)}

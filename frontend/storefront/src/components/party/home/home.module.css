@@ -12,6 +12,9 @@
   --ink-mute: #5C4A3D;
   --tomato: #FF5A3C;
   --spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  /* The kitchen board's ground follows the day. Dividers into and out of the
+     board read this same token, so the seams never show a hard edge. */
+  --home-board: #4E2A4F;
 
   display: flex;
   flex-direction: column;
@@ -94,6 +97,36 @@
 .btnCream { background: var(--cream); color: var(--ink); }
 .btnCream:hover { transform: translateY(-3px) rotate(1.5deg); }
 
+/* Dinner stays plum (the board adds its own ember glow); late and the small
+   hours go a deeper, cooler plum. */
+:global(html[data-daypart='late']) .root { --home-board: #3A2148; }
+:global(html[data-daypart='night']) .root { --home-board: #2B1A3A; }
+
+/* ── Reveal hygiene (useReveal in Divider.tsx) ─────────────────────────────
+   SSR = final. Armed blocks sit at opacity .4, 24px low, never invisible.
+   Shown: 330 ms plus a --ri stagger of at most 2 × 60 ms, i.e. ≤ 450 ms. */
+.rv {
+  --ri: 0;
+}
+.rv[data-reveal='armed'] {
+  opacity: 0.4;
+  translate: 0 24px;
+}
+.rv[data-reveal='shown'] {
+  transition:
+    opacity 300ms ease-out calc(var(--ri) * 60ms),
+    translate 330ms cubic-bezier(0.22, 1.2, 0.36, 1) calc(var(--ri) * 60ms);
+}
+
+/* Sparse drifting motes on the cream bands (Ambient from the world kit). */
+.motes {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
 /* ── Dividers ─────────────────────────────────────────────────────────── */
 .divider {
   position: relative;
@@ -106,13 +139,16 @@
 .dividerTrack {
   position: absolute;
   inset: 0 auto 0 0;
-  width: 200%;
+  width: 3600px;
   height: 100%;
   display: flex;
-  animation: dividerDrift 22s linear infinite;
+  /* One 1200px tile per 72 s: about 17px/s on every screen width. */
+  animation: dividerDrift 72s linear infinite;
 }
-.dividerTrack svg { width: 50%; height: 100%; display: block; flex-shrink: 0; }
-@keyframes dividerDrift { to { transform: translateX(-50%); } }
+.dividerTrack[data-flip='1'] { animation-direction: reverse; }
+/* Three tiles cover any viewport up to 2400px wide at every drift offset. */
+.dividerTrack svg { width: 1200px; height: 100%; display: block; flex-shrink: 0; }
+@keyframes dividerDrift { to { transform: translateX(-1200px); } }
 
 .srOnly {
   position: absolute;
@@ -130,6 +166,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .dividerTrack { animation: none; }
+  .rv[data-reveal] { opacity: 1; translate: none; transition: none; }
   .btn:hover, .btnCream:hover { transform: none; }
   .btn:hover svg { transform: none; }
 }

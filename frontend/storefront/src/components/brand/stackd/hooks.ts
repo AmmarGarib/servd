@@ -1,6 +1,11 @@
 'use client'
 // Small motion hooks for the stackd microsite. Everything here writes CSS
 // custom properties or flips a class — React never re-renders per frame.
+//
+// Reveal hygiene (the screenshot test): the server-rendered state is always
+// the FINAL state. Entrances are only armed after mount (`useArmed`), trigger
+// early (threshold 0, a positive bottom rootMargin) and finish in ≤450 ms, so
+// a reader who jump-scrolls anywhere never lands on an empty plum field.
 
 import { useEffect, useRef, useState } from 'react'
 
@@ -9,6 +14,22 @@ export function prefersReducedMotion(): boolean {
 }
 
 const clamp01 = (n: number) => (n < 0 ? 0 : n > 1 ? 1 : n)
+
+/** The rootMargin every stackd reveal uses: fire just before the element arrives. */
+export const REVEAL_MARGIN = '0px 0px 10% 0px'
+
+/**
+ * True once mounted in a browser that allows motion. Entrances key off this,
+ * so no-JS and reduced-motion readers get the finished state and never a
+ * hidden one.
+ */
+export function useArmed(): boolean {
+  const [armed, setArmed] = useState(false)
+  useEffect(() => {
+    if (!prefersReducedMotion()) setArmed(true)
+  }, [])
+  return armed
+}
 
 /**
  * 0..1 progress of an element travelling up the viewport, written to `--p`.
@@ -85,13 +106,14 @@ export function useViewProgress<T extends HTMLElement = HTMLElement>(
 /**
  * Whether an element is (or once was, with `once`) near the viewport.
  * Defaults to true without IntersectionObserver so nothing stays hidden.
+ * Defaults follow the reveal rules: threshold 0, fire 10% early.
  */
-export function useInView<T extends HTMLElement = HTMLElement>(
+export function useInView<T extends Element = HTMLElement>(
   opts: { rootMargin?: string; once?: boolean; threshold?: number } = {},
 ) {
   const ref = useRef<T | null>(null)
   const [inView, setInView] = useState(false)
-  const { rootMargin = '0px', once = false, threshold = 0 } = opts
+  const { rootMargin = REVEAL_MARGIN, once = false, threshold = 0 } = opts
   useEffect(() => {
     const el = ref.current
     if (!el) return
@@ -107,10 +129,31 @@ export function useInView<T extends HTMLElement = HTMLElement>(
           if (once) io.disconnect()
         } else if (!once) setInView(false)
       },
-      { rootMargin, threshold },
+      { rootMargin, threshold: Math.min(threshold, 0.05) },
     )
     io.observe(el)
     return () => io.disconnect()
   }, [rootMargin, once, threshold])
   return { ref, inView }
+}
+
+/**
+ * A pulse flag: true for `ms` each time `key` changes after the first render.
+ * Used for one-shot flourishes (the door sign flipping when the kitchen opens
+ * or closes). Never fires under reduced motion.
+ */
+export function useChangePulse(key: unknown, ms: number): boolean {
+  const [on, setOn] = useState(false)
+  const first = useRef(true)
+  useEffect(() => {
+    if (first.current) {
+      first.current = false
+      return
+    }
+    if (prefersReducedMotion()) return
+    setOn(true)
+    const id = window.setTimeout(() => setOn(false), ms)
+    return () => window.clearTimeout(id)
+  }, [key, ms])
+  return on
 }

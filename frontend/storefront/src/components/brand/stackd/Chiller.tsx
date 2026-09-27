@@ -2,11 +2,16 @@
 // The grab-and-go chiller. Its glass door is fogged with condensation (someone
 // has written in it); scroll and the door swings open, the fog clears, cold
 // air rolls out — and the food crowd is standing on the top shelf. They cheer
-// when the door is all the way open.
+// every time the door comes all the way open (scroll it shut and open again
+// and they cheer again), and lean after your pointer while it is over the
+// cabinet. It keeps the café's hours: the LED is lit while stackd is open and
+// off when it is closed, and after hours the crowd inside is asleep.
 
 import Link from 'next/link'
-import { useRef, useState } from 'react'
+import { useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { emitCrowd } from '../../characters/crowdBus'
+import { CrowdRow } from '../../world/cast/CrowdCameo'
+import { useKitchen } from '../../../lib/world/kitchens'
 import { LazyCrowd } from './LazyCrowd'
 import { useViewProgress } from './hooks'
 import s from './chiller.module.css'
@@ -45,9 +50,17 @@ function Bottle({ liquid, cap }: { liquid: string; cap: string }) {
   )
 }
 
+const CAST = ['coffee', 'sandwich', 'croissant'] as const
+const LOOK_EVERY_MS = 100 // ≤10 looks a second
+
 export function Chiller({ orderHref }: { orderHref: string }) {
+  const kitchen = useKitchen('stackd')
+  const closed = kitchen.phase === 'closed'
+  const closedRef = useRef(closed)
+  closedRef.current = closed
   const [open, setOpen] = useState(false)
   const cheered = useRef(false)
+  const lastLook = useRef(0)
   const fridgeRef = useViewProgress<HTMLDivElement>({
     start: 0.6,
     end: 0.05,
@@ -56,12 +69,23 @@ export function Chiller({ orderHref }: { orderHref: string }) {
       setOpen((o) => (o === nowOpen ? o : nowOpen))
       if (nowOpen && !cheered.current) {
         cheered.current = true
-        emitCrowd({ type: 'cheer' })
-      } else if (p < 0.3) {
+        // After hours the door-light wakes them: a start, not a cheer.
+        if (closedRef.current) emitCrowd({ type: 'react', mood: 'surprised', seconds: 1.6 })
+        else emitCrowd({ type: 'cheer' })
+      } else if (!nowOpen && p < 0.8) {
+        // The door has swung back (a little hysteresis so a reader resting
+        // on the threshold doesn't make them cheer on every pixel).
         cheered.current = false
       }
     },
   })
+
+  const onPointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const now = performance.now()
+    if (now - lastLook.current < LOOK_EVERY_MS) return
+    lastLook.current = now
+    emitCrowd({ type: 'look', x: e.clientX, y: e.clientY })
+  }
 
   return (
     <section className={s.section} aria-labelledby="stackd-chiller">
@@ -86,15 +110,26 @@ export function Chiller({ orderHref }: { orderHref: string }) {
           </div>
         </div>
 
-        <div ref={fridgeRef} className={`${s.fridge} ${open ? s.isOpen : ''}`} aria-hidden>
+        <div ref={fridgeRef} className={`${s.fridge} ${open ? s.isOpen : ''}`} aria-hidden onPointerMove={onPointerMove}>
           <div className={s.top}>
             <span className={s.brand}>stackd</span>
-            <span className={s.led}><span className={s.ledDot} />cold</span>
+            <span className={s.led}>
+              <span className={s.ledDot} />
+              <span className={s.ledOn}>cold</span>
+              <span className={s.ledOff}>lights out</span>
+            </span>
           </div>
           <div className={s.cabinet}>
             <div className={s.interior}>
               <div className={s.light} />
-              <LazyCrowd className={s.crowd} cast={['coffee', 'sandwich', 'croissant']} excitement={open ? 0.7 : 0} />
+              <LazyCrowd
+                className={s.crowd}
+                cast={[...CAST]}
+                excitement={open && !closed ? 0.7 : 0}
+                sleepy={closed ? 1 : undefined}
+                stageId="stackd-chiller"
+                fallback={<CrowdRow kinds={[...CAST]} size={100} pose={closed ? 'sleep' : 'idle'} gap={10} stagger={220} />}
+              />
               <div className={s.rail} />
               <div className={s.rowWraps}>
                 <Wrapped tilt={-4} />
