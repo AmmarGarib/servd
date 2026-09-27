@@ -33,8 +33,17 @@ export function useReducedMotionAfterMount(): boolean {
   return reduce
 }
 
+/** Type reveals wait until they are a little way into the viewport, so the
+ *  lines are seen rising. */
+export const REVEAL_IN_VIEW = '0px 0px -12% 0px'
+
+/** Picture reveals fire a little BEFORE they reach the viewport (bottom
+ *  margin +10%), so a frame is already hanging by the time it is on screen
+ *  and the ground behind it is never an empty screen. */
+export const REVEAL_EARLY = '0px 0px 10% 0px'
+
 /** Arms on mount, shows once in view, never un-shows. */
-export function useReveal<T extends HTMLElement = HTMLElement>(rootMargin = '0px 0px -12% 0px') {
+export function useReveal<T extends HTMLElement = HTMLElement>(rootMargin = REVEAL_IN_VIEW) {
   const ref = useRef<T | null>(null)
   const [state, setState] = useState<RevealState>('idle')
   useEffect(() => {

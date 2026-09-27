@@ -8,6 +8,51 @@ import { formatBrandName, brandSurface, brandWordmark } from '../../lib/concept'
 import { useBrandSlug, getServdHost } from '../../lib/host'
 import { isLight } from '../../lib/ui'
 import { defaultBrandFooter, parseBrandFooterBlock } from '../../lib/brandFooterConfig'
+import chrome from './brandChrome.module.css'
+
+// ── Press materials ─────────────────────────────────────────────────────────
+// Each brand's Order pill presses like the thing the brand is made of. The
+// motion lives in brandChrome.module.css; colours stay inline at the call site.
+//   flipd  → enamel  (a hard 2px clack, arrow nudges 3px)
+//   stackd → sticker (press flat, re-stick with a tiny squash on release)
+//   simmer → linen   (weighted 1px press, slow heavy release, no scale)
+//   else   → rubber  (the servd squash-and-spring)
+export type PressMaterial = 'rubber' | 'enamel' | 'sticker' | 'linen'
+
+export function pressMaterial(slug: string | null | undefined): PressMaterial {
+  switch (slug) {
+    case 'flipd':  return 'enamel'
+    case 'stackd': return 'sticker'
+    case 'simmer': return 'linen'
+    default:       return 'rubber'
+  }
+}
+
+/** className for a pressable brand pill: the shared base + the brand's material. */
+export function pressClass(slug: string | null | undefined): string {
+  return `${chrome.press ?? ''} ${chrome[pressMaterial(slug)] ?? ''}`
+}
+
+/** className for the arrow inside a pressable pill (nudges on hover/press). */
+export const pressArrowClass: string = chrome.arrow ?? ''
+
+/** className for a plain nav link: a 1px press. */
+export const navLinkClass: string = chrome.navLink ?? ''
+
+/** Spread onto a pressable pill so the sticker material can re-stick on
+ *  release. Harmless on the other materials (their CSS ignores the flag). */
+export const pressReleaseHandlers = {
+  onPointerUp(e: React.PointerEvent<HTMLElement>) {
+    const el = e.currentTarget
+    el.removeAttribute('data-released')
+    // Force a reflow so re-adding the flag restarts the animation.
+    void el.offsetWidth
+    el.setAttribute('data-released', '')
+  },
+  onAnimationEnd(e: React.AnimationEvent<HTMLElement>) {
+    if (e.target === e.currentTarget) e.currentTarget.removeAttribute('data-released')
+  },
+}
 
 // Build a link that points to the servd canonical host. On the servd host
 // itself it stays relative (so client-side navigation kicks in). On a brand
@@ -326,7 +371,7 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
                 href={l.href}
                 {...extra}
                 aria-current={active ? 'page' : undefined}
-                className={pillNav ? 'brand-nav-pill-link' : undefined}
+                className={pillNav ? `brand-nav-pill-link ${navLinkClass}` : navLinkClass}
                 style={{
                   padding: '0.45rem 0.9rem',
                   color: diner ? 'var(--flipd-blue)' : (active ? surface.text : surface.muted),
@@ -352,6 +397,8 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
             <Link
               href={`/${concept.slug}`}
               aria-label={`Order from ${formatBrandName(concept.name)}`}
+              className={pressClass(concept.slug)}
+              {...pressReleaseHandlers}
               style={{
                 padding: '0.45rem 0.95rem',
                 color: diner ? 'var(--flipd-blue)' : surface.text,
@@ -367,7 +414,7 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
               {/* simmer's nav is pinned over every scene, and each scene
                   carries its own orange signal — an orange arrow here would
                   always make two, so on simmer it stays bone. */}
-              Order <span style={{ color: diner ? 'var(--flipd-blue)' : concept.slug === 'simmer' ? surface.text : accent }}>→</span>
+              Order <span aria-hidden="true" className={pressArrowClass} style={{ color: diner ? 'var(--flipd-blue)' : concept.slug === 'simmer' ? surface.text : accent }}>→</span>
             </Link>
           )}
         </div>
@@ -378,10 +425,11 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
           <Link
             href={`/${concept.slug}`}
             aria-label={`Order from ${formatBrandName(concept.name)}`}
-            className="brand-pill"
+            className={`brand-pill ${pressClass(concept.slug)}`}
+            {...pressReleaseHandlers}
             style={{ padding: '0.55rem 1.15rem', fontSize: '0.92rem' }}
           >
-            Order →
+            Order <span aria-hidden="true" className={pressArrowClass}>→</span>
           </Link>
         )}
 
@@ -451,6 +499,7 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
                 {...extra}
                 aria-current={active ? 'page' : undefined}
                 onClick={() => setOpen(false)}
+                className={navLinkClass}
                 style={{
                   padding: '0.85rem 0.4rem',
                   color: active ? surface.text : surface.muted,
@@ -554,7 +603,7 @@ function BrandFooter({ concept, onBrandHost, accent }: { concept: Concept; onBra
             }}>
               {cfg.ctaHeadline} <span style={{ fontStyle: 'italic' }}>{cfg.ctaAccent}</span>
             </h2>
-            <Link href={`/${concept.slug}`} style={{
+            <Link href={`/${concept.slug}`} className={pressClass('simmer')} style={{
               display: 'inline-flex', alignItems: 'center', minHeight: 48,
               padding: '0.85rem 1.6rem',
               border: `1px solid ${accent}`,
@@ -579,8 +628,8 @@ function BrandFooter({ concept, onBrandHost, accent }: { concept: Concept; onBra
               {cfg.ctaHeadline}
               <span className="display-italic" style={{ color: accent }}> {cfg.ctaAccent}</span>
             </h2>
-            <Link href={`/${concept.slug}`} className="brand-pill">
-              Order from {formatBrandName(concept.name)} <span aria-hidden="true">→</span>
+            <Link href={`/${concept.slug}`} className={`brand-pill ${pressClass(concept.slug)}`} {...pressReleaseHandlers}>
+              Order from {formatBrandName(concept.name)} <span aria-hidden="true" className={pressArrowClass}>→</span>
             </Link>
           </div>
         )}

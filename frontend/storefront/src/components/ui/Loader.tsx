@@ -1,30 +1,67 @@
-// servd's universal spinner (storefront) — a 9-cell ripple grid. Pure CSS:
+// servd's universal spinner (storefront): a 9-cell ripple grid. Pure CSS:
 // keyframes + structure live in globals.css under `.servd-loader`; each cell's
 // colour is fed via the --cell-color custom property, so the same wave themes
-// to any brand. Mirrors the admin loader; default palette is servd royal purple.
+// to any brand. Mirrors the admin loader; default palette is servd plum.
+//
+// `size="sm"` is the inline variant for buttons and pills: an 18px ripple that
+// sits on the text baseline and, unless `colors` is passed, takes the
+// button's own text colour, so it reads on any fill.
 
 import React from 'react'
 import { PartyLoader } from '../party/loader/PartyLoader'
 
-// servd obsidian-plum gradient (the storefront brand). Simmer = single orange
-// signal (their rules ban gradients); Stackd = navy-grey.
+// servd obsidian-plum ramp (the storefront brand). simmer = single orange
+// signal (their rules ban gradients); stackd = red plum into cream.
 export const SERVD_CELLS = ['#2D1E2F', '#3D2540', '#4E2A4F', '#623A63', '#774B78', '#8C5E8E', '#A375A4', '#BE96BE', '#D9BFD9']
 export const SIMMER_CELLS = Array<string>(9).fill('#E94E1B')
-export const STACKD_CELLS = ['#142834', '#1E3340', '#293B47', '#384A56', '#45505C', '#5C6470', '#737A85', '#8D8F97', '#B0B2B8']
+export const STACKD_CELLS = ['#5A1C32', '#6B223C', '#7C2946', '#8E3C57', '#A3566E', '#BA7688', '#D39BA4', '#EAC4BE', '#FCE8CE']
 
 const DELAYS = [0, 100, 200, 100, 200, 200, 300, 300, 400]
 
 type CSSVars = React.CSSProperties & Record<string, string | number>
 
+// Inline variant geometry: 3 × (4px cell + 2 × 1px gap) = 18px square.
+const SM_CELL = 4
+
 export function Loader({
   size = 44,
-  colors = SERVD_CELLS,
+  colors,
   className = '',
 }: {
-  size?: number
+  /** Cell size in px, or 'sm' for the 18px inline button variant. */
+  size?: number | 'sm'
   colors?: string[]
   className?: string
 }) {
+  if (size === 'sm') {
+    const palette = colors ?? ['currentColor']
+    return (
+      <span
+        className={`servd-loader ${className}`.trim()}
+        style={{
+          '--cell-size': `${SM_CELL}px`,
+          display: 'inline-flex',
+          flex: '0 0 auto',
+          verticalAlign: 'middle',
+        } as CSSVars}
+        aria-hidden="true"
+      >
+        {Array.from({ length: 9 }).map((_, i) => (
+          <span
+            key={i}
+            className="servd-loader-cell"
+            style={{
+              '--cell-color': palette[i % palette.length] ?? 'currentColor',
+              animationDelay: `${DELAYS[i] ?? 0}ms`,
+              borderRadius: '1.5px',
+            } as CSSVars}
+          />
+        ))}
+      </span>
+    )
+  }
+
+  const palette = colors ?? SERVD_CELLS
   return (
     <div
       className={`servd-loader ${className}`.trim()}
@@ -37,7 +74,7 @@ export function Loader({
           key={i}
           className="servd-loader-cell"
           aria-hidden
-          style={{ '--cell-color': colors[i % colors.length] ?? '#4E2A4F', animationDelay: `${DELAYS[i] ?? 0}ms` } as CSSVars}
+          style={{ '--cell-color': palette[i % palette.length] ?? '#4E2A4F', animationDelay: `${DELAYS[i] ?? 0}ms` } as CSSVars}
         />
       ))}
     </div>
@@ -45,7 +82,7 @@ export function Loader({
 }
 
 // Inline page-level loading state. With no `colors`, it shows the compact
-// servd food-crowd loader (the characters doing their wave) — the hub look.
+// servd food-crowd loader (the characters doing their wave), the hub look.
 // Passing `colors` keeps the themed ripple for brand-coloured surfaces.
 export function LoadingScreen({
   label,

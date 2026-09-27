@@ -7,6 +7,16 @@ import { useCustomerAuth } from '../../../store/customerAuth'
 import { fmt } from '../../../lib/ui'
 import { decodeCartToken } from '../../../lib/cartHandoff'
 import { trackCheckoutStarted, trackCheckoutAbandoned, trackOrderPlaced, trackPromoApplied, trackPromoFailed } from '../../../lib/analytics'
+import { formatBrandName } from '../../../lib/concept'
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
+import { TactileButton, type TactileState } from '../../../components/tactile/TactileButton'
+import { HopDots } from '../../../components/tactile/HopDots'
+import { JELLY, SPRING, tick } from '../../../lib/tactile'
+import { CrowdPoster } from '../../../components/characters/CrowdPoster'
+import { ChoiceChip } from '../../../components/checkout/ChoiceChip'
+import { TactileInput, TactileTextarea } from '../../../components/checkout/TactileField'
+import { TrustStrip } from '../../../components/checkout/TrustStrip'
+import styles from '../../../components/checkout/checkout.module.css'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -192,47 +202,43 @@ export default function CheckoutPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // ── Presentation state (no money logic) ─────────────────────────────────
+  // `placed` holds the Place-order check for a beat before navigating;
+  // `ctaError` drives the button's one-shot error shake.
+  const isSimmer = slug === 'simmer'
+  const [placed,   setPlaced]   = useState(false)
+  const [ctaError, setCtaError] = useState(false)
+  useEffect(() => {
+    if (!ctaError) return
+    const t = setTimeout(() => setCtaError(false), 900)
+    return () => clearTimeout(t)
+  }, [ctaError])
+  // Haptic confirmation for the code checks. Presentation only: reads the
+  // existing status state, never writes it.
+  useEffect(() => {
+    if (promoStatus === 'invalid') tick('error')
+    else if (promoStatus === 'valid') tick('success')
+  }, [promoStatus])
+  useEffect(() => {
+    if (giftCardStatus === 'invalid') tick('error')
+    else if (giftCardStatus === 'valid') tick('success')
+  }, [giftCardStatus])
+
   if (itemCount() === 0) return (
     <main className={`flex min-h-dvh flex-col items-center justify-center gap-5 px-4${brandSkinClass ? ' ' + brandSkinClass : ''}`}
       style={{ background: 'transparent' }}>
-      <svg width="80" height="80" viewBox="0 0 24 24" fill="none" stroke="var(--servd-mute)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-        <circle cx="9" cy="21" r="1"/>
-        <circle cx="20" cy="21" r="1"/>
-        <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/>
-      </svg>
-      <div className="text-center space-y-2">
-        <p className="font-black text-2xl tracking-tight" style={{ color: 'var(--servd-ink)' }}>
-          Your cart&rsquo;s empty
-        </p>
-        <p className="text-sm" style={{ color: 'var(--servd-mute)' }}>
-          Pick something from {slug ? slug.charAt(0).toUpperCase() + slug.slice(1) : 'the menu'} to get going.
-        </p>
-      </div>
-      <Link href={`/${slug}`}
-        className="mt-1 rounded-2xl font-black px-8 py-4 text-sm transition-all hover:scale-[1.02] active:scale-[0.98]"
-        style={{ background: 'var(--servd-green)', color: 'white', boxShadow: '0 6px 18px rgba(58,14,105,0.28)' }}>
-        See the {slug ? slug.charAt(0).toUpperCase() + slug.slice(1) : ''} menu
-      </Link>
-      {/* Quick switch to the other brands so an empty-cart visitor doesn't
-          have to back out to the home page to change kitchens. */}
-      <div className="flex flex-col items-center gap-1.5 pt-2">
-        <p className="text-[10px] font-bold uppercase tracking-[0.22em]" style={{ color: 'var(--servd-dim)' }}>
-          or pick a different kitchen
-        </p>
-        <div className="flex gap-2 flex-wrap justify-center">
-          {['stackd', 'simmer', 'flipd'].filter((s) => s !== slug).map((s) => (
-            <Link key={s} href={`/${s}`}
-              className="rounded-full px-4 py-2 text-xs font-bold transition-colors"
-              style={{
-                background: 'var(--servd-surface)',
-                color: 'var(--servd-ink)',
-                border: '1px solid var(--servd-line)',
-              }}>
-              {s.charAt(0).toUpperCase() + s.slice(1)}
-            </Link>
-          ))}
+      {placed ? (
+        // The cart was just cleared on a successful order and the router is
+        // on its way to the tracker — a pending beat, never an "empty cart".
+        <div className="flex flex-col items-center gap-3" style={{ color: 'var(--servd-ink)' }}>
+          <HopDots size={9} gap={6} label="Opening your order" />
+          <p className="text-sm font-semibold" style={{ color: 'var(--servd-mute)' }}>
+            {isSimmer ? 'opening your order' : 'Opening your order'}
+          </p>
         </div>
-      </div>
+      ) : (
+        <EmptyCart slug={slug} simmer={isSimmer} />
+      )}
     </main>
   )
 
@@ -327,14 +333,17 @@ export default function CheckoutPage() {
     setError('')
     if (fulfilmentType === 'delivery' && !deliveryAddress.trim()) {
       setError('Please enter your delivery address')
+      setCtaError(true)
       return
     }
     if (fulfilmentType === 'dine-in' && !tableLabel.trim()) {
       setError('Please enter your table number (printed on the QR card at your seat).')
+      setCtaError(true)
       return
     }
     if ((paymentMethod === 'jazzcash' || paymentMethod === 'easypaisa') && !paymentPhone.trim()) {
       setError(`Please enter your ${paymentMethod === 'jazzcash' ? 'JazzCash' : 'EasyPaisa'} mobile number`)
+      setCtaError(true)
       return
     }
     setLoading(true)
@@ -386,6 +395,11 @@ export default function CheckoutPage() {
         if (promoCode.trim()) trackPromoApplied(promoCode.trim(), slug, subtotalCents() - displayTotal)
         _orderPlaced.current = true
         trackOrderPlaced(order.id, slug, displayTotal, paymentMethod)
+        // Presentation only: hold the Place-order check for a beat. The
+        // button stays disabled (loading is still true), and the cart clear
+        // + navigation below are unchanged, same target.
+        setPlaced(true)
+        await new Promise<void>((resolve) => setTimeout(resolve, 420))
         clearCart()
         router.push(`/${slug}/order/${order.id}`)
       } else {
@@ -401,6 +415,7 @@ export default function CheckoutPage() {
       const msg = e instanceof Error ? e.message : 'Something went wrong'
       if (promoCode.trim()) trackPromoFailed(promoCode.trim(), msg)
       setError(msg)
+      setCtaError(true)
     } finally {
       setLoading(false)
     }
@@ -412,6 +427,9 @@ export default function CheckoutPage() {
     : paymentMethod === 'keenu'
       ? 'Continue to Keenu'
       : 'Place Order'
+  // TactileButton state: success holds the check, loading hops, a caught or
+  // validation error shakes once, then back to idle.
+  const ctaState: TactileState = placed ? 'success' : loading ? 'loading' : ctaError ? 'error' : 'idle'
 
   return (
     <main
@@ -444,11 +462,11 @@ export default function CheckoutPage() {
       <div className="relative z-10 max-w-lg mx-auto px-4 py-5 space-y-3">
 
         {/* ── Order summary ── */}
-        <Panel label="Your Order">
+        <Panel label="Your Order" i={0}>
           <div className="space-y-3 mb-4">
             {items.map((item, i) => (
-              <div key={item.lineId} className="flex items-start justify-between gap-3"
-                style={{ animation: `revealUp 0.4s ${i * 0.05}s both` }}>
+              <div key={item.lineId} className={`flex items-start justify-between gap-3 ${styles.rowIn}`}
+                style={{ ['--i' as string]: i } as React.CSSProperties}>
                 <div className="flex items-start gap-3 min-w-0 flex-1">
                   <div className="h-9 w-9 rounded-xl shrink-0 flex items-center justify-center text-sm font-black"
                     style={{ background: 'var(--servd-surface)', color: 'var(--servd-mute)' }}>
@@ -488,18 +506,18 @@ export default function CheckoutPage() {
             ) : (
               <>
                 <p className="text-xs font-bold tracking-wider uppercase mb-2" style={{ color: 'var(--servd-green-dark)' }}>How are you getting it?</p>
-                <div className="flex gap-2 mb-2">
+                <div className="flex gap-2 mb-2" role="group" aria-label="How are you getting it?">
                   {allowedFulfilment.map((m) => (
-                    <button
+                    <ChoiceChip
                       key={m}
-                      type="button"
+                      calm={isSimmer}
+                      selected={fulfilmentType === m}
                       onClick={() => setFulfilmentType(m)}
-                      className="flex-1 rounded-lg px-3 py-2 text-xs font-bold transition-all"
-                      style={fulfilmentType === m
-                        ? { background: 'var(--servd-green-dark)', color: '#0a0a0a', border: '1px solid var(--servd-green)' }
-                        : { background: '#fff', color: 'var(--servd-ink)', border: '1px solid rgba(0,0,0,0.08)' }}>
+                      className="flex-1 rounded-lg px-3 py-2 text-xs font-bold"
+                      selectedStyle={{ background: 'var(--servd-green-dark)', color: slug === 'stackd' ? '#0a0a0a' : 'var(--party-cream, #FFF4D6)', border: '1px solid var(--servd-green)' }}
+                      idleStyle={{ background: '#fff', color: 'var(--servd-ink)', border: '1px solid rgba(0,0,0,0.08)' }}>
                       {FULFILMENT_LABEL[m]}
-                    </button>
+                    </ChoiceChip>
                   ))}
                 </div>
               </>
@@ -518,14 +536,15 @@ export default function CheckoutPage() {
                 <p className="text-[11px]" style={{ color: 'var(--servd-mute)' }}>
                   What table are you at? The number is on the QR card at your seat (e.g. T-7, 12).
                 </p>
-                <input
+                <TactileInput
                   value={tableLabel} onChange={(e) => setTableLabel(e.target.value)}
                   placeholder="Table number"
+                  aria-label="Table number"
                   maxLength={20}
                   inputMode="text"
                   autoCapitalize="characters"
                   className="w-full rounded-lg px-3 py-2 text-sm uppercase tracking-wider"
-                  style={{ background: '#fff', border: '1px solid rgba(0,0,0,0.08)' }}
+                  style={{ background: '#fff' }}
                 />
               </div>
             )}
@@ -534,18 +553,20 @@ export default function CheckoutPage() {
                 <p className="text-[11px]" style={{ color: 'var(--servd-mute)' }}>
                   Tell us about your car so we can find you. Tap &ldquo;I&rsquo;m here&rdquo; on the order page when you arrive.
                 </p>
-                <input
+                <TactileInput
                   value={curbsideVehicle} onChange={(e) => setCurbsideVehicle(e.target.value)}
                   placeholder="e.g. Blue Honda Civic"
+                  aria-label="Your car"
                   maxLength={80}
                   className="w-full rounded-lg px-3 py-2 text-sm"
-                  style={{ background: '#fff', border: '1px solid rgba(0,0,0,0.08)' }} />
-                <input
+                  style={{ background: '#fff' }} />
+                <TactileInput
                   value={curbsidePlate} onChange={(e) => setCurbsidePlate(e.target.value)}
                   placeholder="License plate (optional)"
+                  aria-label="License plate (optional)"
                   maxLength={20}
                   className="w-full rounded-lg px-3 py-2 text-sm"
-                  style={{ background: '#fff', border: '1px solid rgba(0,0,0,0.08)' }} />
+                  style={{ background: '#fff' }} />
               </div>
             )}
             {fulfilmentType === 'delivery' && (
@@ -568,7 +589,8 @@ export default function CheckoutPage() {
                             setDeliveryAddress(addr.address)
                             setShowNewAddressInput(false)
                           }}
-                          className="w-full flex items-center gap-2.5 rounded-lg px-3 py-2 text-left transition-all"
+                          aria-pressed={isSelected}
+                          className={`w-full flex items-center gap-2.5 rounded-lg px-3 py-2 text-left ${styles.pressable}`}
                           style={isSelected
                             ? { background: 'rgba(58,14,105,0.1)', border: '1.5px solid var(--servd-green)' }
                             : { background: '#fff', border: '1px solid rgba(0,0,0,0.08)' }}>
@@ -607,7 +629,8 @@ export default function CheckoutPage() {
                         setSelectedAddressId(null)
                         setDeliveryAddress('')
                       }}
-                      className="w-full flex items-center gap-2 rounded-lg px-3 py-2 text-left transition-all"
+                      aria-pressed={showNewAddressInput}
+                      className={`w-full flex items-center gap-2 rounded-lg px-3 py-2 text-left ${styles.pressable}`}
                       style={showNewAddressInput
                         ? { background: 'rgba(58,14,105,0.1)', border: '1.5px solid var(--servd-green)' }
                         : { background: '#fff', border: '1px dashed rgba(0,0,0,0.12)' }}>
@@ -624,20 +647,22 @@ export default function CheckoutPage() {
 
                 {/* Show text input when "new address" is selected or no saved addresses exist. */}
                 {(showNewAddressInput || savedAddresses.length === 0) && (
-                  <input
+                  <TactileInput
                     value={deliveryAddress} onChange={(e) => setDeliveryAddress(e.target.value)}
                     placeholder="Full delivery address"
+                    aria-label="Full delivery address"
                     maxLength={200}
                     className="w-full rounded-lg px-3 py-2 text-sm"
-                    style={{ background: '#fff', border: '1px solid rgba(0,0,0,0.08)' }} />
+                    style={{ background: '#fff' }} />
                 )}
 
-                <input
+                <TactileInput
                   value={deliveryNotes} onChange={(e) => setDeliveryNotes(e.target.value)}
                   placeholder="Gate code, floor, landmark… (optional)"
+                  aria-label="Delivery notes (optional)"
                   maxLength={120}
                   className="w-full rounded-lg px-3 py-2 text-sm"
-                  style={{ background: '#fff', border: '1px solid rgba(0,0,0,0.08)' }} />
+                  style={{ background: '#fff' }} />
               </div>
             )}
           </div>
@@ -648,31 +673,29 @@ export default function CheckoutPage() {
           {fulfilmentType === 'delivery' && (
           <div className="rounded-xl p-3.5 mb-3" style={{ background: 'rgba(58,14,105,0.08)', border: '1px solid rgba(58,14,105,0.2)' }}>
             <p className="text-xs font-bold tracking-wider uppercase text-[color:var(--servd-green-dark)] mb-2">Tip the rider</p>
-            <div className="flex flex-wrap gap-1.5 mb-2">
+            <div className="flex flex-wrap gap-1.5 mb-2" role="group" aria-label="Tip the rider">
               {(['none', '5', '10', '15', '20', 'custom'] as const).map((m) => (
-                <button
+                <ChoiceChip
                   key={m}
+                  calm={isSimmer}
+                  selected={tipMode === m}
                   onClick={() => setTipMode(m)}
-                  aria-pressed={tipMode === m}
                   className="px-3 py-1.5 rounded-full text-xs font-bold border"
-                  style={{
-                    background: tipMode === m ? '#0a0a0a' : 'white',
-                    color:      tipMode === m ? '#fff' : '#0a0a0a',
-                    borderColor: tipMode === m ? '#0a0a0a' : 'rgba(0,0,0,0.1)',
-                  }}
+                  selectedStyle={{ background: '#0a0a0a', color: '#fff', borderColor: '#0a0a0a' }}
+                  idleStyle={{ background: 'white', color: '#0a0a0a', borderColor: 'rgba(0,0,0,0.1)' }}
                 >
                   {m === 'none' ? 'No tip' : m === 'custom' ? 'Custom' : `${m}%`}
-                </button>
+                </ChoiceChip>
               ))}
             </div>
             {tipMode === 'custom' && (
-              <input
+              <TactileInput
                 type="number" min={0} step={50}
                 value={customTip}
                 onChange={(e) => setCustomTip(e.target.value)}
                 placeholder="Tip amount (PKR)"
-                className="w-full text-sm rounded-lg px-3 py-1.5 border"
-                style={{ borderColor: 'rgba(0,0,0,0.1)' }}
+                aria-label="Tip amount (PKR)"
+                className="w-full text-sm rounded-lg px-3 py-1.5"
               />
             )}
             {tipCents > 0 && (
@@ -687,7 +710,9 @@ export default function CheckoutPage() {
           <div className="rounded-xl p-3.5 mb-3" style={{ background: 'rgba(0,0,0,0.03)', border: '1px solid rgba(0,0,0,0.06)' }}>
             <label className="text-xs font-bold tracking-wider uppercase text-[color:var(--servd-mute)] block mb-2">Gift card</label>
             <div className="flex gap-2">
-              <input
+              <TactileInput
+                aria-label="Gift card code"
+                invalid={giftCardStatus === 'invalid'}
                 value={giftCard}
                 onChange={(e) => {
                   setGiftCard(e.target.value.toUpperCase())
@@ -698,33 +723,40 @@ export default function CheckoutPage() {
                   }
                 }}
                 placeholder="GS-XXXX-XXXX"
-                className="flex-1 text-sm rounded-lg px-3 py-1.5 border font-mono uppercase tracking-wider"
-                style={{ borderColor: 'rgba(0,0,0,0.1)' }}
+                className="flex-1 min-w-0 text-sm rounded-lg px-3 py-1.5 font-mono uppercase tracking-wider"
               />
               <button
                 type="button"
                 onClick={() => { void checkGiftCardBalance() }}
                 disabled={giftCardStatus === 'checking' || !giftCard.trim()}
-                className="shrink-0 rounded-lg px-3 py-1.5 text-xs font-black transition-all disabled:opacity-40"
+                aria-busy={giftCardStatus === 'checking' || undefined}
+                className={`shrink-0 inline-flex items-center justify-center min-w-[3.75rem] rounded-lg px-3 py-1.5 text-xs font-black ${styles.pressable}`}
                 style={{
                   background: giftCardStatus === 'valid' ? 'var(--servd-green-dark)' : 'rgba(0,0,0,0.07)',
                   color: giftCardStatus === 'valid' ? '#fff' : 'var(--servd-ink)',
                   border: '1px solid rgba(0,0,0,0.08)',
+                  opacity: !giftCard.trim() && giftCardStatus !== 'checking' ? 0.4 : 1,
                 }}>
-                {giftCardStatus === 'checking' ? '…' : giftCardStatus === 'valid' ? '✓' : 'Check'}
+                {giftCardStatus === 'checking'
+                  ? <HopDots size={5} gap={3} label="Checking card" />
+                  : giftCardStatus === 'valid'
+                    ? <SpringCheck label="Card accepted" />
+                    : 'Check'}
               </button>
             </div>
-            {giftCardStatus === 'valid' && (
-              <p className="text-xs font-semibold mt-1.5" style={{ color: 'var(--servd-green-dark)' }}>
-                Balance: {fmt(giftCardBalance)}
-                {giftCardDeduction > 0 && ` · saving ${fmt(giftCardDeduction)} on this order`}
-              </p>
-            )}
-            {giftCardStatus === 'invalid' && (
-              <p className="text-xs font-semibold mt-1.5" style={{ color: '#dc2626' }}>
-                Invalid or expired card
-              </p>
-            )}
+            <AnimatePresence initial={false}>
+              {giftCardStatus === 'valid' && (
+                <SlideMessage key="gc-ok" color="var(--servd-green-dark)">
+                  Balance: {fmt(giftCardBalance)}
+                  {giftCardDeduction > 0 && ` · saving ${fmt(giftCardDeduction)} on this order`}
+                </SlideMessage>
+              )}
+              {giftCardStatus === 'invalid' && (
+                <SlideMessage key="gc-bad" color="#dc2626" alert>
+                  Invalid or expired card
+                </SlideMessage>
+              )}
+            </AnimatePresence>
           </div>
 
           <div className="rounded-xl p-3.5 space-y-2"
@@ -735,21 +767,21 @@ export default function CheckoutPage() {
               <PriceLine label="Tip" value={fmt(tipCents)} accent="var(--servd-green-dark)" />
             )}
             {loyaltyDeduction > 0 && (
-              <PriceLine label={`Points (${loyaltyPts} pts)`} value={`−${fmt(loyaltyDeduction)}`} accent="var(--servd-green-dark)" />
+              <PriceLine label={`Points (${loyaltyPts} pts)`} value={`−${fmt(loyaltyDeduction)}`} accent="var(--servd-green-dark)" pop={!isSimmer} />
             )}
             {walletDeduction > 0 && (
-              <PriceLine label="Wallet credit" value={`−${fmt(walletDeduction)}`} accent="var(--servd-green-dark)" />
+              <PriceLine label="Wallet credit" value={`−${fmt(walletDeduction)}`} accent="var(--servd-green-dark)" pop={!isSimmer} />
             )}
             {promoDiscountCents > 0 && (
-              <PriceLine label={`Promo (${promoCode.trim().toUpperCase()})`} value={`−${fmt(promoDiscountCents)}`} accent="var(--servd-green-dark)" />
+              <PriceLine label={`Promo (${promoCode.trim().toUpperCase()})`} value={`−${fmt(promoDiscountCents)}`} accent="var(--servd-green-dark)" pop={!isSimmer} />
             )}
             {giftCardDeduction > 0 && (
-              <PriceLine label={`Gift card (${giftCard.trim().toUpperCase()})`} value={`−${fmt(giftCardDeduction)}`} accent="var(--servd-green-dark)" />
+              <PriceLine label={`Gift card (${giftCard.trim().toUpperCase()})`} value={`−${fmt(giftCardDeduction)}`} accent="var(--servd-green-dark)" pop={!isSimmer} />
             )}
             <div className="flex justify-between items-center pt-2.5"
               style={{ borderTop: '1px solid rgba(0,0,0,0.08)' }}>
               <span className="font-black text-base" style={{ color: 'var(--servd-ink)' }}>Total</span>
-              <span className="font-black text-xl" style={{ color: 'var(--servd-green-dark)' }}>{fmt(displayTotal)}</span>
+              <RollingPrice cents={displayTotal} className="font-black text-xl" style={{ color: 'var(--servd-green-dark)' }} />
             </div>
           </div>
         </Panel>
@@ -762,10 +794,12 @@ export default function CheckoutPage() {
         {token ? (
           <>
             {/* Promo code */}
-            <Panel icon="" label="Promo Code">
+            <Panel icon="" label="Promo Code" i={1}>
               <div className="flex gap-2">
-                <div className="flex-1">
+                <div className="flex-1 min-w-0">
                   <ServdInput
+                    ariaLabel="Promo code"
+                    invalid={promoStatus === 'invalid'}
                     type="text" value={promoCode}
                     onChange={e => {
                       setPromoCode(e.target.value.toUpperCase())
@@ -783,30 +817,42 @@ export default function CheckoutPage() {
                   type="button"
                   onClick={() => { void applyPromo() }}
                   disabled={promoStatus === 'checking' || !promoCode.trim()}
-                  className="shrink-0 rounded-xl px-4 py-3 text-sm font-black transition-all disabled:opacity-40"
-                  style={{ background: 'var(--servd-green-dark)', color: '#fff' }}
+                  aria-busy={promoStatus === 'checking' || undefined}
+                  className={`shrink-0 inline-flex items-center justify-center min-w-[4.5rem] rounded-xl px-4 py-3 text-sm font-black ${styles.pressable}`}
+                  style={{
+                    background: 'var(--servd-green-dark)', color: '#fff',
+                    opacity: !promoCode.trim() && promoStatus !== 'checking' ? 0.4 : 1,
+                  }}
                 >
-                  {promoStatus === 'checking' ? '…' : promoStatus === 'valid' ? '✓' : 'Apply'}
+                  {promoStatus === 'checking'
+                    ? <HopDots size={5} gap={3} label="Checking code" />
+                    : promoStatus === 'valid'
+                      ? <SpringCheck label="Code applied" />
+                      : 'Apply'}
                 </button>
               </div>
-              {promoStatus === 'valid' && promoMessage && (
-                <p className="text-xs font-semibold mt-1.5" style={{ color: 'var(--servd-green-dark)' }}>
-                  ✓ {promoMessage} · saving {fmt(promoDiscountCents)}
-                </p>
-              )}
-              {promoStatus === 'invalid' && promoMessage && (
-                <p className="text-xs font-semibold mt-1.5" style={{ color: '#dc2626' }}>
-                  {promoMessage}
-                </p>
-              )}
+              <AnimatePresence initial={false}>
+                {promoStatus === 'valid' && promoMessage && (
+                  <SlideMessage key="promo-ok" color="var(--servd-green-dark)">
+                    <InlineCheck /> {promoMessage} · saving {fmt(promoDiscountCents)}
+                  </SlideMessage>
+                )}
+                {promoStatus === 'invalid' && promoMessage && (
+                  <SlideMessage key="promo-bad" color="#dc2626" alert>
+                    {promoMessage}
+                  </SlideMessage>
+                )}
+              </AnimatePresence>
             </Panel>
 
             {/* Wallet toggle */}
             {walletBalance > 0 && (
               <button
                 onClick={() => setUseWallet(v => !v)}
-                className="flex items-center justify-between w-full rounded-2xl p-4 transition-all duration-200 active:scale-[0.99]"
+                aria-pressed={useWallet}
+                className={`flex items-center justify-between w-full rounded-2xl p-4 ${styles.pressable} ${styles.panelIn}`}
                 style={{
+                  ['--i' as string]: 2,
                   background: useWallet ? 'rgba(58,14,105,0.06)' : '#fff',
                   border: `1px solid ${useWallet ? 'rgba(58,14,105,0.28)' : 'rgba(0,0,0,0.07)'}`,
                   boxShadow: useWallet ? '0 0 20px rgba(58,14,105,0.08)' : '0 2px 8px rgba(0,0,0,0.04)',
@@ -837,7 +883,7 @@ export default function CheckoutPage() {
 
             {/* Loyalty points */}
             {loyaltyBalance > 0 && (
-              <Panel icon="" label="Redeem Points">
+              <Panel icon="" label="Redeem Points" i={3}>
                 <div className="flex items-center justify-between">
                   <p className="text-xs" style={{ color: 'var(--servd-mute)' }}>
                     {loyaltyBalance} pts available · <span style={{ color: 'var(--servd-ink)' }}>{loyaltyPts} selected</span>
@@ -852,14 +898,14 @@ export default function CheckoutPage() {
             )}
 
             {/* Notes */}
-            <Panel icon="" label="Special Instructions for Kitchen">
-              <ServdTextarea value={notes} onChange={e => setNotes(e.target.value)}
+            <Panel icon="" label="Special Instructions for Kitchen" i={4}>
+              <ServdTextarea ariaLabel="Special instructions for the kitchen" value={notes} onChange={e => setNotes(e.target.value)}
                 placeholder="Allergies, spice level, extras…" rows={2} />
             </Panel>
           </>
         ) : (
           /* ── Guest details ── */
-          <Panel icon="" label="Your Details" extra={
+          <Panel icon="" label="Your Details" i={1} extra={
             <Link href="/login"
               className="text-xs font-black transition-colors"
               style={{ color: 'var(--servd-green-dark)' }}
@@ -886,45 +932,44 @@ export default function CheckoutPage() {
         )}
 
         {/* ── Payment Method ── */}
-        <Panel icon="" label="Payment Method">
-          <div className="space-y-2">
+        <Panel icon="" label="Payment Method" i={5}>
+          <div className="space-y-2" role="radiogroup" aria-label="Payment method">
             {PAYMENT_OPTIONS.map((opt) => {
               const isSelected = paymentMethod === opt.id
               return (
                 <div key={opt.id}>
-                  <button
-                    type="button"
+                  <ChoiceChip
+                    aria="radio"
+                    calm={isSimmer}
+                    selected={isSelected}
                     onClick={() => setPaymentMethod(opt.id)}
-                    className="w-full flex items-center gap-3 rounded-xl px-3.5 py-3 transition-all"
-                    style={isSelected
-                      ? { background: 'rgba(58,14,105,0.06)', border: '1.5px solid rgba(58,14,105,0.35)' }
-                      : { background: 'rgba(0,0,0,0.025)', border: '1px solid rgba(0,0,0,0.07)' }}>
+                    className="w-full flex items-center gap-3 rounded-xl px-3.5 py-3"
+                    selectedStyle={{ background: 'rgba(58,14,105,0.06)', border: '1.5px solid rgba(58,14,105,0.35)' }}
+                    idleStyle={{ background: 'rgba(0,0,0,0.025)', border: '1.5px solid rgba(0,0,0,0.07)' }}
+                    dot
+                    dotSelectedStyle={{ background: 'rgba(58,14,105,0.12)', border: '1.5px solid rgba(58,14,105,0.45)' }}
+                    dotIdleStyle={{ background: 'transparent', border: '1.5px solid rgba(0,0,0,0.15)' }}>
                     <span className="text-lg shrink-0">{opt.icon}</span>
-                    <div className="flex-1 text-left min-w-0">
-                      <p className="font-bold text-sm" style={{ color: 'var(--servd-ink)' }}>{opt.label}</p>
+                    <span className="flex-1 text-left min-w-0">
+                      <span className="block font-bold text-sm" style={{ color: 'var(--servd-ink)' }}>{opt.label}</span>
                       {!opt.phoneRequired && (
-                        <p className="text-[11px] mt-0.5" style={{ color: 'var(--servd-mute)' }}>{opt.sub}</p>
+                        <span className="block text-[11px] mt-0.5" style={{ color: 'var(--servd-mute)' }}>{opt.sub}</span>
                       )}
-                    </div>
-                    <div className="h-5 w-5 rounded-full shrink-0 flex items-center justify-center"
-                      style={isSelected
-                        ? { background: 'rgba(58,14,105,0.12)', border: '1.5px solid rgba(58,14,105,0.45)' }
-                        : { background: 'transparent', border: '1.5px solid rgba(0,0,0,0.15)' }}>
-                      {isSelected && <div className="h-2 w-2 rounded-full" style={{ background: 'var(--servd-green-dark)' }} />}
-                    </div>
-                  </button>
+                    </span>
+                  </ChoiceChip>
 
                   {/* Phone number input for mobile wallets */}
                   {isSelected && opt.phoneRequired && (
                     <div className="mt-1.5 px-1">
-                      <input
+                      <TactileInput
                         type="tel"
                         value={paymentPhone}
                         onChange={(e) => setPaymentPhone(e.target.value)}
                         placeholder="03xx-xxxxxxx"
+                        aria-label={`${opt.label} number`}
                         maxLength={15}
                         className="w-full rounded-lg px-3 py-2 text-sm"
-                        style={{ background: '#fff', border: '1.5px solid rgba(58,14,105,0.3)' }}
+                        style={{ background: '#fff' }}
                       />
                       <p className="text-[11px] mt-1" style={{ color: 'var(--servd-mute)' }}>
                         Enter your {opt.label} number to process payment
@@ -963,47 +1008,32 @@ export default function CheckoutPage() {
         )}
 
         {/* ── Trust strip — per the CRO skill: address the three top
-              objections ("will this work for me / what if it doesn't /
-              can I get out") right before the place-order button. Each
-              line is fact, not puffery. */}
-        <div className="rounded-xl p-3.5" style={{ background: 'rgba(58,14,105,0.04)', border: '1px solid rgba(58,14,105,0.12)' }}>
-          <ul className="space-y-1.5 text-xs" style={{ color: 'var(--servd-mute)' }}>
-            <li className="flex items-start gap-2">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--servd-green-dark)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="shrink-0 mt-0.5">
-                <polyline points="20 6 9 17 4 12"/>
-              </svg>
-              <span><strong style={{ color: 'var(--servd-ink)' }}>One clear price.</strong> What you see is what you pay — no surprise fees.</span>
-            </li>
-            <li className="flex items-start gap-2">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--servd-green-dark)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="shrink-0 mt-0.5">
-                <polyline points="20 6 9 17 4 12"/>
-              </svg>
-              <span><strong style={{ color: 'var(--servd-ink)' }}>Cancel free</strong> until the kitchen confirms.</span>
-            </li>
-            <li className="flex items-start gap-2">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--servd-green-dark)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="shrink-0 mt-0.5">
-                <polyline points="20 6 9 17 4 12"/>
-              </svg>
-              <span><strong style={{ color: 'var(--servd-ink)' }}>Cash on delivery</strong> if you prefer.</span>
-            </li>
-          </ul>
-        </div>
+              objections right before the place-order button. Same facts,
+              now drawn in as they arrive. */}
+        <TrustStrip />
       </div>
 
       {/* ── Fixed CTA ── */}
       <div className="fixed bottom-0 left-0 right-0 px-4 pt-4 z-40"
         style={{ background: 'rgba(255,255,255,0.96)', backdropFilter: 'blur(24px)', borderTop: '1px solid rgba(0,0,0,0.08)', paddingBottom: 'calc(1rem + env(safe-area-inset-bottom))' }}>
-        <button
+        <TactileButton
           onClick={() => { void handlePlaceOrder() }} disabled={loading}
-          className="flex items-center justify-between w-full max-w-lg mx-auto rounded-2xl py-4 px-6 font-black text-base transition-all duration-200 disabled:opacity-40 hover:scale-[1.01] active:scale-[0.98]"
+          state={ctaState}
+          loadingLabel="Placing your order"
+          successLabel={isSimmer ? 'order in' : 'Order in'}
+          squish={isSimmer ? 0.2 : 1.2}
+          className="flex items-center justify-center w-full max-w-lg mx-auto rounded-2xl py-4 px-6 font-black text-base transition-[box-shadow,background-color,color] duration-200"
           style={{
-            background: loading ? 'var(--servd-line)' : 'var(--servd-green)',
-            color: loading ? 'var(--servd-mute)' : '#fff',
-            boxShadow: loading ? 'none' : '0 0 32px rgba(58,14,105,0.28)',
+            background: 'var(--servd-green)',
+            color: '#fff',
+            boxShadow: loading ? '0 0 18px rgba(58,14,105,0.18)' : '0 0 32px rgba(58,14,105,0.28)',
           }}>
-          <span>{ctaLabel}</span>
-          <span>{fmt(displayTotal)}</span>
-        </button>
+          <span className={styles.ctaInner}>
+            <span className={styles.ctaLabel}>{ctaLabel}</span>
+            <span className={styles.ctaSep} aria-hidden="true">·</span>
+            <RollingPrice cents={displayTotal} />
+          </span>
+        </TactileButton>
       </div>
     </main>
   )
@@ -1011,15 +1041,17 @@ export default function CheckoutPage() {
 
 /* ── Sub-components ── */
 
-function Panel({ icon, label, extra, children }: {
+function Panel({ icon, label, extra, children, i = 0 }: {
   icon?: string; label: string; extra?: React.ReactNode; children: React.ReactNode
+  /** Mount order — panels fade up with a 60ms stagger. */
+  i?: number
 }) {
   // icon prop retained for backward compat but unused — the eyebrow label
   // alone carries the meaning. Skill rule: no emoji as structural icons.
   void icon
   return (
-    <div className="rounded-2xl p-4 space-y-3"
-      style={{ background: 'white', border: '1px solid var(--servd-line)', boxShadow: '0 1px 3px rgba(0,0,0,0.04)' }}>
+    <div className={`rounded-2xl p-4 space-y-3 ${styles.panelIn}`}
+      style={{ background: 'white', border: '1px solid var(--servd-line)', boxShadow: '0 1px 3px rgba(0,0,0,0.04)', ['--i' as string]: i } as React.CSSProperties}>
       <div className="flex items-center justify-between">
         <p className="text-[10px] font-black uppercase tracking-[0.22em]"
           style={{ color: 'var(--servd-mute)' }}>{label}</p>
@@ -1030,12 +1062,119 @@ function Panel({ icon, label, extra, children }: {
   )
 }
 
-function PriceLine({ label, value, accent }: { label: string; value: string; accent?: string }) {
+function PriceLine({ label, value, accent, pop = false }: {
+  label: string; value: string; accent?: string
+  /** A discount arriving: the value lands with a jelly wobble and a
+   *  tomato-to-ink flash. Off on simmer (no bounce) and under reduced motion. */
+  pop?: boolean
+}) {
+  const reduce = useReducedMotion()
+  const animate = pop && !reduce
   return (
     <div className="flex justify-between text-sm">
       <span style={{ color: 'var(--servd-mute)' }}>{label}</span>
-      <span style={{ color: accent ?? 'var(--servd-mute)' }}>{value}</span>
+      {animate ? (
+        <motion.span
+          className={styles.inkFlash}
+          style={{ color: accent ?? 'var(--servd-mute)', display: 'inline-block', transformOrigin: '100% 60%' }}
+          initial={{ scaleX: 1, scaleY: 1 }}
+          animate={JELLY}
+          transition={{ duration: 0.5, ease: 'easeOut' }}
+        >
+          {value}
+        </motion.span>
+      ) : (
+        <span style={{ color: accent ?? 'var(--servd-mute)' }}>{value}</span>
+      )}
     </div>
+  )
+}
+
+/* Rolling digits — each digit is a 0-9 strip that springs to its place, so
+   a total that changes reads as the same number rolling, not a swap. The
+   full value is in a visually hidden span for assistive tech. Digits are
+   keyed from the right so the units column stays the units column as the
+   number grows. */
+const DIGITS = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'] as const
+
+function RollingPrice({ cents, className, style }: {
+  cents: number; className?: string; style?: React.CSSProperties
+}) {
+  const text = fmt(cents)
+  const chars = text.split('')
+  return (
+    <span className={className} style={style}>
+      <span className={styles.srOnly}>{text}</span>
+      <span className={styles.roll} aria-hidden="true">
+        {chars.map((c, idx) => {
+          const col = chars.length - idx
+          const d = c.charCodeAt(0) - 48
+          if (d < 0 || d > 9) {
+            return <span key={`s${col}`} className={styles.rollStatic}>{c}</span>
+          }
+          return (
+            <span key={`d${col}`} className={styles.rollCell}>
+              <span className={styles.rollGhost}>{c}</span>
+              <span className={styles.rollStrip} style={{ transform: `translateY(${-d * 10}%)` }}>
+                {DIGITS.map((n) => <span key={n}>{n}</span>)}
+              </span>
+            </span>
+          )
+        })}
+      </span>
+    </span>
+  )
+}
+
+/* A field message that slides down (height + fade, 200ms) instead of
+   popping in and shoving the page. Reduced motion: a plain fade. */
+function SlideMessage({ color, alert = false, children }: {
+  color: string; alert?: boolean; children: React.ReactNode
+}) {
+  const reduce = useReducedMotion()
+  return (
+    <motion.div
+      className={styles.msgWrap}
+      initial={reduce ? { opacity: 0 } : { height: 0, opacity: 0 }}
+      animate={reduce ? { opacity: 1 } : { height: 'auto', opacity: 1 }}
+      exit={reduce ? { opacity: 0 } : { height: 0, opacity: 0 }}
+      transition={{ duration: reduce ? 0.12 : 0.2, ease: [0.22, 1, 0.36, 1] }}
+      {...(alert ? { role: 'alert' as const } : {})}
+    >
+      <p className="text-xs font-semibold pt-1.5" style={{ color }}>
+        {children}
+      </p>
+    </motion.div>
+  )
+}
+
+/* The apply button's success mark: springs in on SPRING.pop and draws on. */
+function SpringCheck({ label }: { label: string }) {
+  const reduce = useReducedMotion()
+  return (
+    <motion.svg
+      width="16" height="16" viewBox="0 0 24 24" fill="none" role="img" aria-label={label}
+      initial={reduce ? false : { scale: 0, rotate: -25 }}
+      animate={{ scale: 1, rotate: 0 }}
+      transition={SPRING.pop}
+    >
+      <motion.path
+        d="M4.5 12.5l5 5L19.5 7"
+        stroke="currentColor" strokeWidth={3.2} strokeLinecap="round" strokeLinejoin="round"
+        initial={reduce ? false : { pathLength: 0 }}
+        animate={{ pathLength: 1 }}
+        transition={{ duration: 0.26, delay: 0.08, ease: 'easeOut' }}
+      />
+    </motion.svg>
+  )
+}
+
+function InlineCheck() {
+  return (
+    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"
+      strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ display: 'inline', verticalAlign: '-1px' }}>
+      <path d="M4.5 12.5l5 5L19.5 7" />
+    </svg>
   )
 }
 
@@ -1049,46 +1188,38 @@ function FormField({ label, children }: { label: string; children: React.ReactNo
   )
 }
 
-function ServdInput({ type, value, onChange, placeholder, autoFocus }: {
+// Focus is class-driven now (TactileField): the ring grows via box-shadow,
+// the border colour transitions, and the field lifts to 1.01. Same props and
+// values as before; `invalid` / `ariaLabel` are presentation-only additions.
+function ServdInput({ type, value, onChange, placeholder, autoFocus, invalid, ariaLabel }: {
   type: string; value: string
   onChange: (e: React.ChangeEvent<HTMLInputElement>) => void
   placeholder?: string; autoFocus?: boolean
+  invalid?: boolean; ariaLabel?: string
 }) {
   return (
-    <input
+    <TactileInput
       type={type} value={value} onChange={onChange} placeholder={placeholder} autoFocus={autoFocus}
-      className="w-full rounded-xl px-4 py-3 text-sm focus:outline-none transition-all placeholder:text-black/25"
-      style={{ background: '#fff', border: '1.5px solid rgba(0,0,0,0.1)', color: 'var(--servd-ink)' }}
-      onFocus={e => {
-        e.currentTarget.style.borderColor = 'var(--servd-green)'
-        e.currentTarget.style.boxShadow   = '0 0 0 3px rgba(58,14,105,0.28)'
-      }}
-      onBlur={e => {
-        e.currentTarget.style.borderColor = 'rgba(0,0,0,0.1)'
-        e.currentTarget.style.boxShadow   = 'none'
-      }}
+      invalid={invalid}
+      aria-label={ariaLabel}
+      className="w-full rounded-xl px-4 py-3 text-sm placeholder:text-black/25"
+      style={{ background: '#fff', color: 'var(--servd-ink)' }}
     />
   )
 }
 
-function ServdTextarea({ value, onChange, placeholder, rows }: {
+function ServdTextarea({ value, onChange, placeholder, rows, ariaLabel }: {
   value: string
   onChange: (e: React.ChangeEvent<HTMLTextAreaElement>) => void
   placeholder?: string; rows?: number
+  ariaLabel?: string
 }) {
   return (
-    <textarea
+    <TactileTextarea
       value={value} onChange={onChange} placeholder={placeholder} rows={rows}
-      className="w-full rounded-xl px-4 py-3 text-sm focus:outline-none transition-all resize-none placeholder:text-black/25"
-      style={{ background: '#fff', border: '1.5px solid rgba(0,0,0,0.1)', color: 'var(--servd-ink)' }}
-      onFocus={e => {
-        e.currentTarget.style.borderColor = 'var(--servd-green)'
-        e.currentTarget.style.boxShadow   = '0 0 0 3px rgba(58,14,105,0.28)'
-      }}
-      onBlur={e => {
-        e.currentTarget.style.borderColor = 'rgba(0,0,0,0.1)'
-        e.currentTarget.style.boxShadow   = 'none'
-      }}
+      aria-label={ariaLabel}
+      className="w-full rounded-xl px-4 py-3 text-sm resize-none placeholder:text-black/25"
+      style={{ background: '#fff', color: 'var(--servd-ink)' }}
     />
   )
 }
@@ -1097,11 +1228,74 @@ function StepBtn({ onClick, children }: { onClick: () => void; children: React.R
   return (
     <button
       onClick={onClick}
-      className="h-8 w-8 rounded-xl flex items-center justify-center font-black transition-all active:scale-90"
+      className={`h-8 w-8 rounded-xl flex items-center justify-center font-black ${styles.pressable}`}
       style={{ background: 'rgba(0,0,0,0.07)', color: 'var(--servd-mute)', border: '1px solid rgba(0,0,0,0.08)' }}
       onMouseEnter={e => (e.currentTarget.style.color = 'var(--servd-ink)')}
       onMouseLeave={e => (e.currentTarget.style.color = 'var(--servd-mute)')}>
       {children}
     </button>
+  )
+}
+
+/* Brand name for a slug, through formatBrandName so simmer / stackd stay
+   lowercase and Flipd keeps its capital. */
+function brandLabel(s: string): string {
+  return formatBrandName(s ? s.charAt(0).toUpperCase() + s.slice(1) : '')
+}
+
+/* Empty cart — a designed state, not a dead end.
+   Hub / stackd / Flipd: the crowd shrugs on a rubber sticker card, with a
+   rubber CTA back to the menu and rubber-press quick switches.
+   simmer: no characters. Lowercase, Amarante + Times, hairlines, a weighted
+   1px press. */
+function EmptyCart({ slug, simmer }: { slug: string; simmer: boolean }) {
+  const others = ['stackd', 'simmer', 'flipd'].filter((s) => s !== slug)
+  const name = slug ? brandLabel(slug) : ''
+
+  if (simmer) {
+    return (
+      <div className={styles.simmerEmpty}>
+        <h1 className={styles.simmerTitle}>your cart&rsquo;s empty</h1>
+        <p className={styles.simmerSub}>pick something from {name || 'the menu'} to get going.</p>
+        <Link href={`/${slug}`} className={styles.simmerLink}>see the {name} menu</Link>
+        <div className="flex flex-col items-center gap-2 pt-6">
+          <p className="text-[11px] tracking-[0.22em]" style={{ opacity: 0.6 }}>or pick a different kitchen</p>
+          <div className="flex gap-2 flex-wrap justify-center">
+            {others.map((s) => (
+              <Link key={s} href={`/${s}`} className={styles.simmerChip}>{brandLabel(s)}</Link>
+            ))}
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <>
+      <div className={styles.stickerCard}>
+        <div className={styles.posterFrame}>
+          <CrowdPoster cast={['fries', 'sandwich']} mode="shrug" />
+        </div>
+        <h1 className={styles.stickerTitle}>Your cart&rsquo;s empty</h1>
+        <p className={styles.stickerSub}>
+          Pick something from {name || 'the menu'} to get going.
+        </p>
+        <Link href={`/${slug}`} className={`${styles.rubber} ${styles.rubberPrimary}`}>
+          See the {name} menu
+        </Link>
+      </div>
+      {/* Quick switch to the other brands so an empty-cart visitor doesn't
+          have to back out to the home page to change kitchens. */}
+      <div className="flex flex-col items-center gap-2.5 pt-3">
+        <p className={styles.eyebrow}>or pick a different kitchen</p>
+        <div className="flex gap-2.5 flex-wrap justify-center">
+          {others.map((s) => (
+            <Link key={s} href={`/${s}`} className={`${styles.rubber} ${styles.rubberSmall}`}>
+              {brandLabel(s)}
+            </Link>
+          ))}
+        </div>
+      </div>
+    </>
   )
 }

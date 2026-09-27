@@ -32,6 +32,37 @@ export interface BuiltCharacter {
   height: number
   /** Arm rest angle (radians, outward). */
   armRest: number
+  /** Named sub-parts the rig animates for each kind's cheer flourish. */
+  parts: CharacterParts
+}
+
+/**
+ * Movable pieces for the per-kind flourishes. Every group is pivoted where
+ * it should hinge, and its rest transform is recorded so the rig can add
+ * offsets without drifting.
+ */
+export interface CharacterParts {
+  /** Burger top bun (with its face) / sandwich front slice: lifts like a lid. Pivot at its base. */
+  lid?: THREE.Object3D
+  /** Shake straw, pivoted where it enters the cream. */
+  straw?: THREE.Object3D
+  /** Shake cherry + stem, pivoted at the cherry's base. */
+  cherry?: THREE.Object3D
+  /** Coffee: model-space point steam rises from. */
+  steam?: THREE.Vector3
+}
+
+/** Wrap `children` in a group pivoted at `pivot` without moving them visually. */
+function pivotGroup(parent: THREE.Object3D, pivot: THREE.Vector3, children: THREE.Object3D[]): THREE.Group {
+  const grp = new THREE.Group()
+  grp.position.copy(pivot)
+  for (const c of children) {
+    c.position.sub(pivot)
+    grp.add(c)
+  }
+  parent.add(grp)
+  grp.userData.rest = { x: pivot.x, y: pivot.y, z: pivot.z, rx: grp.rotation.x, ry: grp.rotation.y, rz: grp.rotation.z }
+  return grp
 }
 
 export interface BuildContext {
@@ -308,7 +339,11 @@ function buildBurger({ kit, face, limbs }: BuildContext): BuiltCharacter {
   ])
   addLegs(g, limbs, limbMat, [-0.2, 0.2], legH + 0.03)
 
-  return { model: g, face: faceRig, arms, width: 1.3, height: topY + base + Bh, armRest: 0.45 }
+  // The top bun (with its seeds and face) hinges as one lid for the cheer.
+  g.remove(topBun, seeds, faceRig.group)
+  const lid = pivotGroup(g, new THREE.Vector3(0, topY, 0), [topBun, seeds, faceRig.group])
+
+  return { model: g, face: faceRig, arms, width: 1.3, height: topY + base + Bh, armRest: 0.45, parts: { lid } }
 }
 
 /* ================================================================== */
@@ -480,7 +515,7 @@ function buildFries({ kit, face, limbs }: BuildContext): BuiltCharacter {
     [0.36, legH + 0.4, 0],
   ])
   addLegs(g, limbs, limbMat, [-0.16, 0.16], legH + 0.03)
-  return { model: g, face: faceRig, arms, width: 1.0, height: legH + H + 0.3, armRest: 0.3 }
+  return { model: g, face: faceRig, arms, width: 1.0, height: legH + H + 0.3, armRest: 0.3, parts: {} }
 }
 
 /* ================================================================== */
@@ -598,7 +633,15 @@ function buildCoffee({ kit, face, limbs }: BuildContext): BuiltCharacter {
     [0.355, legH + 0.42, 0],
   ])
   addLegs(g, limbs, lidMat, [-0.13, 0.13], legH + 0.03)
-  return { model: g, face: faceRig, arms, width: 0.95, height: legH + 1.05, armRest: 0.3 }
+  return {
+    model: g,
+    face: faceRig,
+    arms,
+    width: 0.95,
+    height: legH + 1.05,
+    armRest: 0.3,
+    parts: { steam: new THREE.Vector3(0, legH + 1.1, 0.12) },
+  }
 }
 
 /* ================================================================== */
@@ -703,7 +746,12 @@ function buildSandwich({ kit, face, limbs }: BuildContext): BuiltCharacter {
     [0.47, 0.26, 0.04],
   ])
   addLegs(g, limbs, limbMat, [-0.2, 0.2], legH + 0.05)
-  return { model: g, face: faceRig, arms, width: 1.2, height: legH + 1.02, armRest: 0.5 }
+
+  // The front slice (with its face) hinges at its bottom crust like a lid.
+  inner.remove(front, faceRig.group)
+  const lid = pivotGroup(inner, new THREE.Vector3(0, 0, 0.155), [front, faceRig.group])
+
+  return { model: g, face: faceRig, arms, width: 1.2, height: legH + 1.02, armRest: 0.5, parts: { lid } }
 }
 
 /* ================================================================== */
@@ -854,7 +902,16 @@ function buildShake({ kit, face, limbs }: BuildContext): BuiltCharacter {
     [0.31, legH + 0.4, 0],
   ])
   addLegs(g, limbs, limbMat, [-0.12, 0.12], legH + 0.03)
-  return { model: g, face: faceRig, arms, width: 0.9, height: legH + 1.42, armRest: 0.28 }
+
+  // Cherry + stem bounce together from the cherry's base; the straw wobbles
+  // from where it enters the cream.
+  g.remove(cherry, stem)
+  const cherryG = pivotGroup(g, new THREE.Vector3(-0.02, legH + 1.26, 0.02), [cherry, stem])
+  g.remove(straw)
+  const strawBase = new THREE.Vector3(0.14 - Math.sin(0.32) * 0.2,legH + 1.15 - Math.cos(0.32) * 0.2, -0.1)
+  const strawG = pivotGroup(g, strawBase, [straw])
+
+  return { model: g, face: faceRig, arms, width: 0.9, height: legH + 1.42, armRest: 0.28, parts: { straw: strawG, cherry: cherryG } }
 }
 
 /* ================================================================== */
@@ -934,7 +991,7 @@ function buildCroissant({ kit, face, limbs }: BuildContext): BuiltCharacter {
     [-0.5, 0.44, 0.08],
     [0.5, 0.44, 0.08],
   ])
-  return { model: g, face: faceRig, arms, width: 1.35, height: cy + R + rMax, armRest: 0.35 }
+  return { model: g, face: faceRig, arms, width: 1.35, height: cy + R + rMax, armRest: 0.35, parts: {} }
 }
 
 const BUILDERS: Record<CharacterKind, (ctx: BuildContext) => BuiltCharacter> = {

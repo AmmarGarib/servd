@@ -4,12 +4,19 @@
 // swinging; left alone, one of them hops now and then. The glass glint slides
 // as you scroll past.
 //
+// Tap (or click) a pastry and it goes the way it would at the counter: the
+// tongs lift it, a stackd paper bag slides up from the shelf lip, the pastry
+// drops in on an arc, the bag crinkles and folds its top over, and after a
+// beat the case restocks. Packaging is the vessel, so the payoff is the bag.
+// Reduced motion: the tag lights up in sky and the bag is simply there.
+//
 // The line-up is illustrative — the menu API does not yet expose per-brand
 // items, so this is the case's character, not a price list. The CTA goes to
 // the real menu.
 
 import Link from 'next/link'
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { tick } from '../../../lib/tactile'
 import { useInView, useViewProgress, prefersReducedMotion } from './hooks'
 import s from './case.module.css'
 import ui from './ui.module.css'
@@ -112,26 +119,94 @@ const BOTTOM: Item[] = [
   { name: 'focaccia', art: <Focaccia /> },
 ]
 
-function Shelf({ items, offset, hop }: { items: Item[]; offset: number; hop: number }) {
+// The tongs: two plum arms on a hinge, drawn open; they close on the pastry
+// as the pick starts.
+function Tongs() {
+  return (
+    <svg className={s.tongs} viewBox="0 0 40 56" aria-hidden focusable="false">
+      <g className={s.tongArmL}>
+        <path d="M20 2 C 16 16, 10 30, 9 50" fill="none" stroke={PLUM} strokeWidth={4} strokeLinecap="round" />
+        <path d="M9 50 l -3 4" stroke={PLUM} strokeWidth={4} strokeLinecap="round" />
+      </g>
+      <g className={s.tongArmR}>
+        <path d="M20 2 C 24 16, 30 30, 31 50" fill="none" stroke={PLUM} strokeWidth={4} strokeLinecap="round" />
+        <path d="M31 50 l 3 4" stroke={PLUM} strokeWidth={4} strokeLinecap="round" />
+      </g>
+      <circle cx="20" cy="4" r="3.4" fill={CREAM} stroke={INK} strokeWidth={1.8} />
+    </svg>
+  )
+}
+
+// The stackd paper bag: cream kraft, a plum line drawing of the mascot's face
+// and the lowercase wordmark. The top band folds over once the pastry is in.
+function Bag() {
+  return (
+    <svg className={s.bagArt} viewBox="0 0 80 84" preserveAspectRatio="xMidYMax meet" aria-hidden focusable="false">
+      <path d="M8 22 L 72 22 L 76 80 C 76 82, 75 83, 73 83 L 7 83 C 5 83, 4 82, 4 80 Z" fill={CREAM} stroke={INK} strokeWidth={2.2} strokeLinejoin="round" />
+      <path d="M12 30 L 10 78 M68 30 L 70 78" stroke={INK} strokeOpacity={0.22} strokeWidth={1.4} strokeLinecap="round" />
+      {/* The mascot line: a round face, two dot eyes, the grin. */}
+      <circle cx="40" cy="50" r="12" fill="none" stroke={PLUM} strokeWidth={2} />
+      <circle cx="35.5" cy="47.5" r="1.6" fill={PLUM} />
+      <circle cx="44.5" cy="47.5" r="1.6" fill={PLUM} />
+      <path d="M34.5 53.5 C 37 57, 43 57, 45.5 53.5" fill="none" stroke={PLUM} strokeWidth={2} strokeLinecap="round" />
+      <path d="M31 39 C 34 35, 38 36, 40 38.5 C 42 36, 46 35, 49 39" fill="none" stroke={PLUM} strokeWidth={1.8} strokeLinecap="round" />
+      <text x="40" y="75" textAnchor="middle" className={s.bagWord}>stackd</text>
+      {/* The top band, which folds down over the mouth. */}
+      <g className={s.bagTop}>
+        <path d="M8 22 L 8 8 C 8 6, 9 5, 11 5 L 69 5 C 71 5, 72 6, 72 8 L 72 22 Z" fill={CREAM} stroke={INK} strokeWidth={2.2} strokeLinejoin="round" />
+        <path d="M8 22 L 14 17 L 20 22 L 26 17 L 32 22 L 38 17 L 44 22 L 50 17 L 56 22 L 62 17 L 68 22 L 72 19" fill="none" stroke={INK} strokeOpacity={0.3} strokeWidth={1.2} strokeLinejoin="round" />
+      </g>
+      <circle cx="40" cy="22" r="3.2" fill={SKY} stroke={INK} strokeWidth={1.6} className={s.bagSeal} />
+    </svg>
+  )
+}
+
+interface ShelfProps {
+  items: Item[]
+  offset: number
+  hop: number
+  picked: number
+  onPick: (n: number, name: string) => void
+}
+
+function Shelf({ items, offset, hop, picked, onPick }: ShelfProps) {
   return (
     <>
       <ul className={s.row}>
         {items.map((it, i) => {
           const n = offset + i
+          const isPicked = picked === n
           return (
-            <li key={it.name} className={s.item} data-hop={hop === n ? 'true' : undefined} style={{ '--n': n } as CSSProperties}>
-              <div className={s.lift}>
-                {it.fresh && (
-                  <svg className={s.steam} viewBox="0 0 60 40" aria-hidden focusable="false">
-                    <path d="M16 38 C 10 28, 22 20, 16 8" />
-                    <path d="M32 38 C 26 26, 38 18, 32 2" />
-                    <path d="M46 38 C 40 28, 52 20, 46 8" />
-                  </svg>
-                )}
-                <div className={s.art}>{it.art}</div>
-              </div>
-              <span className={s.shadow} aria-hidden />
-              <span className={s.tag}>{it.name}</span>
+            <li
+              key={it.name}
+              className={s.item}
+              data-hop={hop === n && !isPicked ? 'true' : undefined}
+              data-picked={isPicked ? 'true' : undefined}
+              style={{ '--n': n } as CSSProperties}
+            >
+              <button
+                type="button"
+                className={s.pick}
+                aria-label={`${it.name}, lift from the case`}
+                onClick={() => onPick(n, it.name)}
+              >
+                <span className={s.lift}>
+                  {it.fresh && (
+                    <svg className={s.steam} viewBox="0 0 60 40" aria-hidden focusable="false">
+                      <path d="M16 38 C 10 28, 22 20, 16 8" />
+                      <path d="M32 38 C 26 26, 38 18, 32 2" />
+                      <path d="M46 38 C 40 28, 52 20, 46 8" />
+                    </svg>
+                  )}
+                  <span className={s.art}>{it.art}</span>
+                  <Tongs />
+                </span>
+                <span className={s.shadow} aria-hidden />
+                <span className={s.bagSlot} aria-hidden>
+                  <span className={s.bag}><Bag /></span>
+                </span>
+                <span className={s.tag} aria-hidden>{it.name}</span>
+              </button>
             </li>
           )
         })}
@@ -141,12 +216,39 @@ function Shelf({ items, offset, hop }: { items: Item[]; offset: number; hop: num
   )
 }
 
+// The whole pick runs 1.4s, then the bag drops away and the shelf restocks.
+const PICK_MS = 1750
+
 export function PastryCase({ menuHref }: { menuHref: string }) {
   const glassRef = useViewProgress<HTMLDivElement>({ start: 1, end: 0 })
   const { ref, inView } = useInView<HTMLElement>({ rootMargin: '0px 0px -10% 0px' })
   const [hop, setHop] = useState(-1)
   const [settled, setSettled] = useState(false)
+  const [picked, setPicked] = useState(-1)
+  const [bagged, setBagged] = useState('')
   const timer = useRef<number | undefined>(undefined)
+  const pickTimer = useRef<number | undefined>(undefined)
+  const pickedRef = useRef(-1)
+
+  const onPick = useCallback((n: number, name: string) => {
+    if (pickedRef.current === n) return
+    tick('light')
+    window.clearTimeout(pickTimer.current)
+    // Restart cleanly if another pastry is mid-flight.
+    pickedRef.current = -1
+    setPicked(-1)
+    requestAnimationFrame(() => {
+      pickedRef.current = n
+      setPicked(n)
+      setBagged(`${name}, into the bag`)
+      pickTimer.current = window.setTimeout(() => {
+        pickedRef.current = -1
+        setPicked(-1)
+      }, PICK_MS)
+    })
+  }, [])
+
+  useEffect(() => () => window.clearTimeout(pickTimer.current), [])
 
   // Items drop onto the shelves the first time the case is seen.
   useEffect(() => { if (inView) setSettled(true) }, [inView])
@@ -158,6 +260,8 @@ export function PastryCase({ menuHref }: { menuHref: string }) {
     const id = window.setInterval(() => {
       let n = Math.floor(Math.random() * 6)
       if (n === last) n = (n + 1) % 6
+      // Never hop the pastry that is on its way into a bag.
+      if (n === pickedRef.current) n = (n + 1) % 6
       last = n
       setHop(n)
       window.clearTimeout(timer.current)
@@ -192,10 +296,11 @@ export function PastryCase({ menuHref }: { menuHref: string }) {
           </div>
           <div ref={glassRef} className={s.window}>
             <div className={s.lamp} aria-hidden />
-            <Shelf items={TOP} offset={0} hop={hop} />
-            <Shelf items={BOTTOM} offset={3} hop={hop} />
+            <Shelf items={TOP} offset={0} hop={hop} picked={picked} onPick={onPick} />
+            <Shelf items={BOTTOM} offset={3} hop={hop} picked={picked} onPick={onPick} />
             <div className={s.glass} aria-hidden />
           </div>
+          <p className={ui.srOnly} aria-live="polite">{bagged}</p>
           <div className={s.base} aria-hidden>
             <span>baked here</span>
             <span>·</span>

@@ -24,6 +24,10 @@ export function SimmerCursor() {
     let scale = 0.4, tScale = 0.4
     let raf = 0
     let on = false
+    // Pressing closes the ring to .75 through the same lerp (so it eases in
+    // and out with weight, no snap and no bounce); letting go opens it.
+    let pressed = false
+    const target = () => (on ? (pressed ? 0.75 : 1) : 0.4)
 
     const tick = () => {
       x += (tx - x) * 0.2
@@ -45,7 +49,7 @@ export function SimmerCursor() {
       if (next !== on) {
         on = next
         el.dataset.on = String(on)
-        tScale = on ? 1 : 0.4
+        tScale = target()
       }
       if (hit) {
         const ground = hit.closest('[data-ground]')?.getAttribute('data-ground') ?? 'tiber'
@@ -54,12 +58,32 @@ export function SimmerCursor() {
       if (!on) { x = tx; y = ty }   // no trailing while hidden
       kick()
     }
-    const onLeave = () => { on = false; el.dataset.on = 'false'; tScale = 0.4; kick() }
+    const onLeave = () => { on = false; pressed = false; el.dataset.on = 'false'; tScale = 0.4; kick() }
+    const onDown = (e: PointerEvent) => {
+      if (e.pointerType !== 'mouse') return
+      pressed = true
+      tScale = target()
+      kick()
+    }
+    const onUp = () => {
+      if (!pressed) return
+      pressed = false
+      tScale = target()
+      kick()
+    }
 
     window.addEventListener('pointermove', onMove, { passive: true })
+    window.addEventListener('pointerdown', onDown, { passive: true })
+    window.addEventListener('pointerup', onUp, { passive: true })
+    window.addEventListener('pointercancel', onUp, { passive: true })
+    window.addEventListener('blur', onUp)
     document.documentElement.addEventListener('pointerleave', onLeave)
     return () => {
       window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerdown', onDown)
+      window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onUp)
+      window.removeEventListener('blur', onUp)
       document.documentElement.removeEventListener('pointerleave', onLeave)
       if (raf) cancelAnimationFrame(raf)
     }

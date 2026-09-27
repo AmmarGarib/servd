@@ -4,6 +4,8 @@
 .wall {
   position: relative;
   padding: clamp(4rem, 10vh, 7rem) 0 clamp(3rem, 8vh, 5rem);
+  /* The slap starts a touch oversized; never let it widen the page. */
+  overflow-x: clip;
 }
 .head { max-width: 40rem; }
 
@@ -22,23 +24,82 @@
   position: relative;
   aspect-ratio: 1 / 1;
   transform: translateY(var(--lift)) rotate(var(--tilt));
-  transition: transform 420ms cubic-bezier(0.34, 1.56, 0.64, 1), filter 240ms ease;
+  transition: transform 420ms var(--ease-spring, cubic-bezier(0.34, 1.56, 0.64, 1)), filter 240ms ease;
   filter: drop-shadow(0 14px 20px rgba(28, 8, 16, 0.5));
+  -webkit-tap-highlight-color: transparent;
+  cursor: default;
 }
 .sticker:nth-child(4n + 2) { --tilt: 1.8deg; }
 .sticker:nth-child(4n + 3) { --tilt: -1deg; }
 .sticker:nth-child(4n + 4) { --tilt: 2.6deg; }
-.sticker:hover { --tilt: 0deg; --lift: -8px; filter: drop-shadow(0 26px 26px rgba(28, 8, 16, 0.55)); }
 
-/* Slapped on: hidden until the wall is first seen (only when JS armed it). */
-.armed .sticker { opacity: 0; }
+/* Lifted: off the wall, squared up, a deeper and softer shadow, and one
+   corner catching the light. Hover (fine pointers) and press both lift. */
+@media (hover: hover) {
+  .sticker:hover {
+    --tilt: 0deg;
+    --lift: -4px;
+    filter: drop-shadow(0 24px 26px rgba(28, 8, 16, 0.55));
+  }
+  .sticker:hover .peel { opacity: 1; transform: scale(1) rotate(0deg); }
+}
+.sticker.lifted {
+  --tilt: 0deg;
+  --lift: -4px;
+  filter: drop-shadow(0 24px 26px rgba(28, 8, 16, 0.55));
+  transition-duration: 180ms, 180ms;
+  transition-timing-function: var(--ease-out, cubic-bezier(0.22, 1, 0.36, 1)), ease;
+}
+.sticker.lifted .peel { opacity: 1; transform: scale(1) rotate(0deg); }
+
+/* The body carries the re-stick jelly, so it never fights the slap (which
+   lives on the li) or the lift (the li's transform). */
+.body {
+  position: absolute;
+  inset: 0;
+  transform-origin: 50% 70%;
+}
+.resticking .body { animation: restick 420ms var(--ease-out, cubic-bezier(0.22, 1, 0.36, 1)) 1; }
+@keyframes restick {
+  0%   { transform: scale(1.03, 0.95); }
+  35%  { transform: scale(0.98, 1.03); }
+  65%  { transform: scale(1.01, 0.99); }
+  100% { transform: none; }
+}
+
+/* The peeling corner: the sticker's cream back curling up off the wall. */
+.peel {
+  position: absolute;
+  top: 9%;
+  right: 12%;
+  width: 17%;
+  aspect-ratio: 1;
+  z-index: 2;
+  border-radius: 0 0 0 70%;
+  background:
+    linear-gradient(225deg, rgba(255, 255, 255, 0) 46%, #FFFFFF 50%, var(--stackd-cream, #FCE8CE) 72%, #EBCFAE 100%);
+  filter: drop-shadow(-3px 4px 3px rgba(28, 8, 16, 0.28));
+  opacity: 0;
+  transform: scale(0.3) rotate(-12deg);
+  transform-origin: 100% 0;
+  transition: opacity 160ms ease, transform 260ms var(--ease-spring, cubic-bezier(0.34, 1.56, 0.64, 1));
+  pointer-events: none;
+}
+
+/* Slapped on: armed until the wall is first seen (only when JS armed it).
+   The armed state is the slap's first frame, and it is never fainter than
+   .35, so a still caught mid-scroll shows a sticker arriving, not a ghost. */
+.armed .sticker { opacity: 0.35; scale: 1.06; rotate: -8deg; translate: 0 -14px; }
 .armed.seen .sticker {
   opacity: 1;
+  scale: 1;
+  rotate: 0deg;
+  translate: 0 0;
   animation: slap 760ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
   animation-delay: calc(var(--i) * 130ms);
 }
 @keyframes slap {
-  0% { opacity: 0; scale: 1.6; rotate: -14deg; translate: 0 -30px; }
+  0% { opacity: 0.35; scale: 1.06; rotate: -8deg; translate: 0 -14px; }
   55% { opacity: 1; scale: 0.94; rotate: 3deg; translate: 0 0; }
   78% { scale: 1.03; rotate: -1deg; }
   100% { opacity: 1; scale: 1; rotate: 0deg; translate: 0 0; }
@@ -166,9 +227,13 @@
   .num { font-size: 0.64rem; margin-top: 0.15rem; }
 }
 
+/* Calmer, never dead: no lift or jelly, but the shadow deepens and the
+   corner still peels (a fade, no curl) under the finger. */
 @media (prefers-reduced-motion: reduce) {
-  .sticker, .sticker:hover { transition: none; transform: rotate(var(--tilt)); }
-  .armed .sticker, .armed.seen .sticker { opacity: 1; animation: none; }
+  .sticker, .sticker:hover, .sticker.lifted { transition: filter 120ms ease-out; transform: rotate(var(--tilt)); }
+  .armed .sticker, .armed.seen .sticker { opacity: 1; scale: none; rotate: none; translate: none; animation: none; }
+  .resticking .body { animation: none; }
+  .peel, .sticker:hover .peel, .sticker.lifted .peel { transform: none; transition: opacity 120ms ease-out; }
   .vig *, .live .vig * { animation: none !important; }
   .steamG path { opacity: 0.7; }
 }

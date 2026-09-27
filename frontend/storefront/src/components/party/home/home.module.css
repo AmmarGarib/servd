@@ -63,7 +63,9 @@
   color: var(--ink-mute);
 }
 
-/* ── Chunky diner buttons (same recipe as the hero) ───────────────────── */
+/* ── Rubber buttons (same material as the hero CTA) ─────────────────────
+   Surface: 2.5px ink border + hard offset shadow. Hover lifts, press squashes
+   flat and wide in --dur-press, release springs back with overshoot. */
 .btn {
   display: inline-flex;
   align-items: center;
@@ -83,16 +85,37 @@
   text-decoration: none;
   white-space: nowrap;
   cursor: pointer;
-  transition: transform 160ms var(--spring), box-shadow 160ms ease, background-color 160ms ease;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  transition:
+    transform var(--dur-release, 320ms) var(--ease-spring, cubic-bezier(0.34, 1.56, 0.64, 1)),
+    box-shadow var(--dur-release, 320ms) var(--ease-spring, cubic-bezier(0.34, 1.56, 0.64, 1)),
+    background-color 160ms ease;
 }
-.btn svg { flex-shrink: 0; transition: transform 200ms ease; }
+.btn svg { flex-shrink: 0; transition: transform 200ms var(--ease-out, cubic-bezier(0.22, 1, 0.36, 1)); }
 .btn:hover { transform: translateY(-3px) rotate(-1.5deg); box-shadow: 0 9px 0 var(--ink); }
 .btn:hover svg { transform: translateX(4px); }
-.btn:active { transform: translateY(4px); box-shadow: 0 2px 0 var(--ink); }
 .btn:focus-visible { outline: 3px solid var(--ink); outline-offset: 4px; }
 
 .btnCream { background: var(--cream); color: var(--ink); }
 .btnCream:hover { transform: translateY(-3px) rotate(1.5deg); }
+
+.btn:active,
+.btn.pending {
+  transform: translateY(4px) scale(1.03, 0.94);
+  box-shadow: 0 2px 0 var(--ink);
+  transition-duration: var(--dur-press, 80ms), var(--dur-press, 80ms), 160ms;
+  transition-timing-function: var(--ease-out, cubic-bezier(0.22, 1, 0.36, 1));
+}
+.btn.pending { cursor: progress; }
+.btn.pending svg { animation: whoosh 260ms linear infinite; }
+
+@keyframes whoosh {
+  0%   { transform: translateX(0); opacity: 1; }
+  60%  { transform: translateX(10px); opacity: 0.35; }
+  61%  { transform: translateX(-4px); opacity: 0.35; }
+  100% { transform: translateX(0); opacity: 1; }
+}
 
 /* ── Dividers ─────────────────────────────────────────────────────────── */
 .divider {
@@ -102,6 +125,11 @@
   overflow: hidden;
   margin: -1px 0; /* hide sub-pixel seams */
   z-index: 1;
+}
+.dividerSquash {
+  position: absolute;
+  inset: 0;
+  transform-origin: 50% 100%;
 }
 .dividerTrack {
   position: absolute;
@@ -130,6 +158,9 @@
 
 @media (prefers-reduced-motion: reduce) {
   .dividerTrack { animation: none; }
+  .btn { transition: background-color 150ms ease, box-shadow 150ms ease; }
   .btn:hover, .btnCream:hover { transform: none; }
-  .btn:hover svg { transform: none; }
+  .btn:hover svg, .btn.pending svg { transform: none; animation: none; }
+  /* Calmer, never dead: the press darkens instead of squashing. */
+  .btn:active, .btn.pending { transform: none; box-shadow: 0 2px 0 var(--ink); filter: brightness(0.86); }
 }

@@ -1,5 +1,6 @@
 'use client'
 import { useEffect, useState } from 'react'
+import chrome from '../brandChrome.module.css'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -98,9 +99,12 @@ interface BadgeProps {
   hoursData: HoursData | null
   accentColor?: string
   size?: 'sm' | 'md'
+  /** The brand this badge sits on. simmer's open dot stays still; every
+   *  other brand's breathes. Omit on servd surfaces (breathes). */
+  brandSlug?: string
 }
 
-export function OpenStatusBadge({ hoursData, accentColor, size = 'md' }: BadgeProps) {
+export function OpenStatusBadge({ hoursData, accentColor, size = 'md', brandSlug }: BadgeProps) {
   const [status, setStatus] = useState<{ open: boolean; closesAt: string | null; opensAt: string | null } | null>(null)
 
   useEffect(() => {
@@ -156,13 +160,14 @@ export function OpenStatusBadge({ hoursData, accentColor, size = 'md' }: BadgePr
         background: `${green}1a`, color: green,
         border: `1px solid ${green}44`,
       }}>
-        <span style={{
-          width: '6px', height: '6px', borderRadius: '50%', background: green, flexShrink: 0,
-          boxShadow: `0 0 5px ${green}`,
-          animation: 'openPulse 2s ease-in-out infinite',
-        }} />
+        {/* The open dot breathes: a soft ring pulse off currentColor, 2.2s.
+            Still on simmer (see brandSlug). */}
+        <span
+          aria-hidden="true"
+          className={brandSlug === 'simmer' ? chrome.dot : `${chrome.dot} ${chrome.breathe}`}
+          style={{ color: green }}
+        />
         Open Now{status.closesAt ? ` · Closes ${status.closesAt}` : ''}
-        <style>{`@keyframes openPulse { 0%,100%{opacity:1} 50%{opacity:0.45} }`}</style>
       </span>
     )
   }

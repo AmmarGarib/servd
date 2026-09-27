@@ -1,12 +1,16 @@
 'use client'
 
 import Link from 'next/link'
-import { MagneticLink } from '@/components/ui/MagneticButton'
 import { useEffect, useState } from 'react'
+import type { CSSProperties } from 'react'
 import { useRouter } from 'next/navigation'
 import { useCustomerAuth } from '../../store/customerAuth'
 import { useCart, type CartItemModifier } from '../../store/cart'
 import { ErrorToast } from '../../components/ui/ErrorToast'
+import { HopDots } from '../../components/tactile/HopDots'
+import { CrowdPoster } from '../../components/characters/CrowdPoster'
+import { formatBrandName } from '../../lib/concept'
+import styles from '../../components/checkout/checkout.module.css'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -86,18 +90,16 @@ function ReorderButton({ orderId, conceptSlug, token, onError }: {
     <button
       onClick={onClick}
       disabled={busy}
+      aria-busy={busy || undefined}
+      className={`${styles.pillBtn} ${styles.pressable}`}
       style={{
         background: 'var(--servd-green)', color: 'white',
-        fontWeight: 700,
-        fontSize: '0.8rem',
-        padding: '0.45rem 0.9rem',
-        borderRadius: '999px',
         border: 'none',
+        minWidth: '6.5rem',
         cursor: busy ? 'wait' : 'pointer',
-        opacity: busy ? 0.6 : 1,
       }}
     >
-      {busy ? 'Loading…' : 'Reorder ↻'}
+      {busy ? <HopDots size={5} gap={3} label="Loading your order" /> : 'Reorder ↻'}
     </button>
   )
 }
@@ -154,33 +156,47 @@ export default function OrdersPage() {
       <section className="section-tight">
         <div className="container">
           {loading ? (
-            <div role="status" style={{ padding: '4rem 0', textAlign: 'center', color: 'var(--servd-mute)' }}>Loading…</div>
+            <div role="status" aria-label="Loading your orders" style={{ display: 'grid', gap: '0.85rem', maxWidth: '820px', margin: '0 auto' }}>
+              {[0, 1, 2].map((i) => (
+                <div key={i} className={styles.skeleton} style={{ ['--i' as string]: i } as CSSProperties} aria-hidden="true" />
+              ))}
+              <div style={{ display: 'flex', justifyContent: 'center', color: 'var(--servd-mute)', paddingTop: '0.5rem' }}>
+                <HopDots size={7} gap={5} />
+              </div>
+            </div>
           ) : error ? (
             <div role="alert" className="servd-card" style={{ padding: '2rem', textAlign: 'center' }}>
               <p style={{ color: '#b91c1c', fontWeight: 600 }}>{error}</p>
               <button onClick={() => window.location.reload()} className="servd-btn-secondary" style={{ marginTop: '1rem' }}>Try again</button>
             </div>
           ) : !profile?.orders.length ? (
-            <div className="servd-card" style={{ padding: '4rem 2rem', textAlign: 'center' }}>
-              <h2 style={{ fontSize: '1.4rem', marginBottom: '0.75rem' }}>No orders yet</h2>
-              <p style={{ color: 'var(--servd-mute)', marginBottom: '2rem' }}>Once you order, it&rsquo;ll show up here for re-ordering with one tap.</p>
-              <MagneticLink href="/browse" className="servd-btn-primary">Browse brands</MagneticLink>
+            <div style={{ display: 'flex', justifyContent: 'center', padding: '1.5rem 0 2.5rem' }}>
+              <div className={styles.stickerCard}>
+                <div className={styles.posterFrame}>
+                  <CrowdPoster cast={['burger', 'coffee']} mode="shrug" />
+                </div>
+                <h2 className={styles.stickerTitle}>No orders yet.</h2>
+                <p className={styles.stickerSub}>Once you order, it&rsquo;ll show up here for re-ordering with one tap.</p>
+                <Link href="/browse" className={`${styles.rubber} ${styles.rubberPrimary}`}>
+                  Find something to eat
+                </Link>
+              </div>
             </div>
           ) : (
             <div style={{ display: 'grid', gap: '0.85rem', maxWidth: '820px', margin: '0 auto' }}>
-              {profile.orders.map((o) => {
+              {profile.orders.map((o, idx) => {
                 const badge = statusFor(o.status)
                 const itemSummary = o.items.slice(0, 2).map((i) => `${i.quantity}× ${i.name}`).join(', ')
                 const more = o.items.length > 2 ? ` +${o.items.length - 2} more` : ''
                 return (
                   <article
                     key={o.id}
-                    className="servd-card"
-                    style={{ padding: '1.25rem 1.5rem', display: 'grid', gridTemplateColumns: '1fr auto', gap: '1rem', alignItems: 'center' }}
+                    className={`servd-card ${styles.cardSquish} ${styles.panelIn}`}
+                    style={{ padding: '1.25rem 1.5rem', display: 'grid', gridTemplateColumns: '1fr auto', gap: '1rem', alignItems: 'center', ['--i' as string]: Math.min(idx, 8) } as CSSProperties}
                   >
                     <div>
                       <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
-                        <h2 style={{ fontSize: '1.05rem', fontWeight: 800, margin: 0 }}>{o.concept.name}</h2>
+                        <h2 style={{ fontSize: '1.05rem', fontWeight: 800, margin: 0 }}>{formatBrandName(o.concept.name)}</h2>
                         <span style={{
                           background: badge.bg, color: badge.text,
                           fontSize: '0.7rem', fontWeight: 700, letterSpacing: '0.06em',
@@ -204,15 +220,10 @@ export default function OrdersPage() {
                           href={['preparing', 'received', 'confirmed', 'ready'].includes(o.status)
                             ? `/${o.concept.slug}/order/${o.id}`
                             : `/${o.concept.slug}`}
+                          className={`${styles.pillBtn} ${styles.pressable}`}
                           style={{
-                            display: 'inline-block',
                             background: 'var(--servd-black)',
                             color: 'white',
-                            fontWeight: 700,
-                            fontSize: '0.8rem',
-                            padding: '0.45rem 0.9rem',
-                            borderRadius: '999px',
-                            textDecoration: 'none',
                           }}
                         >
                           {['preparing', 'received', 'confirmed', 'ready'].includes(o.status) ? 'Track →' : 'Visit brand'}

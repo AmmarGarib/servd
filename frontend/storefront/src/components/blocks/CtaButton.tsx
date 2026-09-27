@@ -1,16 +1,20 @@
 import Link from 'next/link'
 import type { CtaButtonBlock } from '../../lib/blocks'
 import { BUTTON_SIZE_PX } from '../../lib/blocks'
+import c from '../brand/brandChrome.module.css'
 
-const STYLE: Record<CtaButtonBlock['style'], { bg: string; fg: string; shadow: string; border: string }> = {
-  primary:   { bg: 'var(--servd-green)', fg: 'var(--servd-black)', shadow: '0 14px 36px rgba(58,14,105,0.4)', border: 'none' },
-  secondary: { bg: '#fff',               fg: 'var(--servd-ink)',   shadow: 'none',                            border: '1px solid var(--servd-line)' },
-  dark:      { bg: '#0a0a0a',            fg: '#fff',               shadow: '0 12px 30px rgba(0,0,0,0.25)',    border: 'none' },
-  ghost:     { bg: 'transparent',        fg: 'var(--servd-ink)',   shadow: 'none',                            border: '1px solid transparent' },
+// Page-builder CTA. The look (fill, ink, rim, resting/hover/pressed shadow)
+// lives in brandChrome.module.css so the button can actually lift on hover
+// and squash on press — inline styles can't express either. Size and layout
+// stay inline because they come straight from the block config.
+const VARIANT: Record<CtaButtonBlock['style'], string> = {
+  primary:   c.ctaPrimary ?? '',
+  secondary: c.ctaSecondary ?? '',
+  dark:      c.ctaDark ?? '',
+  ghost:     c.ctaGhost ?? '',
 }
 
 export function CtaButton(block: CtaButtonBlock) {
-  const s = STYLE[block.style]
   const sz = BUTTON_SIZE_PX[block.size]
   return (
     <div className="container" style={{
@@ -19,18 +23,16 @@ export function CtaButton(block: CtaButtonBlock) {
     }}>
       <Link
         href={block.href}
+        className={`${c.cta} ${VARIANT[block.style] ?? VARIANT.primary}`}
         style={{
-          display: 'flex', alignItems: 'center', justifyContent: 'center', textAlign: 'center',
           width: block.fullWidth ? '100%' : 'clamp(280px, 70vw, 560px)',
+          maxWidth: '100%',
           padding: `${sz.py} ${block.fullWidth ? '1rem' : '0'}`,
           fontSize: sz.fz,
-          background: s.bg, color: s.fg, border: s.border, boxShadow: s.shadow,
-          fontWeight: 900, letterSpacing: '-0.01em',
-          borderRadius: '999px', textDecoration: 'none',
-          transition: 'transform 140ms ease, box-shadow 140ms ease',
         }}
       >
-        {block.text}{block.trailingArrow ? ' →' : ''}
+        {block.text}
+        {block.trailingArrow ? <span aria-hidden="true" className={c.arrow}>→</span> : null}
       </Link>
     </div>
   )

@@ -1,6 +1,6 @@
 'use client'
 import Link from 'next/link'
-import { useCallback, useRef, useState, type CSSProperties } from 'react'
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
 import { emitCrowd } from '../characters/crowdBus'
 import type { CharacterKind } from '../characters/types'
 import {
@@ -142,6 +142,143 @@ const DOTS: [number, number, number][] = [
   [-128, -30, 5], [132, -26, 5],
 ]
 
+// ── Pull the stack apart ─────────────────────────────────────────────────
+// Once the burger has landed, a deliberate press-hold (150ms without moving)
+// grabs the stack; dragging up pulls it into an exploded view, dragging down
+// squashes it. Let go and it drops back on an under-damped spring — the same
+// bounce-and-squash as the landing. A quick flick or a vertical swipe is
+// still a page scroll (touch-action: pan-y), and a plain click still
+// jiggles. Reduced motion: none of this.
+
+const HOLD_MS = 150
+/** Movement before the hold completes that means "this is a scroll". */
+const HOLD_SLOP = 8
+/** Pixels of drag per unit of --pull. */
+const PULL_PX = 140
+const PULL_MAX = 1.4
+const PULL_MIN = -0.45
+/** The drop back: stiff and lightly damped, so it bounces and squashes. */
+const DROP_K = 520
+const DROP_C = 15
+
+function useStackPull(enabled: boolean, onDrop: () => void) {
+  const stageRef = useRef<HTMLDivElement | null>(null)
+  const dropCb = useRef(onDrop)
+  dropCb.current = onDrop
+  /** True for the click that ends a drag, so it does not also jiggle. */
+  const suppressClick = useRef(false)
+
+  useEffect(() => {
+    const el = stageRef.current
+    if (!el || !enabled) return
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return
+
+    let holdTimer = 0
+    let raf = 0
+    let grabbed = false
+    let pointerId = -1
+    let startX = 0
+    let startY = 0
+    let pull = 0
+    let vel = 0
+    let last = 0
+
+    const write = (v: number) => el.style.setProperty('--pull', v.toFixed(4))
+    const stopSpring = () => { if (raf) { cancelAnimationFrame(raf); raf = 0 } }
+    const spring = (now: number) => {
+      const dt = Math.min(0.032, (now - last) / 1000 || 0.016)
+      last = now
+      const acc = -DROP_K * pull - DROP_C * vel
+      vel += acc * dt
+      pull += vel * dt
+      if (Math.abs(pull) < 0.001 && Math.abs(vel) < 0.01) {
+        pull = 0
+        vel = 0
+        raf = 0
+        write(0)
+        delete el.dataset.pulling
+        return
+      }
+      write(pull)
+      raf = requestAnimationFrame(spring)
+    }
+
+    const cancelHold = () => { window.clearTimeout(holdTimer); holdTimer = 0 }
+
+    const onDown = (e: PointerEvent) => {
+      if (e.button !== 0 || grabbed) return
+      pointerId = e.pointerId
+      startX = e.clientX
+      startY = e.clientY
+      cancelHold()
+      holdTimer = window.setTimeout(() => {
+        holdTimer = 0
+        grabbed = true
+        stopSpring()
+        vel = 0
+        // Continue from wherever a previous drop had got to.
+        startY -= pull * -PULL_PX
+        el.dataset.pulling = '1'
+        el.dataset.grabbed = '1'
+        try { el.setPointerCapture(pointerId) } catch { /* pointer already gone */ }
+      }, HOLD_MS)
+    }
+    const onMove = (e: PointerEvent) => {
+      if (e.pointerId !== pointerId) return
+      if (!grabbed) {
+        if (holdTimer && Math.hypot(e.clientX - startX, e.clientY - startY) > HOLD_SLOP) cancelHold()
+        return
+      }
+      const dy = e.clientY - startY
+      pull = Math.max(PULL_MIN, Math.min(PULL_MAX, -dy / PULL_PX))
+      write(pull)
+    }
+    const onUp = (e: PointerEvent) => {
+      if (e.pointerId !== pointerId) return
+      cancelHold()
+      if (!grabbed) return
+      grabbed = false
+      delete el.dataset.grabbed
+      suppressClick.current = true
+      window.setTimeout(() => { suppressClick.current = false }, 0)
+      try { el.releasePointerCapture(pointerId) } catch { /* already released */ }
+      // Only a real pull earns the drop (and the crowd's cheer).
+      if (Math.abs(pull) > 0.08) dropCb.current()
+      vel = 0
+      last = performance.now()
+      stopSpring()
+      raf = requestAnimationFrame(spring)
+    }
+    // While held, a finger's drag moves the stack, not the page. The first
+    // touchmove after a still hold is cancelable, so this wins over pan-y.
+    const onTouchMove = (e: TouchEvent) => { if (grabbed && e.cancelable) e.preventDefault() }
+    // A long press on touch would otherwise open the context menu.
+    const onContext = (e: Event) => { if (grabbed || holdTimer) e.preventDefault() }
+
+    el.addEventListener('pointerdown', onDown)
+    el.addEventListener('pointermove', onMove)
+    el.addEventListener('pointerup', onUp)
+    el.addEventListener('pointercancel', onUp)
+    el.addEventListener('touchmove', onTouchMove, { passive: false })
+    el.addEventListener('contextmenu', onContext)
+    return () => {
+      cancelHold()
+      stopSpring()
+      el.removeEventListener('pointerdown', onDown)
+      el.removeEventListener('pointermove', onMove)
+      el.removeEventListener('pointerup', onUp)
+      el.removeEventListener('pointercancel', onUp)
+      el.removeEventListener('touchmove', onTouchMove)
+      el.removeEventListener('contextmenu', onContext)
+      write(0)
+      delete el.dataset.pulling
+      delete el.dataset.grabbed
+    }
+  }, [enabled])
+
+  return { stageRef, suppressClick }
+}
+
 function Stamp() {
   return (
     <svg viewBox="0 0 120 120" aria-hidden>
@@ -168,7 +305,9 @@ export function FlipdSpecHero({ brandName, orderHref, menuHref, tagline }: Props
   const [landed, setLanded] = useState(false)
   const [excited, setExcited] = useState(false)
   const [jiggling, setJiggling] = useState(false)
-  const stageRef = useRef<HTMLDivElement | null>(null)
+  const { stageRef, suppressClick } = useStackPull(landed, () => {
+    emitCrowd({ type: 'cheer', kind: 'burger' })
+  })
 
   // Point the crowd's eyes at the burger (they go back to the cursor on the
   // next real pointer move).
@@ -192,6 +331,7 @@ export function FlipdSpecHero({ brandName, orderHref, menuHref, tagline }: Props
   })
 
   function onStageClick() {
+    if (suppressClick.current) return
     if (!landed || jiggling) return
     setJiggling(true)
     emitCrowd({ type: 'cheer' })

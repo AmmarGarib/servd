@@ -1,10 +1,15 @@
 'use client'
 import { useHoursData } from './OpenStatusBadge'
+import chrome from '../brandChrome.module.css'
 
 // Compact open/closed indicator for surfaces that don't have room for
 // the full OpenStatusBadge (the eyebrow tags on /reserve brand cards,
 // the brand pill on home, etc.). Until the hours fetch lands, falls
 // back to a static label so the visual placeholder is preserved.
+//
+// While open, a small dot breathes (a soft ring pulse, 2.2s) — the kitchen is
+// alive. simmer's dot stays still (its bible: quiet, no decoration that
+// moves for its own sake), and a closed kitchen's dot never moves.
 
 interface Props {
   slug: string
@@ -25,12 +30,23 @@ export function OpenNowPill({ slug, fallback }: Props) {
       ? { bg: 'rgba(34,197,94,0.92)', fg: '#0a2415', label: `Open · closes ${status.closesAt ?? 'soon'}` }
       : { bg: 'rgba(0,0,0,0.78)',     fg: 'rgba(255,255,255,0.95)', label: status.opensAt ? `Opens ${status.opensAt}` : 'Closed today' }
 
+  const breathe = !!status?.open && slug !== 'simmer'
   return (
     <span style={{
+      display: 'inline-flex', alignItems: 'center', gap: '0.4rem',
       background: tone.bg, color: tone.fg,
       fontSize: '0.7rem', fontWeight: 700, letterSpacing: '0.1em',
       textTransform: 'uppercase', padding: '0.3rem 0.65rem', borderRadius: '999px',
-    }}>{tone.label}</span>
+    }}>
+      {status ? (
+        <span
+          aria-hidden="true"
+          className={breathe ? `${chrome.dot} ${chrome.breathe}` : chrome.dot}
+          style={{ color: status.open ? '#0a2415' : 'rgba(255,255,255,0.7)' }}
+        />
+      ) : null}
+      {tone.label}
+    </span>
   )
 }
 

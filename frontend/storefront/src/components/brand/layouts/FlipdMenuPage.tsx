@@ -21,7 +21,8 @@
 
 import Link from 'next/link'
 import { useEffect, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent } from 'react'
-import { FlipdCrowd, Marquee, OrderLink, Words, DoodleBurst, DoodleSquiggle } from '../flipd/FlipdBits'
+import { FlipdCrowd, Marquee, OrderLink, Words, DoodleBurst, DoodleSquiggle, DoodleStar } from '../flipd/FlipdBits'
+import { tick } from '../../../lib/tactile'
 import { ItemTicket } from '../flipd/ItemTicket'
 import { MiniBuild } from '../flipd/MiniBuild'
 import { useSectionMotion } from '../flipd/useFlipdMotion'
@@ -103,6 +104,7 @@ function ChipBar({ cats, active }: { cats: FlipdMenuCategoryLive[]; active: stri
     const el = document.getElementById(`cat-${id}`)
     if (!el) return
     e.preventDefault()
+    tick('light')
     const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
     el.scrollIntoView({ behavior: reduced ? 'auto' : 'smooth', block: 'start' })
     el.focus({ preventScroll: true })
@@ -154,6 +156,36 @@ function Category({ cat, index, slug }: { cat: FlipdMenuCategoryLive; index: num
         {cat.items.map((item, i) => (
           <ItemTicket key={item.id} item={item} index={i} orderHref={`/${slug}`} label={cat.name} />
         ))}
+      </div>
+    </section>
+  )
+}
+
+/**
+ * Nothing published yet. Still a ticket on the rail — it swings in like the
+ * real ones, a doodle boils beside it, and a small crowd waits on the
+ * counter next to it, barely excited, for the kitchen to post something.
+ */
+function EmptyMenu({ slug }: { slug: string }) {
+  const ref = useSectionMotion<HTMLElement>(0.1)
+  return (
+    <section ref={ref} className={m.cats} aria-labelledby="flipd-menu-empty">
+      <div className={m.empty}>
+        <div className={m.emptyTicket}>
+          <div className={f.ticketWrap} style={{ '--r': '-1.5deg', '--i': 0 } as CSSProperties}>
+            <span className={f.clip} aria-hidden />
+            <div className={f.ticket}>
+              <div className={f.ticketHead}><span>No. 00</span><span>Kitchen</span></div>
+              <hr className={f.perf} />
+              <h2 id="flipd-menu-empty" className={m.emptyTitle}>The menu isn&rsquo;t up yet.</h2>
+              <p className={m.emptyBody}>Call the counter and we&rsquo;ll tell you what&rsquo;s on.</p>
+              <Link href={`/${slug}`} className={f.btn}>Go to ordering</Link>
+            </div>
+          </div>
+          <DoodleStar className={`${f.float} ${m.emptyDoodle}`} />
+          <DoodleSquiggle className={`${f.float} ${m.emptySquiggle}`} />
+        </div>
+        <FlipdCrowd className={m.emptyCrowd} excitement={0.08} />
       </div>
     </section>
   )
@@ -225,20 +257,7 @@ export function FlipdMenuPage({ slug, conceptName, categories }: Props) {
       {shown.length === 0 ? (
         // The API answered but nothing is published (or it did not answer).
         // Say so plainly and send them somewhere useful.
-        <section className={m.cats}>
-          <div className={m.empty}>
-            <div className={f.ticketWrap} style={{ '--r': '-1.5deg' } as CSSProperties}>
-              <span className={f.clip} aria-hidden />
-              <div className={f.ticket}>
-                <div className={f.ticketHead}><span>No. 00</span><span>Kitchen</span></div>
-                <hr className={f.perf} />
-                <h2 className={m.emptyTitle}>The menu isn&rsquo;t up yet.</h2>
-                <p className={m.emptyBody}>Call the counter and we&rsquo;ll tell you what&rsquo;s on.</p>
-                <Link href={`/${slug}`} className={f.btn}>Go to ordering</Link>
-              </div>
-            </div>
-          </div>
-        </section>
+        <EmptyMenu slug={slug} />
       ) : (
         <div className={m.cats}>
           {shown.map((cat, i) => (

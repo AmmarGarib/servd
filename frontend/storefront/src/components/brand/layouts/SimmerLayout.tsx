@@ -34,7 +34,7 @@
 import Link from 'next/link'
 import type { CSSProperties, ReactNode } from 'react'
 import type { Concept } from '../../../lib/concept'
-import { conceptHeroImage } from '../../../lib/concept'
+import { conceptHeroImage, formatBrandName } from '../../../lib/concept'
 import { SpeakeasyFridgeHero } from '../../kinetic/SpeakeasyFridgeHero'
 import { locationFor, whatsappLink } from '../../../lib/brandLocations'
 import { Candle } from '../simmer/Candle'
@@ -151,7 +151,7 @@ export function SimmerLayout({ concept, concepts }: Props) {
 
       {/* ── 1. THE WALK-IN ───────────────────────────────────────────── */}
       <SpeakeasyFridgeHero
-        brandName="simmer"
+        brandName={(formatBrandName(concept.name) || 'simmer').toLowerCase()}
         reserveHref={`/reserve/${concept.slug}`}
         menuHref={`/brand/${concept.slug}/menu`}
       />

@@ -130,6 +130,16 @@
   aspect-ratio: 1;
   display: grid;
   place-items: center;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: default;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
   transform:
     translate(-50%, -50%)
     translateZ(2px)
@@ -138,7 +148,15 @@
     scale(calc(1 + var(--seal) * 0.12));
   filter: drop-shadow(0 calc(2px + var(--seal) * 14px) calc(3px + var(--seal) * 10px) rgba(61, 17, 34, 0.35));
   z-index: 5;
+  transition: scale 260ms var(--ease-spring, cubic-bezier(0.34, 1.56, 0.64, 1));
 }
+/* Once the parcel is open the seal is a live button. */
+.sealLive { cursor: pointer; }
+.sealLive:focus-visible { outline: 3px solid var(--stackd-plum); outline-offset: 4px; }
+@media (hover: hover) {
+  .sealLive:hover { scale: 1.07; }
+}
+.sealLive:active { scale: 0.9; transition-duration: 80ms; }
 .seal svg { position: absolute; inset: 0; width: 100%; height: 100%; }
 .seal span {
   position: relative;
@@ -149,7 +167,71 @@
   color: var(--stackd-plum-dark);
 }
 
+/* The hint under the parcel, once it can be toggled. */
+.hint {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0.25rem;
+  margin: 0;
+  text-align: center;
+  font-family: var(--stackd-mono);
+  font-size: 0.7rem;
+  font-weight: 500;
+  letter-spacing: 0.2em;
+  color: var(--stackd-plum);
+  opacity: 0;
+  transition: opacity 240ms ease;
+  pointer-events: none;
+}
+.hintOn { opacity: 1; }
+
+/* ── Tap to re-wrap / re-open ──────────────────────────────────────────
+   A toggle pins the fold values; .manual turns on transitions so the pinned
+   values animate (scroll-driven motion never transitions, so it never lags
+   the wheel). Re-wrapping runs the opening backwards: the sandwich tucks in,
+   left, bottom and right flaps fold in, the top flap lands last on a
+   spring, then the seal comes home and is pressed down. */
+.stage.forceWrapped { --seal: 0; --f0: 0; --f1: 0; --f2: 0; --f3: 0; --pop: 0; }
+.stage.forceOpen    { --seal: 1; --f0: 1; --f1: 1; --f2: 1; --f3: 1; --pop: 1; }
+
+.manual .flap { transition: transform 460ms var(--ease-out, cubic-bezier(0.22, 1, 0.36, 1)); }
+.manual .seal {
+  transition:
+    transform 520ms var(--ease-spring, cubic-bezier(0.34, 1.56, 0.64, 1)),
+    filter 520ms ease,
+    scale 260ms var(--ease-spring, cubic-bezier(0.34, 1.56, 0.64, 1));
+}
+.manual .sandwich { transition: transform 380ms var(--ease-out, cubic-bezier(0.22, 1, 0.36, 1)), opacity 300ms ease; }
+
+/* Opening (forwards): seal, top, right, bottom, left, then the sandwich. */
+.manual .top    { transition-delay: 140ms; }
+.manual .right  { transition-delay: 260ms; }
+.manual .bottom { transition-delay: 380ms; }
+.manual .left   { transition-delay: 500ms; }
+.manual .sandwich { transition-delay: 640ms; }
+
+/* Wrapping (backwards). */
+.wrapping .sandwich { transition-delay: 0ms; }
+.wrapping .left   { transition-delay: 90ms; }
+.wrapping .bottom { transition-delay: 220ms; }
+.wrapping .right  { transition-delay: 350ms; }
+.wrapping .top    { transition: transform 620ms var(--ease-spring, cubic-bezier(0.34, 1.56, 0.64, 1)) 480ms; }
+.wrapping .seal   { transition-delay: 820ms, 820ms, 0ms; animation: sealPress 380ms ease-out 1250ms 1; }
+@keyframes sealPress {
+  0%   { scale: 1; }
+  35%  { scale: 0.86 0.9; }
+  70%  { scale: 1.05; }
+  100% { scale: 1; }
+}
+
 @media (max-width: 860px) {
   .grid { grid-template-columns: minmax(0, 1fr); }
   .stage { --sq: min(10rem, 29vw); order: 2; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .seal, .manual .seal, .manual .flap, .manual .sandwich { transition: none; }
+  .sealLive:hover, .sealLive:active { scale: none; }
+  .wrapping .seal { animation: none; }
 }

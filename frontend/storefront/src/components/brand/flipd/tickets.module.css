@@ -6,6 +6,42 @@
   display: flex;
   flex-direction: column;
   height: 100%;
+  transform-origin: 50% 0;
+}
+
+/* ── The punch ────────────────────────────────────────────────────────────
+   A conductor's punch through the ticket's right edge, level with Order.
+   The disc is the page's own mustard, centred ON the edge, and the ticket's
+   mask cuts it in half — so what shows is a half-round notch bitten out of
+   the paper, with a blue burr where the die went through. ItemTicket sets
+   [data-punch] on press and clears it 600ms after release. */
+.ticket::after {
+  content: '';
+  position: absolute;
+  right: -13px;
+  bottom: 2.05rem;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--punch-bg, var(--flipd-mustard));
+  box-shadow: inset 0 0 0 2.5px var(--flipd-blue);
+  transform: scale(0);
+  transition: transform 180ms var(--ease-out, cubic-bezier(0.22, 1, 0.36, 1));
+  pointer-events: none;
+}
+.wrap[data-punch] .ticket::after {
+  transform: scale(1);
+  transition: transform 260ms var(--ease-spring, cubic-bezier(0.34, 1.56, 0.64, 1));
+}
+/* The ticket wiggles on its clip as the die bites. `rotate` on the paper,
+   not the wrapper, so the wrapper's swing-in is never restarted. */
+.wrap[data-punch] .ticket { animation: punchWiggle 420ms var(--ease-out, cubic-bezier(0.22, 1, 0.36, 1)); }
+@keyframes punchWiggle {
+  0%   { rotate: 0deg; }
+  25%  { rotate: 1.5deg; }
+  55%  { rotate: -1.1deg; }
+  80%  { rotate: 0.4deg; }
+  100% { rotate: 0deg; }
 }
 .label {
   max-width: 60%;
@@ -46,6 +82,17 @@
   border: 1.5px solid var(--flipd-blue);
   color: var(--flipd-blue);
   white-space: nowrap;
+  transition:
+    transform 320ms var(--ease-spring, cubic-bezier(0.34, 1.56, 0.64, 1)),
+    background-color 140ms ease;
+}
+/* Option chips are print, not controls — but they still give under a
+   thumb: a quick squash, and a spring back. */
+.chip:hover { transform: translateY(-1px) rotate(-2deg); }
+.chip:active {
+  transform: translateY(1px) scale(1.04, 0.9);
+  background-color: var(--flipd-mustard);
+  transition-duration: 80ms, 80ms;
 }
 .foot {
   margin-top: auto;
@@ -92,7 +139,7 @@
 .order svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; transition: transform 200ms ease; }
 .order:hover { transform: translateY(-2px); box-shadow: 0 5px 0 var(--flipd-blue-deep); }
 .order:hover svg { transform: translateX(3px); }
-.order:active { transform: translateY(3px); box-shadow: 0 0 0 var(--flipd-blue-deep); }
+.order:active { transform: translateY(3px) scale(1.03, 0.94); box-shadow: 0 0 0 var(--flipd-blue-deep); transition-duration: 60ms; }
 .order:focus-visible { outline: 3px solid var(--flipd-blue); outline-offset: 3px; }
 
 /* Sold out: a sticker slapped across the ticket. Text stays full strength —
@@ -120,7 +167,15 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .price, .order, .order svg { transition: none; }
+  .price, .order svg { transition: none; }
+  .order, .chip { transition: box-shadow 120ms ease, background-color 120ms ease; }
+  .order:hover, .order:active, .order:hover svg, .chip:hover, .chip:active { transform: none; }
+  .order:active { background-color: var(--flipd-blue-deep); }
   .wrap:hover .price { rotate: -3deg; scale: 1; }
   [data-in] .soldOut { animation: none; }
+  /* The punch still lands — as a notch that simply appears — and the
+     ticket stays still. */
+  .ticket::after { transform: scale(1); opacity: 0; transition: opacity 120ms ease; }
+  .wrap[data-punch] .ticket::after { transform: scale(1); opacity: 1; transition: opacity 120ms ease; }
+  .wrap[data-punch] .ticket { animation: none; }
 }

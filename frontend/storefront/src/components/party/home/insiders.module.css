@@ -87,6 +87,7 @@
   flex-direction: column;
   overflow: hidden;
   transform-style: preserve-3d;
+  -webkit-tap-highlight-color: transparent;
 }
 .clip {
   position: absolute;
@@ -203,9 +204,8 @@
   border: 2.5px solid #2A1A2B;
   border-radius: 24px;
   box-shadow: 8px 8px 0 #2A1A2B;
-  transition: translate 240ms cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 200ms ease;
+  /* Information, not a control: no hover lift. */
 }
-.perk:hover { translate: 0 -6px; box-shadow: 10px 14px 0 #2A1A2B; }
 
 .simmer { background: #06392F; color: #F3ECDE; }
 .stackd { background: #7C2946; color: #FCE8CE; }
@@ -238,9 +238,7 @@
   margin-bottom: 1rem;
   border-radius: 999px;
   border: 2px solid currentColor;
-  transition: transform 300ms cubic-bezier(0.34, 1.56, 0.64, 1);
 }
-.perk:hover .perkIcon { transform: rotate(-12deg) scale(1.1); }
 .perkTag {
   margin: 0 0 0.45rem;
   font-family: var(--font-display);
@@ -268,7 +266,6 @@
 .simmer .perkHead { font-family: var(--simmer-display); font-weight: 400; letter-spacing: 0.01em; }
 .simmer .perkBody { font-family: var(--simmer-body); font-size: 1.02rem; }
 .simmer .perkIcon { border-width: 1px; color: #E94E1B; }
-.simmer:hover .perkIcon { transform: none; }
 
 @keyframes sway {
   0%, 100% { transform: rotate(-1.6deg); }
@@ -294,6 +291,4 @@
 @media (prefers-reduced-motion: reduce) {
   .swing, .pass::after { animation: none; }
   .holo { display: none; }
-  .perk:hover { translate: none; }
-  .perk:hover .perkIcon { transform: none; }
 }

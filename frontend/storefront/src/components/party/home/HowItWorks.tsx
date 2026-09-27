@@ -5,23 +5,24 @@
 // gets the whole crew excited, clicking it makes them cheer on the way out
 // (same beat as the hero's Order now).
 //
-// This is the page's second and last WebGL crowd. It is aria-hidden
-// decoration; every step is plain text.
-import dynamic from 'next/dynamic'
+// This is the page's second and last WebGL crowd (it paints its flat poster
+// first, so the stage is never empty). It is aria-hidden decoration; every
+// step is plain text, and the step cards are not controls, so they only
+// settle a degree on hover instead of lifting like buttons.
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { useState, type MouseEvent } from 'react'
+import { useEffect, useRef, useState, type CSSProperties, type MouseEvent } from 'react'
 import { motion, useReducedMotion } from 'framer-motion'
 import { ArrowRight, Bike, ShoppingBag, Store } from 'lucide-react'
+import { formatBrandName } from '../../../lib/concept'
+import { tick } from '../../../lib/tactile'
 import { emitCrowd } from '../../characters/crowdBus'
+// Direct import (not next/dynamic): FoodCrowd is SSR-safe and loads three.js
+// itself, so its flat poster is in the server-rendered first paint.
+import { FoodCrowd } from '../../characters/FoodCrowd'
 import type { CharacterKind } from '../../characters/types'
 import s from './home.module.css'
 import h from './how.module.css'
-
-const FoodCrowd = dynamic(
-  () => import('../../characters/FoodCrowd').then((m) => m.FoodCrowd),
-  { ssr: false },
-)
 
 const CAST: CharacterKind[] = ['burger', 'coffee', 'shake']
 
@@ -29,7 +30,7 @@ const STEPS: Array<{ n: string; title: string; body: string; Icon: typeof Store;
   {
     n: '1',
     title: 'Pick your kitchens',
-    body: 'stackd, simmer and Flipd side by side. Add from one, or from all three.',
+    body: `${formatBrandName('stackd')}, ${formatBrandName('simmer')} and ${formatBrandName('Flipd')} side by side. Add from one, or from all three.`,
     Icon: Store,
     who: 'coffee',
     tilt: -2,
@@ -56,12 +57,18 @@ export function HowItWorks() {
   const reduce = useReducedMotion()
   const router = useRouter()
   const [excited, setExcited] = useState(false)
+  const [pending, setPending] = useState(false)
+  const navTimer = useRef<number | undefined>(undefined)
+  useEffect(() => () => window.clearTimeout(navTimer.current), [])
 
   function onExplore(e: MouseEvent<HTMLAnchorElement>) {
     if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return
     e.preventDefault()
+    if (pending) return
+    setPending(true)
+    tick('light')
     emitCrowd({ type: 'cheer' })
-    window.setTimeout(() => router.push('/browse'), 520)
+    navTimer.current = window.setTimeout(() => router.push('/browse'), 520)
   }
 
   return (
@@ -76,10 +83,10 @@ export function HowItWorks() {
       <div className={s.wrap}>
         <motion.header
           className={h.head}
-          initial={{ opacity: 0, y: 30 }}
+          initial={{ opacity: 0.001, y: 24 }}
           whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true, amount: 0.6 }}
-          transition={{ type: 'spring', stiffness: 160, damping: 16 }}
+          viewport={{ once: true, amount: 0.2, margin: '0px 0px -8% 0px' }}
+          transition={reduce ? { duration: 0 } : { default: { type: 'spring', stiffness: 220, damping: 20 }, opacity: { duration: 0.22 } }}
         >
           <p className={s.eyebrow}>How servd works</p>
           <h2 id="how-title" className={s.h2}>
@@ -91,7 +98,7 @@ export function HowItWorks() {
       {/* The crew — wide and short so all three stand in a row. */}
       <div className={h.stage} aria-hidden>
         <div className={h.counter} />
-        <FoodCrowd cast={CAST} excitement={excited ? 1 : 0} />
+        <FoodCrowd cast={CAST} excitement={excited || pending ? 1 : 0} />
       </div>
 
       <div className={s.wrap}>
@@ -101,12 +108,17 @@ export function HowItWorks() {
             <motion.li
               key={st.n}
               className={h.step}
-              initial={{ opacity: 0, y: 60, rotate: st.tilt * 4, scale: 0.9 }}
+              style={{ '--settle': `${st.tilt > 0 ? -1 : 1}deg` } as CSSProperties}
+              initial={{ opacity: 0.001, y: 24, rotate: st.tilt * 1.5, scale: 0.96 }}
               whileInView={{ opacity: 1, y: 0, rotate: st.tilt, scale: 1 }}
-              viewport={{ once: true, amount: 0.6 }}
-              transition={reduce ? { duration: 0 } : { type: 'spring', stiffness: 180, damping: 13, delay: i * 0.18 }}
+              viewport={{ once: true, amount: 0.2, margin: '0px 0px -8% 0px' }}
+              transition={
+                reduce
+                  ? { duration: 0 }
+                  : { default: { type: 'spring', stiffness: 260, damping: 16, delay: i * 0.07 }, opacity: { duration: 0.22, delay: i * 0.07 } }
+              }
               onViewportEnter={() => {
-                if (!reduce) window.setTimeout(() => emitCrowd({ type: 'cheer', kind: st.who }), 250 + i * 380)
+                if (!reduce) window.setTimeout(() => emitCrowd({ type: 'cheer', kind: st.who }), 200 + i * 300)
               }}
             >
               <span className={h.num} aria-hidden>{st.n}</span>
@@ -122,8 +134,8 @@ export function HowItWorks() {
                     d="M4 24 C 18 4, 38 4, 54 20"
                     initial={{ pathLength: 0 }}
                     whileInView={{ pathLength: 1 }}
-                    viewport={{ once: true, amount: 1 }}
-                    transition={reduce ? { duration: 0 } : { duration: 0.6, ease: 'easeOut', delay: 0.5 + i * 0.3 }}
+                    viewport={{ once: true, amount: 0.3 }}
+                    transition={reduce ? { duration: 0 } : { duration: 0.36, ease: 'easeOut', delay: 0.12 + i * 0.07 }}
                   />
                   <path d="M44 20 L55 21 L53 10" />
                 </svg>
@@ -136,10 +148,10 @@ export function HowItWorks() {
         {/* Explore invitation — the old plum band, now a torn ticket. */}
         <motion.div
           className={h.ticket}
-          initial={{ opacity: 0, y: 40, rotate: -3 }}
+          initial={{ opacity: 0.001, y: 24, rotate: -3 }}
           whileInView={{ opacity: 1, y: 0, rotate: -1 }}
-          viewport={{ once: true, amount: 0.5 }}
-          transition={reduce ? { duration: 0 } : { type: 'spring', stiffness: 170, damping: 14 }}
+          viewport={{ once: true, amount: 0.2, margin: '0px 0px -8% 0px' }}
+          transition={reduce ? { duration: 0 } : { default: { type: 'spring', stiffness: 240, damping: 15 }, opacity: { duration: 0.22 } }}
         >
           <p className={h.ticketCopy}>
             <strong>Every kitchen, one order.</strong>
@@ -147,7 +159,8 @@ export function HowItWorks() {
           </p>
           <Link
             href="/browse"
-            className={s.btn}
+            className={`${s.btn} ${pending ? s.pending : ''}`}
+            aria-busy={pending || undefined}
             onClick={onExplore}
             onMouseEnter={() => setExcited(true)}
             onMouseLeave={() => setExcited(false)}

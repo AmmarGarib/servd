@@ -39,7 +39,7 @@
   border-radius: 999px;
   background: #FF5A3C;
   box-shadow: 0 0 0 0 rgba(255, 90, 60, 0.7);
-  animation: pulse 1.6s ease-out infinite;
+  animation: breathe 2.2s ease-in-out infinite;
 }
 
 /* ── The board ────────────────────────────────────────────────────────── */
@@ -121,29 +121,105 @@
 }
 .tile {
   position: relative;
-  display: inline-grid;
-  place-items: center;
+  display: inline-block;
   width: clamp(1.9rem, 2.6vw, 2.35rem);
   height: clamp(2.4rem, 3.3vw, 2.95rem);
   border-radius: 6px;
-  background: linear-gradient(180deg, #43304A 0 49%, #36253A 51% 100%);
-  box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.35), 0 2px 0 #140A15;
+  box-shadow: 0 2px 0 #140A15;
   font-family: var(--font-display);
   font-weight: 800;
   font-size: clamp(1.35rem, 2vw, 1.7rem);
   line-height: 1;
   color: #FFF4D6;
   transform-origin: 50% 50%;
+  perspective: 300px;
 }
+/* The seam, exactly on the hinge. */
 .tile::after {
   content: '';
   position: absolute;
+  z-index: 3;
   left: 0;
   right: 0;
-  top: 50%;
+  top: calc(50% - 0.75px);
   height: 1.5px;
   background: rgba(20, 10, 21, 0.85);
+  pointer-events: none;
 }
+
+.half {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 50%;
+  overflow: hidden;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+.top {
+  top: 0;
+  border-radius: 6px 6px 0 0;
+  background: #43304A;
+}
+.bottom {
+  top: 50%;
+  border-radius: 0 0 6px 6px;
+  background: #36253A;
+  box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.35);
+}
+/* The glyph box is the full tile height; each half shows its own slice. */
+.glyph {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 200%;
+  display: grid;
+  place-items: center;
+}
+.top .glyph { top: 0; }
+.bottom .glyph { top: -100%; }
+
+.flaps {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+}
+/* Old top half falls forward around its bottom edge. */
+.flapTop {
+  transform-origin: 50% 100%;
+  animation: flapTop 110ms cubic-bezier(0.55, 0, 1, 0.45) forwards;
+}
+/* New bottom half swings down from the hinge and clacks with a tiny kick. */
+.flapBottom {
+  transform-origin: 50% 0;
+  transform: rotateX(90deg);
+  animation: flapBottom 150ms cubic-bezier(0.22, 1, 0.36, 1) 100ms both;
+}
+/* A brief shadow on each flap as it passes through the hinge. */
+.flapTop::after,
+.flapBottom::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: #140A15;
+  opacity: 0;
+  pointer-events: none;
+}
+.flapTop::after { animation: flapShadeIn 110ms linear forwards; }
+.flapBottom::after { animation: flapShadeOut 150ms linear 100ms both; }
+
+@keyframes flapTop {
+  from { transform: rotateX(0deg); }
+  to   { transform: rotateX(-90deg); }
+}
+@keyframes flapBottom {
+  0%   { transform: rotateX(90deg); }
+  75%  { transform: rotateX(-6deg); }
+  100% { transform: rotateX(0deg); }
+}
+@keyframes flapShadeIn  { to { opacity: 0.55; } }
+@keyframes flapShadeOut { from { opacity: 0.55; } to { opacity: 0; } }
 
 .where { min-width: 0; }
 .area {
@@ -194,19 +270,38 @@
 }
 .sign[data-state='open'] .bulb {
   box-shadow: 0 0 0 0 rgba(124, 242, 154, 0.7);
-  animation: pulseGreen 1.6s ease-out infinite;
+  animation: breatheGreen 2.2s ease-in-out infinite;
 }
 .sign[data-state='closed'] { color: #FFB199; }
 .sign[data-state='closed'] .bulb { background: transparent; border: 2px solid currentColor; }
-.sign[data-state='pending'] { color: #FFD447; }
+/* Pending: the hours are on their way — a slow, low shimmer across the
+   sign so it reads as "checking", not as a dead flat pill. */
+.sign[data-state='pending'] {
+  position: relative;
+  overflow: hidden;
+  color: #FFD447;
+}
+.sign[data-state='pending']::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(100deg, transparent 30%, rgba(255, 212, 71, 0.22) 50%, transparent 70%);
+  transform: translateX(-100%);
+  animation: shimmer 1.8s ease-in-out infinite;
+  pointer-events: none;
+}
 
 .links {
   display: flex;
   align-items: center;
   gap: 0.5rem;
 }
+/* Rubber pills: small hard shadow, lift on hover, squash on press. */
 .orderLink,
 .waLink {
+  box-shadow: 0 4px 0 #140A15;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -220,23 +315,39 @@
   font-size: 0.92rem;
   text-decoration: none;
   white-space: nowrap;
-  transition: transform 160ms cubic-bezier(0.34, 1.56, 0.64, 1), background-color 160ms ease, color 160ms ease;
+  transition:
+    transform var(--dur-release, 320ms) var(--ease-spring, cubic-bezier(0.34, 1.56, 0.64, 1)),
+    box-shadow var(--dur-release, 320ms) var(--ease-spring, cubic-bezier(0.34, 1.56, 0.64, 1)),
+    background-color 160ms ease,
+    color 160ms ease;
 }
 .orderLink { background: #FFD447; color: #2A1A2B; border-color: #FFD447; }
-.orderLink:hover { transform: translateY(-2px) rotate(-2deg); }
+.orderLink:hover { transform: translateY(-2px) rotate(-2deg); box-shadow: 0 6px 0 #140A15; }
 .waLink { color: #FFF4D6; background: transparent; }
-.waLink:hover { background: #FFF4D6; color: #2A1A2B; transform: translateY(-2px) rotate(2deg); }
+.waLink:hover { background: #FFF4D6; color: #2A1A2B; transform: translateY(-2px) rotate(2deg); box-shadow: 0 6px 0 #140A15; }
+.orderLink:active,
+.waLink:active {
+  transform: translateY(2px) scale(0.96);
+  box-shadow: 0 1px 0 #140A15;
+  transition-duration: var(--dur-press, 80ms), var(--dur-press, 80ms), 160ms, 160ms;
+  transition-timing-function: var(--ease-out, cubic-bezier(0.22, 1, 0.36, 1));
+}
 .orderLink:focus-visible,
 .waLink:focus-visible { outline: 3px solid #FFD447; outline-offset: 3px; }
 
 @keyframes twinkle { 0% { opacity: 1; } 50% { opacity: 0; } }
-@keyframes pulse {
-  0% { box-shadow: 0 0 0 0 rgba(255, 90, 60, 0.7); }
-  100% { box-shadow: 0 0 0 12px rgba(255, 90, 60, 0); }
+/* Live dots breathe: a slow in-and-out glow, not an alarm pulse. */
+@keyframes breathe {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255, 90, 60, 0.55); }
+  50%      { box-shadow: 0 0 0 7px rgba(255, 90, 60, 0); }
 }
-@keyframes pulseGreen {
-  0% { box-shadow: 0 0 0 0 rgba(124, 242, 154, 0.7); }
-  100% { box-shadow: 0 0 0 12px rgba(124, 242, 154, 0); }
+@keyframes breatheGreen {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(124, 242, 154, 0.6); }
+  50%      { box-shadow: 0 0 0 7px rgba(124, 242, 154, 0); }
+}
+@keyframes shimmer {
+  0%   { transform: translateX(-100%); }
+  70%, 100% { transform: translateX(100%); }
 }
 @keyframes buzz {
   0%, 91%, 95%, 100% { opacity: 1; }
@@ -266,7 +377,10 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .board::before, .board::after, .liveDot, .sign, .sign .bulb { animation: none !important; }
+  .board::before, .board::after, .liveDot, .sign, .sign .bulb, .sign::after { animation: none !important; }
   .board::after { display: none; }
-  .orderLink:hover, .waLink:hover { transform: none; }
+  .sign[data-state='pending']::after { display: none; }
+  .orderLink, .waLink { transition: background-color 150ms ease, color 150ms ease, box-shadow 150ms ease; }
+  .orderLink:hover, .waLink:hover, .orderLink:active, .waLink:active { transform: none; }
+  .orderLink:active, .waLink:active { box-shadow: 0 1px 0 #140A15; filter: brightness(0.86); }
 }

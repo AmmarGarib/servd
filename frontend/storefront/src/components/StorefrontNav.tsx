@@ -1,7 +1,7 @@
 'use client'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useCustomerAuth } from '../store/customerAuth'
 import { useOnBrandMicrosite } from '../lib/host'
 
@@ -34,6 +34,10 @@ export function StorefrontNav({ initialBrandSlug = null }: Props) {
   // the white text becomes invisible — so flip to the blurred-glass look
   // (white bg + ink text) after the first 60vh of scroll.
   const [scrolledPastHero, setScrolledPastHero] = useState(false)
+  // The "s" dot gives one jelly wobble on hover (and on tap, for touch). The
+  // class comes off on animationend so the next hover can replay it.
+  const [jelly, setJelly] = useState(false)
+  const wobble = useCallback(() => setJelly(true), [])
   useEffect(() => {
     if (!TRANSPARENT_PATHS.has(pathname)) return
     const threshold = window.innerHeight * 0.6
@@ -92,16 +96,23 @@ export function StorefrontNav({ initialBrandSlug = null }: Props) {
       <Link
         href="/"
         aria-label="servd home"
+        className="servd-nav-home"
+        onMouseEnter={wobble}
+        onPointerDown={(e) => { if (e.pointerType !== 'mouse') wobble() }}
         style={{ display: 'inline-flex', alignItems: 'center', gap: '0.6rem', textDecoration: 'none' }}
       >
-        <span aria-hidden="true" style={{
+        <span
+          aria-hidden="true"
+          className={jelly ? 't-jelly' : undefined}
+          onAnimationEnd={() => setJelly(false)}
+          style={{
           width: '2.3rem', height: '2.3rem', borderRadius: '50%', flexShrink: 0,
           background: 'var(--servd-green)', color: 'white',
           display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
           fontFamily: 'var(--font-display)', fontWeight: 900, fontSize: '1.05rem',
           letterSpacing: '-0.02em', boxShadow: '0 2px 10px rgba(0,0,0,0.25)',
         }}>s</span>
-        <span style={{
+        <span className="servd-nav-wordmark" style={{
           fontFamily: 'var(--font-wordmark)',
           fontSize: '1.5rem',
           fontWeight: 800,
@@ -135,6 +146,7 @@ export function StorefrontNav({ initialBrandSlug = null }: Props) {
         {token ? (
           <Link
             href="/account"
+            className="t-squish"
             style={{
               display: 'inline-flex',
               alignItems: 'center',
@@ -169,13 +181,18 @@ export function StorefrontNav({ initialBrandSlug = null }: Props) {
         ) : (
           /* Single Sign in button — the login page already has a "create
              account" path, so a separate Sign up CTA is redundant. */
+          /* Rubber: ink rim + hard offset shadow, squashes into the shadow
+             on press and springs back past rest (.t-rubber in globals.css). */
           <Link
             href="/login"
-            className="brand-pill"
+            className="t-rubber"
             style={{
-              ['--brand-accent' as string]: 'var(--servd-green)',
-              ['--brand-ink' as string]:    'white',
-              padding: '0.7rem 1.3rem',
+              ['--rubber-bg' as string]: 'var(--servd-green)',
+              ['--rubber-fg' as string]: 'white',
+              padding: '0.55rem 1.2rem',
+              fontFamily: 'var(--font-display)',
+              fontWeight: 800,
+              letterSpacing: '-0.01em',
               fontSize: '0.92rem',
               minHeight: '44px',
             }}

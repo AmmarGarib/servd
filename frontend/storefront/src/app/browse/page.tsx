@@ -1,5 +1,6 @@
 import { BrowseClient } from './BrowseClient'
 import type { Concept } from '../../lib/concept'
+import { formatBrandName } from '../../lib/concept'
 
 export const dynamic = 'force-dynamic'
 
@@ -19,7 +20,7 @@ async function getConcepts(): Promise<Concept[]> {
 
 export const metadata = {
   title: 'All brands',
-  description: 'Browse every kitchen on servd — simmer, stackd, and Flipd.',
+  description: `Browse every kitchen on servd — ${formatBrandName('simmer')}, ${formatBrandName('stackd')}, and ${formatBrandName('Flipd')}.`,
 }
 
 export default async function BrowsePage() {

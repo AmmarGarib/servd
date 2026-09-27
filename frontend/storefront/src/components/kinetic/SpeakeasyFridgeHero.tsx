@@ -68,14 +68,42 @@ function useWalkIn() {
     const mq = window.matchMedia?.('(prefers-reduced-motion: reduce)')
     let raf = 0
 
-    const apply = (p: number) => {
+    // The handle is a heavy steel lever: it chases the scroll through an
+    // exponential lerp (≈.14 per frame) instead of tracking it 1:1, and the
+    // loop stops as soon as it has settled. Reduced motion writes it direct.
+    let handleNow = 0
+    let handleTarget = 0
+    let handleRaf = 0
+    const HANDLE_LERP = 0.14
+    const stepHandle = () => {
+      handleNow += (handleTarget - handleNow) * HANDLE_LERP
+      if (Math.abs(handleTarget - handleNow) < 0.0005) {
+        handleNow = handleTarget
+        handleRaf = 0
+      } else {
+        handleRaf = requestAnimationFrame(stepHandle)
+      }
+      el.style.setProperty('--handle', handleNow.toFixed(4))
+    }
+    const setHandle = (v: number, direct: boolean) => {
+      handleTarget = v
+      if (direct) {
+        if (handleRaf) { cancelAnimationFrame(handleRaf); handleRaf = 0 }
+        handleNow = v
+        el.style.setProperty('--handle', v.toFixed(4))
+        return
+      }
+      if (!handleRaf) handleRaf = requestAnimationFrame(stepHandle)
+    }
+
+    const apply = (p: number, direct = false) => {
       const handle = easeOut(seg(p, 0.02, 0.1))
       const crack = easeOut(seg(p, 0.09, 0.16))
       const swing = easeInOut(seg(p, 0.16, 0.62))
       const door = crack * 7 + swing * 113
       const vapor = seg(p, 0.1, 0.22) * (1 - 0.5 * seg(p, 0.6, 0.8))
+      setHandle(handle, direct)
       const vars: Record<string, number> = {
-        '--handle': handle,
         '--door': door,
         '--vapor': vapor,
         '--inside': seg(p, 0.08, 0.17),
@@ -93,13 +121,18 @@ function useWalkIn() {
       setLive((prev) => (prev === now ? prev : now))
     }
 
+    let first = true
     const update = () => {
       raf = 0
-      if (mq?.matches || !pin) { apply(1); return }
+      // The first measurement (a reload halfway down) lands the handle where
+      // it belongs rather than swinging it there.
+      const direct = first
+      first = false
+      if (mq?.matches || !pin) { apply(1, true); return }
       const rect = el.getBoundingClientRect()
       const stickTop = parseFloat(getComputedStyle(pin).top) || 0
       const total = rect.height - pin.offsetHeight
-      apply(total > 0 ? clamp01((stickTop - rect.top) / total) : 1)
+      apply(total > 0 ? clamp01((stickTop - rect.top) / total) : 1, direct)
     }
     const onScroll = () => { if (!raf) raf = requestAnimationFrame(update) }
 
@@ -112,6 +145,7 @@ function useWalkIn() {
       window.removeEventListener('resize', onScroll)
       mq?.removeEventListener?.('change', onScroll)
       if (raf) cancelAnimationFrame(raf)
+      if (handleRaf) cancelAnimationFrame(handleRaf)
     }
   }, [])
   return { ref, live }

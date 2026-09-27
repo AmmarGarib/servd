@@ -1,8 +1,14 @@
 'use client'
 // Ticker — two crossed "tape" strips over the seam between the hero floor
 // and the kitchens. They drift on their own and speed up (and flip
-// direction) with scroll velocity. Decorative: the words are aria-hidden;
-// everything they say is said properly elsewhere on the page.
+// direction) with scroll velocity. They can also be grabbed and flung: the
+// strip stretches a little under the finger (elastic 0.2), the words follow
+// the drag, and a fling adds its velocity to the drift, decaying back to the
+// ambient speed over about 1.2s.
+//
+// Decorative: the whole seam is aria-hidden, nothing in it is focusable and
+// the drag is pointer-only; everything the tapes say is said properly
+// elsewhere on the page. Reduced motion: static tapes, no drag.
 import { useRef, type ReactNode } from 'react'
 import {
   motion,
@@ -14,11 +20,17 @@ import {
   useSpring,
   useTransform,
   useVelocity,
+  type PanInfo,
 } from 'framer-motion'
 import t from './ticker.module.css'
 
 const FOOD = ['smash burgers', 'sandwiches', 'small plates', 'pastries', 'triple-cooked fries', 'craft mocktails', 'desserts', 'light bites']
 const PROMISE = ['three kitchens', 'one bag', 'one checkout', 'made in karachi', 'hot stays hot', 'cold stays cold']
+
+/** Fling boost time constant: e^(-1200/300) ≈ 2% left after ~1.2s. */
+const FLING_TAU_MS = 300
+/** Cap on a fling, in track-% per second, so a wild flick stays readable. */
+const MAX_FLING = 60
 
 function wrapPct(min: number, max: number, v: number) {
   const r = max - min
@@ -42,6 +54,7 @@ const DOODLES = [Star, Squiggle, Dot, Heart]
 function Row({ words, baseVelocity, className }: { words: string[]; baseVelocity: number; className: string }) {
   const reduce = useReducedMotion()
   const ref = useRef<HTMLDivElement>(null)
+  const trackRef = useRef<HTMLDivElement>(null)
   const inView = useInView(ref, { margin: '120px 0px' })
   const baseX = useMotionValue(0)
   const { scrollY } = useScroll()
@@ -49,16 +62,47 @@ function Row({ words, baseVelocity, className }: { words: string[]; baseVelocity
   const smooth = useSpring(velocity, { damping: 50, stiffness: 400 })
   const factor = useTransform(smooth, [0, 1000], [0, 4], { clamp: false })
   const dir = useRef(1)
+  const fling = useRef(0)
+  const dragging = useRef(false)
   const x = useTransform(baseX, (v) => `${wrapPct(-50, 0, v)}%`)
 
+  /** px → % of the track's own width (the unit baseX is in). */
+  function toPct(px: number): number {
+    const w = trackRef.current?.offsetWidth ?? 0
+    return w > 0 ? (px / w) * 100 : 0
+  }
+
   useAnimationFrame((_, delta) => {
-    if (reduce || !inView) return
+    if (reduce || !inView || dragging.current) return
+    const dt = delta / 1000
     const f = factor.get()
     if (f < 0) dir.current = -1
     else if (f > 0) dir.current = 1
-    const move = dir.current * baseVelocity * (delta / 1000) * (1 + Math.abs(f))
+    let move = dir.current * baseVelocity * dt * (1 + Math.abs(f))
+    if (fling.current !== 0) {
+      move += fling.current * dt
+      fling.current *= Math.exp(-delta / FLING_TAU_MS)
+      if (Math.abs(fling.current) < 0.05) fling.current = 0
+    }
     baseX.set(baseX.get() + move)
   })
+
+  function onDragStart() {
+    dragging.current = true
+    fling.current = 0
+  }
+  function onDrag(_: PointerEvent | MouseEvent | TouchEvent, info: PanInfo) {
+    // The grab wrapper itself only stretches 20% of the way (elastic); the
+    // words carry the other 80% so they stay under the finger.
+    baseX.set(baseX.get() + toPct(info.delta.x * 0.8))
+  }
+  function onDragEnd(_: PointerEvent | MouseEvent | TouchEvent, info: PanInfo) {
+    dragging.current = false
+    const v = toPct(info.velocity.x)
+    fling.current = Math.max(-MAX_FLING, Math.min(MAX_FLING, v))
+    // Settle into the flung direction so the ambient drift doesn't reverse.
+    if (Math.abs(v) > 1) dir.current = Math.sign(v) === Math.sign(baseVelocity) ? 1 : -1
+  }
 
   // One "half" holds the words twice so it is always wider than the viewport;
   // the track holds two halves and wraps at -50%.
@@ -77,9 +121,22 @@ function Row({ words, baseVelocity, className }: { words: string[]; baseVelocity
 
   return (
     <div ref={ref} className={`${t.tape} ${className}`}>
-      <motion.div className={t.track} style={{ x }}>
-        <div className={t.half}>{half}</div>
-        <div className={t.half}>{half}</div>
+      <motion.div
+        className={t.grab}
+        drag={reduce ? false : 'x'}
+        dragConstraints={{ left: 0, right: 0 }}
+        dragElastic={0.2}
+        dragMomentum={false}
+        dragSnapToOrigin
+        dragTransition={{ bounceStiffness: 520, bounceDamping: 16 }}
+        onDragStart={onDragStart}
+        onDrag={onDrag}
+        onDragEnd={onDragEnd}
+      >
+        <motion.div ref={trackRef} className={t.track} style={{ x }}>
+          <div className={t.half}>{half}</div>
+          <div className={t.half}>{half}</div>
+        </motion.div>
       </motion.div>
     </div>
   )

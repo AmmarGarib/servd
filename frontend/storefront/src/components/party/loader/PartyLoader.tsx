@@ -1,3 +1,4 @@
+'use client'
 // PartyLoader — the servd hub route loader in the "food crowd" direction.
 //
 // The crowd from the home hero, redrawn as flat-but-rich SVG so it paints
@@ -8,13 +9,49 @@
 // row, glance back at you, and blink on their own clocks. Under them the
 // servd. wordmark ripples as the wave passes and a cheeky status line cycles.
 //
-// Pure SVG + CSS keyframes, server-renderable. Reduced motion shows the
-// crowd standing still with the first status line.
+// Pure SVG + CSS keyframes, rendered on the server, so it paints from the
+// first byte of HTML. The only JS is the reduced-motion status rotation.
+//
+// Handoff: the screen variant carries `data-route-loader`, which the root
+// template reads to wear the same butter ground while the loader is up, then
+// dissolve it under the page as the page sets down (see app/template.tsx).
+//
+// Status lines advance every 0.8s (three show inside 2.5s). On phones the row
+// is cropped to the middle four, and the two masked-out characters stop
+// animating. Reduced motion: the crowd stands still, and the status lines
+// still rotate, as hard cuts every 1.2s.
 
+import { useEffect, useState } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
 import s from './loader.module.css'
 
-const LINES = ['firing the grill…', 'warming the brioche…', 'salting the fries…', 'whipping the shake…', 'plating up…']
+const LINES = ['firing the grill…', 'warming the ovens…', 'salting the fries…', 'whipping the shakes…', 'plating up…']
+const RM_STEP_MS = 1200
+
+/** Index of the status line to show when motion is reduced. Hard cuts every
+ *  1.2s via setInterval; stays on 0 (and does nothing) otherwise, since the
+ *  CSS rotation owns the full-motion version. */
+function useReducedMotionLine(count: number, enabled: boolean): number {
+  const [idx, setIdx] = useState(0)
+  useEffect(() => {
+    if (!enabled || typeof window === 'undefined' || !window.matchMedia) return
+    const mq = window.matchMedia('(prefers-reduced-motion: reduce)')
+    let timer: number | undefined
+    const sync = () => {
+      window.clearInterval(timer)
+      timer = undefined
+      setIdx(0)
+      if (mq.matches) timer = window.setInterval(() => setIdx((i) => (i + 1) % count), RM_STEP_MS)
+    }
+    sync()
+    mq.addEventListener?.('change', sync)
+    return () => {
+      window.clearInterval(timer)
+      mq.removeEventListener?.('change', sync)
+    }
+  }, [count, enabled])
+  return idx
+}
 
 type V = CSSProperties & Record<`--${string}`, string | number>
 
@@ -185,8 +222,10 @@ function Crowd() {
       {CAST.map(({ body, blink }, i) => {
         const x = 60 + i * 112
         const v: V = { '--i': i, '--b': blink }
+        // The first and last are masked out of the phone crop; they rest.
+        const edge = i === 0 || i === CAST.length - 1
         return (
-          <g key={i} style={v}>
+          <g key={i} style={v} className={edge ? s.edge : undefined}>
             <ellipse className={s.shadow} cx={x} cy="184" rx="34" ry="6" fill="#2A1A2B" opacity=".16" />
             <g transform={`translate(${x + (i % 2 ? 30 : -30)} ${i % 2 ? 44 : 30})`}>
               <path className={s.spark} d={STAR} fill={i % 2 ? '#FF5A3C' : '#4E2A4F'} />
@@ -205,8 +244,14 @@ function Crowd() {
  *  `inline` = compact crowd on whatever surface it sits on. Passing `label`
  *  shows that line instead of the cycling status lines. */
 export function PartyLoader({ variant = 'screen', label }: { variant?: 'screen' | 'inline'; label?: string }) {
+  const line = useReducedMotionLine(LINES.length, !label)
   return (
-    <div className={variant === 'screen' ? s.screen : s.inline} role="status" aria-live="polite">
+    <div
+      className={variant === 'screen' ? s.screen : s.inline}
+      role="status"
+      aria-live="polite"
+      data-route-loader={variant === 'screen' ? 'servd' : undefined}
+    >
       <span className="sr-only">{label ?? 'Loading…'}</span>
       {variant === 'screen' && (
         <>
@@ -229,7 +274,7 @@ export function PartyLoader({ variant = 'screen', label }: { variant?: 'screen' 
             <span className={s.fixed}>{label}</span>
           ) : (
             LINES.map((t, i) => (
-              <span key={t} style={{ '--n': i } as V}>{t}</span>
+              <span key={t} style={{ '--n': i } as V} data-on={i === line ? '' : undefined}>{t}</span>
             ))
           )}
         </p>

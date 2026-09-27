@@ -1,21 +1,35 @@
 'use client'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { ArrowRight, Eye, EyeOff } from 'lucide-react'
 import { useCustomerAuth } from '../../store/customerAuth'
 import { ErrorToast } from '../../components/ui/ErrorToast'
 import { SmokeyBackground } from '../../components/ui/SmokeyBackground'
-import { MagneticButton } from '../../components/ui/MagneticButton'
+import { TactileButton, type TactileState } from '../../components/tactile/TactileButton'
+import a from '../../components/auth/auth.module.css'
 
 // /login — glassmorphism card over an interactive servd-purple WebGL shader.
 // Auth flow (email/password → /auth/customer/login → setAuth → /account) is
-// unchanged; only the presentation is new.
+// unchanged; only the presentation is new: fields grow their focus ring, the
+// submit is a rubber TactileButton (loading → hop dots, a failed sign-in →
+// shake), and the fields a failed sign-in points at are marked invalid and
+// shake once.
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
-const inputCls =
-  'w-full rounded-2xl px-4 py-3.5 text-sm font-semibold text-white bg-white/10 border border-white/20 placeholder:text-white/35 focus:outline-none focus:border-white/60 focus:bg-white/[0.16] transition-all'
+/** True for a moment each time `signal` becomes a new truthy value, long
+ *  enough for a one-shot shake to play. */
+function usePulse(signal: unknown, ms = 460): boolean {
+  const [on, setOn] = useState(false)
+  useEffect(() => {
+    if (!signal) { setOn(false); return }
+    setOn(true)
+    const t = window.setTimeout(() => setOn(false), ms)
+    return () => window.clearTimeout(t)
+  }, [signal, ms])
+  return on
+}
 
 // Where to send the user after auth. Checkout sends ?next=, the order tracker
 // sends ?return= — honour both. Only same-origin relative paths (open-redirect
@@ -37,10 +51,13 @@ export default function LoginPage() {
   const [loading,  setLoading]  = useState(false)
   const [error,    setError]    = useState('')
   const [showPassword, setShowPassword] = useState(false)
+  // Presentation only: which fields the last failure points at.
+  const [badCreds, setBadCreds] = useState(false)
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
+    setBadCreds(false)
     setLoading(true)
     try {
       const res  = await fetch(`${API_URL}/api/v1/auth/customer/login`, {
@@ -49,7 +66,7 @@ export default function LoginPage() {
         body: JSON.stringify({ email: email.trim(), password }),
       })
       const data = await res.json() as { token?: string; customer?: { id: string }; error?: { message?: string } }
-      if (!res.ok) { setError(data.error?.message ?? 'Invalid email or password'); return }
+      if (!res.ok) { setBadCreds(true); setError(data.error?.message ?? 'Invalid email or password'); return }
       setAuth(data.token!, data.customer!.id)
       router.replace(postAuthDest())
     } catch (err) {
@@ -57,6 +74,10 @@ export default function LoginPage() {
       setError('Could not reach the server. Make sure the API is running.')
     } finally { setLoading(false) }
   }
+
+  const failed = usePulse(error)
+  const shake = failed && badCreds
+  const btnState: TactileState = loading ? 'loading' : failed ? 'error' : 'idle'
 
   return (
     <main className="relative flex items-center justify-center px-5" style={{ minHeight: '100dvh', background: '#1E1420' }}>
@@ -68,24 +89,26 @@ export default function LoginPage() {
           servd<span style={{ color: '#C9A6F0' }}>.</span>
         </Link>
 
-        <div className="w-full rounded-3xl px-7 py-8 bg-white/10 backdrop-blur-xl border border-white/20 shadow-2xl" style={{ animation: 'fadeSlideUp 0.4s both' }}>
+        <div className={`w-full rounded-3xl px-7 py-8 bg-white/10 backdrop-blur-xl border border-white/20 shadow-2xl ${a.card}`}>
           <h1 className="font-black tracking-tight text-white mb-1" style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(1.9rem, 6vw, 2.3rem)', letterSpacing: '-0.03em' }}>Sign in</h1>
           <p className="text-sm mb-6 text-white/60">Welcome back.</p>
 
           {error && <ErrorToast message={error} onDismiss={() => setError('')} />}
 
-          <form onSubmit={e => { void handleSubmit(e) }} className="space-y-4">
+          <form onSubmit={e => { if (loading) { e.preventDefault(); return } void handleSubmit(e) }} className="space-y-4">
             <div>
               <label htmlFor="login-email" className="block text-[10px] font-black uppercase tracking-[0.22em] mb-1.5 text-white/55">Email</label>
-              <input id="login-email" type="email" autoComplete="email" value={email} onChange={e => setEmail(e.target.value)}
-                placeholder="you@example.com" autoFocus required className={inputCls} />
+              <input id="login-email" type="email" autoComplete="email" value={email} onChange={e => { setEmail(e.target.value); setBadCreds(false) }}
+                placeholder="you@example.com" autoFocus required className={a.field}
+                aria-invalid={badCreds || undefined} />
             </div>
             <div>
               <label htmlFor="login-password" className="block text-[10px] font-black uppercase tracking-[0.22em] mb-1.5 text-white/55">Password</label>
-              <div className="relative">
+              <div className={`relative ${shake ? 't-shake' : ''}`}>
                 <input id="login-password" type={showPassword ? 'text' : 'password'} autoComplete="current-password"
-                  value={password} onChange={e => setPassword(e.target.value)}
-                  placeholder="••••••••" required className={inputCls + ' pr-12'} />
+                  value={password} onChange={e => { setPassword(e.target.value); setBadCreds(false) }}
+                  placeholder="••••••••" required className={`${a.field} ${a.fieldPad}`}
+                  aria-invalid={badCreds || undefined} />
                 <button type="button" onClick={() => setShowPassword(v => !v)}
                   aria-label={showPassword ? 'Hide password' : 'Show password'} aria-pressed={showPassword}
                   className="absolute right-1.5 top-1/2 -translate-y-1/2 flex items-center justify-center min-h-[44px] min-w-[44px] rounded-lg text-white/50 hover:text-white/80 transition-colors">
@@ -94,12 +117,10 @@ export default function LoginPage() {
               </div>
             </div>
 
-            <MagneticButton type="submit" disabled={loading}
-              className="group w-full rounded-2xl py-3.5 font-black text-[0.95rem] transition-all disabled:opacity-40 active:scale-[0.98] bg-white text-[#4E2A4F] hover:bg-white/90"
-              style={{ boxShadow: '0 8px 24px rgba(0,0,0,0.25)' }}>
-              {loading ? 'Signing in…' : 'Sign in'}
-              {!loading && <ArrowRight className="h-5 w-5 transition-transform group-hover:translate-x-1" />}
-            </MagneticButton>
+            <TactileButton type="submit" state={btnState} loadingLabel="Signing in…" className={a.submit}>
+              Sign in
+              <ArrowRight className={`h-5 w-5 ${a.submitArrow}`} aria-hidden="true" />
+            </TactileButton>
           </form>
 
           <p className="text-center text-sm mt-6 text-white/60">

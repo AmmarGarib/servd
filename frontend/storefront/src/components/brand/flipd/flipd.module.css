@@ -38,10 +38,37 @@
   white-space: nowrap;
   cursor: pointer;
   box-shadow: 0 5px 0 var(--flipd-blue-deep);
+  /* Enamel: the sheen (::before) is clipped to the pill, and sits between
+     the fill and the label. Outline and the hard shadow are not clipped by
+     the element's own overflow. */
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+  --sheen: rgba(249, 240, 225, 0.3);
   transition:
-    transform 200ms cubic-bezier(0.34, 1.56, 0.64, 1),
+    transform 320ms var(--ease-spring, cubic-bezier(0.34, 1.56, 0.64, 1)),
     box-shadow 200ms ease,
     background-color 160ms ease;
+}
+/* The enamel highlight: two flat diagonal bands (no gradient — the book
+   forbids them) parked off the left edge, swept across on hover or press.
+   Transform only. The return is instant, so it only ever sweeps one way. */
+.btn::before {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  background: var(--sheen);
+  /* A wide band and a thin one, as one clipped shape. */
+  clip-path: polygon(0% 100%, 14% 0%, 30% 0%, 16% 100%, 22% 100%, 36% 0%, 41% 0%, 27% 100%);
+  transform: translateX(-102%);
+  pointer-events: none;
+}
+.btn:hover::before,
+.btn:focus-visible::before,
+.btn:active::before {
+  transform: translateX(102%);
+  transition: transform 500ms var(--ease-out, cubic-bezier(0.22, 1, 0.36, 1));
 }
 .btn svg {
   width: 18px;
@@ -55,16 +82,19 @@
 }
 .btn:hover { transform: translateY(-3px) rotate(-1.5deg); box-shadow: 0 8px 0 var(--flipd-blue-deep); }
 .btn:hover svg { transform: translateX(4px); }
-.btn:active { transform: translateY(4px); box-shadow: 0 1px 0 var(--flipd-blue-deep); transition-duration: 60ms; }
+/* The clack: a hard, fast drop onto the shadow (the press is 60ms, the
+   spring back is the base 320ms transition). */
+.btn:active { transform: translateY(4px) scale(1.02, 0.96); box-shadow: 0 1px 0 var(--flipd-blue-deep); transition-duration: 60ms, 60ms, 160ms; }
 .btn:focus-visible { outline: 3px solid var(--flipd-blue); outline-offset: 4px; }
 
 .btnGhost {
   background: var(--flipd-bone);
   color: var(--flipd-blue);
   box-shadow: 0 5px 0 var(--flipd-blue);
+  --sheen: rgba(254, 213, 97, 0.6);
 }
 .btnGhost:hover { box-shadow: 0 8px 0 var(--flipd-blue); transform: translateY(-3px) rotate(1.5deg); }
-.btnGhost:active { box-shadow: 0 1px 0 var(--flipd-blue); }
+.btnGhost:active { box-shadow: 0 1px 0 var(--flipd-blue); transform: translateY(4px) scale(1.02, 0.96); }
 
 /* On a Flipd Blue band: mustard button, blue ink, mustard focus ring. */
 .btnOnBlue {
@@ -72,6 +102,7 @@
   color: var(--flipd-blue);
   border-color: var(--flipd-mustard);
   box-shadow: 0 5px 0 var(--flipd-bone);
+  --sheen: rgba(249, 240, 225, 0.55);
 }
 .btnOnBlue:hover { box-shadow: 0 8px 0 var(--flipd-bone); }
 .btnOnBlue:active { box-shadow: 0 1px 0 var(--flipd-bone); }
@@ -95,11 +126,23 @@
   text-decoration: underline;
   text-decoration-thickness: 2px;
   text-underline-offset: 4px;
-  transition: text-underline-offset 160ms ease;
+  transition:
+    text-underline-offset 160ms ease,
+    transform 320ms var(--ease-spring, cubic-bezier(0.34, 1.56, 0.64, 1));
 }
 .textLink:hover { text-underline-offset: 7px; }
+/* A 1px press, so the visit block's links have a pressed tier too. */
+.textLink:active { transform: translateY(1px); text-underline-offset: 3px; transition-duration: 60ms; }
 .textLink:focus-visible { outline: 3px solid var(--flipd-blue); outline-offset: 3px; border-radius: 4px; }
-.textLink svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+.textLink svg {
+  width: 16px; height: 16px; flex: none;
+  fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round;
+  transition: transform 320ms var(--ease-spring, cubic-bezier(0.34, 1.56, 0.64, 1));
+}
+/* The icon nudges toward the words, the way an arrow leans into a link. */
+.textLink:hover svg,
+.textLink:focus-visible svg,
+.textLink:active svg { transform: translateX(3px); }
 
 /* ── The checker, as a rule ────────────────────────────────────────────── */
 .checker {
@@ -402,9 +445,15 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .btn, .btn svg, .ticketWrap, .sticker, .textLink { transition: none; }
-  .btn:hover, .btnGhost:hover { transform: none; }
-  .btn:hover svg { transform: none; }
+  /* Presses stay, as colour and shadow only. */
+  .btn, .ticketWrap, .sticker, .textLink { transition: box-shadow 120ms ease, background-color 120ms ease; }
+  .btn svg, .textLink svg { transition: none; }
+  .btn:hover, .btnGhost:hover, .btn:active, .btnGhost:active, .textLink:active { transform: none; }
+  .btn:hover svg, .textLink:hover svg, .textLink:focus-visible svg, .textLink:active svg { transform: none; }
+  .btn::before { display: none; }
+  .btn:active { background-color: var(--flipd-blue-deep); }
+  .btnGhost:active { background-color: var(--flipd-mustard); }
+  .btnOnBlue:active { background-color: var(--flipd-bone); }
   .track, .bulbs::before, .marqueeStar, .doodle, .float { animation: none; }
   [data-armed]:not([data-in]) .ticketWrap,
   [data-armed]:not([data-in]) .sticker,

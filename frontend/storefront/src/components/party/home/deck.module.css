@@ -64,21 +64,40 @@
 }
 .slot:nth-child(2) { margin-top: 2.5rem; }
 
+/* The card is a physical object: --hov (0..1, hover/focus) and --lift
+   (0..1, picked up) are sprung in JS and drive the lift and the shadow
+   together, so the shadow always matches the height. */
 .card {
+  --sh: 10px;
   position: relative;
   padding: 12px 12px 16px;
   border: 2.5px solid #2A1A2B;
   border-radius: 28px;
-  box-shadow: 10px 10px 0 #2A1A2B;
+  box-shadow:
+    calc(var(--sh) + var(--hov, 0) * 4px + var(--lift, 0) * 6px)
+    calc(var(--sh) + var(--hov, 0) * 8px + var(--lift, 0) * 6px)
+    0 #2A1A2B;
   transform-style: preserve-3d;
-  transition: box-shadow 220ms ease, translate 260ms cubic-bezier(0.34, 1.56, 0.64, 1);
   isolation: isolate;
+  /* Horizontal drags are the leash; vertical swipes still scroll. */
+  touch-action: pan-y;
+  cursor: grab;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
 }
-.slot:hover .card,
-.slot:focus-within .card {
-  translate: 0 -8px;
-  box-shadow: 14px 18px 0 #2A1A2B;
+.card[data-held] {
+  cursor: grabbing;
+  user-select: none;
+  -webkit-user-select: none;
+  z-index: 5;
 }
+/* Reduced motion: no pickup transforms — the press darkens instead. */
+.card[data-pressed] {
+  border-color: #120A12;
+  box-shadow: calc(var(--sh) - 4px) calc(var(--sh) - 4px) 0 #120A12;
+  filter: brightness(0.92);
+}
+.elegant .card { cursor: auto; }
 
 .tab {
   position: absolute;
@@ -110,9 +129,14 @@
   height: 100%;
   object-fit: cover;
   display: block;
-  transition: transform 700ms cubic-bezier(0.22, 1, 0.36, 1);
+  /* Zoom-out settles with a spring instead of rewinding the zoom-in. */
+  transition: transform 350ms var(--ease-spring, cubic-bezier(0.34, 1.56, 0.64, 1));
 }
-.slot:hover .photo img { transform: scale(1.07) rotate(-0.6deg); }
+.slot:hover .photo img,
+.card[data-held] .photo img {
+  transform: scale(1.07) rotate(-0.6deg);
+  transition: transform 700ms var(--ease-out, cubic-bezier(0.22, 1, 0.36, 1));
+}
 
 .num,
 .kind {
@@ -160,7 +184,8 @@
   transform: rotate(14deg);
   filter: drop-shadow(0 4px 0 rgba(42, 26, 43, 0.55));
 }
-.slot:hover .stickerBadge { transform: rotate(-4deg) scale(1.12); }
+.slot:hover .stickerBadge,
+.card[data-held] .stickerBadge { transform: rotate(-4deg) scale(1.12); }
 /* stackd's walking-bread mascot on a die-cut cream disc. */
 .stickerMascot {
   width: clamp(84px, 8vw, 104px);
@@ -180,11 +205,16 @@
   width: auto;
   margin-inline: auto;
   transform-origin: 50% 90%;
-  animation: strut 1.4s ease-in-out infinite;
+  animation: strut 1.4s ease-in-out infinite both;
   animation-play-state: paused;
 }
-.slot:hover .stickerMascot { transform: rotate(-6deg) scale(1.1); }
-.slot:hover .stickerMascot img { animation-play-state: running; }
+/* He struts twice when the card first comes into view, then again on
+   hover or while the card is held. */
+.slot[data-seen] .stickerMascot img { animation-iteration-count: 2; animation-play-state: running; }
+.slot:hover .stickerMascot,
+.card[data-held] .stickerMascot { transform: rotate(-6deg) scale(1.1); }
+.slot:hover .stickerMascot img,
+.card[data-held] .stickerMascot img { animation-iteration-count: infinite; animation-play-state: running; }
 
 @keyframes strut {
   0%, 100% { transform: rotate(-5deg); }
@@ -261,8 +291,8 @@
   gap: 0.75rem;
   margin-top: 1.4rem;
 }
-/* Sits above the stretched link. */
-.order { position: relative; z-index: 4; min-height: 50px; padding: 0.7rem 1.3rem; font-size: 0.98rem; }
+/* Sits above the stretched link. Rubber press comes from .btn. */
+.order { position: relative; z-index: 4; min-height: 50px; padding: 0.7rem 1.3rem; font-size: 0.98rem; cursor: pointer; }
 
 .visit {
   flex-shrink: 0;
@@ -275,7 +305,8 @@
   color: var(--text);
   transition: transform 300ms cubic-bezier(0.34, 1.56, 0.64, 1);
 }
-.slot:hover .visit { transform: rotate(45deg) scale(1.08); }
+.slot:hover .visit,
+.card[data-held] .visit { transform: rotate(45deg) scale(1.08); }
 
 .glare {
   position: absolute;
@@ -287,7 +318,8 @@
   transition: opacity 250ms ease;
   mix-blend-mode: soft-light;
 }
-.slot:hover .glare { opacity: 1; }
+.slot:hover .glare,
+.card[data-held] .glare { opacity: 1; }
 
 /* ── simmer: the quiet card in the set ────────────────────────────────── */
 .elegant .name {
@@ -355,9 +387,19 @@
   letter-spacing: 0.06em;
   text-transform: lowercase;
   text-decoration: none;
-  transition: background-color 400ms ease, color 400ms ease;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition:
+    background-color 400ms ease,
+    color 400ms ease,
+    transform 220ms var(--ease-out, cubic-bezier(0.22, 1, 0.36, 1));
 }
 .orderQuiet:hover { background: #F3ECDE; color: #06392F; }
+/* simmer is linen and ceramic: a weighted 1px press, no bounce back. */
+.orderQuiet:active {
+  transform: translateY(1px) scale(0.985);
+  transition-duration: 400ms, 400ms, var(--dur-press, 80ms);
+}
 .orderQuiet:focus-visible { outline: 3px solid #2A1A2B; outline-offset: 4px; }
 
 @keyframes spin { to { transform: rotate(360deg); } }
@@ -373,17 +415,18 @@
   .grid { grid-template-columns: minmax(0, 1fr); row-gap: 3.5rem; perspective: none; }
   .slot:nth-child(3) { max-width: none; }
   .note { display: none; }
-  .card { box-shadow: 7px 7px 0 #2A1A2B; }
+  .card { --sh: 7px; }
   .stickerBadge { right: -8px; top: -30px; width: 88px; }
   .stickerMascot { right: -6px; top: -26px; width: 80px; }
   .actions .order { width: auto; flex: 1; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .bgStar, .stickerMascot img, .candle, .hairline { animation: none; }
+  .bgStar, .stickerMascot img, .candle, .hairline { animation: none !important; }
   .glare { display: none; }
-  .slot:hover .card, .slot:focus-within .card { translate: none; }
+  .card { cursor: pointer; }
   .slot:hover .photo img, .slot:hover .visit { transform: none; }
   .slot:hover .stickerBadge { transform: rotate(14deg); }
   .slot:hover .stickerMascot { transform: rotate(10deg); }
+  .orderQuiet:active { transform: none; }
 }

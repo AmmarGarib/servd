@@ -1,0 +1,322 @@
+/* Root template: the page "set down", the loader handoff ground, and the
+   boundary material the 404 and error pages share.
+
+   Motion tokens come from globals.css (P1) with inline fallbacks so this
+   file works on its own. */
+
+/* ── Set down ────────────────────────────────────────────────────────────
+   The wrapper itself never moves. Its children do, once, on insertion, and
+   `backwards` fill drops every animated value the moment it ends, so no
+   transform or will-change is left to trap position: fixed / sticky.
+   `:where()` keeps specificity at zero, so a page's own animation on its
+   root element always wins over this one. */
+.root {
+  background-color: transparent;
+  transition: background-color 300ms var(--ease-out, cubic-bezier(0.22, 1, 0.36, 1));
+}
+
+:where(.root) > * {
+  animation: setDown 300ms var(--ease-out, cubic-bezier(0.22, 1, 0.36, 1)) backwards;
+}
+
+@keyframes setDown {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.996);
+    transform-origin: 50% 0;
+  }
+  to {
+    transform-origin: 50% 0;
+  }
+}
+
+/* Brand microsites carry their own intro: fade only, never translate.
+   The path check covers client navigation; `:has(brand-shell)` covers a
+   brand domain, where the browser path is "/" but the page is a microsite. */
+:where(.root[data-setdown='calm']) > *,
+:where(.root:has(:global(.brand-shell))) > * {
+  animation: setDownFade 240ms var(--ease-out, cubic-bezier(0.22, 1, 0.36, 1)) backwards;
+}
+
+@keyframes setDownFade {
+  from { opacity: 0; }
+}
+
+/* ── Loader handoff ──────────────────────────────────────────────────────
+   While a route loader is mounted, the wrapper wears the loader's ground
+   (no transition, so it is there on the first frame). When the page
+   replaces the loader, the ground dissolves over the same 300ms the page
+   takes to fade in on top of it, so the page is set down onto the loader
+   colour instead of cutting through white. */
+.root:has([data-route-loader]) {
+  background-color: var(--party-butter, #FFD447);
+  transition: none;
+}
+.root:has([data-route-loader='simmer']) { background-color: #06392F; }
+.root:has([data-route-loader='stackd']) { background-color: #7C2946; }
+.root:has([data-route-loader='flipd']) { background-color: #FED561; }
+
+/* Reduced motion: opacity only, 120ms. Calmer, never dead. The global
+   reduced-motion rule clamps every animation to 0.01ms with !important, so
+   this one needs its own !important and a real class to keep its 120ms. */
+@media (prefers-reduced-motion: reduce) {
+  .root > * {
+    animation: setDownFade 120ms linear backwards !important;
+  }
+  .root { transition-duration: 120ms; }
+}
+
+/* ── Boundary material (404 + error) ─────────────────────────────────────
+   Butter ground, a cream rubber sticker card, rubber links. */
+.boundary {
+  --ink: var(--party-ink, #2A1A2B);
+  --plum: var(--party-plum, #4E2A4F);
+  --cream: var(--party-cream, #FFF4D6);
+  --mute: var(--party-ink-mute, #5C4A3D);
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: 6.5rem 16px 3rem;
+  background:
+    radial-gradient(ellipse 60% 45% at 50% 42%, rgba(255, 250, 225, 0.75) 0%, rgba(255, 250, 225, 0) 70%),
+    var(--party-butter, #FFD447);
+  color: var(--ink);
+  text-align: center;
+}
+.boundaryInline { min-height: 70dvh; }
+
+/* Doodles in the corners, same set as the loader. */
+.doodle {
+  position: absolute;
+  z-index: -1;
+  pointer-events: none;
+  animation: doodleFloat 6s ease-in-out infinite;
+}
+.doodleStar { top: 18%; left: 8%; width: clamp(26px, 4vw, 44px); fill: var(--plum); }
+.doodleSquig {
+  bottom: 14%; right: 7%; width: clamp(64px, 9vw, 96px);
+  fill: none; stroke: var(--party-tomato, #FF5A3C); stroke-width: 5; stroke-linecap: round;
+  animation-delay: -3s;
+}
+@keyframes doodleFloat {
+  0%, 100% { transform: translateY(0) rotate(0); }
+  50% { transform: translateY(-10px) rotate(8deg); }
+}
+
+.card {
+  position: relative;
+  width: min(100%, 30rem);
+  padding: 1.1rem 1.4rem 1.75rem;
+  background: var(--cream);
+  border: 2.5px solid var(--ink);
+  border-radius: 28px;
+  box-shadow: 0 8px 0 var(--ink);
+  rotate: -1.2deg;
+  animation: cardIn 560ms var(--ease-spring, cubic-bezier(0.34, 1.56, 0.64, 1)) 90ms backwards;
+}
+/* A strip of tape holding the sticker down. */
+.card::before {
+  content: '';
+  position: absolute;
+  top: -13px;
+  left: 50%;
+  width: 92px;
+  height: 24px;
+  translate: -50% 0;
+  rotate: 3deg;
+  border-radius: 3px;
+  background: rgba(78, 42, 79, 0.16);
+  border: 1.5px dashed rgba(42, 26, 43, 0.25);
+}
+@keyframes cardIn {
+  from { opacity: 0; transform: translateY(22px) scale(0.92) rotate(3deg); }
+}
+
+.poster {
+  position: relative;
+  width: min(100%, 320px);
+  aspect-ratio: 16 / 9;
+  margin: 0.25rem auto 0.4rem;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+/* The floor the crowd stands on. */
+.poster::after {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  left: 8%;
+  right: 8%;
+  bottom: -2px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--party-butter-deep, #F4C22E);
+}
+.poster > * { width: 100%; }
+
+.code {
+  display: inline-block;
+  margin: 0 0 0.55rem;
+  padding: 0.2rem 0.7rem;
+  border: 2px solid var(--ink);
+  border-radius: 999px;
+  background: var(--party-butter, #FFD447);
+  font-family: var(--font-display, system-ui, sans-serif);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ink);
+}
+
+.title {
+  margin: 0;
+  font-family: var(--font-display, system-ui, sans-serif);
+  font-weight: 800;
+  font-size: clamp(1.7rem, 6vw, 2.35rem);
+  line-height: 1.05;
+  letter-spacing: -0.03em;
+  color: var(--ink);
+  text-wrap: balance;
+}
+
+.body {
+  margin: 0.65rem auto 0;
+  max-width: 25rem;
+  font-size: 0.98rem;
+  line-height: 1.5;
+  color: var(--mute);
+  text-wrap: pretty;
+}
+
+.ref {
+  display: block;
+  margin-top: 0.5rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.72rem;
+  opacity: 0.7;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.85rem;
+  margin-top: 1.5rem;
+}
+
+/* ── Rubber control ─────────────────────────────────────────────────────
+   Surface: 2.5px ink, hard 6px shadow, pill. Hover lifts 3px (9px shadow);
+   press sinks and squashes (2px shadow) in 80ms; release springs back. */
+.rubber {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  min-height: 48px;
+  padding: 0 1.4rem;
+  border: 2.5px solid var(--ink);
+  border-radius: 999px;
+  background: var(--cream);
+  color: var(--ink);
+  box-shadow: 0 6px 0 var(--ink);
+  font-family: var(--font-display, system-ui, sans-serif);
+  font-size: 1rem;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  line-height: 1;
+  text-decoration: none;
+  cursor: pointer;
+  user-select: none;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  transition:
+    transform var(--dur-release, 320ms) var(--ease-spring, cubic-bezier(0.34, 1.56, 0.64, 1)),
+    box-shadow var(--dur-release, 320ms) var(--ease-spring, cubic-bezier(0.34, 1.56, 0.64, 1)),
+    background-color 160ms ease,
+    color 160ms ease;
+}
+@media (hover: hover) {
+  .rubber:hover { transform: translateY(-3px); box-shadow: 0 9px 0 var(--ink); }
+}
+.rubber:active {
+  transform: translateY(4px) scale(1.03, 0.94);
+  box-shadow: 0 2px 0 var(--ink);
+  transition-duration: var(--dur-press, 80ms);
+  transition-timing-function: var(--ease-out, cubic-bezier(0.22, 1, 0.36, 1));
+}
+.rubber:focus-visible { outline: 3px solid var(--plum); outline-offset: 4px; }
+.rubber[disabled],
+.rubber[aria-busy='true'] { cursor: progress; }
+.primary { background: var(--plum); color: var(--cream); }
+.primary:focus-visible { outline-color: var(--ink); }
+
+@media (prefers-reduced-motion: reduce) {
+  .doodle { animation: none; }
+  .card { animation: setDownFade 150ms linear backwards; }
+  .rubber,
+  .rubber:hover { transform: none; }
+  .rubber:active { transform: none; box-shadow: 0 3px 0 var(--ink); }
+}
+
+/* ── simmer surface ─────────────────────────────────────────────────────
+   The same boundary on a simmer route follows the brand bible: forest
+   ground, bone type, Amarante + Times, lowercase, no characters, no
+   gradients, no white, no rubber bounce. */
+.root[data-surface='simmer'] .boundary {
+  --ink: #EDE6D3;
+  --cream: #06392F;
+  --mute: rgba(237, 230, 211, 0.72);
+  background: #06392F;
+  font-family: var(--simmer-body, 'Times New Roman', Times, serif);
+  text-transform: lowercase;
+}
+.root[data-surface='simmer'] .doodle,
+.root[data-surface='simmer'] .poster,
+.root[data-surface='simmer'] .card::before { display: none; }
+.root[data-surface='simmer'] .card {
+  rotate: none;
+  border-width: 1px;
+  border-radius: 2px;
+  box-shadow: none;
+  padding-top: 2rem;
+  animation-name: setDownFade;
+}
+.root[data-surface='simmer'] .code {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  font-family: var(--simmer-body, 'Times New Roman', Times, serif);
+  letter-spacing: 0.28em;
+  font-weight: 400;
+}
+.root[data-surface='simmer'] .title {
+  font-family: var(--simmer-display, 'Amarante', serif);
+  font-weight: 400;
+  letter-spacing: 0;
+}
+.root[data-surface='simmer'] .rubber {
+  min-height: 46px;
+  border-width: 1px;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+  color: #EDE6D3;
+  font-family: var(--simmer-body, 'Times New Roman', Times, serif);
+  font-weight: 400;
+  letter-spacing: 0.12em;
+  transition: background-color 180ms ease, color 180ms ease, transform 120ms ease;
+}
+.root[data-surface='simmer'] .rubber:hover { transform: none; background: #EDE6D3; color: #06392F; box-shadow: none; }
+/* simmer press: a weighted 1px set-down, no bounce. */
+.root[data-surface='simmer'] .rubber:active { transform: translateY(1px); box-shadow: none; }
+.root[data-surface='simmer'] .primary { background: #EDE6D3; color: #06392F; }
+.root[data-surface='simmer'] .primary:hover { background: transparent; color: #EDE6D3; }
+.root[data-surface='simmer'] .rubber:focus-visible { outline: 2px solid #EDE6D3; outline-offset: 3px; }
+@media (prefers-reduced-motion: reduce) {
+  .root[data-surface='simmer'] .rubber:active { transform: none; }
+}

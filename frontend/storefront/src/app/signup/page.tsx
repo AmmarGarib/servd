@@ -6,7 +6,8 @@ import { Eye, EyeOff } from 'lucide-react'
 import { useCustomerAuth } from '../../store/customerAuth'
 import { ErrorToast } from '../../components/ui/ErrorToast'
 import { SmokeyBackground } from '../../components/ui/SmokeyBackground'
-import { MagneticButton } from '../../components/ui/MagneticButton'
+import { TactileButton, type TactileState } from '../../components/tactile/TactileButton'
+import a from '../../components/auth/auth.module.css'
 
 // /signup — glassmorphism card over the servd-purple WebGL shader.
 //
@@ -14,8 +15,28 @@ import { MagneticButton } from '../../components/ui/MagneticButton'
 // time; the customer types whichever copy arrives first. WhatsApp here is an
 // unofficial channel that can drop; when it does, the email copy carries the
 // signup and the number is verified later from /account.
+//
+// Presentation: fields grow their focus ring instead of snapping, the submits
+// are rubber TactileButtons (loading → hop dots, a failure → shake), and the
+// field a failure points at is marked aria-invalid and shakes once. A code
+// error shakes the code boxes. The request/verify flow is untouched.
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
+
+type BadField = 'name' | 'email' | 'phone' | 'password' | 'confirm' | 'code'
+
+/** True for a moment each time `signal` becomes a new truthy value, long
+ *  enough for a one-shot shake to play. */
+function usePulse(signal: unknown, ms = 460): boolean {
+  const [on, setOn] = useState(false)
+  useEffect(() => {
+    if (!signal) { setOn(false); return }
+    setOn(true)
+    const t = window.setTimeout(() => setOn(false), ms)
+    return () => window.clearTimeout(t)
+  }, [signal, ms])
+  return on
+}
 
 export default function SignupPage() {
   const router  = useRouter()
@@ -42,6 +63,9 @@ export default function SignupPage() {
   const [error,    setError]    = useState('')
   const [emailTaken, setEmailTaken] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
+
+  // Presentation only: which field the last failure points at.
+  const [bad, setBad] = useState<BadField | null>(null)
 
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
   const setFieldError = (k: string, msg: string) => setFieldErrors((m) => ({ ...m, [k]: msg }))
@@ -81,11 +105,12 @@ export default function SignupPage() {
     e.preventDefault()
     setEmailTaken(false)
     setError('')
-    if (password.length < 8) { setError('Password must be at least 8 characters'); return }
-    if (password !== confirm) { setError('Passwords do not match'); return }
+    setBad(null)
+    if (password.length < 8) { setBad('password'); setError('Password must be at least 8 characters'); return }
+    if (password !== confirm) { setBad('confirm'); setError('Passwords do not match'); return }
     const digits = phone.replace(/\D/g, '')
-    if (digits.length < 10) { setError('Enter a valid mobile number'); return }
-    if (!/\S+@\S+\.\S+/.test(email.trim())) { setError('Enter a valid email'); return }
+    if (digits.length < 10) { setBad('phone'); setError('Enter a valid mobile number'); return }
+    if (!/\S+@\S+\.\S+/.test(email.trim())) { setBad('email'); setError('Enter a valid email'); return }
     setLoading(true)
     const sent = await requestCodes()
     setLoading(false)
@@ -95,7 +120,8 @@ export default function SignupPage() {
   async function handleStep2(e: React.FormEvent) {
     e.preventDefault()
     setError('')
-    if (otp.length < 6) { setError('Enter the 6-digit code'); return }
+    setBad(null)
+    if (otp.length < 6) { setBad('code'); setError('Enter the 6-digit code'); return }
     setLoading(true)
     try {
       const res = await fetch(`${API_URL}/api/v1/auth/customer/register`, {
@@ -114,9 +140,11 @@ export default function SignupPage() {
       if (!res.ok) {
         if (res.status === 409 || data.error?.code === 'EMAIL_TAKEN') {
           setEmailTaken(true)
+          setBad('email')
           setError('An account with this email already exists.')
           setStep('details')
         } else if (data.error?.code?.includes('OTP') || data.error?.code?.endsWith('CODE_REQUIRED')) {
+          setBad('code')
           setError(data.error?.message ?? 'Invalid or expired code')
         } else {
           setError(data.error?.message ?? 'Registration failed. Please try again.')
@@ -135,22 +163,13 @@ export default function SignupPage() {
   }
 
   // ── Glass styling shared with the field helpers ──
-  const inp = (extra = '') =>
-    `w-full rounded-2xl px-4 py-3.5 text-sm font-semibold text-white placeholder:text-white/35 focus:outline-none transition-all ${extra}`
-  const inpStyle: React.CSSProperties = { background: 'rgba(255,255,255,0.10)', border: '1px solid rgba(255,255,255,0.20)', color: 'white' }
-  const onFocus = (e: React.FocusEvent<HTMLInputElement>) => {
-    e.currentTarget.style.borderColor = 'rgba(255,255,255,0.6)'
-    e.currentTarget.style.boxShadow   = '0 0 0 3px rgba(255,255,255,0.12)'
-  }
-  const onBlur = (e: React.FocusEvent<HTMLInputElement>) => {
-    e.currentTarget.style.borderColor = 'rgba(255,255,255,0.20)'
-    e.currentTarget.style.boxShadow   = 'none'
-  }
-  const primaryBtnStyle = (busy: boolean): React.CSSProperties => ({
-    background: busy ? 'rgba(255,255,255,0.12)' : 'white',
-    color: busy ? 'rgba(255,255,255,0.6)' : '#4E2A4F',
-    boxShadow: busy ? 'none' : '0 8px 24px rgba(0,0,0,0.25)',
-  })
+  // The focus ring grows in CSS (auth.module.css), so no JS style swaps.
+  const inp = (extra = '') => `${a.field} ${extra}`.trim()
+
+  const failed = usePulse(error)
+  const shakeOn = (f: BadField) => failed && bad === f
+  const btnState: TactileState = loading ? 'loading' : failed ? 'error' : 'idle'
+  const clearBad = (f: BadField) => setBad((b) => (b === f ? null : b))
 
   return (
     <main className="relative flex items-center justify-center px-5 py-12" style={{ minHeight: '100dvh', background: '#1E1420' }}>
@@ -162,7 +181,7 @@ export default function SignupPage() {
           servd<span style={{ color: '#C9A6F0' }}>.</span>
         </Link>
 
-        <div className="w-full rounded-3xl px-7 py-8 bg-white/10 backdrop-blur-xl border border-white/20 shadow-2xl" style={{ animation: 'fadeSlideUp 0.4s both' }}>
+        <div className={`w-full rounded-3xl px-7 py-8 bg-white/10 backdrop-blur-xl border border-white/20 shadow-2xl ${a.card}`}>
           {step === 'details' ? (
             <>
               <h1 className="font-black tracking-tight text-white mb-1" style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(1.9rem, 6vw, 2.3rem)', letterSpacing: '-0.03em' }}>Create account</h1>
@@ -175,48 +194,46 @@ export default function SignupPage() {
                 </div>
               )}
 
-              <form onSubmit={e => { void handleStep1(e) }} className="space-y-3" noValidate>
+              <form onSubmit={e => { if (loading) { e.preventDefault(); return } void handleStep1(e) }} className="space-y-3" noValidate>
                 <Field id="signup-name" label="Full name" type="text" autoComplete="name"
-                  value={name} onChange={(v) => { setName(v); clearFieldError('name') }}
+                  value={name} onChange={(v) => { setName(v); clearFieldError('name'); clearBad('name') }}
                   onValidate={() => name.trim().length < 2 ? setFieldError('name', 'Please enter your full name') : clearFieldError('name')}
                   placeholder="Your name" autoFocus error={fieldErrors['name']}
-                  inp={inp} inpStyle={inpStyle} onFocus={onFocus} onBlur={onBlur} />
+                  bad={bad === 'name'} shake={shakeOn('name')} inp={inp} />
 
                 <Field id="signup-email" label="Email" type="email" autoComplete="email"
-                  value={email} onChange={(v) => { setEmail(v); clearFieldError('email') }}
+                  value={email} onChange={(v) => { setEmail(v); clearFieldError('email'); clearBad('email') }}
                   onValidate={() => /\S+@\S+\.\S+/.test(email.trim()) ? clearFieldError('email') : setFieldError('email', 'Please enter a valid email')}
                   placeholder="you@example.com" error={fieldErrors['email']}
-                  inp={inp} inpStyle={inpStyle} onFocus={onFocus} onBlur={onBlur} />
+                  bad={bad === 'email'} shake={shakeOn('email')} inp={inp} />
 
                 <Field id="signup-phone" label="Mobile (WhatsApp)" type="tel" autoComplete="tel"
                   inputMode="tel"
-                  value={phone} onChange={(v) => { setPhone(v); clearFieldError('phone') }}
+                  value={phone} onChange={(v) => { setPhone(v); clearFieldError('phone'); clearBad('phone') }}
                   onValidate={() => phone.replace(/\D/g, '').length < 10 ? setFieldError('phone', 'Phone needs at least 10 digits') : clearFieldError('phone')}
                   placeholder="0300 1234567" error={fieldErrors['phone']}
-                  inp={inp} inpStyle={inpStyle} onFocus={onFocus} onBlur={onBlur} />
+                  bad={bad === 'phone'} shake={shakeOn('phone')} inp={inp} />
 
                 <PasswordField id="signup-password" label="Password" autoComplete="new-password"
-                  value={password} onChange={(v) => { setPassword(v); clearFieldError('password') }}
+                  value={password} onChange={(v) => { setPassword(v); clearFieldError('password'); clearBad('password') }}
                   onValidate={() => password.length < 8 ? setFieldError('password', 'At least 8 characters') : clearFieldError('password')}
                   placeholder="8+ characters" error={fieldErrors['password']}
                   show={showPassword} onToggle={() => setShowPassword(v => !v)}
-                  inp={inp} inpStyle={inpStyle} onFocus={onFocus} onBlur={onBlur} />
+                  bad={bad === 'password'} shake={shakeOn('password')} inp={inp} />
 
                 <PasswordField id="signup-confirm" label="Confirm password" autoComplete="new-password"
-                  value={confirm} onChange={(v) => { setConfirm(v); clearFieldError('confirm') }}
+                  value={confirm} onChange={(v) => { setConfirm(v); clearFieldError('confirm'); clearBad('confirm') }}
                   onValidate={() => confirm !== password ? setFieldError('confirm', "Passwords don't match") : clearFieldError('confirm')}
                   placeholder="Repeat password" error={fieldErrors['confirm']}
                   show={showPassword} onToggle={() => setShowPassword(v => !v)}
-                  inp={inp} inpStyle={inpStyle} onFocus={onFocus} onBlur={onBlur} />
+                  bad={bad === 'confirm'} shake={shakeOn('confirm')} inp={inp} />
 
                 <p className="text-[11px] leading-snug pt-1 text-white/55">
                   We&rsquo;ll send a 6-digit code to your WhatsApp and your email.
                 </p>
-                <MagneticButton type="submit" disabled={loading}
-                  className="w-full rounded-2xl py-3.5 font-black text-[0.95rem] transition-all disabled:opacity-40 active:scale-[0.98] mt-1"
-                  style={primaryBtnStyle(loading)}>
-                  {loading ? 'Sending code…' : 'Continue →'}
-                </MagneticButton>
+                <TactileButton type="submit" state={btnState} loadingLabel="Sending code…" className={`${a.submit} mt-1`}>
+                  Continue <span className={a.submitArrow} aria-hidden="true">→</span>
+                </TactileButton>
               </form>
             </>
           ) : (
@@ -230,12 +247,12 @@ export default function SignupPage() {
 
               {error && <ErrorToast message={error} onDismiss={() => setError('')} />}
 
-              <form onSubmit={e => { void handleStep2(e) }} className="space-y-4">
+              <form onSubmit={e => { if (loading) { e.preventDefault(); return } void handleStep2(e) }} className="space-y-4">
                 <CodeBoxes
                   label="Your code"
                   sublabel={[phoneLive && 'WhatsApp', emailLive && 'email'].filter(Boolean).join(' and ') + ' — same code, use whichever arrives first'}
-                  value={otp} onChange={setOtp}
-                  autoFocus inpStyle={inpStyle} onFocus={onFocus} onBlur={onBlur} />
+                  value={otp} onChange={(v) => { setOtp(v); clearBad('code') }}
+                  autoFocus invalid={bad === 'code'} shake={shakeOn('code')} />
                 {channels?.phone === 'failed' && (
                   <p className="text-[11px] leading-snug text-white/60 rounded-2xl px-3 py-2" style={{ background: 'rgba(255,255,255,0.06)' }}>
                     WhatsApp isn&rsquo;t reachable right now, so the code went to your email only. You can verify your number later from your account.
@@ -247,20 +264,20 @@ export default function SignupPage() {
                   </p>
                 )}
 
-                <MagneticButton type="submit" disabled={loading || otp.length < 6}
-                  className="w-full rounded-2xl py-3.5 font-black text-[0.95rem] transition-all disabled:opacity-40 active:scale-[0.98] mt-1"
-                  style={primaryBtnStyle(loading)}>
-                  {loading ? 'Verifying…' : 'Verify & create account'}
-                </MagneticButton>
+                <TactileButton type="submit" state={btnState} loadingLabel="Verifying…"
+                  disabled={!loading && otp.length < 6}
+                  className={`${a.submit} mt-1`}>
+                  Verify &amp; create account
+                </TactileButton>
 
                 <div className="flex items-center justify-between text-xs -mx-2">
                   <button type="button" onClick={() => { setStep('details'); setOtp(''); setError('') }}
-                    className="inline-flex items-center min-h-[44px] px-2 font-bold text-white/55 hover:text-white transition-colors">
+                    className={`inline-flex items-center min-h-[44px] px-2 font-bold text-white/55 hover:text-white ${a.press}`}>
                     ← Change details
                   </button>
                   <button type="button" disabled={resendCooldown > 0 || loading}
                     onClick={() => { void requestCodes() }}
-                    className="inline-flex items-center min-h-[44px] px-2 font-bold text-white hover:text-white/80 disabled:opacity-40 transition-colors">
+                    className={`inline-flex items-center min-h-[44px] px-2 font-bold text-white hover:text-white/80 disabled:opacity-40 ${a.press}`}>
                     {resendCooldown > 0 ? `Resend in ${resendCooldown}s` : 'Resend code'}
                   </button>
                 </div>
@@ -308,9 +325,8 @@ function CodeBoxes(p: {
   value: string
   onChange: (v: string) => void
   autoFocus?: boolean
-  inpStyle: React.CSSProperties
-  onFocus: (e: React.FocusEvent<HTMLInputElement>) => void
-  onBlur: (e: React.FocusEvent<HTMLInputElement>) => void
+  invalid?: boolean
+  shake?: boolean
 }) {
   const refs = useRef<Array<HTMLInputElement | null>>([])
   const set = (idx: number, raw: string) => {
@@ -331,7 +347,7 @@ function CodeBoxes(p: {
     <div>
       <label className="block text-[10px] font-black uppercase tracking-[0.22em] mb-0.5 text-white/55">{p.label}</label>
       <p className="text-[11px] mb-1.5 text-white/45 truncate">{p.sublabel}</p>
-      <div className="flex gap-1.5 sm:gap-2">
+      <div className={`flex gap-1.5 sm:gap-2 ${p.shake ? 't-shake' : ''}`}>
         {Array.from({ length: 6 }).map((_, i) => (
           <input
             key={i}
@@ -352,10 +368,8 @@ function CodeBoxes(p: {
             }}
             autoFocus={p.autoFocus && i === 0}
             aria-label={`${p.label}, digit ${i + 1} of 6`}
-            className="flex-1 min-w-0 max-w-[2.75rem] h-14 text-center text-xl font-black rounded-xl focus:outline-none transition-all text-white"
-            style={p.inpStyle}
-            onFocus={p.onFocus}
-            onBlur={p.onBlur}
+            aria-invalid={p.invalid || undefined}
+            className={`${a.field} ${a.digit} ${p.value[i] ? a.digitFilled : ''}`}
           />
         ))}
       </div>
@@ -376,23 +390,23 @@ interface FieldProps {
   autoFocus?: boolean
   inputMode?: 'text' | 'tel' | 'email' | 'numeric'
   error?: string
+  /** The last submit failed on this field. */
+  bad?: boolean
+  /** Play the one-shot shake now. */
+  shake?: boolean
   inp: (extra?: string) => string
-  inpStyle: React.CSSProperties
-  onFocus: (e: React.FocusEvent<HTMLInputElement>) => void
-  onBlur: (e: React.FocusEvent<HTMLInputElement>) => void
 }
 function Field(p: FieldProps) {
   return (
-    <div>
+    <div className={p.shake ? 't-shake' : undefined}>
       <label htmlFor={p.id} className="block text-[10px] font-black uppercase tracking-[0.22em] mb-1.5 text-white/55">{p.label}</label>
       <input id={p.id} type={p.type} autoComplete={p.autoComplete}
         inputMode={p.inputMode}
         value={p.value} onChange={(e) => p.onChange(e.target.value)}
         placeholder={p.placeholder} autoFocus={p.autoFocus} required
-        aria-invalid={!!p.error} aria-describedby={p.error ? `${p.id}-err` : undefined}
-        className={p.inp()} style={p.inpStyle}
-        onFocus={p.onFocus}
-        onBlur={(e) => { p.onBlur(e); p.onValidate() }} />
+        aria-invalid={!!p.error || !!p.bad} aria-describedby={p.error ? `${p.id}-err` : undefined}
+        className={p.inp()}
+        onBlur={() => { p.onValidate() }} />
       {p.error && (
         <p id={`${p.id}-err`} role="alert" className="mt-1 text-[11px] font-semibold" style={{ color: '#ffb4ab' }}>{p.error}</p>
       )}
@@ -406,16 +420,15 @@ interface PasswordFieldProps extends Omit<FieldProps, 'type' | 'inputMode'> {
 }
 function PasswordField(p: PasswordFieldProps) {
   return (
-    <div>
+    <div className={p.shake ? 't-shake' : undefined}>
       <label htmlFor={p.id} className="block text-[10px] font-black uppercase tracking-[0.22em] mb-1.5 text-white/55">{p.label}</label>
       <div className="relative">
         <input id={p.id} type={p.show ? 'text' : 'password'} autoComplete={p.autoComplete}
           value={p.value} onChange={(e) => p.onChange(e.target.value)}
           placeholder={p.placeholder} autoFocus={p.autoFocus} required
-          aria-invalid={!!p.error} aria-describedby={p.error ? `${p.id}-err` : undefined}
-          className={p.inp() + ' pr-12'} style={p.inpStyle}
-          onFocus={p.onFocus}
-          onBlur={(e) => { p.onBlur(e); p.onValidate() }} />
+          aria-invalid={!!p.error || !!p.bad} aria-describedby={p.error ? `${p.id}-err` : undefined}
+          className={p.inp(a.fieldPad)}
+          onBlur={() => { p.onValidate() }} />
         <button type="button" onClick={p.onToggle}
           aria-label={p.show ? 'Hide password' : 'Show password'}
           aria-pressed={p.show}

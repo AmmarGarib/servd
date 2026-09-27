@@ -1,63 +1,39 @@
-// 404 page. Browsers will land here on any unmatched route — including
-// stale brand slugs after a concept rename.
+// 404. Browsers land here on any unmatched route, including stale brand
+// slugs after a concept rename.
+//
+// The servd boundary material: butter ground, a cream rubber sticker card and
+// three of the crowd shrugging at the missing page. On a simmer route the same
+// markup is restyled by the template's `data-surface="simmer"` (forest ground,
+// lowercase, no characters), so the brand bible holds here too.
 
 import Link from 'next/link'
+import { CrowdPoster } from '../components/characters/CrowdPoster'
+import s from './template.module.css'
 
 export const metadata = {
   title: 'Not found',
 }
 
+const STAR = 'M0 -12L3 -3L12 0L3 3L0 12L-3 3L-12 0L-3 -3Z'
+
 export default function NotFound() {
   return (
-    <div
-      style={{
-        minHeight: '70dvh',
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: '2rem',
-        gap: '1.25rem',
-        textAlign: 'center',
-      }}
-    >
-      <p style={{
-        color: 'rgba(0,0,0,0.4)',
-        fontSize: 'clamp(0.7rem, 1.8vw, 0.85rem)',
-        fontWeight: 500,
-        letterSpacing: '0.18em',
-        textTransform: 'uppercase',
-        margin: 0,
-      }}>
-        404
-      </p>
-      <h1 style={{
-        fontSize: 'clamp(2rem, 6vw, 3.5rem)',
-        fontWeight: 900,
-        letterSpacing: '-0.04em',
-        margin: 0,
-      }}>
-        We couldn&rsquo;t find that.
-      </h1>
-      <p style={{ color: 'rgba(0,0,0,0.5)', maxWidth: '28rem', margin: 0 }}>
-        The page may have moved, or the brand may no longer be on servd.
-      </p>
-      <Link
-        href="/order"
-        style={{
-          display: 'inline-block',
-          background: '#4ade80',
-          color: '#000',
-          fontWeight: 800,
-          fontSize: '1rem',
-          padding: '0.75rem 2rem',
-          borderRadius: '999px',
-          textDecoration: 'none',
-          marginTop: '0.5rem',
-        }}
-      >
-        See all brands
-      </Link>
+    <div className={s.boundary}>
+      <svg className={`${s.doodle} ${s.doodleStar}`} viewBox="-13 -13 26 26" aria-hidden="true" focusable="false"><path d={STAR} /></svg>
+      <svg className={`${s.doodle} ${s.doodleSquig}`} viewBox="0 0 80 24" aria-hidden="true" focusable="false"><path d="M2 12C12 2 22 22 32 12S52 2 62 12S76 20 78 12" /></svg>
+
+      <div className={s.card}>
+        <div className={s.poster} aria-hidden="true">
+          <CrowdPoster cast={['fries', 'burger', 'coffee']} mode="shrug" />
+        </div>
+        <p className={s.code}>404</p>
+        <h1 className={s.title}>This page wandered off.</h1>
+        <p className={s.body}>The link might be old, or the page moved. The kitchens are still open.</p>
+        <div className={s.actions}>
+          <Link href="/" className={`${s.rubber} ${s.primary}`}>Back home</Link>
+          <Link href="/browse" className={s.rubber}>Browse kitchens</Link>
+        </div>
+      </div>
     </div>
   )
 }

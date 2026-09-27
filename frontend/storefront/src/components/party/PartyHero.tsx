@@ -1,29 +1,33 @@
 'use client'
 // PartyHero — the home hero for the playful "food crowd" direction.
 //
-// A warm butter-yellow stage with the 3D food crowd standing on its floor.
-// The crowd watches the cursor everywhere on the page; hovering the main
-// CTA gets them excited (they lean in and bounce), clicking it makes them
-// cheer before navigating. Headline + overview stay operator-editable
-// (Admin → Marketing → Landing Hero); the headline splits on its comma so
-// "Every kitchen, one place" lands as two beats.
+// A warm butter-yellow stage with the food crowd standing on its floor. The
+// crowd paints as a flat poster first (FoodCrowd owns that) and cross-fades
+// into 3D, so the stage is never empty. The crowd watches the cursor
+// everywhere on the page; hovering the main CTA gets them excited, clicking
+// it makes them cheer while the rubber button holds its pressed squash and
+// the arrow whooshes until we navigate. Headline + overview stay
+// operator-editable (Admin → Marketing → Landing Hero); the headline splits
+// on its comma so "Every kitchen, one place" lands as two beats.
 //
-// FoodCrowd is WebGL and client-only, so it loads via next/dynamic with
-// ssr:false; the page is fully usable (and readable) before it arrives
-// and if WebGL is unavailable.
+// FoodCrowd server-renders its SVG poster and code-splits three.js inside
+// an effect; the page is fully usable (and readable) before the 3D crowd
+// arrives and if WebGL is unavailable.
 
-import dynamic from 'next/dynamic'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { useState, type CSSProperties } from 'react'
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type MouseEvent } from 'react'
 import type { HeroConfig } from '../../lib/heroConfig'
-import { emitCrowd } from '../characters/crowdBus'
+import { tick } from '../../lib/tactile'
+import { emitCrowd, onCrowd } from '../characters/crowdBus'
+// Direct import (not next/dynamic): FoodCrowd is SSR-safe and loads three.js
+// itself, so its flat poster is in the server-rendered first paint.
+import { FoodCrowd } from '../characters/FoodCrowd'
 import s from './party.module.css'
 
-const FoodCrowd = dynamic(
-  () => import('../characters/FoodCrowd').then((m) => m.FoodCrowd),
-  { ssr: false },
-)
+const HINT_KEY = 'servd:crowd-hint'
+const NAV_DELAY_MS = 520
+const EXCITED_MS = 900
 
 function splitTitle(title: string): [string, string | null] {
   const i = title.indexOf(',')
@@ -44,23 +48,111 @@ function BouncyWords({ text, offset = 0 }: { text: string; offset?: number }) {
   )
 }
 
+/** First-visit hint: once per browser session. Storage can throw (private
+ *  mode, blocked site data) — then we simply skip the hint. */
+function claimHint(): boolean {
+  try {
+    if (window.sessionStorage.getItem(HINT_KEY)) return false
+    window.sessionStorage.setItem(HINT_KEY, '1')
+    return true
+  } catch {
+    return false
+  }
+}
+
 export function PartyHero({ config }: { config: HeroConfig }) {
   const router = useRouter()
   const [excited, setExcited] = useState(false)
+  const [burst, setBurst] = useState(false)
+  const [pending, setPending] = useState(false)
   const [lead, tail] = splitTitle(config.title)
   const leadCount = lead.split(' ').length
 
-  function onOrder(e: React.MouseEvent<HTMLAnchorElement>) {
+  const stageRef = useRef<HTMLDivElement>(null)
+  const burstTimer = useRef<number | undefined>(undefined)
+  const hintTimer = useRef<number | undefined>(undefined)
+  const navTimer = useRef<number | undefined>(undefined)
+  const ready = useRef(false)
+  const waveQueued = useRef(false)
+  const waved = useRef(false)
+
+  // Doodles get excited for a beat whenever anybody cheers the crowd.
+  useEffect(() => {
+    const off = onCrowd((e) => {
+      if (e.type !== 'cheer') return
+      setBurst(true)
+      window.clearTimeout(burstTimer.current)
+      burstTimer.current = window.setTimeout(() => setBurst(false), EXCITED_MS)
+    })
+    return () => {
+      off()
+      window.clearTimeout(burstTimer.current)
+      window.clearTimeout(hintTimer.current)
+      window.clearTimeout(navTimer.current)
+    }
+  }, [])
+
+  const fireWave = useCallback(() => {
+    if (waved.current) return
+    waved.current = true
+    emitCrowd({ type: 'wave' })
+  }, [])
+
+  // Touch arrival: the first time the stage is on screen on a hover-less
+  // device, the crowd does a stadium wave (after it is ready to be seen).
+  useEffect(() => {
+    const el = stageRef.current
+    if (!el || typeof IntersectionObserver === 'undefined') return
+    let touch = false
+    try {
+      touch = window.matchMedia('(hover: none)').matches
+    } catch {
+      touch = false
+    }
+    if (!touch) return
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (!entries.some((en) => en.isIntersecting)) return
+        io.disconnect()
+        if (ready.current) fireWave()
+        else waveQueued.current = true
+      },
+      { threshold: 0.2 },
+    )
+    io.observe(el)
+    return () => io.disconnect()
+  }, [fireWave])
+
+  const onReady = useCallback(() => {
+    if (ready.current) return
+    ready.current = true
+    if (waveQueued.current) fireWave()
+    hintTimer.current = window.setTimeout(() => {
+      if (claimHint()) emitCrowd({ type: 'hint' })
+    }, 1600)
+  }, [fireWave])
+
+  function onOrder(e: MouseEvent<HTMLAnchorElement>) {
     // Let modified clicks (new tab, etc.) behave natively.
     if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return
     e.preventDefault()
+    if (pending) return
+    setPending(true)
+    tick('light')
     emitCrowd({ type: 'cheer' })
-    window.setTimeout(() => router.push('/browse'), 520)
+    navTimer.current = window.setTimeout(() => router.push('/browse'), NAV_DELAY_MS)
   }
 
+  function lookAt(el: HTMLElement) {
+    const r = el.getBoundingClientRect()
+    emitCrowd({ type: 'look', x: r.left + r.width / 2, y: r.top + r.height / 2 })
+  }
+
+  const heroClass = `${s.hero} ${excited || burst ? s.stageExcited : ''}`
+
   return (
-    <section className={s.hero} aria-labelledby="party-hero-title">
-      {/* Floating doodles — decoration only. */}
+    <section className={heroClass} aria-labelledby="party-hero-title">
+      {/* Floating doodles — decoration only. They get excited with the crowd. */}
       <svg aria-hidden className={`${s.doodle} ${s.doodleStar}`} viewBox="0 0 40 40">
         <path d="M20 2 L24 16 L38 20 L24 24 L20 38 L16 24 L2 20 L16 16 Z" />
       </svg>
@@ -88,7 +180,8 @@ export function PartyHero({ config }: { config: HeroConfig }) {
         <div className={s.ctas}>
           <Link
             href="/browse"
-            className={s.cta}
+            className={`${s.cta} ${pending ? s.pending : ''}`}
+            aria-busy={pending || undefined}
             onClick={onOrder}
             onMouseEnter={() => setExcited(true)}
             onMouseLeave={() => setExcited(false)}
@@ -98,13 +191,20 @@ export function PartyHero({ config }: { config: HeroConfig }) {
             Order now
             <svg aria-hidden viewBox="0 0 24 24" width="20" height="20"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
           </Link>
-          <a href="#brands" className={s.ctaGhost}>Meet the kitchens</a>
+          <a
+            href="#brands"
+            className={s.ctaGhost}
+            onMouseEnter={(e) => lookAt(e.currentTarget)}
+            onFocus={(e) => lookAt(e.currentTarget)}
+          >
+            Meet the kitchens
+          </a>
         </div>
       </div>
 
-      <div className={s.stage} aria-hidden>
+      <div ref={stageRef} className={s.stage} aria-hidden>
         <div className={s.floor} />
-        <FoodCrowd excitement={excited ? 1 : 0} />
+        <FoodCrowd excitement={excited || pending ? 1 : 0} onReady={onReady} />
       </div>
     </section>
   )

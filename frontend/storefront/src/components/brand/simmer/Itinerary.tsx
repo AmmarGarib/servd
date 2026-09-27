@@ -9,16 +9,20 @@
 //     frames read as windows rather than stickers;
 //   • the plate and the coupe are drawn in line by line once hung, then the
 //     plate steams and the glass keeps a slow tilt;
-//   • one orange ember travels down the rail as you read. It is the only
-//     orange on this bone ground — the rail, the stops and the date are ink.
+//   • one orange ember travels down the rail as you read, on a spring, so it
+//     trails the scroll with a little weight. It is the only orange on this
+//     bone ground — the rail, the stops and the date are ink;
+//   • before a frame is hung, the wall already carries its pencil layout (a
+//     hairline where the frame goes, the drawing faint inside it), so the
+//     section is never an empty bone screen while it waits to reveal.
 //
 // Frames are flat walnut with a hard offset shadow (no wood-grain gradient,
 // no blurred shadow). Reduced motion: frames hang still, pictures don't
 // drift, the ember sits at the first stop, sketches are drawn already.
 
 import { useRef, type CSSProperties, type ReactNode } from 'react'
-import { motion, useScroll, useTransform } from 'framer-motion'
-import { Reveal, useReducedMotionAfterMount } from './reveal'
+import { motion, useScroll, useSpring, useTransform } from 'framer-motion'
+import { Reveal, REVEAL_EARLY, useReducedMotionAfterMount } from './reveal'
 import s from './simmer.module.css'
 
 function Parallax({ children }: { children: ReactNode }) {
@@ -35,19 +39,32 @@ function Parallax({ children }: { children: ReactNode }) {
   )
 }
 
-function Stop({ side, label, children }: { side: 'left' | 'right', label: string, children: ReactNode }) {
+function Stop({ side, label, ghost, children }: {
+  side: 'left' | 'right'
+  label: string
+  /** Line drawing pencilled on the wall before the frame is hung. */
+  ghost?: ReactNode
+  children: ReactNode
+}) {
   return (
     <Reveal
       className={s.stop}
       style={{ alignItems: side === 'right' ? 'flex-end' : 'flex-start' }}
+      rootMargin={REVEAL_EARLY}
     >
       {/* Frame zone is full width so the stop dot (left: 50%) lands on the
           rail and top: 50% centres it on the picture at any frame size. */}
       <div className={s.stopFrameZone} style={{ position: 'relative', width: '100%', display: 'flex', justifyContent: side === 'right' ? 'flex-end' : 'flex-start' }}>
         <span aria-hidden="true" className={s.stopDot} />
-        <div className={s.frame}>
-          <div className={s.mat}>
-            <Parallax>{children}</Parallax>
+        <div className={s.hang}>
+          <div aria-hidden="true" className={s.ghost}>
+            <span className={s.ghostNail} />
+            {ghost}
+          </div>
+          <div className={s.frame}>
+            <div className={s.mat}>
+              <Parallax>{children}</Parallax>
+            </div>
           </div>
         </div>
       </div>
@@ -119,28 +136,88 @@ function CoupeSketch() {
   )
 }
 
+// ─── Ghosts: the pencil layout on the wall, before each frame is hung ─────
+// Forest ink hairlines at a quarter strength. Same drawings as the sketches
+// (same viewBox, same lines), minus the fills, steam and bubbles.
+const GHOST_INK = {
+  fill: 'none',
+  stroke: 'var(--simmer-green)',
+  strokeWidth: 1,
+  strokeLinecap: 'round',
+  vectorEffect: 'non-scaling-stroke',
+} as const
+
+function GhostSvg({ children }: { children: ReactNode }) {
+  return (
+    <svg aria-hidden="true" focusable="false" viewBox="0 0 200 160" preserveAspectRatio="xMidYMid meet" opacity={0.25}>
+      <g {...GHOST_INK}>{children}</g>
+    </svg>
+  )
+}
+
+function SpaceGhost() {
+  return (
+    <GhostSvg>
+      {/* The room, in one-point perspective: back wall, floor, the door. */}
+      <rect x="62" y="42" width="76" height="62" />
+      <path d="M8 8 L62 42 M192 8 L138 42 M8 152 L62 104 M192 152 L138 104" />
+      <rect x="88" y="62" width="24" height="42" />
+      <path d="M100 8 V 30 M92 30 H 108" />
+    </GhostSvg>
+  )
+}
+
+function PlateGhost() {
+  return (
+    <GhostSvg>
+      <circle cx="100" cy="84" r="54" />
+      <circle cx="100" cy="84" r="44" />
+      <path d="M78 98 Q 100 108, 124 98" />
+      <ellipse cx="104" cy="84" rx="17" ry="10" transform="rotate(-18 104 84)" />
+      <path d="M84 74 l6 -6 M90 78 l5 -5 M86 82 l6 -3" />
+    </GhostSvg>
+  )
+}
+
+function CoupeGhost() {
+  return (
+    <GhostSvg>
+      <ellipse cx="100" cy="58" rx="50" ry="11" />
+      <path d="M50 58 Q 52 94, 100 102 Q 148 94, 150 58" />
+      <path d="M100 102 V 138" />
+      <ellipse cx="100" cy="142" rx="30" ry="4" />
+    </GhostSvg>
+  )
+}
+
+/** The ember's weight: it trails the scroll instead of being glued to it. */
+const EMBER_SPRING = { stiffness: 120, damping: 24 } as const
+
 export function Itinerary({ spaceImage }: { spaceImage: string }) {
   const ref = useRef<HTMLDivElement | null>(null)
   const reduce = useReducedMotionAfterMount()
   const { scrollYProgress } = useScroll({ target: ref, offset: ['start 75%', 'end 45%'] })
-  const top = useTransform(scrollYProgress, [0, 1], ['4%', '96%'])
+  // Both the ember's position and its light come off one sprung progress, so
+  // they stay in step while it catches up.
+  const progress = useSpring(scrollYProgress, EMBER_SPRING)
+  const top = useTransform(progress, [0, 1], ['4%', '96%'])
   // The ember burns out at the end of the rail, so it never shares a screen
   // with the candle in the next scene — one orange per viewport.
-  const opacity = useTransform(scrollYProgress, [0, 0.04, 0.78, 0.94], [0, 1, 1, 0])
+  const opacity = useTransform(progress, [0, 0.04, 0.78, 0.94], [0, 1, 1, 0])
   return (
     <div ref={ref} style={{ position: 'relative', padding: '0.5rem 0' }}>
       <div aria-hidden="true" className={s.rail} />
       <motion.span aria-hidden="true" className={s.railEmber} style={{ top: reduce ? '4%' : top, opacity: reduce ? 1 : opacity }} />
 
-      <Stop side="left" label="the space">
+      <Stop side="left" label="the space" ghost={<SpaceGhost />}>
         {/* Decorative — the label names it. Lazy: it sits below a tall hero. */}
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src={spaceImage} alt="" loading="lazy" decoding="async" />
       </Stop>
-      <Stop side="right" label="the plate">
+      <Stop side="right" label="the plate" ghost={<PlateGhost />}>
         <PlateSketch />
       </Stop>
-      <Stop side="left" label="the pour">
+      <Stop side="left" label="the pour" ghost={<CoupeGhost />}>
         <CoupeSketch />
       </Stop>
     </div>

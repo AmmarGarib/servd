@@ -24,9 +24,11 @@
   gap: clamp(0.4rem, 2vh, 1.2rem);
   overflow: hidden;
   isolation: isolate;
+  /* Same butter the root template wears while a loader is mounted, so the
+     ground never changes colour across the loader -> page handoff. */
   background:
     radial-gradient(ellipse 60% 45% at 50% 45%, rgba(255, 250, 225, 0.8) 0%, rgba(255, 250, 225, 0) 70%),
-    #FFD447;
+    var(--party-butter, #FFD447);
 }
 
 .inline { padding: 2rem 16px; gap: 0.4rem; }
@@ -60,6 +62,10 @@
     mask-image: linear-gradient(90deg, transparent, #000 14%, #000 86%, transparent);
   }
   .screen .crowd { width: 150%; margin-left: -25%; }
+  /* The two characters the mask hides stop working: nobody sees them, so
+     they should not cost a frame. */
+  .screen .edge,
+  .screen .edge * { animation: none !important; }
 }
 
 /* ── Characters ─────────────────────────────────────────────────────── */
@@ -143,6 +149,8 @@
 }
 
 /* ── Wordmark + status ──────────────────────────────────────────────── */
+/* Status: five lines on a 4s loop, one every 0.8s, so three have shown by
+   2.5s. Each rises in, holds, and lifts out as the next arrives. */
 .brand { display: grid; justify-items: center; gap: 0.5rem; }
 
 .wordmark {
@@ -198,13 +206,13 @@
   inset: 0;
   white-space: nowrap;
   opacity: 0;
-  animation: line 7s infinite backwards;
-  animation-delay: calc(var(--n) * 1.4s - 0.25s);
+  animation: line 4s infinite backwards;
+  animation-delay: calc(var(--n) * 0.8s - 0.12s);
 }
 .status .fixed { opacity: 1; animation: none; }
 @keyframes line {
-  0%   { opacity: 0; transform: translateY(80%); }
-  3.6%, 17% { opacity: 1; transform: none; animation-timing-function: ease-in; }
+  0%   { opacity: 0; transform: translateY(80%); animation-timing-function: cubic-bezier(0.34, 1.56, 0.64, 1); }
+  5%, 17% { opacity: 1; transform: none; animation-timing-function: ease-in; }
   20%, 100% { opacity: 0; transform: translateY(-80%); }
 }
 
@@ -222,9 +230,14 @@
   50% { transform: translateY(-12px) rotate(10deg); }
 }
 
+/* Reduced motion: the crowd stands at rest and the doodles hold still, but
+   the status keeps talking. A client interval marks one line `data-on`
+   every 1.2s, and it swaps as a hard cut (opacity only, no travel). */
 @media (prefers-reduced-motion: reduce) {
   .screen *, .inline * { animation: none !important; }
-  .status span:first-child { opacity: 1; transform: none; }
+  .status span { opacity: 0; transform: none; }
+  .status span[data-on] { opacity: 1; }
+  .status .fixed { opacity: 1; }
 }
 
 /* The butter ground paints instantly (no blank flash between pages); the

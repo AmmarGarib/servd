@@ -1,23 +1,37 @@
 'use client'
 
-// Per-brand ordering page. Replaces the previous 1400-line monolith with a
-// focused ordering UX:
+// Per-brand ordering page:
 //   • brand-keyed hero (image + name + tagline)
 //   • sticky category nav (jumps within the page)
 //   • menu grid with card-per-item
-//   • floating cart drawer with checkout CTA
-//   • item customisation modal for items with modifier groups
+//   • item customisation sheet (drag to dismiss) that flies the item into
+//     the cart pill on Add
+//   • basket sheet with checkout CTA
+//
+// Every surface paints in the brand's material through the --o-* tokens in
+// components/order/order.module.css: rubber for the servd hub, sticker and
+// paper for stackd, diner enamel for Flipd, linen and ceramic for simmer.
 //
 // Uses the public storefront API: /storefront/concepts and /storefront/:slug/menu.
 
-import { useEffect, useMemo, useState } from 'react'
+import { AnimatePresence, LayoutGroup, MotionConfig, motion, useAnimationControls, useReducedMotion, type TargetAndTransition, type Transition } from 'framer-motion'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { MagneticButton, MagneticLink } from '@/components/ui/MagneticButton'
 import { useCart } from '../../store/cart'
-import { conceptHeroImage } from '../../lib/concept'
+import { conceptHeroImage, formatBrandName, typeLabel } from '../../lib/concept'
 import { useBrandSlug, getServdHost } from '../../lib/host'
 import { encodeCartToken } from '../../lib/cartHandoff'
+import { EASE_OUT, SPRING, tick } from '../../lib/tactile'
+import { useSquish } from '../../components/tactile/useSquish'
+import { CrowdPoster } from '../../components/characters/CrowdPoster'
+import type { CharacterKind } from '../../components/characters/types'
+import { BottomSheet, SheetBody, SheetDragZone, orderBrand, type OrderBrand } from '../../components/order/BottomSheet'
+import { CartPill } from '../../components/order/CartPill'
+import { useFlyToCart } from '../../components/order/FlyToCart'
+import { OrderEmptyState } from '../../components/order/OrderEmptyState'
+import { RollingNumber } from '../../components/order/RollingNumber'
+import styles from '../../components/order/order.module.css'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -52,12 +66,33 @@ function FlameIcon() {
     </svg>
   )
 }
+function PlusIcon({ size = 14 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" aria-hidden="true">
+      <path d="M12 5v14M5 12h14" />
+    </svg>
+  )
+}
+function CloseIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" aria-hidden="true">
+      <path d="M6 6l12 12M18 6L6 18" />
+    </svg>
+  )
+}
+function CheckIcon() {
+  return (
+    <svg className={styles.modCheck} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M5 12.5l4.5 4.5L19 7.5" />
+    </svg>
+  )
+}
 
-const DIETARY_BADGE: Record<string, { label: string; color: string; withIcon: boolean }> = {
-  vegetarian:  { label: 'Veg',   color: 'rgba(58,14,105,0.15)',  withIcon: true  },
-  vegan:       { label: 'Vegan', color: 'rgba(58,14,105,0.15)',  withIcon: true  },
-  halal:       { label: 'Halal', color: 'rgba(58,14,105,0.15)',  withIcon: false },
-  gluten_free: { label: 'GF',    color: 'rgba(245,158,11,0.15)', withIcon: false },
+const DIETARY_BADGE: Record<string, { label: string; withIcon: boolean }> = {
+  vegetarian:  { label: 'Veg',   withIcon: true  },
+  vegan:       { label: 'Vegan', withIcon: true  },
+  halal:       { label: 'Halal', withIcon: false },
+  gluten_free: { label: 'GF',    withIcon: false },
 }
 interface Category   { id: string; name: string; sortOrder: number; items: MenuItem[] }
 interface Concept    {
@@ -88,6 +123,91 @@ function prettifySlug(slug: string): string {
     .join(' ')
 }
 
+// Fetch concept + menu. Resilient against either API hiccupping: if the
+// /concepts fetch fails (Neon cold-start, transient 5xx, rate limit) we
+// derive a minimal placeholder concept from the slug so the menu still
+// renders. Throws only when the *menu* itself is unavailable — that's the
+// one we can't fake. Pure: the page commits the result (and the retry on the
+// "menu isn't online" state re-runs exactly this).
+async function fetchMenu(slug: string): Promise<{ concept: Concept; categories: Category[] }> {
+  const [conceptsRes, menuRes] = await Promise.all([
+    fetch(`${API_URL}/api/v1/storefront/concepts`).catch(() => null),
+    fetch(`${API_URL}/api/v1/storefront/${slug}/menu`),
+  ])
+
+  if (!menuRes.ok) {
+    throw new Error(menuRes.status === 404 ? 'Brand not found' : `Menu API returned ${menuRes.status}`)
+  }
+  // Backend returns { concept, categories } — pull the array out.
+  const menuPayload = await menuRes.json() as { concept?: Concept; categories: Category[] } | Category[]
+  const cats: Category[] = Array.isArray(menuPayload) ? menuPayload : (menuPayload.categories ?? [])
+
+  // Try to enrich with real concept data; otherwise build a placeholder
+  // from the slug so the page still renders with brand colour/name.
+  let resolved: Concept
+  if (conceptsRes && conceptsRes.ok) {
+    const all: Concept[] = await conceptsRes.json()
+    const found = all.find((x) => x.slug === slug)
+    if (found) {
+      resolved = found
+    } else {
+      resolved = {
+        id: slug, slug, name: prettifySlug(slug), type: 'restaurant',
+        description: null, logoUrl: null, primaryColor: null, taxRate: 0,
+      }
+    }
+  } else {
+    resolved = {
+      id: slug, slug, name: prettifySlug(slug), type: 'restaurant',
+      description: null, logoUrl: null, primaryColor: null, taxRate: 0,
+    }
+  }
+  return { concept: resolved, categories: cats }
+}
+
+// ── Press model per material ──────────────────────────────────────────────
+// servd hub + stackd: the shared rubber squish. simmer: a weighted 1px press,
+// no bounce. Flipd: a hard enamel clack, no overshoot.
+interface PressProps {
+  whileHover?: TargetAndTransition
+  whileTap: TargetAndTransition
+  transition: Transition
+  onTapStart: () => void
+}
+function usePress(brand: OrderBrand, strength = 1, hover = true): PressProps {
+  const squish = useSquish({ strength, hover })
+  const reduced = useReducedMotion()
+  return useMemo<PressProps>(() => {
+    if (reduced || brand === 'hub' || brand === 'stackd') return squish
+    if (brand === 'simmer') {
+      return {
+        whileTap: { y: 1, transition: { duration: 0.08, ease: 'easeOut' } },
+        transition: { duration: 0.24, ease: EASE_OUT },
+        onTapStart: squish.onTapStart,
+      }
+    }
+    return {
+      whileTap: { y: 3 * strength, scale: 0.985, transition: { duration: 0.05, ease: 'easeOut' } },
+      ...(hover ? { whileHover: { y: -2 } } : {}),
+      transition: { type: 'spring', stiffness: 900, damping: 40 },
+      onTapStart: squish.onTapStart,
+    }
+  }, [brand, reduced, squish, strength, hover])
+}
+
+// Name-sticker colour for items without a photo, per brand ground.
+const FLY_CHIP: Partial<Record<OrderBrand, string>> = {
+  simmer: '#EDE6D3',
+  stackd: '#9BD3DD',
+  flipd: '#FED561',
+}
+
+function shrugCast(brand: OrderBrand): CharacterKind[] {
+  if (brand === 'flipd') return ['burger', 'fries']
+  if (brand === 'stackd') return ['coffee', 'croissant']
+  return ['fries', 'coffee']
+}
+
 export default function ConceptOrderPage() {
   const { concept: slug } = useParams<{ concept: string }>()
   const router = useRouter()
@@ -98,66 +218,57 @@ export default function ConceptOrderPage() {
   const [activeCategory, setActiveCategory] = useState<string | null>(null)
   const [openItem, setOpenItem] = useState<MenuItem | null>(null)
   const [cartOpen, setCartOpen] = useState(false)
+  const [bump, setBump] = useState(0)
+  const [note, setNote] = useState<string | undefined>(undefined)
 
   const cart = useCart()
   const brandSlug = useBrandSlug()
+  const brand = orderBrand(slug)
+  const { fly, portal } = useFlyToCart()
 
-  // Fetch concept + menu. Resilient against either API hiccupping: if the
-  // /concepts fetch fails (Neon cold-start, transient 5xx, rate limit) we
-  // derive a minimal placeholder concept from the slug so the menu still
-  // renders. Only show the error page when the *menu* itself is unavailable
-  // — that's the one we can't fake.
+  // Latest cart for the commit step, so a retry run later still sees the
+  // current store, exactly like the original effect saw it at run time.
+  const cartRef = useRef(cart)
+  cartRef.current = cart
+  const slugRef = useRef(slug)
+  slugRef.current = slug
+
+  const commit = useCallback((s: string, result: { concept: Concept; categories: Category[] }) => {
+    const cats = result.categories
+    setConcept(result.concept)
+    setCategories(cats)
+    setActiveCategory(cats[0]?.id ?? null)
+    setError(null)
+    const c = cartRef.current
+    if (c.conceptSlug && c.conceptSlug !== s) c.clearCart()
+    c.setConceptSlug(s)
+  }, [])
+
   useEffect(() => {
     let cancelled = false
     async function load() {
       try {
-        const [conceptsRes, menuRes] = await Promise.all([
-          fetch(`${API_URL}/api/v1/storefront/concepts`).catch(() => null),
-          fetch(`${API_URL}/api/v1/storefront/${slug}/menu`),
-        ])
-
-        if (!menuRes.ok) {
-          throw new Error(menuRes.status === 404 ? 'Brand not found' : `Menu API returned ${menuRes.status}`)
-        }
-        // Backend returns { concept, categories } — pull the array out.
-        const menuPayload = await menuRes.json() as { concept?: Concept; categories: Category[] } | Category[]
-        const cats: Category[] = Array.isArray(menuPayload) ? menuPayload : (menuPayload.categories ?? [])
-
-        // Try to enrich with real concept data; otherwise build a placeholder
-        // from the slug so the page still renders with brand colour/name.
-        let resolved: Concept
-        if (conceptsRes && conceptsRes.ok) {
-          const all: Concept[] = await conceptsRes.json()
-          const found = all.find((x) => x.slug === slug)
-          if (found) {
-            resolved = found
-          } else {
-            resolved = {
-              id: slug, slug, name: prettifySlug(slug), type: 'restaurant',
-              description: null, logoUrl: null, primaryColor: null, taxRate: 0,
-            }
-          }
-        } else {
-          resolved = {
-            id: slug, slug, name: prettifySlug(slug), type: 'restaurant',
-            description: null, logoUrl: null, primaryColor: null, taxRate: 0,
-          }
-        }
-
+        const result = await fetchMenu(slug)
         if (cancelled) return
-        setConcept(resolved)
-        setCategories(cats)
-        setActiveCategory(cats[0]?.id ?? null)
-        if (cart.conceptSlug && cart.conceptSlug !== slug) cart.clearCart()
-        cart.setConceptSlug(slug)
+        commit(slug, result)
       } catch (e) {
         if (!cancelled) setError((e as Error).message)
       }
     }
     void load()
     return () => { cancelled = true }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [slug])
+  }, [slug, commit])
+
+  // Retry from the "menu isn't online" state: the same fetch. Resolves when
+  // the menu is back (the button shows its check, then the menu takes over),
+  // rejects when it's still offline (the button shakes).
+  const retry = useCallback(async () => {
+    const s = slug
+    const result = await fetchMenu(s)
+    window.setTimeout(() => {
+      if (slugRef.current === s) commit(s, result)
+    }, 650)
+  }, [slug, commit])
 
   // Track active category as the user scrolls
   useEffect(() => {
@@ -175,47 +286,47 @@ export default function ConceptOrderPage() {
     return () => window.removeEventListener('scroll', handler)
   }, [categories])
 
+  // Keep the active chip in view inside the horizontally-scrolling nav.
+  const navRef = useRef<HTMLElement>(null)
+  useEffect(() => {
+    const nav = navRef.current
+    if (!nav || !activeCategory) return
+    const chip = nav.querySelector<HTMLElement>(`[data-cat="${CSS.escape(activeCategory)}"]`)
+    if (!chip) return
+    const left = chip.offsetLeft - nav.clientWidth / 2 + chip.clientWidth / 2
+    nav.scrollTo({ left: Math.max(0, left), behavior: 'smooth' })
+  }, [activeCategory])
+
   if (error) {
     return (
-      <div className="min-h-dvh flex items-center justify-center p-6 text-center">
-        <div style={{ maxWidth: '28rem' }}>
-          <h1 className="text-2xl font-bold mb-2">Tableside ordering isn&rsquo;t live yet.</h1>
-          <p className="text-s-muted text-sm mb-4">
-            The kitchen hasn&rsquo;t published a menu to the order system. Flag down your server — they&rsquo;ll take the order from the printed card. Reservations are open below.
-          </p>
-          <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center', flexWrap: 'wrap' }}>
-            <MagneticLink href={`/brand/${slug}/menu`} className="servd-btn-primary">See the menu</MagneticLink>
-            <MagneticLink href={`/reserve/${slug}`} className="servd-btn-primary" style={{ background: 'var(--servd-mute)', color: 'white' }}>Reserve a table</MagneticLink>
-          </div>
-        </div>
-      </div>
+      <OrderEmptyState
+        slug={slug}
+        brandName={concept?.name ?? prettifySlug(slug)}
+        onRetry={retry}
+      />
     )
   }
 
   if (!concept || !categories) {
-    // Menu skeleton — same hero stripe + category nav strip + 4 item rows
-    // as the real page, just shimmer-tinted. Reserves the layout so the
+    // Menu skeleton — same hero stripe + category nav strip + item rows as
+    // the real page, on the brand's own ground. Reserves the layout so the
     // real menu doesn't push content around on hydrate (avoids CLS).
     return (
-      <div role="status" aria-label="Loading menu" style={{ background: '#fff', minHeight: '100dvh' }}>
-        <div style={{ height: '260px', background: 'linear-gradient(90deg, var(--servd-surface), #f0f0f0, var(--servd-surface))', backgroundSize: '200% 100%', animation: 'skeletonShimmer 1.4s ease-in-out infinite' }} />
-        <div style={{ padding: '1rem 1rem 0', display: 'flex', gap: '0.5rem', overflowX: 'hidden' }}>
+      <div role="status" aria-label="Loading menu" className={`${styles.scope} ${styles.skel}`} data-obrand={brand}>
+        <div className={`${styles.skelBlock} ${styles.skelHero}`} />
+        <div className={styles.skelChips}>
           {Array.from({ length: 4 }).map((_, i) => (
-            <span key={i} style={{ width: '4.5rem', height: '2rem', borderRadius: '999px', background: 'var(--servd-surface)', flex: 'none' }} />
+            <span key={i} className={`${styles.skelBlock} ${styles.skelChip}`} />
           ))}
         </div>
-        <div style={{ padding: '1.25rem', display: 'grid', gap: '0.85rem' }}>
+        <div className={styles.skelRows}>
           {Array.from({ length: 5 }).map((_, i) => (
-            <div key={i} style={{
-              display: 'grid', gridTemplateColumns: '1fr 5rem', gap: '0.75rem',
-              padding: '0.85rem', borderRadius: '1rem',
-              background: 'var(--servd-surface)', border: '1px solid var(--servd-line)',
-            }}>
+            <div key={i} className={styles.skelRow} style={{ '--i': i } as CSSProperties}>
               <div>
-                <div style={{ height: '0.95rem', width: '60%', background: '#eaeaea', borderRadius: '4px', marginBottom: '0.4rem' }} />
-                <div style={{ height: '0.75rem', width: '90%', background: '#f1f1f1', borderRadius: '4px' }} />
+                <div className={`${styles.skelBlock} ${styles.skelLine}`} />
+                <div className={`${styles.skelBlock} ${styles.skelLineLong}`} />
               </div>
-              <div style={{ height: '4rem', borderRadius: '0.6rem', background: '#eaeaea' }} />
+              <div className={`${styles.skelBlock} ${styles.skelThumb}`} />
             </div>
           ))}
         </div>
@@ -228,12 +339,12 @@ export default function ConceptOrderPage() {
   const itemTotal = cart.itemCount()
   const hasItems = itemTotal > 0
   const fmt = fmtFor(slug)
+  const displayName = formatBrandName(concept.name)
+  const calm = brand === 'simmer'
 
   // Per-brand skin — same class system as /[concept]/checkout. Wraps the
-  // ordering surface in the brand's design language (token remap + a few
-  // targeted overrides in globals.css) so the menu / item modal / cart
-  // drawer feel like the brand the customer just walked into, not the
-  // generic servd treatment.
+  // ordering surface in the brand's design language so the menu / item
+  // sheet / basket feel like the brand the customer just walked into.
   const brandSkinClass =
     slug === 'simmer' ? 'simmer-ordering' :
     slug === 'stackd'   ? 'stackd-ordering'   :
@@ -241,270 +352,309 @@ export default function ConceptOrderPage() {
     ''
 
   return (
-    <div className={brandSkinClass}
-      style={{ background: '#fff', minHeight: '100dvh', paddingBottom: hasItems ? '7rem' : '0' }}>
-      {/* Hero */}
-      <section
-        style={{
-          position: 'relative',
-          minHeight: '320px',
-          display: 'flex',
-          alignItems: 'flex-end',
-          background: `${accent} url(${conceptHeroImage(concept)}) center/cover`,
-          color: '#fff',
-        }}
+    <MotionConfig reducedMotion="user">
+      <div
+        className={[brandSkinClass, styles.scope, styles.page, hasItems ? styles.pageWithPill : ''].filter(Boolean).join(' ')}
+        data-obrand={brand}
       >
-        <div aria-hidden="true" style={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, rgba(0,0,0,0.15) 0%, rgba(0,0,0,0.65) 100%)' }} />
-        <div className="container" style={{ position: 'relative', zIndex: 1, paddingTop: '5rem', paddingBottom: '2rem' }}>
-          <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
-            <Link href={`/brand/${concept.slug}`} style={{ color: 'rgba(255,255,255,0.85)', textDecoration: 'none', fontSize: '0.85rem' }}>
-              ← {concept.name}
-            </Link>
-            <Link href="/browse" style={{ color: 'rgba(255,255,255,0.85)', textDecoration: 'none', fontSize: '0.85rem' }}>
-              Other brands →
-            </Link>
-          </div>
-          <h1 style={{ fontSize: 'clamp(2rem, 5vw, 3.25rem)', fontWeight: 900, letterSpacing: '-0.04em', marginBottom: '0.5rem' }}>
-            {/* simmer brand rule: the wordmark is always lowercase. */}
-            {slug === 'simmer' ? concept.name.toLowerCase() : concept.name}
-          </h1>
-          {concept.description && (
-            <p style={{ color: 'rgba(255,255,255,0.85)', maxWidth: '36rem', fontSize: '1rem' }}>
-              {concept.description}
-            </p>
-          )}
-        </div>
-      </section>
-
-      {/* Sticky category nav */}
-      {categories.length > 0 && (
-        <nav
-          aria-label="Menu sections"
-          className="no-scrollbar"
-          style={{
-            position: 'sticky',
-            top: '60px',
-            zIndex: 30,
-            background: 'rgba(255,255,255,0.95)',
-            backdropFilter: 'blur(14px)',
-            WebkitBackdropFilter: 'blur(14px)',
-            borderBottom: '1px solid var(--servd-line)',
-            display: 'flex',
-            gap: '0.25rem',
-            overflowX: 'auto',
-            padding: '0.5rem clamp(1rem, 4vw, 2rem)',
-          }}
+        {/* Hero */}
+        <section
+          className={styles.hero}
+          style={{ backgroundColor: accent, backgroundImage: `url(${conceptHeroImage(concept)})` }}
         >
-          {categories.map((c) => {
-            const active = activeCategory === c.id
-            return (
-              <a
-                key={c.id}
-                href={`#cat-${c.id}`}
-                onClick={(e) => {
-                  e.preventDefault()
-                  document.getElementById(`cat-${c.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-                  setActiveCategory(c.id)
-                }}
-                style={{
-                  whiteSpace: 'nowrap',
-                  padding: '0.45rem 0.95rem',
-                  fontWeight: active ? 800 : 500,
-                  fontSize: '0.875rem',
-                  color: active ? '#0a0a0a' : 'var(--servd-mute)',
-                  textDecoration: 'none',
-                  borderRadius: '999px',
-                  background: active ? 'var(--servd-green-soft)' : 'transparent',
-                }}
-              >
-                {c.name}
-              </a>
-            )
-          })}
-        </nav>
-      )}
-
-      {/* Menu */}
-      <div className="container" style={{ padding: 'clamp(2rem, 4vw, 3rem) 0', display: 'grid', gap: '2.5rem' }}>
-        {categories.length === 0 && (
-          <div className="text-center py-12">
-            <h3 className="text-lg font-semibold mb-2">No menu yet</h3>
-            <p className="text-s-muted">{concept.name} hasn&rsquo;t published a menu. Check back soon.</p>
+          <div aria-hidden="true" className={styles.heroScrim} />
+          <div className={`container ${styles.heroInner}`}>
+            <div className={styles.heroLinks}>
+              <Link href={`/brand/${concept.slug}`} className={styles.heroLink}>
+                <span aria-hidden="true">←</span> {displayName}
+              </Link>
+              <Link href="/browse" className={styles.heroLink}>
+                Other brands <span aria-hidden="true">→</span>
+              </Link>
+            </div>
+            <span className={styles.heroEyebrow}>{typeLabel(concept.type)} · order here</span>
+            <motion.h1
+              className={styles.heroTitle}
+              initial={{ opacity: 0.35, y: calm ? 6 : 16 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={calm ? { duration: 0.5, ease: EASE_OUT } : SPRING.settle}
+            >
+              {/* simmer + stackd brand rule: the wordmark is always lowercase. */}
+              {displayName}
+            </motion.h1>
+            {concept.description && (
+              <p className={styles.heroDesc}>{concept.description}</p>
+            )}
           </div>
+        </section>
+
+        {/* Sticky category nav */}
+        {categories.length > 0 && (
+          <LayoutGroup id="order-cats">
+            <nav ref={navRef} aria-label="Menu sections" className={styles.catNav}>
+              {categories.map((c) => {
+                const active = activeCategory === c.id
+                return (
+                  <a
+                    key={c.id}
+                    href={`#cat-${c.id}`}
+                    data-cat={c.id}
+                    aria-current={active ? 'true' : undefined}
+                    onClick={(e) => {
+                      e.preventDefault()
+                      document.getElementById(`cat-${c.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+                      setActiveCategory(c.id)
+                    }}
+                    className={`${styles.catChip} ${active ? styles.catChipActive : ''}`}
+                  >
+                    {active && (
+                      <motion.span
+                        layoutId="order-cat-active"
+                        className={styles.catChipBg}
+                        transition={calm ? { duration: 0.22, ease: EASE_OUT } : SPRING.settle}
+                      />
+                    )}
+                    {c.name}
+                  </a>
+                )
+              })}
+            </nav>
+          </LayoutGroup>
         )}
 
-        {categories.map((cat) => (
-          <section key={cat.id} id={`cat-${cat.id}`} style={{ scrollMarginTop: '120px' }}>
-            <h2 style={{ fontSize: 'clamp(1.4rem, 3vw, 1.85rem)', marginBottom: '1.25rem' }}>{cat.name}</h2>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 260px), 1fr))', gap: '1rem' }}>
-              {cat.items.map((item) => <ItemCard key={item.id} item={item} onClick={() => setOpenItem(item)} accent={accent} fmt={fmt} />)}
+        {/* Menu */}
+        <div className={`container ${styles.menu}`}>
+          {categories.length === 0 && (
+            <div className={styles.noMenu}>
+              {!calm && (
+                <div className={styles.noMenuPoster}>
+                  <CrowdPoster cast={shrugCast(brand)} mode="shrug" />
+                </div>
+              )}
+              <h3>No menu yet</h3>
+              <p>{displayName} hasn&rsquo;t published a menu. Check back soon.</p>
             </div>
-          </section>
-        ))}
-      </div>
+          )}
 
-      {/* Item modal */}
-      {openItem && (
-        <ItemDetailModal
-          item={openItem}
-          conceptSlug={concept.slug}
-          accent={accent}
-          fmt={fmt}
+          {categories.map((cat) => (
+            <section key={cat.id} id={`cat-${cat.id}`} className={styles.catSection}>
+              <h2 className={styles.catTitle}>
+                {cat.name}
+                <span className={styles.catCount} aria-label={`${cat.items.length} items`}>{cat.items.length}</span>
+              </h2>
+              <div className={styles.grid}>
+                {cat.items.map((item, i) => (
+                  <div key={item.id} className={styles.gridCell}>
+                    <ItemCard item={item} index={i} brand={brand} onClick={() => setOpenItem(item)} fmt={fmt} />
+                  </div>
+                ))}
+              </div>
+            </section>
+          ))}
+        </div>
+
+        {/* Item sheet */}
+        <BottomSheet
+          open={openItem !== null}
           onClose={() => setOpenItem(null)}
-          onAdd={(item, qty, modifiers, finalPriceCents, notes) => {
-            for (let i = 0; i < qty; i++) {
-              cart.addItem({
-                menuItemId: item.id,
-                name: item.name,
-                priceCents: finalPriceCents,
-                ...(modifiers.length > 0 && { modifiers }),
-                ...(notes && { notes }),
-              })
-            }
-            setOpenItem(null)
-            setCartOpen(true)
-          }}
-        />
-      )}
+          label={openItem?.name ?? 'Item'}
+          brand={brand}
+        >
+          {openItem && (
+            <ItemDetail
+              key={openItem.id}
+              item={openItem}
+              brand={brand}
+              fmt={fmt}
+              onClose={() => setOpenItem(null)}
+              onAdd={(item, qty, modifiers, finalPriceCents, notes, fromRect) => {
+                for (let i = 0; i < qty; i++) {
+                  cart.addItem({
+                    menuItemId: item.id,
+                    name: item.name,
+                    priceCents: finalPriceCents,
+                    ...(modifiers.length > 0 && { modifiers }),
+                    ...(notes && { notes }),
+                  })
+                }
+                setOpenItem(null)
+                // No drawer: the pill catching the item is the confirmation.
+                const land = () => { setNote(item.name); setBump((b) => b + 1) }
+                if (fromRect) {
+                  void fly(fromRect, {
+                    imageUrl: item.imageUrl,
+                    label: item.name,
+                    ...(FLY_CHIP[brand] ? { color: FLY_CHIP[brand] } : {}),
+                  }).then(land)
+                } else {
+                  land()
+                }
+              }}
+            />
+          )}
+        </BottomSheet>
 
-      {/* Cart drawer */}
-      {hasItems && (
-        <CartDrawer
-          open={cartOpen}
-          onOpen={() => setCartOpen(true)}
-          onClose={() => setCartOpen(false)}
-          accent={accent}
-          fmt={fmt}
-          onCheckout={() => {
-            // On a brand custom domain (eatstax.com, stackd.localhost:3002…),
-            // hand the cart off to the canonical servd checkout via a URL
-            // token so the user can be cross-sold items from other GS Foods
-            // brands. On the servd host itself, fall through to the local
-            // checkout route.
-            const onBrandHost = brandSlug !== null
-            const servdHost   = getServdHost()
-            if (onBrandHost && servdHost) {
-              const token = encodeCartToken({
-                cartId:      cart.cartId,
-                conceptSlug: cart.conceptSlug,
-                items:       cart.items,
-              })
-              window.location.href = `${servdHost}/${concept.slug}/checkout?cart=${encodeURIComponent(token)}`
-              return
-            }
-            router.push(`/${concept.slug}/checkout`)
-          }}
-        />
-      )}
-    </div>
+        {/* Cart pill */}
+        <AnimatePresence>
+          {hasItems && (
+            <CartPill
+              key="cart-pill"
+              count={itemTotal}
+              subtotalLabel={fmt(cart.subtotalCents())}
+              onOpen={() => setCartOpen(true)}
+              bump={bump}
+              note={note}
+              brand={brand}
+            />
+          )}
+        </AnimatePresence>
+
+        {/* Basket sheet */}
+        <BottomSheet open={cartOpen} onClose={() => setCartOpen(false)} label="Basket" brand={brand}>
+          <BasketContents
+            brand={brand}
+            fmt={fmt}
+            onClose={() => setCartOpen(false)}
+            onCheckout={() => {
+              // On a brand custom domain (eatstax.com, stackd.localhost:3002…),
+              // hand the cart off to the canonical servd checkout via a URL
+              // token so the user can be cross-sold items from other GS Foods
+              // brands. On the servd host itself, fall through to the local
+              // checkout route.
+              const onBrandHost = brandSlug !== null
+              const servdHost   = getServdHost()
+              if (onBrandHost && servdHost) {
+                const token = encodeCartToken({
+                  cartId:      cart.cartId,
+                  conceptSlug: cart.conceptSlug,
+                  items:       cart.items,
+                })
+                window.location.href = `${servdHost}/${concept.slug}/checkout?cart=${encodeURIComponent(token)}`
+                return
+              }
+              router.push(`/${concept.slug}/checkout`)
+            }}
+          />
+        </BottomSheet>
+
+        {portal}
+      </div>
+    </MotionConfig>
   )
 }
 
 // ───── Components ───────────────────────────────────────────────────────────
 
-function ItemCard({ item, onClick, accent, fmt }: { item: MenuItem; onClick: () => void; accent: string; fmt: (cents: number) => string }) {
+/** A photo that fades and settles in (.96 → 1) once it has actually loaded. */
+function useLoadedImage() {
+  const [loaded, setLoaded] = useState(false)
+  const ref = useCallback((el: HTMLImageElement | null) => {
+    if (el && el.complete && el.naturalWidth > 0) setLoaded(true)
+  }, [])
+  return { loaded, ref, onLoad: () => setLoaded(true) }
+}
+
+function ItemCard({ item, index, brand, onClick, fmt }: {
+  item: MenuItem; index: number; brand: OrderBrand; onClick: () => void; fmt: (cents: number) => string
+}) {
   const disabled = !item.isAvailable
+  const press = usePress(brand, 1)
+  const img = useLoadedImage()
+  const calm = brand === 'simmer'
+  const hasBadges = (item.dietary?.length ?? 0) > 0 || (item.spiceLevel ?? 0) > 0
+  const spice = Math.min(item.spiceLevel ?? 0, 3)
+  const badgeIn = (i: number): Transition =>
+    calm ? { duration: 0.3, ease: EASE_OUT, delay: i * 0.04 } : { ...SPRING.pop, delay: 0.12 + i * 0.04 }
+
   return (
-    <button
+    <motion.button
       type="button"
       onClick={() => !disabled && onClick()}
       disabled={disabled}
-      style={{
-        textAlign: 'left',
-        background: '#fff',
-        border: '1px solid var(--servd-line)',
-        borderRadius: '0.85rem',
-        padding: 0,
-        cursor: disabled ? 'not-allowed' : 'pointer',
-        opacity: disabled ? 0.55 : 1,
-        overflow: 'hidden',
-        transition: 'transform 180ms cubic-bezier(0.22,1,0.36,1), box-shadow 180ms',
-      }}
-      onMouseEnter={(e) => { if (!disabled) e.currentTarget.style.transform = 'translateY(-2px)'; if (!disabled) e.currentTarget.style.boxShadow = '0 8px 24px rgba(0,0,0,0.08)' }}
-      onMouseLeave={(e) => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = 'none' }}
+      className={`${styles.card} ${disabled ? styles.cardDisabled : ''}`}
       aria-label={`${item.name} — ${fmt(item.priceCents)}${disabled ? ' — sold out' : ''}`}
+      initial={{ opacity: 0.4, y: calm ? 6 : 14 }}
+      whileInView={{ opacity: 1, y: 0, transition: calm ? { duration: 0.45, ease: EASE_OUT, delay: Math.min(index, 5) * 0.05 } : { ...SPRING.settle, delay: Math.min(index, 5) * 0.05 } }}
+      viewport={{ once: true, amount: 0.2 }}
+      {...(disabled ? { transition: press.transition } : press)}
     >
-      <div style={{
-        aspectRatio: '4/3',
-        background: item.imageUrl ? `url(${item.imageUrl}) center/cover` : `linear-gradient(135deg, ${accent}22 0%, white 200%)`,
-        position: 'relative',
-        overflow: 'hidden',
-      }}>
+      <div className={styles.cardMedia}>
+        <span className={`${styles.placeholder} ${img.loaded || !item.imageUrl ? styles.placeholderStill : ''}`} aria-hidden="true">
+          {item.name.trim().charAt(0).toUpperCase()}
+        </span>
+        {item.imageUrl && (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            ref={img.ref}
+            src={item.imageUrl}
+            alt=""
+            loading="lazy"
+            decoding="async"
+            onLoad={img.onLoad}
+            className={`${styles.cardImg} ${img.loaded ? styles.imgLoaded : ''}`}
+          />
+        )}
         {item.videoUrl && (
           <video
             src={item.videoUrl}
             {...(item.imageUrl ? { poster: item.imageUrl } : {})}
             autoPlay muted loop playsInline preload="metadata"
             aria-hidden="true"
-            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
+            className={styles.cardVideo}
           />
         )}
-        {disabled && (
-          <span style={{
-            position: 'absolute', top: '0.6rem', left: '0.6rem',
-            background: 'rgba(0,0,0,0.7)', color: 'white',
-            fontSize: '0.7rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase',
-            padding: '0.2rem 0.55rem', borderRadius: '999px',
-          }}>Sold out</span>
-        )}
+        {disabled && <span className={styles.soldOut}>Sold out</span>}
       </div>
-      <div style={{ padding: '0.95rem 1rem', display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
-        <h3 style={{ fontSize: '1rem', fontWeight: 700, lineHeight: 1.3 }}>{item.name}</h3>
-        {item.description && (
-          <p style={{ color: 'var(--servd-mute)', fontSize: '0.85rem', lineHeight: 1.4, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
-            {item.description}
-          </p>
-        )}
-        {((item.dietary?.length ?? 0) > 0 || ((item.spiceLevel ?? 0) > 0)) && (
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem', marginTop: '0.2rem' }}>
-            {(item.dietary ?? []).map((d) => {
+      <div className={styles.cardBody}>
+        <h3 className={styles.cardName}>{item.name}</h3>
+        {item.description && <p className={styles.cardDesc}>{item.description}</p>}
+        {hasBadges && (
+          <div className={styles.badges}>
+            {(item.dietary ?? []).map((d, i) => {
               const b = DIETARY_BADGE[d]
               return (
-                <span key={d} style={{
-                  display: 'inline-flex', alignItems: 'center', gap: '0.25rem',
-                  fontSize: '0.65rem', fontWeight: 700, letterSpacing: '0.05em',
-                  padding: '0.15rem 0.45rem', borderRadius: '999px',
-                  background: b?.color ?? 'rgba(0,0,0,0.06)', color: 'var(--servd-ink)',
-                }}>
+                <motion.span
+                  key={d}
+                  className={styles.badge}
+                  initial={{ opacity: 0.3, scale: calm ? 1 : 0.6 }}
+                  whileInView={{ opacity: 1, scale: 1, transition: badgeIn(i) }}
+                  viewport={{ once: true, amount: 0.2 }}
+                >
                   {b?.withIcon && <LeafIcon />}
                   {b?.label ?? d}
-                </span>
+                </motion.span>
               )
             })}
-            {(item.spiceLevel ?? 0) > 0 && (
-              <span aria-label={`Spice level ${Math.min(item.spiceLevel ?? 0, 3)} of 3`}
-                style={{
-                  display: 'inline-flex', alignItems: 'center', gap: '0.1rem',
-                  fontSize: '0.65rem', fontWeight: 700, padding: '0.15rem 0.45rem',
-                  borderRadius: '999px', background: 'rgba(220,38,38,0.12)', color: '#991b1b',
-                }}>
-                {Array.from({ length: Math.min(item.spiceLevel ?? 0, 3) }).map((_, i) => (
-                  <FlameIcon key={i} />
-                ))}
-              </span>
+            {spice > 0 && (
+              <motion.span
+                aria-label={`Spice level ${spice} of 3`}
+                className={`${styles.badge} ${styles.badgeSpice}`}
+                initial={{ opacity: 0.3, scale: calm ? 1 : 0.6 }}
+                whileInView={{ opacity: 1, scale: 1, transition: badgeIn(item.dietary?.length ?? 0) }}
+                viewport={{ once: true, amount: 0.2 }}
+              >
+                {Array.from({ length: spice }).map((_, i) => <FlameIcon key={i} />)}
+              </motion.span>
             )}
           </div>
         )}
         {(item.allergens?.length ?? 0) > 0 && (
-          <p style={{ fontSize: '0.7rem', color: 'var(--servd-mute)', marginTop: '0.1rem' }}>
-            Contains: {(item.allergens ?? []).join(', ')}
-          </p>
+          <p className={styles.allergens}>Contains: {(item.allergens ?? []).join(', ')}</p>
         )}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '0.4rem' }}>
-          <span style={{ fontWeight: 800, color: 'var(--servd-green-dark)' }}>{fmt(item.priceCents)}</span>
-          {!disabled && <span style={{ fontSize: '1.25rem', color: 'var(--servd-green-dark)', fontWeight: 700 }}>+</span>}
+        <div className={styles.cardFoot}>
+          <span className={styles.price}>{fmt(item.priceCents)}</span>
+          {!disabled && <span className={styles.plus} aria-hidden="true"><PlusIcon /></span>}
         </div>
       </div>
-    </button>
+    </motion.button>
   )
 }
 
-function ItemDetailModal({
-  item, accent, onClose, onAdd, fmt,
+function ItemDetail({
+  item, brand, onClose, onAdd, fmt,
 }: {
   item: MenuItem
-  conceptSlug: string
-  accent: string
+  brand: OrderBrand
   fmt: (cents: number) => string
   onClose: () => void
   onAdd: (
@@ -513,10 +663,22 @@ function ItemDetailModal({
     modifiers: { modifierId: string; name: string; priceDeltaCents: number }[],
     finalPriceCents: number,
     notes: string,
+    fromRect: DOMRect | null,
   ) => void
 }) {
   const [qty, setQty] = useState(1)
   const [notes, setNotes] = useState('')
+  const [flagged, setFlagged] = useState<string | null>(null)
+  const mediaRef = useRef<HTMLDivElement>(null)
+  const groupRefs = useRef<Record<string, HTMLFieldSetElement | null>>({})
+  const addControls = useAnimationControls()
+  const reduced = useReducedMotion()
+  const img = useLoadedImage()
+  const calm = brand === 'simmer'
+
+  const addPress = usePress(brand, 1.2, false)
+  const stepPress = usePress(brand, 0.8, false)
+  const rowPress = usePress(brand, 0.35, false)
 
   // selections[groupId] = Set of selected modifier ids. Seeded with the
   // group's isDefault picks so a "must pick exactly one" group lands on
@@ -555,6 +717,7 @@ function ItemDetailModal({
     return false
   })
   const canAdd = unmet.length === 0
+  const flaggedOpen = flagged !== null && unmet.some((g) => g.id === flagged)
 
   // Flatten picks for price calculation + the add payload.
   const pickedModifiers = groups.flatMap((g) =>
@@ -564,57 +727,61 @@ function ItemDetailModal({
   )
   const lineUnitPriceCents = item.priceCents + pickedModifiers.reduce((s, m) => s + m.priceDeltaCents, 0)
 
-  return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-label={item.name}
-      onClick={onClose}
-      style={{
-        position: 'fixed', inset: 0, zIndex: 60,
-        background: 'rgba(0,0,0,0.45)',
-        display: 'flex', alignItems: 'flex-end', justifyContent: 'center',
-        padding: '0',
-      }}
-    >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          background: '#fff', width: '100%', maxWidth: '34rem',
-          borderRadius: '1.25rem 1.25rem 0 0',
-          maxHeight: '92dvh', overflow: 'hidden',
-          display: 'flex', flexDirection: 'column',
-          animation: 'fadeUp 200ms cubic-bezier(0.22,1,0.36,1) both',
-        }}
-      >
-        <div style={{
-          aspectRatio: '16/10',
-          background: item.imageUrl ? `url(${item.imageUrl}) center/cover` : `linear-gradient(135deg, ${accent}22 0%, white 200%)`,
-          position: 'relative',
-          overflow: 'hidden',
-        }}>
-          {item.videoUrl && (
-            <video
-              src={item.videoUrl}
-              {...(item.imageUrl ? { poster: item.imageUrl } : {})}
-              autoPlay muted loop playsInline preload="metadata"
-              aria-hidden="true"
-              style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
-            />
-          )}
-          <button onClick={onClose} aria-label="Close" style={{
-            position: 'absolute', top: '0.75rem', right: '0.75rem',
-            background: 'rgba(255,255,255,0.95)', border: 'none', borderRadius: '999px',
-            width: '2rem', height: '2rem', fontSize: '1.1rem', cursor: 'pointer',
-          }}>×</button>
-        </div>
+  function handleAdd() {
+    if (!canAdd) {
+      // A designed "not yet": shake the button and walk the customer to the
+      // group that still needs a pick.
+      const first = unmet[0]
+      if (first) {
+        setFlagged(first.id)
+        groupRefs.current[first.id]?.scrollIntoView({ behavior: reduced ? 'auto' : 'smooth', block: 'center' })
+      }
+      tick('error')
+      if (!reduced && !calm) void addControls.start({ x: [0, -8, 7, -5, 3, 0], transition: { duration: 0.38, ease: 'easeOut' } })
+      return
+    }
+    onAdd(item, qty, pickedModifiers, lineUnitPriceCents, notes.trim(), mediaRef.current?.getBoundingClientRect() ?? null)
+  }
 
-        <div style={{ overflowY: 'auto', padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-          <h2 style={{ fontSize: '1.4rem', fontWeight: 800 }}>{item.name}</h2>
-          {item.description && (
-            <p style={{ color: 'var(--servd-mute)', fontSize: '0.95rem', lineHeight: 1.5 }}>{item.description}</p>
-          )}
-          <p style={{ fontWeight: 800, color: 'var(--servd-green-dark)', fontSize: '1.1rem' }}>{fmt(item.priceCents)}</p>
+  const markIn: Transition = calm ? { duration: 0.16, ease: EASE_OUT } : SPRING.pop
+
+  return (
+    <>
+      <SheetDragZone className={styles.media} innerRef={mediaRef}>
+        <span className={`${styles.placeholder} ${img.loaded || !item.imageUrl ? styles.placeholderStill : ''}`} aria-hidden="true">
+          {item.name.trim().charAt(0).toUpperCase()}
+        </span>
+        {item.imageUrl && (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            ref={img.ref}
+            src={item.imageUrl}
+            alt=""
+            decoding="async"
+            onLoad={img.onLoad}
+            draggable={false}
+            className={`${styles.mediaImg} ${img.loaded ? styles.imgLoaded : ''}`}
+          />
+        )}
+        {item.videoUrl && (
+          <video
+            src={item.videoUrl}
+            {...(item.imageUrl ? { poster: item.imageUrl } : {})}
+            autoPlay muted loop playsInline preload="metadata"
+            aria-hidden="true"
+            className={styles.cardVideo}
+          />
+        )}
+        <motion.button type="button" onClick={onClose} aria-label="Close" className={`${styles.closeBtn} ${styles.mediaClose}`} {...stepPress}>
+          <CloseIcon />
+        </motion.button>
+      </SheetDragZone>
+
+      <SheetBody>
+        <div className={styles.detail}>
+          <h2 className={styles.detailName}>{item.name}</h2>
+          {item.description && <p className={styles.detailDesc}>{item.description}</p>}
+          <p className={styles.detailPrice}>{fmt(item.priceCents)}</p>
 
           {/* Modifier groups — radios for maxSelect ≤ 1, checkboxes otherwise.
               Required groups get a "Required" pill; min/max constraints
@@ -629,52 +796,61 @@ function ItemDetailModal({
                   ? `Pick up to ${g.maxSelect}`
                   : 'Optional'
             return (
-              <fieldset key={g.id} style={{ border: '1px solid var(--servd-line)', borderRadius: '0.75rem', padding: '0.85rem 1rem 0.6rem', margin: 0 }}>
-                <legend style={{ padding: '0 0.4rem', display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                  <span style={{ fontSize: '0.92rem', fontWeight: 700, color: 'var(--servd-ink)' }}>{g.name}</span>
-                  {g.isRequired && (
-                    <span style={{
-                      background: 'var(--servd-green)', color: 'white',
-                      fontSize: '0.62rem', fontWeight: 800, letterSpacing: '0.08em',
-                      textTransform: 'uppercase', padding: '0.15rem 0.45rem', borderRadius: '999px',
-                    }}>Required</span>
-                  )}
+              <fieldset
+                key={g.id}
+                ref={(el) => { groupRefs.current[g.id] = el }}
+                className={`${styles.group} ${flaggedOpen && flagged === g.id ? styles.groupFlagged : ''}`}
+              >
+                <legend className={styles.groupLegend}>
+                  <span className={styles.groupName}>{g.name}</span>
+                  {g.isRequired && <span className={styles.required}>Required</span>}
                 </legend>
-                <p style={{ fontSize: '0.75rem', color: 'var(--servd-mute)', marginBottom: '0.5rem' }}>{caption}</p>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+                <p className={styles.groupCaption}>{caption}</p>
+                <div className={styles.modList}>
                   {g.modifiers.map((m) => {
                     const checked = picked.has(m.id)
                     const reachedMax = !radio && !checked && picked.size >= g.maxSelect
                     return (
-                      <label
+                      <motion.label
                         key={m.id}
-                        style={{
-                          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                          padding: '0.55rem 0.75rem', borderRadius: '0.5rem',
-                          background: checked ? 'rgba(58,14,105,0.08)' : 'transparent',
-                          border: checked ? '1px solid var(--servd-green)' : '1px solid transparent',
-                          cursor: reachedMax ? 'not-allowed' : 'pointer',
-                          opacity: reachedMax ? 0.5 : 1,
-                          gap: '0.75rem',
-                        }}
+                        className={`${styles.modRow} ${checked ? styles.modRowOn : ''} ${reachedMax ? styles.modRowOff : ''}`}
+                        {...(reachedMax ? {} : rowPress)}
                       >
-                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.6rem', fontSize: '0.92rem' }}>
+                        <span className={styles.modLead}>
                           <input
                             type={radio ? 'radio' : 'checkbox'}
                             name={radio ? g.id : undefined}
                             checked={checked}
                             disabled={reachedMax}
                             onChange={() => togglePick(g, m.id)}
-                            style={{ accentColor: 'var(--servd-green)' }}
+                            className={styles.modInput}
                           />
+                          <span
+                            className={`${styles.modMark} ${radio ? styles.modMarkRadio : ''} ${checked ? styles.modMarkOn : ''}`}
+                            aria-hidden="true"
+                          >
+                            <AnimatePresence initial={false}>
+                              {checked && (
+                                <motion.span
+                                  key="on"
+                                  style={{ display: 'grid', placeItems: 'center' }}
+                                  initial={{ scale: 0, opacity: 0 }}
+                                  animate={{ scale: 1, opacity: 1, transition: markIn }}
+                                  exit={{ scale: 0, opacity: 0, transition: { duration: 0.12 } }}
+                                >
+                                  {radio ? <span className={styles.modDot} /> : <CheckIcon />}
+                                </motion.span>
+                              )}
+                            </AnimatePresence>
+                          </span>
                           <span>{m.name}</span>
                         </span>
                         {m.priceDeltaCents !== 0 && (
-                          <span style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--servd-mute)' }}>
+                          <span className={styles.modDelta}>
                             {m.priceDeltaCents > 0 ? '+' : ''}{fmt(m.priceDeltaCents)}
                           </span>
                         )}
-                      </label>
+                      </motion.label>
                     )
                   })}
                 </div>
@@ -682,53 +858,49 @@ function ItemDetailModal({
             )
           })}
 
-          <label style={{ display: 'block' }}>
-            <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--servd-mute)' }}>Notes for the kitchen (optional)</span>
+          <label className={styles.notes}>
+            <span className={styles.notesLabel}>Notes for the kitchen (optional)</span>
             <textarea
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
               rows={2}
               maxLength={200}
               placeholder="e.g. no onions, extra spicy"
-              style={{
-                marginTop: '0.4rem', width: '100%', padding: '0.65rem 0.85rem',
-                border: '1px solid var(--servd-line)', borderRadius: '0.6rem', fontFamily: 'inherit', fontSize: '0.9rem',
-              }}
+              className={styles.notesField}
             />
           </label>
         </div>
+      </SheetBody>
 
-        <div style={{ padding: '1rem 1.5rem 1.25rem', borderTop: '1px solid var(--servd-line)', display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
-          <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', border: '1px solid var(--servd-line)', borderRadius: '999px', padding: '0.25rem 0.4rem' }}>
-            <button onClick={() => setQty(Math.max(1, qty - 1))} aria-label="Decrease quantity"
-              style={{ width: '2rem', height: '2rem', borderRadius: '999px', border: 'none', background: 'transparent', fontSize: '1.1rem', cursor: 'pointer' }}>−</button>
-            <span style={{ minWidth: '1.5rem', textAlign: 'center', fontWeight: 700 }}>{qty}</span>
-            <button onClick={() => setQty(Math.min(20, qty + 1))} aria-label="Increase quantity"
-              style={{ width: '2rem', height: '2rem', borderRadius: '999px', border: 'none', background: 'transparent', fontSize: '1.1rem', cursor: 'pointer' }}>+</button>
-          </div>
-          <button
-            onClick={() => canAdd && onAdd(item, qty, pickedModifiers, lineUnitPriceCents, notes.trim())}
-            disabled={!canAdd}
-            className="servd-btn-primary"
-            style={{ flex: 1, padding: '0.85rem 1rem', opacity: canAdd ? 1 : 0.5, cursor: canAdd ? 'pointer' : 'not-allowed' }}
+      <div className={styles.sheetFooter}>
+        <div className={styles.stepper}>
+          <motion.button type="button" onClick={() => setQty(Math.max(1, qty - 1))} aria-label="Decrease quantity" className={styles.stepBtn} {...stepPress}>−</motion.button>
+          <span className={styles.stepQty} aria-live="polite"><RollingNumber value={qty} /></span>
+          <motion.button type="button" onClick={() => setQty(Math.min(20, qty + 1))} aria-label="Increase quantity" className={styles.stepBtn} {...stepPress}>+</motion.button>
+        </div>
+        <motion.div animate={addControls} style={{ flex: 1, display: 'flex', minWidth: 0 }}>
+          <motion.button
+            type="button"
+            onClick={handleAdd}
+            aria-disabled={!canAdd}
+            className={`${styles.cta} ${canAdd ? '' : styles.ctaBlocked}`}
+            {...addPress}
           >
             {canAdd
               ? `Add ${qty} · ${fmt(lineUnitPriceCents * qty)}`
               : `Pick ${unmet[0]?.name}`}
-          </button>
-        </div>
+          </motion.button>
+        </motion.div>
       </div>
-    </div>
+    </>
   )
 }
 
-function CartDrawer({
-  open, onOpen, onClose, accent, onCheckout, fmt,
+function BasketContents({
+  brand, onClose, onCheckout, fmt,
 }: {
-  open: boolean
-  onOpen: () => void
+  brand: OrderBrand
   onClose: () => void
-  accent: string
   onCheckout: () => void
   fmt: (cents: number) => string
 }) {
@@ -737,117 +909,110 @@ function CartDrawer({
   const cart = useCart()
   const subtotal = cart.subtotalCents()
   const itemCount = cart.itemCount()
+  const calm = brand === 'simmer'
 
-  if (!open) {
-    // Floating CTA pill anchored to bottom of screen
-    return (
-      <button
-        onClick={onOpen}
-        aria-label={`View cart — ${itemCount} item${itemCount === 1 ? '' : 's'}, ${fmt(subtotal)}`}
-        style={{
-          position: 'fixed', bottom: 'calc(1.25rem + env(safe-area-inset-bottom))', left: '50%', transform: 'translateX(-50%)', zIndex: 40,
-          background: '#0a0a0a', color: 'white', border: 'none',
-          borderRadius: '999px', padding: '0.85rem 1.5rem',
-          display: 'flex', alignItems: 'center', gap: '0.85rem',
-          boxShadow: '0 12px 40px rgba(0,0,0,0.25)', cursor: 'pointer',
-          fontWeight: 700,
-        }}
-      >
-        <span style={{
-          background: accent, color: '#0a0a0a',
-          minWidth: '1.6rem', height: '1.6rem', borderRadius: '999px',
-          display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-          fontWeight: 900, fontSize: '0.85rem',
-        }}>
-          {itemCount}
-        </span>
-        <span>View basket</span>
-        <span style={{ opacity: 0.85 }}>{fmt(subtotal)}</span>
-      </button>
-    )
-  }
+  const stepPress = usePress(brand, 0.7, false)
+  const removePress = usePress(brand, 0.6, false)
+  const ctaPress = usePress(brand, 1.2, false)
+  const lineExit: Transition = { duration: 0.22, ease: EASE_OUT }
 
   return (
-    <div role="dialog" aria-modal="true" aria-label="Basket"
-      onClick={onClose}
-      style={{
-        position: 'fixed', inset: 0, zIndex: 60,
-        background: 'rgba(0,0,0,0.45)',
-        display: 'flex', alignItems: 'flex-end', justifyContent: 'center',
-      }}
-    >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          background: '#fff', width: '100%', maxWidth: '34rem',
-          borderRadius: '1.25rem 1.25rem 0 0',
-          maxHeight: '92dvh', display: 'flex', flexDirection: 'column',
-          animation: 'fadeUp 200ms cubic-bezier(0.22,1,0.36,1) both',
-        }}
-      >
-        <header style={{ padding: '1.25rem 1.5rem', borderBottom: '1px solid var(--servd-line)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <h2 style={{ fontSize: '1.2rem', fontWeight: 800 }}>Your basket</h2>
-          <button onClick={onClose} aria-label="Close basket"
-            style={{ background: 'transparent', border: 'none', fontSize: '1.4rem', cursor: 'pointer', color: 'var(--servd-mute)' }}>×</button>
-        </header>
-
-        <div style={{ overflowY: 'auto', flex: 1 }}>
-          {cart.items.length === 0 && (
-            <p style={{ padding: '3rem 1.5rem', textAlign: 'center', color: 'var(--servd-mute)' }}>Basket&rsquo;s empty.</p>
+    <>
+      <SheetDragZone className={styles.sheetHeader}>
+        <h2 className={styles.sheetTitle}>
+          Your basket
+          {itemCount > 0 && (
+            <span className={styles.basketCount}><RollingNumber value={itemCount} decorative /></span>
           )}
+        </h2>
+        <motion.button type="button" onClick={onClose} aria-label="Close basket" className={styles.closeBtn} {...stepPress}>
+          <CloseIcon />
+        </motion.button>
+      </SheetDragZone>
+
+      <SheetBody>
+        <AnimatePresence initial={false}>
           {cart.items.map((line) => (
-            <div key={line.lineId} style={{ padding: '1rem 1.5rem', borderBottom: '1px solid var(--servd-line)', display: 'flex', gap: '1rem', alignItems: 'flex-start' }}>
-              <div style={{ flex: 1 }}>
-                <p style={{ fontWeight: 700, marginBottom: '0.25rem' }}>{line.name}</p>
-                {line.modifiers && line.modifiers.length > 0 && (
-                  <p style={{ color: 'var(--servd-mute)', fontSize: '0.78rem', lineHeight: 1.4, marginBottom: '0.2rem' }}>
-                    {line.modifiers.map((m) => m.name).join(' · ')}
-                  </p>
-                )}
-                <p style={{ color: 'var(--servd-mute)', fontSize: '0.85rem' }}>{fmt(line.priceCents)} · qty {line.quantity}</p>
-                <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.5rem', border: '1px solid var(--servd-line)', borderRadius: '999px', padding: '0.15rem 0.3rem' }}>
-                  <button onClick={() => cart.updateQty(line.lineId, line.quantity - 1)} aria-label="Decrease"
-                    style={{ width: '1.6rem', height: '1.6rem', borderRadius: '999px', border: 'none', background: 'transparent', fontSize: '1rem', cursor: 'pointer' }}>−</button>
-                  <span style={{ minWidth: '1.2rem', textAlign: 'center', fontWeight: 700, fontSize: '0.85rem' }}>{line.quantity}</span>
-                  <button onClick={() => cart.updateQty(line.lineId, line.quantity + 1)} aria-label="Increase"
-                    style={{ width: '1.6rem', height: '1.6rem', borderRadius: '999px', border: 'none', background: 'transparent', fontSize: '1rem', cursor: 'pointer' }}>+</button>
+            <motion.div
+              key={line.lineId}
+              layout={calm ? 'position' : true}
+              className={styles.lineWrap}
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              exit={{ x: -24, opacity: 0, height: 0, transition: lineExit }}
+              transition={calm ? { duration: 0.22, ease: EASE_OUT } : SPRING.settle}
+            >
+              <div className={styles.line}>
+                <div className={styles.lineMain}>
+                  <p className={styles.lineName}>{line.name}</p>
+                  {line.modifiers && line.modifiers.length > 0 && (
+                    <p className={styles.lineMods}>{line.modifiers.map((m) => m.name).join(' · ')}</p>
+                  )}
+                  <p className={styles.lineMeta}>{fmt(line.priceCents)} · qty {line.quantity}</p>
+                  <div className={`${styles.stepper} ${styles.stepperSm}`}>
+                    <motion.button type="button" onClick={() => cart.updateQty(line.lineId, line.quantity - 1)} aria-label="Decrease" className={styles.stepBtn} {...stepPress}>−</motion.button>
+                    <span className={styles.stepQty}><RollingNumber value={line.quantity} /></span>
+                    <motion.button type="button" onClick={() => cart.updateQty(line.lineId, line.quantity + 1)} aria-label="Increase" className={styles.stepBtn} {...stepPress}>+</motion.button>
+                  </div>
+                </div>
+                <div className={styles.lineRight}>
+                  <p className={styles.lineTotal}><RollingNumber value={fmt(line.priceCents * line.quantity)} /></p>
+                  <motion.button type="button" onClick={() => cart.removeItem(line.lineId)} className={styles.removeBtn} {...removePress}>
+                    Remove
+                  </motion.button>
                 </div>
               </div>
-              <div style={{ textAlign: 'right' }}>
-                <p style={{ fontWeight: 700 }}>{fmt(line.priceCents * line.quantity)}</p>
-                <button onClick={() => cart.removeItem(line.lineId)}
-                  style={{ background: 'transparent', border: 'none', color: 'var(--servd-mute)', fontSize: '0.75rem', marginTop: '0.4rem', cursor: 'pointer' }}>Remove</button>
-              </div>
-            </div>
+            </motion.div>
           ))}
-        </div>
+        </AnimatePresence>
 
-        {cart.items.length > 0 && (
-          <footer style={{ padding: '1rem 1.5rem 1.25rem', borderTop: '1px solid var(--servd-line)' }}>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', marginBottom: '1rem', fontSize: '0.9rem' }}>
-              {/* Tax/GST is computed at checkout once the customer picks
-                  a payment method (8% on card-rails, 15% on cash), so
-                  the basket only shows subtotal here and notes that tax
-                  is added at the next step. */}
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span style={{ color: 'var(--servd-mute)' }}>Subtotal</span>
-                <span>{fmt(subtotal)}</span>
+        {cart.items.length === 0 && (
+          <motion.div
+            className={styles.basketEmpty}
+            initial={{ opacity: 0, y: calm ? 4 : 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={calm ? { duration: 0.3, ease: EASE_OUT } : { ...SPRING.settle, delay: 0.15 }}
+          >
+            {!calm && (
+              <div className={styles.basketPoster}>
+                <CrowdPoster cast={shrugCast(brand)} mode="shrug" />
               </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', color: 'var(--servd-mute)' }}>
-                <span>GST</span>
-                <span>added at checkout</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 800, fontSize: '1.05rem', marginTop: '0.4rem', paddingTop: '0.5rem', borderTop: '1px solid var(--servd-line)' }}>
-                <span>Total before tax</span>
-                <span>{fmt(subtotal)}</span>
-              </div>
-            </div>
-            <MagneticButton onClick={onCheckout} className="servd-btn-primary" style={{ width: '100%', padding: '1rem' }}>
-              Checkout · {fmt(subtotal)} + tax
-            </MagneticButton>
-          </footer>
+            )}
+            <p className={styles.basketNudge}>
+              Nothing in here yet. The menu is right behind this, and everything on it wants a ride.
+            </p>
+            <motion.button type="button" onClick={onClose} className={`${styles.cta} ${styles.basketBack}`} {...ctaPress}>
+              Back to the menu
+            </motion.button>
+          </motion.div>
         )}
-      </div>
-    </div>
+      </SheetBody>
+
+      {cart.items.length > 0 && (
+        <footer className={styles.basketFoot}>
+          <div className={styles.totals}>
+            {/* Tax/GST is computed at checkout once the customer picks
+                a payment method (8% on card-rails, 15% on cash), so
+                the basket only shows subtotal here and notes that tax
+                is added at the next step. */}
+            <div className={styles.totRow}>
+              <span className={styles.totMute}>Subtotal</span>
+              <RollingNumber value={fmt(subtotal)} />
+            </div>
+            <div className={`${styles.totRow} ${styles.totNote}`}>
+              <span>GST</span>
+              <span>added at checkout</span>
+            </div>
+            <div className={`${styles.totRow} ${styles.totGrand}`}>
+              <span>Total before tax</span>
+              <RollingNumber value={fmt(subtotal)} />
+            </div>
+          </div>
+          <motion.button type="button" onClick={onCheckout} className={`${styles.cta} ${styles.ctaWide}`} {...ctaPress}>
+            Checkout · {fmt(subtotal)} + tax
+          </motion.button>
+        </footer>
+      )}
+    </>
   )
 }

@@ -86,14 +86,22 @@
   white-space: nowrap;
   text-decoration: none;
   box-shadow: 0 3px 0 var(--flipd-blue);
+  -webkit-tap-highlight-color: transparent;
+  /* Released on the shared spring, so a tap overshoots back up. */
   transition:
-    transform 220ms cubic-bezier(0.34, 1.56, 0.64, 1),
+    transform var(--dur-release, 320ms) var(--ease-spring, cubic-bezier(0.34, 1.56, 0.64, 1)),
     box-shadow 180ms ease,
     background-color 160ms ease,
     color 160ms ease;
 }
 .chip:hover { transform: translateY(-2px) rotate(-2deg); box-shadow: 0 5px 0 var(--flipd-blue); }
-.chip:active { transform: translateY(2px); box-shadow: 0 1px 0 var(--flipd-blue); }
+/* The press: a fast squash down onto the shadow. */
+.chip:active {
+  transform: translateY(3px) scale(1.04, 0.92);
+  box-shadow: 0 0 0 var(--flipd-blue);
+  transition-duration: var(--dur-press, 80ms), var(--dur-press, 80ms), 160ms, 160ms;
+}
+.chipActive:active { transform: translateY(3px) rotate(-2deg) scale(1.04, 0.92); }
 .chip:focus-visible { outline: 3px solid var(--flipd-blue); outline-offset: 3px; }
 .chipActive {
   background: var(--flipd-blue);
@@ -173,11 +181,32 @@
 }
 
 /* ── Empty state ─────────────────────────────────────────────────────── */
+/* The ticket on the left, the waiting crowd on its counter to the right;
+   stacked on a phone (ticket first, crowd underneath). */
 .empty {
-  max-width: 30rem;
+  max-width: 52rem;
   margin: 0 auto;
-  text-align: center;
   padding-top: 1.5rem;
+  display: grid;
+  grid-template-columns: minmax(0, 30rem) minmax(0, 1fr);
+  gap: clamp(1.5rem, 4vw, 3rem);
+  align-items: end;
+  justify-content: center;
+}
+.emptyTicket {
+  position: relative;
+  text-align: center;
+  padding-top: 1rem;
+}
+.emptyDoodle { top: -0.6rem; right: -0.4rem; width: 42px; }
+.emptySquiggle { bottom: -1.6rem; left: 8%; width: 76px; }
+.emptyCrowd {
+  position: relative;
+  height: calc(clamp(110px, 20vh, 170px) + 40px);
+}
+@media (max-width: 760px) {
+  .empty { grid-template-columns: minmax(0, 1fr); }
+  .emptyCrowd { width: min(100%, 22rem); margin: 1.5rem auto 0; }
 }
 .emptyTitle {
   margin: 0 0 0.6rem;
@@ -218,8 +247,10 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .chip { transition: none; }
-  .chip:hover, .chip:active { transform: none; }
+  .chip { transition: box-shadow 120ms ease, background-color 120ms ease, color 120ms ease; }
+  .chip:hover, .chip:active, .chipActive:active { transform: none; }
+  .chip:not(.chipActive):active { background-color: var(--flipd-mustard); }
+  .chipActive:active { background-color: var(--flipd-blue-deep); }
   .chipActive { transform: none; }
   [data-in] .catNo { animation: none; }
 }

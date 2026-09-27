@@ -6,6 +6,7 @@ import { StorefrontNav } from '../components/StorefrontNav'
 import { StorefrontFooter } from '../components/StorefrontFooter'
 import { FeedbackWidget } from '../components/feedback/FeedbackWidget'
 import { SmoothScroll } from '../components/ui/SmoothScroll'
+import { GlobalTactile } from '../components/tactile/GlobalTactile'
 import { SERVD_ORIGIN, BRAND_HOST_HEADER } from '../lib/brandDomains'
 
 export const metadata: Metadata = {
@@ -72,6 +73,7 @@ export default function StorefrontLayout({ children }: { children: React.ReactNo
         <StorefrontFooter initialBrandSlug={initialBrandSlug} />
         <FeedbackWidget />
         <SmoothScroll />
+        <GlobalTactile />
       </body>
     </html>
   )

@@ -82,17 +82,43 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  cursor: default;
 }
+
+/* Each pastry is a button: a bare hit area around the art, its shelf shadow,
+   the bag slot and the hanging tag. */
+.pick {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  border-radius: 1rem;
+}
+.pick:focus-visible { outline: 3px solid var(--stackd-plum); outline-offset: 4px; }
+
 .lift {
   position: relative;
+  display: block;
   width: 100%;
   transform-origin: 50% 100%;
   transition: transform 460ms cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 .art { width: 100%; display: flex; justify-content: center; align-items: flex-end; height: clamp(4.25rem, 10vw, 7rem); }
 .art svg, .art img { display: block; max-width: 100%; max-height: 100%; width: auto; height: 100%; object-fit: contain; }
-.item:hover .lift { transform: translateY(-26%) rotate(-5deg) scale(1.08); }
+@media (hover: hover) {
+  .pick:hover .lift { transform: translateY(-26%) rotate(-5deg) scale(1.08); }
+  .pick:hover .shadow { transform: scale(0.6); opacity: 0.5; }
+  .pick:hover .tag { animation: tagSwing 1100ms ease-out; }
+}
 .item[data-hop='true'] .lift { animation: hop 860ms cubic-bezier(0.34, 1.56, 0.64, 1); }
 @keyframes hop {
   0%, 100% { transform: none; }
@@ -112,11 +138,11 @@
   background: rgba(61, 17, 34, 0.28);
   transition: transform 460ms cubic-bezier(0.34, 1.56, 0.64, 1), opacity 300ms ease;
 }
-.item:hover .shadow { transform: scale(0.6); opacity: 0.5; }
 
 /* The kraft-style tag, hanging off the front of the shelf on a string. */
 .tag {
   position: absolute;
+  z-index: 3;
   top: calc(100% + 1.15rem);
   left: 50%;
   translate: -50% 0;
@@ -133,6 +159,7 @@
   transform-origin: 50% -0.9rem;
   rotate: calc((var(--n) - 2.5) * 1.6deg);
   box-shadow: 0 4px 0 rgba(61, 17, 34, 0.25);
+  transition: background-color 150ms ease;
 }
 .tag::before {
   content: '';
@@ -154,7 +181,6 @@
   height: 1.05rem;
   background: var(--stackd-plum-dark);
 }
-.item:hover .tag { animation: tagSwing 1100ms ease-out; }
 @keyframes tagSwing {
   0% { transform: rotate(0deg); }
   20% { transform: rotate(14deg); }
@@ -162,6 +188,120 @@
   70% { transform: rotate(4deg); }
   100% { transform: rotate(0deg); }
 }
+
+/* ── The pick: tongs, bag, drop, crinkle, restock ─────────────────────────
+   One 1750ms timeline shared by every part (1.4s of pick, then the reset),
+   so the beats line up without JS choreography:
+     0–11%   tongs come down and close
+     11–24%  the pastry lifts (y -18px, a slight rotate); the tag swings
+     8–24%   the bag slides up from the shelf lip
+     24–46%  the pastry arcs over and drops into the bag
+     46–62%  the bag crinkle-squashes; its top folds over
+     80–92%  the bag drops away and the shelf restocks */
+
+.tongs {
+  position: absolute;
+  left: 50%;
+  bottom: 62%;
+  width: 26%;
+  min-width: 1.6rem;
+  margin-left: -13%;
+  overflow: visible;
+  opacity: 0;
+  pointer-events: none;
+}
+.tongArmL, .tongArmR { transform-box: view-box; transform-origin: 20px 2px; transform: rotate(0deg); }
+.tongArmL { transform: rotate(12deg); }
+.tongArmR { transform: rotate(-12deg); }
+
+.item[data-picked='true'] .tongs { animation: tongsIn 1750ms var(--ease-out, cubic-bezier(0.22, 1, 0.36, 1)) 1 both; }
+.item[data-picked='true'] .tongArmL { animation: armL 1750ms ease-out 1 both; }
+.item[data-picked='true'] .tongArmR { animation: armR 1750ms ease-out 1 both; }
+@keyframes tongsIn {
+  0%   { opacity: 0; transform: translateY(-70%); }
+  11%  { opacity: 1; transform: translateY(0); }
+  28%  { opacity: 1; transform: translateY(0); }
+  40%  { opacity: 0; transform: translateY(-80%); }
+  100% { opacity: 0; transform: translateY(-80%); }
+}
+@keyframes armL { 0%, 6% { transform: rotate(12deg); } 11%, 26% { transform: rotate(0deg); } 32%, 100% { transform: rotate(14deg); } }
+@keyframes armR { 0%, 6% { transform: rotate(-12deg); } 11%, 26% { transform: rotate(0deg); } 32%, 100% { transform: rotate(-14deg); } }
+
+.item[data-picked='true'] .lift { animation: pickLift 1750ms linear 1 both; }
+@keyframes pickLift {
+  0%   { transform: none; opacity: 1; animation-timing-function: var(--ease-out, cubic-bezier(0.22, 1, 0.36, 1)); }
+  11%  { transform: translateY(2px) scale(1.03, 0.97); animation-timing-function: var(--ease-spring, cubic-bezier(0.34, 1.56, 0.64, 1)); }
+  24%  { transform: translateY(-18px) rotate(-4deg); animation-timing-function: cubic-bezier(0.3, 0, 0.6, 1); }
+  33%  { transform: translate(8%, -30px) rotate(7deg) scale(0.86); animation-timing-function: cubic-bezier(0.5, 0, 0.9, 0.6); }
+  46%  { transform: translate(0, 36%) rotate(2deg) scale(0.5); opacity: 0; }
+  80%  { transform: translateY(-40%); opacity: 0; animation-timing-function: var(--ease-out, cubic-bezier(0.22, 1, 0.36, 1)); }
+  92%  { transform: translateY(3%) scale(1.04, 0.94); opacity: 1; }
+  100% { transform: none; opacity: 1; }
+}
+.item[data-picked='true'] .shadow { animation: pickShadow 1750ms ease-out 1 both; }
+@keyframes pickShadow {
+  0%, 11% { transform: none; opacity: 1; }
+  24%     { transform: scale(0.55); opacity: 0.45; }
+  46%, 84% { transform: scale(0.3); opacity: 0; }
+  100%    { transform: none; opacity: 1; }
+}
+.item[data-picked='true'] .tag { animation: tagSwing 1100ms ease-out 180ms 1 both; }
+
+/* The bag rises from behind the shelf lip: the slot clips only its bottom
+   edge, which sits on the plank. */
+.bagSlot {
+  position: absolute;
+  z-index: 2;
+  left: 12%;
+  right: 12%;
+  bottom: 0;
+  height: 88%;
+  clip-path: inset(-150% -40% 0 -40%);
+  pointer-events: none;
+}
+.bag {
+  position: absolute;
+  inset: 0;
+  display: block;
+  transform: translateY(110%);
+  transform-origin: 50% 100%;
+  opacity: 0;
+}
+.bagArt { display: block; width: 100%; height: 100%; overflow: visible; filter: drop-shadow(0 4px 0 rgba(61, 17, 34, 0.18)); }
+.bagWord { font-family: var(--stackd-mono); font-size: 8.5px; font-weight: 700; letter-spacing: 0.12em; fill: var(--stackd-plum); }
+.bagTop { transform-box: fill-box; transform-origin: 50% 100%; }
+.bagSeal { opacity: 0; }
+
+.item[data-picked='true'] .bag { animation: bagRide 1750ms linear 1 both; }
+@keyframes bagRide {
+  0%, 8% { transform: translateY(110%); opacity: 1; animation-timing-function: var(--ease-out, cubic-bezier(0.22, 1, 0.36, 1)); }
+  20%  { transform: translateY(-6%); animation-timing-function: ease-in-out; }
+  26%  { transform: translateY(0); }
+  44%  { transform: translateY(0) scale(1, 1); animation-timing-function: ease-out; }
+  48%  { transform: scale(1.08, 0.9); animation-timing-function: ease-in-out; }
+  54%  { transform: scale(0.96, 1.05); }
+  59%  { transform: scale(1.02, 0.98); }
+  63%  { transform: none; }
+  66%  { transform: rotate(-3deg); }
+  70%  { transform: rotate(2deg); }
+  74%, 80% { transform: none; opacity: 1; animation-timing-function: cubic-bezier(0.5, 0, 0.9, 0.5); }
+  92%  { transform: translateY(110%); opacity: 1; }
+  100% { transform: translateY(110%); opacity: 0; }
+}
+.item[data-picked='true'] .bagTop { animation: bagFold 1750ms ease-in-out 1 both; }
+@keyframes bagFold {
+  0%, 47% { transform: scaleY(1); }
+  52%     { transform: scaleY(0.2); }
+  58%     { transform: scaleY(-0.62); }
+  62%, 100% { transform: scaleY(-0.55); }
+}
+.item[data-picked='true'] .bagSeal { animation: bagSeal 1750ms ease-out 1 both; }
+@keyframes bagSeal {
+  0%, 58% { opacity: 0; transform: translateY(14px) scale(0.4); }
+  66%     { opacity: 1; transform: translateY(14px) scale(1.25); }
+  72%, 100% { opacity: 1; transform: translateY(14px) scale(1); }
+}
+.bagSeal { transform-box: fill-box; transform-origin: center; }
 
 .steam {
   position: absolute;
@@ -223,10 +363,18 @@
   .case { margin: 0 -0.25rem; }
 }
 
+/* Calmer, never dead: no flight, no hop, no tongs. A tap lights the tag in
+   sky and the bag is simply there, folded, beside the case's pastry. */
 @media (prefers-reduced-motion: reduce) {
   .lift, .shadow { transition: none; }
-  .item:hover .lift, .item[data-hop='true'] .lift { transform: none; animation: none; }
-  .item:hover .tag, .settled .art, .bulb { animation: none; }
+  .pick:hover .lift, .item[data-hop='true'] .lift, .item[data-picked='true'] .lift { transform: none; animation: none; }
+  .pick:hover .shadow, .item[data-picked='true'] .shadow { transform: none; opacity: 1; animation: none; }
+  .pick:hover .tag, .item[data-picked='true'] .tag, .settled .art, .bulb { animation: none; }
+  .item[data-picked='true'] .tongs, .item[data-picked='true'] .tongArmL, .item[data-picked='true'] .tongArmR { animation: none; }
+  .item[data-picked='true'] .tag { background: var(--stackd-sky); }
+  .item[data-picked='true'] .bag { animation: none; transform: none; opacity: 1; }
+  .item[data-picked='true'] .bagTop { animation: none; transform: scaleY(-0.55); }
+  .item[data-picked='true'] .bagSeal { animation: none; opacity: 1; transform: translateY(14px); }
   .steam path { animation: none; opacity: 0.5; }
   .steam path:nth-child(2) { opacity: 0; }
 }

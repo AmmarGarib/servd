@@ -17,6 +17,7 @@
 
 import Link from 'next/link'
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
+import { formatBrandName } from '../../../lib/concept'
 import { SimmerCursor } from '../simmer/SimmerCursor'
 import { Reveal, Line } from '../simmer/reveal'
 import { useService } from '../simmer/serviceClock'
@@ -115,7 +116,9 @@ function useActiveCourse(count: number) {
 export function SimmerMenu({ slug, conceptName }: { slug: string, conceptName: string }) {
   const { stamp } = useService()
   const { mastRef, courseRefs, active } = useActiveCourse(PLACEHOLDER_MENU.length)
-  const brand = conceptName.toLowerCase()
+  // Through the shared helper (simmer is a lowercase brand), then lowercased
+  // again because this whole surface is set in the bible's lowercase voice.
+  const brand = (formatBrandName(conceptName) || 'simmer').toLowerCase()
 
   return (
     <div className={`simmer-page ${s.root}`} style={{ minHeight: '100dvh' }}>

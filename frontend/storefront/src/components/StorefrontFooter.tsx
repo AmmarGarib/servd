@@ -3,6 +3,7 @@ import Link from 'next/link'
 import type { CSSProperties } from 'react'
 import { usePathname } from 'next/navigation'
 import { useOnBrandMicrosite } from '../lib/host'
+import { formatBrandName } from '../lib/concept'
 import { FooterWave } from './party/footer/FooterWave'
 import s from './party/footer/footer.module.css'
 
@@ -70,6 +71,7 @@ export function StorefrontFooter({ initialBrandSlug = null, groundColor }: Store
           <h2 className={s.title}>
             Hungry now?<span className={s.titleItalic}> Let's go.</span>
           </h2>
+          {/* Rubber press (footer.module.css .cta) — works on touch via :active. */}
           <Link href="/browse" className={s.cta}>
             Order now
             <svg aria-hidden viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
@@ -96,7 +98,7 @@ export function StorefrontFooter({ initialBrandSlug = null, groundColor }: Store
                 <li key={b.slug}>
                   <Link href={`/brand/${b.slug}`} className={s.linkRow}>
                     <span aria-hidden className={s.dot} style={{ background: b.accent }} />
-                    {b.name}
+                    {formatBrandName(b.name)}
                   </Link>
                 </li>
               ))}

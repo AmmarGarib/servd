@@ -1,10 +1,13 @@
 'use client'
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { useCustomerAuth } from '../../store/customerAuth'
 import { LoadingScreen } from '../../components/ui/Loader'
 import { fmt } from '../../lib/ui'
+import { formatBrandName } from '../../lib/concept'
+import { CrowdPoster } from '../../components/characters/CrowdPoster'
+import a from '../../components/auth/auth.module.css'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -137,10 +140,12 @@ export default function AccountPage() {
   if (error || !profile) return (
     <main className="flex min-h-dvh flex-col items-center justify-center gap-5 px-4"
       style={{ background: 'transparent' }}>
-      <div className="text-5xl">⚠</div>
-      <p className="text-sm" style={{ color: '#dc2626' }}>{error || 'Account not found'}</p>
+      <div aria-hidden="true" style={{ width: 'min(100%, 260px)', aspectRatio: '16 / 9', display: 'flex', alignItems: 'flex-end' }}>
+        <CrowdPoster cast={['fries', 'burger', 'coffee']} mode="shrug" style={{ width: '100%' }} />
+      </div>
+      <p className="text-sm" style={{ color: '#dc2626' }} role="alert">{error || 'Account not found'}</p>
       <Link href="/browse"
-        className="rounded-2xl font-black px-8 py-3.5 text-sm transition-all hover:scale-[1.02]"
+        className={`rounded-2xl font-black px-8 py-3.5 text-sm ${a.press} ${a.lift}`}
         style={{ background: 'var(--servd-green)', color: '#fff', boxShadow: '0 4px 20px rgba(58,14,105,0.3)' }}>
         Browse brands
       </Link>
@@ -185,7 +190,7 @@ export default function AccountPage() {
           Browse brands
         </Link>
         <button onClick={() => { clearAuth(); router.replace('/browse') }}
-          className="text-xs font-bold transition-colors px-3 py-1.5 rounded-xl"
+          className={`text-xs font-bold px-3 py-1.5 rounded-xl ${a.press}`}
           style={{ color: 'var(--servd-mute)', background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.15)' }}
           onMouseEnter={e => { e.currentTarget.style.color = '#dc2626'; e.currentTarget.style.background = 'rgba(239,68,68,0.1)' }}
           onMouseLeave={e => { e.currentTarget.style.color = 'var(--servd-mute)'; e.currentTarget.style.background = 'rgba(239,68,68,0.06)' }}>
@@ -193,7 +198,7 @@ export default function AccountPage() {
         </button>
       </div>
 
-      <div className="relative z-10 max-w-lg lg:max-w-3xl mx-auto px-4 pt-6 pb-6" style={{ animation: 'revealUp 0.5s both' }}>
+      <div className="relative z-10 max-w-lg lg:max-w-3xl mx-auto px-4 pt-6 pb-6">
 
         {/* ── Greeting ── */}
         <div className="mb-5">
@@ -316,7 +321,8 @@ export default function AccountPage() {
               style={{ color: 'rgba(15,26,15,0.38)' }}>Saved Locations</p>
             <div className="h-px flex-1" style={{ background: 'rgba(0,0,0,0.07)' }} />
             <button onClick={() => setShowAddAddr(!showAddAddr)}
-              className="text-[10px] font-black px-2.5 py-1 rounded-full transition-all"
+              aria-expanded={showAddAddr}
+              className={`text-[10px] font-black px-2.5 py-1 rounded-full ${a.press} ${a.lift}`}
               style={{ background: 'rgba(58,14,105,0.1)', color: 'var(--servd-green-dark)', border: '1px solid rgba(58,14,105,0.2)' }}>
               + Add
             </button>
@@ -344,12 +350,12 @@ export default function AccountPage() {
               </label>
               <div className="flex gap-2">
                 <button onClick={() => void saveAddress()} disabled={addrSaving || !addrForm.label || !addrForm.address}
-                  className="flex-1 rounded-xl py-2.5 text-sm font-black transition-all disabled:opacity-50"
+                  className={`flex-1 rounded-xl py-2.5 text-sm font-black disabled:opacity-50 ${a.press}`}
                   style={{ background: 'var(--servd-green)', color: 'white' }}>
                   {addrSaving ? 'Saving…' : 'Save address'}
                 </button>
                 <button onClick={() => setShowAddAddr(false)}
-                  className="px-4 rounded-xl text-sm transition-all"
+                  className={`px-4 rounded-xl text-sm ${a.press}`}
                   style={{ background: 'rgba(0,0,0,0.04)', border: '1px solid rgba(0,0,0,0.08)' }}>
                   Cancel
                 </button>
@@ -392,13 +398,13 @@ export default function AccountPage() {
                   <div className="flex flex-col gap-1 shrink-0">
                     {!addr.isDefault && (
                       <button onClick={() => void setDefault(addr.id)}
-                        className="text-[10px] font-bold transition-colors"
+                        className={`text-[10px] font-bold min-h-[28px] px-1 ${a.press}`}
                         style={{ color: 'var(--servd-green-dark)' }}>
                         Set default
                       </button>
                     )}
                     <button onClick={() => void deleteAddress(addr.id)}
-                      className="text-[10px] font-bold transition-colors"
+                      className={`text-[10px] font-bold min-h-[28px] px-1 ${a.press}`}
                       style={{ color: 'rgba(220,38,38,0.6)' }}
                       onMouseEnter={e => (e.currentTarget.style.color = '#dc2626')}
                       onMouseLeave={e => (e.currentTarget.style.color = 'rgba(220,38,38,0.6)')}>
@@ -453,11 +459,11 @@ export default function AccountPage() {
               },
             ].map((tip, i) => (
               <div key={tip.title}
-                className="rounded-xl p-3 flex flex-col gap-1.5"
+                className={`rounded-xl p-3 flex flex-col gap-1.5 ${a.rise}`}
                 style={{
                   background: 'rgba(255,255,255,0.7)',
                   border: '1px solid rgba(58,14,105,0.12)',
-                  animation: `revealUp 0.4s ${i * 0.06}s both`,
+                  animationDelay: `${i * 60}ms`,
                   color: 'var(--servd-green-dark)',
                 }}>
                 {tip.icon}
@@ -489,7 +495,7 @@ export default function AccountPage() {
               </svg>
               <p className="text-sm" style={{ color: 'var(--servd-mute)' }}>No orders yet</p>
               <Link href="/browse"
-                className="inline-block mt-3 text-sm font-bold transition-colors"
+                className={`inline-block mt-3 text-sm font-bold ${a.press}`}
                 style={{ color: 'var(--servd-green-dark)' }}>
                 Browse brands →
               </Link>
@@ -502,19 +508,19 @@ export default function AccountPage() {
                   <Link
                     key={order.id}
                     href={`/${order.concept.slug}/order/${order.id}`}
-                    className="block rounded-2xl overflow-hidden transition-all hover:scale-[1.005]"
+                    className={`block rounded-2xl overflow-hidden ${a.press} ${a.pressRow} ${a.liftRow} ${a.rise}`}
                     style={{
                       background: '#fff',
                       border: '1px solid rgba(0,0,0,0.07)',
                       boxShadow: '0 2px 8px rgba(0,0,0,0.04)',
-                      animation: `revealUp 0.4s ${i * 0.04}s both`,
+                      animationDelay: `${Math.min(i, 10) * 40}ms`,
                     }}>
                     <div className="flex">
                       <div className="w-1 shrink-0" style={{ background: sc.bar }} />
                       <div className="flex items-start justify-between gap-3 p-4 flex-1 min-w-0">
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2 flex-wrap mb-0.5">
-                            <p className="font-bold text-sm" style={{ color: 'var(--servd-ink)' }}>{order.concept.name}</p>
+                            <p className="font-bold text-sm" style={{ color: 'var(--servd-ink)' }}>{formatBrandName(order.concept.name)}</p>
                             <span className="text-[9px] font-black uppercase tracking-[0.18em] px-2 py-0.5 rounded-full"
                               style={{ background: sc.bg, color: sc.text }}>
                               {sc.label}
@@ -585,6 +591,8 @@ function ReferralSection({
 }: { token: string | null; referralCode: string | null | undefined; customerName: string | null }) {
   const [data, setData] = useState<{ summary: ReferralSummary; referrals: ReferralEntry[] } | null>(null)
   const [copied, setCopied] = useState(false)
+  const copiedTimer = useRef<number | undefined>(undefined)
+  useEffect(() => () => window.clearTimeout(copiedTimer.current), [])
 
   useEffect(() => {
     if (!token) return
@@ -604,9 +612,13 @@ function ReferralSection({
   function copy(text: string) {
     if (typeof navigator !== 'undefined' && navigator.clipboard) {
       navigator.clipboard.writeText(text).then(() => {
-        setCopied(true)
-        setTimeout(() => setCopied(false), 2000)
-      })
+        // Re-arm on every copy, so a second tap replays the check and holds
+        // it the full 1.4s.
+        window.clearTimeout(copiedTimer.current)
+        setCopied(false)
+        window.requestAnimationFrame(() => setCopied(true))
+        copiedTimer.current = window.setTimeout(() => setCopied(false), 1400)
+      }).catch(() => {})
     }
   }
   function shareNative() {
@@ -641,21 +653,30 @@ function ReferralSection({
           {referralCode}
         </div>
         <button onClick={() => copy(referralCode)}
-          className="rounded-xl px-3 py-3 text-xs font-bold whitespace-nowrap"
-          style={{ background: '#7c2d12', color: '#0a0a0a' }}>
-          {copied ? '✓ Copied' : 'Copy'}
+          aria-label={copied ? 'Referral code copied' : 'Copy referral code'}
+          className={`rounded-xl px-3 py-3 text-xs font-bold whitespace-nowrap ${a.copyBtn} ${a.press}`}
+          style={{ background: '#7c2d12', color: '#FFF4D6' }}>
+          {copied ? (
+            <span className={a.copied}>
+              <svg className={a.check} width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <path d="M3 8.5l3.2 3L13 4.5" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              Copied
+            </span>
+          ) : 'Copy'}
         </button>
+        <span className="sr-only" role="status" aria-live="polite">{copied ? 'Copied to clipboard' : ''}</span>
       </div>
 
       <div className="flex gap-2">
         <button onClick={shareNative}
-          className="flex-1 rounded-xl px-3 py-2.5 text-xs font-bold"
+          className={`flex-1 rounded-xl px-3 py-2.5 text-xs font-bold ${a.press}`}
           style={{ background: 'var(--servd-green)', color: 'white' }}>
           Share invite link
         </button>
         <a href={`https://wa.me/?text=${encodeURIComponent(shareText)}`}
           target="_blank" rel="noopener noreferrer"
-          className="flex-1 rounded-xl px-3 py-2.5 text-xs font-bold text-center"
+          className={`flex-1 rounded-xl px-3 py-2.5 text-xs font-bold text-center ${a.press}`}
           style={{ background: '#25D366', color: '#0a0a0a' }}>
           WhatsApp
         </a>
@@ -724,7 +745,8 @@ function LoyaltyTransactionsSection({ token }: { token: string | null }) {
         <div className="h-px flex-1" style={{ background: 'rgba(0,0,0,0.07)' }} />
         <button
           onClick={() => setOpen(!open)}
-          className="text-[10px] font-black px-2.5 py-1 rounded-full transition-all"
+          aria-expanded={open}
+          className={`text-[10px] font-black px-2.5 py-1 rounded-full ${a.press} ${a.lift}`}
           style={{ background: 'rgba(58,14,105,0.1)', color: 'var(--servd-green-dark)', border: '1px solid rgba(58,14,105,0.2)' }}>
           {open ? 'Hide' : `Show ${recent.length}`}
         </button>
@@ -875,7 +897,7 @@ function MyBookingsSection({ token }: { token: string | null }) {
                 <div className="flex flex-col gap-1.5 shrink-0">
                   {r.confirmToken && r.status === 'booked' && !isCancelled && (
                     <Link href={`/reserve/confirm/${r.confirmToken}`}
-                      className="rounded-lg px-3 py-1.5 text-xs font-bold whitespace-nowrap text-center"
+                      className={`rounded-lg px-3 py-1.5 text-xs font-bold whitespace-nowrap text-center ${a.press}`}
                       style={{ background: 'var(--servd-green)', color: 'white' }}>
                       Confirm
                     </Link>
@@ -884,7 +906,7 @@ function MyBookingsSection({ token }: { token: string | null }) {
                     <button
                       onClick={() => void cancelReservation(r.id, r.confirmToken)}
                       disabled={isCancelling}
-                      className="rounded-lg px-3 py-1.5 text-xs font-bold whitespace-nowrap transition-all disabled:opacity-50"
+                      className={`rounded-lg px-3 py-1.5 text-xs font-bold whitespace-nowrap disabled:opacity-50 ${a.press}`}
                       style={{ background: 'rgba(239,68,68,0.08)', color: '#dc2626', border: '1px solid rgba(239,68,68,0.2)' }}>
                       {isCancelling ? 'Cancelling…' : 'Cancel'}
                     </button>
@@ -1008,11 +1030,11 @@ function MyFavoritesSection({ token }: { token: string | null }) {
           <Link
             key={it.menuItemId}
             href={it.concept ? `/${it.concept.slug}` : '/browse'}
-            className="rounded-xl p-3 text-left transition-all hover:scale-[1.01]"
+            className={`rounded-xl p-3 text-left ${a.press} ${a.lift}`}
             style={{ background: 'rgba(0,0,0,0.025)', border: '1px solid rgba(0,0,0,0.05)' }}>
             <div className="text-[10px] font-bold uppercase tracking-wider"
               style={{ color: 'var(--servd-mute)' }}>
-              {it.concept?.name ?? 'Brand'}
+              {it.concept ? formatBrandName(it.concept.name) : 'Brand'}
             </div>
             <div className="font-bold text-sm mt-0.5 line-clamp-2" style={{ color: 'var(--servd-ink)' }}>
               {it.name}
@@ -1086,12 +1108,18 @@ function SupportSection({ orders }: { orders: Order[] }) {
       {!open ? (
         <button
           onClick={() => setOpen(true)}
-          className="w-full rounded-2xl p-4 text-left transition-all hover:scale-[1.005]"
+          className={`w-full rounded-2xl p-4 text-left ${a.press} ${a.pressRow} ${a.liftRow}`}
           style={{ background: '#fff', border: '1px solid rgba(0,0,0,0.07)', boxShadow: '0 2px 8px rgba(0,0,0,0.04)' }}
         >
           <div className="flex items-center justify-between gap-3">
             <div>
-              <p className="font-black text-sm" style={{ color: 'var(--servd-ink)' }}>🎫 Raise an issue</p>
+              <p className="font-black text-sm inline-flex items-center gap-1.5" style={{ color: 'var(--servd-ink)' }}>
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M3 8a2 2 0 0 0 2-2h14a2 2 0 0 0 2 2v2a2 2 0 0 0 0 4v2a2 2 0 0 0-2 2H5a2 2 0 0 0-2-2v-2a2 2 0 0 0 0-4Z" />
+                  <path d="M9 6v12" strokeDasharray="2 2.5" />
+                </svg>
+                Raise an issue
+              </p>
               <p className="text-xs mt-0.5" style={{ color: 'var(--servd-mute)' }}>
                 Wrong item, late delivery, quality concern — we&apos;ll fix it.
               </p>
@@ -1104,7 +1132,7 @@ function SupportSection({ orders }: { orders: Order[] }) {
           style={{ background: '#fff', border: '1px solid rgba(58,14,105,0.25)', boxShadow: '0 2px 8px rgba(0,0,0,0.04)' }}>
           <div className="flex items-center justify-between">
             <p className="font-black text-sm" style={{ color: 'var(--servd-ink)' }}>Tell us what went wrong</p>
-            <button onClick={() => setOpen(false)} className="text-xs" style={{ color: 'var(--servd-mute)' }}>Close</button>
+            <button onClick={() => setOpen(false)} className={`text-xs min-h-[32px] px-1 ${a.press}`} style={{ color: 'var(--servd-mute)' }}>Close</button>
           </div>
 
           {success && (
@@ -1140,7 +1168,8 @@ function SupportSection({ orders }: { orders: Order[] }) {
                 { key: 'other',         label: 'Other'         },
               ] as const).map((c) => (
                 <button key={c.key} onClick={() => setCategory(c.key)}
-                  className="rounded-xl px-2 py-3 text-xs font-bold transition-all flex items-center justify-center text-center"
+                  aria-pressed={category === c.key}
+                  className={`rounded-xl px-2 py-3 text-xs font-bold flex items-center justify-center text-center ${a.press}`}
                   style={category === c.key
                     ? { background: 'rgba(58,14,105,0.1)', border: '1px solid rgba(58,14,105,0.35)', color: 'var(--servd-green-dark)' }
                     : { background: 'rgba(0,0,0,0.03)', border: '1px solid rgba(0,0,0,0.08)', color: 'var(--servd-mute)' }}>
@@ -1173,7 +1202,7 @@ function SupportSection({ orders }: { orders: Order[] }) {
           )}
 
           <button onClick={() => void submit()} disabled={submitting || !title.trim() || !description.trim()}
-            className="w-full rounded-xl py-2.5 text-sm font-black transition-all disabled:opacity-50"
+            className={`w-full rounded-xl py-2.5 text-sm font-black disabled:opacity-50 ${a.press}`}
             style={{ background: 'var(--servd-green)', color: 'white' }}>
             {submitting ? 'Sending…' : 'Send to manager'}
           </button>
@@ -1199,6 +1228,15 @@ function VerifyContactBanner({ token, profile, onVerified }: {
   const [code, setCode] = useState('')
   const [msg, setMsg] = useState('')
   const [busy, setBusy] = useState(false)
+  // Presentation only: a failed confirm marks the code field and shakes it.
+  const [codeBad, setCodeBad] = useState(false)
+  const [shake, setShake] = useState(false)
+  useEffect(() => {
+    if (!codeBad || !msg) { setShake(false); return }
+    setShake(true)
+    const t = window.setTimeout(() => setShake(false), 460)
+    return () => window.clearTimeout(t)
+  }, [codeBad, msg])
   if (pending.length === 0) return null
 
   const call = async (path: string, body: object) => {
@@ -1220,9 +1258,9 @@ function VerifyContactBanner({ token, profile, onVerified }: {
   }
   const confirm = async () => {
     if (!active) return
-    setBusy(true); setMsg('')
+    setBusy(true); setMsg(''); setCodeBad(false)
     try { await call('confirm', { channel: active, code }); setActive(null); setCode(''); onVerified() }
-    catch (e) { setMsg((e as Error).message) }
+    catch (e) { setCodeBad(true); setMsg((e as Error).message) }
     finally { setBusy(false) }
   }
 
@@ -1237,7 +1275,7 @@ function VerifyContactBanner({ token, profile, onVerified }: {
         <div className="flex flex-wrap gap-2 mt-3">
           {pending.map((c) => (
             <button key={c} disabled={busy} onClick={() => { void send(c) }}
-              className="text-xs font-bold px-3 py-2 rounded-xl disabled:opacity-50"
+              className={`text-xs font-bold px-3 py-2 rounded-xl disabled:opacity-50 ${a.press}`}
               style={{ background: 'var(--servd-green)', color: '#fff' }}>
               Verify {labelFor(c)}
             </button>
@@ -1245,18 +1283,20 @@ function VerifyContactBanner({ token, profile, onVerified }: {
         </div>
       ) : (
         <div className="flex gap-2 mt-3">
-          <input value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+          <input value={code} onChange={(e) => { setCode(e.target.value.replace(/\D/g, '').slice(0, 6)); setCodeBad(false) }}
             inputMode="numeric" autoComplete="one-time-code" placeholder={`Code from ${active === 'phone' ? 'WhatsApp' : 'email'}`}
             aria-label="Verification code"
-            className="flex-1 min-w-0 px-3 py-2 rounded-xl text-sm" style={{ border: '1px solid rgba(0,0,0,0.15)' }} />
+            aria-invalid={codeBad || undefined}
+            aria-describedby={msg ? 'verify-contact-msg' : undefined}
+            className={`servd-input flex-1 min-w-0 px-3 py-2 rounded-xl text-sm ${shake ? 't-shake' : ''}`} />
           <button disabled={busy || code.length < 6} onClick={() => { void confirm() }}
-            className="text-xs font-bold px-3 py-2 rounded-xl disabled:opacity-50"
+            className={`text-xs font-bold px-3 py-2 rounded-xl disabled:opacity-50 ${a.press}`}
             style={{ background: 'var(--servd-green)', color: '#fff' }}>
             Verify
           </button>
         </div>
       )}
-      {msg && <p className="text-xs mt-2" style={{ color: '#dc2626' }}>{msg}</p>}
+      {msg && <p id="verify-contact-msg" role="alert" className="text-xs mt-2" style={{ color: '#dc2626' }}>{msg}</p>}
     </div>
   )
 }

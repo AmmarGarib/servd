@@ -37,9 +37,28 @@ export function SmoothScroll() {
     }
   }, [])
 
-  // A new route may be shorter or taller; let Lenis re-measure the page.
+  // A new route starts at the top — Lenis keeps its own interpolated target,
+  // so without this a navigation could glide on from the old page's scroll
+  // position. Left alone: the first mount (the browser owns reload restore),
+  // back/forward (Next restores the old position) and hash navigation
+  // (anchors handle it). Then let Lenis re-measure, since the new route may
+  // be shorter or taller.
+  const firstPath = useRef(true)
+  const viaHistory = useRef(false)
   useEffect(() => {
-    lenisRef.current?.resize()
+    const onPop = () => { viaHistory.current = true }
+    window.addEventListener('popstate', onPop)
+    return () => window.removeEventListener('popstate', onPop)
+  }, [])
+
+  useEffect(() => {
+    const lenis = lenisRef.current
+    const skipReset = firstPath.current || viaHistory.current || !!window.location.hash
+    firstPath.current = false
+    viaHistory.current = false
+    if (!lenis) return
+    if (!skipReset) lenis.scrollTo(0, { immediate: true })
+    lenis.resize()
   }, [pathname])
 
   return null

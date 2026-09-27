@@ -5,21 +5,40 @@
  */
 import * as THREE from 'three'
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
-import type { CharacterKind } from './types'
+import { visibleSlice, type CharacterKind } from './types'
 import { buildCharacter, type BuildContext } from './characters'
 import { Kit, radialTexture, sharedFace, sharedLimbs } from './kit'
-import { Character } from './rig'
+import { Character, type CharacterFx, type FrameContext } from './rig'
 
 export interface EngineOptions {
   cast: CharacterKind[]
   excitement: number
+  /** Fired after the first frame that actually shows the cast. */
   onFirstFrame?: () => void
+  /**
+   * Grow each character out of the floor on arrival (default true). Off when
+   * a poster is cross-fading into the canvas: the poster is the entrance.
+   */
+  entrance?: boolean
+  /** Reduced motion switched on mid-session. The owner should dispose the engine. */
+  onReducedMotion?: () => void
 }
 
 export interface CrowdEngine {
   setCast(cast: CharacterKind[]): void
   setExcitement(v: number): void
-  cheer(kind?: CharacterKind): void
+  /**
+   * Happy jump + each kind's flourish. One kind, a list (taken literally, so
+   * [] cheers nobody), or everyone when omitted. Under reduced motion it is a
+   * 280ms warm glow with no transform.
+   */
+  cheer(kind?: CharacterKind | readonly CharacterKind[]): void
+  /** Named characters (or all) lean in, widen their eyes and hop once; keen for `ms`. */
+  perk(kinds?: readonly CharacterKind[], ms?: number): void
+  /** The leftmost visible character hops, turns to the viewer and winks. */
+  hint(): void
+  /** A left-to-right stadium wave. */
+  wave(): void
   /** Glance at a viewport point (CSS px, clientX/clientY space). */
   look(clientX: number, clientY: number): void
   dispose(): void
@@ -106,6 +125,15 @@ export function createCrowdEngine(host: HTMLElement, opts: EngineOptions): Crowd
     : null
   const blobGeo = blobMat ? kit.geo(new THREE.PlaneGeometry(1, 1)) : null
 
+  // Cream steam puffs for the coffee cheer: one shared soft texture, one
+  // material per sprite (each fades on its own). Characters own and dispose them.
+  const puffTex = radialTexture(kit, 0.45)
+  const fx: CharacterFx = {
+    makePuff: puffTex
+      ? () => new THREE.Sprite(new THREE.SpriteMaterial({ map: puffTex, color: '#FFF4D6', transparent: true, opacity: 0, depthWrite: false }))
+      : undefined,
+  }
+
   /* ---------------- characters ---------------- */
   const ctx: BuildContext = { kit, face: sharedFace(kit), limbs: sharedLimbs(kit) }
   const hitGeo = kit.geo(new THREE.BoxGeometry(1, 1, 1))
@@ -117,7 +145,7 @@ export function createCrowdEngine(host: HTMLElement, opts: EngineOptions): Crowd
   const getChar = (kind: CharacterKind): Character => {
     let c = built.get(kind)
     if (!c) {
-      c = new Character(kind, buildCharacter(kind, ctx), hitGeo, hitMat, blobGeo, blobMat)
+      c = new Character(kind, buildCharacter(kind, ctx), hitGeo, hitMat, blobGeo, blobMat, fx)
       built.set(kind, c)
     }
     return c
@@ -162,6 +190,10 @@ export function createCrowdEngine(host: HTMLElement, opts: EngineOptions): Crowd
   let width = 0
   let height = 0
   const lookAt = new THREE.Vector3()
+  const hitList: THREE.Object3D[] = []
+  const hitsOut: THREE.Intersection[] = []
+  const entranceOn = opts.entrance !== false
+  let hadCast = false
 
   function layout(): void {
     width = host.clientWidth
@@ -172,9 +204,7 @@ export function createCrowdEngine(host: HTMLElement, opts: EngineOptions): Crowd
     camera.aspect = aspect
     camera.fov = aspect < 0.95 ? 34 : 30
 
-    const n = Math.min(cast.length, aspect < 0.95 ? 3 : aspect < 1.35 ? 4 : cast.length)
-    const start = Math.max(0, Math.floor((cast.length - n) / 2))
-    const kinds = cast.slice(start, start + n)
+    const kinds = visibleSlice(cast, aspect)
     // Characters are built + shader-compiled one per idle slice (warmStep),
     // never all at once — a synchronous build of a whole crowd was a 100-200ms
     // main-thread block, felt as a stutter when a crowd mounted mid-scroll.
@@ -185,6 +215,7 @@ export function createCrowdEngine(host: HTMLElement, opts: EngineOptions): Crowd
       queueWarm(missing)
       for (const c of shown) scene.remove(c.root)
       shown = []
+      hitList.length = 0
       return
     }
     const next = kinds.map(getChar)
@@ -192,8 +223,14 @@ export function createCrowdEngine(host: HTMLElement, opts: EngineOptions): Crowd
     for (const c of shown) if (!next.includes(c)) scene.remove(c.root)
     for (const c of entering) scene.add(c.root)
     shown = next
-    if (!reduced) entering.forEach((c, i) => c.enter(0.1 + i * 0.09))
+    hitList.length = 0
+    for (const c of shown) hitList.push(c.hit)
+    // With a poster under the canvas, the first cast is already "there": the
+    // cross-fade is its entrance. Later arrivals (a resize) still grow in.
+    if (!reduced && (entranceOn || hadCast)) entering.forEach((c, i) => c.enter(0.1 + i * 0.09))
     if (!shown.length) return
+    hadCast = true
+    rectDirty = true
 
     const vfov = THREE.MathUtils.degToRad(camera.fov)
     const tanV = Math.tan(vfov / 2)
@@ -250,7 +287,7 @@ export function createCrowdEngine(host: HTMLElement, opts: EngineOptions): Crowd
   const target = new THREE.Vector3(0, 0.8, 6)
   const rawTarget = new THREE.Vector3()
   const pointer = { x: 0, y: 0, has: false, touch: false, last: -1e9, inside: false }
-  let wander = { x: 0, y: 0.1, next: 0 }
+  const wander = { x: 0, y: 0.1, next: 0 }
   const coarse = window.matchMedia?.('(hover: none)').matches ?? false
 
   const now = () => performance.now() / 1000
@@ -262,6 +299,7 @@ export function createCrowdEngine(host: HTMLElement, opts: EngineOptions): Crowd
     pointer.touch = touch
     pointer.last = now()
     pointer.inside = true
+    rectDirty = true
     requestRender()
   }
   const onPointerMove = (e: PointerEvent) => setPointer(e.clientX, e.clientY, e.pointerType === 'touch')
@@ -274,9 +312,16 @@ export function createCrowdEngine(host: HTMLElement, opts: EngineOptions): Crowd
   }
   const onPointerDown = (e: PointerEvent) => {
     setPointer(e.clientX, e.clientY, e.pointerType === 'touch')
-    if (reduced) return
     const c = pick(e.clientX, e.clientY)
-    if (c) c.jump({ height: 0.62, duration: 0.78, spin: true, armsUp: true })
+    if (!c) return
+    if (reduced) {
+      c.pulse()
+      requestRender()
+      return
+    }
+    // a tap is a big spin-jump plus the character's own flourish (fries shimmy instead of spinning)
+    c.jump({ height: 0.62, duration: 0.78, spin: true, armsUp: true })
+    c.flourish(0.8, 0.12)
   }
   window.addEventListener('pointermove', onPointerMove, { passive: true })
   window.addEventListener('touchstart', onTouch, { passive: true })
@@ -284,39 +329,53 @@ export function createCrowdEngine(host: HTMLElement, opts: EngineOptions): Crowd
   document.addEventListener('mouseout', onLeave)
   canvas.addEventListener('pointerdown', onPointerDown)
 
-  function toNdc(clientX: number, clientY: number, rect: DOMRect): THREE.Vector2 {
+  // Canvas rect, cached: re-read only after a scroll/resize/layout, never per frame.
+  const rect = { left: 0, top: 0, width: 1, height: 1 }
+  let rectDirty = true
+  function readRect(): void {
+    if (!rectDirty) return
+    rectDirty = false
+    const r = canvas.getBoundingClientRect()
+    rect.left = r.left
+    rect.top = r.top
+    rect.width = Math.max(1, r.width)
+    rect.height = Math.max(1, r.height)
+  }
+  const onScroll = () => {
+    rectDirty = true
+  }
+  window.addEventListener('scroll', onScroll, { passive: true, capture: true })
+
+  function toNdc(clientX: number, clientY: number): THREE.Vector2 {
     return ndc.set(((clientX - rect.left) / rect.width) * 2 - 1, -(((clientY - rect.top) / rect.height) * 2 - 1))
   }
 
   function pick(clientX: number, clientY: number): Character | null {
-    const rect = canvas.getBoundingClientRect()
-    if (clientX < rect.left || clientX > rect.right || clientY < rect.top || clientY > rect.bottom) return null
-    raycaster.setFromCamera(toNdc(clientX, clientY, rect), camera)
-    const hits = raycaster.intersectObjects(
-      shown.map((c) => c.hit),
-      false,
-    )
-    const first = hits[0]
+    readRect()
+    if (clientX < rect.left || clientX > rect.left + rect.width || clientY < rect.top || clientY > rect.top + rect.height) return null
+    raycaster.setFromCamera(toNdc(clientX, clientY), camera)
+    hitsOut.length = 0
+    raycaster.intersectObjects(hitList, false, hitsOut)
+    const first = hitsOut[0]
+    hitsOut.length = 0
     return first ? ((first.object.userData.character as Character | undefined) ?? null) : null
   }
 
   let hovered: Character | null = null
   function updateTarget(dt: number, t: number): void {
-    const rect = canvas.getBoundingClientRect()
+    readRect()
     const idleFor = now() - pointer.last
     const useWander = !pointer.has || (!pointer.inside && !pointer.touch) || ((pointer.touch || coarse) && idleFor > 5)
     if (useWander) {
       if (t > wander.next) {
         const straight = Math.random() < 0.3
-        wander = {
-          x: straight ? 0 : (Math.random() * 2 - 1) * 0.95,
-          y: straight ? 0.05 : Math.random() * 0.9 - 0.3,
-          next: t + 1.6 + Math.random() * 2.6,
-        }
+        wander.x = straight ? 0 : (Math.random() * 2 - 1) * 0.95
+        wander.y = straight ? 0.05 : Math.random() * 0.9 - 0.3
+        wander.next = t + 1.6 + Math.random() * 2.6
       }
       ndc.set(wander.x, wander.y)
     } else {
-      toNdc(pointer.x, pointer.y, rect)
+      toNdc(pointer.x, pointer.y)
     }
     raycaster.setFromCamera(ndc, camera)
     if (raycaster.ray.intersectPlane(lookPlane, rawTarget)) {
@@ -330,6 +389,7 @@ export function createCrowdEngine(host: HTMLElement, opts: EngineOptions): Crowd
     if (h !== hovered) {
       if (hovered) hovered.hovered = false
       if (h) {
+        // hover: the rig springs it to 1.04 and it glances at the cursor
         h.hovered = true
         if (!h.airborne) h.jump({ height: 0.2, duration: 0.46 })
       }
@@ -350,15 +410,30 @@ export function createCrowdEngine(host: HTMLElement, opts: EngineOptions): Crowd
   let firstFrame = false
   let last = performance.now()
   let t = 0
+  // Idle signature beats: every 12–20s, if the pointer has rested for 4s+.
+  let nextBeat = 12 + Math.random() * 8
+  const fc: FrameContext = { t: 0, dt: 0, target, excitement: 0, reduced: false }
+
+  function idleBeat(): void {
+    if (t < nextBeat) return
+    nextBeat = t + 12 + Math.random() * 8
+    if (!shown.length || now() - pointer.last < 4) return
+    const c = shown[Math.floor(Math.random() * shown.length)]
+    if (c && !c.airborne) c.flourish(0.5)
+  }
 
   const frame = (dt: number) => {
     t += dt
     excitement = damp(excitement, excitementTarget, 5, dt)
     updateTarget(dt, t)
-    const fc = { t, dt, target, excitement: reduced ? 0 : excitement, reduced }
+    if (!reduced) idleBeat()
+    fc.t = t
+    fc.dt = dt
+    fc.excitement = reduced ? 0 : excitement
+    fc.reduced = reduced
     for (const c of shown) c.update(fc)
     renderer.render(scene, camera)
-    if (!firstFrame) {
+    if (!firstFrame && shown.length) {
       firstFrame = true
       try {
         opts.onFirstFrame?.()
@@ -368,16 +443,22 @@ export function createCrowdEngine(host: HTMLElement, opts: EngineOptions): Crowd
     }
   }
 
+  const anyPulsing = () => {
+    for (const c of shown) if (c.pulsing) return true
+    return false
+  }
   const tick = () => {
     raf = 0
     if (disposed) return
     const nowMs = performance.now()
     const dt = Math.min(1 / 20, Math.max(0, (nowMs - last) / 1000))
     last = nowMs
-    frame(reduced ? 1 / 60 : dt)
-    if (shouldRun()) raf = requestAnimationFrame(tick)
+    frame(dt)
+    if (shouldRun() || (reduced && canDraw() && anyPulsing())) raf = requestAnimationFrame(tick)
   }
-  const shouldRun = () => !disposed && !reduced && inView && pageVisible && width > 1
+  // Off-screen, hidden-tab or zero-size crowds never schedule a frame.
+  const canDraw = () => !disposed && inView && pageVisible && width > 1
+  const shouldRun = () => !reduced && canDraw()
   function wake(): void {
     if (!raf && shouldRun()) {
       last = performance.now()
@@ -388,7 +469,10 @@ export function createCrowdEngine(host: HTMLElement, opts: EngineOptions): Crowd
   function requestRender(): void {
     if (disposed || raf) return
     if (reduced) {
-      if (inView && pageVisible && width > 1) raf = requestAnimationFrame(tick)
+      if (canDraw()) {
+        last = performance.now()
+        raf = requestAnimationFrame(tick)
+      }
     } else wake()
   }
 
@@ -402,8 +486,11 @@ export function createCrowdEngine(host: HTMLElement, opts: EngineOptions): Crowd
   io?.observe(host)
   const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => layout()) : null
   ro?.observe(host)
-  const onResize = () => layout()
-  if (!ro) window.addEventListener('resize', onResize)
+  const onResize = () => {
+    rectDirty = true
+    if (!ro) layout()
+  }
+  window.addEventListener('resize', onResize)
   const onVis = () => {
     pageVisible = document.visibilityState !== 'hidden'
     if (pageVisible) requestRender()
@@ -411,6 +498,15 @@ export function createCrowdEngine(host: HTMLElement, opts: EngineOptions): Crowd
   document.addEventListener('visibilitychange', onVis)
   const onMotion = () => {
     reduced = reducedMq?.matches ?? false
+    if (reduced && opts.onReducedMotion) {
+      // The owner swaps back to the still poster and disposes us.
+      try {
+        opts.onReducedMotion()
+      } catch {
+        /* ignore */
+      }
+      return
+    }
     requestRender()
   }
   reducedMq?.addEventListener?.('change', onMotion)
@@ -425,9 +521,44 @@ export function createCrowdEngine(host: HTMLElement, opts: EngineOptions): Crowd
       excitementTarget = Math.min(1, Math.max(0, Number.isFinite(v) ? v : 0))
     },
     cheer(kind) {
-      if (reduced) return
-      const who = kind ? shown.filter((c) => c.kind === kind) : shown
-      who.forEach((c, i) => c.jump({ height: 0.48, duration: 0.7, armsUp: true, delay: kind ? 0 : i * 0.06 }))
+      if (disposed) return
+      const list = typeof kind === 'string' ? null : kind
+      let i = 0
+      for (const c of shown) {
+        if (typeof kind === 'string' ? c.kind !== kind : list && !list.includes(c.kind)) continue
+        if (reduced) c.pulse()
+        else c.cheer(kind === undefined ? i * 0.06 : i * 0.05)
+        i++
+      }
+      requestRender()
+    },
+    perk(kinds, ms = 1200) {
+      if (disposed || reduced) return
+      const secs = Math.min(10, Math.max(0.2, (Number.isFinite(ms) ? ms : 1200) / 1000))
+      let i = 0
+      for (const c of shown) {
+        if (kinds && !kinds.includes(c.kind)) continue
+        c.perk(secs, i * 0.04)
+        i++
+      }
+      requestRender()
+    },
+    hint() {
+      if (disposed || reduced || !shown.length) return
+      // Turn to the cursor if there is one on the page, else to the centre.
+      const idleFor = now() - pointer.last
+      if (!pointer.has || (!pointer.inside && !pointer.touch) || idleFor > 5) {
+        wander.x = 0
+        wander.y = 0.05
+        wander.next = t + 1.8
+      }
+      shown[0]!.hint()
+      requestRender()
+    },
+    wave() {
+      if (disposed || reduced) return
+      shown.forEach((c, i) => c.jump({ height: 0.3, duration: 0.6, armsUp: true, delay: i * 0.07 }))
+      requestRender()
     },
     look(x, y) {
       pointer.x = x
@@ -446,6 +577,7 @@ export function createCrowdEngine(host: HTMLElement, opts: EngineOptions): Crowd
       window.removeEventListener('touchstart', onTouch)
       window.removeEventListener('touchmove', onTouch)
       window.removeEventListener('resize', onResize)
+      window.removeEventListener('scroll', onScroll, { capture: true })
       document.removeEventListener('mouseout', onLeave)
       document.removeEventListener('visibilitychange', onVis)
       canvas.removeEventListener('pointerdown', onPointerDown)
@@ -455,8 +587,11 @@ export function createCrowdEngine(host: HTMLElement, opts: EngineOptions): Crowd
       scene.environment = null
       envRT.dispose()
       pmrem.dispose()
+      built.forEach((c) => c.dispose())
       kit.dispose()
       built.clear()
+      shown = []
+      hitList.length = 0
       renderer.dispose()
       renderer.forceContextLoss()
       canvas.remove()

@@ -1,11 +1,22 @@
 'use client'
 
 // Global error boundary for the storefront. Renders when any client-side
-// rendering throws below the layout. Don't drop the user on a blank page —
-// give them something to click and a way to recover.
+// rendering throws below the layout. Don't drop the user on a blank page:
+// give them something to press and a way to recover.
+//
+// Same material as the 404: butter ground, cream rubber sticker card, the
+// crowd shrugging. "Try again" is a rubber TactileButton that holds a short
+// loading beat before reset(), so the retry reads as something happening
+// rather than a flicker. On a simmer route the template's
+// data-surface="simmer" restyles all of it to the brand bible (no characters).
 
-import { useEffect } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
+import { CrowdPoster } from '../components/characters/CrowdPoster'
+import { TactileButton, type TactileState } from '../components/tactile/TactileButton'
+import s from './template.module.css'
+
+const RETRY_BEAT_MS = 480
 
 export default function GlobalError({ error, reset }: { error: Error & { digest?: string }; reset: () => void }) {
   useEffect(() => {
@@ -13,65 +24,42 @@ export default function GlobalError({ error, reset }: { error: Error & { digest?
     console.error('[storefront] uncaught error:', error)
   }, [error])
 
+  const [state, setState] = useState<TactileState>('idle')
+  const timer = useRef<number | undefined>(undefined)
+  useEffect(() => () => window.clearTimeout(timer.current), [])
+
+  const retry = () => {
+    if (state === 'loading') return
+    setState('loading')
+    timer.current = window.setTimeout(() => {
+      reset()
+      setState('idle')
+    }, RETRY_BEAT_MS)
+  }
+
   return (
-    <div
-      role="alert"
-      aria-live="assertive"
-      style={{
-        minHeight: '100dvh',
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: '2rem',
-        gap: '1.25rem',
-        textAlign: 'center',
-        background: '#fff',
-        color: '#0a0a0a',
-      }}
-    >
-      <h1 style={{ fontSize: 'clamp(1.5rem, 4vw, 2rem)', fontWeight: 800, margin: 0 }}>
-        Something broke
-      </h1>
-      <p style={{ color: 'rgba(0,0,0,0.55)', maxWidth: '32rem', margin: 0 }}>
-        We&rsquo;re sorry — that wasn&rsquo;t supposed to happen. You can try again, or head back to the menu.
-        {error.digest && (
-          <span style={{ display: 'block', fontSize: '0.75rem', marginTop: '0.5rem', opacity: 0.5 }}>
-            Reference: {error.digest}
-          </span>
-        )}
-      </p>
-      <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', justifyContent: 'center' }}>
-        <button
-          onClick={reset}
-          style={{
-            background: '#4ade80',
-            color: '#000',
-            fontWeight: 800,
-            padding: '0.75rem 2rem',
-            borderRadius: '999px',
-            border: 'none',
-            cursor: 'pointer',
-            fontSize: '1rem',
-          }}
-        >
-          Try again
-        </button>
-        <Link
-          href="/order"
-          style={{
-            background: 'transparent',
-            color: '#000',
-            fontWeight: 600,
-            padding: '0.75rem 2rem',
-            borderRadius: '999px',
-            border: '1px solid rgba(0,0,0,0.15)',
-            textDecoration: 'none',
-            fontSize: '1rem',
-          }}
-        >
-          Back to brands
-        </Link>
+    <div className={s.boundary} role="alert" aria-live="assertive">
+      <div className={s.card}>
+        <div className={s.poster} aria-hidden="true">
+          <CrowdPoster cast={['fries', 'burger', 'coffee']} mode="shrug" />
+        </div>
+        <h1 className={s.title}>Something tipped over.</h1>
+        <p className={s.body}>
+          That wasn&rsquo;t supposed to happen. Try again, or head back and pick up where you left off.
+          {error.digest && <span className={s.ref}>Reference: {error.digest}</span>}
+        </p>
+        <div className={s.actions}>
+          <TactileButton
+            type="button"
+            state={state}
+            loadingLabel="Trying again…"
+            onClick={retry}
+            className={`${s.rubber} ${s.primary}`}
+          >
+            Try again
+          </TactileButton>
+          <Link href="/browse" className={s.rubber}>Browse kitchens</Link>
+        </div>
       </div>
     </div>
   )

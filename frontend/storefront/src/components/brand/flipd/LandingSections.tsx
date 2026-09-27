@@ -91,6 +91,38 @@ export function OffTheGrill({ slug, orderHref, menuHref }: { slug: string; order
 
 // ── Court-side: the counter, the crowd, the ball ─────────────────────────
 
+/**
+ * One stool on the counter. It spins in when the stand arrives (CSS, keyed
+ * off the stand's [data-in]) and swivels on hover or tap: each turn adds half
+ * a revolution about the post — a flat drawing seen edge-on at a quarter turn
+ * would vanish, so it passes through and lands face-on again, stripes
+ * running the other way. Decorative: the stand is aria-hidden and the stool
+ * is not focusable.
+ */
+function SpinStool({ k }: { k: number }) {
+  const [turns, setTurns] = useState(0)
+  const lastTurn = useRef(0)
+  const turn = () => {
+    const now = performance.now()
+    // One swivel per gesture: a tap fires pointerdown and pointerenter.
+    if (now - lastTurn.current < 250) return
+    lastTurn.current = now
+    setTurns((n) => n + 1)
+  }
+  return (
+    <span
+      className={l.stool}
+      style={{ '--i': k, '--turn': turns } as CSSProperties}
+      onPointerEnter={(e) => { if (e.pointerType === 'mouse') turn() }}
+      onPointerDown={turn}
+    >
+      <span className={l.stoolSeat}>
+        <Stool id={`flipd-stool-${k}`} />
+      </span>
+    </span>
+  )
+}
+
 /** A diner stool. The stripes on the seat band slide to fake a spin. */
 function Stool({ id }: { id: string }) {
   return (
@@ -159,7 +191,9 @@ function useWatchTheBall(active: boolean, ballRef: RefObject<HTMLElement>) {
 }
 
 /**
- * The diner door sign: flips over on its hooks when the section arrives.
+ * The diner door sign: flips over on its hooks (rotateX 180 → 0, on a
+ * spring) as it mounts — or, if it mounts before the section is on screen,
+ * the moment the section arrives.
  * Open is the lit side (blue board, mustard letters, chase bulbs); closed is
  * the bone side. Rendered only once hours have loaded, like the shared badge.
  */
@@ -244,17 +278,20 @@ export function CourtSide({
         <div ref={setStand} className={l.stand} aria-hidden>
           <div className={l.rally}>
             <div className={l.ballX}>
-              <span ref={ballRef} className={l.ballY}>
-                <Ball />
+              <span className={l.ballY}>
+                <span ref={ballRef} className={l.ballBody}>
+                  <Ball />
+                </span>
               </span>
             </div>
           </div>
+          {/* Mounted with the section, at resting excitement: the flat
+              poster stands in until the 3D crowd has its first frame, so
+              the counter is never empty. */}
           <FlipdCrowd className={l.standCrowd} excitement={0.35} />
           <div className={l.stools}>
             {[0, 1, 2, 3].map((k) => (
-              <span key={k} className={l.stool}>
-                <Stool id={`flipd-stool-${k}`} />
-              </span>
+              <SpinStool key={k} k={k} />
             ))}
           </div>
         </div>

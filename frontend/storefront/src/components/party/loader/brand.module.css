@@ -62,20 +62,46 @@
   opacity: 0.78;
 }
 
-/* ── stackd: the layers drop in and stack ────────────────────────────── */
+/* ── stackd: the layers drop in once, then the stack idles ──────────────
+   Each layer lands with a spring and STAYS (fill: both). After the last one
+   lands the whole stack bobs gently and two wisps of steam rise off the top,
+   so the loader is never empty, however long the route takes. */
 .stackd { background: #7C2946; color: #FCE8CE; }
 .stackd .art { width: 112px; }
-.stack { animation: clear 3.4s infinite; }
-@keyframes clear { 0%, 84% { opacity: 1; transform: none; } 94% { opacity: 0; transform: translateY(6px); } 100% { opacity: 0; } }
-.l0, .l1, .l2, .l3 { animation: 3.4s infinite; }
-.l0 { animation-name: d0; }
-.l1 { animation-name: d1; }
-.l2 { animation-name: d2; }
-.l3 { animation-name: d3; }
-@keyframes d0 { 0% { transform: translateY(-70px); opacity: 0; animation-timing-function: cubic-bezier(0.34, 1.56, 0.64, 1); } 12%, 100% { transform: none; opacity: 1; } }
-@keyframes d1 { 0%, 9% { transform: translateY(-70px); opacity: 0; animation-timing-function: cubic-bezier(0.34, 1.56, 0.64, 1); } 21%, 100% { transform: none; opacity: 1; } }
-@keyframes d2 { 0%, 18% { transform: translateY(-70px); opacity: 0; animation-timing-function: cubic-bezier(0.34, 1.56, 0.64, 1); } 30%, 100% { transform: none; opacity: 1; } }
-@keyframes d3 { 0%, 27% { transform: translateY(-70px); opacity: 0; animation-timing-function: cubic-bezier(0.34, 1.56, 0.64, 1); } 40%, 100% { transform: none; opacity: 1; } }
+.l0, .l1, .l2, .l3 {
+  animation: drop 620ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+.l0 { animation-delay: 240ms; }
+.l1 { animation-delay: 360ms; }
+.l2 { animation-delay: 480ms; }
+.l3 { animation-delay: 600ms; }
+@keyframes drop {
+  from { transform: translateY(-70px); opacity: 0; }
+  40% { opacity: 1; }
+  to { transform: none; opacity: 1; }
+}
+.stack {
+  transform-box: fill-box;
+  transform-origin: 50% 100%;
+  animation: bob 2.8s ease-in-out 1.3s infinite;
+}
+@keyframes bob {
+  0%, 100% { transform: none; }
+  45% { transform: translateY(-3px) scale(0.99, 1.015); }
+  60% { transform: translateY(-3px) scale(1, 1); }
+}
+.steam {
+  opacity: 0;
+  stroke-dasharray: 32;
+  stroke-dashoffset: 32;
+  animation: steam 2.8s ease-out 1.4s infinite;
+}
+.steamB { animation-delay: 2.5s; }
+@keyframes steam {
+  0% { opacity: 0; stroke-dashoffset: 32; transform: none; }
+  30% { opacity: 0.7; }
+  100% { opacity: 0; stroke-dashoffset: 0; transform: translateY(-7px); }
+}
 .stackdMark { font-family: var(--stackd-display, 'Playfair Display', Georgia, serif); font-weight: 700; font-size: 2.5rem; line-height: 1; letter-spacing: -0.01em; }
 .stackdLine { margin-top: 0.6rem !important; font-family: var(--stackd-body, 'Inter', system-ui, sans-serif); font-size: 0.95rem; color: rgba(252, 232, 206, 0.8); }
 
@@ -105,6 +131,16 @@
 .flipdMark { font-family: var(--flipd-display, 'Alfa Slab One', Georgia, serif); font-size: 2.6rem; line-height: 1; }
 .flipdLine { margin-top: 0.55rem !important; font-family: var(--flipd-body, 'Poppins', system-ui, sans-serif); font-weight: 600; font-size: 0.95rem; }
 
+/* Reduced motion: explicit resting states, so nothing is left at a
+   keyframe's first frame (an unlanded layer, a hidden flame). The steam,
+   smoke and sizzle hold as still marks instead of vanishing. */
 @media (prefers-reduced-motion: reduce) {
   .wrap * { animation: none !important; }
+  .l0, .l1, .l2, .l3, .stack { opacity: 1; transform: none; }
+  .steam { opacity: 0.5; stroke-dashoffset: 0; transform: none; }
+  .flame { opacity: 1; transform: none; }
+  .smoke { opacity: 0.35; stroke-dashoffset: 0; transform: none; }
+  .patty { opacity: 1; transform: none; }
+  .sizzle { opacity: 0.6; transform: none; }
+  .col { opacity: 1; transform: none; }
 }

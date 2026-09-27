@@ -1,7 +1,10 @@
-/* Browse — playful "food crowd" direction.
+/* Browse — playful "food crowd" direction, in the sticker material.
    Palette matches components/party/party.module.css (contrast-checked):
    plum/butter 8.35:1 · ink/butter 11.52:1 · cream/plum 10.84:1 · ink/cream 14.96:1.
-   Tomato is decoration only — never text. */
+   Tomato is decoration only — never text.
+
+   Motion tokens (--ease-out, --ease-spring, --dur-press…) come from
+   globals.css; every use carries its fallback. */
 
 .page {
   --party-butter: #FFD447;
@@ -15,6 +18,7 @@
   background: var(--party-cream);
   color: var(--party-ink);
   overflow-x: hidden;
+  overflow-x: clip;
 }
 
 .inner {
@@ -88,18 +92,29 @@
   100% { opacity: 1; transform: none; }
 }
 
+/* The tail rides the same word-drop stagger as the headline (--i is set to
+   the next beat by BrowseClient). */
 .titleTail {
   position: relative;
   display: inline-block;
+  margin: 0 0.1em;
   font-style: italic;
   color: var(--party-plum);
-  animation: tailPop 620ms cubic-bezier(0.34, 1.56, 0.64, 1) 420ms both;
+  animation: wordDrop 700ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  animation-delay: calc(var(--i, 3) * 70ms + 80ms);
 }
 
-@keyframes tailPop {
-  0%   { opacity: 0; transform: scale(0.85) translateY(6px); }
-  100% { opacity: 1; transform: none; }
+/* The rolling kitchen count: each new number rolls in over the old one. */
+.rollBox {
+  position: relative;
+  display: inline-grid;
+  overflow: hidden;
+  vertical-align: bottom;
+  line-height: 1.02;
+  padding: 0 0.04em;
 }
+.rollBox > * { grid-area: 1 / 1; }
+.rollDigit { display: inline-block; }
 
 .underline {
   position: absolute;
@@ -114,7 +129,7 @@
   stroke-linecap: round;
   stroke-dasharray: 260;
   stroke-dashoffset: 260;
-  animation: drawLine 700ms ease-out 900ms forwards;
+  animation: drawLine 700ms ease-out 620ms forwards;
 }
 
 @keyframes drawLine { to { stroke-dashoffset: 0; } }
@@ -140,13 +155,27 @@
   margin: 0 0 1.1rem;
 }
 
+/* Centred with a margin rather than a transform, so the busy wobble can own
+   the transform. */
 .searchIcon {
   position: absolute;
   left: 1.15rem;
   top: 50%;
-  transform: translateY(-50%);
+  margin-top: -9px;
   color: var(--party-ink-mute);
   pointer-events: none;
+  transform-origin: 40% 40%;
+}
+
+.searchIconBusy {
+  color: var(--party-plum);
+  animation: lensWobble 640ms ease-in-out infinite;
+}
+
+@keyframes lensWobble {
+  0%, 100% { transform: rotate(0deg) translate(0, 0); }
+  25%      { transform: rotate(-14deg) translate(-1px, -1px); }
+  75%      { transform: rotate(10deg) translate(1px, 0); }
 }
 
 .searchInput {
@@ -160,21 +189,23 @@
   font-size: 1rem;
   font-family: inherit;
   box-shadow: 0 4px 0 var(--party-ink);
-  transition: box-shadow 160ms ease;
+  transition: box-shadow 200ms var(--ease-out, cubic-bezier(0.22, 1, 0.36, 1));
 }
 
 .searchInput::placeholder { color: var(--party-ink-mute); opacity: 0.85; }
 
 .searchInput:focus-visible {
   outline: none;
-  box-shadow: 0 4px 0 var(--party-ink), 0 0 0 3px rgba(78, 42, 79, 0.4);
+  box-shadow: 0 4px 0 var(--party-ink), 0 0 0 4px rgba(78, 42, 79, 0.28);
 }
 
+/* Positioned with a negative margin (not a transform) because framer owns
+   the transform for the pop in and out. */
 .clearBtn {
   position: absolute;
   right: 6px;
   top: 50%;
-  transform: translateY(-50%);
+  margin-top: -22px;
   width: 44px;
   height: 44px;
   display: inline-flex;
@@ -185,11 +216,11 @@
   background: var(--party-butter);
   color: var(--party-ink);
   cursor: pointer;
-  transition: background-color 140ms ease, transform 140ms cubic-bezier(0.34, 1.56, 0.64, 1);
+  -webkit-tap-highlight-color: transparent;
+  transition: background-color 140ms ease;
 }
 
-.clearBtn:hover { background: var(--party-butter-deep); transform: translateY(-50%) scale(1.06); }
-.clearBtn:active { transform: translateY(-50%) scale(0.94); }
+.clearBtn:hover { background: var(--party-butter-deep); }
 .clearBtn:focus-visible { outline: 3px solid var(--party-plum); outline-offset: 2px; }
 
 /* ── Filter chips — sticker buttons ──────────────────────────────────── */
@@ -197,9 +228,12 @@
   display: flex;
   flex-wrap: wrap;
   gap: 0.6rem;
+  padding-bottom: 4px;
 }
 
 .chip {
+  position: relative;
+  isolation: isolate;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -214,22 +248,38 @@
   font-weight: 700;
   font-size: 0.92rem;
   cursor: pointer;
-  transition: background-color 140ms ease, color 140ms ease, box-shadow 140ms ease;
+  box-shadow: 0 3px 0 var(--party-ink);
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  transition:
+    background-color 140ms ease,
+    color 180ms ease,
+    box-shadow 160ms var(--ease-out, cubic-bezier(0.22, 1, 0.36, 1));
 }
 
-.chip:hover { background: #fff; }
+.chip:hover { background: #FFFBEF; box-shadow: 0 5px 0 var(--party-ink); }
+.chip:active { box-shadow: 0 0 0 var(--party-ink); transition-duration: 140ms, 180ms, var(--dur-press, 80ms); }
 
-.chipActive {
+/* The active fill is its own layer (layoutId='chipActive') so it slides from
+   chip to chip instead of blinking. */
+.chipFill {
+  position: absolute;
+  inset: -1px;
+  z-index: -1;
+  border-radius: inherit;
   background: var(--party-plum);
-  border-color: var(--party-ink);
-  color: var(--party-cream);
 }
 
-.chipActive:hover { background: var(--party-plum); }
+.chipLabel { position: relative; }
+
+.chipActive { color: var(--party-cream); }
+.chipActive:hover { background: var(--party-cream); }
 
 .chip:focus-visible { outline: 3px solid var(--party-ink); outline-offset: 2px; }
 
 /* ── Doodles ──────────────────────────────────────────────────────────── */
+.doodles { position: absolute; inset: 0; z-index: 1; pointer-events: none; }
+
 .doodle { position: absolute; pointer-events: none; z-index: 1; }
 
 .doodleStar {
@@ -263,11 +313,34 @@
 @keyframes wiggle { 0%, 100% { transform: rotate(-6deg); } 50% { transform: rotate(6deg) translateY(-3px); } }
 @keyframes bob    { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-8px); } }
 
+/* The filter-change punch. It animates the individual `scale` / `rotate` /
+   `translate` properties, so it stacks on top of each doodle's own loop
+   (which owns `transform`) without restarting it. */
+.doodlesPunch .doodleStar     { animation: spin 10s linear infinite, doodlePunch 400ms var(--ease-spring, cubic-bezier(0.34, 1.56, 0.64, 1)) 1; }
+.doodlesPunch .doodleSquiggle { animation: wiggle 3.2s ease-in-out infinite, doodlePunch 400ms var(--ease-spring, cubic-bezier(0.34, 1.56, 0.64, 1)) 1; }
+.doodlesPunch .doodleDot      { animation: bob 2.6s ease-in-out infinite, doodleHop 400ms var(--ease-spring, cubic-bezier(0.34, 1.56, 0.64, 1)) 1; }
+
+@keyframes doodlePunch {
+  0%   { scale: 1;    rotate: 0deg; }
+  30%  { scale: 1.35; rotate: -14deg; }
+  60%  { scale: 0.9;  rotate: 9deg; }
+  100% { scale: 1;    rotate: 0deg; }
+}
+@keyframes doodleHop {
+  0%   { translate: 0 0;     scale: 1; }
+  35%  { translate: 0 -14px; scale: 0.9 1.15; }
+  70%  { translate: 0 2px;   scale: 1.2 0.8; }
+  100% { translate: 0 0;     scale: 1; }
+}
+
 /* ── Menu-hit results ─────────────────────────────────────────────────── */
 .hitsSection { padding: 2.5rem 0 0; }
 
 .sectionLabel {
   margin: 0 0 1rem;
+  min-height: 1.4em;
+  display: flex;
+  align-items: center;
   font-family: var(--font-display);
   font-weight: 700;
   font-size: 1.05rem;
@@ -276,10 +349,13 @@
 
 .hitsGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr));
   gap: 0.9rem;
   margin-bottom: 2.5rem;
 }
+
+.hitWrap { display: flex; min-width: 0; }
+.hitWrap > .hitCard { flex: 1; min-width: 0; }
 
 .hitCard {
   display: flex;
@@ -292,11 +368,18 @@
   text-decoration: none;
   color: inherit;
   box-shadow: 0 4px 0 var(--party-ink);
-  transition: transform 180ms cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 180ms ease;
+  -webkit-tap-highlight-color: transparent;
+  transition:
+    transform var(--dur-release, 320ms) var(--ease-spring, cubic-bezier(0.34, 1.56, 0.64, 1)),
+    box-shadow 180ms ease;
 }
 
 .hitCard:hover { transform: translateY(-3px); box-shadow: 0 7px 0 var(--party-ink); }
-.hitCard:active { transform: translateY(1px); box-shadow: 0 2px 0 var(--party-ink); }
+.hitCard:active {
+  transform: translateY(2px) scale(1.01, 0.97);
+  box-shadow: 0 2px 0 var(--party-ink);
+  transition-duration: var(--dur-press, 80ms), 80ms;
+}
 .hitCard:focus-visible { outline: 3px solid var(--party-plum); outline-offset: 2px; }
 
 .hitThumb {
@@ -330,6 +413,30 @@
 
 .hitPrice { margin: 0; font-size: 0.85rem; font-weight: 800; color: var(--party-plum); }
 
+/* ── Skeletons (search pending + route loading) ───────────────────────── */
+/* A placeholder bar: butter-deep paper with a slow sheen passing over it. */
+.skel {
+  position: relative;
+  display: block;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(78, 42, 79, 0.12);
+}
+.skel::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(100deg, rgba(255, 244, 214, 0) 20%, rgba(255, 244, 214, 0.75) 50%, rgba(255, 244, 214, 0) 80%);
+  transform: translateX(-100%);
+  animation: shimmer 1.2s ease-in-out infinite;
+}
+@keyframes shimmer { to { transform: translateX(100%); } }
+
+.hitSkeleton { pointer-events: none; box-shadow: 0 4px 0 rgba(42, 26, 43, 0.35); border-color: rgba(42, 26, 43, 0.45); }
+.hitSkeleton:hover { transform: none; }
+.hitSkeleton .hitThumb { border: 0; border-radius: 12px; }
+.skelLines { flex: 1; display: flex; flex-direction: column; gap: 0.45rem; min-width: 0; }
+
 /* ── Brand grid ───────────────────────────────────────────────────────── */
 .gridSection { padding: 2.5rem 0 5rem; }
 
@@ -340,10 +447,17 @@
 }
 
 .cardWrap { height: 100%; }
-.cardWrap:nth-child(odd) .card  { transform: rotate(-1.1deg); }
-.cardWrap:nth-child(even) .card { transform: rotate(1.1deg); }
+
+/* The shell carries the live tilt, lift and press (framer owns its
+   transform). The card inside is the paper: border, shadow, photo. */
+.shell {
+  height: 100%;
+  transform-origin: 50% 100%;
+  -webkit-tap-highlight-color: transparent;
+}
 
 .card {
+  position: relative;
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -354,16 +468,22 @@
   text-decoration: none;
   color: var(--party-ink);
   box-shadow: 0 6px 0 var(--party-ink);
-  transition: transform 220ms cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 220ms ease;
+  transition: box-shadow 220ms var(--ease-out, cubic-bezier(0.22, 1, 0.36, 1));
 }
 
-.card:hover, .card:focus-visible {
-  transform: translateY(-6px) rotate(0deg);
-  box-shadow: 0 10px 0 var(--party-ink);
-}
-
-.card:active { transform: translateY(2px) rotate(0deg); box-shadow: 0 3px 0 var(--party-ink); }
+.shell:hover .card, .card:focus-visible { box-shadow: 0 12px 0 var(--party-ink); }
+.shell:active .card { box-shadow: 0 2px 0 var(--party-ink); transition-duration: var(--dur-press, 80ms); }
 .card:focus-visible { outline: 3px solid var(--party-plum); outline-offset: 3px; }
+
+/* The cursor-following glare. */
+.glare {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+  opacity: 0;
+  mix-blend-mode: soft-light;
+}
 
 .photoWrap {
   position: relative;
@@ -373,13 +493,24 @@
   border-bottom: 2.5px solid var(--party-ink);
 }
 
+/* The photo zooms in on the ease-out and settles back on the spring. */
 .photo {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
   object-fit: cover;
-  transition: filter 200ms ease;
+  transition:
+    transform 350ms var(--ease-spring, cubic-bezier(0.34, 1.56, 0.64, 1)),
+    filter 200ms ease;
+}
+
+@media (hover: hover) {
+  .shell:hover .photo {
+    transform: scale(1.05);
+    transition: transform 420ms var(--ease-out, cubic-bezier(0.22, 1, 0.36, 1)), filter 200ms ease;
+  }
+  .shell:hover .pillArrow { transform: translateX(3px); }
 }
 
 .photoClosed .photo { filter: saturate(0.35) brightness(0.92); }
@@ -425,6 +556,13 @@
 .statusOpen   { background: var(--party-butter); color: var(--party-ink); }
 .statusClosed { background: var(--party-ink);    color: var(--party-cream); }
 .statusDot    { width: 0.4rem; height: 0.4rem; border-radius: 999px; background: currentColor; display: inline-block; }
+
+/* Open kitchens breathe; closed ones stay still. */
+.statusOpen .statusDot { animation: breathe 2.2s ease-in-out infinite; }
+@keyframes breathe {
+  0%        { box-shadow: 0 0 0 0 rgba(42, 26, 43, 0.45); }
+  70%, 100% { box-shadow: 0 0 0 5px rgba(42, 26, 43, 0); }
+}
 
 .cardBody {
   padding: 1.15rem 1.25rem 1.3rem;
@@ -472,22 +610,36 @@
   border: 2px solid var(--party-ink);
 }
 
+.pillArrow {
+  display: inline-block;
+  transition: transform var(--dur-release, 320ms) var(--ease-spring, cubic-bezier(0.34, 1.56, 0.64, 1));
+}
+
 .seeMore { font-size: 0.75rem; color: var(--party-ink-mute); font-weight: 700; }
 
 /* ── Empty state ──────────────────────────────────────────────────────── */
 .empty {
   text-align: center;
-  padding: 4.5rem 1.5rem;
+  padding: 3rem 1.5rem 4.5rem;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 1rem;
 }
 
-.emptyIcon { color: var(--party-plum); }
+/* The two shruggers get a fixed stage so the poster never collapses. */
+.emptyStage {
+  width: 220px;
+  max-width: 100%;
+  height: 150px;
+  position: relative;
+}
 
 .emptyTitle { margin: 0; font-size: 1.1rem; font-weight: 700; color: var(--party-ink); }
+.emptySub { margin: -0.4rem 0 0; font-size: 0.95rem; color: var(--party-ink-mute); }
 
+/* Rubber: lift on hover, squash wide-and-short on press, spring past rest on
+   release. */
 .clearAllBtn {
   display: inline-flex;
   align-items: center;
@@ -501,25 +653,81 @@
   font-family: var(--font-display);
   font-weight: 800;
   font-size: 1rem;
-  box-shadow: 0 5px 0 var(--party-ink);
+  box-shadow: 0 6px 0 var(--party-ink);
   cursor: pointer;
-  transition: transform 160ms cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 160ms ease;
+  transform-origin: 50% 100%;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  transition:
+    transform var(--dur-release, 320ms) var(--ease-spring, cubic-bezier(0.34, 1.56, 0.64, 1)),
+    box-shadow var(--dur-release, 320ms) var(--ease-spring, cubic-bezier(0.34, 1.56, 0.64, 1));
 }
 
-.clearAllBtn:hover { transform: translateY(-2px); box-shadow: 0 7px 0 var(--party-ink); }
-.clearAllBtn:active { transform: translateY(3px); box-shadow: 0 2px 0 var(--party-ink); }
+.clearAllBtn:hover { transform: translateY(-3px); box-shadow: 0 9px 0 var(--party-ink); }
+.clearAllBtn:active {
+  transform: translateY(4px) scale(1.03, 0.94);
+  box-shadow: 0 2px 0 var(--party-ink);
+  transition-duration: var(--dur-press, 80ms);
+  transition-timing-function: var(--ease-out, cubic-bezier(0.22, 1, 0.36, 1));
+}
 .clearAllBtn:focus-visible { outline: 3px solid var(--party-ink); outline-offset: 3px; }
+
+/* ── Route loading (app/browse/loading.tsx) ───────────────────────────── */
+.loadTitleBar { height: clamp(2.2rem, 5.6vw, 4rem); border-radius: 18px; margin-bottom: 0.7rem; }
+.loadEyebrow { height: 0.8rem; width: 7.5rem; margin-bottom: 1.2rem; }
+.loadLead { height: 0.95rem; margin-bottom: 0.55rem; max-width: 36rem; }
+.loadSearch {
+  height: 56px;
+  max-width: 34rem;
+  margin: 1.6rem 0 1.1rem;
+  border: 2.5px solid rgba(42, 26, 43, 0.35);
+  background: rgba(255, 244, 214, 0.7);
+}
+.loadChips { display: flex; gap: 0.6rem; flex-wrap: wrap; }
+.loadChip { height: 44px; width: 5.5rem; border: 2px solid rgba(42, 26, 43, 0.3); background: rgba(255, 244, 214, 0.6); }
+
+/* Skeleton stickers: the real card's size and tilt, in paper tones. */
+.skelCard {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 25rem;
+  border: 2.5px solid rgba(42, 26, 43, 0.35);
+  border-radius: 24px;
+  overflow: hidden;
+  background: var(--party-cream);
+  box-shadow: 0 6px 0 rgba(42, 26, 43, 0.3);
+  rotate: -1.1deg;
+}
+.cardWrap:nth-child(even) .skelCard { rotate: 1.1deg; }
+.skelPhoto {
+  aspect-ratio: 16 / 10;
+  border-radius: 0;
+  border-bottom: 2.5px solid rgba(42, 26, 43, 0.2);
+  background: rgba(244, 194, 46, 0.35);
+}
+.skelBody { padding: 1.15rem 1.25rem 1.3rem; display: flex; flex-direction: column; gap: 0.6rem; flex: 1; }
+.skelFoot { margin-top: auto; display: flex; justify-content: space-between; align-items: center; }
 
 @media (max-width: 640px) {
   .doodleStar, .doodleSquiggle { display: none; }
   .chips { gap: 0.5rem; }
 }
 
+/* Calmer, never dead: colour, opacity and shadow feedback stay; transforms,
+   loops and shimmer go. */
 @media (prefers-reduced-motion: reduce) {
   .titleWord, .titleTail, .lead, .underline { animation: none; }
   .underline { stroke-dashoffset: 0; }
-  .doodle { animation: none; }
-  .card, .chip, .clearAllBtn, .hitCard, .searchInput, .clearBtn, .photo {
-    transition: none;
+  .doodle, .doodlesPunch .doodle { animation: none; }
+  .searchIconBusy { animation: none; }
+  .statusOpen .statusDot { animation: none; }
+  .skel::after { animation: none; display: none; }
+  .photo, .pillArrow { transition: filter 200ms ease; }
+  .shell:hover .photo, .shell:hover .pillArrow { transform: none; }
+  .hitCard:hover, .hitCard:active, .clearAllBtn:hover, .clearAllBtn:active { transform: none; }
+  .card, .chip, .clearAllBtn, .hitCard, .searchInput, .clearBtn {
+    transition: box-shadow 120ms ease-out, background-color 120ms ease-out, color 120ms ease-out;
   }
+  .skelCard, .cardWrap:nth-child(even) .skelCard { rotate: 0deg; }
 }

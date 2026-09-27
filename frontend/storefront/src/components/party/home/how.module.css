@@ -67,11 +67,13 @@
   border-radius: 24px;
   background: #FFF4D6;
   box-shadow: 8px 8px 0 #2A1A2B;
-  transition: translate 240ms cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 200ms ease;
+  /* Not a control: no lift, no shadow growth. On hover the card just
+     settles a degree toward flat, like paper under a palm. */
+  transition: rotate 520ms var(--ease-out, cubic-bezier(0.22, 1, 0.36, 1));
 }
 .step:nth-child(1) { z-index: 3; }
 .step:nth-child(2) { z-index: 2; }
-.step:hover { translate: 0 -6px; box-shadow: 10px 14px 0 #2A1A2B; }
+.step:hover { rotate: var(--settle, 0deg); }
 
 .num {
   position: absolute;
@@ -106,9 +108,9 @@
   border: 2px solid #2A1A2B;
   color: #2A1A2B;
   transform: rotate(6deg);
-  transition: transform 300ms cubic-bezier(0.34, 1.56, 0.64, 1);
+  transition: transform 520ms var(--ease-out, cubic-bezier(0.22, 1, 0.36, 1));
 }
-.step:hover .icon { transform: rotate(-8deg) scale(1.12); }
+.step:hover .icon { transform: rotate(2deg); }
 
 .stepTitle {
   margin: 0.4rem 0 0.5rem;
@@ -217,6 +219,6 @@
 
 @media (prefers-reduced-motion: reduce) {
   .doodle { animation: none; }
-  .step:hover { translate: none; }
+  .step:hover { rotate: none; }
   .step:hover .icon { transform: rotate(6deg); }
 }

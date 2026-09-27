@@ -5,6 +5,11 @@ import Link from 'next/link'
 import { fmt, isLight } from '../../../../lib/ui'
 import { useCustomerAuth } from '../../../../store/customerAuth'
 import { LoadingScreen } from '../../../../components/ui/Loader'
+import { OrderStamp } from '../../../../components/checkout/OrderStamp'
+import { HopDots } from '../../../../components/tactile/HopDots'
+import { tick } from '../../../../lib/tactile'
+import { formatBrandName } from '../../../../lib/concept'
+import styles from '../../../../components/checkout/checkout.module.css'
 
 // /<concept>/order/[id] — live order tracker.
 // Restyled onto the on-system --servd-* tokens. Status icons are inline
@@ -100,6 +105,29 @@ export default function OrderStatusPage() {
     return () => stop()
   }, [id, token, router, pathname, slug])
 
+  // ── Presentation state (never touches polling or fetches) ──────────────
+  // Which steps just completed, so they pop and draw their check instead of
+  // swapping in. Only real transitions pop; the first load renders at rest.
+  const status = order?.status
+  const prevIdx = useRef<number | null>(null)
+  const [popped, setPopped] = useState<[number, number] | null>(null)
+  useEffect(() => {
+    if (!status) return
+    const idx = STEP_INDEX[status] ?? 0
+    const prev = prevIdx.current
+    prevIdx.current = idx
+    if (prev !== null && idx > prev) setPopped([prev + 1, idx])
+  }, [status])
+  // The header card takes the stamp's weight for a moment.
+  const [thud, setThud] = useState(false)
+  useEffect(() => {
+    if (!thud) return
+    const t = setTimeout(() => setThud(false), 320)
+    return () => clearTimeout(t)
+  }, [thud])
+  // Curbside arrival just confirmed in this session → bounce + flash + check.
+  const [justArrived, setJustArrived] = useState(false)
+
   if (notFound) return (
     <main className="flex min-h-dvh flex-col items-center justify-center gap-5 px-4" style={{ background: 'var(--servd-bg)' }}>
       <SearchIcon size={48} stroke="var(--servd-mute)" />
@@ -110,7 +138,7 @@ export default function OrderStatusPage() {
         </p>
       </div>
       <Link href={`/${slug}`}
-        className="rounded-2xl font-black px-8 py-4 text-sm transition-transform active:scale-[0.98]"
+        className={`rounded-2xl font-black px-8 py-4 text-sm ${styles.pressable}`}
         style={{ background: 'var(--servd-green)', color: 'white', boxShadow: '0 6px 18px rgba(58,14,105,0.28)' }}>
         Back to menu
       </Link>
@@ -140,10 +168,8 @@ export default function OrderStatusPage() {
   return (
     <main className="min-h-dvh pb-16" style={{ background: 'var(--servd-bg)' }}>
 
-      {flash && (
-        <div className="fixed inset-0 z-50 pointer-events-none"
-          style={{ background: `color-mix(in srgb, ${color} 10%, transparent)`, animation: 'fadeIn 0.15s ease-out' }} />
-      )}
+      {/* The status-change flash is scoped to the step that changed (a ring
+          ripples off its dot below), not a full-screen wash. */}
 
       {/* Sticky header — on-system glass bar, matches /checkout */}
       <div className="relative z-10 px-4 pt-5 pb-4 flex items-center gap-2.5"
@@ -159,7 +185,7 @@ export default function OrderStatusPage() {
         )}
         <span style={{ color: 'var(--servd-dim)' }}>·</span>
         <span className="font-display text-sm font-semibold" style={{ fontFamily: 'var(--font-display)', color: 'var(--servd-ink)' }}>
-          {order.concept.name}
+          {formatBrandName(order.concept.name)}
         </span>
         {!isDone && !isCancelled && (
           <div className="ml-auto flex items-center gap-1.5">
@@ -172,8 +198,15 @@ export default function OrderStatusPage() {
       <div className="relative z-10 max-w-md lg:max-w-2xl mx-auto px-4 py-6 space-y-4">
 
         {/* ── Status hero ── */}
-        <div className="rounded-3xl p-7 text-center relative overflow-hidden"
+        <div className={`rounded-3xl p-7 text-center relative overflow-hidden${thud ? ' ' + styles.heroThud : ''}`}
           style={{ background: heroBg, border: heroBorder }}>
+          {!isCancelled && (
+            <OrderStamp
+              orderId={order.id}
+              variant={slug === 'simmer' ? 'simmer' : 'rubber'}
+              onImpact={() => setThud(true)}
+            />
+          )}
           {isReady && (
             <div className="absolute inset-0 rounded-3xl pointer-events-none"
               style={{ border: `1.5px solid color-mix(in srgb, ${color} 40%, transparent)`, animation: 'glowPulse 2s ease-in-out infinite' }} />
@@ -217,24 +250,34 @@ export default function OrderStatusPage() {
             style={{ background: 'white', border: '1px solid var(--servd-line)', boxShadow: '0 1px 3px rgba(0,0,0,0.04)' }}>
             <div className="flex items-center">
               {STEPS.map((step, i) => {
-                const done    = i <= stepIdx
-                const current = i === stepIdx
-                const last    = i === STEPS.length - 1
+                const done     = i <= stepIdx
+                const current  = i === stepIdx
+                const last     = i === STEPS.length - 1
+                const justDone = popped !== null && i >= popped[0] && i <= popped[1]
+                const dotClass = [
+                  'h-9 w-9 rounded-full flex items-center justify-center text-sm',
+                  styles.dot,
+                  current && !isDone ? styles.dotCurrent : '',
+                  justDone ? styles.dotPop : '',
+                  current && flash ? styles.dotFlash : '',
+                ].filter(Boolean).join(' ')
                 return (
                   <div key={step.key} className="flex items-center flex-1">
                     <div className="flex flex-col items-center gap-2 flex-1">
                       <div
-                        className="h-9 w-9 rounded-full flex items-center justify-center text-sm transition-all duration-700"
+                        className={dotClass}
+                        aria-current={current ? 'step' : undefined}
                         style={{
                           background: done ? color : 'var(--servd-surface)',
                           color: done ? (isLight(color) ? '#000' : '#fff') : 'var(--servd-dim)',
                           boxShadow: current ? `0 0 18px color-mix(in srgb, ${color} 60%, transparent)` : 'none',
                           transform: current ? 'scale(1.15)' : 'scale(1)',
-                        }}>
+                          ['--ring' as string]: color,
+                        } as React.CSSProperties}>
                         {current && isPreparing
-                          ? <span style={{ display: 'inline-block', animation: 'spin 1.2s linear infinite' }} aria-hidden>⏳</span>
+                          ? <HopDots size={4} gap={2} label="Preparing" />
                           : done
-                            ? <CheckSmall />
+                            ? <CheckSmall draw={justDone} />
                             : <span className="text-[11px]" style={{ color: 'var(--servd-dim)' }}>{i + 1}</span>
                         }
                       </div>
@@ -244,8 +287,10 @@ export default function OrderStatusPage() {
                       </span>
                     </div>
                     {!last && (
-                      <div className="h-px flex-1 mx-1 mb-5 transition-all duration-1000"
-                        style={{ background: i < stepIdx ? color : 'var(--servd-line)' }} />
+                      <div className={styles.connector} aria-hidden="true">
+                        <div className={styles.connectorFill}
+                          style={{ background: color, transform: `scaleX(${i < stepIdx ? 1 : 0})` }} />
+                      </div>
                     )}
                   </div>
                 )
@@ -260,7 +305,7 @@ export default function OrderStatusPage() {
           <div className="px-4 py-3.5"
             style={{ borderBottom: '1px solid var(--servd-line)' }}>
             <p className="font-display font-black text-sm" style={{ fontFamily: 'var(--font-display)', color: 'var(--servd-ink)' }}>
-              {order.concept.name}
+              {formatBrandName(order.concept.name)}
             </p>
           </div>
 
@@ -320,12 +365,23 @@ export default function OrderStatusPage() {
         {order.curbsideVehicle && !order.curbsideArrivedAt && order.status !== 'cancelled' && order.status !== 'completed' && (
           <CurbsideArrivedButton orderId={order.id} onArrived={() => {
             setOrder((o) => o ? { ...o, curbsideArrivedAt: new Date().toISOString() } : o)
+            setJustArrived(true)
+            tick('success')
           }} />
         )}
         {order.curbsideVehicle && order.curbsideArrivedAt && !order.curbsideRunnerOutAt && (
-          <div className="rounded-2xl px-4 py-3.5 text-center"
+          <div className={`rounded-2xl px-4 py-3.5 text-center${justArrived ? ' ' + styles.arrivedIn : ''}`}
+            role={justArrived ? 'status' : undefined}
             style={{ background: 'rgba(58,14,105,0.1)', border: '1px solid rgba(58,14,105,0.35)', color: 'var(--servd-green-dark)' }}>
-            <p className="font-black text-sm">We see you. Bringing your food now.</p>
+            <p className="font-black text-sm inline-flex items-center justify-center gap-1.5">
+              {justArrived && (
+                <svg className={styles.arrivedCheck} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#16a34a"
+                  strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M4.5 12.5l5 5L19.5 7" />
+                </svg>
+              )}
+              We see you. Bringing your food now.
+            </p>
             <p className="text-xs mt-0.5 opacity-70">{order.curbsideVehicle}</p>
           </div>
         )}
@@ -339,7 +395,7 @@ export default function OrderStatusPage() {
         {/* ── Rate-your-meal CTA ── */}
         {order.status === 'completed' && token && (
           <Link href={`/orders/${order.id}/review`}
-            className="block w-full rounded-3xl overflow-hidden transition-transform active:scale-[0.98]"
+            className={`block w-full rounded-3xl overflow-hidden ${styles.pressable}`}
             style={{ background: 'var(--servd-green)', boxShadow: '0 6px 18px rgba(58,14,105,0.28)' }}>
             <div className="px-6 py-5 flex items-center justify-between gap-4">
               <div>
@@ -356,7 +412,7 @@ export default function OrderStatusPage() {
         )}
 
         <Link href={`/${slug}`}
-          className="flex items-center justify-center gap-2 w-full rounded-2xl py-3.5 font-bold text-sm transition-all active:scale-[0.98]"
+          className={`flex items-center justify-center gap-2 w-full rounded-2xl py-3.5 font-bold text-sm ${styles.pressable}`}
           style={{ background: 'white', border: '1px solid var(--servd-line)', color: 'var(--servd-mute)' }}>
           Order something else →
         </Link>
@@ -385,15 +441,16 @@ function CurbsideArrivedButton({ orderId, onArrived }: { orderId: string; onArri
   }
 
   return (
-    <button onClick={tap} disabled={busy}
-      className="flex items-center justify-center gap-2 w-full rounded-2xl py-4 font-black text-sm tracking-wide transition-transform active:scale-[0.98]"
+    // While busy the button holds its pressed squash and the car drives
+    // forward on a loop — full colour, never dimmed.
+    <button onClick={tap} disabled={busy} aria-busy={busy || undefined}
+      className={`flex items-center justify-center gap-2 w-full rounded-2xl py-4 font-black text-sm tracking-wide ${styles.curbBtn}${busy ? ' ' + styles.curbBusy : ''}`}
       style={{
         background: 'var(--servd-green)', color: 'white',
         border: '1px solid var(--servd-green-dark)',
         boxShadow: '0 6px 18px rgba(58,14,105,0.28)',
-        opacity: busy ? 0.6 : 1,
       }}>
-      <CarIcon />
+      <span className={busy ? styles.carDrive : 'inline-flex'}><CarIcon /></span>
       <span>{busy ? "Letting them know…" : "I'm here"}</span>
     </button>
   )
@@ -415,9 +472,9 @@ function StatusIcon({ status, animated }: { status: string; animated: boolean })
   }
 }
 
-function CheckSmall() {
+function CheckSmall({ draw = false }: { draw?: boolean }) {
   return (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <svg className={draw ? styles.checkDraw : undefined} width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="M2 7l3 3 7-7"/>
     </svg>
   )

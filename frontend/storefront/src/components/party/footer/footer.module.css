@@ -47,7 +47,21 @@
   line-height: 0;
 }
 
-.wave { display: block; width: 100%; height: 100%; }
+.wave {
+  display: block;
+  width: 100%;
+  height: 100%;
+  transform-origin: 50% 0;
+}
+/* One rubbery wobble the first time the footer scrolls into view: the
+   ground above stretches down onto the plum, overshoots, and settles. */
+.waveWobble { animation: waveWobble 700ms var(--ease-out, cubic-bezier(0.22, 1, 0.36, 1)) 1 both; }
+@keyframes waveWobble {
+  0%   { transform: scaleY(1); }
+  35%  { transform: scaleY(1.15); }
+  70%  { transform: scaleY(0.95); }
+  100% { transform: scaleY(1); }
+}
 .wave path { fill: var(--wave-color); }
 
 .inner {
@@ -120,13 +134,27 @@
   text-decoration: none;
   box-shadow: 0 6px 0 var(--party-ink);
   cursor: pointer;
-  transition: transform 160ms cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 160ms ease;
+  transform-origin: 50% 100%;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  /* Rubber: the release springs back past rest. */
+  transition:
+    transform var(--dur-release, 320ms) var(--ease-spring, cubic-bezier(0.34, 1.56, 0.64, 1)),
+    box-shadow var(--dur-release, 320ms) var(--ease-spring, cubic-bezier(0.34, 1.56, 0.64, 1)),
+    background-color 160ms ease;
 }
 
-.cta svg { transition: transform 200ms ease; }
-.cta:hover { transform: translateY(-3px) rotate(-1.5deg); box-shadow: 0 9px 0 var(--party-ink); }
+.cta svg { transition: transform var(--dur-release, 320ms) var(--ease-spring, cubic-bezier(0.34, 1.56, 0.64, 1)); }
+.cta:hover { transform: translateY(-3px) rotate(-1.5deg); box-shadow: 0 9px 0 var(--party-ink); background: #FFEDBF; }
 .cta:hover svg { transform: translateX(4px); }
-.cta:active { transform: translateY(4px); box-shadow: 0 2px 0 var(--party-ink); }
+/* Press: squash wide and short into the shadow, fast and damped. */
+.cta:active {
+  transform: translateY(4px) scale(1.03, 0.94);
+  box-shadow: 0 2px 0 var(--party-ink);
+  transition-duration: var(--dur-press, 80ms), var(--dur-press, 80ms), 160ms;
+  transition-timing-function: var(--ease-out, cubic-bezier(0.22, 1, 0.36, 1));
+}
+.cta:active svg { transform: translateX(6px); transition-duration: var(--dur-press, 80ms); }
 .cta:focus-visible { outline: 3px solid var(--party-butter); outline-offset: 4px; }
 
 /* ── Link columns ─────────────────────────────────────────────────────── */
@@ -180,6 +208,7 @@
 }
 
 .linkRow:hover { color: var(--party-butter); transform: translateX(2px); }
+.linkRow:active { transform: translate(2px, 1px); transition-duration: var(--dur-press, 80ms); }
 .linkRow:focus-visible { outline: 3px solid var(--party-butter); outline-offset: 2px; border-radius: 4px; }
 
 .dot { width: 0.6rem; height: 0.6rem; border-radius: 999px; display: inline-block; border: 1px solid rgba(0, 0, 0, 0.25); flex-shrink: 0; }
@@ -205,6 +234,8 @@
 
 @media (prefers-reduced-motion: reduce) {
   .doodle { animation: none; }
-  .cta:hover { transform: none; }
-  .linkRow:hover { transform: none; }
+  .waveWobble { animation: none; }
+  .cta:hover, .cta:active { transform: none; }
+  .cta:hover svg, .cta:active svg { transform: none; }
+  .linkRow:hover, .linkRow:active { transform: none; }
 }

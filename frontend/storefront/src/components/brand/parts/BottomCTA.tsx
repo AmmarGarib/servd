@@ -1,5 +1,9 @@
 'use client'
 import Link from 'next/link'
+import { pressArrowClass, pressClass, pressReleaseHandlers } from '../BrandShell'
+
+// The Order button presses like the brand's own material (rubber / enamel /
+// sticker / linen — see pressMaterial in BrandShell). Colours stay inline.
 
 interface Props {
   brandName: string
@@ -26,6 +30,8 @@ export function BottomCTA({ brandName, brandSlug, accent }: Props) {
         </p>
         <Link
           href={`/${brandSlug}`}
+          className={pressClass(brandSlug)}
+          {...pressReleaseHandlers}
           style={{
             display: 'inline-flex',
             alignItems: 'center',
@@ -40,7 +46,7 @@ export function BottomCTA({ brandName, brandSlug, accent }: Props) {
             letterSpacing: '-0.01em',
           }}
         >
-          Order from {brandName} →
+          Order from {brandName}&nbsp;<span aria-hidden="true" className={pressArrowClass}>→</span>
         </Link>
       </div>
     </section>

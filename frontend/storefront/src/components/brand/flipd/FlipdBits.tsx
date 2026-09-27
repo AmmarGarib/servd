@@ -2,28 +2,28 @@
 // Small shared pieces for the Flipd microsite: the crowd, the order button
 // that makes the crowd cheer, the marquee, word drops and the marker doodles.
 
-import dynamic from 'next/dynamic'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import type { CSSProperties, ReactNode, MouseEvent as ReactMouseEvent } from 'react'
 import { emitCrowd } from '../../characters/crowdBus'
+import { FoodCrowd } from '../../characters/FoodCrowd'
 import type { CharacterKind } from '../../characters/types'
 import { useSectionMotion } from './useFlipdMotion'
 import s from './flipd.module.css'
 
-// three.js is client-only and code-split: the page is complete and usable
-// before it arrives, and without WebGL the crowd simply is not there.
-const FoodCrowd = dynamic(
-  () => import('../../characters/FoodCrowd').then((m) => m.FoodCrowd),
-  { ssr: false },
-)
+// FoodCrowd is imported directly, not through next/dynamic: the component
+// itself is tiny (it loads three.js lazily inside an effect), and rendering
+// it on the server means its flat poster is in the very first paint. The
+// old ssr:false wrapper left the counter empty until a chunk arrived — the
+// "stools floating in mustard" frame.
 
 export const FLIPD_CAST: CharacterKind[] = ['fries', 'burger', 'shake']
 
 /**
  * The court-side crowd, standing on a diner counter. Decorative
  * (aria-hidden, no pointer events); the parent box sets the size — wide and
- * short suits it.
+ * short suits it. It mounts with its section at whatever excitement it is
+ * given; the 3D cast cross-fades in over the poster when ready.
  */
 export function FlipdCrowd({
   excitement = 0,

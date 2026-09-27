@@ -80,6 +80,26 @@
   --stackd-body:             'Inter', system-ui, sans-serif;
   --stackd-mono:             'JetBrains Mono', 'Courier New', monospace;
 
+  /* ── servd hub "party" palette — the rubber-and-butter material the hub
+        pages are made of. Brand tokens above stay untouched. ─────────── */
+  --party-butter:       #FFD447;
+  --party-butter-deep:  #F4C22E;
+  --party-cream:        #FFF4D6;
+  --party-plum:         #4E2A4F;
+  --party-ink:          #2A1A2B;
+  --party-ink-mute:     #5C4A3D;
+  --party-tomato:       #FF5A3C;
+
+  /* ── Motion tokens — the CSS mirror of src/lib/tactile (SPRING/EASE_*).
+        Press is quick and damped; release overshoots like rubber; heavy is
+        for weighted materials (simmer ceramic, sheets). ──────────────── */
+  --ease-out:           cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-spring:        cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-heavy:         cubic-bezier(0.65, 0, 0.35, 1);
+  --dur-press:          80ms;
+  --dur-release:        320ms;
+  --dur-pop:            420ms;
+
   /* ── Per-brand microsite component classes (moved out of <style jsx>
         because Next.js standalone build doesn't transpile styled-jsx in
         app-router server boundaries reliably) ─────────────────────────── */
@@ -106,12 +126,31 @@ summary:focus-visible {
   border-radius: 6px;
 }
 
+/* Reduced motion, two tiers — calmer, never dead.
+   Tier 1: every animation and smooth scroll is cut, and transitions are
+   instant by default.
+   Tier 2: interactive elements keep their colour / shadow / opacity
+   feedback at a short 120ms so a press still visibly lands, but any
+   hover or press TRANSFORM is removed. */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
+  }
+  button, a, input, select, textarea, [role="button"], .t-squish, .t-rubber, .servd-card {
+    transition-property: color, background-color, border-color, opacity, box-shadow, outline-color !important;
+    transition-duration: 120ms !important;
+    transition-timing-function: ease-out !important;
+  }
+  .servd-btn-primary:hover, .servd-btn-primary:active,
+  .servd-btn-secondary:hover, .servd-btn-secondary:active,
+  .servd-btn-dark:hover, .servd-btn-dark:active,
+  .t-squish:hover, .t-squish:active,
+  .t-rubber:hover, .t-rubber:active,
+  .servd-card:hover, .servd-card:active {
+    transform: none !important;
   }
 }
 
@@ -1585,57 +1624,211 @@ a { color: inherit; }
 
 /* ── Buttons ─────────────────────────────────────────────────────────────── */
 
-.servd-btn-primary {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.5rem;
-  background: var(--servd-green);
-  color: white;
-  font-weight: 800;
-  padding: 0.85rem 1.75rem;
-  border-radius: 999px;
-  border: none;
-  cursor: pointer;
-  text-decoration: none;
-  transition: background 120ms ease, transform 120ms ease;
-  letter-spacing: -0.005em;
-}
-.servd-btn-primary:hover { background: var(--servd-green-dark); color: white; }
-.servd-btn-primary:active { transform: scale(0.98); }
-
-.servd-btn-secondary {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.5rem;
-  background: transparent;
-  color: white;
-  font-weight: 600;
-  padding: 0.85rem 1.5rem;
-  border-radius: 999px;
-  border: 1px solid var(--servd-line);
-  cursor: pointer;
-  text-decoration: none;
-  transition: background 120ms ease;
-}
-.servd-btn-secondary:hover { background: var(--servd-surface); }
-
+/* One press model for all three: lift on hover, squash wide-and-short on
+   press (quick, --dur-press), and spring back past rest on release
+   (--dur-release on --ease-spring). The release timing lives on the base
+   rule; :active swaps in the short press duration. */
+.servd-btn-primary,
+.servd-btn-secondary,
 .servd-btn-dark {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 0.5rem;
+  border-radius: 999px;
+  cursor: pointer;
+  text-decoration: none;
+  transform-origin: 50% 100%;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  transition:
+    transform var(--dur-release, 320ms) var(--ease-spring, cubic-bezier(0.34, 1.56, 0.64, 1)),
+    background-color 160ms ease,
+    color 160ms ease,
+    border-color 160ms ease,
+    box-shadow 160ms ease;
+}
+@media (hover: hover) {
+  .servd-btn-primary:hover,
+  .servd-btn-secondary:hover,
+  .servd-btn-dark:hover { transform: translateY(-2px); }
+}
+.servd-btn-primary:active,
+.servd-btn-secondary:active,
+.servd-btn-dark:active {
+  transform: translateY(2px) scale(1.02, 0.95);
+  transition-duration: var(--dur-press, 80ms), 160ms, 160ms, 160ms, 160ms;
+  transition-timing-function: var(--ease-out, cubic-bezier(0.22, 1, 0.36, 1)), ease, ease, ease, ease;
+}
+.servd-btn-primary:focus-visible,
+.servd-btn-secondary:focus-visible,
+.servd-btn-dark:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(42, 26, 43, 0.35);
+  box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 35%, transparent);
+}
+/* A busy button keeps full colour; it just stops squashing. */
+.servd-btn-primary[aria-busy="true"],
+.servd-btn-secondary[aria-busy="true"],
+.servd-btn-dark[aria-busy="true"] { cursor: progress; }
+
+.servd-btn-primary {
+  background: var(--servd-green);
+  color: white;
+  font-weight: 800;
+  padding: 0.85rem 1.75rem;
+  border: none;
+  letter-spacing: -0.005em;
+}
+.servd-btn-primary:hover { background: var(--servd-green-dark); color: white; }
+
+/* A real secondary: cream fill, ink text, a thin ink rim and a small hard
+   shadow that flattens on press. Reads on white, plum and brand fields
+   alike, so pages no longer need inline grey overrides. */
+.servd-btn-secondary {
+  background: var(--party-cream, #FFF4D6);
+  color: var(--party-ink, #2A1A2B);
+  font-weight: 700;
+  padding: 0.85rem 1.5rem;
+  border: 1.5px solid var(--party-ink, #2A1A2B);
+  box-shadow: 0 3px 0 var(--party-ink, #2A1A2B);
+}
+.servd-btn-secondary:hover {
+  background: #FFEDBF;
+  color: var(--party-ink, #2A1A2B);
+  box-shadow: 0 5px 0 var(--party-ink, #2A1A2B);
+}
+.servd-btn-secondary:active { box-shadow: 0 1px 0 var(--party-ink, #2A1A2B); }
+.servd-btn-secondary:focus-visible {
+  box-shadow: 0 3px 0 var(--party-ink, #2A1A2B), 0 0 0 5px rgba(42, 26, 43, 0.35);
+  box-shadow: 0 3px 0 var(--party-ink, #2A1A2B), 0 0 0 5px color-mix(in srgb, currentColor 35%, transparent);
+}
+.servd-btn-secondary:disabled,
+.servd-btn-secondary[aria-disabled="true"]:not([aria-busy="true"]) {
+  cursor: not-allowed;
+  box-shadow: none;
+  opacity: 0.6;
+  transform: none;
+}
+
+.servd-btn-dark {
   background: var(--servd-black);
   color: white;
   font-weight: 700;
   padding: 0.85rem 1.75rem;
-  border-radius: 999px;
   border: none;
-  cursor: pointer;
-  text-decoration: none;
 }
 .servd-btn-dark:hover { background: var(--servd-ink); }
+
+/* ── Tactile utilities ────────────────────────────────────────────────────
+   .t-squish  the press model for any element (no look of its own)
+   .t-rubber  the full servd rubber surface: ink rim, hard offset shadow
+   .t-jelly   one-shot jelly wobble (add the class, remove on animationend)
+   .t-shake   one-shot error shake
+   .t-pop-in  spring entrance
+   ──────────────────────────────────────────────────────────────────────── */
+.t-squish {
+  transform-origin: 50% 100%;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  transition: transform var(--dur-release, 320ms) var(--ease-spring, cubic-bezier(0.34, 1.56, 0.64, 1));
+}
+@media (hover: hover) {
+  .t-squish:hover { transform: translateY(-2px); }
+}
+.t-squish:active {
+  transform: translateY(2px) scale(1.02, 0.95);
+  transition-duration: var(--dur-press, 80ms);
+  transition-timing-function: var(--ease-out, cubic-bezier(0.22, 1, 0.36, 1));
+}
+
+.t-rubber {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  /* --rubber-bg / --rubber-fg let a caller recolour the fill (e.g. a plum
+     Sign in pill) without losing the ink rim and shadow. */
+  background: var(--rubber-bg, var(--party-cream, #FFF4D6));
+  color: var(--rubber-fg, var(--party-ink, #2A1A2B));
+  border: 2.5px solid var(--party-ink, #2A1A2B);
+  border-radius: 999px;
+  box-shadow: 0 6px 0 var(--party-ink, #2A1A2B);
+  cursor: pointer;
+  text-decoration: none;
+  transform-origin: 50% 100%;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  transition:
+    transform var(--dur-release, 320ms) var(--ease-spring, cubic-bezier(0.34, 1.56, 0.64, 1)),
+    box-shadow var(--dur-release, 320ms) var(--ease-spring, cubic-bezier(0.34, 1.56, 0.64, 1)),
+    background-color 160ms ease,
+    color 160ms ease;
+}
+@media (hover: hover) {
+  .t-rubber:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 9px 0 var(--party-ink, #2A1A2B);
+  }
+}
+.t-rubber:active {
+  transform: translateY(4px) scale(1.03, 0.94);
+  box-shadow: 0 2px 0 var(--party-ink, #2A1A2B);
+  transition-duration: var(--dur-press, 80ms), var(--dur-press, 80ms), 160ms, 160ms;
+  transition-timing-function: var(--ease-out, cubic-bezier(0.22, 1, 0.36, 1));
+}
+.t-rubber:focus-visible {
+  outline: 3px solid var(--party-butter-deep, #F4C22E);
+  outline-offset: 3px;
+}
+.t-rubber:disabled,
+.t-rubber[aria-disabled="true"]:not([aria-busy="true"]) {
+  cursor: not-allowed;
+  opacity: 0.55;
+  box-shadow: 0 2px 0 var(--party-ink, #2A1A2B);
+  transform: translateY(4px);
+}
+
+.t-jelly { animation: t-jelly 500ms ease-out 1 both; }
+.t-shake { animation: t-shake 380ms ease-out 1 both; }
+.t-pop-in { animation: t-pop-in var(--dur-pop, 420ms) var(--ease-spring, cubic-bezier(0.34, 1.56, 0.64, 1)) 1 both; }
+
+@keyframes t-jelly {
+  0%   { transform: scale(1, 1); }
+  20%  { transform: scale(1.14, 0.86); }
+  40%  { transform: scale(0.92, 1.08); }
+  60%  { transform: scale(1.04, 0.97); }
+  80%  { transform: scale(0.99, 1.01); }
+  100% { transform: scale(1, 1); }
+}
+@keyframes t-shake {
+  0%, 100% { transform: translateX(0); }
+  16%  { transform: translateX(-7px); }
+  33%  { transform: translateX(7px); }
+  50%  { transform: translateX(-5px); }
+  66%  { transform: translateX(5px); }
+  83%  { transform: translateX(-2px); }
+}
+@keyframes t-pop-in {
+  from { opacity: 0; transform: scale(0.6); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+/* ── servd nav chrome ──────────────────────────────────────────────────────
+   The wordmark leans 2px toward the pointer on hover; the "s" dot's jelly
+   is driven from StorefrontNav (.t-jelly on hover / tap). */
+.servd-nav-wordmark {
+  display: inline-block;
+  transition: transform var(--dur-release, 320ms) var(--ease-spring, cubic-bezier(0.34, 1.56, 0.64, 1));
+}
+@media (hover: hover) {
+  .servd-nav-home:hover .servd-nav-wordmark { transform: translateX(2px); }
+}
+.servd-nav-home:active .servd-nav-wordmark { transform: translateX(2px) translateY(1px); }
+@media (prefers-reduced-motion: reduce) {
+  .servd-nav-home:hover .servd-nav-wordmark,
+  .servd-nav-home:active .servd-nav-wordmark { transform: none; }
+}
 
 /* ── Cards ──────────────────────────────────────────────────────────────── */
 
@@ -1644,12 +1837,19 @@ a { color: inherit; }
   border: 1px solid var(--servd-line);
   border-radius: 1rem;
   overflow: hidden;
-  transition: transform 180ms cubic-bezier(0.22, 1, 0.36, 1),
+  transition: transform var(--dur-release, 320ms) var(--ease-spring, cubic-bezier(0.34, 1.56, 0.64, 1)),
               box-shadow 180ms cubic-bezier(0.22, 1, 0.36, 1);
 }
-.servd-card:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 8px 24px rgba(0,0,0,0.08);
+@media (hover: hover) {
+  .servd-card:hover {
+    transform: translateY(-3px) rotate(-0.3deg);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.08);
+  }
+}
+.servd-card:active {
+  transform: translateY(0) scale(0.985);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+  transition-duration: 80ms, 80ms;
 }
 
 /* ── Inputs ─────────────────────────────────────────────────────────────── */
@@ -1662,9 +1862,25 @@ a { color: inherit; }
   font: inherit;
   background: white;
   color: var(--servd-ink);
+  box-shadow: 0 0 0 0 rgba(78, 42, 79, 0);
+  transition:
+    border-color 160ms ease,
+    box-shadow 200ms var(--ease-out, cubic-bezier(0.22, 1, 0.36, 1));
 }
 .servd-input::placeholder { color: var(--servd-dim); }
-.servd-input:focus { outline: 2px solid var(--servd-green-dark); outline-offset: -1px; border-color: var(--servd-green-dark); }
+/* Focus grows a soft plum ring instead of swapping in a hard outline. */
+.servd-input:focus {
+  outline: none;
+  border-color: var(--party-plum, #4E2A4F);
+  box-shadow: 0 0 0 4px rgba(78, 42, 79, 0.18);
+}
+.servd-input[aria-invalid="true"] {
+  border-color: var(--party-tomato, #FF5A3C);
+}
+.servd-input[aria-invalid="true"]:focus {
+  border-color: var(--party-tomato, #FF5A3C);
+  box-shadow: 0 0 0 4px rgba(255, 90, 60, 0.2);
+}
 
 /* ── Subtle ambient accents ─────────────────────────────────────────────── */
 
@@ -1857,7 +2073,10 @@ a { color: inherit; }
   border: none;
   cursor: pointer;
   text-decoration: none;
-  transition: transform 160ms cubic-bezier(0.22, 1, 0.36, 1),
+  transform-origin: 50% 100%;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  transition: transform var(--dur-release, 320ms) var(--ease-spring, cubic-bezier(0.34, 1.56, 0.64, 1)),
               box-shadow 160ms cubic-bezier(0.22, 1, 0.36, 1),
               background 160ms ease;
   box-shadow: 0 8px 24px -8px color-mix(in srgb, var(--brand-accent) 60%, transparent);
@@ -1866,7 +2085,15 @@ a { color: inherit; }
   transform: translateY(-2px) scale(1.02);
   box-shadow: 0 16px 32px -10px color-mix(in srgb, var(--brand-accent) 70%, transparent);
 }
-.brand-pill:active { transform: translateY(0) scale(0.99); }
+/* Rubber press: squash wide-and-short on the way down (fast, damped), and
+   spring back past rest on release (the base transition). */
+.brand-pill:active {
+  transform: translateY(2px) scale(1.03, 0.94);
+  transition-duration: var(--dur-press, 80ms), var(--dur-press, 80ms), 160ms;
+}
+@media (prefers-reduced-motion: reduce) {
+  .brand-pill:hover, .brand-pill:active { transform: none !important; }
+}
 
 .brand-pill-outline {
   display: inline-flex;

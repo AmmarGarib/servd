@@ -1,0 +1,220 @@
+/* Brand chrome — the interactive states for the pieces of brand UI that are
+   otherwise inline-styled (the Order pill in the brand header, the standalone
+   brand Order pill, BottomCTA, the page-builder CtaButton, the open-now dot).
+   Inline styles cannot express :hover / :active, so the COLOURS stay inline at
+   the call site and only the motion lives here.
+
+   Each brand presses like its own material:
+     rubber  (servd / generic) squash wide-and-short, spring past rest
+     enamel  (flipd)           a hard 2px clack, no bounce; the arrow nudges
+     sticker (stackd)          press flat, then re-stick with a tiny squash
+     linen   (simmer)          a weighted 1px press, slow heavy release, no
+                               scale, no bounce, no colour change
+
+   Hover transforms are gated to real hover devices so a tap never leaves a
+   pill stuck in its lifted state; every press works on touch via :active
+   (GlobalTactile switches :active on for iOS). */
+
+/* ── Shared press base ──────────────────────────────────────────────────── */
+.press {
+  transform-origin: 50% 100%;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  will-change: transform;
+}
+.arrow {
+  display: inline-block;
+  transition: transform var(--dur-release, 320ms) var(--ease-out, cubic-bezier(0.22, 1, 0.36, 1));
+}
+
+/* ── rubber (servd hub + any brand without its own material) ─────────── */
+.press.rubber {
+  transition:
+    transform var(--dur-release, 320ms) var(--ease-spring, cubic-bezier(0.34, 1.56, 0.64, 1)),
+    box-shadow var(--dur-release, 320ms) var(--ease-spring, cubic-bezier(0.34, 1.56, 0.64, 1));
+}
+@media (hover: hover) {
+  /* doubled class beats the global .brand-pill:hover regardless of order */
+  .press.rubber:hover { transform: translateY(-3px); }
+  .press.rubber:hover .arrow { transform: translateX(3px); }
+}
+.press.rubber:active {
+  transform: translateY(3px) scale(1.03, 0.94);
+  transition-duration: var(--dur-press, 80ms);
+  transition-timing-function: var(--ease-out, cubic-bezier(0.22, 1, 0.36, 1));
+}
+
+/* ── enamel (flipd): a diner-counter clack ────────────────────────────── */
+.press.enamel {
+  transition: transform 140ms cubic-bezier(0.2, 0, 0, 1);
+}
+@media (hover: hover) {
+  .press.enamel:hover .arrow { transform: translateX(3px); }
+}
+.press.enamel:active {
+  transform: translateY(2px);
+  transition-duration: 40ms;
+  transition-timing-function: linear;
+}
+.press.enamel:active .arrow { transform: translateX(3px); transition-duration: 40ms; }
+
+/* ── sticker (stackd): peel a touch on hover, press flat, re-stick ────── */
+.press.sticker {
+  transition: transform 220ms var(--ease-out, cubic-bezier(0.22, 1, 0.36, 1));
+}
+@media (hover: hover) {
+  .press.sticker:hover { transform: translateY(-1px) rotate(-1.2deg); }
+  .press.sticker:hover .arrow { transform: translateX(2px); }
+}
+.press.sticker:active {
+  transform: translateY(1px) rotate(0deg);
+  transition-duration: var(--dur-press, 80ms);
+}
+/* Released: data-released is set on pointerup (see pressRelease in
+   BrandShell) and cleared on animationend — one small squash as the
+   sticker sticks back down. */
+.press.sticker[data-released] {
+  animation: restick 300ms var(--ease-spring, cubic-bezier(0.34, 1.56, 0.64, 1)) 1;
+}
+@keyframes restick {
+  0%   { transform: translateY(1px) scale(1.02, 0.97); }
+  100% { transform: translateY(0) scale(1, 1); }
+}
+
+/* ── linen (simmer): weighted, quiet, no bounce ───────────────────────── */
+.press.linen {
+  transition: transform 400ms var(--ease-heavy, cubic-bezier(0.65, 0, 0.35, 1));
+}
+.linen .arrow {
+  transition: transform 400ms var(--ease-heavy, cubic-bezier(0.65, 0, 0.35, 1));
+}
+@media (hover: hover) {
+  .press.linen:hover .arrow { transform: translateX(2px); }
+}
+.press.linen:active {
+  transform: translateY(1px);
+  transition-duration: 180ms;
+}
+
+/* ── Brand nav links: a 1px press ─────────────────────────────────────── */
+.navLink {
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+.navLink:active {
+  transform: translateY(1px);
+}
+
+/* ── Page-builder CtaButton ───────────────────────────────────────────── */
+.cta {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45em;
+  text-align: center;
+  font-weight: 900;
+  letter-spacing: -0.01em;
+  border-radius: 999px;
+  text-decoration: none;
+  cursor: pointer;
+  background: var(--cta-bg);
+  color: var(--cta-fg);
+  border: var(--cta-border);
+  box-shadow: var(--cta-shadow);
+  transform-origin: 50% 100%;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  transition:
+    transform var(--dur-release, 320ms) var(--ease-spring, cubic-bezier(0.34, 1.56, 0.64, 1)),
+    box-shadow 200ms var(--ease-out, cubic-bezier(0.22, 1, 0.36, 1)),
+    background-color 160ms ease;
+}
+@media (hover: hover) {
+  .cta:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--cta-shadow-hover);
+  }
+  .cta:hover .arrow { transform: translateX(3px); }
+}
+.cta:active {
+  transform: translateY(2px) scale(1.02, 0.95);
+  box-shadow: var(--cta-shadow-press);
+  transition-duration: var(--dur-press, 80ms), var(--dur-press, 80ms), 160ms;
+  transition-timing-function: var(--ease-out, cubic-bezier(0.22, 1, 0.36, 1));
+}
+.cta:focus-visible {
+  outline: 3px solid var(--cta-ring, var(--servd-green));
+  outline-offset: 3px;
+}
+
+.ctaPrimary {
+  --cta-bg: var(--servd-green);
+  --cta-fg: #fff;
+  --cta-border: none;
+  --cta-shadow: 0 14px 36px rgba(58, 14, 105, 0.4);
+  --cta-shadow-hover: 0 20px 44px rgba(58, 14, 105, 0.48);
+  --cta-shadow-press: 0 6px 16px rgba(58, 14, 105, 0.34);
+}
+.ctaPrimary:hover { background-color: var(--servd-green-dark); }
+.ctaSecondary {
+  --cta-bg: #fff;
+  --cta-fg: var(--servd-ink);
+  --cta-border: 1px solid var(--servd-line);
+  --cta-shadow: 0 0 0 rgba(0, 0, 0, 0);
+  --cta-shadow-hover: 0 10px 24px rgba(0, 0, 0, 0.1);
+  --cta-shadow-press: 0 2px 6px rgba(0, 0, 0, 0.08);
+}
+.ctaDark {
+  --cta-bg: #0a0a0a;
+  --cta-fg: #fff;
+  --cta-border: none;
+  --cta-ring: #0a0a0a;
+  --cta-shadow: 0 12px 30px rgba(0, 0, 0, 0.25);
+  --cta-shadow-hover: 0 18px 38px rgba(0, 0, 0, 0.32);
+  --cta-shadow-press: 0 4px 12px rgba(0, 0, 0, 0.22);
+}
+.ctaGhost {
+  --cta-bg: transparent;
+  --cta-fg: var(--servd-ink);
+  --cta-border: 1px solid transparent;
+  --cta-shadow: 0 0 0 rgba(0, 0, 0, 0);
+  --cta-shadow-hover: 0 0 0 rgba(0, 0, 0, 0);
+  --cta-shadow-press: 0 0 0 rgba(0, 0, 0, 0);
+}
+.ctaGhost:hover { border-color: var(--servd-line); }
+
+/* ── Open-now dot: breathes while open ────────────────────────────────── */
+.dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: currentColor;
+}
+.breathe {
+  animation: breathe 2.2s ease-out infinite;
+}
+@keyframes breathe {
+  0%   { box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 55%, transparent); }
+  70%  { box-shadow: 0 0 0 6px color-mix(in srgb, currentColor 0%, transparent); }
+  100% { box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 0%, transparent); }
+}
+
+/* ── Reduced motion: colour and shadow only ───────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  .press,
+  .press:hover,
+  .press:active,
+  .press .arrow,
+  .navLink:active,
+  .cta:hover,
+  .cta:active,
+  .cta .arrow {
+    transform: none !important;
+  }
+  .press.sticker[data-released],
+  .breathe {
+    animation: none !important;
+  }
+}

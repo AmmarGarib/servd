@@ -1,7 +1,8 @@
 /* simmer — the walk-in. Styles for SpeakeasyFridgeHero.
  *
  * The component writes eased scroll phases as custom properties on .walkin:
- *   --handle  0→1  the lever turns down
+ *   --handle  0→1  the lever turns down (lerped toward the scroll, so the
+ *                  heavy lever lags a touch behind the wheel)
  *   --door    0→120 degrees the door has swung (crack, then the heavy swing)
  *   --vapor   0→1  cold air spilling out of the seal, along the floor
  *   --inside  0→1  the interior drawing, visible once the seal breaks
@@ -338,6 +339,10 @@
   font-size: max(0.7rem, 2.5cqw);
   padding-left: max(1rem, 3.4cqw);
   padding-right: max(1rem, 3.4cqw);
+  /* The linen press (1px sink + inset line, from simmer.module.css .btn /
+     .btnSolid) is the tap feedback here; the platform's grey tap flash
+     would be a second, off-palette colour on top of it. */
+  -webkit-tap-highlight-color: transparent;
 }
 .floor {
   position: absolute;

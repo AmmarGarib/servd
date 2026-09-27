@@ -9,9 +9,9 @@
 // sign instead of a pill. Until the hours land it shows the "Today"
 // fallback, exactly like the pill did.
 import Link from 'next/link'
-import { motion, useReducedMotion } from 'framer-motion'
+import { motion, useInView, useReducedMotion } from 'framer-motion'
 import { ArrowRight, MapPin, MessageCircle } from 'lucide-react'
-import type { CSSProperties } from 'react'
+import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { useHoursData } from '../../brand/parts/OpenStatusBadge'
 import { locationFor, whatsappLink } from '../../../lib/brandLocations'
 import s from './home.module.css'
@@ -62,21 +62,70 @@ function NeonSign({ slug }: { slug: string }) {
   )
 }
 
-function Tiles({ text, delay }: { text: string; delay: number }) {
-  const reduce = useReducedMotion()
+// ── Split-flap ──────────────────────────────────────────────────────────
+// Each tile is two static halves plus, while a change is running, two flaps:
+// the old top half falls forward around its bottom edge (the hinge), then
+// the new bottom half swings down from the hinge and clacks into place. The
+// seam line sits exactly on the hinge. Flaps are CSS keyframes keyed by a
+// flip counter, so each change restarts them without any JS per frame.
+const BLANK = '\u00a0'
+
+function Half({ ch, side, flap }: { ch: string; side: 'top' | 'bottom'; flap?: boolean }) {
+  const cls = [k.half, side === 'top' ? k.top : k.bottom, flap ? (side === 'top' ? k.flapTop : k.flapBottom) : '']
+    .filter(Boolean)
+    .join(' ')
   return (
-    <span className={k.tiles} aria-hidden>
+    <span className={cls}>
+      <span className={k.glyph}>{ch}</span>
+    </span>
+  )
+}
+
+function FlapTile({ ch, armed, delay }: { ch: string; armed: boolean; delay: number }) {
+  const reduce = useReducedMotion()
+  const [face, setFace] = useState<{ cur: string; prev: string; n: number }>({ cur: BLANK, prev: BLANK, n: 0 })
+
+  useEffect(() => {
+    if (!armed) return
+    const target = ch === ' ' ? BLANK : ch
+    if (reduce) {
+      setFace((f) => ({ cur: target, prev: target, n: f.n }))
+      return
+    }
+    const id = window.setTimeout(() => {
+      setFace((f) => (f.cur === target ? f : { cur: target, prev: f.cur, n: f.n + 1 }))
+    }, delay * 1000)
+    return () => window.clearTimeout(id)
+  }, [armed, ch, delay, reduce])
+
+  const flipping = face.n > 0 && !reduce
+  return (
+    <motion.span
+      className={k.tile}
+      initial={{ rotateX: -18, opacity: 0.001 }}
+      animate={armed ? { rotateX: 0, opacity: 1 } : { rotateX: -18, opacity: 0.001 }}
+      transition={reduce ? { duration: 0 } : { rotateX: { type: 'spring', stiffness: 420, damping: 22, delay }, opacity: { duration: 0.16, delay } }}
+    >
+      <Half ch={face.cur} side="top" />
+      {/* Until the falling bottom flap lands, the old bottom half shows. */}
+      <Half ch={flipping ? face.prev : face.cur} side="bottom" />
+      {flipping && (
+        <span key={face.n} className={k.flaps}>
+          <Half ch={face.prev} side="top" flap />
+          <Half ch={face.cur} side="bottom" flap />
+        </span>
+      )}
+    </motion.span>
+  )
+}
+
+function Tiles({ text, delay }: { text: string; delay: number }) {
+  const ref = useRef<HTMLSpanElement>(null)
+  const armed = useInView(ref, { once: true, amount: 0.2, margin: '0px 0px -8% 0px' })
+  return (
+    <span ref={ref} className={k.tiles} aria-hidden>
       {Array.from(text).map((ch, i) => (
-        <motion.span
-          key={`${ch}-${i}`}
-          className={k.tile}
-          initial={{ rotateX: -100, opacity: 0 }}
-          whileInView={{ rotateX: 0, opacity: 1 }}
-          viewport={{ once: true, amount: 0.8 }}
-          transition={reduce ? { duration: 0 } : { type: 'spring', stiffness: 260, damping: 16, delay: delay + i * 0.06 }}
-        >
-          {ch}
-        </motion.span>
+        <FlapTile key={i} ch={ch} armed={armed} delay={delay + i * 0.02} />
       ))}
     </span>
   )
@@ -102,10 +151,10 @@ export function KitchenBoard({ brands }: { brands: BoardBrand[] }) {
 
         <motion.div
           className={k.board}
-          initial={{ opacity: 0, y: 50, scale: 0.97 }}
+          initial={{ opacity: 0.001, y: 24, scale: 0.98 }}
           whileInView={{ opacity: 1, y: 0, scale: 1 }}
-          viewport={{ once: true, amount: 0.2 }}
-          transition={reduce ? { duration: 0 } : { type: 'spring', stiffness: 150, damping: 17 }}
+          viewport={{ once: true, amount: 0.2, margin: '0px 0px -8% 0px' }}
+          transition={reduce ? { duration: 0 } : { default: { type: 'spring', stiffness: 220, damping: 20 }, opacity: { duration: 0.2 } }}
         >
           <div className={k.boardHead} aria-hidden>
             <span>kitchen</span>
@@ -120,7 +169,7 @@ export function KitchenBoard({ brands }: { brands: BoardBrand[] }) {
                 <li key={b.id} className={k.row} style={{ '--signal': SIGNAL[b.slug] ?? '#FFD447' } as CSSProperties}>
                   <h3 className={k.name}>
                     <span className={s.srOnly}>{b.name}</span>
-                    <Tiles text={b.name} delay={0.15 + i * 0.25} />
+                    <Tiles text={b.name} delay={0.03 + i * 0.05} />
                   </h3>
                   <div className={k.where}>
                     {loc && !loc.area.startsWith('TODO') && (

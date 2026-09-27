@@ -3,8 +3,13 @@
 // scroll in. Each seal carries a small moving drawing in the brand's ink:
 // a pan that steams, a sandwich that stacks itself, a glass being poured,
 // a bag swinging on its way out. Loops run only while the wall is on screen.
+//
+// Every seal is a real sticker under the finger: hover or press lifts it off
+// the wall (up a little, squared up, a deeper shadow, one corner catching the
+// light as it peels), and letting go presses it back down with a small jelly.
+// On touch a tap runs the whole lift-and-restick.
 
-import { useEffect, useState, type CSSProperties } from 'react'
+import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
 import { Die } from './Die'
 import { useInView } from './hooks'
 import s from './stickers.module.css'
@@ -102,6 +107,59 @@ function Vignette({ kind }: { kind: Kind }) {
   }
 }
 
+const RESTICK_MS = 420
+const LIFTED = s.lifted ?? 'lifted'
+const RESTICKING = s.resticking ?? 'resticking'
+const TAP_LIFT_MS = 170
+
+// Re-stick: restart the jelly on the sticker's body. Imperative on purpose,
+// so a press never re-renders the wall.
+function restick(li: HTMLElement) {
+  li.classList.remove(LIFTED)
+  li.classList.remove(RESTICKING)
+  // Force a reflow so the animation can replay from the top.
+  void li.offsetWidth
+  li.classList.add(RESTICKING)
+  const prev = Number(li.dataset.restickTimer)
+  if (prev) window.clearTimeout(prev)
+  li.dataset.restickTimer = String(window.setTimeout(() => {
+    li.classList.remove(RESTICKING)
+    delete li.dataset.restickTimer
+  }, RESTICK_MS))
+}
+
+function usePeel() {
+  const tapTimer = useRef<number | undefined>(undefined)
+  useEffect(() => () => window.clearTimeout(tapTimer.current), [])
+
+  const onPointerDown = (e: ReactPointerEvent<HTMLLIElement>) => {
+    const li = e.currentTarget
+    window.clearTimeout(tapTimer.current)
+    li.classList.remove(RESTICKING)
+    li.classList.add(LIFTED)
+    li.dataset.downAt = String(performance.now())
+  }
+  const release = (e: ReactPointerEvent<HTMLLIElement>) => {
+    const li = e.currentTarget
+    if (!li.classList.contains(LIFTED)) return
+    // A quick tap still shows the lift before it re-sticks.
+    const held = performance.now() - Number(li.dataset.downAt ?? 0)
+    const wait = Math.max(0, TAP_LIFT_MS - held)
+    window.clearTimeout(tapTimer.current)
+    if (wait > 0) tapTimer.current = window.setTimeout(() => restick(li), wait)
+    else restick(li)
+  }
+  const onPointerLeave = (e: ReactPointerEvent<HTMLLIElement>) => {
+    // Mouse leaving after a hover: the sticker settles back with the jelly.
+    if (e.pointerType === 'mouse' && !e.currentTarget.classList.contains(LIFTED)) {
+      restick(e.currentTarget)
+      return
+    }
+    release(e)
+  }
+  return { onPointerDown, onPointerUp: release, onPointerCancel: release, onPointerLeave }
+}
+
 export function StickerWall({ highlights }: { highlights: string[] }) {
   // Seen once -> the slap plays. On screen now -> the loops run.
   const { ref, inView } = useInView<HTMLElement>({ rootMargin: '0px 0px -15% 0px' })
@@ -112,6 +170,8 @@ export function StickerWall({ highlights }: { highlights: string[] }) {
     if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) setArmed(true)
   }, [])
   useEffect(() => { if (inView) setSeen(true) }, [inView])
+
+  const peel = usePeel()
 
   const cls = [s.wall, armed ? s.armed : '', seen ? s.seen : '', inView ? s.live : ''].filter(Boolean).join(' ')
 
@@ -124,12 +184,15 @@ export function StickerWall({ highlights }: { highlights: string[] }) {
         </div>
         <ul className={s.grid}>
           {highlights.map((h, i) => (
-            <li key={h} className={s.sticker} style={{ '--i': i } as CSSProperties}>
-              <Die className={s.die} face={i % 2 ? '#FFFFFF' : '#FCE8CE'} />
-              <div className={s.inner}>
-                <Vignette kind={kindFor(h)} />
-                <span className={s.num}>{String(i + 1).padStart(2, '0')}</span>
-                <p className={s.label}>{h}</p>
+            <li key={h} className={s.sticker} style={{ '--i': i } as CSSProperties} {...peel}>
+              <div className={s.body}>
+                <Die className={s.die} face={i % 2 ? '#FFFFFF' : '#FCE8CE'} />
+                <div className={s.inner}>
+                  <Vignette kind={kindFor(h)} />
+                  <span className={s.num}>{String(i + 1).padStart(2, '0')}</span>
+                  <p className={s.label}>{h}</p>
+                </div>
+                <span className={s.peel} aria-hidden />
               </div>
             </li>
           ))}
