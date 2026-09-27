@@ -759,6 +759,15 @@ async function build() {
   } catch (err) {
     fastify.log.warn(`[ledger] chart-of-accounts bootstrap skipped: ${(err as Error).message}`)
   }
+  // Supplier opening balances live in the ledger (Dr 3020 / Cr 2010). Post any
+  // that predate this, so AP aging and the ledger agree from the first boot.
+  try {
+    const { syncAllSupplierOpeningBalances } = await import('./modules/procurement/openingBalance.js')
+    const r = await syncAllSupplierOpeningBalances()
+    if (r.synced || r.failed.length) fastify.log.info(`[ap] supplier opening balances: ${r.synced} posted, ${r.failed.length} failed`)
+  } catch (err) {
+    fastify.log.warn(`[ap] supplier opening-balance sync skipped: ${(err as Error).message}`)
+  }
 
   if (workersEnabled) {
     startCartReleaseWorker()

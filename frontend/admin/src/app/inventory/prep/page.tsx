@@ -1,63 +1,114 @@
 'use client'
 // Prep batch logging — chef records what they used + what they made.
 // Yield variance < 85% fires an ExceptionFlag (skim signal).
+//
+// This is the ONE place prep is recorded (owner decision 29): the batch
+// deducts its ingredients, records the yield and feeds "made today" on the par
+// sheet. Pick the sub-recipe from the recipe library (the par sheet's list for
+// your company); its ingredients and expected yield are filled in for you, in
+// each ingredient's own stock unit, so a 200 g draw from a kg item deducts
+// 0.2 kg — not 200 kg.
 
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api } from '../../../lib/api'
 
 interface InventoryItem { id: string; name: string; unit: string; currentStock: number }
 interface DraftInput { inventoryItemId: string; qtyDrawn: number; unit: string }
-interface PrepBatch { id: string; itemName: string; actualYieldQty: number; expectedYieldQty: number | null; yieldVariancePct: number | null; createdAt: string; staffId: string }
+interface PrepBatch { id: string; itemName: string; actualYieldQty: number; expectedYieldQty: number | null; yieldVariancePct: number | null; createdAt: string; staffId: string; unit: string }
+interface PrepOption {
+  id: string; name: string; yieldGrams: number | null
+  inputs: Array<{ inventoryItemId: string | null; name: string; unit: string; qtyDrawn: number; missing: boolean }>
+  subPreps: Array<{ id: string; name: string | null; grams: number }>
+}
+
+const AD_HOC = '__ad_hoc__'
 
 export default function PrepBatchPage() {
   const qc = useQueryClient()
   const { data: items = [] } = useQuery<InventoryItem[]>({ queryKey: ['inventory'], queryFn: () => api.get('/inventory') })
+  const { data: preps = [] } = useQuery<PrepOption[]>({ queryKey: ['par-sheet', 'preps'], queryFn: () => api.get('/par-sheet/preps') })
   const { data: batches = [] } = useQuery<PrepBatch[]>({ queryKey: ['prep-batches'], queryFn: () => api.get('/crosschecks/prep-batches'), refetchInterval: 30_000 })
 
+  const [recipeId, setRecipeId] = useState('')
+  const [multiplier, setMultiplier] = useState(1)
   const [itemName, setItemName] = useState('')
   const [inputs, setInputs] = useState<DraftInput[]>([])
   const [expectedYieldQty, setExpectedYieldQty] = useState<number | ''>('')
   const [actualYieldQty, setActualYieldQty] = useState<number | ''>('')
-  const [unit, setUnit] = useState('g')
   const [photoUrl, setPhotoUrl] = useState('')
   const [notes, setNotes] = useState('')
   const [feedback, setFeedback] = useState<string | null>(null)
 
+  const itemById = useMemo(() => new Map(items.map((i) => [i.id, i])), [items])
+  const prep = preps.find((p) => p.id === recipeId)
+  const adHoc = recipeId === AD_HOC
+
+  // Fill the form from the sub-recipe × number of batches.
+  function applyRecipe(p: PrepOption | undefined, mult: number) {
+    if (!p) return
+    setItemName(p.name)
+    setInputs(p.inputs.filter((i) => i.inventoryItemId).map((i) => ({
+      inventoryItemId: i.inventoryItemId!, qtyDrawn: Math.round(i.qtyDrawn * mult * 1000) / 1000, unit: i.unit,
+    })))
+    setExpectedYieldQty(p.yieldGrams ? Math.round(p.yieldGrams * mult) : '')
+  }
+
+  // /inventory/prep?recipeId=<id> — opened from the par sheet's "Log batch".
+  useEffect(() => {
+    const id = new URLSearchParams(window.location.search).get('recipeId')
+    if (id && !recipeId && preps.some((p) => p.id === id)) {
+      setRecipeId(id)
+      applyRecipe(preps.find((p) => p.id === id), 1)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [preps])
+
   const submit = useMutation({
     mutationFn: () => api.post('/crosschecks/prep-batches', {
+      recipeId: adHoc || !recipeId ? null : recipeId,
       itemName, inputs,
       expectedYieldQty: expectedYieldQty === '' ? null : expectedYieldQty,
       actualYieldQty: actualYieldQty === '' ? 0 : actualYieldQty,
-      unit,
+      unit: 'g',
       photoUrl: photoUrl || null,
       notes: notes || null,
     }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['prep-batches'] })
       qc.invalidateQueries({ queryKey: ['inventory'] })
+      qc.invalidateQueries({ queryKey: ['par-sheet'] })
       qc.invalidateQueries({ queryKey: ['exceptions'] })
       const yieldPct = expectedYieldQty && actualYieldQty ? +actualYieldQty / +expectedYieldQty : null
       setFeedback(yieldPct != null && yieldPct < 0.85 ? '⚠️ Batch saved — low yield flagged.' : '✓ Batch logged, inventory deducted.')
+      setRecipeId(''); setMultiplier(1)
       setItemName(''); setInputs([]); setExpectedYieldQty(''); setActualYieldQty(''); setPhotoUrl(''); setNotes('')
       setTimeout(() => setFeedback(null), 5000)
     },
   })
 
-  function addInput() { setInputs([...inputs, { inventoryItemId: items[0]?.id ?? '', qtyDrawn: 0, unit: 'g' }]) }
+  function addInput() {
+    const first = items[0]
+    setInputs([...inputs, { inventoryItemId: first?.id ?? '', qtyDrawn: 0, unit: first?.unit ?? '' }])
+  }
   function patchInput(i: number, p: Partial<DraftInput>) { setInputs(inputs.map((x, idx) => idx === i ? { ...x, ...p } : x)) }
   function rmInput(i: number) { setInputs(inputs.filter((_, idx) => idx !== i)) }
 
   const yieldPct = expectedYieldQty && actualYieldQty && +expectedYieldQty > 0 ? (+actualYieldQty / +expectedYieldQty) * 100 : null
+  const missing = prep?.inputs.filter((i) => i.missing) ?? []
 
   return (
     <div className="min-h-screen" style={{ background: '#090a0e' }}>
       <header className="px-7 py-6 border-b border-white/[0.05]">
-        <Link href="/inventory" className="text-xs text-white/40 hover:text-white/70">← Inventory</Link>
+        <div className="flex gap-4 text-xs">
+          <Link href="/inventory" className="text-white/40 hover:text-white/70">← Inventory</Link>
+          <Link href="/par-sheet" className="text-white/40 hover:text-white/70">Par sheet</Link>
+        </div>
         <h1 className="text-2xl font-black text-white/90 mt-2">🥣 Prep batch log</h1>
         <p className="text-sm text-white/40 mt-1 max-w-2xl">
-          Record what you drew from inventory + what you made. Low-yield batches (under 85%) auto-flag to the owner inbox.
+          Record what you drew from inventory + what you made. This is the only place prep is recorded: it deducts the
+          ingredients and shows on the par sheet. Low-yield batches (under 85%) auto-flag to the owner inbox.
         </p>
       </header>
 
@@ -72,18 +123,56 @@ export default function PrepBatchPage() {
         )}
 
         <Section title="What did you make?">
-          <Field label="Prep name *">
-            <input value={itemName} onChange={(e) => setItemName(e.target.value)} placeholder="Confit garlic aioli" className={fieldCls} />
-          </Field>
+          <div className="grid grid-cols-[1fr_120px] gap-3">
+            <Field label="Sub-recipe *">
+              <select value={recipeId} className={fieldCls}
+                onChange={(e) => {
+                  const id = e.target.value
+                  setRecipeId(id)
+                  if (id === AD_HOC || !id) { setItemName(''); setInputs([]); setExpectedYieldQty('') }
+                  else applyRecipe(preps.find((p) => p.id === id), multiplier)
+                }}>
+                <option value="">— pick from the recipe library —</option>
+                {preps.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                <option value={AD_HOC}>Other (not in the recipe library)</option>
+              </select>
+            </Field>
+            {!adHoc && (
+              <Field label="Batches">
+                <input type="number" min={0.25} step={0.25} value={multiplier} className={fieldCls}
+                  onChange={(e) => {
+                    const m = parseFloat(e.target.value) || 1
+                    setMultiplier(m)
+                    applyRecipe(prep, m)
+                  }} />
+              </Field>
+            )}
+          </div>
+          {adHoc && (
+            <div className="mt-3">
+              <Field label="Prep name *">
+                <input value={itemName} onChange={(e) => setItemName(e.target.value)} placeholder="Staff meal base" className={fieldCls} />
+              </Field>
+            </div>
+          )}
+          {missing.length > 0 && (
+            <p className="mt-2 text-xs text-amber-300">
+              Not in your company&rsquo;s inventory, so not deducted: {missing.map((m) => m.name).join(', ')}.
+            </p>
+          )}
+          {prep && prep.subPreps.length > 0 && (
+            <p className="mt-2 text-xs text-white/45">
+              Also uses prepared: {prep.subPreps.map((s) => `${s.name ?? '—'} (${Math.round(s.grams * multiplier)} g)`).join(', ')}.
+            </p>
+          )}
           <div className="grid grid-cols-2 gap-3 mt-3">
-            <Field label="Expected yield">
+            <Field label="Expected yield (g)">
               <input type="number" step="0.1" value={expectedYieldQty} onChange={(e) => setExpectedYieldQty(e.target.value === '' ? '' : parseFloat(e.target.value))} placeholder="e.g. 500" className={fieldCls} />
             </Field>
-            <Field label="Actual yield *">
+            <Field label="Actual yield (g) *">
               <input type="number" step="0.1" value={actualYieldQty} onChange={(e) => setActualYieldQty(e.target.value === '' ? '' : parseFloat(e.target.value))} placeholder="What you got" className={fieldCls} />
             </Field>
           </div>
-          <Field label="Unit"><input value={unit} onChange={(e) => setUnit(e.target.value)} className={fieldCls + ' max-w-[100px]'} /></Field>
           {yieldPct != null && (
             <div className="mt-3 rounded-lg p-3 text-sm font-bold"
               style={{
@@ -99,13 +188,16 @@ export default function PrepBatchPage() {
         <Section title="What did you use?">
           {inputs.length === 0 && <p className="text-xs text-white/35 italic">No ingredients yet. Add at least one.</p>}
           {inputs.map((inp, i) => (
-            <div key={i} className="grid grid-cols-[1fr_100px_70px_auto] gap-2 items-center mt-2">
-              <select value={inp.inventoryItemId} onChange={(e) => patchInput(i, { inventoryItemId: e.target.value })} className={fieldCls}>
+            <div key={i} className="grid grid-cols-[1fr_100px_60px_auto] gap-2 items-center mt-2">
+              <select value={inp.inventoryItemId}
+                onChange={(e) => patchInput(i, { inventoryItemId: e.target.value, unit: itemById.get(e.target.value)?.unit ?? '' })}
+                className={fieldCls}>
                 <option value="">— ingredient —</option>
                 {items.map((it) => <option key={it.id} value={it.id}>{it.name} ({it.currentStock} {it.unit})</option>)}
               </select>
-              <input type="number" step="0.01" value={inp.qtyDrawn} onChange={(e) => patchInput(i, { qtyDrawn: parseFloat(e.target.value) || 0 })} placeholder="Qty" className={fieldCls} />
-              <input value={inp.unit} onChange={(e) => patchInput(i, { unit: e.target.value })} className={fieldCls} />
+              <input type="number" step="0.001" value={inp.qtyDrawn} onChange={(e) => patchInput(i, { qtyDrawn: parseFloat(e.target.value) || 0 })} placeholder="Qty" className={fieldCls} />
+              {/* The draw is taken off stock as-is, so it is always in the item's own stock unit. */}
+              <span className="text-xs text-white/55">{itemById.get(inp.inventoryItemId)?.unit ?? inp.unit}</span>
               <button onClick={() => rmInput(i)} className="text-white/30 hover:text-red-400 px-2">✕</button>
             </div>
           ))}
@@ -120,7 +212,8 @@ export default function PrepBatchPage() {
         {submit.error && <div className="rounded-xl px-4 py-3 text-sm text-red-400" style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)' }}>Save failed: {(submit.error as Error).message}</div>}
 
         <div className="flex justify-end pt-2">
-          <button onClick={() => submit.mutate()} disabled={submit.isPending || !itemName.trim() || inputs.length === 0 || !actualYieldQty}
+          <button onClick={() => submit.mutate()}
+            disabled={submit.isPending || !recipeId || !itemName.trim() || inputs.length === 0 || inputs.some((x) => !x.inventoryItemId) || !actualYieldQty}
             className="rounded-xl bg-kds-green px-6 py-3 text-sm font-black text-black hover:opacity-90 disabled:opacity-50">
             {submit.isPending ? 'Saving…' : 'Log batch →'}
           </button>
@@ -135,7 +228,7 @@ export default function PrepBatchPage() {
                   style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)' }}>
                   <div>
                     <p className="text-sm font-bold text-white/85">{b.itemName}</p>
-                    <p className="text-xs text-white/45">{b.actualYieldQty} yielded · {new Date(b.createdAt).toLocaleString()}</p>
+                    <p className="text-xs text-white/45">{b.actualYieldQty} {b.unit} yielded · {new Date(b.createdAt).toLocaleString()}</p>
                   </div>
                   {b.yieldVariancePct != null && (
                     <span className="text-xs font-bold" style={{ color: b.yieldVariancePct < 0.85 ? '#FCD34D' : '#00D4B1' }}>

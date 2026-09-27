@@ -68,12 +68,12 @@ export default function AccountingHubPage() {
 
   const { data: vendors } = useQuery({
     queryKey: ['vendors'],
-    queryFn: () => api.get<Vendor[]>('/recipes/vendors'),
+    queryFn: () => api.get<Vendor[]>('/procurement/suppliers'),
   })
 
   const { data: recentPOs } = useQuery({
     queryKey: ['purchase-orders', 'recent'],
-    queryFn: () => api.get<PurchaseOrder[]>('/recipes/purchase-orders?limit=5'),
+    queryFn: () => api.get<PurchaseOrder[]>('/procurement/purchase-orders?limit=5'),
     refetchInterval: 60_000,
   })
 
@@ -118,7 +118,7 @@ export default function AccountingHubPage() {
               value: vendors?.length ?? '—',
               sub: `${vendors?.reduce((s, v) => s + v._count.purchaseOrders, 0) ?? 0} POs total`,
               color: 'text-s-indigo',
-              href: '/accounting/vendors',
+              href: '/procurement',
             },
             {
               label: 'Recipes Built',
@@ -268,7 +268,7 @@ export default function AccountingHubPage() {
           <section className="s-card p-5">
             <div className="flex items-center justify-between mb-4">
               <p className="text-xs font-semibold text-s-muted uppercase tracking-wider">Recent Purchase Orders</p>
-              <Link href="/accounting/vendors" className="text-xs text-s-teal hover:underline">All POs →</Link>
+              <Link href="/procurement" className="text-xs text-s-teal hover:underline">All POs →</Link>
             </div>
             {!recentPOs?.length ? (
               <p className="text-sm text-s-dim text-center py-6">No purchase orders yet</p>
@@ -302,7 +302,7 @@ export default function AccountingHubPage() {
             {[
               { href: '/accounting/food-cost', icon: '🍽', label: 'Food Cost', desc: 'Theoretical vs actual' },
               { href: '/accounting/recipes',   icon: '📐', label: 'Recipes',   desc: 'Ingredient costing' },
-              { href: '/accounting/vendors',   icon: '🏭', label: 'Vendors',   desc: 'Suppliers & POs' },
+              { href: '/procurement',   icon: '🏭', label: 'Vendors',   desc: 'Suppliers & POs' },
               { href: '/accounting/pl-ledger', icon: '💰', label: 'P&L',       desc: 'Profit & Loss (ledger)' },
               { href: '/reports',              icon: '📈', label: 'Reports',   desc: 'Sales & analytics' },
               { href: '/inventory',            icon: '📦', label: 'Inventory', desc: 'Stock & par levels' },

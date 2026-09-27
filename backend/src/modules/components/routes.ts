@@ -1,30 +1,26 @@
-// Component library — master file of preps / sauces / sub-recipes built from
-// raw ingredients. Filter by ingredient, type (hero/supporting/trim_waste),
-// or season. CRUD per component, plus brand-use tagging.
+// Component library — the hero / supporting / trim-waste utilisation matrix per
+// base ingredient (seeded from the GS Foods PDF by scripts/seed-gs-components.ts),
+// with shelf life and which brands use each item.
+//
+// READ-ONLY planning reference (owner decision 29, 2026-09-27). The catalogue of
+// things the kitchen preps is the recipe library's sub-recipes; the par sheet
+// lists those and prep is logged through prep batches. The create / edit /
+// delete / clone endpoints were removed with that decision (they had no caller
+// in any app). Brand-use chips only show the operator's own companies' brands.
 
-import type { FastifyInstance } from 'fastify'
-import { z } from 'zod'
+import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { prisma } from '../../lib/prisma.js'
-import { requireAuth, MANAGERS, ALL_STAFF } from '../auth/middleware.js'
+import { requireAuth, ALL_STAFF } from '../auth/middleware.js'
 import { NotFoundError } from '../../lib/errors.js'
+import { conceptIdsInScope, assertConceptOwned } from '../../lib/tenantScope.js'
 
-const COMPONENT_TYPES = ['hero', 'supporting', 'trim_waste'] as const
-const SEASONS = ['spring', 'summer', 'monsoon', 'autumn', 'winter', 'ramadan', 'year-round'] as const
-
-const componentInput = z.object({
-  name:             z.string().min(1).max(120),
-  type:             z.enum(COMPONENT_TYPES),
-  baseIngredientId: z.string().uuid().nullable().optional(),
-  description:      z.string().max(500).nullable().optional(),
-  preparation:      z.string().nullable().optional(),
-  seasons:          z.array(z.enum(SEASONS)).default([]),
-  yieldGrams:       z.number().positive().nullable().optional(),
-  shelfLifeHours:   z.number().int().min(0).nullable().optional(),
-  laborMinutes:     z.number().int().min(0).nullable().optional(),
-  isActive:         z.boolean().default(true),
-  notes:            z.string().nullable().optional(),
-  brandConceptIds:  z.array(z.string().uuid()).default([]),    // brands that currently use this component
-})
+async function brandUseInclude(req: FastifyRequest) {
+  const ids = await conceptIdsInScope(req, 'read')
+  return {
+    where: { conceptId: { in: ids } },
+    include: { concept: { select: { id: true, name: true, slug: true, primaryColor: true } } },
+  }
+}
 
 export async function componentRoutes(fastify: FastifyInstance) {
 
@@ -43,6 +39,7 @@ export async function componentRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuth(...ALL_STAFF) },
     async (req) => {
       const { type, ingredientId, brandConceptId, q, activeOnly } = req.query
+      if (brandConceptId) await assertConceptOwned(req, brandConceptId, 'read')
       let { season } = req.query
       if (season === 'current') season = currentSeason(new Date())
 
@@ -72,7 +69,7 @@ export async function componentRoutes(fastify: FastifyInstance) {
         },
         include: {
           baseIngredient: { select: { id: true, name: true, unit: true, notes: true } },
-          brands: { include: { concept: { select: { id: true, name: true, slug: true, primaryColor: true } } } },
+          brands: await brandUseInclude(req),
         },
         orderBy: [{ baseIngredient: { name: 'asc' } }, { type: 'asc' }, { name: 'asc' }],
       })
@@ -89,7 +86,7 @@ export async function componentRoutes(fastify: FastifyInstance) {
       return prisma.component.findMany({
         where: { baseIngredientId: req.params.ingredientId, deletedAt: null },
         include: {
-          brands: { include: { concept: { select: { id: true, name: true, slug: true } } } },
+          brands: await brandUseInclude(req),
         },
         orderBy: [{ type: 'asc' }, { name: 'asc' }],
       })
@@ -104,102 +101,12 @@ export async function componentRoutes(fastify: FastifyInstance) {
       const c = await prisma.component.findUnique({
         where: { id: req.params.id },
         include: {
-          baseIngredient: true,
-          brands: { include: { concept: { select: { id: true, name: true, slug: true, primaryColor: true } } } },
+          baseIngredient: { select: { id: true, name: true, unit: true, notes: true } },
+          brands: await brandUseInclude(req),
         },
       })
       if (!c) throw new NotFoundError('Component', req.params.id)
       return c
-    },
-  )
-
-  // POST /components — create
-  fastify.post('/', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
-    const body = componentInput.parse(req.body)
-    const { brandConceptIds, ...rest } = body
-    const created = await prisma.component.create({
-      data: {
-        ...rest,
-        brands: { create: brandConceptIds.map((cid) => ({ conceptId: cid })) },
-      },
-      include: {
-        baseIngredient: { select: { id: true, name: true, unit: true } },
-        brands: { include: { concept: { select: { id: true, name: true, slug: true, primaryColor: true } } } },
-      },
-    })
-    return reply.status(201).send(created)
-  })
-
-  // PATCH /components/:id — partial update + replace brand uses if provided
-  fastify.patch<{ Params: { id: string } }>(
-    '/:id',
-    { preHandler: requireAuth(...MANAGERS) },
-    async (req) => {
-      const body = componentInput.partial().parse(req.body)
-      const { brandConceptIds, ...rest } = body
-
-      if (brandConceptIds) {
-        await prisma.componentBrandUse.deleteMany({ where: { componentId: req.params.id } })
-        if (brandConceptIds.length > 0) {
-          await prisma.componentBrandUse.createMany({
-            data: brandConceptIds.map((cid) => ({ componentId: req.params.id, conceptId: cid })),
-            skipDuplicates: true,
-          })
-        }
-      }
-
-      return prisma.component.update({
-        where: { id: req.params.id },
-        data: rest,
-        include: {
-          baseIngredient: { select: { id: true, name: true, unit: true } },
-          brands: { include: { concept: { select: { id: true, name: true, slug: true, primaryColor: true } } } },
-        },
-      })
-    },
-  )
-
-  // DELETE /components/:id — soft delete
-  fastify.delete<{ Params: { id: string } }>(
-    '/:id',
-    { preHandler: requireAuth(...MANAGERS) },
-    async (req, reply) => {
-      await prisma.component.update({
-        where: { id: req.params.id },
-        data: { deletedAt: new Date(), isActive: false },
-      })
-      return reply.status(204).send()
-    },
-  )
-
-  // POST /components/:id/clone — duplicate (e.g. seasonal variant)
-  fastify.post<{ Params: { id: string } }>(
-    '/:id/clone',
-    { preHandler: requireAuth(...MANAGERS) },
-    async (req, reply) => {
-      const body = z.object({ name: z.string().min(1).max(120) }).parse(req.body)
-      const src = await prisma.component.findUnique({
-        where: { id: req.params.id },
-        include: { brands: true },
-      })
-      if (!src) throw new NotFoundError('Component', req.params.id)
-      const cloned = await prisma.component.create({
-        data: {
-          name: body.name,
-          type: src.type,
-          baseIngredientId: src.baseIngredientId,
-          description: src.description,
-          preparation: src.preparation,
-          seasons: src.seasons,
-          yieldGrams: src.yieldGrams,
-          shelfLifeHours: src.shelfLifeHours,
-          laborMinutes: src.laborMinutes,
-          notes: src.notes,
-          brands: { create: src.brands.map((b) => ({ conceptId: b.conceptId, isPrimary: b.isPrimary })) },
-        },
-        include: { brands: true, baseIngredient: { select: { id: true, name: true, unit: true } } },
-      })
-      return reply.status(201).send(cloned)
     },
   )
 }

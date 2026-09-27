@@ -1,6 +1,7 @@
 'use client'
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import Link from 'next/link'
 import { api } from '../../lib/api'
 import { EmptyStateGuide } from '../../components/ui/EmptyStateGuide'
 import { TenantChip, TenantField, useMyTenants } from '../../components/ui/TenantPicker'
@@ -64,24 +65,16 @@ export default function InventoryPage() {
   const qc = useQueryClient()
   const [tab, setTab] = useState<Tab>('stock')
   const [showAdd, setShowAdd] = useState(false)
-  const [editingId, setEditingId] = useState<string | null>(null)
-  const [addForm, setAddForm] = useState({ name: '', unit: 'kg', parLevel: '', currentStock: '', notes: '', tenantId: '' })
+  const [addForm, setAddForm] = useState({ name: '', unit: 'kg', parLevel: '', notes: '', tenantId: '' })
   const { data: tenants = [] } = useMyTenants()
   const viewAll = useViewAllTenants()
 
-  // Default the picker to the operator's first tenant when single-tenant view.
-  useEffect(() => {
-    if (!viewAll && !addForm.tenantId && tenants[0]) {
-      setAddForm((f) => ({ ...f, tenantId: tenants[0]!.id }))
-    }
-  }, [tenants, viewAll, addForm.tenantId])
-  const [adjustQty, setAdjustQty] = useState<Record<string, string>>({})
+  // Company for a new item: the ACTIVE company (the API binds it) unless the
+  // operator is in "All companies" view, where they must pick one. Defaulting
+  // to the first membership used to file items under the wrong company.
+  const needsCompanyPick = viewAll && tenants.length > 1
   const [wasteItemId, setWasteItemId] = useState<string | null>(null)
   const [wasteForm, setWasteForm] = useState({ quantity: '', unit: 'kg', reason: 'spoilage' as typeof WASTE_REASONS[number], notes: '' })
-
-  // Bulk adjust mode
-  const [bulkMode, setBulkMode] = useState(false)
-  const [bulkDeltas, setBulkDeltas] = useState<Record<string, string>>({}) // itemId → new absolute value as string
 
   // Toast state
   const [toast, setToast] = useState<string | null>(null)
@@ -112,20 +105,14 @@ export default function InventoryPage() {
       name: addForm.name,
       unit: addForm.unit,
       parLevel: Number(addForm.parLevel),
-      currentStock: addForm.currentStock ? Number(addForm.currentStock) : 0,
       notes: addForm.notes || undefined,
-      ...(addForm.tenantId ? { tenantId: addForm.tenantId } : {}),
+      ...(needsCompanyPick && addForm.tenantId ? { tenantId: addForm.tenantId } : {}),
     }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['inventory'] })
       setShowAdd(false)
-      setAddForm({ name: '', unit: 'kg', parLevel: '', currentStock: '', notes: '', tenantId: '' })
+      setAddForm({ name: '', unit: 'kg', parLevel: '', notes: '', tenantId: '' })
     },
-  })
-
-  const adjustMutation = useMutation({
-    mutationFn: ({ id, delta }: { id: string; delta: number }) => api.patch(`/inventory/${id}/adjust`, { delta }),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ['inventory'] }),
   })
 
   const wasteMutation = useMutation({
@@ -142,40 +129,6 @@ export default function InventoryPage() {
       setWasteForm({ quantity: '', unit: 'kg', reason: 'spoilage', notes: '' })
     },
   })
-
-  const bulkAdjustMutation = useMutation({
-    mutationFn: async (pending: Array<{ id: string; delta: number }>) => {
-      await Promise.all(pending.map(({ id, delta }) => api.patch(`/inventory/${id}/adjust`, { delta })))
-    },
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ['inventory'] })
-      setBulkMode(false)
-      setBulkDeltas({})
-    },
-  })
-
-  function adjust(id: string, delta: number) { adjustMutation.mutate({ id, delta }) }
-
-  function applyBulkAdjust() {
-    const pending = items
-      .filter((item) => bulkDeltas[item.id] !== undefined && bulkDeltas[item.id] !== '')
-      .map((item) => {
-        const newVal = Number(bulkDeltas[item.id])
-        return { id: item.id, delta: newVal - item.currentStock }
-      })
-      .filter(({ delta }) => delta !== 0)
-
-    if (pending.length === 0) {
-      setBulkMode(false)
-      return
-    }
-    bulkAdjustMutation.mutate(pending)
-  }
-
-  function exitBulkMode() {
-    setBulkMode(false)
-    setBulkDeltas({})
-  }
 
   // Only items you actually track as stock belong on the Inventory page —
   // i.e. anything with stock on hand or a par level set. This keeps the shared
@@ -212,10 +165,16 @@ export default function InventoryPage() {
             {alertCount > 0 && <span className="text-kds-red font-semibold">{alertCount} low stock alert{alertCount !== 1 ? 's' : ''}</span>}
           </p>
         </div>
-        <button onClick={() => setShowAdd(true)}
-          className="rounded-xl bg-kds-green text-black font-bold px-4 py-2 text-sm hover:opacity-90">
-          + Add item
-        </button>
+        <div className="flex items-center gap-2">
+          <Link href="/inventory/count"
+            className="rounded-xl border border-kds-border text-kds-text font-bold px-4 py-2 text-sm hover:border-kds-green hover:text-kds-green">
+            Stock count
+          </Link>
+          <button onClick={() => setShowAdd(true)}
+            className="rounded-xl bg-kds-green text-black font-bold px-4 py-2 text-sm hover:opacity-90">
+            + Add item
+          </button>
+        </div>
       </header>
 
       {alertCount > 0 && (
@@ -271,10 +230,6 @@ export default function InventoryPage() {
                   <input type="number" value={addForm.parLevel} onChange={(e) => setAddForm({ ...addForm, parLevel: e.target.value })}
                     placeholder="5" className={fi} />
                 </F>
-                <F label="Current stock (optional)">
-                  <input type="number" value={addForm.currentStock} onChange={(e) => setAddForm({ ...addForm, currentStock: e.target.value })}
-                    placeholder="0" className={fi} />
-                </F>
                 <F label="Notes / category (optional)">
                   <input value={addForm.notes} onChange={(e) => setAddForm({ ...addForm, notes: e.target.value })}
                     placeholder="Proteins, Veg, Dry goods…" className={fi} />
@@ -283,22 +238,29 @@ export default function InventoryPage() {
               {/* Tenant picker — hidden when the operator has one tenant
                   (auto-defaults). In portfolio view it's required and
                   prompts "— pick a company —". */}
-              <TenantField value={addForm.tenantId}
-                onChange={(id) => setAddForm({ ...addForm, tenantId: id })}
-                required={!addForm.tenantId} />
+              <p className="text-xs text-kds-subtext">
+                New items start at zero on hand. Record the opening stock with a{' '}
+                <Link href="/inventory/count" className="text-kds-green hover:underline">stock count</Link>.
+              </p>
+              {needsCompanyPick && (
+                <TenantField value={addForm.tenantId} autoDefault={false}
+                  onChange={(id) => setAddForm({ ...addForm, tenantId: id })}
+                  required={!addForm.tenantId} />
+              )}
               <div className="flex gap-2">
                 <button
                   onClick={() => {
-                    if (tenants.length > 0 && !addForm.tenantId) return
+                    if (needsCompanyPick && !addForm.tenantId) return
                     addMutation.mutate()
                   }}
-                  disabled={!addForm.name || !addForm.parLevel || (tenants.length > 0 && !addForm.tenantId) || addMutation.isPending}
+                  disabled={!addForm.name || !addForm.parLevel || (needsCompanyPick && !addForm.tenantId) || addMutation.isPending}
                   className="rounded-xl bg-kds-green text-black font-bold px-4 py-2 text-sm hover:opacity-90 disabled:opacity-50">
                   {addMutation.isPending ? 'Adding…' : 'Add item'}
                 </button>
                 <button onClick={() => setShowAdd(false)}
                   className="rounded-xl border border-kds-border text-kds-subtext px-4 py-2 text-sm">Cancel</button>
               </div>
+              {addMutation.isError && <p className="text-xs text-kds-red">{(addMutation.error as Error).message}</p>}
             </div>
           )}
 
@@ -315,9 +277,8 @@ export default function InventoryPage() {
                     placeholder="2.5" className={fi} autoFocus />
                 </F>
                 <F label="Unit">
-                  <select value={wasteForm.unit} onChange={(e) => setWasteForm({ ...wasteForm, unit: e.target.value })} className={fi}>
-                    {['kg', 'g', 'L', 'ml', 'pcs', 'box', 'bag', 'bottle'].map((u) => <option key={u} value={u}>{u}</option>)}
-                  </select>
+                  {/* Stock is kept in the item's own unit; waste is logged in it too. */}
+                  <input value={wasteForm.unit} readOnly className={fi + ' opacity-70'} />
                 </F>
                 <F label="Reason">
                   <select value={wasteForm.reason} onChange={(e) => setWasteForm({ ...wasteForm, reason: e.target.value as typeof WASTE_REASONS[number] })} className={fi}>
@@ -338,6 +299,7 @@ export default function InventoryPage() {
                 <button onClick={() => setWasteItemId(null)}
                   className="rounded-xl border border-kds-border text-kds-subtext px-4 py-2 text-sm">Cancel</button>
               </div>
+              {wasteMutation.isError && <p className="text-xs text-kds-red">{(wasteMutation.error as Error).message}</p>}
             </div>
           )}
 
@@ -360,40 +322,19 @@ export default function InventoryPage() {
               />
             ) : (
               <>
-                {/* Bulk Adjust toolbar */}
-                <div className="flex items-center gap-3">
-                  {!bulkMode ? (
-                    <>
-                      <button
-                        onClick={() => { setBulkMode(true); setBulkDeltas({}) }}
-                        className="text-sm rounded-xl border border-kds-border px-4 py-2 text-kds-subtext hover:border-kds-green hover:text-kds-green transition-colors font-semibold">
-                        Bulk Adjust
-                      </button>
-                      <button
-                        onClick={() => downloadStockCsv(items)}
-                        className="text-sm rounded-xl border border-kds-border px-4 py-2 text-kds-subtext hover:border-kds-green hover:text-kds-green transition-colors font-semibold">
-                        Export CSV
-                      </button>
-                    </>
-                  ) : (
-                    <>
-                      <span className="text-sm font-semibold text-kds-text">Bulk adjust mode</span>
-                      <span className="text-xs text-kds-subtext">Enter new stock values for any items you want to update, then click Apply.</span>
-                      <div className="ml-auto flex gap-2">
-                        <button
-                          onClick={applyBulkAdjust}
-                          disabled={bulkAdjustMutation.isPending}
-                          className="rounded-xl bg-kds-green text-black font-bold px-4 py-2 text-sm hover:opacity-90 disabled:opacity-50">
-                          {bulkAdjustMutation.isPending ? 'Applying…' : 'Apply All'}
-                        </button>
-                        <button
-                          onClick={exitBulkMode}
-                          className="rounded-xl border border-kds-border text-kds-subtext px-4 py-2 text-sm">
-                          Cancel
-                        </button>
-                      </div>
-                    </>
-                  )}
+                {/* Stock on hand changes only through a count, a waste log or a
+                    delivery (owner decision 28) — there is no +/- or "set to". */}
+                <div className="flex items-center gap-3 flex-wrap">
+                  <Link href="/inventory/count"
+                    className="text-sm rounded-xl border border-kds-border px-4 py-2 text-kds-subtext hover:border-kds-green hover:text-kds-green transition-colors font-semibold">
+                    Count stock
+                  </Link>
+                  <button
+                    onClick={() => downloadStockCsv(items)}
+                    className="text-sm rounded-xl border border-kds-border px-4 py-2 text-kds-subtext hover:border-kds-green hover:text-kds-green transition-colors font-semibold">
+                    Export CSV
+                  </button>
+                  <span className="text-xs text-kds-subtext">Stock changes come from counts, waste logs and deliveries.</span>
                 </div>
 
                 {Object.entries(grouped).map(([cat, catItems]) => (
@@ -402,19 +343,14 @@ export default function InventoryPage() {
                     <div className="rounded-xl border border-kds-border overflow-hidden">
                       {catItems.map((item) => {
                         const isLow = item.currentStock <= item.parLevel
-                        const isEditing = editingId === item.id
-                        const bulkVal = bulkDeltas[item.id] ?? ''
-                        const newVal = bulkVal !== '' ? Number(bulkVal) : item.currentStock
-                        const delta = newVal - item.currentStock
                         return (
                           <div key={item.id}
                             className={`border-b border-kds-border/50 last:border-0 transition-colors ${isLow ? 'bg-red-950/5' : ''}`}>
                             <div className="flex items-center justify-between px-4 py-3">
                               <div className="flex items-center gap-3 min-w-0 flex-wrap">
-                                <button onClick={() => !bulkMode && setEditingId(isEditing ? null : item.id)}
-                                  className={`text-sm font-semibold hover:text-kds-green transition-colors ${isLow ? 'text-kds-red' : 'text-kds-text'}`}>
+                                <span className={`text-sm font-semibold ${isLow ? 'text-kds-red' : 'text-kds-text'}`}>
                                   {item.name}
-                                </button>
+                                </span>
                                 {isLow && <span className="text-xs font-bold text-kds-red bg-red-950/30 px-2 py-0.5 rounded-full">Low stock</span>}
                                 {/* Brand chip in portfolio view — every item
                                     belongs to one company. Orphan rows always
@@ -422,69 +358,21 @@ export default function InventoryPage() {
                                 <TenantChip tenant={item.tenant} tenantId={item.tenantId} tenants={tenants} />
                               </div>
 
-                              {bulkMode ? (
-                                /* ── Bulk adjust row ── */
-                                <div className="flex items-center gap-3 shrink-0">
-                                  <span className="text-xs text-kds-subtext">
-                                    Current: <span className="font-semibold text-kds-text">{item.currentStock}</span>
-                                    {bulkVal !== '' && delta !== 0 && (
-                                      <span className={delta > 0 ? 'text-kds-green' : 'text-kds-red'}>
-                                        {' '}→ New: {newVal} ({delta > 0 ? `+${delta}` : delta})
-                                      </span>
-                                    )}
-                                  </span>
-                                  <input
-                                    type="number"
-                                    value={bulkVal}
-                                    placeholder={String(item.currentStock)}
-                                    onChange={(e) => setBulkDeltas((prev) => ({ ...prev, [item.id]: e.target.value }))}
-                                    className="w-20 rounded-lg bg-kds-bg border border-kds-border px-2 py-1 text-sm text-kds-text focus:border-kds-green focus:outline-none"
-                                  />
-                                  <span className="text-xs text-kds-subtext">{item.unit}</span>
-                                </div>
-                              ) : (
-                                /* ── Normal row ── */
-                                <div className="flex items-center gap-2 shrink-0">
-                                  <div className="flex items-center gap-1">
-                                    <button onClick={() => adjust(item.id, -1)} disabled={adjustMutation.isPending}
-                                      className="h-7 w-7 rounded-lg bg-kds-bg border border-kds-border text-kds-text text-sm hover:border-kds-red hover:text-kds-red transition-colors">
-                                      −
-                                    </button>
-                                    <span className={`font-black text-lg w-14 text-center ${isLow ? 'text-kds-red' : 'text-kds-text'}`}>
-                                      {item.currentStock}
-                                    </span>
-                                    <button onClick={() => adjust(item.id, 1)} disabled={adjustMutation.isPending}
-                                      className="h-7 w-7 rounded-lg bg-kds-bg border border-kds-border text-kds-text text-sm hover:border-kds-green hover:text-kds-green transition-colors">
-                                      +
-                                    </button>
-                                  </div>
-                                  <span className="text-xs text-kds-subtext w-16">{item.unit} · par {item.parLevel}</span>
-                                  <button onClick={() => { setWasteItemId(item.id); setWasteForm({ ...wasteForm, unit: item.unit }) }}
-                                    className="text-xs px-2 py-1 rounded-lg border border-kds-red/30 text-kds-red/70 hover:border-kds-red hover:text-kds-red transition-colors">
-                                    waste
-                                  </button>
-                                </div>
-                              )}
-                            </div>
-                            {!bulkMode && isEditing && (
-                              <div className="px-4 pb-3 flex items-center gap-3">
-                                <span className="text-xs text-kds-subtext">Set to:</span>
-                                <input type="number" placeholder={String(item.currentStock)}
-                                  value={adjustQty[item.id] ?? ''}
-                                  onChange={(e) => setAdjustQty({ ...adjustQty, [item.id]: e.target.value })}
-                                  className="w-20 rounded-lg bg-kds-bg border border-kds-border px-2 py-1 text-sm text-kds-text focus:border-kds-green focus:outline-none" />
-                                <button
-                                  onClick={() => {
-                                    const qty = Number(adjustQty[item.id])
-                                    if (!isNaN(qty)) adjust(item.id, qty - item.currentStock)
-                                    setEditingId(null)
-                                    setAdjustQty({ ...adjustQty, [item.id]: '' })
-                                  }}
-                                  className="rounded-lg bg-kds-green text-black font-bold px-3 py-1 text-xs hover:opacity-90">
-                                  Update
+                              <div className="flex items-center gap-2 shrink-0">
+                                <span className={`font-black text-lg w-14 text-center ${isLow ? 'text-kds-red' : 'text-kds-text'}`}>
+                                  {item.currentStock}
+                                </span>
+                                <span className="text-xs text-kds-subtext w-16">{item.unit} · par {item.parLevel}</span>
+                                <Link href={`/inventory/count?item=${item.id}`}
+                                  className="text-xs px-2 py-1 rounded-lg border border-kds-border text-kds-subtext hover:border-kds-green hover:text-kds-green transition-colors">
+                                  count
+                                </Link>
+                                <button onClick={() => { setWasteItemId(item.id); setWasteForm({ ...wasteForm, unit: item.unit }) }}
+                                  className="text-xs px-2 py-1 rounded-lg border border-kds-red/30 text-kds-red/70 hover:border-kds-red hover:text-kds-red transition-colors">
+                                  waste
                                 </button>
                               </div>
-                            )}
+                            </div>
                           </div>
                         )
                       })}

@@ -2,17 +2,19 @@
 //
 // Owns:
 //  - Purchase order lifecycle (create → submit → approve → send → receive → close)
-//  - Receiving with weighted-average cost + price history + variance log
+//  - Receiving (receiving.ts: GRN + moving-average cost + price history + variance log)
 //  - Supplier bills (AP), 3-way matching (PO ↔ receipt ↔ bill)
 //  - Multi-bill payment allocation
 //  - Aging report
 //  - Reorder suggestions
 //  - PO email dispatch + audit trail
 
+import { isBelowPar } from '../../lib/recipeCost.js'
 import { prisma } from '../../lib/prisma.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { sendEmail } from '../../lib/notify.js'
 import { withholdingForBill } from '../accounting/supplierPosting.js'
+import { postedOpeningBalances } from './openingBalance.js'
 import type { Prisma } from '@prisma/client'
 
 // ─── Settings ────────────────────────────────────────────────────────────────
@@ -210,116 +212,9 @@ export async function sendPoToSupplier(poId: string, userId: string) {
 }
 
 // ─── Receiving ───────────────────────────────────────────────────────────────
-
-export interface ReceiveInput {
-  poId: string
-  userId: string
-  lines: Array<{ poLineId: string; quantityReceived: number; discrepancyReason?: string; discrepancyNotes?: string }>
-}
-
-export async function receivePo(input: ReceiveInput) {
-  const po = await prisma.purchaseOrder.findUnique({
-    where:   { id: input.poId },
-    include: { lines: true },
-  })
-  if (!po) throw new NotFoundError('PurchaseOrder', input.poId)
-  if (po.status === 'cancelled') throw new AppError('PO_CANCELLED', 'Cannot receive a cancelled PO', 400)
-  if (po.status === 'received')  throw new AppError('PO_RECEIVED',  'PO is already fully received', 400)
-
-  for (const recv of input.lines) {
-    if (recv.quantityReceived <= 0) {
-      throw new AppError('INVALID_QTY', 'Received quantity must be positive', 400)
-    }
-  }
-
-  return prisma.$transaction(async (tx) => {
-    for (const recv of input.lines) {
-      const poLine = po.lines.find((l) => l.id === recv.poLineId)
-      if (!poLine) throw new AppError('LINE_NOT_FOUND', `Line ${recv.poLineId} not part of this PO`, 400)
-
-      // Update line received qty
-      await tx.purchaseOrderLine.update({
-        where: { id: recv.poLineId },
-        data:  { quantityReceived: { increment: recv.quantityReceived } },
-      })
-
-      // Update inventory + weighted-average cost
-      const item = await tx.inventoryItem.findUnique({ where: { id: poLine.inventoryItemId } })
-      if (item) {
-        const oldStock    = item.currentStock
-        const newStock    = oldStock + recv.quantityReceived
-        const oldCost     = item.unitCostCents ?? poLine.unitCostCents
-        const newUnitCost = newStock > 0
-          ? Math.round((oldCost * oldStock + poLine.unitCostCents * recv.quantityReceived) / newStock)
-          : poLine.unitCostCents
-
-        await tx.inventoryItem.update({
-          where: { id: poLine.inventoryItemId },
-          data:  { currentStock: { increment: recv.quantityReceived }, unitCostCents: newUnitCost },
-        })
-
-        // Price history — only record if cost actually changed
-        if (oldCost !== newUnitCost) {
-          await tx.itemPriceHistory.create({
-            data: {
-              inventoryItemId: poLine.inventoryItemId,
-              supplierId:      po.supplierId,
-              oldCostCents:    oldCost,
-              newCostCents:    newUnitCost,
-              source:          'po_receive',
-              poLineId:        poLine.id,
-            },
-          })
-        }
-      }
-
-      // Variance log: short shipment, over shipment, or explicit reason given
-      const cumulativeReceived = poLine.quantityReceived + recv.quantityReceived
-      const variance = cumulativeReceived - poLine.quantityOrdered
-      if (recv.discrepancyReason || variance < 0 || variance > 0) {
-        const reason =
-          recv.discrepancyReason ??
-          (variance < 0 ? 'short_shipment' : 'over_shipment')
-        await tx.receivingDiscrepancy.create({
-          data: {
-            poLineId:     poLine.id,
-            expectedQty:  poLine.quantityOrdered,
-            receivedQty:  cumulativeReceived,
-            reason,
-            notes:        recv.discrepancyNotes ?? null,
-            recordedById: input.userId,
-          },
-        })
-      }
-    }
-
-    // Recompute PO status: fully received vs partial
-    const allReceived = po.lines.every((l) => {
-      const recv = input.lines.find((r) => r.poLineId === l.id)
-      const cum  = l.quantityReceived + (recv?.quantityReceived ?? 0)
-      return cum >= l.quantityOrdered
-    })
-
-    await tx.purchaseOrder.update({
-      where: { id: input.poId },
-      data:  {
-        status:       allReceived ? 'received' : 'partial',
-        receivedDate: new Date(),
-      },
-    })
-
-    await tx.poActivityLog.create({
-      data: {
-        purchaseOrderId: input.poId,
-        userId:          input.userId,
-        action:          allReceived ? 'received' : 'received_partial',
-        details:         { lineCount: input.lines.length },
-      },
-    })
-
-    return { ok: true, status: allReceived ? 'received' : 'partial' }
-  })
-}
+//
+// Receiving lives in ./receiving.ts (receiveGoods) — the ONE path that brings
+// stock in, with or without a PO. receivePo was folded into it.
 
 // ─── Bills (Accounts Payable) ────────────────────────────────────────────────
 
@@ -636,9 +531,16 @@ export async function allocatePayment(
 //             days past its DUE date (current / 1-30 / 31-60 / 61-90 / 90+)
 //   credits   payments not yet applied to a bill, plus any bill paid beyond
 //             what it owed — both already debited to AP in full
-//   total     Σ buckets − credits   ← the supplier's AP balance in the ledger
-//   opening   Supplier.openingBalanceCents, shown on its own: it was never
-//             posted to the ledger, so it is not in `total`
+//   opening   the supplier's opening balance AS POSTED to the ledger
+//             (openingBalance.ts posts Supplier.openingBalanceCents once, as a
+//             delta, Dr 3020 / Cr 2010) — its own column and inside `total`
+//   total     Σ buckets + opening − credits   ← the supplier's AP balance in
+//             the ledger; a payment left unapplied against the opening
+//             balance nets it off here, as it does in AP 2010
+//   openingUnposted  Supplier.openingBalanceCents not (yet) in the ledger —
+//             0 unless a posting failed (e.g. the month is locked); NOT in
+//             `total`. For a supplier with no company nothing is ever posted,
+//             so its opening sits in `opening` and `total` under `unassigned`.
 // Suppliers with no company are never posted to any ledger; they are listed
 // under `unassigned`, never inside a company's totals.
 
@@ -657,6 +559,7 @@ export interface AgingRow {
   creditsCents: number
   total: number
   openingCents: number
+  openingUnpostedCents: number
 }
 
 export type AgingTotals = Omit<AgingRow, 'supplierId' | 'supplierName' | 'tenantId'>
@@ -676,7 +579,7 @@ function agingBucket(daysPastDue: number): AgingBucketKey {
   return '90_plus'
 }
 
-const emptyTotals = (): AgingTotals => ({ bills: 0, current: 0, '1_30': 0, '31_60': 0, '61_90': 0, '90_plus': 0, creditsCents: 0, total: 0, openingCents: 0 })
+const emptyTotals = (): AgingTotals => ({ bills: 0, current: 0, '1_30': 0, '31_60': 0, '61_90': 0, '90_plus': 0, creditsCents: 0, total: 0, openingCents: 0, openingUnpostedCents: 0 })
 
 async function agingRows(supplierWhere: Prisma.SupplierWhereInput, asOf: Date): Promise<AgingRow[]> {
   const suppliers = await prisma.supplier.findMany({
@@ -691,12 +594,17 @@ async function agingRows(supplierWhere: Prisma.SupplierWhereInput, asOf: Date): 
     },
   })
 
+  const posted = await postedOpeningBalances(suppliers.map((s) => s.id))
   const rows: AgingRow[] = []
   for (const s of suppliers) {
+    // Company suppliers: the opening as posted to that company's ledger.
+    // No company: nothing is ever posted, the column is the only figure.
+    const openingCents = s.tenantId ? (posted.get(s.id)?.get(s.tenantId) ?? 0) : s.openingBalanceCents
     const row: AgingRow = {
       supplierId: s.id, supplierName: s.name, tenantId: s.tenantId,
       bills: 0, current: 0, '1_30': 0, '31_60': 0, '61_90': 0, '90_plus': 0,
-      creditsCents: 0, total: 0, openingCents: s.openingBalanceCents,
+      creditsCents: 0, total: 0, openingCents,
+      openingUnpostedCents: s.tenantId ? s.openingBalanceCents - openingCents : 0,
     }
     for (const b of s.bills) {
       const due = billDueCents(b)
@@ -706,8 +614,8 @@ async function agingRows(supplierWhere: Prisma.SupplierWhereInput, asOf: Date): 
       row.bills += 1
     }
     for (const p of s.payments) row.creditsCents += Math.max(0, p.amountCents - p.appliedCents)
-    row.total = row.current + row['1_30'] + row['31_60'] + row['61_90'] + row['90_plus'] - row.creditsCents
-    if (row.bills > 0 || row.creditsCents > 0 || row.openingCents !== 0) rows.push(row)
+    row.total = row.current + row['1_30'] + row['31_60'] + row['61_90'] + row['90_plus'] + row.openingCents - row.creditsCents
+    if (row.bills > 0 || row.creditsCents > 0 || row.openingCents !== 0 || row.openingUnpostedCents !== 0) rows.push(row)
   }
   return rows.sort((a, b) => b.total - a.total)
 }
@@ -718,6 +626,7 @@ function totalsOf(rows: AgingRow[]): AgingTotals {
     t.bills += r.bills
     t.current += r.current; t['1_30'] += r['1_30']; t['31_60'] += r['31_60']; t['61_90'] += r['61_90']; t['90_plus'] += r['90_plus']
     t.creditsCents += r.creditsCents; t.total += r.total; t.openingCents += r.openingCents
+    t.openingUnpostedCents += r.openingUnpostedCents
   }
   return t
 }
@@ -759,17 +668,11 @@ export async function supplierAging(supplierId: string, asOf = new Date()): Prom
  * draft PO ready to fire. Considers in-flight POs to avoid double-ordering.
  */
 export async function reorderSuggestions(tenantIds?: string[]) {
-  // Tenant scope filters inventory items via their preferred supplier.
-  // Inventory items themselves don't carry a tenantId column — they're
-  // scoped indirectly through the supplier they're sourced from. Items with
-  // no preferred supplier come through unscoped (par-sheet defaults).
-  const supplierFilter = tenantIds && tenantIds.length > 0
-    ? { OR: [{ tenantId: { in: tenantIds } }, { tenantId: null }] }
-    : null
+  // Items are company master data: scope by the item's own company.
   const items = await prisma.inventoryItem.findMany({
     where:   {
       deletedAt: null,
-      ...(supplierFilter ? { OR: [{ supplier: supplierFilter }, { supplierId: null }] } : {}),
+      ...(tenantIds && tenantIds.length > 0 ? { tenantId: { in: tenantIds } } : {}),
     },
     include: { supplier: { select: { id: true, name: true } } },
   })
@@ -805,8 +708,7 @@ export async function reorderSuggestions(tenantIds?: string[]) {
   for (const item of items) {
     const incoming = onOrder.get(item.id) ?? 0
     const projected = item.currentStock + incoming
-    if (projected >= item.parLevel) continue
-    if (item.parLevel <= 0) continue // no par set — skip
+    if (!isBelowPar(item, incoming)) continue
 
     const suggestedQty = Math.ceil(item.parLevel - projected)
     if (suggestedQty <= 0) continue

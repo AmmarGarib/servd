@@ -35,11 +35,24 @@ async function assertSupplierAccess(req: FastifyRequest, supplierId: string) {
   }
 }
 import {
-  createPo, submitPo, approvePo, rejectPo, cancelPo, sendPoToSupplier, receivePo,
+  createPo, submitPo, approvePo, rejectPo, cancelPo, sendPoToSupplier,
   createBill, voidBill, matchBill,
   createPayment, allocatePayment,
   agingReport, supplierAging, reorderSuggestions,
 } from './service.js'
+import { receiveGoods } from './receiving.js'
+import { syncSupplierOpeningBalance } from './openingBalance.js'
+
+// Post a supplier's opening balance to its company's ledger (a delta — see
+// openingBalance.ts). A failure (e.g. the month is locked) is logged; the AP
+// aging shows the amount as openingUnpostedCents until it posts.
+async function syncOpening(req: FastifyRequest, supplierId: string) {
+  try {
+    await syncSupplierOpeningBalance(supplierId, { postedBy: req.staffUser?.id })
+  } catch (err) {
+    req.log.error({ err: (err as Error).message, supplierId }, 'syncSupplierOpeningBalance failed')
+  }
+}
 
 // ─── Zod schemas ─────────────────────────────────────────────────────────────
 
@@ -153,6 +166,7 @@ export async function procurementRoutes(fastify: FastifyInstance) {
         tenant:        { select: { id: true, name: true, slug: true } },
       },
     })
+    if (supplier.openingBalanceCents !== 0) await syncOpening(req, supplier.id)
     return reply.status(201).send(supplier)
   })
 
@@ -184,7 +198,7 @@ export async function procurementRoutes(fastify: FastifyInstance) {
           throw new ForbiddenError('You can only transfer a supplier into a company you belong to.')
         }
       }
-      return prisma.supplier.update({
+      const updated = await prisma.supplier.update({
         where: { id: req.params.id },
         data:  body,
         include: {
@@ -192,6 +206,11 @@ export async function procurementRoutes(fastify: FastifyInstance) {
           tenant:        { select: { id: true, name: true, slug: true } },
         },
       })
+      // A new opening balance, or a move to another company, re-posts it.
+      if (body.openingBalanceCents !== undefined || body.tenantId !== undefined) {
+        await syncOpening(req, updated.id)
+      }
+      return updated
     },
   )
 
@@ -207,15 +226,17 @@ export async function procurementRoutes(fastify: FastifyInstance) {
         prisma.supplierPayment.findMany({ where: { supplierId: req.params.id }, orderBy: { paymentDate: 'desc' }, include: { applications: true } }),
         supplierAging(req.params.id),
       ])
-      // The same figures as the AP aging row: bills net of withholding, less
-      // unapplied payments (ledgerOutstanding — ties to AP 2010), plus the
-      // opening balance, which was never posted to the ledger.
-      const ledgerOutstanding = aging?.total ?? 0
+      // ONE balance, the AP aging row's total: open bills net of withholding
+      // plus the posted opening balance, less unapplied payments — which is
+      // this supplier's AP 2010 balance in the ledger. The opening balance is
+      // counted once, inside it (openingBalance.ts posts it).
+      const outstanding = aging?.total ?? 0
       return {
         supplier,
-        outstanding: supplier.openingBalanceCents + ledgerOutstanding,
-        ledgerOutstanding,
+        outstanding,
+        ledgerOutstanding: outstanding,   // same figure; kept for older clients
         openingBalanceCents: supplier.openingBalanceCents,
+        openingUnpostedCents: aging?.openingUnpostedCents ?? 0,
         aging,
         bills,
         payments,
@@ -323,20 +344,40 @@ export async function procurementRoutes(fastify: FastifyInstance) {
     async (req) => { await guardPo(req, req.params.id); return sendPoToSupplier(req.params.id, req.staffUser!.id) },
   )
 
+  // Receive against a PO — the same receiveGoods() the dock page
+  // (POST /crosschecks/receiving) calls: writes the GoodsReceipt, the PO line
+  // quantities, stock and moving-average cost in one transaction, with the
+  // photo threshold and the raiser-can't-receive rule (CEO exempt).
   fastify.post<{ Params: { id: string } }>(
     '/purchase-orders/:id/receive',
     { preHandler: requireAuth(...MANAGERS) },
-    async (req) => {
+    async (req, reply) => {
       await guardPo(req, req.params.id)
       const body = z.object({
+        photoUrl: z.string().url().nullable().optional(),
+        notes:    z.string().max(500).nullable().optional(),
         lines: z.array(z.object({
           poLineId:           z.string().uuid(),
-          quantityReceived:   z.number().positive(),
+          quantityReceived:   z.number().min(0),
           discrepancyReason:  z.enum(['short_shipment', 'over_shipment', 'damaged', 'wrong_item', 'quality_issue']).optional(),
-          discrepancyNotes:   z.string().optional(),
+          // `discrepancyNotes` is the older name for the line note.
+          discrepancyNotes:   z.string().max(200).optional(),
+          notes:              z.string().max(200).nullable().optional(),
         })).min(1),
       }).parse(req.body)
-      return receivePo({ poId: req.params.id, userId: req.staffUser!.id, lines: body.lines })
+      const result = await receiveGoods({
+        actor:    req.staffUser!,
+        poId:     req.params.id,
+        photoUrl: body.photoUrl ?? null,
+        notes:    body.notes ?? null,
+        lines:    body.lines.map((l) => ({
+          poLineId:          l.poLineId,
+          quantityReceived:  l.quantityReceived,
+          discrepancyReason: l.discrepancyReason ?? null,
+          notes:             l.notes ?? l.discrepancyNotes ?? null,
+        })),
+      })
+      return reply.status(201).send({ ok: true, status: result.poStatus, receipt: result.receipt, flagged: result.flagged })
     },
   )
 

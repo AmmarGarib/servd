@@ -1,23 +1,34 @@
 'use client'
-// Sourcing Master Sheet — the ingredient + price catalog. This is the list the
-// Recipe page pulls ingredients from. Edit prices/units/notes inline; add new
-// items (shared across all brands by default). Actual stock-on-hand lives on
-// the separate Inventory page; this sheet is purely "what's available + what it
-// costs". Backed by the same InventoryItem table (GET/POST/PATCH /inventory).
+// Sourcing Master Sheet — the ingredient catalogue, per company. This is the
+// list the Recipe page pulls ingredients from. Edit names/units/categories/
+// notes inline; add new items. Stock on hand lives on the separate Inventory
+// page; both pages are views of the same InventoryItem rows and both create
+// through POST /inventory, which binds the item to one company (owner
+// decision 30, 2026-09-27 — there are no "shared" items any more).
+//
+// Cost: an ingredient's cost is the moving average of what deliveries actually
+// cost, and only receiving moves it. The price typed here is the opening
+// estimate for an item nothing has been received for yet; once it has been
+// delivered the cell is read-only. (The negotiated list price gets its own
+// reference column when InventoryItem.listPriceCents lands.)
 import { useState, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api } from '../../lib/api'
-import { TenantChip, useMyTenants } from '../../components/ui/TenantPicker'
+import { TenantChip, TenantField, useMyTenants } from '../../components/ui/TenantPicker'
+import { useViewAllTenants } from '../../components/ui/TenantSwitcher'
 
 interface Item {
   id: string; name: string; unit: string
   unitCostCents: number | null; category: string | null; notes: string | null
+  costSource?: 'deliveries' | 'opening'
   tenantId?: string | null
   tenant?: { id: string; name: string; slug: string } | null
 }
 
-const UNITS = ['g', 'ml', 'each', 'kg', 'litres', 'pcs', 'dozen']
+// 'dozen' is not offered: recipe costing treats every non-kg/litre unit as
+// per piece, so a dozen-priced item costed 12x too much.
+const UNITS = ['g', 'ml', 'each', 'kg', 'litres', 'pcs']
 const fi = 'rounded-md border border-kds-border bg-kds-bg px-2 py-1 text-sm text-kds-text focus:border-kds-green focus:outline-none'
 
 function pkr(cents: number | null): string {
@@ -29,9 +40,11 @@ function pkr(cents: number | null): string {
 export default function SourcingPage() {
   const qc = useQueryClient()
   const { data: tenants = [] } = useMyTenants()
+  const viewAll = useViewAllTenants()
+  const needsCompanyPick = viewAll && tenants.length > 1
   const [search, setSearch] = useState('')
   const [showAdd, setShowAdd] = useState(false)
-  const [addForm, setAddForm] = useState({ name: '', unit: 'g', pricePkr: '', category: '', notes: '' })
+  const [addForm, setAddForm] = useState({ name: '', unit: 'g', pricePkr: '', category: '', notes: '', tenantId: '' })
   const [err, setErr] = useState('')
 
   const { data: items = [], isLoading } = useQuery<Item[]>({
@@ -47,13 +60,13 @@ export default function SourcingPage() {
     mutationFn: () => api.post('/inventory', {
       name: addForm.name.trim(),
       unit: addForm.unit,
-      shared: true,
       unitCostCents: addForm.pricePkr.trim() ? Math.round(parseFloat(addForm.pricePkr) * 100) : null,
       category: addForm.category.trim() || null,
       notes: addForm.notes.trim() || null,
+      ...(needsCompanyPick && addForm.tenantId ? { tenantId: addForm.tenantId } : {}),
     }),
     onSuccess: () => {
-      setAddForm({ name: '', unit: 'g', pricePkr: '', category: '', notes: '' }); setShowAdd(false); setErr('')
+      setAddForm({ name: '', unit: 'g', pricePkr: '', category: '', notes: '', tenantId: '' }); setShowAdd(false); setErr('')
       void qc.invalidateQueries({ queryKey: ['inventory'] })
     },
     onError: (e: Error) => setErr(e.message),
@@ -62,7 +75,8 @@ export default function SourcingPage() {
   // Patch a single field if it actually changed from the server value.
   function savePrice(it: Item, raw: string) {
     const next = raw.trim() ? Math.round(parseFloat(raw) * 100) : null
-    if (next !== it.unitCostCents && !(next != null && Number.isNaN(next))) patch.mutate({ id: it.id, body: { unitCostCents: next } })
+    if (next == null || Number.isNaN(next)) return
+    if (next !== it.unitCostCents) patch.mutate({ id: it.id, body: { unitCostCents: next } })
   }
   function saveField(it: Item, field: 'name' | 'unit' | 'category' | 'notes', raw: string) {
     const v = raw.trim()
@@ -78,6 +92,7 @@ export default function SourcingPage() {
   }, [items, search])
 
   const pricedCount = filtered.filter((i) => i.unitCostCents != null).length
+  const unassignedCount = (items ?? []).filter((i) => !i.tenantId).length
 
   return (
     <div className="min-h-screen bg-kds-bg">
@@ -85,9 +100,12 @@ export default function SourcingPage() {
         <div>
           <h1 className="text-2xl font-black text-kds-text mt-0.5">Sourcing Master Sheet</h1>
           <p className="text-sm text-kds-subtext">
-            {filtered.length} ingredients · {pricedCount} priced. This catalog feeds{' '}
+            {filtered.length} ingredients · {pricedCount} costed. This catalogue feeds{' '}
             <Link href="/accounting/recipes" className="text-kds-green hover:underline">Recipe</Link> costing.
             Stock on hand lives on <Link href="/inventory" className="text-kds-green hover:underline">Inventory</Link>.
+          </p>
+          <p className="text-xs text-kds-subtext mt-1">
+            Cost is the average of what deliveries cost. You can type an opening cost for an item that has not been delivered yet.
           </p>
         </div>
         <button onClick={() => setShowAdd((s) => !s)}
@@ -95,6 +113,13 @@ export default function SourcingPage() {
           + Add ingredient
         </button>
       </header>
+
+      {unassignedCount > 0 && (
+        <div className="mx-6 mt-4 rounded-xl border border-kds-amber/40 bg-kds-amber/5 px-4 py-3 text-sm text-kds-text">
+          {unassignedCount} ingredient{unassignedCount === 1 ? ' has' : 's have'} no company. Their waste never reaches the books and
+          their cost can be moved by either company&rsquo;s deliveries. Assign each one in the Company column.
+        </div>
+      )}
 
       {showAdd && (
         <div className="mx-6 mt-4 rounded-xl border border-kds-border bg-kds-card p-4">
@@ -108,7 +133,7 @@ export default function SourcingPage() {
                 {UNITS.map((u) => <option key={u} value={u}>{u}</option>)}
               </select>
             </label>
-            <label className="text-xs text-kds-subtext">Price (PKR/unit)
+            <label className="text-xs text-kds-subtext">Opening cost (PKR/unit)
               <input type="number" step="any" min={0} value={addForm.pricePkr} onChange={(e) => setAddForm({ ...addForm, pricePkr: e.target.value })}
                 placeholder="1.5" className={fi + ' w-full mt-1'} />
             </label>
@@ -121,12 +146,21 @@ export default function SourcingPage() {
                 placeholder="Region / supplier" className={fi + ' w-full mt-1'} />
             </label>
           </div>
+          {needsCompanyPick && (
+            <div className="mt-3 max-w-xs">
+              <TenantField value={addForm.tenantId} autoDefault={false} required={!addForm.tenantId}
+                onChange={(id) => setAddForm({ ...addForm, tenantId: id })} />
+            </div>
+          )}
           <div className="mt-3 flex items-center gap-3">
-            <button onClick={() => add.mutate()} disabled={!addForm.name.trim() || add.isPending}
+            <button onClick={() => add.mutate()}
+              disabled={!addForm.name.trim() || (needsCompanyPick && !addForm.tenantId) || add.isPending}
               className="rounded-lg bg-kds-green text-black font-bold px-4 py-2 text-sm disabled:opacity-50">
-              {add.isPending ? 'Adding…' : 'Add (shared)'}
+              {add.isPending ? 'Adding…' : 'Add ingredient'}
             </button>
-            <span className="text-xs text-kds-subtext">New items are shared across all brands.</span>
+            <span className="text-xs text-kds-subtext">
+              {needsCompanyPick ? 'Added to the company you pick.' : 'Added to your current company.'}
+            </span>
             {err && <span className="text-xs text-kds-red">{err}</span>}
           </div>
         </div>
@@ -146,10 +180,10 @@ export default function SourcingPage() {
                 <tr className="text-left">
                   <th className="px-3 py-2 font-bold">Ingredient</th>
                   <th className="px-3 py-2 font-bold w-24">Unit</th>
-                  <th className="px-3 py-2 font-bold w-36">Price (PKR/unit)</th>
+                  <th className="px-3 py-2 font-bold w-36">Cost (PKR/unit)</th>
                   <th className="px-3 py-2 font-bold w-32">Category</th>
                   <th className="px-3 py-2 font-bold">Source / notes</th>
-                  <th className="px-3 py-2 font-bold w-28">Brand</th>
+                  <th className="px-3 py-2 font-bold w-40">Company</th>
                 </tr>
               </thead>
               <tbody>
@@ -160,15 +194,23 @@ export default function SourcingPage() {
                         onBlur={(e) => saveField(it, 'name', e.target.value)} className={fi + ' w-full min-w-[180px]'} />
                     </td>
                     <td className="px-3 py-1.5">
-                      <select key={`u${it.id}${it.unit}`} defaultValue={UNITS.includes(it.unit) ? it.unit : 'g'}
+                      <select key={`u${it.id}${it.unit}`} defaultValue={it.unit}
                         onChange={(e) => saveField(it, 'unit', e.target.value)} className={fi + ' w-full'}>
                         {(UNITS.includes(it.unit) ? UNITS : [it.unit, ...UNITS]).map((u) => <option key={u} value={u}>{u}</option>)}
                       </select>
                     </td>
                     <td className="px-3 py-1.5">
-                      <input key={`p${it.id}${it.unitCostCents}`} type="number" step="any" min={0} defaultValue={pkr(it.unitCostCents)}
-                        placeholder="—" onBlur={(e) => savePrice(it, e.target.value)}
-                        className={fi + ' w-full text-right font-mono'} />
+                      {it.costSource === 'deliveries' ? (
+                        <span className="block w-full text-right font-mono text-kds-text" title="Average of what deliveries cost — moves when stock is received">
+                          {pkr(it.unitCostCents) || '—'}
+                          <span className="ml-1 text-[10px] font-sans text-kds-subtext">avg</span>
+                        </span>
+                      ) : (
+                        <input key={`p${it.id}${it.unitCostCents}`} type="number" step="any" min={0} defaultValue={pkr(it.unitCostCents)}
+                          placeholder="—" title="Opening cost — replaced by the delivery average at the first delivery"
+                          onBlur={(e) => savePrice(it, e.target.value)}
+                          className={fi + ' w-full text-right font-mono'} />
+                      )}
                     </td>
                     <td className="px-3 py-1.5">
                       <input key={`c${it.id}${it.category}`} defaultValue={it.category ?? ''}
@@ -179,9 +221,15 @@ export default function SourcingPage() {
                         onBlur={(e) => saveField(it, 'notes', e.target.value)} className={fi + ' w-full min-w-[200px]'} />
                     </td>
                     <td className="px-3 py-1.5">
-                      {it.tenant
+                      {it.tenantId
                         ? <TenantChip tenant={it.tenant} tenantId={it.tenantId} tenants={tenants} />
-                        : <span className="text-[10px] text-kds-subtext">Shared</span>}
+                        : (
+                          <select defaultValue="" className={fi + ' w-full'}
+                            onChange={(e) => { if (e.target.value) patch.mutate({ id: it.id, body: { tenantId: e.target.value } }) }}>
+                            <option value="">No company — assign…</option>
+                            {tenants.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                          </select>
+                        )}
                     </td>
                   </tr>
                 ))}

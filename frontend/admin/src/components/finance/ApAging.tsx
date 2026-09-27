@@ -12,7 +12,7 @@ import { fmtPkr } from '../../lib/money'
 type Buckets = { current: number; '1_30': number; '31_60': number; '61_90': number; '90_plus': number }
 export interface ApAgingRow extends Buckets {
   supplierId: string; supplierName: string; tenantId: string | null
-  bills: number; creditsCents: number; total: number; openingCents: number
+  bills: number; creditsCents: number; total: number; openingCents: number; openingUnpostedCents?: number
 }
 export type ApAgingTotals = Omit<ApAgingRow, 'supplierId' | 'supplierName' | 'tenantId'>
 export interface ApAgingReport {
@@ -44,7 +44,7 @@ function AgingTable({ rows, total, empty }: { rows: ApAgingRow[]; total: ApAging
             {BUCKETS.map((b) => <th key={b.k} className="px-4 py-2 text-right">{b.label.replace(' days', '')}</th>)}
             <th className="px-4 py-2 text-right" title="Payments not yet applied to a bill, and bills paid beyond what they owed">Credits</th>
             <th className="px-4 py-2 text-right" title="Ties to ledger AP 2010">Owed</th>
-            <th className="px-4 py-2 text-right" title="Supplier opening balance — never posted to the ledger">Opening</th>
+            <th className="px-4 py-2 text-right" title="Supplier opening balance, posted to the ledger">Opening</th>
           </tr>
         </thead>
         <tbody>
@@ -109,7 +109,7 @@ export function ApAging() {
       <div className="s-card overflow-hidden">
         <div className="px-4 py-2 bg-s-bg-soft border-b border-s-border text-xs font-semibold text-s-text">
           By supplier ({data.bySupplier.length}) — owed {fmtPkr(data.total.total)}
-          {data.total.openingCents !== 0 && <span className="text-s-muted font-normal"> · plus {fmtPkr(data.total.openingCents)} of opening balances not in the ledger</span>}
+          {(data.total.openingUnpostedCents ?? 0) !== 0 && <span className="text-s-muted font-normal"> · {fmtPkr(data.total.openingUnpostedCents ?? 0)} of opening balances not yet posted</span>}
         </div>
         <AgingTable rows={data.bySupplier} total={data.total} empty="No outstanding payables" />
       </div>

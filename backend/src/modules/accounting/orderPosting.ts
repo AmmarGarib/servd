@@ -7,98 +7,34 @@
 // Posting is idempotent on (sourceType, sourceId) — see journal.ts. Replays
 // from concurrent KDS bumps, retried webhooks, or worker reruns are no-ops.
 
-import type { Order, OrderItem, Payment, Concept, Recipe, RecipeIngredient, InventoryItem, Prisma } from '@prisma/client'
+import type { Order, OrderItem, Payment, Concept } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
 import { ACCT, postJournalEntry, reverseJournalEntry, revenueCodeForConcept, type JournalLineInput } from './journal.js'
-import { costPerMeasureCents } from '../../lib/recipeCost.js'
+import { cogsForSoldLines } from '../../lib/recipeCost.js'
 
-const Q_FACTOR = 0.05 // 5% recipe shrinkage uplift, mirrors recipes module
-
-// Loose typing on the ingredients because each row can carry either a raw
-// inventoryItem or a prepRecipe (with its own nested ingredients). Sticking
-// with the broad shape so the cost reducer below can pattern-match cleanly.
 interface OrderForPosting extends Order {
   concept:  Concept
   payments: Payment[]
-  items: (OrderItem & { menuItem?: { recipe?: (Recipe & { ingredients: (RecipeIngredient & { inventoryItem: InventoryItem | null })[] }) | null } | null })[]
+  items: OrderItem[]
 }
 
 async function loadOrderForPosting(orderId: string): Promise<OrderForPosting | null> {
-  return (await prisma.order.findUnique({
+  return prisma.order.findUnique({
     where: { id: orderId },
-    include: {
-      concept: true,
-      payments: true,
-      items: {
-        include: {
-          menuItem: {
-            include: {
-              recipe: {
-                include: {
-                  ingredients: {
-                    include: {
-                      inventoryItem: true,
-                      // Nested cost-per-gram for prep components — one level
-                      // deep is enough; preps composed of preps would need
-                      // recursion, but we don't allow that for now (validated
-                      // at write time below).
-                      prepRecipe: {
-                        include: {
-                          ingredients: { include: { inventoryItem: { select: { unit: true, unitCostCents: true } } } },
-                        },
-                      },
-                    },
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-    },
-  })) as OrderForPosting | null
+    include: { concept: true, payments: true, items: true },
+  })
 }
 
-// Theoretical food cost for the order, summed from recipe ingredients of each
-// non-voided item (yield-adjusted, with shrinkage uplift). Items without a
-// recipe contribute 0 — COGS for those is recognised when their inventory is
-// counted/adjusted, not at sale time.
-function computeOrderCogsCents(order: OrderForPosting): number {
-  let totalCents = 0
-  for (const item of order.items) {
-    if (item.status === 'voided') continue
-    const recipe = item.menuItem?.recipe
-    if (!recipe || recipe.servings < 1) continue
-
-    // Prep-recipe components carry their cost as cost-per-gram × quantity.
-    // Raw inventory items carry cost-per-unit × quantity ÷ yield. Rows missing
-    // both (shouldn't happen given the CHECK constraint) contribute zero.
-    const ingCost = recipe.ingredients.reduce((s, ing) => {
-      const yp = ing.yieldPct > 0 ? ing.yieldPct : 1
-      if (ing.inventoryItem) {
-        // costPerMeasureCents, not the raw unit cost: an item bought per kg is
-        // priced per kg while the recipe quantity is in grams, so the raw value
-        // booked COGS ~1000x too high for every weighed ingredient.
-        return s + costPerMeasureCents(ing.inventoryItem.unit, ing.inventoryItem.unitCostCents) * (ing.quantity / yp)
-      }
-      const prep = (ing as unknown as { prepRecipe?: { ingredients: { quantity: number; yieldPct: number; inventoryItem: { unit?: string | null; unitCostCents: number | null } | null }[]; laborMinutes: number; yieldGrams: number | null } }).prepRecipe
-      if (prep) {
-        const sub = prep.ingredients.reduce(
-          (s2, i2) => s2 + costPerMeasureCents(i2.inventoryItem?.unit, i2.inventoryItem?.unitCostCents) * (i2.quantity / (i2.yieldPct > 0 ? i2.yieldPct : 1)),
-          0,
-        )
-        const labor = (prep.laborMinutes / 60) * 50_00
-        const batch = sub * (1 + Q_FACTOR) + labor
-        const perGram = (prep.yieldGrams && prep.yieldGrams > 0) ? batch / prep.yieldGrams : 0
-        return s + Math.round(perGram * ing.quantity)
-      }
-      return s
-    }, 0)
-    const totalWithQ     = Math.round(ingCost * (1 + Q_FACTOR))
-    const costPerPortion = Math.round(totalWithQ / recipe.servings)
-    totalCents += costPerPortion * item.quantity
-  }
-  return totalCents
+// Theoretical food cost for the order: THE plate cost (lib/recipeCost.ts —
+// the same number the recipe and menu-engineering screens price against, and
+// the same explosion that took the stock out at sale) × quantity, over the
+// non-voided items. That means each recipe's own Q factor (default 10%, not
+// the old fixed 5%), applied once — the old copy applied it again on top of
+// sub-recipe lines — sub-recipes costed at any depth, and no kitchen labour
+// (owner decision 26). Items without a recipe contribute 0: their cost is
+// recognised when their inventory is counted or wasted, not at sale time.
+function computeOrderCogsCents(order: OrderForPosting): Promise<number> {
+  return cogsForSoldLines(order.items)
 }
 
 export interface SaleAccounting {
@@ -246,7 +182,7 @@ export async function postOrderCompletion(orderId: string): Promise<PostOrderRes
   }
 
   const sa = computeSaleAccounting(order)
-  const cogsCents = computeOrderCogsCents(order)
+  const cogsCents = await computeOrderCogsCents(order)
   const lines = buildSaleLines(order, sa, cogsCents)
 
   // The order's brand decides whose books this lands in.
@@ -292,9 +228,13 @@ export async function reverseOrderCompletion(orderId: string, reason: string): P
 //   4. Gift card balance redeemed against the order — every GiftCardRedemption
 //      adds its amountCents back to the GiftCard.balanceCents (and re-activates
 //      the card if it was 'redeemed_full').
-// Inventory is *not* automatically restored — physical inventory consumed at
-// production cannot be un-consumed. A counter-WasteLog or manual adjust is
-// required if you want the COGS reflected differently.
+// Inventory is *not* restored on a refund — the food was made and eaten. Stock
+// comes back only when an order ends WITHOUT a sale (cancelOrder →
+// restoreInventoryForOrder in orders/service.ts), and such an order never
+// booked COGS in the first place. KNOWN GAP: step 1 reverses the whole
+// completion entry, COGS leg included, so a refunded order's food goes back
+// onto INVENTORY_FOOD in the ledger while physical stock stays consumed. Until
+// the refund re-books that cost (as waste), a count will show it as shrinkage.
 //
 // Each step is idempotent: re-running the refund won't double-debit.
 export async function postOrderRefund(orderId: string, reason: string): Promise<PostOrderResult[]> {

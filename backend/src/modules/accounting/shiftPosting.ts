@@ -59,6 +59,7 @@ import { prisma } from '../../lib/prisma.js'
 import { ACCT, postJournalEntry, revenueCodeForConcept, type JournalLineInput } from './journal.js'
 import { computeSaleAccounting, type SaleOrderFields } from './orderPosting.js'
 import { drawerExpectationOf } from '../../lib/drawer.js'
+import { cogsForSoldLines } from '../../lib/recipeCost.js'
 import { SHIFT_COMPANY_INCLUDE, shiftTenantId } from '../../lib/tenantScope.js'
 
 /** processPayment accepts a tender within 2 paisa of what is due. */
@@ -127,6 +128,8 @@ export function homeShiftOf(order: { payments: ShiftOrderPaymentRow[] }): string
 export interface ShiftBrandSales {
   conceptId: string
   conceptSlug: string
+  /** Till orders this drawer books for the brand — what its COGS is costed from. */
+  orderIds: string[]
   orders: number
   revenueCents: number
   serviceChargeCents: number
@@ -138,7 +141,7 @@ export interface ShiftBrandSales {
 
 export interface ShiftSales {
   byConcept: Map<string, ShiftBrandSales>
-  totals: Omit<ShiftBrandSales, 'conceptId' | 'conceptSlug'>
+  totals: Omit<ShiftBrandSales, 'conceptId' | 'conceptSlug' | 'orderIds'>
   /** Receipts on this drawer for the till orders it books or clears. */
   cashCents: number
   cardPaidCents: number
@@ -198,10 +201,11 @@ export function summariseShiftSales(shiftId: string, payments: ShiftPaymentRow[]
 
     const sa = computeSaleAccounting(order)
     const brand = out.byConcept.get(order.conceptId) ?? {
-      conceptId: order.conceptId, conceptSlug: order.concept.slug, orders: 0,
+      conceptId: order.conceptId, conceptSlug: order.concept.slug, orderIds: [], orders: 0,
       revenueCents: 0, serviceChargeCents: 0, tipCents: 0, taxCents: 0, discountCents: 0, walletAppliedCents: 0,
     }
     brand.orders             += 1
+    brand.orderIds.push(order.id)
     brand.revenueCents       += sa.grossRevenueCents
     brand.serviceChargeCents += sa.serviceChargeCents
     brand.tipCents           += sa.tipCents
@@ -321,6 +325,23 @@ export async function buildShiftCloseEntry(shiftId: string): Promise<ShiftCloseE
     const memo = `Cash for online orders taken at the drawer — sale booked on the order ${tag}`
     lines.push({ accountCode: ACCT.CASH_DRAWER,  type: 'debit',  amountCents: sales.nonTillCashCents, memo })
     lines.push({ accountCode: ACCT.CASH_ON_HAND, type: 'credit', amountCents: sales.nonTillCashCents, memo })
+  }
+
+  // ── Cost of sales: what the till's orders took out of stock, per brand ──
+  // Online orders book COGS as each completes (orderPosting.ts); till sales
+  // reach the ledger only here, so this is where their COGS is booked, from
+  // the same recipe explosion (lib/recipeCost.ts) at the same plate cost.
+  for (const b of sales.byConcept.values()) {
+    if (b.orderIds.length === 0) continue
+    const soldLines = await prisma.orderItem.findMany({
+      where: { orderId: { in: b.orderIds } },
+      select: { menuItemId: true, quantity: true, status: true },
+    })
+    const cogsCents = await cogsForSoldLines(soldLines)
+    if (cogsCents > 0) {
+      lines.push({ accountCode: ACCT.FOOD_COST,      type: 'debit',  amountCents: cogsCents, memo: `COGS @ ${b.conceptSlug} ${tag}`, conceptId: b.conceptId })
+      lines.push({ accountCode: ACCT.INVENTORY_FOOD, type: 'credit', amountCents: cogsCents, memo: `Inventory used @ ${b.conceptSlug} ${tag}`, conceptId: b.conceptId })
+    }
   }
 
   for (const b of sales.byConcept.values()) {

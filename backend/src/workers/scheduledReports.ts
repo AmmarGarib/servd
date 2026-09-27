@@ -8,6 +8,7 @@
 
 import cron from 'node-cron'
 import { serviceClient as prisma } from '../lib/prisma.js'
+import { belowParWhere } from '../lib/recipeCost.js'
 import { sendEmail } from '../lib/notify.js'
 import { shiftOfCompany } from '../lib/tenantScope.js'
 import { getZReport } from '../modules/pos/service.js'
@@ -257,7 +258,7 @@ async function buildLowStockReport(tenantId: string): Promise<{ subject: string;
     where: {
       deletedAt: null,
       tenantId,
-      currentStock: { lte: prisma.inventoryItem.fields.parLevel },
+      ...belowParWhere(),
     },
     select: { name: true, currentStock: true, parLevel: true, unit: true },
     take: 50,
@@ -298,7 +299,7 @@ export async function buildApAgingReport(tenantId: string): Promise<{ subject: s
       <h2>AP aging</h2>
       <p>Days past due date. Amounts are net of withholding tax, as in the ledger (AP 2010).</p>
       <table cellpadding="6" border="1" style="border-collapse:collapse">
-        <tr><th>Supplier</th><th>Current</th><th>1–30</th><th>31–60</th><th>61–90</th><th>90+</th><th>Credits</th><th>Owed (ledger)</th><th>Opening (not in ledger)</th></tr>
+        <tr><th>Supplier</th><th>Current</th><th>1–30</th><th>31–60</th><th>61–90</th><th>90+</th><th>Credits</th><th>Owed (ledger)</th><th>Opening (in owed)</th></tr>
         ${aging.bySupplier.map((r) => row(esc(r.supplierName), r)).join('')}
         ${row('<strong>Total</strong>', aging.total)}
       </table>`,

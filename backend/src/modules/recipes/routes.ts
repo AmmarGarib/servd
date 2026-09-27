@@ -2,69 +2,31 @@ import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import { Prisma } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
-import { requireAuth, MANAGERS, APPROVERS, ALL_STAFF, assertNotSelfApproval } from '../auth/middleware.js'
+import { requireAuth, MANAGERS, APPROVERS, ALL_STAFF } from '../auth/middleware.js'
+import { assertNotSelfApproval } from '../../lib/separation-of-duties.js'
 import { NotFoundError, AppError } from '../../lib/errors.js'
-import { costPerMeasureCents } from '../../lib/recipeCost.js'
-import { scopeTenantWhere, type ScopeMode } from '../../lib/tenantScope.js'
+import {
+  buildRecipeGraph, loadRecipeGraph, menuItemPlateCosts, recipeCost,
+  type CostRecipe, type RecipeCost, type RecipeLineCost,
+} from '../../lib/recipeCost.js'
+import { scopeTenantWhere, resolveTenantScope, type ScopeMode } from '../../lib/tenantScope.js'
+import { pnlByConcept } from '../accounting/reports.js'
+import { ACCT } from '../accounting/journal.js'
 
-const Q_FACTOR = 0.05 // 5% miscellaneous surcharge (salt, oil, unmeasured items)
+// Every cost on this module comes from lib/recipeCost.ts — THE plate cost the
+// ledger books as COGS and the stock depletion explodes. That is: each
+// recipe's own Q factor (default 10%) applied once, on its own raw lines;
+// sub-recipes costed at any depth at their cost-per-gram; count items divided
+// by yield like weighed ones; and NO kitchen labour (owner decision 26 — the
+// PKR 50/hr that the list and every sub-recipe used to add). Labour reaches
+// the price only as payroll, in /:id/costing's opex per portion.
+//
+// Recipe.laborMinutes stays: it is prep TIME (course pacing, prep planning),
+// not a cost input.
 
-// Normalise a raw inventory item's cost to per-gram (paisa/g): items priced
-// per kg/litre divide by 1000; per g/ml (and per-unit pcs) are already per
-// measure. Used wherever a raw line is costed so weighed items priced per kg
-// aren't ~1000x off — including inside component (prep) batch costing.
-const cpgCents = costPerMeasureCents
-
-// Components can be composed of other components (one sub-recipe used as an
-// ingredient inside another). Costing therefore recurses: a component's
-// cost-per-gram includes the cost-per-gram of any sub-components it contains.
-// We resolve EVERY component's cost-per-gram in one pass over the whole
-// component set, memoised, with a cycle guard so a mis-authored loop
-// (A→B→A) can't blow the stack — a cyclic back-edge just contributes 0.
-// Each component's batch cost uses ITS OWN qFactorPct (the recipe's waste
-// buffer, default 10) — not the legacy hardcoded 5% — so the cost-per-gram
-// that flows into parent recipes matches the component's own detail view.
-async function buildComponentCpgMap(): Promise<Map<string, number>> {
-  const comps = await prisma.recipe.findMany({
-    where: { kind: 'component' },
-    select: {
-      id: true, yieldGrams: true, laborMinutes: true, qFactorPct: true,
-      ingredients: {
-        select: {
-          quantity: true, yieldPct: true, prepRecipeId: true,
-          inventoryItem: { select: { unit: true, unitCostCents: true } },
-        },
-      },
-    },
-  })
-  const byId = new Map(comps.map((c) => [c.id, c]))
-  const memo = new Map<string, number>()
-  function cpg(id: string, stack: Set<string>): number {
-    const cached = memo.get(id)
-    if (cached !== undefined) return cached
-    if (stack.has(id)) return 0            // cycle — break the back-edge
-    const c = byId.get(id)
-    if (!c || !c.yieldGrams || c.yieldGrams <= 0) { memo.set(id, 0); return 0 }
-    stack.add(id)
-    let ingCost = 0
-    for (const i of c.ingredients) {
-      if (i.prepRecipeId) {
-        // Sub-component consumed by the gram (already yield-adjusted by its batch).
-        ingCost += cpg(i.prepRecipeId, stack) * i.quantity
-      } else {
-        const yp = i.yieldPct > 0 ? i.yieldPct : 1
-        ingCost += cpgCents(i.inventoryItem?.unit, i.inventoryItem?.unitCostCents) * (i.quantity / yp)
-      }
-    }
-    stack.delete(id)
-    const labor = (c.laborMinutes / 60) * 50_00
-    const result = (ingCost * (1 + (c.qFactorPct ?? 10) / 100) + labor) / c.yieldGrams
-    memo.set(id, result)
-    return result
-  }
-  const out = new Map<string, number>()
-  for (const c of comps) out.set(c.id, cpg(c.id, new Set()))
-  return out
+/** Cost lines keyed by RecipeIngredient.id so a route can decorate its own rows. */
+function linesById(cost: RecipeCost): Map<string, RecipeLineCost> {
+  return new Map(cost.lines.filter((l) => l.ingredientId).map((l) => [l.ingredientId!, l]))
 }
 
 const SEASON_KEYS = ['spring', 'summer', 'monsoon', 'autumn', 'winter', 'ramadan', 'year-round'] as const
@@ -174,19 +136,6 @@ function currentSeasonsForDate(d: Date): string[] {
   if (m >= 11 || m <= 2)  return ['winter']
   return []
 }
-
-const poSchema = z.object({
-  supplierId:   z.string().uuid(),
-  expectedDate: z.string().datetime().optional(),
-  reference:    z.string().optional(),
-  notes:        z.string().optional(),
-  lines: z.array(z.object({
-    inventoryItemId: z.string().uuid(),
-    quantityOrdered: z.number().positive(),
-    unitCostCents:   z.number().int().positive(),
-    notes:           z.string().optional(),
-  })).min(1),
-})
 
 // ── Tenant scoping ──────────────────────────────────────────────────────────
 // Recipes have no tenant column: plates scope through their menu item's
@@ -342,44 +291,33 @@ export async function recipeRoutes(fastify: FastifyInstance) {
         }
       }
 
-      // Recursive component cost-per-gram map — one query, reused for every
-      // component-ingredient line below.
-      const cpgMap = await buildComponentCpgMap()
+      // THE plate cost (lib/recipeCost.ts) for every listed recipe, sub-recipes
+      // at any depth, one memo so shared sub-recipes are costed once.
+      const { graph } = await loadRecipeGraph({ id: { in: recipes.map((r) => r.id) } })
+      const memo = new Map<string, RecipeCost>()
 
       return recipes.map((r) => {
+        const cost = recipeCost(graph, r.id, memo)
+        const byLine = linesById(cost)
         const ingDetails = r.ingredients.map((ing) => {
-          let costPerUnit = 0
-          let ingredientCostCents = 0
-          const yp = ing.yieldPct > 0 ? ing.yieldPct : 1
-          const purchaseQty = ing.quantity / yp     // what you actually buy
-
-          if (ing.prepRecipeId) {
-            // Prep component — cost = the component's (recursive) cost-per-gram ×
-            // quantity. Uses the shared map so components built from other
-            // components cost correctly instead of silently dropping the nested cost.
-            const costPerGram = cpgMap.get(ing.prepRecipeId) ?? 0
-            costPerUnit = costPerGram                       // "per unit" of this component = per gram
-            ingredientCostCents = Math.round(costPerGram * ing.quantity)
-          } else if (ing.inventoryItem) {
-            // Normalise to a per-gram cost so weighed items priced per kg/litre
-            // aren't ~1000x off (must match the /costing handler). Count units
-            // (pcs/unit/each) cost per unit. purchaseQty already = qty ÷ yield.
-            const u = (ing.inventoryItem.unit ?? '').toLowerCase()
-            const raw = ing.inventoryItem.unitCostCents ?? 0
-            costPerUnit = (u === 'kg' || u === 'litres' || u === 'l') ? raw / 1000
-                        : (u === 'g'  || u === 'ml')                  ? raw
-                        : raw   // pcs / unit / each — priced per unit
-            ingredientCostCents = Math.round(costPerUnit * purchaseQty)
+          const line = byLine.get(ing.id)
+          return {
+            ...ing,
+            // Raw lines: purchase units drawn per batch after yield (kg / L /
+            // pcs — what you actually buy). Sub-recipes: grams used.
+            purchaseQty:         ing.prepRecipeId ? ing.quantity : (line?.purchaseQty ?? 0),
+            // Per g / ml / piece for raw lines; per gram for sub-recipes.
+            costPerUnit:         line?.costPerMeasureCents ?? 0,
+            ingredientCostCents: Math.round(line?.costCents ?? 0),
           }
-          return { ...ing, purchaseQty, costPerUnit, ingredientCostCents }
         })
 
-        const ingredientCostCents = ingDetails.reduce((s, i) => s + i.ingredientCostCents, 0)
-        // Use the recipe's own Q-factor (default 10%) so the list matches the
-        // detail/costing view; the old hardcoded 5% disagreed with both.
-        const qFactorCents        = Math.round(ingredientCostCents * (r.qFactorPct / 100))
-        const laborCostCents      = Math.round((r.laborMinutes / 60) * 50_00) // PKR 50/hr
-        const totalCostCents      = ingredientCostCents + qFactorCents + laborCostCents
+        const ingredientCostCents = Math.round(cost.ingredientCents)
+        const qFactorCents        = Math.round(cost.qCents)
+        // No kitchen labour in plate cost (owner decision 26). Kept at 0 for
+        // clients that still render the row.
+        const laborCostCents      = 0
+        const totalCostCents      = Math.round(cost.totalCents)
 
         // Per-kind headline numbers.
         //   plate     → plate cost (total ÷ servings) + margin vs. menu price.
@@ -387,10 +325,10 @@ export async function recipeRoutes(fastify: FastifyInstance) {
         // We keep both fields populated where they make sense so the frontend
         // can read whichever it needs without conditional branching.
         const costPerPortionCents = r.kind === 'plate' && r.servings > 0
-          ? Math.round(totalCostCents / r.servings)
+          ? Math.round(cost.perPortionCents)
           : null
-        const costPerGramCents = r.kind === 'component' && r.yieldGrams && r.yieldGrams > 0
-          ? totalCostCents / r.yieldGrams                          // sub-cent precision — fractions matter at gram scale
+        const costPerGramCents = r.kind === 'component'
+          ? cost.perGramCents                                      // sub-cent precision — fractions matter at gram scale
           : null
         const priceCents     = r.menuItem?.priceCents ?? null
         const grossMarginPct = (priceCents && priceCents > 0 && costPerPortionCents !== null)
@@ -424,18 +362,19 @@ export async function recipeRoutes(fastify: FastifyInstance) {
   // picker can preview "PKR 0.85/g" next to each option without N+1 queries.
   // (Path kept as /prep for backwards-compatibility; it now lists components.)
   fastify.get('/prep', { preHandler: requireAuth(...MANAGERS) }, async () => {
-    // Recursive cost-per-gram for the whole component set — correctly costs
-    // components that are themselves built from other components.
-    const cpgMap = await buildComponentCpgMap()
     const preps = await prisma.recipe.findMany({
       where: { kind: 'component', isActive: true },
       select: { id: true, name: true, yieldGrams: true },
       orderBy: { name: 'asc' },
     })
+    // THE cost-per-gram (lib/recipeCost.ts), nested sub-recipes included.
+    const { graph } = await loadRecipeGraph({ id: { in: preps.map((p) => p.id) } })
+    const memo = new Map<string, RecipeCost>()
 
     return preps.map((p) => {
-      const costPerGramCents = cpgMap.get(p.id) ?? 0
-      const batchCost = (p.yieldGrams && p.yieldGrams > 0) ? costPerGramCents * p.yieldGrams : 0
+      const cost = recipeCost(graph, p.id, memo)
+      const costPerGramCents = cost.perGramCents ?? 0
+      const batchCost = cost.totalCents
       return {
         id:               p.id,
         name:             p.name ?? '—',
@@ -444,6 +383,64 @@ export async function recipeRoutes(fastify: FastifyInstance) {
         costPerGramCents,                 // sub-cent precision deliberately preserved
       }
     })
+  })
+
+  // POST /recipes/costing-preview — cost an UNSAVED recipe with the same
+  // function as everything else, so the recipe form's live preview stops
+  // carrying its own copy of the maths (it divided count items by yield on a
+  // 0–100 scale and skipped nothing else the server did — close, but a copy).
+  // Nothing is written.
+  const previewSchema = z.object({
+    kind:       z.enum(['plate', 'component']).default('plate'),
+    servings:   z.number().int().min(1).default(1),
+    yieldGrams: z.number().positive().nullable().optional(),
+    qFactorPct: z.number().min(0).max(100).default(10),
+    ingredients: z.array(z.object({
+      inventoryItemId: z.string().uuid().optional(),
+      prepRecipeId:    z.string().uuid().optional(),
+      quantity:        z.number().min(0),
+      yieldPct:        z.number().min(0.01).max(1).default(1),
+    })).max(200),
+  })
+  fastify.post('/costing-preview', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
+    const body = previewSchema.parse(req.body)
+    const itemIds = body.ingredients.map((i) => i.inventoryItemId).filter((x): x is string => !!x)
+    const subIds  = body.ingredients.map((i) => i.prepRecipeId).filter((x): x is string => !!x)
+    const [items, { graph }] = await Promise.all([
+      prisma.inventoryItem.findMany({
+        where: { id: { in: itemIds }, OR: [await scopeTenantWhere(req, 'read'), { tenantId: null }] },
+        select: { id: true, unit: true, unitCostCents: true },
+      }),
+      loadRecipeGraph({ id: { in: subIds }, kind: 'component' }),
+    ])
+    const itemById = new Map(items.map((i) => [i.id, i]))
+    const PREVIEW = '__preview__'
+    const draft: CostRecipe = {
+      id: PREVIEW, kind: body.kind, servings: body.servings,
+      yieldGrams: body.yieldGrams ?? null, qFactorPct: body.qFactorPct,
+      ingredients: body.ingredients.map((i, idx) => ({
+        id: String(idx),
+        inventoryItemId: i.inventoryItemId ?? null,
+        prepRecipeId: i.prepRecipeId && graph.has(i.prepRecipeId) ? i.prepRecipeId : null,
+        quantity: i.quantity,
+        yieldPct: i.prepRecipeId ? 1 : i.yieldPct,
+        inventoryItem: i.inventoryItemId ? (itemById.get(i.inventoryItemId) ?? null) : null,
+      })),
+    }
+    const cost = recipeCost(buildRecipeGraph([draft, ...graph.values()]), PREVIEW)
+    return {
+      lines: cost.lines.map((l) => ({
+        index: Number(l.ingredientId),
+        purchaseQty: l.purchaseQty,
+        costPerMeasureCents: l.costPerMeasureCents,
+        costCents: Math.round(l.costCents),
+      })),
+      ingredientCents: Math.round(cost.ingredientCents),
+      qFactorCents:    Math.round(cost.qCents),
+      totalCents:      Math.round(cost.totalCents),
+      plateCostCents:  Math.round(cost.perPortionCents),
+      costPerGramCents: cost.perGramCents,
+    }
   })
 
   // GET /recipes/pending-approval — CEO/owner inbox. Recipes a manager has
@@ -500,15 +497,7 @@ export async function recipeRoutes(fastify: FastifyInstance) {
           ingredients: {
             include: {
               inventoryItem: { select: { id: true, name: true, unit: true, unitCostCents: true, yieldPct: true, allergens: true } },
-              // Component sub-recipes need their own ingredients to compute a
-              // cost-per-gram here (mirrors the GET / list handler) — otherwise
-              // component lines used to silently cost zero.
-              prepRecipe: {
-                select: {
-                  id: true, name: true, yieldGrams: true, laborMinutes: true,
-                  ingredients: { select: { quantity: true, yieldPct: true, inventoryItem: { select: { unit: true, unitCostCents: true } } } },
-                },
-              },
+              prepRecipe: { select: { id: true, name: true } },
             },
           },
         },
@@ -517,39 +506,16 @@ export async function recipeRoutes(fastify: FastifyInstance) {
       // Cross-company guard — 404 so ids don't leak existence.
       if (!recipeInScope(recipe, await scopedConceptIdSet(req))) throw new NotFoundError('Recipe', req.params.id)
 
-      // Recursive component cost-per-gram map — correctly costs a component that
-      // is itself built from other components.
-      const cpgMap = await buildComponentCpgMap()
-
-      // Section 2 — per-ingredient cost
+      // Sections 2 + 3 — THE plate cost (lib/recipeCost.ts): the number the
+      // recipe list shows and the ledger books as COGS. Count items are
+      // divided by yield like weighed ones (this handler used not to), and
+      // sub-recipes carry their own Q, so the plate's Q covers its raw lines.
+      const { graph } = await loadRecipeGraph({ id: recipe.id })
+      const cost = recipeCost(graph, recipe.id)
+      const byLine = linesById(cost)
       const ingredients = recipe.ingredients.map((ri) => {
         const inv = ri.inventoryItem
-        // Cost per gram for raw inventory items. unit is e.g. "kg" with
-        // unitCostCents priced per kg, so /1000 gives cost-per-gram. For
-        // 'pcs', cost per gram doesn't apply; ingredient cost = qty * cost.
-        let costPerGramCents = 0
-        let ingredientCostCents = 0
-        if (ri.prepRecipeId) {
-          // Component: cost flows in at the batch's cost-per-gram × grams used
-          // (the component is already yield-adjusted by its own batch).
-          costPerGramCents = cpgMap.get(ri.prepRecipeId) ?? 0
-          ingredientCostCents = costPerGramCents * ri.quantity
-        } else if (inv) {
-          if (inv.unit === 'kg' || inv.unit === 'litres' || inv.unit === 'l') {
-            costPerGramCents = (inv.unitCostCents ?? 0) / 1000
-          } else if (inv.unit === 'g' || inv.unit === 'ml') {
-            costPerGramCents = inv.unitCostCents ?? 0
-          } else {
-            // 'pcs' / other → quantity is in units, not grams. Cost is qty * unitCost.
-            ingredientCostCents = (inv.unitCostCents ?? 0) * ri.quantity
-          }
-          if (costPerGramCents > 0) {
-            // Yield raises cost. ri.yieldPct is a fraction (0–1); the inventory
-            // default is 0–100 — normalise both to a fraction before dividing.
-            const yieldFactor = ri.yieldPct ?? ((inv.yieldPct ?? 100) / 100)
-            ingredientCostCents = (ri.quantity * costPerGramCents) / Math.max(yieldFactor, 0.01)
-          }
-        }
+        const line = byLine.get(ri.id)
         return {
           id:               ri.id,
           name:             inv?.name ?? ri.prepRecipe?.name ?? '—',
@@ -557,17 +523,17 @@ export async function recipeRoutes(fastify: FastifyInstance) {
           quantity:         ri.quantity,
           // Displayed yield as a percent (ri.yieldPct is stored as a fraction).
           yieldPct:         ri.yieldPct != null ? Math.round(ri.yieldPct * 100) : (inv?.yieldPct ?? 100),
-          costPerGramCents,
-          ingredientCostCents: Math.round(ingredientCostCents),
+          // Per g / ml / piece for raw lines; per gram for sub-recipes.
+          costPerGramCents: line?.costPerMeasureCents ?? 0,
+          ingredientCostCents: Math.round(line?.costCents ?? 0),
           allergens:        inv?.allergens ?? [],
         }
       })
 
-      // Section 3 — cost calculation
-      const totalIngredientCents = ingredients.reduce((s, i) => s + i.ingredientCostCents, 0)
-      const qFactorCents         = Math.round(totalIngredientCents * (recipe.qFactorPct / 100))
-      const totalRecipeCents     = totalIngredientCents + qFactorCents
-      const plateCostCents       = Math.round(totalRecipeCents / Math.max(recipe.servings, 1))
+      const totalIngredientCents = Math.round(cost.ingredientCents)
+      const qFactorCents         = Math.round(cost.qCents)
+      const totalRecipeCents     = Math.round(cost.totalCents)
+      const plateCostCents       = Math.round(cost.perPortionCents)
 
       // Opex/Portion — only applies to plate recipes (sub-recipes never carry
       // opex; their cost rolls into the plate that uses them). Monthly opex =
@@ -992,7 +958,7 @@ export async function recipeRoutes(fastify: FastifyInstance) {
         throw new AppError('BAD_STATUS', `Only recipes pending approval can be promoted (this one is ${recipe.status})`, 409)
       }
       // A co-owner cannot sign off their own submission — escalates to the CEO.
-      assertNotSelfApproval(req, recipe.submittedById)
+      await assertNotSelfApproval({ actor: req.staffUser!, creatorId: recipe.submittedById, action: 'approve', entity: 'Recipe', entityId: recipe.id, message: 'You submitted this — it needs the CEO to approve. Owners cannot approve their own work.' })
 
       const data: Prisma.RecipeUpdateInput = {
         status:          'production',
@@ -1039,7 +1005,7 @@ export async function recipeRoutes(fastify: FastifyInstance) {
         throw new AppError('BAD_STATUS', `Only recipes pending approval can be rejected (this one is ${recipe.status})`, 409)
       }
       // Same escalation rule as approve — an owner can't rule on their own work.
-      assertNotSelfApproval(req, recipe.submittedById)
+      await assertNotSelfApproval({ actor: req.staffUser!, creatorId: recipe.submittedById, action: 'reject', entity: 'Recipe', entityId: recipe.id, message: 'You submitted this — it needs the CEO to approve. Owners cannot approve their own work.' })
       return prisma.recipe.update({
         where: { id: req.params.id },
         data: {
@@ -1132,312 +1098,124 @@ export async function recipeRoutes(fastify: FastifyInstance) {
         return {
           period: { from: from.toISOString(), to: to.toISOString() },
           revenue: { grossCents: 0, netCents: 0 },
-          cost: { theoreticalCents: 0, actualPurchasesCents: 0, theoreticalFoodCostPct: 0, targetFoodCostPct: 30, variance: -30, status: 'good' },
+          cost: { theoreticalCents: 0, actualCents: 0, actualFoodCostPct: 0, actualPurchasesCents: 0, theoreticalFoodCostPct: 0, targetFoodCostPct: 30, variance: -30, actualVsTheoreticalPct: 0, status: 'good' },
           byItem: [], itemsWithoutRecipe: [],
         }
       }
       const conceptScope = conceptId ? [conceptId] : Array.from(visibleConceptIds)
+      const conceptSet = new Set(conceptScope)
+      const { tenantIds } = await resolveTenantScope(req)
 
-      // Sales in period
-      const salesData = await prisma.financialEntry.aggregate({
+      // ── Revenue: the LEDGER (owner decision 20), ex-GST. gross = item
+      // revenue before discounts; net = after discounts / promos. The old
+      // FinancialEntry sum was GST-inclusive and missed till sales.
+      const buckets = await pnlByConcept(tenantIds, from, to)
+      const inScope = buckets.filter((b) => b.conceptId && conceptSet.has(b.conceptId))
+      const grossRevenue = inScope.reduce((s, b) => s + b.revenueCents, 0)
+      const netRevenue   = grossRevenue - inScope.reduce((s, b) => s + b.contraRevenueCents, 0)
+
+      // ── Actual cost: what the ledger booked to cost of sales (5xxx: COGS
+      // at sale, waste, inventory variance) for the brands in scope. Waste is
+      // posted without a brand, so the company-wide view (no conceptId) adds
+      // the unattributed bucket; a single brand can't claim it.
+      const ledgerCostCents = inScope.reduce((s, b) => s + b.cogsCents, 0)
+        + (conceptId ? 0 : buckets.filter((b) => !b.conceptId).reduce((s, b) => s + b.cogsCents, 0))
+      // Purchases = supplier bills booked to INVENTORY_FOOD (quantity × price,
+      // net of GST) — company-level, it can't be split by brand.
+      const purchasesAgg = await prisma.journalLine.aggregate({
         where: {
-          conceptId: { in: conceptScope },
-          entryDate: { gte: from, lte: to },
+          type: 'debit',
+          account: { code: ACCT.INVENTORY_FOOD },
+          journalEntry: { tenantId: { in: tenantIds }, entryDate: { gte: from, lte: to } },
         },
-        _sum: { grossCents: true, netCents: true },
-        _count: true,
+        _sum: { amountCents: true },
       })
-      const grossRevenue = salesData._sum.grossCents ?? 0
-      const netRevenue   = salesData._sum.netCents   ?? 0
+      const actualPurchasesCents = purchasesAgg._sum.amountCents ?? 0
 
-      // Items sold in period
-      const soldItems = await prisma.orderItem.groupBy({
-        by: ['menuItemId', 'name'],
+      // ── Theoretical: THE plate cost × what was sold (completed, not voided),
+      // at the price actually charged.
+      const soldRows = await prisma.orderItem.findMany({
         where: {
-          order: {
-            conceptId: { in: conceptScope },
-            status: 'completed',
-            placedAt: { gte: from, lte: to },
-          },
+          status: { not: 'voided' },
           menuItemId: { not: null },
+          order: { conceptId: { in: conceptScope }, status: 'completed', completedAt: { gte: from, lte: to } },
         },
-        _sum: { quantity: true },
+        select: { menuItemId: true, name: true, quantity: true, unitPriceCents: true },
       })
-
-      // Recipes with costs
-      const recipes = await prisma.recipe.findMany({
-        where: { menuItem: { conceptId: { in: conceptScope } } },
-        include: {
-          menuItem: { select: { id: true, name: true, priceCents: true } },
-          ingredients: { include: { inventoryItem: { select: { unitCostCents: true } } } },
-        },
-      })
-
-      const recipeMap = new Map(recipes.map((r) => [r.menuItemId, r]))
+      const sold = new Map<string, { name: string; qty: number; revenue: number }>()
+      for (const r of soldRows) {
+        const s = sold.get(r.menuItemId!) ?? { name: r.name, qty: 0, revenue: 0 }
+        s.qty += r.quantity
+        s.revenue += r.unitPriceCents * r.quantity
+        sold.set(r.menuItemId!, s)
+      }
+      const plateCosts = await menuItemPlateCosts([...sold.keys()])
+      const targets = new Map((await prisma.recipe.findMany({
+        where: { menuItemId: { in: [...sold.keys()] } },
+        select: { menuItemId: true, targetFoodCostPct: true },
+      })).map((r) => [r.menuItemId, r.targetFoodCostPct]))
 
       let theoreticalCostCents = 0
+      let targetWeight = 0
+      let targetRevenue = 0
       const byItem: Array<{
         menuItemId: string; name: string; qtySold: number
         costPerPortion: number; totalCost: number
         revenue: number; foodCostPct: number; marginPct: number
       }> = []
-
-      for (const sold of soldItems) {
-        if (!sold.menuItemId) continue
-        const qty = sold._sum.quantity ?? 0
-        const recipe = recipeMap.get(sold.menuItemId)
-        if (!recipe) continue
-
-        const ingCost = recipe.ingredients.reduce((s, ing) => {
-          const yp = ing.yieldPct > 0 ? ing.yieldPct : 1
-          // Only raw inventory rows count here — prep components are rare on
-          // a plate sold today (zero in the current dataset) and the food-cost
-          // endpoint is approximate by design (theoretical, not actual COGS).
-          if (!ing.inventoryItem) return s
-          return s + Math.round((ing.inventoryItem.unitCostCents ?? 0) * (ing.quantity / yp))
-        }, 0)
-        const totalWithQ     = Math.round(ingCost * (1 + Q_FACTOR))
-        const costPerPortion = recipe.servings > 0 ? Math.round(totalWithQ / recipe.servings) : totalWithQ
-        const totalCost = costPerPortion * qty
-        // recipe.menuItem can now be null on prep recipes — but a "sold"
-        // order item by definition has a menuItem, so this is a Prisma type
-        // narrowing concern, not a real null. Default to 0 revenue if absent.
-        const itemRevenue = (recipe.menuItem?.priceCents ?? 0) * qty
-
+      for (const [menuItemId, s] of sold) {
+        const cost = plateCosts.get(menuItemId)
+        if (!cost) continue
+        const costPerPortion = Math.round(cost.perPortionCents)
+        const totalCost = Math.round(cost.perPortionCents * s.qty)
         theoreticalCostCents += totalCost
+        targetWeight  += (targets.get(menuItemId) ?? 30) * s.revenue
+        targetRevenue += s.revenue
         byItem.push({
-          menuItemId:   sold.menuItemId,
-          name:         sold.name,
-          qtySold:      qty,
+          menuItemId,
+          name:         s.name,
+          qtySold:      s.qty,
           costPerPortion,
           totalCost,
-          revenue:      itemRevenue,
-          foodCostPct:  itemRevenue > 0 ? Math.round((totalCost / itemRevenue) * 100) : 0,
-          marginPct:    itemRevenue > 0 ? Math.round(((itemRevenue - totalCost) / itemRevenue) * 100) : 0,
+          revenue:      s.revenue,
+          foodCostPct:  s.revenue > 0 ? Math.round((totalCost / s.revenue) * 100) : 0,
+          marginPct:    s.revenue > 0 ? Math.round(((s.revenue - totalCost) / s.revenue) * 100) : 0,
         })
       }
-
       byItem.sort((a, b) => b.totalCost - a.totalCost)
 
-      // Actual food cost from purchases in period. POs scope through their
-      // supplier's tenant (legacy suppliers with no tenant count for everyone).
-      const purchases = await prisma.purchaseOrderLine.aggregate({
-        where: {
-          purchaseOrder: {
-            status: 'received',
-            receivedDate: { gte: from, lte: to },
-            supplier: { OR: [{ tenantId: req.staffUser!.tenantFilter }, { tenantId: null }] },
-          },
-        },
-        _sum: { unitCostCents: true },
-      })
-      const actualPurchasesCents = purchases._sum.unitCostCents ?? 0
-
-      const theoreticalFoodCostPct = grossRevenue > 0
-        ? parseFloat(((theoreticalCostCents / grossRevenue) * 100).toFixed(1))
-        : 0
+      const pct = (n: number, d: number) => (d > 0 ? parseFloat(((n / d) * 100).toFixed(1)) : 0)
+      const theoreticalFoodCostPct = pct(theoreticalCostCents, grossRevenue)
+      const actualFoodCostPct      = pct(ledgerCostCents, grossRevenue)
+      // Target = the recipes' own targetFoodCostPct, weighted by what sold.
+      const targetFoodCostPct = targetRevenue > 0 ? parseFloat((targetWeight / targetRevenue).toFixed(1)) : 30
 
       return {
         period:     { from: from.toISOString(), to: to.toISOString() },
-        revenue:    { grossCents: grossRevenue, netCents: netRevenue },
+        revenue:    { grossCents: grossRevenue, netCents: netRevenue, basis: 'ledger_ex_gst' as const },
         cost: {
           theoreticalCents:       theoreticalCostCents,
+          // Ledger cost of sales (5xxx) — theoretical COGS booked at sale plus
+          // waste and variance. Till sales reach it only once the shift close
+          // posts COGS.
+          actualCents:            ledgerCostCents,
+          actualFoodCostPct,
           actualPurchasesCents,
           theoreticalFoodCostPct,
-          targetFoodCostPct:      30,   // industry standard for restaurant
-          variance:               parseFloat((theoreticalFoodCostPct - 30).toFixed(1)),
-          status:                 theoreticalFoodCostPct <= 30 ? 'good' : theoreticalFoodCostPct <= 35 ? 'warning' : 'critical',
+          targetFoodCostPct,
+          // Theoretical against the recipes' own target.
+          variance:               parseFloat((theoreticalFoodCostPct - targetFoodCostPct).toFixed(1)),
+          // Actual against theoretical: waste, over-portioning, shrinkage.
+          actualVsTheoreticalPct: parseFloat((actualFoodCostPct - theoreticalFoodCostPct).toFixed(1)),
+          status:                 theoreticalFoodCostPct <= targetFoodCostPct ? 'good' : theoreticalFoodCostPct <= targetFoodCostPct + 5 ? 'warning' : 'critical',
         },
         byItem,
-        itemsWithoutRecipe: soldItems.filter((s) => s.menuItemId && !recipeMap.has(s.menuItemId)).map((s) => ({
-          menuItemId: s.menuItemId,
+        itemsWithoutRecipe: [...sold].filter(([id]) => !plateCosts.has(id)).map(([menuItemId, s]) => ({
+          menuItemId,
           name: s.name,
-          qtySold: s._sum.quantity ?? 0,
+          qtySold: s.qty,
         })),
       }
-    },
-  )
-
-  // ── Vendors / Purchase Orders ──────────────────────────────────────────────
-
-  // GET /recipes/vendors — scoped to the active company's suppliers (legacy
-  // rows with no tenant stay visible everywhere until assigned).
-  fastify.get('/vendors', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
-    return prisma.supplier.findMany({
-      where: {
-        deletedAt: null,
-        OR: [{ tenantId: req.staffUser!.tenantFilter }, { tenantId: null }],
-      },
-      include: { _count: { select: { purchaseOrders: true, inventoryItems: true } } },
-      orderBy: { name: 'asc' },
-    })
-  })
-
-  // POST /recipes/vendors
-  fastify.post('/vendors', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
-    const body = z.object({
-      name:    z.string().min(1),
-      phone:   z.string().optional(),
-      email:   z.string().email().optional(),
-      address: z.string().optional(),
-      taxId:   z.string().optional(),
-      notes:   z.string().optional(),
-    }).parse(req.body)
-    const vendor = await prisma.supplier.create({ data: body })
-    return reply.status(201).send(vendor)
-  })
-
-  // PATCH /recipes/vendors/:id
-  fastify.patch<{ Params: { id: string } }>(
-    '/vendors/:id',
-    { preHandler: requireAuth(...MANAGERS) },
-    async (req) => {
-      const body = z.object({
-        name:    z.string().min(1).optional(),
-        phone:   z.string().optional(),
-        email:   z.string().email().optional(),
-        address: z.string().optional(),
-        taxId:   z.string().optional(),
-        notes:   z.string().optional(),
-      }).parse(req.body)
-      // Suppliers are company data (Supplier.tenantId) — editing one by bare
-      // id let a manager rename or re-point another company's vendor.
-      const owned = await prisma.supplier.findFirst({
-        where: { id: req.params.id, tenantId: req.staffUser!.tenantFilter },
-        select: { id: true },
-      })
-      if (!owned) throw new NotFoundError('Supplier', req.params.id)
-      return prisma.supplier.update({ where: { id: owned.id }, data: body })
-    },
-  )
-
-  // GET /recipes/purchase-orders
-  fastify.get<{ Querystring: { supplierId?: string; status?: string; limit?: string } }>(
-    '/purchase-orders',
-    { preHandler: requireAuth(...MANAGERS) },
-    async (req) => {
-      const limit = Math.min(parseInt(req.query.limit ?? '50', 10), 200)
-      return prisma.purchaseOrder.findMany({
-        where: {
-          ...(req.query.supplierId && { supplierId: req.query.supplierId }),
-          ...(req.query.status    && { status: req.query.status }),
-          // POs scope through their supplier's tenant (null = legacy/shared).
-          supplier: { OR: [{ tenantId: req.staffUser!.tenantFilter }, { tenantId: null }] },
-        },
-        include: {
-          supplier: { select: { name: true } },
-          lines:    { include: { inventoryItem: { select: { name: true, unit: true } } } },
-        },
-        orderBy: { createdAt: 'desc' },
-        take: limit,
-      })
-    },
-  )
-
-  // POST /recipes/purchase-orders
-  fastify.post('/purchase-orders', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
-    const body = poSchema.parse(req.body)
-    const totalCents = body.lines.reduce((s, l) => s + Math.round(l.unitCostCents * l.quantityOrdered), 0)
-    const po = await prisma.purchaseOrder.create({
-      data: {
-        supplierId:   body.supplierId,
-        expectedDate: body.expectedDate ? new Date(body.expectedDate) : null,
-        reference:    body.reference,
-        notes:        body.notes,
-        totalCents,
-        createdBy:    req.staffUser!.id,
-        lines: { create: body.lines },
-      },
-      include: { supplier: true, lines: { include: { inventoryItem: true } } },
-    })
-    return reply.status(201).send(po)
-  })
-
-  // POST /recipes/purchase-orders/:id/receive — mark as received, update inventory + costs
-  fastify.post<{ Params: { id: string }; Body: { lines: { lineId: string; quantityReceived: number }[] } }>(
-    '/purchase-orders/:id/receive',
-    { preHandler: requireAuth(...MANAGERS) },
-    async (req) => {
-      const { lines } = z.object({
-        lines: z.array(z.object({
-          lineId:           z.string().uuid(),
-          quantityReceived: z.number().positive(),
-        })),
-      }).parse(req.body)
-
-      // Receiving stock against another company's PO would post their goods
-      // (and their liability) from this company's screen.
-      const po = await prisma.purchaseOrder.findFirst({
-        where: { id: req.params.id, supplier: { tenantId: req.staffUser!.tenantFilter } },
-        include: { lines: true },
-      })
-      if (!po) throw new NotFoundError('PurchaseOrder', req.params.id)
-      if (po.status === 'cancelled') throw new AppError('PO_CANCELLED', 'Cannot receive a cancelled PO', 400)
-
-      await prisma.$transaction(async (tx) => {
-        for (const recv of lines) {
-          const poLine = po.lines.find((l) => l.id === recv.lineId)
-          if (!poLine) continue
-
-          // Update line received qty
-          await tx.purchaseOrderLine.update({
-            where: { id: recv.lineId },
-            data: { quantityReceived: { increment: recv.quantityReceived } },
-          })
-
-          // Update inventory stock + unit cost (weighted average)
-          const item = await tx.inventoryItem.findUnique({ where: { id: poLine.inventoryItemId } })
-          if (item) {
-            const oldStock   = item.currentStock
-            const newStock   = oldStock + recv.quantityReceived
-            const oldCost    = item.unitCostCents ?? poLine.unitCostCents
-            const newUnitCost = newStock > 0
-              ? Math.round((oldCost * oldStock + poLine.unitCostCents * recv.quantityReceived) / newStock)
-              : poLine.unitCostCents
-
-            await tx.inventoryItem.update({
-              where: { id: poLine.inventoryItemId },
-              data: { currentStock: { increment: recv.quantityReceived }, unitCostCents: newUnitCost },
-            })
-          }
-        }
-
-        const allReceived = po.lines.every((l) => {
-          const recv = lines.find((r) => r.lineId === l.id)
-          const total = l.quantityReceived + (recv?.quantityReceived ?? 0)
-          return total >= l.quantityOrdered
-        })
-
-        await tx.purchaseOrder.update({
-          where: { id: req.params.id },
-          data: {
-            status:       allReceived ? 'received' : 'partial',
-            receivedDate: new Date(),
-          },
-        })
-      })
-
-      return prisma.purchaseOrder.findUnique({
-        where: { id: req.params.id },
-        include: { supplier: true, lines: { include: { inventoryItem: true } } },
-      })
-    },
-  )
-
-  // PATCH /recipes/purchase-orders/:id/cancel
-  fastify.patch<{ Params: { id: string } }>(
-    '/purchase-orders/:id/cancel',
-    { preHandler: requireAuth(...APPROVERS) },
-    async (req) => {
-      const owned = await prisma.purchaseOrder.findFirst({
-        where: { id: req.params.id, supplier: { tenantId: req.staffUser!.tenantFilter } },
-        select: { id: true },
-      })
-      if (!owned) throw new NotFoundError('PurchaseOrder', req.params.id)
-      return prisma.purchaseOrder.update({
-        where: { id: owned.id },
-        data: { status: 'cancelled' },
-      })
     },
   )
 

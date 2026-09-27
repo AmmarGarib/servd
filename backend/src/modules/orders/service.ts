@@ -4,88 +4,154 @@ import { AppError, ConflictError, NotFoundError } from '../../lib/errors.js'
 import { sendOrderReceipt, sendOrderStatusUpdate } from '../../lib/notify.js'
 import { postOrderCompletion, postOrderRefund } from '../accounting/orderPosting.js'
 import type { OrderDTO } from '@servd/types'
-import type { OrderStatus, ItemStatus, Prisma } from '@prisma/client'
+import { Prisma } from '@prisma/client'
+import type { OrderStatus, ItemStatus } from '@prisma/client'
 import { calculatePointsEarned } from '../../lib/loyaltySettings.js'
+import { consumptionForSoldLines } from '../../lib/recipeCost.js'
 
 // ─── Inventory deduction (recipe-driven) ─────────────────────────────────────
-// Called fire-and-forget after a new order is created.
-// Silently skips items without a configured recipe — never blocks order creation.
+//
+// What a sale takes out of stock comes from THE recipe explosion
+// (lib/recipeCost.ts consumptionForSoldLines) — the same one the ledger's COGS
+// uses — so it is in PURCHASE units (kg / litres / pcs, the unit currentStock is
+// held in) and it recurses through sub-recipes. The old inline copy subtracted
+// recipe grams from kilo stock (150 g off a 20 kg sack clamped it to zero and
+// auto-86'd every dish on it) and skipped sub-recipe lines entirely.
+//
+// TIMING — at order creation, restored on cancel / reject. Chosen over "at
+// completion, like COGS" for two reasons:
+//   1. Completion is written by several paths that don't go through
+//      transitionOrder (the till's completeTillSaleTx, the KDS bump-all, the
+//      delivery OTP verify). Hooking completion here would have missed the
+//      till — most sales — entirely. ingestOrder is the one door every channel
+//      comes through.
+//   2. The auto-86 needs stock that is already promised to tickets on the
+//      line; depleting at completion would keep selling the last portions
+//      while earlier tickets are still cooking.
+// Stock and COGS still agree: a completed order has had exactly the quantities
+// its COGS was costed on taken out; an order that ends without a sale
+// (cancelled / rejected) gets them back and never books COGS. A REFUND keeps
+// the depletion — the food was made and eaten (see postOrderRefund).
+//
+// Each depletion writes a 'stock' category audit row (action
+// stock.sale_deplete) holding what was ACTUALLY taken per item — clamping at
+// zero can take less than requested — and the restore gives back exactly that,
+// once (stock.sale_restore). Both lock the order row, so a cancel racing the
+// fire-and-forget depletion can't restore before it lands or deplete after it.
 
+const STOCK_DEPLETE = 'stock.sale_deplete'
+const STOCK_RESTORE = 'stock.sale_restore'
+const NO_SALE: string[] = ['cancelled', 'rejected']
+
+async function lockOrderForStock(tx: Prisma.TransactionClient, orderId: string) {
+  const rows = await tx.$queryRaw<Array<{ status: string; tenantId: string | null }>>`
+    SELECT o.status::text AS status, c."tenantId" AS "tenantId"
+    FROM orders o JOIN concepts c ON c.id = o."conceptId"
+    WHERE o.id = ${orderId}
+    FOR UPDATE OF o
+  `
+  return rows[0] ?? null
+}
+
+/**
+ * Take an order's recipe consumption out of stock. Idempotent per order, never
+ * blocks order creation (callers fire and forget), silently skips items with
+ * no recipe, and does nothing for an order that has already ended without a
+ * sale.
+ */
 export async function deductInventoryForOrder(orderId: string): Promise<void> {
-  const order = await prisma.order.findUnique({
-    where: { id: orderId },
-    select: {
-      items: {
-        where: { status: { not: 'voided' } },
-        select: { menuItemId: true, quantity: true },
-      },
-    },
-  })
-  if (!order) return
+  const touched = await prisma.$transaction(async (tx) => {
+    const order = await lockOrderForStock(tx, orderId)
+    if (!order || NO_SALE.includes(order.status)) return []
+    const done = await tx.auditLog.findFirst({
+      where: { entity: 'Order', entityId: orderId, action: STOCK_DEPLETE },
+      select: { id: true },
+    })
+    if (done) return []
 
-  const menuItemIds = order.items
-    .map((i) => i.menuItemId)
-    .filter((id): id is string => id !== null)
-  if (!menuItemIds.length) return
+    const items = await tx.orderItem.findMany({
+      where: { orderId },
+      select: { menuItemId: true, quantity: true, status: true },
+    })
+    const need = await consumptionForSoldLines(items, tx)
+    if (need.size === 0) return []
 
-  const recipes = await prisma.recipe.findMany({
-    where: { menuItemId: { in: menuItemIds } },
-    include: { ingredients: { select: { inventoryItemId: true, quantity: true, yieldPct: true } } },
-  })
-  if (!recipes.length) return
-
-  const recipeMap = new Map(recipes.map((r) => [r.menuItemId, r]))
-
-  // Accumulate total deduction per inventory item across all order items
-  const deductions = new Map<string, number>()
-  for (const item of order.items) {
-    if (!item.menuItemId) continue
-    const recipe = recipeMap.get(item.menuItemId)
-    if (!recipe || recipe.servings < 1) continue
-    for (const ing of recipe.ingredients) {
-      if (!ing.inventoryItemId) continue
-      // quantity per serving adjusted for yield loss
-      const rawQtyPerServing = ing.quantity / recipe.servings
-      const purchaseQty = ing.yieldPct > 0 ? rawQtyPerServing / ing.yieldPct : rawQtyPerServing
-      const total = purchaseQty * item.quantity
-      deductions.set(ing.inventoryItemId, (deductions.get(ing.inventoryItemId) ?? 0) + total)
-    }
-  }
-
-  if (!deductions.size) return
-
-  // Atomic clamped decrement — the read-then-write pattern races under
-  // concurrent orders for the same item (two orders both reading 0.05kg,
-  // both decrementing, ending at -0.05kg). GREATEST(0, …) at the DB level
-  // makes each UPDATE self-contained: PostgreSQL row-locks the row for the
-  // duration of the UPDATE, so concurrent decrements serialise correctly.
-  // The trade-off: we lose the per-item "shortfall" log unless we read the
-  // before/after values. We compute shortfall via a RETURNING clause.
-  const ids = Array.from(deductions.keys())
-
-  for (const [id, qty] of deductions.entries()) {
-    // Single-statement clamped decrement, returning the change so we can
-    // detect (and log) shortfalls without a separate read.
-    const result = await prisma.$queryRaw<Array<{ name: string; before: number; after: number }>>`
-      UPDATE inventory_items
-      SET "currentStock" = GREATEST(0, "currentStock" - ${qty})
-      WHERE id = ${id}
-      RETURNING name, ("currentStock" + ${qty}) AS before, "currentStock" AS after
+    // Row-lock the items in a fixed order (no deadlock between two orders for
+    // the same ingredients), then clamp at zero. Reading under the lock is
+    // what lets us record what was really taken — the old RETURNING computed
+    // "before" as after + requested, which is wrong exactly when it clamps.
+    const ids = [...need.keys()].sort()
+    const stock = await tx.$queryRaw<Array<{ id: string; name: string; currentStock: number }>>`
+      SELECT id, name, "currentStock" FROM inventory_items
+      WHERE id IN (${Prisma.join(ids)})
+      ORDER BY id
+      FOR UPDATE
     `
-    const row = result[0]
-    if (!row) continue
-    const requested = qty
-    const actual = Number(row.before) - Number(row.after)
-    if (actual + 0.0001 < requested) {
-      console.warn(`[inventory] ${row.name} shortfall: requested ${requested.toFixed(4)}, deducted ${actual.toFixed(4)} (clamped to 0)`)
+    const taken: Record<string, number> = {}
+    for (const row of stock) {
+      const requested = need.get(row.id) ?? 0
+      const before = Number(row.currentStock)
+      const after = Math.max(0, before - requested)
+      const actual = before - after
+      if (actual > 0) {
+        await tx.inventoryItem.update({ where: { id: row.id }, data: { currentStock: after } })
+        taken[row.id] = actual
+      }
+      if (actual + 0.0001 < requested) {
+        console.warn(`[inventory] ${row.name} shortfall on order ${orderId}: requested ${requested.toFixed(4)}, deducted ${actual.toFixed(4)} (clamped to 0)`)
+      }
     }
-  }
+    await tx.auditLog.create({
+      data: {
+        category: 'stock',
+        tenantId: order.tenantId,
+        action: STOCK_DEPLETE,
+        entity: 'Order',
+        entityId: orderId,
+        metadata: { taken, requested: Object.fromEntries(need) } as never,
+      },
+    })
+    return ids
+  }, { maxWait: 10_000, timeout: 15_000 })
 
   // Auto-86: if any deducted ingredient is now at or below zero, mark every
   // menu item whose recipe depends on it as unavailable. Cross-channel: the
   // emitted event reaches storefront clients and KDS (everything reads
   // MenuItem.isAvailable).
-  await autoEightySixDepletedItems(ids)
+  if (touched.length > 0) await autoEightySixDepletedItems(touched)
+}
+
+/**
+ * Give back what deductInventoryForOrder took, exactly once. Called when an
+ * order ends without a sale (cancelOrder). Menu items the depletion 86'd are
+ * NOT switched back on automatically — an operator may have 86'd them for
+ * another reason; the kitchen re-enables them.
+ */
+export async function restoreInventoryForOrder(orderId: string): Promise<void> {
+  await prisma.$transaction(async (tx) => {
+    const order = await lockOrderForStock(tx, orderId)
+    if (!order) return
+    const [depleted, restored] = await Promise.all([
+      tx.auditLog.findFirst({ where: { entity: 'Order', entityId: orderId, action: STOCK_DEPLETE }, select: { metadata: true } }),
+      tx.auditLog.findFirst({ where: { entity: 'Order', entityId: orderId, action: STOCK_RESTORE }, select: { id: true } }),
+    ])
+    if (!depleted || restored) return
+    const taken = ((depleted.metadata ?? {}) as { taken?: Record<string, number> }).taken ?? {}
+    for (const [id, qty] of Object.entries(taken)) {
+      if (!(qty > 0)) continue
+      await tx.inventoryItem.updateMany({ where: { id }, data: { currentStock: { increment: qty } } })
+    }
+    await tx.auditLog.create({
+      data: {
+        category: 'stock',
+        tenantId: order.tenantId,
+        action: STOCK_RESTORE,
+        entity: 'Order',
+        entityId: orderId,
+        metadata: { restored: taken, status: order.status } as never,
+      },
+    })
+  }, { maxWait: 10_000, timeout: 15_000 })
 }
 
 async function autoEightySixDepletedItems(ingredientIds: string[]) {
@@ -95,9 +161,25 @@ async function autoEightySixDepletedItems(ingredientIds: string[]) {
   })
   if (depleted.length === 0) return
 
-  // Find every recipe that uses any depleted ingredient, then map to menu items
+  // Every plate that uses a depleted ingredient — directly, or through a
+  // sub-recipe at any depth (the depletion explodes sub-recipes, so the 86
+  // has to follow them too).
+  const recipeIds = new Set<string>()
+  let frontier = (await prisma.recipeIngredient.findMany({
+    where: { inventoryItemId: { in: depleted.map((d) => d.id) } },
+    select: { recipeId: true },
+  })).map((r) => r.recipeId)
+  while (frontier.length > 0) {
+    const fresh = frontier.filter((id) => !recipeIds.has(id))
+    fresh.forEach((id) => recipeIds.add(id))
+    if (fresh.length === 0) break
+    frontier = (await prisma.recipeIngredient.findMany({
+      where: { prepRecipeId: { in: fresh } },
+      select: { recipeId: true },
+    })).map((r) => r.recipeId)
+  }
   const recipes = await prisma.recipe.findMany({
-    where: { ingredients: { some: { inventoryItemId: { in: depleted.map((d) => d.id) } } } },
+    where: { id: { in: [...recipeIds] }, menuItemId: { not: null } },
     select: { menuItemId: true, menuItem: { select: { id: true, conceptId: true, isAvailable: true } } },
   })
   const toDisable = recipes
@@ -701,7 +783,8 @@ async function releasePromoUsage(orderId: string, promoCodeId: string): Promise<
 // cancel on /orders and /refunds, the expo reject, refused-at-door and the
 // auto-cancel sweep — comes through here, so each one gets the state machine,
 // the cancelledAt + reason stamp, the customer notice, the restores (wallet,
-// gift card, points earned on it), the promo release and an audit entry.
+// gift card, points earned on it, the stock the sale took), the promo release
+// and an audit entry.
 
 export interface CancelOrderInput {
   /** Why. Required — stored on the order and in the audit trail. */
@@ -732,6 +815,15 @@ export async function cancelOrder(id: string, input: CancelOrderInput) {
     cancellationReason: reason,
     onlyFrom: input.onlyFrom,
   })
+
+  // No sale → the stock the order took at creation goes back (and it never
+  // books COGS). Only on the call that actually made the change; the restore
+  // is itself once-only, so a retry after a failure is safe.
+  if (changed) {
+    await restoreInventoryForOrder(id).catch((err) =>
+      console.error(`[inventory] restore failed for ${status} order ${id}:`, (err as Error).message),
+    )
+  }
 
   // Audit only what actually happened: a repeat cancel is a no-op, not a
   // second cancellation.

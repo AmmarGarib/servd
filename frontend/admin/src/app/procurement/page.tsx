@@ -1,6 +1,7 @@
 'use client'
 import { useState, useCallback, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useRouter } from 'next/navigation'
 import { api } from '../../lib/api'
 import { useViewAllTenants } from '../../components/ui/TenantSwitcher'
 import { ApAging } from '../../components/finance/ApAging'
@@ -165,10 +166,10 @@ export default function ProcurementPage() {
 // ══════════════════════════════════════════════════════════════════════════════
 
 function PoTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
+  const router = useRouter()
   const [statusFilter, setStatusFilter] = useState('')
   const [showCreate, setShowCreate] = useState(false)
   const [detailId, setDetailId] = useState<string | null>(null)
-  const [receiveId, setReceiveId] = useState<string | null>(null)
   const [rejectId, setRejectId] = useState<string | null>(null)
   const [rejectReason, setRejectReason] = useState('')
   const [cancelId, setCancelId] = useState<string | null>(null)
@@ -257,7 +258,7 @@ function PoTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
                     <PoActions po={po} onAction={(action, body) => {
                       if (action === 'reject') { setRejectId(po.id); return }
                       if (action === 'cancel') { setCancelId(po.id); return }
-                      if (action === 'receive') { setReceiveId(po.id); return }
+                      if (action === 'receive') { router.push(`/procurement/receiving?poId=${po.id}`); return }
                       actionMut.mutate({ id: po.id, action, body })
                     }} />
                   </td>
@@ -306,11 +307,6 @@ function PoTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
           {detail.rejectedReason && <p className="text-xs text-kds-red">Rejected: {detail.rejectedReason}</p>}
           {detail.cancelReason && <p className="text-xs text-kds-subtext">Cancelled: {detail.cancelReason}</p>}
         </div>
-      )}
-
-      {/* Receive modal */}
-      {receiveId && (
-        <ReceiveModal poId={receiveId} qc={qc} onClose={() => setReceiveId(null)} />
       )}
 
       {/* Reject modal */}
@@ -504,65 +500,10 @@ function CreatePoForm({ qc, onClose }: { qc: ReturnType<typeof useQueryClient>; 
   )
 }
 
-// ─── Receive modal ────────────────────────────────────────────────────────────
-
-function ReceiveModal({ poId, qc, onClose }: { poId: string; qc: ReturnType<typeof useQueryClient>; onClose: () => void }) {
-  const { data: po } = useQuery({
-    queryKey: ['procurement', 'po', poId],
-    queryFn: () => api.get<PurchaseOrder>(`/procurement/purchase-orders/${poId}`),
-  })
-
-  const [quantities, setQuantities] = useState<Record<string, string>>({})
-
-  const mut = useMutation({
-    mutationFn: () => {
-      const lines = (po?.lines ?? []).map((l) => ({
-        poLineId: l.id,
-        quantityReceived: Number(quantities[l.id] ?? l.quantityOrdered),
-      }))
-      return api.post(`/procurement/purchase-orders/${poId}/receive`, { lines })
-    },
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ['procurement', 'pos'] })
-      void qc.invalidateQueries({ queryKey: ['procurement', 'po', poId] })
-      void qc.invalidateQueries({ queryKey: ['inventory'] })
-      onClose()
-    },
-  })
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-      <div className="bg-kds-card border border-kds-border rounded-2xl p-6 w-full max-w-lg space-y-4">
-        <div className="flex items-center justify-between">
-          <p className="font-bold text-kds-text">Receive Goods</p>
-          <button onClick={onClose} className="text-kds-subtext text-xs">✕</button>
-        </div>
-        {!po ? <p className="text-kds-subtext text-sm">Loading…</p> : (
-          <div className="space-y-2">
-            {(po.lines ?? []).map((l) => (
-              <div key={l.id} className="flex items-center gap-3">
-                <span className="flex-1 text-sm text-kds-text">{l.inventoryItem?.name ?? l.inventoryItemId}</span>
-                <span className="text-xs text-kds-subtext">Ordered: {l.quantityOrdered} {l.inventoryItem?.unit}</span>
-                <input type="number" className="w-24 rounded-lg bg-kds-bg border border-kds-border px-2 py-1.5 text-sm text-kds-text focus:border-kds-green focus:outline-none"
-                  placeholder={String(l.quantityOrdered)}
-                  value={quantities[l.id] ?? ''}
-                  onChange={(e) => setQuantities({ ...quantities, [l.id]: e.target.value })} />
-              </div>
-            ))}
-          </div>
-        )}
-        <div className="flex gap-2 pt-2">
-          <button onClick={() => mut.mutate()} disabled={mut.isPending || !po}
-            className="rounded-xl bg-kds-green text-black font-bold px-4 py-2 text-sm hover:opacity-90 disabled:opacity-50">
-            {mut.isPending ? 'Receiving…' : 'Confirm receipt'}
-          </button>
-          <button onClick={onClose} className="rounded-xl border border-kds-border text-kds-subtext px-4 py-2 text-sm">Cancel</button>
-        </div>
-        {mut.isError && <p className="text-xs text-kds-red">{(mut.error as Error).message}</p>}
-      </div>
-    </div>
-  )
-}
+// Receiving happens on ONE screen, /procurement/receiving (the dock page):
+// the "Receive" action opens it with the PO preselected. The old modal here
+// posted the full ordered quantity again on a part-received PO and couldn't
+// skip a line that hadn't arrived.
 
 // ══════════════════════════════════════════════════════════════════════════════
 // BILLS TAB
@@ -1020,7 +961,7 @@ function SuppliersTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
 
   const { data: statement } = useQuery({
     queryKey: ['procurement', 'statement', statementId],
-    queryFn: () => api.get<{ supplier: Supplier; outstanding: number; bills: Bill[]; payments: SupplierPayment[] }>(`/procurement/suppliers/${statementId}/statement`),
+    queryFn: () => api.get<{ supplier: Supplier; outstanding: number; openingUnpostedCents?: number; bills: Bill[]; payments: SupplierPayment[] }>(`/procurement/suppliers/${statementId}/statement`),
     enabled: !!statementId,
   })
 
@@ -1101,8 +1042,11 @@ function SuppliersTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
               <p className={`text-xl font-black ${statement.outstanding > 0 ? 'text-kds-red' : 'text-kds-green'}`}>{pkr(statement.outstanding)}</p>
             </div>
             <div>
-              <p className="text-xs text-kds-subtext">Opening balance</p>
+              <p className="text-xs text-kds-subtext">Opening balance (included above)</p>
               <p className="text-sm font-semibold text-kds-text">{pkr(statement.supplier.openingBalanceCents)}</p>
+              {(statement.openingUnpostedCents ?? 0) !== 0 && (
+                <p className="text-[11px] text-amber-400">{pkr(statement.openingUnpostedCents ?? 0)} not yet posted to the ledger, so not in the balance</p>
+              )}
             </div>
           </div>
           <div className="grid md:grid-cols-2 gap-4">

@@ -1,4 +1,5 @@
 import { prisma } from '../../lib/prisma.js'
+import { menuItemPlateCosts } from '../../lib/recipeCost.js'
 
 export interface MenuEngineeringItem {
   menuItemId: string
@@ -39,51 +40,28 @@ export async function getMenuEngineering(opts: {
 
   const menuItemIds = salesRows.map((r) => r.menuItemId!).filter(Boolean)
 
-  // Get menu item prices + recipes in one query
-  const menuItems = await prisma.menuItem.findMany({
-    where: { id: { in: menuItemIds } },
-    select: {
-      id: true,
-      name: true,
-      priceCents: true,
-      recipe: {
-        select: {
-          servings: true,
-          laborMinutes: true,
-          ingredients: {
-            select: {
-              quantity: true,
-              yieldPct: true,
-              inventoryItem: { select: { unitCostCents: true } },
-            },
-          },
-        },
-      },
-    },
-  })
+  // Menu prices, plus THE plate cost (lib/recipeCost.ts) — the number the
+  // recipe screens price against and the ledger books as COGS. The inline copy
+  // here multiplied the per-kg price by grams (1000x high on weighed items),
+  // skipped sub-recipes, had no Q factor, divided by a yield that could be 0,
+  // and added labour at 0.83 paisa a minute (100x below the PKR 50/hr it
+  // claimed — and decision 26 drops kitchen labour from plate cost anyway).
+  const [menuItems, plateCosts] = await Promise.all([
+    prisma.menuItem.findMany({
+      where: { id: { in: menuItemIds } },
+      select: { id: true, name: true, priceCents: true },
+    }),
+    menuItemPlateCosts(menuItemIds),
+  ])
 
   const itemMap = new Map(menuItems.map((m) => [m.id, m]))
-
-  // Compute food cost per item (ingredient cost / servings + labour)
-  const LABOUR_RATE_PER_MIN = 50 / 60  // PKR 50/hr = ~0.83/min in paisa
 
   const results: MenuEngineeringItem[] = salesRows.map((row) => {
     const qtySold = row._sum.quantity ?? 0
     const item = itemMap.get(row.menuItemId!)
     const priceCents = item?.priceCents ?? 0
-    let foodCostCents = 0
-
-    if (item?.recipe) {
-      const { recipe } = item
-      const servings = recipe.servings || 1
-      const ingredientCost = recipe.ingredients.reduce((sum, ing) => {
-        if (!ing.inventoryItem) return sum
-        const rawCost = (ing.inventoryItem.unitCostCents ?? 0) * ing.quantity
-        return sum + rawCost / ing.yieldPct
-      }, 0)
-      const labourCost = recipe.laborMinutes * LABOUR_RATE_PER_MIN
-      foodCostCents = Math.round((ingredientCost + labourCost) / servings)
-    }
+    const cost = plateCosts.get(row.menuItemId!)
+    const foodCostCents = cost ? Math.round(cost.perPortionCents) : 0
 
     const grossMarginPct = priceCents > 0 ? ((priceCents - foodCostCents) / priceCents) * 100 : 0
 
@@ -97,7 +75,7 @@ export async function getMenuEngineering(opts: {
       quadrant: 'dog' as const,  // filled in below
       popularityIndex: 0,
       marginIndex: 0,
-      hasRecipe: !!item?.recipe,
+      hasRecipe: !!cost,
     }
   })
 

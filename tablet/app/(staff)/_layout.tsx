@@ -22,7 +22,6 @@ const NAV = [
   { key: 'reservations',  label: 'Bookings',     icon: '📅', path: '/(staff)/reservations' },
   { key: 'curbside',      label: 'Curbside',     icon: '🚗', path: '/(staff)/curbside' },
   { key: 'dispatch',      label: 'Dispatch',     icon: '🛵', path: '/(staff)/dispatch' },
-  { key: 'inventory',     label: 'Inventory',    icon: '📦', path: '/(staff)/inventory' },
   { key: 'customer',      label: 'Customer',     icon: '👤', path: '/(staff)/customer' },
   { key: 'shift',         label: 'Shift',        icon: '💰', path: '/(staff)/shift' },
   { key: 'time-clock',    label: 'Time clock',   icon: '⏱️', path: '/(staff)/time-clock' },

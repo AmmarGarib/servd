@@ -8,7 +8,7 @@
 import cron from 'node-cron'
 import { serviceClient as prisma } from '../lib/prisma.js'
 import { flagException } from '../lib/exceptions.js'
-import { getOperationsConfig } from '../lib/setup-config.js'
+import { getOperationsConfig, primaryTenantId } from '../lib/setup-config.js'
 
 const TREND_THRESHOLD_PCT = -0.015        // -1.5% rolling average = chronic shrinkage
 
@@ -19,7 +19,8 @@ export function startShrinkageTrendWorker(): void {
 }
 
 export async function runOnce(): Promise<{ checked: number; flagged: number }> {
-  const ops = await getOperationsConfig()
+  // Trend window is a company setting; the primary company's applies to the sweep.
+  const ops = await getOperationsConfig(await primaryTenantId())
   const weeks = ops?.shrinkage_trend_weeks ?? 4
   const since = new Date(); since.setDate(since.getDate() - weeks * 7)
 

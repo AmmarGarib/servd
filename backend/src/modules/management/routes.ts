@@ -18,6 +18,7 @@ import { requireAuth, FINANCIALS_VIEWERS, MARKETING_TEAM } from '../auth/middlew
 import { profitAndLoss, cashFlow, pnlByConcept } from '../accounting/reports.js'
 import { outputTaxCollectedCents } from '../accounting/salesTaxReturn.js'
 import { labourPctReport } from '../../lib/labour.js'
+import { isBelowPar } from '../../lib/recipeCost.js'
 import { resolveTenantScope, scopeTenantWhere, type TenantIdWhere } from '../../lib/tenantScope.js'
 import { salesTotals, dailySeries, topItems, stationTimes } from '../reports/service.js'
 
@@ -261,7 +262,9 @@ export async function managementRoutes(fastify: FastifyInstance) {
         where: { deletedAt: null, ...company },
         select: { name: true, currentStock: true, parLevel: true },
       })
-      const lowStock = inventory.filter((i) => i.currentStock <= i.parLevel)
+      // THE below-par rule (lib/recipeCost.ts): par must be set — items with
+      // parLevel 0 are untracked and used to count whenever their stock was 0.
+      const lowStock = inventory.filter((i) => isBelowPar(i))
       const lowStockItems = lowStock
         .map((i) => ({ name: i.name, currentStock: i.currentStock, parLevel: i.parLevel }))
         .slice(0, 12)

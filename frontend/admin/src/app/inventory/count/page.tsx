@@ -2,8 +2,13 @@
 // Physical count — periodic spot-check. Manager picks items, enters physical
 // quantity, system shows variance vs DB. Variance > 2% fires shrinkage flag.
 // Inventory is auto-adjusted to physical truth on submit.
+//
+// This is the ONLY way to set stock on hand by hand (owner decision 28): the
+// Inventory page's +/- and bulk "set to" are gone, and every change comes from
+// a count (this page, which keeps the PhysicalCount record), a waste log or a
+// delivery. Opening stock for a new item is its first count.
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api } from '../../../lib/api'
@@ -18,6 +23,13 @@ export default function PhysicalCountPage() {
   const [lines, setLines] = useState<Record<string, DraftLine>>({})
   const [notes, setNotes] = useState('')
   const [feedback, setFeedback] = useState<string | null>(null)
+
+  // /inventory/count?item=<id> — opened from an item's "count" link.
+  useEffect(() => {
+    const id = new URLSearchParams(window.location.search).get('item')
+    const it = id ? items.find((i) => i.id === id) : undefined
+    if (it) setSearch(it.name)
+  }, [items])
 
   const submit = useMutation({
     mutationFn: () => api.post('/crosschecks/physical-counts', {

@@ -13,6 +13,7 @@ import type { FastifyInstance } from 'fastify'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, MANAGERS } from '../auth/middleware.js'
 import { getDemandForecast } from '../reports/demand-forecast.js'
+import { belowParWhere, explodeRecipe, loadRecipeGraph } from '../../lib/recipeCost.js'
 
 export async function opsReportRoutes(fastify: FastifyInstance) {
 
@@ -53,18 +54,28 @@ export async function opsReportRoutes(fastify: FastifyInstance) {
       // separately fetch the stations referenced.
       const items = await prisma.menuItem.findMany({
         where: { id: { in: menuItemIds } },
-        include: {
-          recipe: {
-            include: {
-              ingredients: {
-                include: {
-                  inventoryItem: { select: { id: true, name: true, currentStock: true, unit: true, parLevel: true } },
-                },
-              },
-            },
-          },
-        },
+        select: { id: true, name: true, stationId: true, recipe: { select: { id: true } } },
       })
+      // THE recipe explosion (lib/recipeCost.ts) — purchase units, sub-recipes
+      // at any depth — the same one that depletes stock at sale. The inline
+      // copy here summed recipe GRAMS and compared them with stock held in
+      // KILOS, so every weighed ingredient showed a ~1000x shortfall, and it
+      // left out everything that goes in through a sub-recipe.
+      const { graph } = await loadRecipeGraph({ menuItemId: { in: menuItemIds } })
+      const needed = new Map<string, Map<string, number>>()   // menuItemId → item → qty
+      const allIngredientIds = new Set<string>()
+      for (const item of items) {
+        const fc = forecastQty.get(item.id)
+        if (!fc || !item.recipe) continue
+        const q = explodeRecipe(graph, item.recipe.id, fc.qty, 'portion')
+        needed.set(item.id, q)
+        for (const id of q.keys()) allIngredientIds.add(id)
+      }
+      const invRows = await prisma.inventoryItem.findMany({
+        where: { id: { in: [...allIngredientIds] } },
+        select: { id: true, name: true, currentStock: true, unit: true },
+      })
+      const invById = new Map(invRows.map((r) => [r.id, r]))
       const stationIds = Array.from(new Set(items.map((i) => i.stationId).filter((x): x is string => !!x)))
       const stations = stationIds.length > 0
         ? await prisma.station.findMany({ where: { id: { in: stationIds } }, select: { id: true, name: true } })
@@ -102,17 +113,10 @@ export async function opsReportRoutes(fastify: FastifyInstance) {
         const bucket = byStation.get(station.id)!
         bucket.itemNames.push(`${fc.qty}× ${item.name}`)
 
-        // For each ingredient, compute total raw qty needed for the forecast volume
-        const portionsNeeded = fc.qty
-        const recipeServings = recipe.servings || 1
-        for (const ing of recipe.ingredients) {
-          const yp = ing.yieldPct > 0 ? ing.yieldPct : 1
-          // ing.quantity is per-batch; per-portion = quantity / servings; raw purchase = / yieldPct
-          const perPortion = ing.quantity / recipeServings
-          const rawNeeded = (perPortion / yp) * portionsNeeded
-          const inv = ing.inventoryItem
+        // Raw purchase-unit quantities needed for the forecast volume
+        for (const [id, rawNeeded] of needed.get(item.id) ?? []) {
+          const inv = invById.get(id)
           if (!inv) continue
-          const id = inv.id
 
           const existing = bucket.lines.get(id)
           if (existing) {
@@ -248,12 +252,14 @@ export async function opsReportRoutes(fastify: FastifyInstance) {
         }
       }
 
-      // 4. Inventory items at or below par level (company's own + shared items)
+      // 4. Inventory items below par — THE rule (lib/recipeCost.ts): a par
+      // must be set (parLevel 0 = untracked catalogue item, which used to
+      // flag whenever its stock was 0), scoped by the item's own company.
       const lowStock = await prisma.inventoryItem.findMany({
         where: {
           deletedAt: null,
-          currentStock: { lte: prisma.inventoryItem.fields.parLevel },
-          OR: [{ tenantId: tenantFilter }, { tenantId: null }],
+          tenantId: tenantFilter ?? { in: [] },
+          ...belowParWhere(),
         },
         select: { id: true, name: true, currentStock: true, parLevel: true, unit: true },
         take: 20,

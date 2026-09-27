@@ -1,17 +1,17 @@
 // Cross-checks module — the closed-loop inventory + exception endpoints.
 // Bundled in one file because they all share the ExceptionFlag spine.
 
-import type { FastifyInstance } from 'fastify'
+import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, MANAGERS, ALL_STAFF, ADMIN_ONLY } from '../auth/middleware.js'
 import { flagException, acknowledgeException, resolveException, type ExceptionKind } from '../../lib/exceptions.js'
-import { assertNotSelfApproval } from '../../lib/separation-of-duties.js'
+import { receiveGoods } from '../procurement/receiving.js'
 import { NotFoundError, AppError } from '../../lib/errors.js'
-import { conceptIdsInScope } from '../../lib/tenantScope.js'
+import { toPurchaseUnits } from '../../lib/recipeCost.js'
+import { conceptIdsInScope, resolveTenantScope, scopeTenantWhere } from '../../lib/tenantScope.js'
 
 // Variance thresholds. Hardcoded for now; later config-driven.
-const RECEIVING_VARIANCE_THRESHOLD = 0.05    // 5%
 const PRICE_DRIFT_THRESHOLD        = 0.03    // 3%
 const YIELD_LOW_THRESHOLD          = 0.85    // < 85% of expected = leak
 const SHRINKAGE_THRESHOLD          = 0.02    // > 2% physical vs system = flag
@@ -19,142 +19,110 @@ const SHRINKAGE_THRESHOLD          = 0.02    // > 2% physical vs system = flag
 export async function crosschecksRoutes(fastify: FastifyInstance) {
 
   // ════════════════════════════════════════════════════════════════════════
-  // RECEIVING — 3-way match between PO, GRN, and supplier bill
+  // RECEIVING — the dock-door page. Thin wrappers over procurement
+  // receiveGoods(), the ONE receiving path (the PO receive route calls it
+  // too): GoodsReceipt + PO line quantities + stock + moving-average cost in
+  // one transaction, variance flags after commit. Manager tiers only (owner
+  // decision 27) and deliberately not behind the procurement module, so a
+  // kitchen manager can take a delivery at the door.
   // ════════════════════════════════════════════════════════════════════════
 
-  fastify.get('/receiving', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
+  // Suppliers the operator can see: their companies' plus company-less ones
+  // (which can still carry an old PO). Fails closed on an empty scope.
+  async function receivingSupplierIds(req: FastifyRequest): Promise<string[]> {
+    const scope = await resolveTenantScope(req)
+    if (scope.tenantIds.length === 0) return []
+    const rows = await prisma.supplier.findMany({
+      where:  { OR: [{ tenantId: { in: scope.tenantIds } }, { tenantId: null }] },
+      select: { id: true },
+    })
+    return rows.map((r) => r.id)
+  }
+
+  fastify.get('/receiving', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
     const { status } = req.query as { status?: string }
     return prisma.goodsReceipt.findMany({
-      where: { ...(status && { status }) },
-      include: {
-        lines: { include: { } },
-      },
+      where: { supplierId: { in: await receivingSupplierIds(req) }, ...(status && { status }) },
+      include: { lines: true },
       orderBy: { receivedAt: 'desc' },
       take: 100,
     })
   })
 
-  fastify.post('/receiving', { preHandler: requireAuth(...ALL_STAFF) }, async (req, reply) => {
+  // Suppliers a delivery WITHOUT a PO can come from: the active company's.
+  fastify.get('/receiving/suppliers', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
+    const tenantId = req.staffUser!.tenantId
+    if (!tenantId) return []
+    return prisma.supplier.findMany({
+      where:   { tenantId, deletedAt: null },
+      select:  { id: true, name: true },
+      orderBy: { name: 'asc' },
+    })
+  })
+
+  // POs waiting at the dock: approved and sent, or part-received.
+  fastify.get('/receiving/open-pos', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
+    return prisma.purchaseOrder.findMany({
+      where: { supplierId: { in: await receivingSupplierIds(req) }, status: { in: ['sent', 'partial'] } },
+      include: {
+        supplier: { select: { id: true, name: true } },
+        lines:    { include: { inventoryItem: { select: { id: true, name: true, unit: true } } } },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+    })
+  })
+
+  fastify.post('/receiving', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
     const body = z.object({
       poId:       z.string().uuid().nullable().optional(),
-      supplierId: z.string().uuid(),
+      supplierId: z.string().uuid().nullable().optional(),
       photoUrl:   z.string().url().nullable().optional(),
       notes:      z.string().max(500).nullable().optional(),
       lines: z.array(z.object({
-        inventoryItemId: z.string().uuid().nullable().optional(),
-        description:     z.string().min(1).max(200),
-        poQty:           z.number().nullable().optional(),
-        receivedQty:     z.number().min(0),
-        poUnitCostCents: z.number().int().nullable().optional(),
-        unit:            z.string().max(20).default('kg'),
-        notes:           z.string().max(200).nullable().optional(),
+        poLineId:          z.string().uuid().nullable().optional(),
+        inventoryItemId:   z.string().uuid().nullable().optional(),
+        quantityReceived:  z.number().min(0),
+        unitCostCents:     z.number().int().min(0).nullable().optional(),
+        discrepancyReason: z.enum(['short_shipment', 'over_shipment', 'damaged', 'wrong_item', 'quality_issue']).nullable().optional(),
+        notes:             z.string().max(200).nullable().optional(),
       })).min(1),
     }).parse(req.body)
 
-    // Separation of duties: receiver ≠ PO creator
-    if (body.poId) {
-      const po = await prisma.purchaseOrder.findUnique({ where: { id: body.poId }, select: { createdBy: true } })
-      if (po) {
-        await assertNotSelfApproval({
-          actorId: req.staffUser!.id,
-          creatorId: po.createdBy,
-          action: 'receive_goods',
-          entity: 'PurchaseOrder',
-          entityId: body.poId,
-        })
+    // The supplier must be one the operator can see; a delivery without a PO
+    // binds new stock, so it must be the ACTIVE company's supplier.
+    const supplierId = body.poId
+      ? (await prisma.purchaseOrder.findUnique({ where: { id: body.poId }, select: { supplierId: true } }))?.supplierId
+      : body.supplierId
+    if (!supplierId) throw body.poId ? new NotFoundError('PurchaseOrder', body.poId) : new AppError('SUPPLIER_REQUIRED', 'Pick the supplier for a delivery without a PO', 400)
+    if (!(await receivingSupplierIds(req)).includes(supplierId)) {
+      throw body.poId ? new NotFoundError('PurchaseOrder', body.poId) : new NotFoundError('Supplier', supplierId)
+    }
+    if (!body.poId) {
+      const sup = await prisma.supplier.findUnique({ where: { id: supplierId }, select: { tenantId: true } })
+      if (sup?.tenantId && sup.tenantId !== req.staffUser!.tenantId) {
+        throw new AppError('SUPPLIER_NOT_IN_ACTIVE_COMPANY', 'Switch to the supplier\'s company to receive a delivery without a PO', 422)
       }
     }
 
-    // Photo enforcement — above the configured threshold (sum of line value
-    // when costs are present) a photo is required to accept the delivery.
-    const { getOperationsConfig } = await import('../../lib/setup-config.js')
-    const ops = await getOperationsConfig(req.staffUser!.tenantId)
-    const photoThreshold = ops?.photoRequiredAboveCents ?? 50000
-    const totalValue = body.lines.reduce((s, l) => s + (l.poUnitCostCents ?? 0) * l.receivedQty, 0)
-    if (totalValue >= photoThreshold && !body.photoUrl) {
-      throw new AppError(
-        'PHOTO_REQUIRED',
-        `Deliveries above PKR ${(photoThreshold / 100).toFixed(0)} require a dock-door photo. Snap the goods before submitting.`,
-        400,
-      )
-    }
-
-    // Compute variance per line; collect flags to fire after commit
-    const flagsToFire: Array<{ kind: ExceptionKind; line: typeof body.lines[number]; variancePct: number }> = []
-
-    const linesData = body.lines.map((l) => {
-      let variancePct: number | null = null
-      if (l.poQty != null && l.poQty > 0) {
-        variancePct = (l.receivedQty - l.poQty) / l.poQty
-        if (Math.abs(variancePct) > RECEIVING_VARIANCE_THRESHOLD) {
-          flagsToFire.push({
-            kind: variancePct < 0 ? 'short_shipment' : 'receiving_variance',
-            line: l, variancePct,
-          })
-        }
-      }
-      return {
-        inventoryItemId: l.inventoryItemId ?? null,
-        description: l.description,
-        poQty: l.poQty ?? null,
-        receivedQty: l.receivedQty,
-        poUnitCostCents: l.poUnitCostCents ?? null,
-        unit: l.unit,
-        variancePct,
-        notes: l.notes ?? null,
-      }
+    const result = await receiveGoods({
+      actor:      req.staffUser!,
+      poId:       body.poId ?? null,
+      supplierId,
+      photoUrl:   body.photoUrl ?? null,
+      notes:      body.notes ?? null,
+      lines:      body.lines,
     })
-
-    const hasVariance = flagsToFire.length > 0
-
-    const receipt = await prisma.goodsReceipt.create({
-      data: {
-        poId: body.poId ?? null,
-        supplierId: body.supplierId,
-        receivedById: req.staffUser!.id,
-        photoUrl: body.photoUrl ?? null,
-        notes: body.notes ?? null,
-        status: hasVariance ? 'disputed' : 'accepted',
-        varianceFlag: hasVariance,
-        lines: { create: linesData },
-      },
-      include: { lines: true },
-    })
-
-    // Bump InventoryItem.currentStock for each line that maps to one
-    for (const l of body.lines) {
-      if (l.inventoryItemId) {
-        await prisma.inventoryItem.update({
-          where: { id: l.inventoryItemId },
-          data: { currentStock: { increment: l.receivedQty } },
-        }).catch(() => {})
-      }
-    }
-
-    // Fire exception flags (variance, short shipment)
-    for (const f of flagsToFire) {
-      const sev = f.kind === 'short_shipment' && Math.abs(f.variancePct) > 0.15 ? 'high' : 'medium'
-      await flagException({
-        kind: f.kind,
-        severity: sev,
-        title: `${f.kind === 'short_shipment' ? 'Short shipment' : 'Receiving variance'}: ${f.line.description}`,
-        description: `Ordered ${f.line.poQty} ${f.line.unit}, received ${f.line.receivedQty} ${f.line.unit} (${(f.variancePct * 100).toFixed(1)}% variance).`,
-        entityType: 'GoodsReceipt',
-        entityId: receipt.id,
-        actorId: req.staffUser!.id,
-        metadata: { line: f.line, variancePct: f.variancePct },
-      })
-    }
-
-    return reply.status(201).send(receipt)
+    return reply.status(201).send({ ...result.receipt, poStatus: result.poStatus, flagged: result.flagged })
   })
 
   // ════════════════════════════════════════════════════════════════════════
   // PREP BATCHES — yield tracking
   // ════════════════════════════════════════════════════════════════════════
 
-  fastify.get('/prep-batches', { preHandler: requireAuth(...ALL_STAFF) }, async () => {
+  fastify.get('/prep-batches', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
     return prisma.prepBatch.findMany({
+      where: await scopeTenantWhere(req, 'read'),
       orderBy: { createdAt: 'desc' },
       take: 100,
     })
@@ -181,28 +149,69 @@ export async function crosschecksRoutes(fastify: FastifyInstance) {
       yieldVariancePct = body.actualYieldQty / body.expectedYieldQty
     }
 
-    const batch = await prisma.prepBatch.create({
-      data: {
-        recipeId: body.recipeId ?? null,
-        itemName: body.itemName,
-        inputs: body.inputs as never,
-        expectedYieldQty: body.expectedYieldQty ?? null,
-        actualYieldQty: body.actualYieldQty,
-        unit: body.unit,
-        yieldVariancePct,
-        staffId: req.staffUser!.id,
-        photoUrl: body.photoUrl ?? null,
-        notes: body.notes ?? null,
-      },
+    // Inputs are weighed in the kitchen (grams by default) but stock is held
+    // in PURCHASE units (kg / litres / pcs). The old code subtracted the gram
+    // figure straight from kilo stock — 500 g of garlic took 500 kg. Convert
+    // through lib/recipeCost.ts (the same unit rules as the recipe explosion)
+    // and refuse a unit that can't be reconciled rather than guess.
+    // Inputs must be the active company's own items: a batch draws that
+    // company's stock, and the batch is stamped with it.
+    const tenantId = req.staffUser?.tenantId
+    if (!tenantId) throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company first — a prep batch draws one company\'s stock', 422)
+    const invItems = await prisma.inventoryItem.findMany({
+      where: { id: { in: body.inputs.map((i) => i.inventoryItemId) }, deletedAt: null, tenantId },
+      select: { id: true, name: true, unit: true },
+    })
+    const invById = new Map(invItems.map((i) => [i.id, i]))
+    const inputs = body.inputs.map((i) => {
+      const inv = invById.get(i.inventoryItemId)
+      if (!inv) throw new NotFoundError('InventoryItem', i.inventoryItemId)
+      const qtyPurchaseUnits = toPurchaseUnits(i.qtyDrawn, i.unit, inv.unit)
+      if (qtyPurchaseUnits == null) {
+        throw new AppError('UNIT_MISMATCH', `${inv.name} is stocked in ${inv.unit}; ${i.unit} can't be converted to it`, 422)
+      }
+      return { ...i, qtyPurchaseUnits, stockUnit: inv.unit }
     })
 
-    // Deduct each input from inventory at the actual qty drawn
-    for (const i of body.inputs) {
-      await prisma.inventoryItem.update({
-        where: { id: i.inventoryItemId },
-        data: { currentStock: { decrement: i.qtyDrawn } },
-      }).catch(() => {})
-    }
+    // A batch of a SUB-RECIPE (recipeId → kind 'component') is a yield record
+    // only: sale-time depletion already explodes that sub-recipe into its raw
+    // ingredients when the plates using it sell (the same explosion the ledger
+    // costs COGS on), so taking the inputs out here as well would count them
+    // twice. Ad-hoc batches (no recipe) still draw their inputs from stock.
+    const subRecipe = body.recipeId
+      ? await prisma.recipe.findFirst({ where: { id: body.recipeId, kind: 'component' }, select: { id: true } })
+      : null
+
+    const batch = await prisma.$transaction(async (tx) => {
+      const created = await tx.prepBatch.create({
+        data: {
+          tenantId,
+          recipeId: body.recipeId ?? null,
+          itemName: body.itemName,
+          inputs: inputs as never,
+          expectedYieldQty: body.expectedYieldQty ?? null,
+          actualYieldQty: body.actualYieldQty,
+          unit: body.unit,
+          yieldVariancePct,
+          staffId: req.staffUser!.id,
+          photoUrl: body.photoUrl ?? null,
+          notes: body.notes ?? null,
+        },
+      })
+      if (!subRecipe) {
+        for (const i of inputs) {
+          if (!(i.qtyPurchaseUnits > 0)) continue
+          // Conditional: never take stock below zero, and fail the whole
+          // batch (transaction) rather than record a draw that did not happen.
+          const n = await tx.inventoryItem.updateMany({
+            where: { id: i.inventoryItemId, currentStock: { gte: i.qtyPurchaseUnits } },
+            data: { currentStock: { decrement: i.qtyPurchaseUnits } },
+          })
+          if (n.count === 0) throw new AppError('INSUFFICIENT_STOCK', `Not enough ${invById.get(i.inventoryItemId)?.name ?? 'stock'} on hand for this batch`, 409)
+        }
+      }
+      return created
+    })
 
     // Flag if yield is suspiciously low
     if (yieldVariancePct != null && yieldVariancePct < YIELD_LOW_THRESHOLD) {
@@ -226,8 +235,9 @@ export async function crosschecksRoutes(fastify: FastifyInstance) {
   // PHYSICAL COUNT — periodic spot-checks
   // ════════════════════════════════════════════════════════════════════════
 
-  fastify.get('/physical-counts', { preHandler: requireAuth(...MANAGERS) }, async () => {
+  fastify.get('/physical-counts', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
     return prisma.physicalCount.findMany({
+      where: await scopeTenantWhere(req, 'read'),
       include: { lines: true },
       orderBy: { countedAt: 'desc' },
       take: 50,
@@ -244,11 +254,22 @@ export async function crosschecksRoutes(fastify: FastifyInstance) {
       notes: z.string().max(500).nullable().optional(),
     }).parse(req.body)
 
-    // Snapshot system stock for each item BEFORE the count adjusts anything
+    // A count is the ONE way stock on hand is set (decision 28), so it has to
+    // be exact: every line is an item of the active company, and the snapshot,
+    // the count and the stock set happen together or not at all.
+    const tenantId = req.staffUser?.tenantId
+    if (!tenantId) throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company first — a count sets one company\'s stock', 422)
+    const ids = body.lines.map((l) => l.inventoryItemId)
+    if (new Set(ids).size !== ids.length) throw new AppError('DUPLICATE_LINE', 'An item appears twice in the count', 400)
     const items = await prisma.inventoryItem.findMany({
-      where: { id: { in: body.lines.map((l) => l.inventoryItemId) } },
-      select: { id: true, name: true, currentStock: true },
+      where: { id: { in: ids }, deletedAt: null },
+      select: { id: true, name: true, currentStock: true, tenantId: true },
     })
+    for (const id of ids) {
+      const it = items.find((x) => x.id === id)
+      if (!it || (it.tenantId && it.tenantId !== tenantId)) throw new NotFoundError('InventoryItem', id)
+      if (!it.tenantId) throw new AppError('ITEM_UNASSIGNED', `${it.name} belongs to no company yet — assign it on the Sourcing sheet first`, 422)
+    }
     const stockMap = new Map(items.map((i) => [i.id, i]))
 
     const linesData = body.lines.map((l) => {
@@ -263,25 +284,29 @@ export async function crosschecksRoutes(fastify: FastifyInstance) {
       }
     })
 
-    const count = await prisma.physicalCount.create({
-      data: {
-        countedById: req.staffUser!.id,
-        notes: body.notes ?? null,
-        status: 'completed',
-        lines: { create: linesData },
-      },
-      include: { lines: true },
+    const count = await prisma.$transaction(async (tx) => {
+      const created = await tx.physicalCount.create({
+        data: {
+          tenantId,
+          countedById: req.staffUser!.id,
+          notes: body.notes ?? null,
+          status: 'completed',
+          lines: { create: linesData },
+        },
+        include: { lines: true },
+      })
+      // Stock becomes what was counted — inside the same transaction, so a
+      // count is never recorded without its stock set (or the reverse).
+      for (const l of body.lines) {
+        await tx.inventoryItem.update({ where: { id: l.inventoryItemId }, data: { currentStock: l.physicalQty } })
+      }
+      return created
     })
 
-    // Adjust inventory to physical truth + flag significant variances
+    // Flag significant variances once the count is committed.
     for (const l of body.lines) {
       const sysQty = stockMap.get(l.inventoryItemId)?.currentStock ?? 0
       const itemName = stockMap.get(l.inventoryItemId)?.name ?? 'unknown'
-      await prisma.inventoryItem.update({
-        where: { id: l.inventoryItemId },
-        data: { currentStock: l.physicalQty },
-      }).catch(() => {})
-
       const variancePct = sysQty > 0 ? (l.physicalQty - sysQty) / sysQty : 0
       if (Math.abs(variancePct) > SHRINKAGE_THRESHOLD && sysQty > 0) {
         await flagException({

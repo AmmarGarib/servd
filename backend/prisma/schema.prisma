@@ -1881,7 +1881,9 @@ model InventoryItem {
   unit          String // e.g. "kg", "pcs", "litres"
   parLevel      Float     @default(0)
   currentStock  Float     @default(0)
-  unitCostCents Int? // cost per unit (paisa) — updated on each PO receipt
+  unitCostCents Int? // cost per unit (paisa) — moving average of deliveries
+  // The negotiated price on the sourcing sheet. A reference only; never the cost.
+  listPriceCents Int?
   // Edible portion after trim/peel/loss. The Recipe page uses this as the
   // default yield when adding this ingredient to a recipe; per-recipe rows
   // can still override on RecipeIngredient.yieldPct.
@@ -2292,6 +2294,7 @@ model PurchaseOrderLine {
   billLines           SupplierBillLine[]
   discrepancies       ReceivingDiscrepancy[]
   priceHistoryEntries ItemPriceHistory[]
+  receiptLines        GoodsReceiptLine[]
 
   @@index([purchaseOrderId])
   @@index([inventoryItemId])
@@ -4742,10 +4745,15 @@ model GoodsReceiptLine {
   unit            String  @default("kg")
   variancePct     Float? // (receivedQty - poQty) / poQty
   notes           String?
+  // The PO line this receipt line was matched to, so a receipt can be traced
+  // back to what was ordered.
+  poLineId        String?
 
-  receipt GoodsReceipt @relation(fields: [receiptId], references: [id], onDelete: Cascade)
+  receipt GoodsReceipt      @relation(fields: [receiptId], references: [id], onDelete: Cascade)
+  poLine  PurchaseOrderLine? @relation(fields: [poLineId], references: [id], onDelete: SetNull)
 
   @@index([receiptId])
+  @@index([poLineId])
   @@map("goods_receipt_lines")
 }
 
@@ -4755,6 +4763,7 @@ model GoodsReceiptLine {
 // product shows up here as low yield % over time.
 model PrepBatch {
   id               String   @id @default(cuid())
+  tenantId         String? // company whose stock the inputs came from
   recipeId         String? // null for ad-hoc preps
   itemName         String // e.g. "Confit garlic"
   inputs           Json // [{inventoryItemId, qtyDrawn, unit}]
@@ -4769,6 +4778,7 @@ model PrepBatch {
 
   @@index([staffId, createdAt])
   @@index([recipeId])
+  @@index([tenantId, createdAt])
   @@map("prep_batches")
 }
 
@@ -4777,6 +4787,8 @@ model PrepBatch {
 // per-item shrinkage trends drive the strongest theft signal.
 model PhysicalCount {
   id          String   @id @default(cuid())
+  // Company the count belongs to (the items counted are that company's).
+  tenantId    String?
   countedById String
   countedAt   DateTime @default(now())
   status      String   @default("pending") // pending | completed | reviewed
@@ -4785,6 +4797,7 @@ model PhysicalCount {
   lines PhysicalCountLine[]
 
   @@index([countedAt])
+  @@index([tenantId, countedAt])
   @@map("physical_counts")
 }
 

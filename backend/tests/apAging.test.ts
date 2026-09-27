@@ -143,7 +143,7 @@ describe('one AP aging, tied to ledger AP', () => {
     const dairy = r.bySupplier.find((s) => s.supplierId === supA2)!
     expect(dairy).toMatchObject({
       current: 9_550, '31_60': 38_200 - 5_000, creditsCents: 3_000,
-      total: 9_550 + 33_200 - 3_000, openingCents: 70_000, bills: 2,
+      total: 9_550 + 33_200 - 3_000, openingCents: 0, openingUnpostedCents: 70_000, bills: 2,
     })
     expect(r.bySupplier.some((s) => s.supplierId === orphan)).toBe(false)
     expect(r.unassigned.bySupplier.map((s) => s.supplierId)).toEqual([orphan])
@@ -173,7 +173,7 @@ describe('one AP aging, tied to ledger AP', () => {
     const st = res.json() as { outstanding: number; ledgerOutstanding: number; openingBalanceCents: number }
     const row = (await agingReport([tenantA])).bySupplier.find((s) => s.supplierId === supA2)!
     expect(st.ledgerOutstanding).toBe(row.total)
-    expect(st.outstanding).toBe(row.total + 70_000)
+    expect(st.outstanding).toBe(row.total)
   })
 
   it('the emailed AP aging is the same aging, for one company', async () => {
