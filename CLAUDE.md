@@ -394,10 +394,10 @@ review, and it personally handles anything correctness-critical —
 payments, FBR/SRB tax submission, auth/permissions, RLS/tenant
 isolation, order money math.
 
-**Subagents run on Fable too (product owner, 2026-09-27).** Do not set
-the Agent tool's `model` parameter — every agent inherits the session model.
-The tier table that used to live here (opus / sonnet / haiku routing) is
-retired; the owner would rather pay for one tier than review cheaper output.
+**Subagents run on Opus 5.5 (product owner, 2026-09-27, revised the same
+day).** Pass `model: "opus"` on every Agent call — no tiering to sonnet or
+haiku, and no Fable for agents (tried it for a day; the owner prefers Opus).
+The main session runs on whatever the owner sets with `/model`.
 
 ### Parallel agents
 
