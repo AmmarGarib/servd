@@ -390,18 +390,10 @@ review, and it personally handles anything correctness-critical —
 payments, FBR/SRB tax submission, auth/permissions, RLS/tenant
 isolation, order money math.
 
-Subagents are routed via the Agent tool's `model` parameter:
-
-| `model` | Route here |
-|---|---|
-| `fable` (or inherit) | Hardest isolated problems; final review of critical-path changes; anything touching money, tax, auth, or tenant isolation |
-| `opus` (Opus 5.5 / latest Opus tier) | Heavy reasoning in parallel: gnarly bug hunts, security-sensitive review, complex multi-file refactors, backend modules with real business logic |
-| `sonnet` | Standard implementation at scale: page restyles, route ports, tests, docs, codemods that still need judgment |
-| `haiku` | Mechanical/bulk: broad searches, screenshot/verification runs, log triage, exact-spec find-and-replace across many files |
-
-Rule of thumb: **escalate a tier** when a cheaper agent's output would
-need line-by-line review anyway (the review erases the saving);
-**de-escalate** when the spec is exact and failure is cheap to detect.
+**Subagents run on Fable too (product owner, 2026-09-27).** Do not set
+the Agent tool's `model` parameter — every agent inherits the session model.
+The tier table that used to live here (opus / sonnet / haiku routing) is
+retired; the owner would rather pay for one tier than review cheaper output.
 
 ### Parallel agents
 
