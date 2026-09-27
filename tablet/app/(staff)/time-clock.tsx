@@ -1,10 +1,11 @@
-// Time clock — punch in/out with selfie + geo. Mirrors the existing
-// /time-clock web kiosk but tablet-native. The signed-in staff user can
-// punch their own shift; managers can switch user via the END SHIFT button
-// in the side rail.
+// Time clock — punch in/out with selfie + geo, tablet-native twin of the
+// admin /time-clock page. The signed-in person punches their own shift; staff
+// WITHOUT a login punch on this tablet with their HR employee ID and the kiosk
+// PIN HR set for them. Every punch writes that day's HR attendance (present or
+// late against the roster) through /time-clock on the API.
 
 import { useRef, useState, useEffect } from 'react'
-import { View, Text, Pressable, Alert, ActivityIndicator } from 'react-native'
+import { View, Text, Pressable, Alert, ActivityIndicator, TextInput } from 'react-native'
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query'
 import { CameraView, useCameraPermissions } from 'expo-camera'
 import * as FileSystem from 'expo-file-system'
@@ -90,6 +91,36 @@ export default function TimeClockScreen() {
     onError:   (err: Error) => Alert.alert('Punch failed', err.message),
   })
 
+  // Kiosk punch for staff without a login: employee ID + PIN. In when their
+  // day is not open, out when it is — the server decides.
+  const [kioskCode, setKioskCode] = useState('')
+  const [kioskPin, setKioskPin] = useState('')
+  const kiosk = useMutation({
+    mutationFn: async () => {
+      setCapturing(true)
+      try {
+        const [fix, selfieUrl] = await Promise.all([
+          currentFix(5_000),
+          cameraPerm?.granted ? captureSelfie() : Promise.resolve(null),
+        ])
+        return await api.post<{ action: 'in' | 'out'; employee: { fullName: string }; attendance: { status: string | null; lateMinutes: number | null } | null }>('/time-clock/kiosk/punch', {
+          employeeCode: kioskCode.trim(), pin: kioskPin,
+          ...(fix && { lat: fix.lat, lng: fix.lng }),
+          ...(selfieUrl && { selfieUrl }),
+        })
+      } finally {
+        setCapturing(false)
+      }
+    },
+    onSuccess: (r) => {
+      setKioskCode(''); setKioskPin('')
+      const late = r.attendance?.status === 'late' ? ` Marked late by ${r.attendance.lateMinutes} min.` : ''
+      Alert.alert(r.action === 'in' ? 'Clocked in' : 'Clocked out', `${r.employee.fullName}${r.action === 'in' ? ', welcome.' : ', goodbye.'}${late}`)
+      qc.invalidateQueries({ queryKey: ['time-clock'] })
+    },
+    onError: (err: Error) => { setKioskPin(''); Alert.alert('Punch failed', err.message) },
+  })
+
   const punchedIn = status.data?.punchedIn ?? false
   const shift = status.data?.shift
 
@@ -135,6 +166,19 @@ export default function TimeClockScreen() {
         )}
       </Panel>
 
+      <View style={{ flex: 1, gap: 16 }}>
+      <Panel title="No login? Punch with your employee ID" style={{ gap: 10, padding: 16 }}>
+        <TextInput value={kioskCode} onChangeText={setKioskCode} placeholder="Employee ID (e.g. EMP-0012)" placeholderTextColor={theme.textMuted}
+          autoCapitalize="characters" autoCorrect={false}
+          style={{ color: theme.text, borderWidth: 1, borderColor: theme.border, borderRadius: 10, padding: 12, fontSize: 16 }} />
+        <TextInput value={kioskPin} onChangeText={(t) => setKioskPin(t.replace(/\D/g, '').slice(0, 6))} placeholder="Kiosk PIN" placeholderTextColor={theme.textMuted}
+          keyboardType="number-pad" secureTextEntry
+          style={{ color: theme.text, borderWidth: 1, borderColor: theme.border, borderRadius: 10, padding: 12, fontSize: 16 }} />
+        <Button label={kiosk.isPending ? 'Recording…' : 'Punch in / out'} onPress={() => {
+          if (!kioskCode.trim() || kioskPin.length < 4) { Alert.alert('Punch', 'Type your employee ID and PIN.'); return }
+          kiosk.mutate()
+        }} />
+      </Panel>
       <Panel title="Today's shifts" style={{ flex: 1 }}>
         {status.isLoading ? (
           <ActivityIndicator color={theme.accent} />
@@ -157,6 +201,7 @@ export default function TimeClockScreen() {
           ))
         )}
       </Panel>
+      </View>
     </View>
   )
 }

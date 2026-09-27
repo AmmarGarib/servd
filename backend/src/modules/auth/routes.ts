@@ -1,8 +1,7 @@
 import type { FastifyInstance } from 'fastify'
-import { randomBytes } from 'crypto'
-import bcrypt from 'bcryptjs'                  // PIN collision check on staff signup
+import bcrypt from 'bcryptjs'                  // password checks on the self-service routes
 import { z } from 'zod'
-import { staffLogin, refreshStaffToken, customerRegister, customerLogin, verifyMagicLink, requestMagicLink, hashPassword, hashPin, issueStaffSession, findOtpLoginStaff } from './service.js'
+import { staffLogin, refreshStaffToken, customerRegister, customerLogin, verifyMagicLink, requestMagicLink, hashPassword, issueStaffSession, findOtpLoginStaff } from './service.js'
 import {
   verifyLoginChallenge,
   startEnrolment,
@@ -11,6 +10,10 @@ import {
   maskPhone,
 } from './twoFactor.js'
 import { requestOtp, verifyOtp, normalisePhone, requestEmailOtp, verifyEmailOtp, requestSharedCode, verifySharedCode } from './otp.js'
+import { preparePin, setManagerPin } from './managerPin.js'
+import { accountStateOf, whereAccountState, suspendData, reactivateData, approveData, softDeleteData } from './accountStatus.js'
+import { ASSIGNABLE_ROLES_WITH_ADMIN, isGeofenceExempt } from '../../lib/roles.js'
+import type { UserRole } from '@prisma/client'
 import { sendText, invalidateWhatsappConfig, WA_URL_KEY, WA_KEY_KEY } from '../../lib/whatsapp.js'
 import { sendEmail, mailConfig, invalidateMailConfig, emailConfigured as isEmailConfigured, SMTP_HOST_KEY, SMTP_PORT_KEY, SMTP_USER_KEY, SMTP_PASS_KEY, SMTP_FROM_KEY } from '../../lib/mailer.js'
 import { runDeliveryWatch, DELIVERY_STATE_KEY } from '../../workers/deliveryWatch.js'
@@ -80,41 +83,17 @@ function dedupeStrings(list: string[]): string[] {
   return Array.from(new Set(list))
 }
 
-// All UserRole enum values *except* admin — admin is reserved for the CEO and
-// can only be granted by another admin via PATCH /auth/users/:id; new staff
-// signing themselves up never get it. Keep in sync with backend/prisma/schema.prisma.
-const STAFF_ROLE_VALUES = [
-  'manager', 'management', 'foh_management', 'boh_management',
-  'foh', 'boh', 'kitchen', 'expediter', 'cashier',
-  'procurement', 'marketing', 'finance', 'hr',
-] as const
-const STAFF_ROLE = z.enum(STAFF_ROLE_VALUES)
-// CEO-only assignment includes `admin` so the founder can promote a successor.
-const STAFF_ROLE_WITH_ADMIN = z.enum(['admin', ...STAFF_ROLE_VALUES])
+// Roles the CEO may assign on the staff editor — derived from the Prisma enum
+// in lib/roles.ts (every role except legacy 'manager'; 'admin' included so the
+// founder can name a successor). This used to be a hand-kept list that had
+// drifted: Workforce offered fnb_manager, brand_manager and owner, and the API
+// rejected all three with a 400.
+const STAFF_ROLE_WITH_ADMIN = z.enum(ASSIGNABLE_ROLES_WITH_ADMIN as [UserRole, ...UserRole[]])
 
-// 6-digit PIN, 10^6 = 1M keyspace. Combined with per-IP lockout on /auth/pin,
-// this is brute-force-resistant in practice. Used by both staff signup and
-// the admin-driven re-issue flow for legacy PIN rotation.
-/**
- * Reject PINs that a shoulder-surfer or a casual guesser would land quickly:
- * all-same digits (0000), ascending/descending runs (1234, 4321), and
- * plausible birth years. Not a substitute for lockout, but it removes the
- * handful of PINs that a meaningful share of people actually pick.
- */
-export function isWeakPin(pin: string): boolean {
-  if (/^(\d)\1+$/.test(pin)) return true                      // 1111, 000000
-  const asc  = '01234567890'
-  const desc = '09876543210'
-  if (asc.includes(pin) || desc.includes(pin)) return true      // 1234, 4321
-  if (/^(19|20)\d{2}$/.test(pin)) return true                   // 1998, 2024
-  return false
-}
-
-function generateRandomPin(): string {
-  const buf = randomBytes(4)
-  const n = buf.readUInt32BE(0) % 1_000_000
-  return n.toString().padStart(6, '0')
-}
+// Manager-override PIN rules (format, weak-PIN list, per-company collision
+// check) live in ./managerPin.ts — the ONE setter and the ONE verifier.
+export { isWeakPin } from './managerPin.js'
+import { clockIn, clockOut } from '../timeclock/service.js'
 
 function haversineMeters(lat1: number, lng1: number, lat2: number, lng2: number): number {
   const R = 6_371_000
@@ -127,74 +106,6 @@ function haversineMeters(lat1: number, lng1: number, lat2: number, lng2: number)
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
 }
 
-// Clock-in policy: geofence + anti-buddy-punching selfie.
-//
-// Extracted so POST /auth/pin and POST /auth/clock-in enforce the SAME rules.
-// It previously lived only inside the PIN handler, which meant deleting PIN
-// login would have switched attendance fraud control off silently — the
-// OperationsConfig screen would keep rendering settings that controlled
-// nothing. Returns the geofence verdict for the audit record.
-async function enforceClockInPolicy(
-  user: { id: string; role: string },
-  body: { lat?: number; lng?: number; selfieUrl?: string },
-): Promise<{ geofenceMatched: boolean | null; geofenceDistanceM: number | null }> {
-  let geofenceMatched: boolean | null = null
-  let geofenceDistanceM: number | null = null
-  if (['admin', 'manager'].includes(user.role)) return { geofenceMatched, geofenceDistanceM }
-
-  const { getOperationsConfig } = await import('../../lib/setup-config.js')
-  const ops = await getOperationsConfig(
-    (await prisma.user.findUnique({ where: { id: user.id }, select: { tenantId: true } }))?.tenantId,
-  )
-  const ratioEnforced = ops?.geofenceEnforced ?? false
-  const selfieRequired = ops?.selfieRequiredAtClockIn ?? false
-  const radiusM = ops?.geofenceRadiusMetres ?? 150
-
-  const concept = await prisma.concept.findFirst({
-    where: { latitude: { not: null }, longitude: { not: null }, isActive: true, deletedAt: null },
-    select: { latitude: true, longitude: true, name: true },
-  })
-
-  if (selfieRequired && !body.selfieUrl) {
-    throw new AppError('SELFIE_REQUIRED', 'Snap a selfie to clock in. Buddy-punching is blocked.', 403)
-  }
-
-  if (ratioEnforced && concept?.latitude != null && concept?.longitude != null) {
-    if (body.lat == null || body.lng == null) {
-      throw new AppError('LOCATION_REQUIRED', 'Allow location in your browser — you can only clock in on-site.', 403)
-    }
-    geofenceDistanceM = haversineMeters(concept.latitude, concept.longitude, body.lat, body.lng)
-    geofenceMatched = geofenceDistanceM <= radiusM
-    if (!geofenceMatched) {
-      throw new AppError(
-        'OUTSIDE_GEOFENCE',
-        `You must be within ${radiusM}m of ${concept.name} to clock in (you are ${Math.round(geofenceDistanceM)}m away).`,
-        403,
-      )
-    }
-  } else if (concept?.latitude != null && body.lat != null && body.lng != null) {
-    geofenceDistanceM = haversineMeters(concept.latitude, concept.longitude!, body.lat, body.lng)
-    geofenceMatched = geofenceDistanceM <= radiusM
-  }
-
-  if (!ratioEnforced) {
-    const row = await prisma.setting.findUnique({ where: { key: 'location_config' } })
-    if (row) {
-      let cfg: { enabled: boolean; lat: number | null; lng: number | null; radiusMeters: number }
-      try { cfg = JSON.parse(row.value) } catch { cfg = { enabled: false, lat: null, lng: null, radiusMeters: 200 } }
-      if (cfg.enabled && cfg.lat !== null && cfg.lng !== null) {
-        if (body.lat == null || body.lng == null) {
-          throw new AppError('LOCATION_REQUIRED', 'Location access is required to sign in. Please allow location in your browser.', 403)
-        }
-        const dist = haversineMeters(cfg.lat, cfg.lng, body.lat, body.lng)
-        if (dist > cfg.radiusMeters) {
-          throw new AppError('OUTSIDE_LOCATION', `You must be within ${cfg.radiusMeters}m of the restaurant to clock in (you are ${Math.round(dist)}m away).`, 403)
-        }
-      }
-    }
-  }
-  return { geofenceMatched, geofenceDistanceM }
-}
 
 
 export async function authRoutes(fastify: FastifyInstance) {
@@ -284,7 +195,7 @@ export async function authRoutes(fastify: FastifyInstance) {
       } catch (err) {
         // A cooldown is the caller's own doing and worth saying out loud —
         // silence here reads as "my number is wrong" and they try another one.
-        if (err instanceof AppError && err.code === 'OTP_COOLDOWN') throw err
+        if (err instanceof AppError && (err.code === 'OTP_COOLDOWN' || err.code === 'OTP_DAILY_LIMIT')) throw err
         // Anything else (WhatsApp down or unconfigured) is ours. Say so plainly
         // rather than returning the generic success: a cashier standing at a
         // till needs to know to go and find a manager, not to keep retrying.
@@ -669,70 +580,37 @@ export async function authRoutes(fastify: FastifyInstance) {
     },
   )
 
-  // POST /auth/clock-in — staff clocks in.
-  //
-  // Until now the ONLY thing in the backend that created a `type: 'in'`
-  // ClockLog was the PIN-login handler. That made clock-in a side effect of a
-  // login method we are removing, and removing it would have been silent and
-  // expensive: payroll pairs in/out (payroll/service.ts computeHoursForPeriod)
-  // and an 'out' with no open 'in' contributes nothing, so every hourly
-  // staffer would compute ZERO hours and zero wages. Tip pools pair the same
-  // way and skip anyone with hours <= 0, so a pool would be built with no
-  // members and tips already booked as owed to staff would go to nobody.
-  // Neither surfaces an error — the numbers just get smaller.
-  //
-  // So clock-in becomes its own authenticated action, enforcing the same
-  // geofence + selfie policy the PIN route did.
+  // POST /auth/clock-in and /auth/clock-out are the tablet's and the admin
+  // logout's punch calls. They hand off to the time-clock module, which is the
+  // ONE punch writer: it applies the company's geofence (lib/setup-config.ts),
+  // writes the ClockLog, and turns the punch into the day's HR attendance.
   fastify.post('/clock-in', { preHandler: requireAuth(...ALL_STAFF) }, async (req, reply) => {
     const body = z.object({
       lat: z.number().min(-90).max(90).optional(),
       lng: z.number().min(-180).max(180).optional(),
       selfieUrl: z.string().url().optional(),
     }).parse(req.body ?? {})
-
-    const user = req.staffUser!
-
-    // Already clocked in? Return the open shift rather than stacking a second
-    // 'in', which would leave an unpaired record and skew the hours pairing.
-    const lastLog = await prisma.clockLog.findFirst({
-      where: { userId: user.id },
-      orderBy: { recordedAt: 'desc' },
-      select: { type: true, recordedAt: true },
-    })
-    if (lastLog?.type === 'in') {
-      return reply.status(200).send({ alreadyClockedIn: true, since: lastLog.recordedAt })
-    }
-
-    const { geofenceMatched, geofenceDistanceM } = await enforceClockInPolicy(
-      { id: user.id, role: user.role },
-      body,
-    )
-
-    const log = await prisma.clockLog.create({
-      data: {
-        userId: user.id,
-        type: 'in',
-        lat: body.lat ?? null,
-        lng: body.lng ?? null,
-        selfieUrl: body.selfieUrl ?? null,
-        geofenceMatched,
-        geofenceDistanceM,
-        ipAddress: req.ip,
-      },
-    })
-    return reply.status(201).send({ clockedInAt: log.recordedAt, geofenceMatched, geofenceDistanceM })
+    const u = req.staffUser!
+    const r = await clockIn({ id: u.id, role: u.role, tenantId: u.tenantId ?? null, name: u.name }, body, req.ip)
+    return reply.status('alreadyClockedIn' in r && r.alreadyClockedIn ? 200 : 201).send(r)
   })
 
-  // POST /auth/clock-out — staff clocks out
   fastify.post('/clock-out', { preHandler: requireAuth(...ALL_STAFF) }, async (req, reply) => {
-    const userId = req.staffUser!.id
-    await prisma.clockLog.create({ data: { userId, type: 'out' } })
+    const u = req.staffUser!
+    await clockOut({ id: u.id, role: u.role, tenantId: u.tenantId ?? null, name: u.name }, {}, req.ip)
     return reply.status(204).send()
   })
 
-  // GET /auth/clock-logs — shift report for managers
-  // A manager may only see clock logs for staff that share at least one of
-  // their assigned concepts. Admins see all. (Closes IDOR §C5.)
+  // GET /auth/clock-logs — shift report for managers.
+  //
+  // Scoped by COMPANY: a manager sees the punches of staff who belong to the
+  // company (or companies, in portfolio view) they are looking at — primary
+  // company or a membership. It used to scope by the User.conceptIds brand
+  // whitelist, which nothing in the app writes and which was read off the
+  // session (where it never exists), so every non-admin got an empty report
+  // or a 403. Per owner decision 35 company membership is the scope; the
+  // whitelist column is kept but no longer read. Staff with no company are
+  // the CEO's to see, nobody else's.
   fastify.get<{ Querystring: { date?: string; userId?: string } }>(
     '/clock-logs',
     { preHandler: requireAuth(...MANAGERS) },
@@ -741,33 +619,21 @@ export async function authRoutes(fastify: FastifyInstance) {
       const start = new Date(date); start.setHours(0, 0, 0, 0)
       const end   = new Date(date); end.setHours(23, 59, 59, 999)
 
-      const isAdmin = req.staffUser!.role === 'admin'
-      const myConceptIds: string[] = (req.staffUser as unknown as { conceptIds?: string[] }).conceptIds ?? []
-
-      // If a specific userId is requested, validate the requester is allowed
-      // to see them.
-      if (!isAdmin && req.query.userId) {
-        const target = await prisma.user.findUnique({
-          where: { id: req.query.userId },
-          select: { conceptIds: true },
-        })
-        const targetConceptIds = (target?.conceptIds ?? []) as string[]
-        const hasOverlap = targetConceptIds.some((c) => myConceptIds.includes(c))
-        if (!hasOverlap) throw new AppError('FORBIDDEN', 'Cannot view clock logs for this user', 403)
+      const scope = await resolveTenantScope(req)
+      const inScope = {
+        OR: [
+          { tenantId: { in: scope.tenantIds } },
+          { tenantMemberships: { some: { tenantId: { in: scope.tenantIds } } } },
+          ...(req.staffUser!.role === 'admin' ? [{ tenantId: null }] : []),
+        ],
       }
-
-      // Without a specific userId, restrict to staff in the manager's concepts.
-      const userScope = !isAdmin && !req.query.userId
-        ? {
-            user: { conceptIds: { hasSome: myConceptIds } },
-          }
-        : undefined
 
       return prisma.clockLog.findMany({
         where: {
           recordedAt: { gte: start, lte: end },
           ...(req.query.userId && { userId: req.query.userId }),
-          ...(userScope ?? {}),
+          // A userId outside the scope simply returns nothing — no oracle.
+          user: inScope,
         },
         include: { user: { select: { id: true, name: true, role: true } } },
         orderBy: { recordedAt: 'desc' },
@@ -807,29 +673,6 @@ export async function authRoutes(fastify: FastifyInstance) {
     return reply.status(200).send({ ok: true })
   })
 
-  // GET /auth/location-config — get on-site sign-in config
-  fastify.get('/location-config', { preHandler: requireAuth(...MANAGERS) }, async () => {
-    const row = await prisma.setting.findUnique({ where: { key: 'location_config' } })
-    if (!row) return { enabled: false, lat: null, lng: null, radiusMeters: 200 }
-    try { return JSON.parse(row.value) } catch { return { enabled: false, lat: null, lng: null, radiusMeters: 200 } }
-  })
-
-  // PUT /auth/location-config — save on-site sign-in config (admin only)
-  fastify.put('/location-config', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req) => {
-    const body = z.object({
-      enabled:      z.boolean(),
-      lat:          z.number().min(-90).max(90).nullable(),
-      lng:          z.number().min(-180).max(180).nullable(),
-      radiusMeters: z.number().min(10).max(5000).default(200),
-    }).parse(req.body)
-
-    await prisma.setting.upsert({
-      where:  { key: 'location_config' },
-      create: { key: 'location_config', value: JSON.stringify(body) },
-      update: { value: JSON.stringify(body) },
-    })
-    return body
-  })
 
   // POST /auth/customer/login — email+password login (brute-force protected)
   fastify.post('/customer/login', async (req, reply) => {
@@ -928,37 +771,12 @@ export async function authRoutes(fastify: FastifyInstance) {
     }
   })
 
-  // F19: POST /auth/customer/request-otp — sends a 6-digit code over WhatsApp.
-  // Rate-limited per-IP via the same customer-password limit so we don't get
-  // abused as a free SMS gateway. The `purpose` lets the same endpoint serve
-  // signup, phone-change, and password-reset later — front-end always sends
-  // the matching purpose to verify.
-  fastify.post('/customer/request-otp', async (req, reply) => {
-    const ip = req.ip ?? 'unknown'
-    await checkRateLimit(CUSTOMER_PASSWORD_LIMIT, ip)
-
-    const body = z.object({
-      phone:   z.string().min(7).max(20),
-      purpose: z.enum(['signup', 'phone_verify', 'password_reset']).default('signup'),
-    }).parse(req.body)
-
-    const result = await requestOtp({ phone: body.phone, purpose: body.purpose })
-    // Don't echo the code back; the client only needs to know it's on its way.
-    return reply.status(200).send({ phone: result.phone, expiresAt: result.expiresAt })
-  })
-
-  // POST /auth/customer/verify-otp — front-end uses this to validate before
-  // submitting the registration form, so the user gets immediate "✓ verified"
-  // feedback. The signup endpoint re-verifies server-side regardless.
-  fastify.post('/customer/verify-otp', async (req, reply) => {
-    const body = z.object({
-      phone:   z.string().min(7).max(20),
-      code:    z.string().regex(/^\d{4,6}$/),
-      purpose: z.enum(['signup', 'phone_verify', 'password_reset']).default('signup'),
-    }).parse(req.body)
-    await verifyOtp({ phone: body.phone, code: body.code, purpose: body.purpose })
-    return reply.status(200).send({ ok: true })
-  })
+  // /customer/request-otp and /customer/verify-otp are gone. They had no
+  // caller, and request-otp was an unauthenticated, IP-limited-only endpoint
+  // that sent a WhatsApp message to any number the caller chose. Signup uses
+  // /customer/request-signup-codes below; verify-later uses /customer/contact/*,
+  // which read the number from the session. Both share otp.ts's per-contact
+  // daily cap.
 
   // POST /auth/customer/request-signup-codes — ONE code, sent to WhatsApp and
   // email at the same time. One channel failing never blocks the other; that
@@ -1029,81 +847,19 @@ export async function authRoutes(fastify: FastifyInstance) {
     return reply.status(200).send({ verified: true })
   })
 
-  // ── Staff self-signup + CEO approval ───────────────────────────────────────
+  // ── Pending staff + CEO approval ─────────────────────────────────────────
   //
-  // Workflow:
-  //   1. New hire fills the signup form on /login (name, email, phone, role).
-  //   2. POST /auth/staff/signup creates a User row with status='pending'.
-  //      PIN is a freshly-generated 6-digit random value, shown ONCE in the
-  //      signup response so the new hire can save it. Phone-derived PINs
-  //      used to be the default — that meant anyone who knew a staff member's
-  //      phone (business cards, Instagram, reservation history) had their
-  //      admin PIN. CSPRNG closes that.
-  //   3. CEO reviews pending accounts and approves/rejects.
-  //   4. Until approved, PIN login is blocked at the service layer.
+  // Staff accounts are created by the CEO on /workforce. The public self-signup
+  // endpoint (POST /auth/staff/signup) is gone: it had no UI caller, created
+  // rows with no company, and let the caller pick their own role — including
+  // legacy 'manager'. Existing pending rows are reviewed on /workforce
+  // (status filter "pending"), which calls approve / reject below.
 
-  // POST /auth/staff/signup — public, IP-rate-limited. Creates a pending User.
-  fastify.post('/staff/signup', async (req, reply) => {
-    const ip = req.ip ?? 'unknown'
-    await checkRateLimit(STAFF_PASSWORD_LIMIT, ip)
-
-    const body = z.object({
-      name:    z.string().min(1).max(80),
-      email:   z.string().email(),
-      phone:   z.string().min(7).max(20),
-      role:    STAFF_ROLE,
-      reason:  z.string().max(280).optional(),    // free-text "why I'm joining"
-    }).parse(req.body)
-
-    if (!isStaffEmail(body.email)) {
-      return reply.status(400).send({ error: { code: 'EMAIL_NOT_COMPANY_DOMAIN', message: STAFF_EMAIL_MESSAGE } })
-    }
-    const email = normaliseStaffEmail(body.email)
-    // Duplicate email = nicer error than a 500 from the unique constraint.
-    const existing = await prisma.user.findUnique({ where: { email } })
-    if (existing) {
-      return reply.status(409).send({
-        error: { code: 'EMAIL_TAKEN', message: 'A staff account with this email already exists' },
-      })
-    }
-
-    // This is a REQUEST TO JOIN, not an account with a credential.
-    //
-    // It used to be: the hire picks a PIN, the CEO approves, the PIN works.
-    // Under email+password there is no credential a stranger can safely set
-    // for themselves, so the row is created with an unusable random password
-    // and NO way in. Approving it is not enough either — the CEO then issues a
-    // password from Workforce, which is the only path that produces one.
-    // Saying that here matters: the old copy told the hire they could sign in
-    // after approval, which would now be a lie.
-    const password = await hashPassword(randomBytes(24).toString('base64url'))
-
-    const user = await prisma.user.create({
-      data: {
-        name: body.name.trim(),
-        email,
-        phone: body.phone.trim(),
-        password,
-        role: body.role,
-        accountStatus: 'pending',
-        mustChangePassword: true,
-        signupReason: body.reason ?? null,
-        // isActive stays true; accountStatus is the real gate. We keep isActive
-        // for legacy "soft disable" semantics.
-      },
-      select: { id: true, name: true, email: true, role: true, phone: true, accountStatus: true },
-    })
-
-    return reply.status(201).send({
-      ...user,
-      message: 'Request sent. Once the CEO approves you they will give you a password to sign in with.',
-    })
-  })
-
-  // GET /auth/staff/pending — CEO lists everyone waiting for approval.
+  // GET /auth/staff/pending — the CEO's "N pending" badge in the sidebar. The
+  // queue itself is reviewed on /workforce?status=pending.
   fastify.get('/staff/pending', { preHandler: requireAuth('admin') }, async () => {
     const pending = await prisma.user.findMany({
-      where: { accountStatus: 'pending', deletedAt: null },
+      where: { ...whereAccountState('pending'), deletedAt: null },
       select: {
         id: true, name: true, email: true, phone: true, role: true,
         signupReason: true, createdAt: true,
@@ -1113,21 +869,36 @@ export async function authRoutes(fastify: FastifyInstance) {
     return pending
   })
 
-  // PATCH /auth/staff/:id/approve — CEO flips status to active. PIN was set
-  // at signup so they can log in immediately after approval.
+  // PATCH /auth/staff/:id/approve — CEO flips a pending hire to active.
+  // Approving issues no credential: the CEO issues a password from Workforce.
   fastify.patch<{ Params: { id: string } }>(
     '/staff/:id/approve',
     { preHandler: requireAuth('admin') },
     async (req, reply) => {
-      const user = await prisma.user.findUnique({ where: { id: req.params.id } })
+      const user = await prisma.user.findFirst({
+        where: { id: req.params.id, deletedAt: null },
+        select: { id: true, name: true, email: true, role: true, accountStatus: true, isActive: true },
+      })
       if (!user) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'No such staff' } })
-      if (user.accountStatus === 'active') {
-        return reply.status(200).send({ ...user, pin: undefined, password: undefined, message: 'Already active' })
+      if (accountStateOf(user) === 'active') {
+        return reply.status(200).send({ ...user, message: 'Already active' })
       }
       const updated = await prisma.user.update({
         where: { id: req.params.id },
-        data: { accountStatus: 'active' },
+        data: approveData(),
         select: { id: true, name: true, email: true, role: true, accountStatus: true },
+      })
+      // Letting someone in is half of "who can get in"; it was never recorded.
+      await audit({
+        category: 'identity',
+        action: 'user.approve',
+        entity: 'User',
+        entityId: user.id,
+        userId: req.staffUser?.id ?? null,
+        userEmail: req.staffUser?.email ?? null,
+        tenantId: req.staffUser?.tenantId ?? null,
+        before: { accountStatus: user.accountStatus },
+        after: { accountStatus: updated.accountStatus, targetEmail: user.email, role: user.role },
       })
       return reply.status(200).send(updated)
     },
@@ -1140,93 +911,35 @@ export async function authRoutes(fastify: FastifyInstance) {
     '/staff/:id/reject',
     { preHandler: requireAuth('admin') },
     async (req, reply) => {
+      const before = await prisma.user.findUnique({
+        where: { id: req.params.id },
+        select: { accountStatus: true, email: true },
+      })
+      if (!before) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'No such staff' } })
       const updated = await prisma.user.update({
         where: { id: req.params.id },
-        data: { accountStatus: 'suspended', isActive: false },
+        data: suspendData(),
         select: { id: true, name: true, accountStatus: true },
       })
       await revokeAllForSubject(req.params.id) // kill the rejected user's sessions now
+      await audit({
+        category: 'identity',
+        action: 'user.reject',
+        entity: 'User',
+        entityId: req.params.id,
+        userId: req.staffUser?.id ?? null,
+        userEmail: req.staffUser?.email ?? null,
+        tenantId: req.staffUser?.tenantId ?? null,
+        before: { accountStatus: before.accountStatus },
+        after: { accountStatus: updated.accountStatus, targetEmail: before.email },
+      })
       return reply.status(200).send(updated)
     },
   )
 
-  // POST /auth/staff/:id/issue-pin — admin rotates a staff member's PIN.
-  //
-  // Use case: legacy accounts whose PIN was derived from their phone are
-  // flagged pinMustReset=true and blocked from PIN login. This endpoint
-  // replaces the bcrypt hash and clears the flag.
-  //
-  // Body is optional. With no body, a fresh 6-digit CSPRNG PIN is generated
-  // and returned once in the response so the admin can hand it to the staff
-  // member out-of-band. With `{ pin: "<6 digits>" }`, the admin sets a
-  // specific value — useful when the staff member wants a memorable PIN
-  // (kept loosely random, never derived from PII).
-  fastify.post<{ Params: { id: string } }>(
-    '/staff/:id/issue-pin',
-    { preHandler: requireAuth('admin') },
-    async (req, reply) => {
-      const body = z.object({
-        pin: z.string().regex(/^\d{6}$/, 'PIN must be exactly 6 digits').optional(),
-      }).parse(req.body ?? {})
-
-      const user = await prisma.user.findUnique({
-        where: { id: req.params.id },
-        select: { id: true, name: true, role: true, isActive: true, deletedAt: true },
-      })
-      if (!user || user.deletedAt) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'No such staff' } })
-
-      // Collision check against every active PIN — see /auth/staff/signup
-      // for the same logic. Retry until we find a unique value, or — when
-      // the admin supplied a specific PIN — reject if it clashes.
-      const candidates = await prisma.user.findMany({
-        where: { isActive: true, pin: { not: null }, accountStatus: 'active', id: { not: user.id } },
-        select: { pin: true },
-      })
-
-      let pinPlain: string | null = null
-      if (body.pin) {
-        for (const c of candidates) {
-          if (c.pin && await bcrypt.compare(body.pin, c.pin)) {
-            return reply.status(409).send({ error: { code: 'PIN_COLLISION', message: 'That PIN is already in use by another staff member. Pick a different value.' } })
-          }
-        }
-        pinPlain = body.pin
-      } else {
-        for (let attempt = 0; attempt < 5; attempt++) {
-          const tryPin = generateRandomPin()
-          let collides = false
-          for (const c of candidates) {
-            if (c.pin && await bcrypt.compare(tryPin, c.pin)) { collides = true; break }
-          }
-          if (!collides) { pinPlain = tryPin; break }
-        }
-        if (!pinPlain) {
-          return reply.status(503).send({ error: { code: 'PIN_GENERATION_FAILED', message: 'Could not allocate a unique PIN. Try again.' } })
-        }
-      }
-
-      const pin = await hashPin(pinPlain)
-      await prisma.user.update({
-        where: { id: user.id },
-        data: {
-          pin,
-          // Temporary by design: the staff member must pick their own PIN on
-          // next login, so the CEO never ends up knowing a live credential.
-          pinMustReset: true,
-          // Their "forgot PIN" escalation is now handled.
-          pinResetRequestedAt: null,
-        },
-      })
-
-      return reply.status(200).send({
-        id: user.id,
-        name: user.name,
-        pin: pinPlain,
-        temporary: true,
-        message: 'Temporary PIN issued. Share it with the staff member now — they will be asked to choose their own PIN when they log in.',
-      })
-    },
-  )
+  // POST /auth/staff/:id/issue-pin is gone — it had no caller. The CEO sets a
+  // manager-override PIN on /workforce (PATCH /auth/users/:id), through the
+  // same setter as /pin/change below.
 
   // POST /auth/pin/change — staff sets their OWN PIN.
   //
@@ -1239,12 +952,6 @@ export async function authRoutes(fastify: FastifyInstance) {
       newPin:     z.string().regex(/^\d{4,8}$/, 'PIN must be 4–8 digits'),
     }).parse(req.body)
 
-    if (isWeakPin(body.newPin)) {
-      return reply.status(400).send({
-        error: { code: 'WEAK_PIN', message: 'That PIN is too easy to guess — avoid repeated digits (1111), runs (1234), and years.' },
-      })
-    }
-
     const me = await prisma.user.findUnique({
       where: { id: req.staffUser!.id },
       select: { id: true, pin: true },
@@ -1253,14 +960,9 @@ export async function authRoutes(fastify: FastifyInstance) {
       return reply.status(401).send({ error: { code: 'BAD_PIN', message: 'Current PIN is incorrect.' } })
     }
 
-    await prisma.user.update({
-      where: { id: me.id },
-      data: {
-        pin: await hashPin(body.newPin),
-        pinMustReset: false,
-        pinResetRequestedAt: null,
-      },
-    })
+    // Same rules as the CEO's setter: format, weak-PIN list, and no two
+    // people in one company sharing a PIN.
+    await setManagerPin(me.id, body.newPin)
     return reply.status(200).send({ message: 'PIN updated.' })
   })
 
@@ -1515,7 +1217,9 @@ export async function authRoutes(fastify: FastifyInstance) {
       const roles = q.role.split(',').map((r) => r.trim()).filter(Boolean)
       if (roles.length > 0) where.role = { in: roles }
     }
-    if (q.status) where.accountStatus = q.status
+    // Status is derived in ONE place (accountStatus.ts) so a row switched off
+    // through the legacy isActive column still lists as suspended.
+    if (q.status) Object.assign(where, { AND: [whereAccountState(q.status)] })
 
     const users = await prisma.user.findMany({
       where,
@@ -1554,6 +1258,7 @@ export async function authRoutes(fastify: FastifyInstance) {
     })
     return users.map((u) => ({
       ...u,
+      accountStatus: accountStateOf(u),
       hasPin: !!u.pin,
       pin: undefined,
       // Flatten memberships into a `tenants` array — primary tenant first,
@@ -1605,13 +1310,11 @@ export async function authRoutes(fastify: FastifyInstance) {
     //     hand over and there is no reset flow to recover with.
     const temporaryPassword = generateStaffPassword()
     const password = await hashPassword(temporaryPassword)
-    // PIN = the explicit body.pin if the CEO typed one, otherwise a CSPRNG
-    // temporary PIN that the staff member MUST change on first login. Never
-    // derived from the phone number — a phone's last 4 digits are effectively
-    // public and made every account guessable.
-    const pinPlain    = body.pin || generateRandomPin()
-    const pin         = await hashPin(pinPlain)
-    const pinIsTemporary = !body.pin
+    // A manager-override PIN is set only when the CEO types one. It used to
+    // generate a random temporary PIN that was never returned or shown to
+    // anyone — a credential nobody knew. Validated by the same rules as every
+    // other PIN write (format, weak list, per-company collision) below, once
+    // the target companies are known.
 
     // Resolve the target tenant: explicit body.tenantId wins; falls back to
     // the operator's active tenantId. Validate either way — you can only
@@ -1647,6 +1350,10 @@ export async function authRoutes(fastify: FastifyInstance) {
       return reply.status(400).send({ error: { code: 'EMAIL_NOT_COMPANY_DOMAIN', message: STAFF_EMAIL_MESSAGE } })
     }
 
+    const pin = body.pin
+      ? await preparePin(body.pin, { tenantIds: dedupeStrings([...(tenantId ? [tenantId] : []), ...extraIds]) })
+      : null
+
     const user = await prisma.user.create({
       data: {
         name: body.name?.trim() || 'Unnamed staff',
@@ -1655,11 +1362,9 @@ export async function authRoutes(fastify: FastifyInstance) {
         ...(body.jobTitle ? { jobTitle: body.jobTitle.trim() } : {}),
         password,
         pin,
-        // A CEO-generated temporary PIN must be changed by the staff member
-        // on first login; an explicitly-typed one is treated as final.
-        pinMustReset: pinIsTemporary,
+        pinMustReset: false,
         ...(tenantId ? { tenantId } : {}),
-        role: body.role as never,
+        role: body.role,
         // Mirror the primary tenant as a membership row too — keeps "is this
         // user a member of tenant X?" queries simple (just check TenantMember,
         // no UNION with User.tenantId needed).
@@ -1767,7 +1472,7 @@ export async function authRoutes(fastify: FastifyInstance) {
         // role / isActive / email are read for the audit trail's before-state,
         // not for the tenant check — a role change is only meaningful in the
         // log if you can see what it moved FROM.
-        select: { tenantId: true, role: true, isActive: true, email: true },
+        select: { tenantId: true, role: true, isActive: true, accountStatus: true, email: true },
       })
       if (!existing) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'No such staff' } })
       if (!isAdmin && existing.tenantId && scope.tenantIds.length > 0 && !scope.tenantIds.includes(existing.tenantId)) {
@@ -1820,21 +1525,35 @@ export async function authRoutes(fastify: FastifyInstance) {
         data.email = normaliseStaffEmail(body.email)
       }
       if (body.role     != null) data.role      = body.role
-      if (body.isActive != null) data.isActive  = body.isActive
+      // Suspend / reactivate: accountStatus is the canonical column and
+      // isActive its mirror — both written together (accountStatus.ts), so the
+      // "suspended" filter and the auth gate can never disagree again.
+      if (body.isActive != null) {
+        Object.assign(data, body.isActive ? reactivateData(existing.accountStatus) : suspendData())
+      }
       if (body.jobTitle != null) data.jobTitle  = body.jobTitle || null
-      if (body.pin      != null) data.pin       = body.pin ? await hashPin(body.pin) : null
       // NOTE: changing the phone number deliberately does NOT touch the PIN.
       // PINs used to be re-derived from the phone's last 4 digits here, which
       // meant editing someone's number silently reset their credential to a
-      // publicly-guessable value. Staff own their own PIN now.
-      if (body.pin != null && body.pin !== '') {
-        if (isWeakPin(body.pin)) {
-          return reply.status(400).send({
-            error: { code: 'WEAK_PIN', message: 'That PIN is too easy to guess.' },
-          })
+      // publicly-guessable value.
+      if (body.pin != null) {
+        if (body.pin === '') {
+          data.pin = null
+        } else {
+          // THE setter's rules (managerPin.ts): 4-8 digits, not guessable, and
+          // not already held by anyone in the companies this person will
+          // belong to after this save.
+          const companies = body.tenantIds
+            ? dedupeStrings([...(finalPrimary ? [finalPrimary] : []), ...body.tenantIds])
+            : dedupeStrings([
+                ...(finalPrimary ? [finalPrimary] : []),
+                ...(await prisma.tenantMember.findMany({ where: { userId: req.params.id }, select: { tenantId: true } })).map((m) => m.tenantId),
+                ...(existing.tenantId ? [existing.tenantId] : []),
+              ])
+          data.pin = await preparePin(body.pin, { tenantIds: companies, excludeUserId: req.params.id })
+          data.pinMustReset        = false
+          data.pinResetRequestedAt = null
         }
-        data.pinMustReset       = false
-        data.pinResetRequestedAt = null
       }
       if (finalPrimary)          data.tenantId  = finalPrimary
       // Override arrays — full-replacement semantics. The frontend computes
@@ -1899,7 +1618,7 @@ export async function authRoutes(fastify: FastifyInstance) {
           after: { role: body.role, targetEmail: existing.email },
         })
       }
-      if (body.isActive != null && existing.isActive !== body.isActive) {
+      if (body.isActive != null && (accountStateOf(existing) === 'suspended') === body.isActive) {
         await audit({
           category: 'identity',
           action: body.isActive ? 'user.enable' : 'user.disable',
@@ -1925,6 +1644,7 @@ export async function authRoutes(fastify: FastifyInstance) {
       }
       return {
         ...user,
+        accountStatus: accountStateOf(user),
         hasPin: !!user.pin,
         pin: undefined,
         tenants: dedupeTenants([
@@ -1943,7 +1663,7 @@ export async function authRoutes(fastify: FastifyInstance) {
     async (req, reply) => {
       await prisma.user.update({
         where: { id: req.params.id },
-        data: { deletedAt: new Date(), isActive: false },
+        data: softDeleteData(),
       })
       await revokeAllForSubject(req.params.id) // kill the deleted user's sessions now
       return reply.status(204).send()

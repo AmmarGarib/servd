@@ -7,9 +7,14 @@ import { ForbiddenError } from './errors.js'
  * "Module Access" matrix (/configuration/role-modules).
  *
  * Three inputs combine into a user's effective module set:
- *   1. Role defaults (below — keep in sync with frontend/admin/src/lib/appRoles.ts)
+ *   1. Role defaults (below — THE copy; the admin app reads them from
+ *      GET /permissions/role-modules and keeps none of its own)
  *   2. The CEO's per-role override rows in RoleModuleAccess (full allow-list)
  *   3. The user's own moduleAllow / moduleDeny arrays (deny wins)
+ *
+ * The same resolution feeds the sidebar: GET /permissions/me returns the
+ * caller's effective modules from effectiveModulesForUser(), so what the
+ * sidebar shows and what the API lets through cannot disagree.
  *
  * Enforcement is deliberately scoped to the SENSITIVE READ SURFACES the 2026-06
  * audit flagged (finance, reports, management dashboards, payroll,
@@ -28,14 +33,31 @@ export const MODULE_IDS = [
   'menu', 'components', 'recipes', 'inventory', 'kds_config', 'par_sheet', 'food_safety',
   'marketing_workspace', 'crm', 'campaigns', 'complaints', 'reviews', 'calendar', 'media', 'promos', 'brands', 'analytics',
   'finance_pl', 'payroll', 'accounting', 'gift_cards', 'reconciliation', 'exceptions', 'capital', 'projections', 'procurement', 'reports',
-  'staff_directory', 'staff_management', 'staff_foh', 'staff_boh', 'staff_procurement', 'staff_marketing', 'staff_finance', 'staff_hr', 'kitchen_staff',
+  'staff_directory', 'staff_hr',
   'settings', 'notifications', 'help', 'configuration', 'onboarding', 'integrations',
 ] as const
 const MODULE_ID_SET = new Set<string>(MODULE_IDS)
 const ALL_MODULES = [...MODULE_IDS] as string[]
 
-// Role defaults — ported from frontend appRoles.ts DEFAULT_MODULE_ACCESS.
-// The legacy 'manager' role mirrors 'management'.
+// Ids that used to exist and may still sit in a saved RoleModuleAccess row or a
+// user's moduleAllow/moduleDeny. They tagged no sidebar item and no gated
+// prefix, so toggling them did nothing. Stripped on read and on write so an
+// old row can still be edited and saved; any OTHER unknown id is a typo and
+// is refused.
+export const RETIRED_MODULE_IDS = [
+  'staff_management', 'staff_foh', 'staff_boh', 'staff_procurement',
+  'staff_marketing', 'staff_finance', 'kitchen_staff',
+] as const
+const RETIRED_SET = new Set<string>(RETIRED_MODULE_IDS)
+
+/** Drop retired / unknown ids from a stored module list. */
+export function knownModulesOnly(modules: readonly string[]): string[] {
+  return modules.filter((m) => MODULE_ID_SET.has(m))
+}
+export function isRetiredModuleId(id: string): boolean { return RETIRED_SET.has(id) }
+
+// Role defaults. The legacy 'manager' role (migrated to foh_management) keeps
+// an entry only so a not-yet-migrated row still resolves.
 const MANAGEMENT_MODULES = ALL_MODULES.filter((m) => m !== 'chain')
 // 'manager' mirrors 'management' for everything EXCEPT the accounting trail.
 const MANAGER_MODULES = MANAGEMENT_MODULES.filter((m) => m !== 'accounting_audit')
@@ -63,13 +85,13 @@ export const DEFAULT_MODULE_ACCESS: Record<UserRole, string[]> = {
     'dashboard', 'ops', 'orders', 'refunds', 'curbside', 'kds_all', 'expo_station',
     'pos', 'reservations', 'reservations_admin', 'scheduling', 'tables', 'dispatch', 'riders',
     'crm', 'complaints', 'reviews', 'campaigns',
-    'staff_directory', 'staff_foh', 'kitchen_staff',
+    'staff_directory',
     'reports', 'integrations',
   ],
   boh_management: [
     'dashboard', 'ops', 'orders', 'kds_all', 'kds_dashboard', 'expo_station',
     'menu', 'components', 'recipes', 'par_sheet', 'inventory', 'kds_config', 'food_safety',
-    'procurement', 'staff_directory', 'staff_boh', 'staff_procurement', 'kitchen_staff',
+    'procurement', 'staff_directory',
     'reports',
   ],
   foh:       ['pos', 'reservations', 'tables', 'dispatch', 'orders', 'curbside'],
@@ -94,7 +116,7 @@ export const DEFAULT_MODULE_ACCESS: Record<UserRole, string[]> = {
     'menu', 'components', 'recipes', 'par_sheet', 'inventory', 'kds_config', 'food_safety',
     'pos', 'reservations', 'reservations_admin', 'scheduling', 'tables', 'dispatch', 'riders',
     'complaints', 'reviews',
-    'staff_directory', 'staff_foh', 'staff_boh', 'kitchen_staff',
+    'staff_directory',
     'finance_pl', 'accounting', 'reports',
   ],
   finance: [
@@ -103,15 +125,13 @@ export const DEFAULT_MODULE_ACCESS: Record<UserRole, string[]> = {
     'exceptions', 'capital', 'projections', 'reports',
   ],
   hr: [
-    'staff_directory', 'staff_management', 'staff_foh', 'staff_boh',
-    'staff_procurement', 'staff_marketing', 'staff_finance', 'staff_hr',
-    'kitchen_staff', 'payroll', 'scheduling',
+    'staff_directory', 'staff_hr', 'payroll', 'scheduling',
   ],
 }
 
 export function isKnownModuleId(id: string): boolean { return MODULE_ID_SET.has(id) }
 
-// ── Role-override cache (mirrors the permissions cache pattern) ─────────────
+// ── Role-override cache ─────────────────────────────────────────────────────
 let overrideCache: { at: number; rows: Map<UserRole, string[]> } | null = null
 const CACHE_TTL_MS = 30_000
 
@@ -133,15 +153,16 @@ export async function effectiveModulesForUser(user: {
 }): Promise<Set<string>> {
   if (user.role === 'admin') return new Set(ALL_MODULES)
   const overrides = await roleOverrides()
-  const base = new Set(overrides.get(user.role) ?? DEFAULT_MODULE_ACCESS[user.role] ?? [])
-  for (const m of user.moduleAllow ?? []) base.add(m)
+  const base = new Set(knownModulesOnly(overrides.get(user.role) ?? DEFAULT_MODULE_ACCESS[user.role] ?? []))
+  for (const m of knownModulesOnly(user.moduleAllow ?? [])) base.add(m)
   for (const m of user.moduleDeny ?? []) base.delete(m)
   return base
 }
 
 // ── URL → required-module map (first match wins; ANY listed module passes) ──
-// Paths are matched after stripping the /api/v1 prefix. Deliberately covers
-// only the audit-flagged financial/reporting surfaces — see header comment.
+// Paths are matched after stripping the /api/v1 prefix. Covers the
+// audit-flagged financial/reporting surfaces plus the HR back office — see
+// header comment.
 const GATED_PREFIXES: Array<{ prefix: string; anyOf: string[] }> = [
   // The P&L (and its by-brand tab) is THE P&L — reachable with the P&L module
   // or the accounting module, as the old /finance P&L was.
@@ -155,6 +176,29 @@ const GATED_PREFIXES: Array<{ prefix: string; anyOf: string[] }> = [
   { prefix: '/procurement',   anyOf: ['procurement'] },
   { prefix: '/reconciliation', anyOf: ['reconciliation'] },
   { prefix: '/gift-cards',    anyOf: ['gift_cards'] },
+  // HR back office — the HR_ADMIN surfaces (hr/routes.ts). Until now the
+  // 'staff_hr' toggle only hid the sidebar link; per owner decision 34 module
+  // access is THE control, so it is enforced here too. Every role in HR_ADMIN
+  // (admin, owner, management, hr) holds staff_hr by default, so nobody loses
+  // access unless the CEO has switched it off for them.
+  //
+  // Deliberately NOT gated: /hr/me*, /hr/approvals, /hr/team, /hr/lookups,
+  // /hr/org (GET) and /hr/records/* — those are every employee's self-service
+  // and HOD approvals (ALL_STAFF by design), and a prefix rule cannot tell
+  // /records/:s/:id/submit from the admin list under the same prefix.
+  { prefix: '/hr/employees',        anyOf: ['staff_hr'] },
+  { prefix: '/hr/documents',        anyOf: ['staff_hr'] },
+  { prefix: '/hr/payroll',          anyOf: ['staff_hr'] },
+  { prefix: '/hr/letters',          anyOf: ['staff_hr'] },
+  { prefix: '/hr/reports',          anyOf: ['staff_hr'] },
+  { prefix: '/hr/settings',         anyOf: ['staff_hr'] },
+  { prefix: '/hr/forms',            anyOf: ['staff_hr'] },
+  { prefix: '/hr/sections',         anyOf: ['staff_hr'] },
+  { prefix: '/hr/dashboard',        anyOf: ['staff_hr'] },
+  { prefix: '/hr/due',              anyOf: ['staff_hr'] },
+  { prefix: '/hr/final-settlement', anyOf: ['staff_hr'] },
+  { prefix: '/hr/org/units',        anyOf: ['staff_hr'] },
+  { prefix: '/hr/org/departments',  anyOf: ['staff_hr'] },
 ]
 
 /**

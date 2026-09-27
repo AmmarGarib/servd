@@ -92,7 +92,8 @@ import { mediaRoutes } from './modules/media/routes.js'
 // If you re-introduce partner API access later, prefer a scoped OAuth2 flow
 // over long-lived bearer tokens.
 import { permissionRoutes } from './modules/permissions/routes.js'
-import { seedPermissions } from './lib/permissions.js'
+import cron from 'node-cron'
+import { timeClockRoutes } from './modules/timeclock/routes.js'
 import { locationRoutes } from './modules/locations/routes.js'
 import { paymentGatewayRoutes } from './modules/paymentGateways/routes.js'
 import { marketingActivityRoutes } from './modules/marketingActivity/routes.js'
@@ -349,6 +350,7 @@ async function build() {
       await api.register(mediaRoutes,        { prefix: '/media' })
       // B07: apiTokens removed — see import-block note above.
       await api.register(permissionRoutes,   { prefix: '/permissions' })
+      await api.register(timeClockRoutes,    { prefix: '/time-clock' })
       await api.register(locationRoutes,     { prefix: '/locations' })
       await api.register(paymentGatewayRoutes, { prefix: '/payment-gateways' })
       await api.register(marketingActivityRoutes, { prefix: '/marketing' })
@@ -667,14 +669,8 @@ async function build() {
       ? process.env['ENABLE_WORKERS'] === 'true'
       : process.env['NODE_ENV'] === 'production'
 
-  // Seed any newly-defined permissions on startup (idempotent — won't overwrite
-  // existing admin customisations). Logs the count of inserted rows.
-  try {
-    const { inserted } = await seedPermissions(prisma)
-    if (inserted > 0) fastify.log.info(`[permissions] seeded ${inserted} new role × permission rows`)
-  } catch (err) {
-    fastify.log.warn(`[permissions] seed skipped: ${(err as Error).message}`)
-  }
+  // (The role × permission matrix seed is gone with the matrix — owner
+  // decision 34. The role_permissions table is kept as history.)
 
   // Tenants bootstrap: if no tenant exists, create a "main" tenant and attach
   // every existing concept + user to it. Idempotent — safe to run on every boot.
@@ -789,6 +785,10 @@ async function build() {
     startWebhookDeliveryWorker()
     startScheduledReportsWorker()
     startShrinkageTrendWorker()
+    // HR nightly: effects due today, missing punches, leavers' logins.
+    cron.schedule('15 19 * * *', () => {
+      import('./modules/hr/daily.js').then((m) => m.runHrDaily()).catch((err: Error) => fastify.log.warn(`[hr] nightly sweep failed: ${err.message}`))
+    })
     startRiderScoringWorker()
     startOrderAutoCancelWorker()
     startPaymentRetryWorker()

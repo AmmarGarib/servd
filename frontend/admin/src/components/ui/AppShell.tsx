@@ -49,14 +49,14 @@ interface NavSection {
 const NAV: NavSection[] = [
   // ── Executive — CEO / Admin only by default.
   //
-  // Two layers of permission control:
-  //   /configuration/roles        → role-level DEFAULTS (what a Cashier can do)
-  //   /configuration/role-modules → role-level sidebar DEFAULTS
-  //   /workforce (Staff Directory) → per-USER overrides on top of those defaults
+  // Access control is Module Access (enforced by the API):
+  //   /configuration/role-modules → what each ROLE can open
+  //   /workforce (Staff Directory) → accounts, companies, pending signups
   //
-  // The standalone pages set the rules for an entire role at once; the
-  // staff directory's row editor lets you make subjective per-person
-  // adjustments without touching the role baseline.
+  // The per-action "Roles & Permissions" matrix and the separate "Pending
+  // Signups" screen were removed (owner decisions 34 and the 2026-09-27
+  // reconcile): the matrix enforced nothing, and pending signups are a
+  // status filter on /workforce.
   {
     title: 'Executive',
     items: [
@@ -72,8 +72,6 @@ const NAV: NavSection[] = [
         { href: '/finance/opex',        label: 'OpEx',        module: 'capital' },
         { href: '/finance/projections', label: 'Projections', module: 'projections' },
       ]},
-      { href: '/configuration/pending-approvals', label: 'Pending Signups',  icon: '⏳', module: 'role_management' },
-      { href: '/configuration/roles',           label: 'Roles & Permissions', icon: '🔐', module: 'role_management' },
       { href: '/configuration/role-modules',    label: 'Module Access',       icon: '🗂', module: 'role_modules' },
       { href: '/settings',                      label: 'Tenants & Brands',    icon: '🏷', module: 'tenants' },
       // ── Account config (relocated from the retired "Setup" section). These
@@ -237,6 +235,7 @@ const NAV: NavSection[] = [
       // Capex tab under Project Tracker.
       { href: '/finance/capital-ledger', label: 'Investment',      icon: '📊', module: 'capital' },
       { href: '/procurement',            label: 'Procurement',     icon: '🏭', module: 'procurement', children: [
+        { href: '/procurement/receiving', label: 'Receiving',   module: 'procurement' },
         { href: '/procurement/chat',    label: 'Supplier Chat', module: 'procurement' },
         { href: '/procurement/monitor', label: 'Monitor',       module: 'procurement' },
       ]},
@@ -308,8 +307,13 @@ function NavLinks({
   // role→modules map. Memoised so we don't re-derive on every nav render.
   const allowedModules = useMemo(() => {
     if (isSuper && !viewAsRole) return null               // real admin/CEO sees everything
-    return new Set<ModuleId>(modulesForRole(effectiveRole, overrides))
-  }, [isSuper, viewAsRole, effectiveRole, overrides])
+    // CEO viewing as another role: that role's server-side set.
+    if (isSuper && viewAsRole) return new Set<ModuleId>(modulesForRole(effectiveRole, overrides))
+    // Everyone else: THEIR effective modules as the API resolves them
+    // (role override ?? default, + moduleAllow − moduleDeny), so the sidebar
+    // and the API's 403s cannot disagree.
+    return new Set<ModuleId>((me?.modules ?? []) as ModuleId[])
+  }, [isSuper, viewAsRole, effectiveRole, overrides, me?.modules])
 
   function visibleByModule(module?: ModuleId) {
     if (!allowedModules) return true                      // real admin/CEO: full access
@@ -790,11 +794,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </div>
         </div>
 
-        {/* CEO-only: live link to the pending-approvals queue with a badge
-            showing how many staff are waiting. Hidden when nothing is in
-            the queue so the card stays quiet. */}
+        {/* CEO-only: live link to the pending queue on /workforce with a
+            badge showing how many staff are waiting. Hidden when nothing is
+            in the queue so the card stays quiet. */}
         {isSuper && pending.length > 0 && (
-          <Link href="/configuration/pending-approvals"
+          <Link href="/workforce?status=pending"
             className="mt-1.5 pt-1.5 border-t border-white/[0.05] flex items-center gap-2 rounded-md px-1 py-1 -mx-1 transition-colors"
             onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(245,158,11,0.06)')}
             onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}>

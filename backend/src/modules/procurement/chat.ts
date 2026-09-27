@@ -12,7 +12,7 @@ export async function supplierChatRoutes(fastify: FastifyInstance) {
   // GET /procurement/conversations — list all conversations for this user
   fastify.get('/conversations', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
     const user = req.staffUser!
-    const isManager = ['admin', 'manager'].includes(user.role)
+    const isManager = (MANAGERS as string[]).includes(user.role)
 
     return prisma.supplierConversation.findMany({
       where: isManager ? {} : { staffId: user.id },

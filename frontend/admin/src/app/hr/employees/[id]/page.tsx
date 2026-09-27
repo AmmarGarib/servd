@@ -7,7 +7,7 @@ import Link from 'next/link'
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../../../lib/api'
-import { card, btn, btnGhost, inp, rs, day, human, STATUS_COLOR, type HrRecord } from '../../../../lib/hr'
+import { card, btn, btnGhost, inp, rs, day, human, STATUS_COLOR, type HrRecord, type HrLogin } from '../../../../lib/hr'
 import { HrShell, Stat, useHrForm, useHrLookups, useHrOrg } from '../../../../components/hr/HrShell'
 import { FormRenderer } from '../../../../components/hr/FormRenderer'
 import { openPrintable } from '../../../../components/hr/RecordDetail'
@@ -21,9 +21,10 @@ interface Profile {
   loans: Array<{ id: string; type: string | null; amountCents: number; installments: number; recoveredCents: number; outstandingCents: number; firstPeriod: string }>
   salaryHistory: Array<{ section: string; effectiveDate: string | null; grossCents: number; applied: boolean }>
   user: { id: string; name: string; email: string; role: string } | null
+  kioskPinSet: boolean
 }
 
-const TABS = ['Profile', 'Documents', 'Requests', 'Leave', 'Loans & pay', 'Letters', 'Login'] as const
+const TABS = ['Profile', 'Documents', 'Requests', 'Leave', 'Loans & pay', 'Letters', 'Login & clock-in'] as const
 
 export default function EmployeeProfilePage() {
   const { id } = useParams<{ id: string }>()
@@ -54,7 +55,7 @@ export default function EmployeeProfilePage() {
           {tab === 'Leave' && <LeaveTab p={p} />}
           {tab === 'Loans & pay' && <PayTab p={p} />}
           {tab === 'Letters' && <LettersTab p={p} />}
-          {tab === 'Login' && <LoginTab p={p} />}
+          {tab === 'Login & clock-in' && <LoginTab p={p} />}
         </>
       )}
     </HrShell>
@@ -218,7 +219,13 @@ function LettersTab({ p }: { p: Profile }) {
 
 function LoginTab({ p }: { p: Profile }) {
   const qc = useQueryClient()
-  const { data: users, error } = useQuery({ queryKey: ['users-for-link'], queryFn: () => api.get<Array<{ id: string; name: string; email: string | null; role: string }>>('/auth/users'), retry: false })
+  // HR's own list of this company's logins (names and roles only) — not the
+  // managers-only /auth/users.
+  const { data: logins, error } = useQuery({
+    queryKey: ['hr-logins', p.employee.tenantId],
+    queryFn: () => api.get<HrLogin[]>(`/hr/logins?${new URLSearchParams({ tenantId: p.employee.tenantId })}`),
+    retry: false,
+  })
   const [pick, setPick] = useState('')
   const [err, setErr] = useState('')
   const link = useMutation({
@@ -226,26 +233,66 @@ function LoginTab({ p }: { p: Profile }) {
     onSuccess: () => { setErr(''); void qc.invalidateQueries() },
     onError: (e: Error) => setErr(e.message),
   })
+  const free = (logins ?? []).filter((u) => !u.linkedEmployee || u.linkedEmployee.id === p.employee.id)
   return (
-    <div className="rounded-2xl p-5 max-w-xl" style={card}>
-      <p className="text-sm text-white/70 mb-3">Linking a servd login lets this person use <strong>My HR</strong> (payslips, leave, requests) and, if they manage people, approve their team&rsquo;s requests.</p>
+    <div className="grid lg:grid-cols-2 gap-4 max-w-4xl">
+      <div className="rounded-2xl p-5" style={card}>
+        <p className="text-sm font-black text-white/85 mb-2">servd login</p>
+        <p className="text-sm text-white/60 mb-3">Not everyone needs one — most kitchen staff punch in with a kiosk PIN instead. Linking a login lets this person clock in as themselves, use <strong>My HR</strong> and, if they manage people, approve their team&rsquo;s requests. One login can be linked to one employee record in each company.</p>
+        {p.user ? (
+          <div className="flex items-center gap-3">
+            <p className="text-sm text-white/85">Linked to <strong>{p.user.name}</strong> ({p.user.email ?? 'no email'}, {human(p.user.role)})</p>
+            <button className={btnGhost} onClick={() => link.mutate(null)}>Unlink</button>
+          </div>
+        ) : error ? (
+          <p className="text-xs text-amber-400">{(error as Error).message}</p>
+        ) : (
+          <div className="flex gap-2">
+            <select className={inp} value={pick} onChange={(e) => setPick(e.target.value)} aria-label="Login to link">
+              <option value="">Choose a login…</option>
+              {free.map((u) => <option key={u.id} value={u.id}>{u.name} — {u.email ?? human(u.role)}{u.isActive ? '' : ' (inactive)'}</option>)}
+            </select>
+            <button className={btn} disabled={!pick || link.isPending} onClick={() => link.mutate(pick)}>Link</button>
+          </div>
+        )}
+        {err && <p className="text-xs text-red-400 mt-2">{err}</p>}
+      </div>
+      <KioskPinCard p={p} />
+    </div>
+  )
+}
+
+function KioskPinCard({ p }: { p: Profile }) {
+  const qc = useQueryClient()
+  const [pin, setPin] = useState('')
+  const [msg, setMsg] = useState('')
+  const save = useMutation({
+    mutationFn: () => api.post(`/hr/employees/${p.employee.id}/kiosk-pin`, { pin }),
+    onSuccess: () => { setPin(''); setMsg('PIN set. Tell them in person — it is not shown again.'); void qc.invalidateQueries({ queryKey: ['hr-employee'] }) },
+    onError: (e: Error) => setMsg(e.message),
+  })
+  const clear = useMutation({
+    mutationFn: () => api.delete(`/hr/employees/${p.employee.id}/kiosk-pin`),
+    onSuccess: () => { setMsg('PIN removed.'); void qc.invalidateQueries({ queryKey: ['hr-employee'] }) },
+    onError: (e: Error) => setMsg(e.message),
+  })
+  return (
+    <div className="rounded-2xl p-5" style={card}>
+      <p className="text-sm font-black text-white/85 mb-2">Kiosk PIN</p>
+      <p className="text-sm text-white/60 mb-3">For staff without a login: they punch in and out at the shared time clock with their employee ID <strong>{p.employee.employeeCode}</strong> and this PIN. Each punch writes their attendance for the day.</p>
       {p.user ? (
-        <div className="flex items-center gap-3">
-          <p className="text-sm text-white/85">Linked to <strong>{p.user.name}</strong> ({p.user.email ?? 'no email'}, {human(p.user.role)})</p>
-          <button className={btnGhost} onClick={() => link.mutate(null)}>Unlink</button>
-        </div>
-      ) : error ? (
-        <p className="text-xs text-amber-400">Only the CEO or management can see the list of logins to link. Ask them to link this employee.</p>
+        <p className="text-xs text-white/45">This person has a login, so they clock in with it — no kiosk PIN needed.</p>
       ) : (
-        <div className="flex gap-2">
-          <select className={inp} value={pick} onChange={(e) => setPick(e.target.value)} aria-label="Login to link">
-            <option value="">Choose a login…</option>
-            {(users ?? []).map((u) => <option key={u.id} value={u.id}>{u.name} — {u.email ?? human(u.role)}</option>)}
-          </select>
-          <button className={btn} disabled={!pick || link.isPending} onClick={() => link.mutate(pick)}>Link</button>
-        </div>
+        <>
+          <p className="text-xs mb-2" style={{ color: p.kioskPinSet ? '#34d399' : 'rgba(255,255,255,0.45)' }}>{p.kioskPinSet ? 'A PIN is set.' : 'No PIN yet.'}</p>
+          <div className="flex gap-2">
+            <input className={inp} inputMode="numeric" maxLength={6} placeholder="4–6 digits" value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))} aria-label="New kiosk PIN" />
+            <button className={btn} disabled={pin.length < 4 || save.isPending} onClick={() => save.mutate()}>{p.kioskPinSet ? 'Change' : 'Set'}</button>
+            {p.kioskPinSet && <button className={btnGhost} disabled={clear.isPending} onClick={() => clear.mutate()}>Remove</button>}
+          </div>
+        </>
       )}
-      {err && <p className="text-xs text-red-400 mt-2">{err}</p>}
+      {msg && <p className="text-xs text-white/60 mt-2">{msg}</p>}
     </div>
   )
 }

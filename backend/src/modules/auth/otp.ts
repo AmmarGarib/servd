@@ -13,6 +13,42 @@ const OTP_TTL_MS = 5 * 60_000
 const MAX_ATTEMPTS = 5
 const RESEND_COOLDOWN_MS = 30_000        // can't spam-request OTPs
 
+// Daily cap PER CONTACT (phone number or email address), per purpose, over a
+// rolling 24 hours. The per-IP limits on the public routes are the easy half
+// to get around — a rotating proxy gets a fresh budget per request — and what
+// they guard against is GS Foods' WhatsApp and mailbox being used to pester
+// ONE person. Counting live rows here puts the cap on the thing being abused,
+// and every sender (customer signup codes, contact verification, staff code
+// sign-in, 2FA) shares it. Codes whose delivery failed are deleted in
+// production, so they do not count.
+const DAILY_WINDOW_MS = 24 * 60 * 60_000
+const DAILY_CAP_DEFAULT = 10
+// Floor staff sign in with a code at every shift start and after every
+// session timeout; a busier budget so a cashier is never locked out of a till.
+const DAILY_CAP_BY_PURPOSE: Partial<Record<string, number>> = { staff_login: 20, staff_2fa: 20 }
+
+function dailyCap(purpose: string): number {
+  return DAILY_CAP_BY_PURPOSE[purpose] ?? DAILY_CAP_DEFAULT
+}
+
+function dailyLimitError(): AppError {
+  return new AppError('OTP_DAILY_LIMIT', 'Too many codes have been requested for this contact today. Try again tomorrow.', 429)
+}
+
+async function assertPhoneUnderDailyCap(phone: string, purpose: string): Promise<void> {
+  const n = await prisma.phoneOtp.count({
+    where: { phone, purpose, createdAt: { gt: new Date(Date.now() - DAILY_WINDOW_MS) } },
+  })
+  if (n >= dailyCap(purpose)) throw dailyLimitError()
+}
+
+async function assertEmailUnderDailyCap(email: string, purpose: string): Promise<void> {
+  const n = await prisma.emailOtp.count({
+    where: { email, purpose, createdAt: { gt: new Date(Date.now() - DAILY_WINDOW_MS) } },
+  })
+  if (n >= dailyCap(purpose)) throw dailyLimitError()
+}
+
 export type OtpPurpose =
   | 'signup'
   | 'phone_verify'
@@ -89,6 +125,7 @@ export async function requestOtp(opts: {
     orderBy: { createdAt: 'desc' },
   })
   if (recent) throw new AppError('OTP_COOLDOWN', 'Please wait a few seconds before requesting another code', 429)
+  await assertPhoneUnderDailyCap(phone, opts.purpose)
 
   const code = generateCode()
   const expiresAt = new Date(Date.now() + OTP_TTL_MS)
@@ -205,6 +242,7 @@ export async function requestEmailOtp(opts: {
     orderBy: { createdAt: 'desc' },
   })
   if (recent) throw new AppError('OTP_COOLDOWN', 'Please wait a few seconds before requesting another code', 429)
+  await assertEmailUnderDailyCap(email, opts.purpose)
 
   const code = generateCode()
   const expiresAt = new Date(Date.now() + OTP_TTL_MS)
@@ -323,6 +361,12 @@ export async function requestSharedCode(opts: {
   if (recentPhone || recentEmail) {
     throw new AppError('OTP_COOLDOWN', 'Please wait a few seconds before requesting another code', 429)
   }
+  // Either contact over its cap stops the whole send: the code goes to both,
+  // so a capped phone must not be reachable by pairing it with a fresh email.
+  await Promise.all([
+    phone ? assertPhoneUnderDailyCap(phone, opts.purpose) : null,
+    email ? assertEmailUnderDailyCap(email, opts.purpose) : null,
+  ])
 
   const code = generateCode()
   const expiresAt = new Date(Date.now() + OTP_TTL_MS)

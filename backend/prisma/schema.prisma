@@ -5483,7 +5483,7 @@ model HrEmployee {
   employeeCode      String // "GSF-0001" — unique per company
   // Optional link to a servd login. Most kitchen staff never have one; when
   // they do, it lets self-service and the time clock find their record.
-  userId            String?   @unique
+  userId            String?
   fullName          String
   fatherHusbandName String?
   cnic              String?
@@ -5515,6 +5515,8 @@ model HrEmployee {
   sessiNo           String?
   ntn               String?
   photoUrl          String?
+  // Kiosk PIN for staff without a login (punches on the shared tablet).
+  kioskPinHash      String?
   // Every other field from the Employee Master format (family, dependents,
   // addresses, emergency contact, …) lives here, keyed as the format defines.
   data              Json      @default("{}")
@@ -5529,6 +5531,8 @@ model HrEmployee {
   @@unique([tenantId, employeeCode])
   @@index([tenantId, status])
   @@index([managerId])
+  @@unique([tenantId, userId])
+  @@index([userId])
   @@map("hr_employees")
 }
 

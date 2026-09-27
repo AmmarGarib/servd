@@ -1,467 +1,230 @@
+// /scheduling — the weekly rota grid.
+//
+// Owner decision 33: standing shifts and weekly offs are set in HR (the shift
+// master and approved roster records). This grid is GENERATED from them
+// (hr/rota.ts) — managers store only the EXCEPTIONS here: a different time on
+// a day, an extra shift, or a day off. An approved HR shift_swap moves a day
+// on its own; there is no swap request here any more (HR's shift_swap is the
+// only one). The week is costed from HR salaries (gross ÷ working days ÷
+// hours per day), never from User.hourlyRateCents.
+//
+// People on the grid are the company's current HR employees whose branch
+// serves this brand (or who have no branch). Everything is company-scoped:
+// the brand is resolved through its owning company first.
+//
+// scheduled_shifts is keyed by login (userId) until it gets an employeeId
+// column (see the report), so an exception can only be stored for someone
+// with a login; staff without one follow their HR roster.
+
 import type { FastifyInstance } from 'fastify'
+import type { UserRole } from '@prisma/client'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, MANAGERS, ALL_STAFF } from '../auth/middleware.js'
-import { assertConceptAccess } from '../../lib/conceptAccess.js'
-import { NotFoundError } from '../../lib/errors.js'
-import { scopeTenantWhere } from '../../lib/tenantScope.js'
+import { AppError, NotFoundError } from '../../lib/errors.js'
+import { assertConceptOwned, scopeTenantWhere } from '../../lib/tenantScope.js'
+import { rotaFor, shiftMaster, cellMinutes, toMinutes, segmentMinutes, ymd, OFF_MARK } from '../hr/rota.js'
+import { employeeLabels, getSettings } from '../hr/service.js'
+import { hourlyRateCents } from '../hr/logic.js'
 
-const shiftSchema = z.object({
-  userId: z.string().uuid(),
+/** Who plans the rota and sees what it costs. */
+const ROTA_PLANNERS = Array.from(new Set([...MANAGERS, 'hr'])) as UserRole[]
+
+const HHMM = z.string().regex(/^\d{2}:\d{2}$/, 'time must be HH:MM')
+const exceptionSchema = z.object({
+  employeeId: z.string().uuid(),
   conceptId: z.string().uuid(),
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'date must be YYYY-MM-DD'),
-  startTime: z.string().regex(/^\d{2}:\d{2}$/, 'startTime must be HH:MM'),
-  endTime: z.string().regex(/^\d{2}:\d{2}$/, 'endTime must be HH:MM'),
-  role: z.string().optional(),
-  notes: z.string().optional(),
+  /** Take the day off instead of setting hours. */
+  off: z.boolean().optional(),
+  /** Hours from an HR shift instead of typed times. */
+  shiftId: z.string().uuid().optional(),
+  startTime: HHMM.optional(),
+  endTime: HHMM.optional(),
+  role: z.string().max(60).optional(),
+  notes: z.string().max(300).optional(),
 })
 
-/** True when [startA, endA) overlaps [startB, endB) using HH:MM strings */
-function timesOverlap(startA: string, endA: string, startB: string, endB: string): boolean {
-  return startA < endB && endA > startB
-}
-
-/** Build a Mon 00:00 UTC / Sun 23:59:59.999 UTC pair from any date string */
+/** Monday..Sunday (UTC dates) of the week containing `weekStart`. */
 function weekBounds(weekStart: string): { mon: Date; sun: Date } {
-  const anchor = new Date(weekStart)
-  const dow = anchor.getUTCDay()
-  const mon = new Date(anchor)
-  mon.setUTCDate(anchor.getUTCDate() - ((dow + 6) % 7))
-  mon.setUTCHours(0, 0, 0, 0)
-  const sun = new Date(mon)
-  sun.setUTCDate(mon.getUTCDate() + 6)
-  sun.setUTCHours(23, 59, 59, 999)
+  const anchor = new Date(`${weekStart.slice(0, 10)}T00:00:00.000Z`)
+  const mon = new Date(anchor.getTime() - ((anchor.getUTCDay() + 6) % 7) * 86_400_000)
+  const sun = new Date(mon.getTime() + 6 * 86_400_000)
   return { mon, sun }
 }
 
+/** [startA, endA) overlaps [startB, endB), each possibly past midnight. */
+function overlaps(aStart: string, aEnd: string, bStart: string, bEnd: string): boolean {
+  const a0 = toMinutes(aStart)!, b0 = toMinutes(bStart)!
+  const a1 = a0 + segmentMinutes(aStart, aEnd), b1 = b0 + segmentMinutes(bStart, bEnd)
+  return a0 < b1 && b0 < a1
+}
+
+/** The company's current employees who work for this brand. */
+async function gridEmployees(tenantId: string, conceptId: string) {
+  const [emps, links] = await Promise.all([
+    prisma.hrEmployee.findMany({ where: { tenantId, status: { in: ['active', 'on_leave'] } }, orderBy: { fullName: 'asc' } }),
+    prisma.conceptLocation.findMany({ where: { conceptId }, select: { locationId: true } }),
+  ])
+  const locs = new Set(links.map((l) => l.locationId))
+  return emps.filter((e) => !e.locationId || locs.size === 0 || locs.has(e.locationId))
+}
+
+/** An exception row, or 404 when it is not in the operator's companies. */
+async function exceptionInScope(req: Parameters<typeof scopeTenantWhere>[0], id: string) {
+  const row = await prisma.scheduledShift.findFirst({
+    where: { id, concept: { deletedAt: null, ...(await scopeTenantWhere(req, 'write')) } },
+    include: { concept: { select: { tenantId: true } } },
+  })
+  if (!row) throw new NotFoundError('ScheduledShift', id)
+  return row
+}
+
 export async function schedulingRoutes(fastify: FastifyInstance) {
-  // GET /scheduling?conceptId=X&weekStart=YYYY-MM-DD
-  fastify.get<{ Querystring: { conceptId: string; weekStart?: string } }>(
-    '/',
-    { preHandler: requireAuth(...ALL_STAFF) },
-    async (req) => {
-      const { conceptId, weekStart } = req.query
-      await assertConceptAccess(req.staffUser!, conceptId)
+  // GET /scheduling?conceptId=X&weekStart=YYYY-MM-DD — the generated week.
+  fastify.get<{ Querystring: { conceptId: string; weekStart?: string } }>('/', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
+    const concept = await assertConceptOwned(req, req.query.conceptId, 'read')
+    if (!concept.tenantId) throw new NotFoundError('Concept', req.query.conceptId)
+    const { mon, sun } = weekBounds(req.query.weekStart ?? new Date().toISOString())
+    const emps = await gridEmployees(concept.tenantId, concept.id)
+    const [cells, label, shifts] = await Promise.all([
+      rotaFor(concept.tenantId, emps, ymd(mon), ymd(sun)),
+      employeeLabels(concept.tenantId, emps),
+      shiftMaster(concept.tenantId),
+    ])
+    return {
+      weekStart: ymd(mon),
+      weekEnd: ymd(sun),
+      conceptId: concept.id,
+      staff: emps.map((e) => ({
+        id: e.id, name: e.fullName, employeeCode: e.employeeCode, designation: label(e.designationId),
+        // An exception needs a login until scheduled_shifts is keyed by employee.
+        canHaveExceptions: !!e.userId,
+      })),
+      cells: cells.map((c) => ({ ...c, minutes: cellMinutes(c) })),
+      shifts: Array.from(shifts.values()),
+    }
+  })
 
-      const { mon, sun } = weekBounds(weekStart ?? new Date().toISOString().slice(0, 10))
+  // POST /scheduling — store an exception for one person on one day.
+  fastify.post('/', { preHandler: requireAuth(...ROTA_PLANNERS) }, async (req, reply) => {
+    const body = exceptionSchema.parse(req.body)
+    const concept = await assertConceptOwned(req, body.conceptId, 'create')
+    const emp = await prisma.hrEmployee.findFirst({ where: { id: body.employeeId, tenantId: concept.tenantId ?? '', status: { in: ['active', 'on_leave'] } } })
+    if (!emp) throw new AppError('EMPLOYEE_NOT_IN_COMPANY', 'That person is not a current employee of this brand\'s company', 422)
+    if (!emp.userId) {
+      throw new AppError('NO_LOGIN_FOR_EXCEPTION', `${emp.fullName} has no servd login, so a one-day change cannot be stored for them yet — change their standing shift in HR → Roster, or approve a shift swap`, 422)
+    }
+    const date = new Date(`${body.date}T00:00:00.000Z`)
+    const sameDay = await prisma.scheduledShift.findMany({ where: { userId: emp.userId, date, concept: { tenantId: concept.tenantId } } })
 
-      const shifts = await prisma.scheduledShift.findMany({
-        where: { conceptId, date: { gte: mon, lte: sun } },
-        include: { user: { select: { id: true, name: true, role: true } } },
-        orderBy: [{ date: 'asc' }, { startTime: 'asc' }],
-      })
+    if (body.off) {
+      // A day off replaces whatever was planned for that day.
+      const [, row] = await prisma.$transaction([
+        prisma.scheduledShift.deleteMany({ where: { id: { in: sameDay.map((x) => x.id) } } }),
+        prisma.scheduledShift.create({ data: { userId: emp.userId, conceptId: concept.id, date, startTime: '00:00', endTime: '00:00', role: OFF_MARK, notes: body.notes ?? null } }),
+      ])
+      return reply.status(201).send(row)
+    }
 
-      // Staff roster for the concept (for the assignment UI)
-      const staff = await prisma.user.findMany({
-        where: {
-          deletedAt: null,
-          OR: [{ conceptIds: { isEmpty: true } }, { conceptIds: { has: conceptId } }],
-        },
-        select: { id: true, name: true, role: true },
-        orderBy: { name: 'asc' },
-      })
+    let start = body.startTime, end = body.endTime
+    if (body.shiftId) {
+      const s = (await shiftMaster(concept.tenantId!)).get(body.shiftId)
+      if (!s) throw new AppError('UNKNOWN_SHIFT', 'That shift is not in this company\'s shift master', 422)
+      start = s.start; end = s.end
+    }
+    if (!start || !end) throw new AppError('TIMES_REQUIRED', 'Give a start and end time, pick a shift, or mark the day off', 400)
+    if (start === end) throw new AppError('BAD_TIMES', 'A shift cannot start and end at the same time', 400)
+    const clash = sameDay.find((x) => x.role !== OFF_MARK && overlaps(start!, end!, x.startTime, x.endTime))
+    if (clash) throw new AppError('SHIFT_CONFLICT', `${emp.fullName} is already down for ${clash.startTime}–${clash.endTime} that day`, 409)
+    const offRows = sameDay.filter((x) => x.role === OFF_MARK).map((x) => x.id)
+    const [, row] = await prisma.$transaction([
+      // Working after all: a day-off exception for the same day goes.
+      prisma.scheduledShift.deleteMany({ where: { id: { in: offRows } } }),
+      prisma.scheduledShift.create({
+        data: { userId: emp.userId, conceptId: concept.id, date, startTime: start, endTime: end, role: body.role ?? null, notes: body.notes ?? null },
+      }),
+    ])
+    return reply.status(201).send(row)
+  })
 
+  // PATCH /scheduling/:id — change an exception's hours or notes.
+  fastify.patch<{ Params: { id: string } }>('/:id', { preHandler: requireAuth(...ROTA_PLANNERS) }, async (req) => {
+    const body = z.object({ startTime: HHMM.optional(), endTime: HHMM.optional(), role: z.string().max(60).nullable().optional(), notes: z.string().max(300).nullable().optional() }).parse(req.body)
+    const row = await exceptionInScope(req, req.params.id)
+    if (row.role === OFF_MARK) throw new AppError('DAY_OFF', 'This is a day off — remove it and add hours instead', 409)
+    const start = body.startTime ?? row.startTime, end = body.endTime ?? row.endTime
+    if (start === end) throw new AppError('BAD_TIMES', 'A shift cannot start and end at the same time', 400)
+    const others = await prisma.scheduledShift.findMany({ where: { userId: row.userId, date: row.date, id: { not: row.id }, role: { not: OFF_MARK }, concept: { tenantId: row.concept.tenantId } } })
+    const clash = others.find((x) => overlaps(start, end, x.startTime, x.endTime))
+    if (clash) throw new AppError('SHIFT_CONFLICT', `Already down for ${clash.startTime}–${clash.endTime} that day`, 409)
+    return prisma.scheduledShift.update({
+      where: { id: row.id },
+      data: { startTime: start, endTime: end, ...(body.role !== undefined && { role: body.role }), ...(body.notes !== undefined && { notes: body.notes }) },
+    })
+  })
+
+  // DELETE /scheduling/:id — drop an exception; the day goes back to the roster.
+  fastify.delete<{ Params: { id: string } }>('/:id', { preHandler: requireAuth(...ROTA_PLANNERS) }, async (req, reply) => {
+    const row = await exceptionInScope(req, req.params.id)
+    await prisma.scheduledShift.delete({ where: { id: row.id } })
+    return reply.status(204).send()
+  })
+
+  // POST /scheduling/copy-week — repeat last week's EXCEPTIONS (the roster
+  // repeats by itself). Skips a day that already has an exception.
+  fastify.post('/copy-week', { preHandler: requireAuth(...ROTA_PLANNERS) }, async (req) => {
+    const body = z.object({
+      conceptId: z.string().uuid(),
+      sourceWeekStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+      targetWeekStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    }).parse(req.body)
+    const concept = await assertConceptOwned(req, body.conceptId, 'create')
+    const src = weekBounds(body.sourceWeekStart)
+    const dst = weekBounds(body.targetWeekStart)
+    const offset = dst.mon.getTime() - src.mon.getTime()
+    const [rows, existing] = await Promise.all([
+      prisma.scheduledShift.findMany({ where: { conceptId: concept.id, date: { gte: src.mon, lte: src.sun } } }),
+      prisma.scheduledShift.findMany({ where: { concept: { tenantId: concept.tenantId }, date: { gte: dst.mon, lte: dst.sun } }, select: { userId: true, date: true } }),
+    ])
+    const taken = new Set(existing.map((x) => `${x.userId}:${ymd(x.date)}`))
+    // Only people still employed here.
+    const current = new Set((await prisma.hrEmployee.findMany({ where: { tenantId: concept.tenantId ?? '', status: { in: ['active', 'on_leave'] }, userId: { not: null } }, select: { userId: true } })).map((e) => e.userId!))
+    let created = 0, skipped = 0
+    for (const r of rows) {
+      const date = new Date(r.date.getTime() + offset)
+      if (!current.has(r.userId) || taken.has(`${r.userId}:${ymd(date)}`)) { skipped++; continue }
+      await prisma.scheduledShift.create({ data: { userId: r.userId, conceptId: r.conceptId, date, startTime: r.startTime, endTime: r.endTime, role: r.role, notes: r.notes } })
+      created++
+    }
+    return { created, copied: created, skipped }
+  })
+
+  // GET /scheduling/labor-cost?conceptId=X&weekStart=YYYY-MM-DD — the
+  // generated week priced at each person's HR hourly rate.
+  fastify.get<{ Querystring: { conceptId: string; weekStart: string } }>('/labor-cost', { preHandler: requireAuth(...ROTA_PLANNERS) }, async (req) => {
+    const concept = await assertConceptOwned(req, req.query.conceptId, 'read')
+    if (!concept.tenantId) throw new NotFoundError('Concept', req.query.conceptId)
+    const { mon, sun } = weekBounds(req.query.weekStart ?? new Date().toISOString())
+    const emps = await gridEmployees(concept.tenantId, concept.id)
+    const [cells, settings] = await Promise.all([rotaFor(concept.tenantId, emps, ymd(mon), ymd(sun)), getSettings(concept.tenantId)])
+    const byEmployee = emps.map((e) => {
+      const minutes = cells.filter((c) => c.employeeId === e.id).reduce((a, c) => a + cellMinutes(c), 0)
+      const hours = minutes / 60
+      const rate = hourlyRateCents(e.grossSalaryCents, settings)
       return {
-        weekStart: mon.toISOString().slice(0, 10),
-        weekEnd: sun.toISOString().slice(0, 10),
-        shifts,
-        staff,
+        employeeId: e.id, name: e.fullName,
+        hours: Math.round(hours * 100) / 100,
+        rateCents: Math.round(rate),
+        totalCents: Math.round(hours * rate),
+        rateUnset: e.grossSalaryCents <= 0,
       }
-    },
-  )
-
-  // POST /scheduling
-  fastify.post(
-    '/',
-    { preHandler: requireAuth(...MANAGERS) },
-    async (req, reply) => {
-      const body = shiftSchema.parse(req.body)
-      await assertConceptAccess(req.staffUser!, body.conceptId)
-
-      // Conflict detection: check for any overlapping shift for this user on this date
-      const conflict = await prisma.scheduledShift.findFirst({
-        where: {
-          userId: body.userId,
-          date: new Date(body.date),
-        },
-      })
-      if (conflict && timesOverlap(body.startTime, body.endTime, conflict.startTime, conflict.endTime)) {
-        return reply.status(409).send({
-          error: {
-            code: 'SHIFT_CONFLICT',
-            message: `Staff already scheduled ${conflict.startTime}–${conflict.endTime} on this date`,
-          },
-        })
-      }
-
-      const shift = await prisma.scheduledShift.create({
-        data: {
-          userId: body.userId,
-          conceptId: body.conceptId,
-          date: new Date(body.date),
-          startTime: body.startTime,
-          endTime: body.endTime,
-          role: body.role,
-          notes: body.notes,
-        },
-        include: { user: { select: { id: true, name: true, role: true } } },
-      })
-      return reply.status(201).send(shift)
-    },
-  )
-
-  // PATCH /scheduling/:id
-  fastify.patch<{ Params: { id: string } }>(
-    '/:id',
-    { preHandler: requireAuth(...MANAGERS) },
-    async (req, reply) => {
-      const body = shiftSchema.partial().parse(req.body)
-      // Scope the lookup itself. assertConceptAccess below is a per-user brand
-      // whitelist that no-ops for every management role, so on its own it let a
-      // manager at one company edit another company's rota.
-      const existing = await prisma.scheduledShift.findFirst({
-        where: { id: req.params.id, concept: { deletedAt: null, ...(await scopeTenantWhere(req, 'write')) } },
-      })
-      if (!existing) throw new NotFoundError('ScheduledShift', req.params.id)
-      await assertConceptAccess(req.staffUser!, existing.conceptId)
-
-      // Resolve effective values after patch for overlap check
-      const effectiveUserId = body.userId ?? existing.userId
-      const effectiveDate = body.date ? new Date(body.date) : existing.date
-      const effectiveStart = body.startTime ?? existing.startTime
-      const effectiveEnd = body.endTime ?? existing.endTime
-
-      // Conflict detection: exclude this shift itself
-      const conflict = await prisma.scheduledShift.findFirst({
-        where: {
-          userId: effectiveUserId,
-          date: effectiveDate,
-          id: { not: req.params.id },
-        },
-      })
-      if (conflict && timesOverlap(effectiveStart, effectiveEnd, conflict.startTime, conflict.endTime)) {
-        return reply.status(409).send({
-          error: {
-            code: 'SHIFT_CONFLICT',
-            message: `Staff already scheduled ${conflict.startTime}–${conflict.endTime} on this date`,
-          },
-        })
-      }
-
-      return prisma.scheduledShift.update({
-        where: { id: req.params.id },
-        data: {
-          ...(body.userId && { userId: body.userId }),
-          ...(body.date && { date: new Date(body.date) }),
-          ...(body.startTime && { startTime: body.startTime }),
-          ...(body.endTime && { endTime: body.endTime }),
-          ...(body.role !== undefined && { role: body.role }),
-          ...(body.notes !== undefined && { notes: body.notes }),
-        },
-        include: { user: { select: { id: true, name: true, role: true } } },
-      })
-    },
-  )
-
-  // DELETE /scheduling/:id
-  fastify.delete<{ Params: { id: string } }>(
-    '/:id',
-    { preHandler: requireAuth(...MANAGERS) },
-    async (req, reply) => {
-      const existing = await prisma.scheduledShift.findFirst({
-        where: { id: req.params.id, concept: { deletedAt: null, ...(await scopeTenantWhere(req, 'write')) } },
-      })
-      if (!existing) throw new NotFoundError('ScheduledShift', req.params.id)
-      await assertConceptAccess(req.staffUser!, existing.conceptId)
-      await prisma.scheduledShift.delete({ where: { id: existing.id } })
-      return reply.status(204).send()
-    },
-  )
-
-  // POST /scheduling/copy-week
-  const copyWeekSchema = z.object({
-    conceptId: z.string().uuid(),
-    sourceWeekStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-    targetWeekStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    }).filter((x) => x.hours > 0)
+    return {
+      totalHours: Math.round(byEmployee.reduce((a, x) => a + x.hours, 0) * 100) / 100,
+      totalCents: byEmployee.reduce((a, x) => a + x.totalCents, 0),
+      byEmployee,
+      basis: `HR gross salary ÷ ${settings.workingDaysPerMonth} working days ÷ ${settings.hoursPerDay} hours`,
+    }
   })
-
-  fastify.post(
-    '/copy-week',
-    { preHandler: requireAuth(...MANAGERS) },
-    async (req, reply) => {
-      const body = copyWeekSchema.parse(req.body)
-      await assertConceptAccess(req.staffUser!, body.conceptId)
-
-      const sourceStart = new Date(body.sourceWeekStart)
-      const targetStart = new Date(body.targetWeekStart)
-
-      // Verify both are Mondays (day of week = 1 in UTC)
-      if (sourceStart.getUTCDay() !== 1) {
-        return reply.status(400).send({
-          error: { code: 'INVALID_WEEK_START', message: 'sourceWeekStart must be a Monday (YYYY-MM-DD)' },
-        })
-      }
-      if (targetStart.getUTCDay() !== 1) {
-        return reply.status(400).send({
-          error: { code: 'INVALID_WEEK_START', message: 'targetWeekStart must be a Monday (YYYY-MM-DD)' },
-        })
-      }
-
-      const offsetDays = Math.round(
-        (targetStart.getTime() - sourceStart.getTime()) / (1000 * 60 * 60 * 24),
-      )
-
-      const { mon: sourceMon, sun: sourceSun } = weekBounds(body.sourceWeekStart)
-
-      const sourceShifts = await prisma.scheduledShift.findMany({
-        where: { conceptId: body.conceptId, date: { gte: sourceMon, lte: sourceSun } },
-      })
-
-      let created = 0
-      let skipped = 0
-
-      for (const shift of sourceShifts) {
-        const newDate = new Date(shift.date)
-        newDate.setUTCDate(newDate.getUTCDate() + offsetDays)
-
-        try {
-          await prisma.scheduledShift.create({
-            data: {
-              userId: shift.userId,
-              conceptId: shift.conceptId,
-              date: newDate,
-              startTime: shift.startTime,
-              endTime: shift.endTime,
-              role: shift.role,
-              notes: shift.notes,
-            },
-          })
-          created++
-        } catch (err: any) {
-          // Unique/constraint violations are counted as skipped; other errors bubble up
-          const code: string = err?.code ?? ''
-          if (code === 'P2002' || code === 'P2003' || code === 'P2004') {
-            skipped++
-          } else {
-            throw err
-          }
-        }
-      }
-
-      return reply.status(200).send({ created, skipped })
-    },
-  )
-
-  // GET /scheduling/labor-cost?conceptId=X&weekStart=YYYY-MM-DD
-  fastify.get<{ Querystring: { conceptId: string; weekStart: string } }>(
-    '/labor-cost',
-    { preHandler: requireAuth(...MANAGERS) },
-    async (req, reply) => {
-      const { conceptId, weekStart } = req.query
-      if (!conceptId || !weekStart) {
-        return reply.status(400).send({ error: { code: 'MISSING_PARAMS', message: 'conceptId and weekStart are required' } })
-      }
-      await assertConceptAccess(req.staffUser!, conceptId)
-
-      const { mon, sun } = weekBounds(weekStart)
-
-      const shifts = await prisma.scheduledShift.findMany({
-        where: { conceptId, date: { gte: mon, lte: sun } },
-        include: { user: { select: { id: true, name: true, hourlyRateCents: true } } },
-      })
-
-      /** Parse HH:MM into total minutes */
-      const toMinutes = (hhmm: string): number => {
-        const parts = hhmm.split(':').map(Number)
-        return (parts[0] ?? 0) * 60 + (parts[1] ?? 0)
-      }
-
-      type ByUserEntry = {
-        userId: string
-        name: string
-        hours: number
-        rateCents: number
-        totalCents: number
-        rateUnset: boolean
-      }
-
-      const byUserMap = new Map<string, ByUserEntry>()
-
-      let totalHours = 0
-      let totalCents = 0
-
-      for (const shift of shifts) {
-        const durationMinutes = toMinutes(shift.endTime) - toMinutes(shift.startTime)
-        const hours = durationMinutes / 60
-        const rateUnset = shift.user.hourlyRateCents == null
-        const rateCents = shift.user.hourlyRateCents ?? 0
-        const shiftCost = Math.round(hours * rateCents)
-
-        totalHours += hours
-        totalCents += shiftCost
-
-        const existing = byUserMap.get(shift.userId)
-        if (existing) {
-          existing.hours += hours
-          existing.totalCents += shiftCost
-          // propagate rateUnset if any shift for this user is unset
-          if (rateUnset) existing.rateUnset = true
-        } else {
-          byUserMap.set(shift.userId, {
-            userId: shift.userId,
-            name: shift.user.name,
-            hours,
-            rateCents,
-            totalCents: shiftCost,
-            rateUnset,
-          })
-        }
-      }
-
-      // Round accumulated hours to 2 decimal places for each user
-      const byUser = Array.from(byUserMap.values()).map((u) => ({
-        ...u,
-        hours: Math.round(u.hours * 100) / 100,
-        totalCents: u.totalCents,
-      }))
-
-      return {
-        totalHours: Math.round(totalHours * 100) / 100,
-        totalCents,
-        byUser,
-      }
-    },
-  )
-
-  // POST /scheduling/swap-request
-  const swapRequestSchema = z.object({
-    shiftId: z.string().uuid(),                                  // B08
-    requestedFromUserId: z.string().uuid(),
-    notes: z.string().optional(),
-  })
-
-  fastify.post(
-    '/swap-request',
-    { preHandler: requireAuth(...ALL_STAFF) },
-    async (req, reply) => {
-      const body = swapRequestSchema.parse(req.body)
-      const requestedByUserId = req.staffUser!.id
-
-      const shift = await prisma.scheduledShift.findUnique({ where: { id: body.shiftId } })
-      if (!shift) throw new NotFoundError('ScheduledShift', body.shiftId)
-      await assertConceptAccess(req.staffUser!, shift.conceptId)
-
-      const swapRequest = await prisma.shiftSwapRequest.create({
-        data: {
-          shiftId: body.shiftId,
-          requestedByUserId,
-          requestedFromUserId: body.requestedFromUserId,
-          notes: body.notes,
-          status: 'pending',
-        },
-      })
-
-      return reply.status(201).send(swapRequest)
-    },
-  )
-
-  // GET /scheduling/swap-requests?conceptId=X
-  fastify.get<{ Querystring: { conceptId: string } }>(
-    '/swap-requests',
-    { preHandler: requireAuth(...MANAGERS) },
-    async (req) => {
-      const { conceptId } = req.query
-      await assertConceptAccess(req.staffUser!, conceptId)
-
-      const requests = await prisma.shiftSwapRequest.findMany({
-        where: { shift: { conceptId } },
-        include: {
-          shift: {
-            select: { id: true, date: true, startTime: true, endTime: true, userId: true, conceptId: true },
-          },
-        },
-        orderBy: { createdAt: 'desc' },
-      })
-
-      return requests
-    },
-  )
-
-  // PATCH /scheduling/swap-requests/:id
-  const swapActionSchema = z.object({
-    action: z.enum(['approve', 'reject']),
-  })
-
-  fastify.patch<{ Params: { id: string } }>(
-    '/swap-requests/:id',
-    { preHandler: requireAuth(...MANAGERS) },
-    async (req, reply) => {
-      const { action } = swapActionSchema.parse(req.body)
-
-      const swapRequest = await prisma.shiftSwapRequest.findFirst({
-        where: {
-          id: req.params.id,
-          shift: { concept: { deletedAt: null, ...(await scopeTenantWhere(req, 'write')) } },
-        },
-        include: { shift: true },
-      })
-      if (!swapRequest) throw new NotFoundError('ShiftSwapRequest', req.params.id)
-      await assertConceptAccess(req.staffUser!, swapRequest.shift.conceptId)
-
-      if (swapRequest.status !== 'pending') {
-        return reply.status(409).send({
-          error: { code: 'ALREADY_RESOLVED', message: `Swap request is already ${swapRequest.status}` },
-        })
-      }
-
-      if (action === 'reject') {
-        const updated = await prisma.shiftSwapRequest.update({
-          where: { id: req.params.id },
-          data: { status: 'rejected' },
-        })
-        return updated
-      }
-
-      // action === 'approve'
-      const { shift } = swapRequest
-
-      // Look for a matching shift owned by the "from" user on the same date+time
-      const fromUserShift = await prisma.scheduledShift.findFirst({
-        where: {
-          userId: swapRequest.requestedFromUserId,
-          conceptId: shift.conceptId,
-          date: shift.date,
-          startTime: shift.startTime,
-          endTime: shift.endTime,
-        },
-      })
-
-      if (fromUserShift) {
-        // Swap userIds between the two shifts
-        await prisma.$transaction([
-          prisma.scheduledShift.update({
-            where: { id: shift.id },
-            data: { userId: swapRequest.requestedFromUserId },
-          }),
-          prisma.scheduledShift.update({
-            where: { id: fromUserShift.id },
-            data: { userId: swapRequest.requestedByUserId },
-          }),
-        ])
-      } else {
-        // No matching shift for the other user — just reassign the original shift to them
-        await prisma.scheduledShift.update({
-          where: { id: shift.id },
-          data: { userId: swapRequest.requestedFromUserId },
-        })
-      }
-
-      const updated = await prisma.shiftSwapRequest.update({
-        where: { id: req.params.id },
-        data: { status: 'approved' },
-      })
-
-      return updated
-    },
-  )
 }

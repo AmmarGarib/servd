@@ -5,6 +5,7 @@ import { useState } from 'react'
 import Link from 'next/link'
 import { api } from '../../lib/api'
 import { fmtPkr, fmtPkrShort } from '../../lib/money'
+import { useBrandFilter } from '../../store/brandFilter'
 
 interface PoolSummary {
   id: string; name: string
@@ -55,7 +56,7 @@ export default function TipPoolsPage() {
         <div>
           <Link href="/hr/payroll" className="text-xs text-s-muted hover:text-s-text">← Payroll</Link>
           <h1 className="text-xl font-bold text-s-text">Tip pools</h1>
-          <p className="text-xs text-s-muted">Pool customer tips, distribute by hours × role weight, pay out staff.</p>
+          <p className="text-xs text-s-muted">Pool a brand&apos;s customer tips and split them by the company&apos;s rules — who is in the pool, the weights and the split are set in <Link href="/configuration/operations" className="underline">Configuration → Operations</Link>. Hours come from the company&apos;s punches.</p>
         </div>
         <button onClick={() => setShowNew(true)} className="s-btn-primary text-xs">+ New pool</button>
       </header>
@@ -114,7 +115,7 @@ export default function TipPoolsPage() {
                     <div>
                       <p className="font-semibold">{m.userName}</p>
                       <p className="text-[11px] text-s-muted">
-                        {m.hoursWorked.toFixed(1)}h · ×{m.roleWeight} = {m.shareUnits.toFixed(2)} units
+                        {m.hoursWorked.toFixed(1)}h · weight {m.roleWeight} · {m.shareUnits.toFixed(2)} share units
                       </p>
                     </div>
                     <span className="font-mono text-xs">{detail.data.status === 'draft' ? '—' : fmtPkrShort(m.shareCents)}</span>
@@ -146,6 +147,8 @@ export default function TipPoolsPage() {
 }
 
 function NewPoolModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
+  const { data: concepts = [] } = useQuery({ queryKey: ['concepts'], queryFn: () => api.get<Array<{ id: string; name: string }>>('/concepts') })
+  const [conceptId, setConceptId] = useState<string>(() => useBrandFilter.getState().brandId ?? '')
   const [name, setName] = useState(`Pool · ${new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}`)
   const [start, setStart] = useState(`${new Date().toISOString().slice(0,10)}T17:00`)
   const [end,   setEnd]   = useState(`${new Date().toISOString().slice(0,10)}T23:59`)
@@ -153,6 +156,7 @@ function NewPoolModal({ onClose, onCreated }: { onClose: () => void; onCreated: 
 
   const create = useMutation({
     mutationFn: () => api.post('/tip-pools', {
+      conceptId,
       name,
       periodStart: new Date(`${start}:00+05:00`).toISOString(),
       periodEnd:   new Date(`${end}:00+05:00`).toISOString(),
@@ -170,6 +174,13 @@ function NewPoolModal({ onClose, onCreated }: { onClose: () => void; onCreated: 
         </div>
         <div className="p-5 space-y-3 text-sm">
           <label className="block">
+            <span className="text-xs text-s-muted">Brand</span>
+            <select value={conceptId} onChange={(e) => setConceptId(e.target.value)} className="w-full mt-1 bg-white border border-s-border rounded px-2 py-1.5">
+              <option value="">Choose the brand whose tips these are…</option>
+              {concepts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </label>
+          <label className="block">
             <span className="text-xs text-s-muted">Name</span>
             <input value={name} onChange={(e) => setName(e.target.value)} className="w-full mt-1 bg-white border border-s-border rounded px-2 py-1.5" />
           </label>
@@ -183,12 +194,12 @@ function NewPoolModal({ onClose, onCreated }: { onClose: () => void; onCreated: 
               <input type="datetime-local" value={end} onChange={(e) => setEnd(e.target.value)} className="w-full mt-1 bg-white border border-s-border rounded px-2 py-1.5" />
             </label>
           </div>
-          <p className="text-[11px] text-s-muted">Pulls Order.tipCents during this window and pairs with clock-log hours.</p>
+          <p className="text-[11px] text-s-muted">Adds up this brand&apos;s tips in the window and the hours its company&apos;s staff punched, then splits them by the company&apos;s tip-pool rules.</p>
           {err && <p className="text-xs text-s-red">{err}</p>}
         </div>
         <div className="px-5 py-3 border-t border-s-border flex justify-end gap-2">
           <button onClick={onClose} className="s-btn-secondary text-sm">Cancel</button>
-          <button onClick={() => create.mutate()} disabled={create.isPending} className="s-btn-primary text-sm">
+          <button onClick={() => create.mutate()} disabled={create.isPending || !conceptId} className="s-btn-primary text-sm">
             {create.isPending ? 'Computing…' : 'Compute pool'}
           </button>
         </div>

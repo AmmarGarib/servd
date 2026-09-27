@@ -11,7 +11,7 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify'
 import type { Prisma, UserRole, HrEmployee, HrRecord } from '@prisma/client'
 import { z } from 'zod'
 import { serviceClient as prisma } from '../../lib/prisma.js'
-import { requireAuth, ALL_STAFF } from '../auth/middleware.js'
+import { requireAuth, ALL_STAFF, MANAGERS } from '../auth/middleware.js'
 import { AppError, NotFoundError, ForbiddenError } from '../../lib/errors.js'
 import { audit } from '../../lib/audit.js'
 import {
@@ -32,8 +32,14 @@ import { DEFAULT_LETTERS, renderLetter, placeholdersIn, sanitizeLetterHtml } fro
 import { REPORTS, buildReport, resolver, type ReportQuery } from './reports.js'
 import { postPayrollAccrual, postPayrollPayment, postLoanDisbursement } from './ledger.js'
 import { reverseJournalEntry, ACCT } from '../accounting/journal.js'
+import { applyAttendanceCorrection, flagMissingPunches } from './attendance.js'
+import { hasKioskPin, setKioskPin, clearKioskPin } from './kioskPin.js'
+import { loginsToDeactivate, deactivateLeftLogins } from './separations.js'
 
 const HR_ADMIN = ['admin', 'owner', 'management', 'hr'] as UserRole[]
+/** Who may see which logins are linked to which employee (names, designation
+ *  and status — never pay): HR and the managers who run Workforce. */
+const PEOPLE_READERS = Array.from(new Set([...HR_ADMIN, ...MANAGERS])) as UserRole[]
 const PAYROLL_APPROVERS = ['admin', 'owner', 'management'] as UserRole[]
 /** Who may edit the Employee Master record linked to their own login. */
 const SELF_EDITORS = ['admin', 'owner'] as UserRole[]
@@ -77,6 +83,23 @@ async function pickerTenant(req: FastifyRequest): Promise<string> {
   throw new ForbiddenError('You do not belong to that company')
 }
 const writeTenants = (req: FastifyRequest) => ({ tenantId: { in: req.staffUser!.memberTenantIds.length ? req.staffUser!.memberTenantIds : [activeTenant(req)] } })
+
+/** The caller's own employee record. One login may be an employee in each
+ *  company (decision 31): the active company's record wins, else the one
+ *  they are employed in now, else any. */
+async function ownEmployee(req: FastifyRequest): Promise<HrEmployee | null> {
+  const mine = await prisma.hrEmployee.findMany({ where: { userId: req.staffUser!.id }, orderBy: { createdAt: 'asc' } })
+  if (mine.length <= 1) return mine[0] ?? null
+  return mine.find((e) => e.tenantId === req.staffUser!.tenantId)
+    ?? mine.find((e) => ['active', 'on_leave'].includes(e.status))
+    ?? mine[0]!
+}
+
+/** Digits only, last 10 — enough to match 0300… with +92300…. */
+const phoneKey = (p: string | null | undefined) => {
+  const d = (p ?? '').replace(/\D/g, '')
+  return d.length >= 10 ? d.slice(-10) : null
+}
 
 function recordSection(key: string) {
   const sec = sectionByKey(key)
@@ -255,6 +278,9 @@ async function finalApproval(tx: Tx, rec: HrRecord, extra: { approvedHours?: num
   const s = await getSettings(rec.tenantId)
   const emp = rec.employeeId ? await tx.hrEmployee.findFirst({ where: { id: rec.employeeId, tenantId: rec.tenantId } }) : null
   await onFinalApproval(tx, { ...rec, status: 'approved' }, emp, s, extra)
+  // A correction rewrites the day it is about — the punched times give way to
+  // the approved ones, and present / late is worked out again.
+  if (rec.section === 'attendance_correction') await applyAttendanceCorrection(tx, { ...rec, status: 'approved' })
   // A loan is paid out when it is approved: it goes on the books as owed by
   // the employee, and payroll recovers it.
   if (rec.section === 'loan') {
@@ -459,10 +485,16 @@ export async function hrRoutes(fastify: FastifyInstance) {
     const tenantId = await pickerTenant(req)
     const [units, departments, locations] = await Promise.all([
       prisma.hrOrgUnit.findMany({ where: { tenantId }, orderBy: [{ kind: 'asc' }, { name: 'asc' }] }),
-      prisma.department.findMany({ where: { tenantId, archivedAt: null }, orderBy: { order: 'asc' }, select: { id: true, name: true } }),
+      prisma.department.findMany({ where: { tenantId }, orderBy: [{ order: 'asc' }, { name: 'asc' }], select: { id: true, name: true, emoji: true, isHeadOffice: true, order: true, archivedAt: true } }),
       prisma.location.findMany({ where: { tenantId }, orderBy: { name: 'asc' }, select: { id: true, name: true } }),
     ])
-    return { units, departments, locations, kinds: ORG_UNIT_KINDS }
+    // Pickers get the live departments; an archived one is listed apart so
+    // Org setup can bring it back and old records still show its name.
+    return {
+      units, locations, kinds: ORG_UNIT_KINDS,
+      departments: departments.filter((d) => !d.archivedAt),
+      archivedDepartments: departments.filter((d) => d.archivedAt),
+    }
   })
 
   fastify.post('/org/units', { preHandler: requireAuth(...HR_ADMIN) }, async (req, reply) => {
@@ -481,12 +513,57 @@ export async function hrRoutes(fastify: FastifyInstance) {
     return prisma.hrOrgUnit.update({ where: { id: unit.id }, data: body })
   })
 
+  // Departments are written HERE only (item 76): Workforce → Positions reads
+  // them. The name picks the wages account HR payroll posts to
+  // (ledger.ts wageAccountFor), so a rename is audited.
   fastify.post('/org/departments', { preHandler: requireAuth(...HR_ADMIN) }, async (req, reply) => {
     const tenantId = activeTenant(req)
-    const body = z.object({ name: z.string().min(1).max(120) }).parse(req.body)
-    const exists = await prisma.department.findFirst({ where: { tenantId, name: body.name.trim() } })
-    if (exists) throw new AppError('DUPLICATE', `"${body.name}" already exists`, 409)
-    return reply.status(201).send(await prisma.department.create({ data: { tenantId, name: body.name.trim() } }))
+    const body = z.object({
+      name: z.string().min(1).max(120), emoji: z.string().max(8).nullable().optional(),
+      isHeadOffice: z.boolean().optional(), order: z.number().int().optional(),
+    }).parse(req.body)
+    const name = body.name.trim()
+    const exists = await prisma.department.findFirst({ where: { tenantId, name: { equals: name, mode: 'insensitive' } } })
+    if (exists) throw new AppError('DUPLICATE', `"${name}" already exists${exists.archivedAt ? ' (archived — bring it back instead)' : ''}`, 409)
+    const dept = await prisma.department.create({ data: { tenantId, name, emoji: body.emoji ?? null, isHeadOffice: body.isHeadOffice ?? false, order: body.order ?? 0 } })
+    await audit({ category: 'identity', action: 'hr.department.create', entity: 'Department', entityId: dept.id, userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId, after: { name } })
+    return reply.status(201).send(dept)
+  })
+
+  fastify.patch<{ Params: { id: string } }>('/org/departments/:id', { preHandler: requireAuth(...HR_ADMIN) }, async (req) => {
+    const body = z.object({
+      name: z.string().min(1).max(120).optional(), emoji: z.string().max(8).nullable().optional(),
+      isHeadOffice: z.boolean().optional(), order: z.number().int().optional(), archived: z.boolean().optional(),
+    }).parse(req.body)
+    const dept = await prisma.department.findFirst({ where: { id: req.params.id, ...writeTenants(req) } })
+    if (!dept || !dept.tenantId) throw new NotFoundError('Department', req.params.id)
+    const name = body.name?.trim()
+    if (name && name.toLowerCase() !== dept.name.toLowerCase() &&
+        await prisma.department.findFirst({ where: { tenantId: dept.tenantId, name: { equals: name, mode: 'insensitive' }, NOT: { id: dept.id } } })) {
+      throw new AppError('DUPLICATE', `"${name}" already exists`, 409)
+    }
+    if (body.archived === true && !dept.archivedAt) {
+      // Archiving hides it from every picker; people and seats still in it
+      // would keep pointing at a department nobody can see or pick.
+      const [people, seats] = await Promise.all([
+        prisma.hrEmployee.count({ where: { tenantId: dept.tenantId, departmentId: dept.id, status: { in: ['active', 'on_leave'] } } }),
+        prisma.position.count({ where: { tenantId: dept.tenantId, departmentId: dept.id, status: { in: ['open', 'filled', 'frozen'] } } }),
+      ])
+      if (people || seats) throw new AppError('DEPARTMENT_IN_USE', `${people} current employee(s) and ${seats} position(s) are in this department — move them first`, 409)
+    }
+    const updated = await prisma.department.update({
+      where: { id: dept.id },
+      data: {
+        ...(name && { name }), ...(body.emoji !== undefined && { emoji: body.emoji }),
+        ...(body.isHeadOffice !== undefined && { isHeadOffice: body.isHeadOffice }), ...(body.order !== undefined && { order: body.order }),
+        ...(body.archived !== undefined && { archivedAt: body.archived ? (dept.archivedAt ?? new Date()) : null }),
+      },
+    })
+    await audit({
+      category: 'identity', action: 'hr.department.update', entity: 'Department', entityId: dept.id, userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: dept.tenantId,
+      before: { name: dept.name, archivedAt: dept.archivedAt, isHeadOffice: dept.isHeadOffice }, after: { name: updated.name, archivedAt: updated.archivedAt, isHeadOffice: updated.isHeadOffice },
+    })
+    return updated
   })
 
   // ── Lookups for pickers (names only — no salaries) ────────────────────────
@@ -551,12 +628,13 @@ export async function hrRoutes(fastify: FastifyInstance) {
     if (!emp) throw new NotFoundError('Employee', req.params.id)
     await applyDueEffects(emp.tenantId)
     const fresh = await prisma.hrEmployee.findUniqueOrThrow({ where: { id: emp.id } })
-    const [label, records, balances, loans, user] = await Promise.all([
+    const [label, records, balances, loans, user, kioskPinSet] = await Promise.all([
       employeeLabels(emp.tenantId, [fresh]),
       prisma.hrRecord.findMany({ where: { employeeId: emp.id }, orderBy: { createdAt: 'desc' }, take: 200 }),
       leaveBalancesFor(emp.tenantId, emp.id),
       loansFor(emp.tenantId, emp.id),
       fresh.userId ? prisma.user.findUnique({ where: { id: fresh.userId }, select: { id: true, name: true, email: true, role: true } }) : null,
+      hasKioskPin(emp.id),
     ])
     const salaryHistory = records
       .filter((r) => (r.section === 'salary_revision' || r.section === 'promotion') && r.status === 'approved' && r.amountCents)
@@ -564,7 +642,7 @@ export async function hrRoutes(fastify: FastifyInstance) {
     return {
       employee: fresh,
       labels: { department: label(fresh.departmentId), designation: label(fresh.designationId), grade: label(fresh.gradeId), branch: label(fresh.locationId), manager: label(fresh.managerId) },
-      documents: emp.documents, records, leaveBalances: balances, loans, salaryHistory, user,
+      documents: emp.documents, records, leaveBalances: balances, loans, salaryHistory, user, kioskPinSet,
     }
   })
 
@@ -643,16 +721,130 @@ export async function hrRoutes(fastify: FastifyInstance) {
         where: { id: userId, deletedAt: null, OR: [{ tenantId: emp.tenantId }, { tenantMemberships: { some: { tenantId: emp.tenantId } } }] },
       })
       if (!u) throw new NotFoundError('User', userId)
-      const taken = await prisma.hrEmployee.findFirst({ where: { userId, NOT: { id: emp.id } } })
-      if (taken) throw new AppError('ALREADY_LINKED', `That login is already linked to ${taken.fullName}`, 409)
+      // One employee record per login PER COMPANY (decision 31): a head-office
+      // person on two companies' payrolls is linked in each.
+      const taken = await prisma.hrEmployee.findFirst({ where: { userId, tenantId: emp.tenantId, NOT: { id: emp.id } } })
+      if (taken) throw new AppError('ALREADY_LINKED', `That login is already linked to ${taken.fullName} in this company`, 409)
     }
-    const updated = await prisma.hrEmployee.update({ where: { id: emp.id }, data: { userId } })
+    let updated: HrEmployee
+    try {
+      updated = await prisma.hrEmployee.update({ where: { id: emp.id }, data: { userId } })
+    } catch (err) {
+      // Until the hr_employees.userId index is per company, the database still
+      // holds one link per login across ALL companies.
+      if ((err as { code?: string }).code === 'P2002') {
+        throw new AppError('ALREADY_LINKED_ELSEWHERE', 'That login is linked to an employee in another company. Linking one login in two companies needs the per-company link migration — ask the admin.', 409)
+      }
+      throw err
+    }
+    // Someone with a login punches as themselves; a kiosk PIN is for staff
+    // without one.
+    if (userId) await clearKioskPin(emp.id)
     await audit({
       category: 'identity', action: 'hr.employee.link_user', entity: 'HrEmployee', entityId: emp.id,
       userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: emp.tenantId, before: { userId: emp.userId }, after: { userId },
     })
     return updated
   })
+
+  // ── Kiosk PIN (staff without a login) ────────────────────────────────────
+  // Decision 32: staff who have no servd login punch at the shared kiosk with
+  // their employee code and a PIN HR sets here.
+  fastify.post<{ Params: { id: string } }>('/employees/:id/kiosk-pin', { preHandler: requireAuth(...HR_ADMIN) }, async (req) => {
+    const { pin } = z.object({ pin: z.string().max(12) }).parse(req.body)
+    const emp = await prisma.hrEmployee.findFirst({ where: { id: req.params.id, ...writeTenants(req) } })
+    if (!emp) throw new NotFoundError('Employee', req.params.id)
+    if (emp.userId) throw new AppError('HAS_LOGIN', 'This employee has a servd login — they clock in with it, not a kiosk PIN', 409)
+    if (!['active', 'on_leave'].includes(emp.status)) throw new AppError('NOT_EMPLOYED', 'Only a current employee can have a kiosk PIN', 409)
+    await setKioskPin(emp.id, pin)
+    await audit({ category: 'identity', action: 'hr.employee.kiosk_pin_set', entity: 'HrEmployee', entityId: emp.id, userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: emp.tenantId })
+    return { ok: true, kioskPinSet: true }
+  })
+  fastify.delete<{ Params: { id: string } }>('/employees/:id/kiosk-pin', { preHandler: requireAuth(...HR_ADMIN) }, async (req) => {
+    const emp = await prisma.hrEmployee.findFirst({ where: { id: req.params.id, ...writeTenants(req) } })
+    if (!emp) throw new NotFoundError('Employee', req.params.id)
+    await clearKioskPin(emp.id)
+    await audit({ category: 'identity', action: 'hr.employee.kiosk_pin_clear', entity: 'HrEmployee', entityId: emp.id, userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: emp.tenantId })
+    return { ok: true, kioskPinSet: false }
+  })
+
+  // ── Logins ↔ employees (decision 31) ─────────────────────────────────────
+  // HR is the person master; a login is access only. Not every login has an
+  // employee record (the CEO, co-owners, agency users) and not every employee
+  // has a login (most kitchen staff).
+
+  // GET /hr/logins — the link picker: this company's logins, names and roles
+  // only, with who each is already linked to here. HR can use it (the full
+  // /auth/users list is managers-only and carries more than HR needs).
+  fastify.get<{ Querystring: { tenantId?: string } }>('/logins', { preHandler: requireAuth(...HR_ADMIN) }, async (req) => {
+    const tenantId = await pickerTenant(req)
+    const [users, links] = await Promise.all([
+      prisma.user.findMany({
+        where: { deletedAt: null, OR: [{ tenantId }, { tenantMemberships: { some: { tenantId } } }] },
+        select: { id: true, name: true, email: true, role: true, isActive: true },
+        orderBy: { name: 'asc' },
+      }),
+      prisma.hrEmployee.findMany({ where: { tenantId, userId: { not: null } }, select: { id: true, userId: true, fullName: true, employeeCode: true } }),
+    ])
+    const byUser = new Map(links.map((l) => [l.userId!, l]))
+    return users.map((u) => ({ ...u, linkedEmployee: byUser.get(u.id) ? { id: byUser.get(u.id)!.id, fullName: byUser.get(u.id)!.fullName, employeeCode: byUser.get(u.id)!.employeeCode } : null }))
+  })
+
+  // GET /hr/people-links?userIds=a,b — for Workforce: the HR record linked to
+  // each login in every company the caller belongs to. Name, phone,
+  // designation, department and status — never pay. HR owns those fields;
+  // Workforce shows them read-only next to the login.
+  fastify.get<{ Querystring: { userIds?: string } }>('/people-links', { preHandler: requireAuth(...PEOPLE_READERS) }, async (req) => {
+    const ids = (req.query.userIds ?? '').split(',').map((x) => x.trim()).filter(Boolean).slice(0, 500)
+    const tenants = req.staffUser!.memberTenantIds.length ? req.staffUser!.memberTenantIds : [activeTenant(req)]
+    const rows = await prisma.hrEmployee.findMany({
+      where: { tenantId: { in: tenants }, userId: ids.length ? { in: ids } : { not: null } },
+      select: { id: true, tenantId: true, userId: true, employeeCode: true, fullName: true, phone: true, status: true, departmentId: true, designationId: true, gradeId: true, locationId: true, managerId: true },
+    })
+    const label = await employeeLabelsAcross(rows)
+    return rows.map((e) => ({
+      userId: e.userId, employeeId: e.id, tenantId: e.tenantId, employeeCode: e.employeeCode, fullName: e.fullName, phone: e.phone,
+      status: e.status, designation: label(e.designationId), department: label(e.departmentId), branch: label(e.locationId),
+    }))
+  })
+
+  // GET /hr/people-reconcile — read-only: this company's active logins with
+  // no employee record, employees with no login, and likely pairs by phone or
+  // email for HR to confirm with link-user. Nothing is linked automatically.
+  fastify.get('/people-reconcile', { preHandler: requireAuth(...HR_ADMIN) }, async (req) => {
+    const tenantId = activeTenant(req)
+    const [users, emps] = await Promise.all([
+      prisma.user.findMany({
+        where: { deletedAt: null, isActive: true, OR: [{ tenantId }, { tenantMemberships: { some: { tenantId } } }] },
+        select: { id: true, name: true, email: true, phone: true, role: true },
+        orderBy: { name: 'asc' },
+      }),
+      prisma.hrEmployee.findMany({
+        where: { tenantId, status: { in: ['active', 'on_leave'] } },
+        select: { id: true, employeeCode: true, fullName: true, phone: true, personalEmail: true, userId: true },
+        orderBy: { employeeCode: 'asc' },
+      }),
+    ])
+    const linked = new Set(emps.map((e) => e.userId).filter(Boolean) as string[])
+    const loginsWithoutRecord = users.filter((u) => !linked.has(u.id))
+    const employeesWithoutLogin = emps.filter((e) => !e.userId)
+    const suggestions: Array<{ userId: string; employeeId: string; by: 'phone' | 'email' | 'name' }> = []
+    for (const u of loginsWithoutRecord) {
+      const hit = employeesWithoutLogin.find((e) => phoneKey(e.phone) && phoneKey(e.phone) === phoneKey(u.phone))
+        ?? employeesWithoutLogin.find((e) => e.personalEmail && u.email && e.personalEmail.toLowerCase() === u.email.toLowerCase())
+        ?? employeesWithoutLogin.find((e) => e.fullName.trim().toLowerCase() === u.name.trim().toLowerCase())
+      if (hit) suggestions.push({ userId: u.id, employeeId: hit.id, by: phoneKey(hit.phone) && phoneKey(hit.phone) === phoneKey(u.phone) ? 'phone' : hit.personalEmail && u.email && hit.personalEmail.toLowerCase() === u.email.toLowerCase() ? 'email' : 'name' })
+    }
+    return { loginsWithoutRecord, employeesWithoutLogin, suggestions }
+  })
+
+  // Leavers' logins — switched off once the last working day has passed
+  // (separations.ts). A daily worker should run this for every company; until
+  // it is wired, the CEO can preview and run it here.
+  fastify.get('/separations/logins', { preHandler: requireAuth(...HR_ADMIN) }, async (req) =>
+    loginsToDeactivate(activeTenant(req)))
+  fastify.post('/separations/deactivate-logins', { preHandler: requireAuth('admin' as UserRole) }, async (req) =>
+    ({ deactivated: await deactivateLeftLogins(activeTenant(req)) }))
 
   // ── Documents ─────────────────────────────────────────────────────────────
   fastify.get<{ Querystring: { employeeId?: string; expiringDays?: string } }>('/documents', { preHandler: requireAuth(...HR_ADMIN) }, async (req) => {
@@ -709,6 +901,8 @@ export async function hrRoutes(fastify: FastifyInstance) {
       const sec = recordSection(req.params.section)
       const { status, employeeId, stage, from, to } = req.query
       const formatTenantId = activeTenant(req)
+      // Days punched in and never out show as missing punches, not present.
+      if (sec.key === 'attendance') await Promise.all(readTenants(req).map((t) => flagMissingPunches(t)))
       const [rows, fmt] = await Promise.all([
         prisma.hrRecord.findMany({
           where: {
@@ -758,9 +952,15 @@ export async function hrRoutes(fastify: FastifyInstance) {
     if (v.errors.length) throw formErrors(v.errors)
     await checkReferences(rec.tenantId, fmt.fields, v.data)
     const cols = slotColumns(v.slots)
+    // Keys starting with _ are written by logic (an effect's _before, the
+    // punches an attendance day was built from) — never by a format, whose
+    // keys start with a letter — so an edit keeps them. An attendance day HR
+    // edits by hand is HR's from now on: a later punch will not rewrite it.
+    const system = Object.fromEntries(Object.entries(stored).filter(([k2]) => k2.startsWith('_')))
+    if (rec.section === 'attendance') system['_source'] = 'hr'
     return prisma.$transaction(async (tx) => {
       await prepareRecord(tx, rec.tenantId, rec.section, fmt.fields, cols, v.data, rec.id)
-      return tx.hrRecord.update({ where: { id: rec.id }, data: { ...cols, data: v.data as Prisma.InputJsonValue } })
+      return tx.hrRecord.update({ where: { id: rec.id }, data: { ...cols, data: { ...v.data, ...system } as Prisma.InputJsonValue } })
     })
   })
 
@@ -1006,6 +1206,7 @@ export async function hrRoutes(fastify: FastifyInstance) {
     if (await prisma.hrPayrollRun.findFirst({ where: { tenantId, period } })) throw new AppError('EXISTS', `There is already a payroll for ${period}`, 409)
     const s = await getSettings(tenantId)
     const run = await prisma.hrPayrollRun.create({ data: { tenantId, period, settings: s as unknown as Prisma.InputJsonValue, createdById: req.staffUser!.id } })
+    await flagMissingPunches(tenantId)
     await calculateRun(tenantId, run.id, req.staffUser!.id)
     return reply.status(201).send(await prisma.hrPayrollRun.findUnique({ where: { id: run.id } }))
   })
@@ -1020,6 +1221,7 @@ export async function hrRoutes(fastify: FastifyInstance) {
   fastify.post<{ Params: { id: string } }>('/payroll/runs/:id/recalculate', { preHandler: requireAuth(...HR_ADMIN) }, async (req) => {
     const run = await prisma.hrPayrollRun.findFirst({ where: { id: req.params.id, ...writeTenants(req) } })
     if (!run) throw new NotFoundError('Payroll', req.params.id)
+    await flagMissingPunches(run.tenantId)
     return calculateRun(run.tenantId, run.id, req.staffUser!.id)
   })
 
@@ -1233,7 +1435,7 @@ export async function hrRoutes(fastify: FastifyInstance) {
   })
 
   fastify.get('/team', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
-    const me = await prisma.hrEmployee.findFirst({ where: { userId: req.staffUser!.id } })
+    const me = await ownEmployee(req)
     if (!me) return { me: null, team: [] }
     const team = await prisma.hrEmployee.findMany({
       where: { managerId: me.id, status: { in: ['active', 'on_leave'] } },
@@ -1245,7 +1447,7 @@ export async function hrRoutes(fastify: FastifyInstance) {
 
   // ── Employee self-service ─────────────────────────────────────────────────
   async function myEmployee(req: FastifyRequest): Promise<HrEmployee> {
-    const me = await prisma.hrEmployee.findFirst({ where: { userId: req.staffUser!.id } })
+    const me = await ownEmployee(req)
     if (!me) throw new AppError('NOT_LINKED', 'Your login is not linked to an employee record yet — ask HR', 404)
     return me
   }

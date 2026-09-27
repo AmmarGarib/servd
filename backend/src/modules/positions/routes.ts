@@ -1,9 +1,7 @@
 ﻿// Workforce positions â€” budgeted seats (filled or not).
 //
 // Endpoints:
-//   GET    /positions/departments                â€” list (auto-seed defaults on first call)
-//   POST   /positions/departments                â€” create
-//   PATCH  /positions/departments/:id            â€” rename / archive / reorder
+//   GET    /positions/departments                — list (read-only; written in HR → Org setup)
 //
 //   GET    /positions/shift-bands                â€” list
 //   POST   /positions/shift-bands                â€” create
@@ -23,6 +21,8 @@ import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, MANAGERS } from '../auth/middleware.js'
+import { AppError, NotFoundError } from '../../lib/errors.js'
+import { budgetedLabour } from '../../lib/labour-budget.js'
 import { contributionRoutes } from './contributions.js'
 
 // Position.tenantId is non-nullable so we can't pass `null` through to
@@ -39,7 +39,9 @@ const positionSchema = z.object({
   conceptId:            z.string().uuid().nullable().optional(),
   departmentId:         z.string().uuid().nullable().optional(),
   shiftBandId:          z.string().uuid().nullable().optional(),
-  title:                z.string().min(1).max(120),
+  title:                z.string().min(1).max(120).optional(),
+  /** HR designation (HrOrgUnit kind=designation). Sets the title. */
+  designationId:        z.string().uuid().nullable().optional(),
   monthlySalaryCents:   z.number().int().nonnegative(),
   tenantCostShareCents: z.number().int().nonnegative().optional(),
   costShareNote:        z.string().max(280).nullable().optional(),
@@ -64,42 +66,10 @@ export async function positionRoutes(fastify: FastifyInstance) {
     })
   })
 
-  fastify.post<{ Body: { name: string; emoji?: string; isHeadOffice?: boolean; order?: number } }>(
-    '/departments',
-    { preHandler: requireAuth(...MANAGERS) },
-    async (req) => {
-      const body = z.object({
-        name: z.string().min(1).max(80),
-        emoji: z.string().max(8).optional(),
-        isHeadOffice: z.boolean().default(false),
-        order: z.number().int().default(0),
-      }).parse(req.body)
-      return prisma.department.create({
-        data: { ...body, tenantId: req.staffUser!.tenantId! },
-      })
-    },
-  )
-
-  fastify.patch<{ Params: { id: string }; Body: Record<string, unknown> }>(
-    '/departments/:id',
-    { preHandler: requireAuth(...MANAGERS) },
-    async (req) => {
-      const body = z.object({
-        name: z.string().min(1).max(80).optional(),
-        emoji: z.string().max(8).nullable().optional(),
-        isHeadOffice: z.boolean().optional(),
-        order: z.number().int().optional(),
-        archivedAt: z.string().nullable().optional(),
-      }).parse(req.body)
-      return prisma.department.update({
-        where: { id: req.params.id, tenantId: tenantWhere(req) },
-        data: {
-          ...body,
-          archivedAt: body.archivedAt === undefined ? undefined : body.archivedAt ? new Date(body.archivedAt) : null,
-        },
-      })
-    },
-  )
+  // Departments are WRITTEN in one place only: HR → Org setup
+  // (/hr/org/departments — 409 on a duplicate name, archive refused while
+  // current employees are in it). Positions only reads them. (Decision on
+  // item 76: HR org setup is the canonical department master.)
 
   // â”€â”€â”€ Shift bands â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
@@ -178,127 +148,80 @@ export async function positionRoutes(fastify: FastifyInstance) {
     },
   )
 
-  // Roll-up totals. Used by the workforce hub header AND the OpEx + projections
-  // pages to show "live budgeted payroll" without re-implementing the math.
+  // Roll-up totals for the Workforce → Positions header. The figures come
+  // from budgetedLabour() (lib/labour-budget.ts), the same function OpEx, the
+  // pro-forma and projections use: frozen seats are left out of the budget and
+  // inter-company contributions net off.
   fastify.get('/summary', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
-    const positions = await prisma.position.findMany({
-      where: {
-        tenantId: tenantWhere(req),
-        status: { in: ['open', 'filled', 'frozen'] }, // archived excluded
-      },
-      include: {
-        concept:    { select: { id: true, name: true } },
-        department: { select: { id: true, name: true, emoji: true, isHeadOffice: true } },
-      },
-    })
-
-    let totalGrossMonthly = 0
-    let totalTenantShareMonthly = 0
-    const byConcept = new Map<string, { id: string | null; name: string; grossCents: number; shareCents: number; count: number }>()
-    const byDepartment = new Map<string, { id: string; name: string; emoji: string | null; isHeadOffice: boolean; grossCents: number; shareCents: number; count: number }>()
-    const byStatus = { open: 0, filled: 0, frozen: 0 }
-
-    for (const p of positions) {
-      const gross = p.monthlySalaryCents * p.headcount
-      const share = p.tenantCostShareCents * p.headcount
-      totalGrossMonthly += gross
-      totalTenantShareMonthly += share
-
-      const cKey = p.conceptId ?? 'tenant'
-      const cName = p.concept?.name ?? 'Tenant-wide / Head Office'
-      const cBucket = byConcept.get(cKey) ?? { id: p.conceptId, name: cName, grossCents: 0, shareCents: 0, count: 0 }
-      cBucket.grossCents += gross
-      cBucket.shareCents += share
-      cBucket.count += p.headcount
-      byConcept.set(cKey, cBucket)
-
-      if (p.department) {
-        const dBucket = byDepartment.get(p.department.id) ?? {
-          id: p.department.id,
-          name: p.department.name,
-          emoji: p.department.emoji,
-          isHeadOffice: p.department.isHeadOffice,
-          grossCents: 0, shareCents: 0, count: 0,
-        }
-        dBucket.grossCents += gross
-        dBucket.shareCents += share
-        dBucket.count += p.headcount
-        byDepartment.set(p.department.id, dBucket)
-      }
-
-      if (p.status === 'open' || p.status === 'filled' || p.status === 'frozen') {
-        byStatus[p.status] += p.headcount
-      }
-    }
-
-    // Inter-tenant contributions affect NET payroll cost:
-    //   incoming = money another tenant sends us (subtract from our cost)
-    //   outgoing = money we send to another tenant (add to our cost)
-    // For the JV setup: GS Foods receives 500k/month from GS x Viva for
-    // shared head-office; that pulls GS Foods' net HO cost from 800k → 300k.
-    const tenantsForFilter = tenantWhere(req)
-    const tenantsArr = typeof tenantsForFilter === 'string' ? [tenantsForFilter] : tenantsForFilter.in
-    const contributions = await prisma.tenantContribution.findMany({
-      where: {
-        isActive: true,
-        OR: [
-          { destinationTenantId: { in: tenantsArr } },
-          { sourceTenantId:      { in: tenantsArr } },
-        ],
-      },
-      include: {
-        sourceTenant:      { select: { id: true, name: true } },
-        destinationTenant: { select: { id: true, name: true } },
-      },
-    })
-
-    let incomingMonthly = 0
-    let outgoingMonthly = 0
-    for (const c of contributions) {
-      if (tenantsArr.includes(c.destinationTenantId)) incomingMonthly += c.monthlyCents
-      if (tenantsArr.includes(c.sourceTenantId))      outgoingMonthly += c.monthlyCents
-    }
-    const netMonthly = totalTenantShareMonthly + outgoingMonthly - incomingMonthly
-
+    const f = tenantWhere(req)
+    const tenantIds = typeof f === 'string' ? [f] : f.in
+    const b = await budgetedLabour(tenantIds)
     return {
-      totalPositions: positions.length,
-      totalHeadcount: positions.reduce((s, p) => s + p.headcount, 0),
-      totalGrossMonthlyCents:       totalGrossMonthly,
-      totalTenantShareMonthlyCents: totalTenantShareMonthly,
-      // Net after inter-tenant contributions — this is the number that hits
-      // the GS Foods P&L for the JV setup.
-      netMonthlyCents:              netMonthly,
-      incomingContributionMonthlyCents: incomingMonthly,
-      outgoingContributionMonthlyCents: outgoingMonthly,
-      annualisedTenantShareCents: totalTenantShareMonthly * 12,
-      annualisedNetCents:         netMonthly * 12,
-      byConcept: Array.from(byConcept.values()).sort((a, b) => b.shareCents - a.shareCents),
-      byDepartment: Array.from(byDepartment.values()).sort((a, b) => b.shareCents - a.shareCents),
-      byStatus,
-      contributions: contributions.map((c) => ({
-        id: c.id,
-        label: c.label,
-        category: c.category,
-        monthlyCents: c.monthlyCents,
-        sourceTenant:      c.sourceTenant,
-        destinationTenant: c.destinationTenant,
-        // Direction from the active tenant's POV — UI uses this to pick
-        // the arrow + colour.
-        direction: tenantsArr.includes(c.destinationTenantId) ? 'incoming' as const : 'outgoing' as const,
-        internalSplit: c.internalSplit,
-      })),
+      totalPositions: b.positions,
+      totalHeadcount: b.headcount,
+      totalGrossMonthlyCents:       b.grossMonthlyCents,
+      totalTenantShareMonthlyCents: b.shareMonthlyCents,
+      netMonthlyCents:              b.netMonthlyCents,
+      incomingContributionMonthlyCents: b.incomingContributionMonthlyCents,
+      outgoingContributionMonthlyCents: b.outgoingContributionMonthlyCents,
+      annualisedTenantShareCents: b.shareMonthlyCents * 12,
+      annualisedNetCents:         b.netMonthlyCents * 12,
+      // Frozen seats are shown, never budgeted.
+      frozenShareMonthlyCents: b.frozenShareMonthlyCents,
+      byConcept: b.byConcept,
+      byDepartment: b.byDepartment,
+      byStatus: { open: b.openSeats, filled: b.filledSeats, frozen: b.frozenSeats },
+      contributions: b.contributions,
     }
   })
 
+  // A seat's title is an HR designation (decision on item 76: the job title
+  // lives on HrEmployee.designationId and the designation list is HR's). A
+  // title that is not one of the company's designations is refused, so the
+  // three names for one job — seat title, login job title, HR designation —
+  // cannot drift apart again.
+  async function seatTitle(tenantId: string, body: { title?: string; designationId?: string | null }): Promise<string | undefined> {
+    if (body.designationId) {
+      const unit = await prisma.hrOrgUnit.findFirst({ where: { id: body.designationId, tenantId, kind: 'designation' } })
+      if (!unit) throw new AppError('UNKNOWN_DESIGNATION', 'That designation is not in this company', 422)
+      return unit.name
+    }
+    if (body.title === undefined) return undefined
+    const unit = await prisma.hrOrgUnit.findFirst({ where: { tenantId, kind: 'designation', name: { equals: body.title.trim(), mode: 'insensitive' } } })
+    if (!unit) throw new AppError('UNKNOWN_DESIGNATION', `"${body.title}" is not a designation — add it in HR → Org setup first`, 422)
+    return unit.name
+  }
+
+  /** The department and the filling login must be this company's. */
+  async function checkSeatRefs(tenantId: string, body: { departmentId?: string | null; filledByUserId?: string | null; conceptId?: string | null }) {
+    if (body.departmentId && !await prisma.department.findFirst({ where: { id: body.departmentId, OR: [{ tenantId }, { tenantId: null }] }, select: { id: true } })) {
+      throw new AppError('DEPARTMENT_NOT_IN_COMPANY', 'That department is not in this company', 422)
+    }
+    if (body.conceptId && !await prisma.concept.findFirst({ where: { id: body.conceptId, tenantId, deletedAt: null }, select: { id: true } })) {
+      throw new AppError('BRAND_NOT_IN_COMPANY', 'That brand does not belong to this company', 422)
+    }
+    if (body.filledByUserId && !await prisma.user.findFirst({
+      where: { id: body.filledByUserId, deletedAt: null, OR: [{ tenantId }, { tenantMemberships: { some: { tenantId } } }] }, select: { id: true },
+    })) {
+      throw new AppError('USER_NOT_IN_COMPANY', 'That login does not belong to this company', 422)
+    }
+  }
+
   fastify.post('/', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
-    const body = positionSchema.parse(req.body)
+    const { designationId, ...body } = positionSchema.parse(req.body)
+    const tenantId = req.staffUser!.tenantId
+    if (!tenantId) throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company before adding a position', 422)
+    await checkSeatRefs(tenantId, body)
+    const title = await seatTitle(tenantId, { title: body.title, designationId })
+    if (!title) throw new AppError('TITLE_REQUIRED', 'Pick the designation this seat is for', 400)
     // Default cost-share to gross if not provided.
     const tenantCostShareCents = body.tenantCostShareCents ?? body.monthlySalaryCents
     return prisma.position.create({
       data: {
         ...body,
+        title,
         tenantCostShareCents,
-        tenantId: req.staffUser!.tenantId!,
+        tenantId,
       },
     })
   })
@@ -307,10 +230,14 @@ export async function positionRoutes(fastify: FastifyInstance) {
     '/:id',
     { preHandler: requireAuth(...MANAGERS) },
     async (req) => {
-      const body = positionSchema.partial().parse(req.body)
+      const { designationId, ...body } = positionSchema.partial().parse(req.body)
+      const seat = await prisma.position.findFirst({ where: { id: req.params.id, tenantId: tenantWhere(req) }, select: { id: true, tenantId: true } })
+      if (!seat) throw new NotFoundError('Position', req.params.id)
+      await checkSeatRefs(seat.tenantId, body)
+      const title = await seatTitle(seat.tenantId, { title: body.title, designationId })
       return prisma.position.update({
-        where: { id: req.params.id, tenantId: tenantWhere(req) },
-        data: body,
+        where: { id: seat.id },
+        data: { ...body, ...(title !== undefined && { title }) },
       })
     },
   )

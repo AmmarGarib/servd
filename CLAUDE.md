@@ -48,9 +48,13 @@ rewritten, trust these corrections:
   - Role/module permissions are server-enforced: `RoleModuleAccess` model +
     `GET/PUT /permissions/role-modules`, enforced in the auth middleware
     (`backend/src/lib/moduleAccess.ts`) on the finance/reports/management/
-    payroll/procurement/reconciliation/gift-cards prefixes. Role→module
-    defaults are duplicated in `moduleAccess.ts` and
-    `frontend/admin/src/lib/appRoles.ts` — keep them in sync.
+    payroll/procurement/reconciliation/gift-cards prefixes and the HR back
+    office (`/hr/employees`, `/hr/payroll`, … — not the ESS/HOD paths).
+    Role→module defaults live ONLY in `moduleAccess.ts`; the admin reads them
+    (and the role lists from `lib/roles.ts`) from `GET /permissions/role-modules`,
+    and the signed-in user's effective modules from `GET /permissions/me`.
+    The per-action permission matrix (`/configuration/roles`) is gone
+    (decision 34); `User.conceptIds` is no longer read (decision 35).
   - Tenant scoping in `/reports/*`, `/management/*`, and accounting P&L is
     done (all queries filter via `req.staffUser.tenantFilter`;
     menu-engineering + demand-forecast validate `conceptId` ownership).

@@ -12,6 +12,11 @@ import { parseCookieHeader, ACCESS_COOKIE } from './cookies.js'
 import type { FastifyInstance } from 'fastify'
 import { verifyStaffToken } from '../modules/auth/service.js'
 import { prisma } from './prisma.js'
+import { MANAGEMENT_TIER } from './roles.js'
+// Every management tier (incl. legacy 'manager' until it is migrated away) —
+// the literal ['admin','owner','manager'] left GMs, floor managers and head
+// chefs out of the KDS, all-orders and reservation rooms.
+const MANAGER_TIER: readonly string[] = MANAGEMENT_TIER
 
 let io: SocketIOServer | null = null
 
@@ -166,7 +171,7 @@ export function initWebSocket(fastify: FastifyInstance): SocketIOServer {
     // B15: only kitchen-side roles may auto-register a KDS device. A cashier
     // socket should not appear in the device registry.
     let heartbeatHandle: NodeJS.Timeout | null = null
-    const kdsAllowed = role === 'kitchen' || role === 'expediter' || role === 'manager' || role === 'admin' || role === 'owner'
+    const kdsAllowed = role === 'kitchen' || role === 'expediter' || role === 'boh' || MANAGER_TIER.includes(role ?? '')
 
     if (deviceFingerprint && kdsAllowed) {
       const throttleKey = `${principal!.id}:${deviceFingerprint}`
@@ -222,13 +227,13 @@ export function initWebSocket(fastify: FastifyInstance): SocketIOServer {
     if (stationId) void joinIfOwned(socket, tenantIds, 'station', stationId)
     if (conceptId) void joinIfOwned(socket, tenantIds, 'concept', conceptId)
     for (const t of tenantIds) void socket.join(`tenant:${t}`)
-    if (role === 'expediter' || role === 'admin' || role === 'owner' || role === 'manager') {
+    if (role === 'expediter' || MANAGER_TIER.includes(role ?? '')) {
       void socket.join('all-orders')
       for (const t of tenantIds) void socket.join(`tenant:${t}:orders`)
     }
     // Reservation events go to managers, admins, cashiers (the host stand)
     // and kitchen/expediter (so the kitchen tracker page updates in real time).
-    if (role === 'admin' || role === 'owner' || role === 'manager' || role === 'cashier' || role === 'expediter' || role === 'kitchen') {
+    if (MANAGER_TIER.includes(role ?? '') || ['cashier', 'foh', 'expediter', 'kitchen', 'boh'].includes(role ?? '')) {
       for (const t of tenantIds) void socket.join(`tenant:${t}:reservations`)
     }
 

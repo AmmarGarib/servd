@@ -30,6 +30,7 @@ import bcrypt from 'bcryptjs'
 import { serviceClient as prisma } from '../../lib/prisma.js'
 import { AppError, UnauthorizedError } from '../../lib/errors.js'
 import { requestOtp, verifyOtp, normalisePhone, requestSharedCode, verifySharedCode } from './otp.js'
+import { ACTIVE_ACCOUNT_WHERE } from './accountStatus.js'
 
 const JWT_SECRET = process.env['JWT_SECRET'] ?? ''
 
@@ -110,7 +111,7 @@ export async function verifyLoginChallenge(challengeToken: string, code: string)
   await verifySharedCode({ phone: payload.phone, email: payload.email ?? null, code, purpose: 'staff_2fa' })
 
   const user = await prisma.user.findFirst({
-    where: { id: payload.sub, isActive: true, deletedAt: null, accountStatus: 'active' },
+    where: { id: payload.sub, ...ACTIVE_ACCOUNT_WHERE },
   })
   // The account could have been suspended between password and code.
   if (!user) throw new UnauthorizedError('Invalid credentials')

@@ -1,4 +1,3 @@
-import bcrypt from 'bcryptjs'
 import { prisma } from '../../lib/prisma.js'
 import { ingestOrder } from '../orders/service.js'
 import { NotFoundError, AppError } from '../../lib/errors.js'
@@ -13,6 +12,10 @@ import { shiftTenantId } from '../../lib/tenantScope.js'
 import { SHIFT_SALE_PAYMENT_INCLUDE, summariseShiftSales } from '../accounting/shiftPosting.js'
 import type { OrderDTO } from '@servd/types'
 import type { Order, PaymentMethod, Prisma } from '@prisma/client'
+// Manager-override PIN: the ONE verifier (company-scoped, active accounts,
+// owner-decision-7 approvers) and the approver tier that rings at manager caps.
+import { verifyManagerPin } from '../auth/managerPin.js'
+import { isOverrideApprover } from '../../lib/roles.js'
 
 // ─── Company scoping ──────────────────────────────────────────────────────────
 //
@@ -22,16 +25,10 @@ import type { Order, PaymentMethod, Prisma } from '@prisma/client'
 // lib/setup-config.ts with the order's / shift's own company — never a local
 // copy of the query.
 
-/**
- * Only managers of `tenantId` (primary company or a membership) may approve
- * an override at its tills — a PIN belonging to the other company's manager
- * must never unlock a discount, void, comp or refund here. No company → no
- * manager matches.
- */
-function managersOf(tenantId: string | null): Prisma.UserWhereInput {
-  const ids = tenantId ? [tenantId] : []
-  return { OR: [{ tenantId: { in: ids } }, { tenantMemberships: { some: { tenantId: { in: ids } } } }] }
-}
+// Only approvers of `tenantId` (primary company or a membership) may approve
+// an override at its tills — a PIN belonging to the other company's manager
+// must never unlock a discount, void, comp or refund here. Enforced inside
+// verifyManagerPin (auth/managerPin.ts).
 
 // ─── POS order creation ───────────────────────────────────────────────────────
 
@@ -103,7 +100,7 @@ export async function createPosOrder(input: PosOrderInput) {
 
     // Discount %
     const discountPct = itemTotal > 0 ? discount / itemTotal : 0
-    const cap = role === 'admin' || role === 'manager' ? managerDiscountCap : cashierDiscountCap
+    const cap = isOverrideApprover(role) ? managerDiscountCap : cashierDiscountCap
     if (discountPct > cap) {
       const approved = await verifyManagerPin(input.managerOverridePin, tenantId)
       if (!approved) {
@@ -688,23 +685,19 @@ async function ensureCapOrManagerOverride(
     throw new AppError('PHOTO_REQUIRED', 'Photo evidence required by policy', 400)
   }
 
-  const cap = actorRole === 'admin' || actorRole === 'manager' ? managerCap : cashierCap
+  const cap = isOverrideApprover(actorRole) ? managerCap : cashierCap
   if (amountCents <= cap) return { approverId: null }
 
-  // Above own cap. Either user is admin/manager (already at managerCap and
+  // Above own cap. Either user is an approver (already at managerCap and
   // still over — block) or cashier with a manager PIN.
-  if (actorRole === 'admin' || actorRole === 'manager') {
+  if (isOverrideApprover(actorRole)) {
     throw new AppError('OVER_CAP', `Amount ${amountCents} exceeds the ${cap} cap for ${action}`, 403)
   }
   if (!managerOverridePin) {
     throw new AppError('MANAGER_OVERRIDE_REQUIRED', `Manager PIN required for ${action} above ${cap}`, 403)
   }
 
-  const managers = await prisma.user.findMany({
-    where: { isActive: true, role: { in: ['admin', 'manager'] }, pin: { not: null }, ...managersOf(tenantId) },
-  })
-  const checks = await Promise.all(managers.map(async (m) => ({ m, ok: m.pin ? await bcrypt.compare(managerOverridePin, m.pin) : false })))
-  const approver = checks.find((c) => c.ok)?.m ?? null
+  const approver = await verifyManagerPin(managerOverridePin, tenantId)
   if (!approver) throw new AppError('INVALID_MANAGER_PIN', 'Manager PIN did not match any active manager', 403)
 
   if (amountCents > managerCap) {
@@ -1033,14 +1026,3 @@ async function detectPriceOverrides(input: PosOrderInput): Promise<Array<{ menuI
   return out
 }
 
-async function verifyManagerPin(pin: string | undefined, tenantId: string | null): Promise<{ id: string; role: string } | null> {
-  if (!pin) return null
-  const managers = await prisma.user.findMany({
-    where: { isActive: true, deletedAt: null, role: { in: ['admin', 'manager'] }, pin: { not: null }, ...managersOf(tenantId) },
-    select: { id: true, role: true, pin: true },
-  })
-  for (const m of managers) {
-    if (m.pin && await bcrypt.compare(pin, m.pin)) return { id: m.id, role: m.role }
-  }
-  return null
-}

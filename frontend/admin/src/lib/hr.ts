@@ -91,11 +91,30 @@ export interface Lookups {
   records: Record<string, Array<{ id: string; label: string }>>
 }
 
+export interface Department { id: string; name: string; emoji?: string | null; isHeadOffice?: boolean; order?: number; archivedAt?: string | null }
+
 export interface OrgData {
   units: Array<{ id: string; kind: string; name: string; code: string | null; isActive: boolean }>
-  departments: Array<{ id: string; name: string }>
+  /** Live departments — what every picker offers. HR org setup is the only place they are written. */
+  departments: Department[]
+  archivedDepartments?: Department[]
   locations: Array<{ id: string; name: string }>
   kinds: string[]
+}
+
+/** A login as the HR link picker sees it (GET /hr/logins) — no pay, no access detail. */
+export interface HrLogin { id: string; name: string; email: string | null; role: string; isActive: boolean; linkedEmployee: { id: string; fullName: string; employeeCode: string } | null }
+
+/** One person's punches on a day next to the attendance record they produced (GET /time-clock/logs). */
+export interface PunchRow {
+  key: string
+  name: string
+  employeeId: string | null
+  employeeCode: string | null
+  userId: string | null
+  role: string | null
+  punches: Array<{ type: 'in' | 'out'; at: string; source: string; geofenceMatched?: boolean | null; geofenceDistanceM?: number | null; selfieUrl?: string | null }>
+  attendance: { id: string; status: string | null; lateMinutes: number | null; checkIn: string | null; checkOut: string | null; source: string | null } | null
 }
 
 export const rs = (c: number | null | undefined) =>

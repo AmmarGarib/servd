@@ -117,6 +117,14 @@ export function PositionsView({ embedded = false }: { embedded?: boolean } = {})
     queryKey: ['shift-bands'],
     queryFn:  () => api.get('/positions/shift-bands'),
   })
+  // A seat's title is an HR designation (HR → Org setup owns the list), and
+  // departments are written there too — this page only reads them.
+  const { data: org } = useQuery<{ units: Array<{ id: string; kind: string; name: string; isActive: boolean }> }>({
+    queryKey: ['hr-org', null],
+    queryFn:  () => api.get('/hr/org'),
+    staleTime: 60_000,
+  })
+  const designations = (org?.units ?? []).filter((u) => u.kind === 'designation' && u.isActive)
 
   const [editingId, setEditingId] = useState<string | null>(null)
   const [showAdd, setShowAdd] = useState(false)
@@ -384,7 +392,8 @@ export function PositionsView({ embedded = false }: { embedded?: boolean } = {})
             <p className="text-sm font-semibold">No budgeted positions yet</p>
             <p className="text-xs text-kds-subtext mt-1 max-w-md mx-auto">
               Start with a position for each seat the org pays for. You don't need a
-              named hire — just a title, shift band, salary and which concept it serves.
+              named hire — just the designation, shift band, salary and which concept it serves.
+              Designations and departments are set up in HR → Org setup.
             </p>
             <button onClick={() => setShowAdd(true)}
               className="mt-4 rounded-lg px-4 py-2 text-xs font-black bg-kds-green text-black hover:opacity-90">
@@ -440,6 +449,7 @@ export function PositionsView({ embedded = false }: { embedded?: boolean } = {})
                           }}
                           departments={departments}
                           shiftBands={shiftBands}
+                          designations={designations}
                         />
                       ))}
                     </div>
@@ -457,6 +467,7 @@ export function PositionsView({ embedded = false }: { embedded?: boolean } = {})
           onCreated={() => { setShowAdd(false); void qc.invalidateQueries({ queryKey: ['positions'] }) }}
           departments={departments}
           shiftBands={shiftBands}
+          designations={designations}
         />
       )}
       {contribModal && (
@@ -498,8 +509,10 @@ function StatCard({ label, value, hint, accent, jvPartners, valueCents }: {
   )
 }
 
+type Designation = { id: string; name: string }
+
 function PositionRow({
-  position, expanded, onExpand, onClose, onChange, departments, shiftBands,
+  position, expanded, onExpand, onClose, onChange, departments, shiftBands, designations,
 }: {
   position: Position
   expanded: boolean
@@ -508,6 +521,7 @@ function PositionRow({
   onChange: () => void
   departments: Department[]
   shiftBands: ShiftBand[]
+  designations: Designation[]
 }) {
   const status = STATUS_META[position.status]
   return (
@@ -548,22 +562,24 @@ function PositionRow({
       </button>
       {expanded && (
         <PositionEditor position={position} onChange={onChange} onClose={onClose}
-          departments={departments} shiftBands={shiftBands} />
+          departments={departments} shiftBands={shiftBands} designations={designations} />
       )}
     </div>
   )
 }
 
 function PositionEditor({
-  position, onChange, onClose, departments, shiftBands,
+  position, onChange, onClose, departments, shiftBands, designations,
 }: {
   position: Position
   onChange: () => void
   onClose: () => void
   departments: Department[]
   shiftBands: ShiftBand[]
+  designations: Designation[]
 }) {
-  const [title, setTitle] = useState(position.title)
+  const current = designations.find((d) => d.name.toLowerCase() === position.title.toLowerCase())
+  const [designationId, setDesignationId] = useState(current?.id ?? '')
   const [gross, setGross] = useState(position.monthlySalaryCents)
   const [share, setShare] = useState(position.tenantCostShareCents)
   const [headcount, setHeadcount] = useState(position.headcount)
@@ -575,7 +591,8 @@ function PositionEditor({
 
   const save = useMutation({
     mutationFn: () => api.patch(`/positions/${position.id}`, {
-      title,
+      // The title is only ever set from an HR designation.
+      ...(designationId && designationId !== current?.id && { designationId }),
       monthlySalaryCents: gross,
       tenantCostShareCents: share,
       headcount,
@@ -596,8 +613,11 @@ function PositionEditor({
   return (
     <div className="bg-kds-bg/30 border-t border-kds-border px-4 py-4 space-y-3">
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <Field label="Title">
-          <input value={title} onChange={(e) => setTitle(e.target.value)} className={inputCls} />
+        <Field label="Designation" hint={current ? undefined : `"${position.title}" is not an HR designation — pick one (add it in HR → Org setup if it is missing).`}>
+          <select value={designationId} onChange={(e) => setDesignationId(e.target.value)} className={inputCls}>
+            <option value="">{current ? current.name : `— ${position.title} —`}</option>
+            {designations.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+          </select>
         </Field>
         <Field label="Status">
           <select value={status} onChange={(e) => setStatus(e.target.value as Position['status'])} className={inputCls}>
@@ -645,6 +665,7 @@ function PositionEditor({
           </Field>
         </div>
       </div>
+      {save.error && <p className="text-xs text-red-400">{(save.error as Error).message}</p>}
       <div className="flex items-center justify-between gap-2 pt-2">
         <button onClick={() => archive.mutate()} disabled={archive.isPending}
           className="rounded-lg px-3 py-2 text-xs font-bold text-red-400 border border-red-400/30 hover:bg-red-400/10 disabled:opacity-50">
@@ -666,14 +687,15 @@ function PositionEditor({
 }
 
 function AddPositionModal({
-  onClose, onCreated, departments, shiftBands,
+  onClose, onCreated, departments, shiftBands, designations,
 }: {
   onClose: () => void
   onCreated: () => void
   departments: Department[]
   shiftBands: ShiftBand[]
+  designations: Designation[]
 }) {
-  const [title, setTitle] = useState('')
+  const [designationId, setDesignationId] = useState('')
   const [gross, setGross] = useState(0)
   const [share, setShare] = useState(0)
   const [shareTouched, setShareTouched] = useState(false)
@@ -690,7 +712,7 @@ function AddPositionModal({
 
   const create = useMutation({
     mutationFn: () => api.post('/positions', {
-      title,
+      designationId,
       monthlySalaryCents: gross,
       tenantCostShareCents: share,
       headcount,
@@ -705,9 +727,11 @@ function AddPositionModal({
       <div className="bg-kds-card border border-kds-border rounded-xl p-6 w-full max-w-lg" onClick={(e) => e.stopPropagation()}>
         <h2 className="text-lg font-black mb-4">New position</h2>
         <div className="space-y-3">
-          <Field label="Title">
-            <input value={title} onChange={(e) => setTitle(e.target.value)}
-              placeholder="e.g. Chef de Partie" className={inputCls} autoFocus />
+          <Field label="Designation" hint={designations.length ? undefined : 'No designations yet — add them in HR → Org setup.'}>
+            <select value={designationId} onChange={(e) => setDesignationId(e.target.value)} className={inputCls} autoFocus>
+              <option value="">Choose the HR designation…</option>
+              {designations.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+            </select>
           </Field>
           <Field label="Department">
             <select value={departmentId} onChange={(e) => setDepartmentId(e.target.value)} className={inputCls}>
@@ -738,11 +762,12 @@ function AddPositionModal({
               onChange={(e) => setHeadcount(parseInt(e.target.value) || 1)} className={inputCls} />
           </Field>
         </div>
+        {create.error && <p className="text-xs text-red-400 mt-3">{(create.error as Error).message}</p>}
         <div className="flex justify-end gap-2 mt-5">
           <button onClick={onClose} className="rounded-lg px-3 py-2 text-xs font-bold text-kds-subtext border border-kds-border hover:text-kds-text">
             Cancel
           </button>
-          <button onClick={() => create.mutate()} disabled={!title || gross <= 0 || create.isPending}
+          <button onClick={() => create.mutate()} disabled={!designationId || gross <= 0 || create.isPending}
             className="rounded-lg px-3 py-2 text-xs font-black bg-kds-green text-black hover:opacity-90 disabled:opacity-50">
             {create.isPending ? 'Creating…' : 'Create position'}
           </button>

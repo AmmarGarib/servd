@@ -83,6 +83,66 @@ export async function getOperationsConfig(tenantId?: string | null) {
 }
 type OperationsConfigT = Awaited<ReturnType<typeof prisma.operationsConfig.findFirst>>
 
+// ─── Clock-in geofence ───────────────────────────────────────────────────────
+//
+// ONE config (owner decision 37): the company's OperationsConfig says whether
+// the geofence and the selfie are enforced and how wide the fence is; the
+// anchors are the company's own Locations that have coordinates. Staff may
+// punch at ANY of their company's locations, so the nearest one decides. The
+// old company-less 'location_config' Setting is not read any more.
+
+export interface GeofenceAnchor { locationId: string; name: string; lat: number; lng: number }
+export interface GeofenceConfig {
+  enforced: boolean
+  radiusM: number
+  selfieRequired: boolean
+  anchors: GeofenceAnchor[]
+}
+
+export async function getGeofenceConfig(tenantId: string): Promise<GeofenceConfig> {
+  const ops = await getOperationsConfig(tenantId)
+  const locs = await prisma.location.findMany({
+    where: { tenantId, isActive: true, deletedAt: null, latitude: { not: null }, longitude: { not: null } },
+    select: { id: true, name: true, latitude: true, longitude: true },
+    orderBy: { name: 'asc' },
+  })
+  return {
+    enforced: ops?.geofenceEnforced ?? false,
+    radiusM: ops?.geofenceRadiusMetres ?? 150,
+    selfieRequired: ops?.selfieRequiredAtClockIn ?? false,
+    anchors: locs.map((l) => ({ locationId: l.id, name: l.name, lat: l.latitude!, lng: l.longitude! })),
+  }
+}
+
+// ─── Tip pool weights ────────────────────────────────────────────────────────
+//
+// Owner decision 36: servers 1.0, cashiers and baristas 0.75, kitchen 0.5.
+// Everyone else is out of the pool unless the company gives them a weight in
+// /configuration/operations. These defaults only SEED the editor and fill in
+// roles a company never set; what the company saved wins. 'barista' is not a
+// login role: it applies to a person whose HR designation says barista.
+
+export const TIP_POOL_DEFAULT_WEIGHTS: Record<string, number> = {
+  foh: 1.0,
+  cashier: 0.75,
+  barista: 0.75,
+  kitchen: 0.5,
+  boh: 0.5,
+  expediter: 0.5,
+}
+
+/** The company's tip-pool weights: saved values over the defaults. */
+export function tipPoolWeights(cfg: { tipPoolRoleWeights?: unknown } | null | undefined): Record<string, number> {
+  const saved = cfg?.tipPoolRoleWeights
+  const out: Record<string, number> = { ...TIP_POOL_DEFAULT_WEIGHTS }
+  if (saved && typeof saved === 'object' && !Array.isArray(saved)) {
+    for (const [k, v] of Object.entries(saved as Record<string, unknown>)) {
+      if (typeof v === 'number' && Number.isFinite(v) && v >= 0) out[k] = v
+    }
+  }
+  return out
+}
+
 export async function getRefundPolicy(tenantId?: string | null) {
   const t = await resolveTenant(tenantId)
   const key = `refund:${t ?? '-'}`

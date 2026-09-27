@@ -151,8 +151,8 @@ export default function LoginScreen() {
         )}
 
         <Text style={{ color: theme.textMuted, fontSize: 14 }}>
-          Tap your PIN to sign in. The system records your location and
-          a quick selfie for every clock-in.
+          Sign in with your email and password. The system records your
+          location and a quick selfie for every clock-in.
         </Text>
       </View>
 

@@ -20,7 +20,7 @@ export default function HrOrgPage() {
       {error && <p className="text-sm text-red-400 mb-4">{(error as Error).message}</p>}
       {org && (
         <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4">
-          <DepartmentsPanel departments={org.departments} />
+          <DepartmentsPanel departments={org.departments} archived={org.archivedDepartments ?? []} />
           <div className="rounded-2xl p-5" style={card}>
             <p className="text-sm font-black text-white/85">Branches</p>
             <p className="text-[11px] text-white/40 mt-0.5 mb-3">These are the company&apos;s locations. Add or edit them under <Link href="/configuration/locations" className="underline">Configuration → Locations</Link>.</p>
@@ -34,21 +34,71 @@ export default function HrOrgPage() {
   )
 }
 
-function DepartmentsPanel({ departments }: { departments: OrgData['departments'] }) {
+function DepartmentsPanel({ departments, archived }: { departments: OrgData['departments']; archived: NonNullable<OrgData['archivedDepartments']> }) {
   const qc = useQueryClient()
   const [name, setName] = useState('')
+  const refresh = () => void qc.invalidateQueries({ queryKey: ['hr-org'] })
   const add = useMutation({
     mutationFn: () => api.post('/hr/org/departments', { name }),
-    onSuccess: () => { setName(''); void qc.invalidateQueries({ queryKey: ['hr-org'] }) },
+    onSuccess: () => { setName(''); refresh() },
+  })
+  const patch = useMutation({
+    mutationFn: ({ id, body }: { id: string; body: Record<string, unknown> }) => api.patch(`/hr/org/departments/${id}`, body),
+    onSuccess: refresh,
   })
   return (
     <div className="rounded-2xl p-5" style={card}>
       <p className="text-sm font-black text-white/85">Departments</p>
-      <p className="text-[11px] text-white/40 mt-0.5 mb-3">Shared with the rest of servd.</p>
-      <ul className="space-y-1 mb-3">{departments.map((d) => <li key={d.id} className="text-sm text-white/75">{d.name}</li>)}</ul>
+      <p className="text-[11px] text-white/40 mt-0.5 mb-3">
+        The one list of departments in servd — Workforce → Positions and every HR form read it. The name also picks the wages account payroll posts to.
+      </p>
+      <ul className="space-y-1 mb-3">
+        {departments.map((d) => (
+          <DepartmentRow key={d.id} d={d}
+            onRename={(n) => patch.mutate({ id: d.id, body: { name: n } })}
+            onHeadOffice={() => patch.mutate({ id: d.id, body: { isHeadOffice: !d.isHeadOffice } })}
+            onArchive={() => patch.mutate({ id: d.id, body: { archived: true } })} />
+        ))}
+      </ul>
       <AddRow value={name} onChange={setName} onAdd={() => add.mutate()} busy={add.isPending} placeholder="New department" />
-      {add.error && <p className="text-xs text-red-400 mt-1">{(add.error as Error).message}</p>}
+      {(add.error || patch.error) && <p className="text-xs text-red-400 mt-1">{((add.error || patch.error) as Error).message}</p>}
+      {archived.length > 0 && (
+        <div className="mt-4">
+          <p className="text-[11px] font-bold uppercase tracking-wider text-white/35 mb-1">Archived</p>
+          <ul className="space-y-1">
+            {archived.map((d) => (
+              <li key={d.id} className="flex items-center gap-2 text-sm">
+                <span className="flex-1 text-white/35 line-through">{d.name}</span>
+                <button className="text-[11px] text-white/40 hover:text-white" onClick={() => patch.mutate({ id: d.id, body: { archived: false } })}>Bring back</button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
+  )
+}
+
+function DepartmentRow({ d, onRename, onHeadOffice, onArchive }: { d: OrgData['departments'][number]; onRename: (name: string) => void; onHeadOffice: () => void; onArchive: () => void }) {
+  const [editing, setEditing] = useState(false)
+  const [name, setName] = useState(d.name)
+  return (
+    <li className="flex items-center gap-2 text-sm">
+      {editing ? (
+        <>
+          <input className={inp} value={name} onChange={(e) => setName(e.target.value)} autoFocus
+            onKeyDown={(e) => { if (e.key === 'Enter' && name.trim()) { onRename(name.trim()); setEditing(false) } }} />
+          <button className="text-xs text-kds-green font-bold" disabled={!name.trim()} onClick={() => { onRename(name.trim()); setEditing(false) }}>Save</button>
+        </>
+      ) : (
+        <>
+          <span className="flex-1 text-white/80">{d.name}{d.isHeadOffice && <span className="text-[10px] font-bold text-amber-400 ml-2">HEAD OFFICE</span>}</span>
+          <button className="text-[11px] text-white/40 hover:text-white" onClick={() => { setName(d.name); setEditing(true) }}>Rename</button>
+          <button className="text-[11px] text-white/40 hover:text-white" onClick={onHeadOffice}>{d.isHeadOffice ? 'Not head office' : 'Head office'}</button>
+          <button className="text-[11px] text-white/40 hover:text-white" onClick={onArchive}>Archive</button>
+        </>
+      )}
+    </li>
   )
 }
 

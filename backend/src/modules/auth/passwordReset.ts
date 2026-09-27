@@ -34,6 +34,7 @@ import { emailConfigured } from '../../lib/mailer.js'
 import { whatsappConfigured } from '../../lib/whatsapp.js'
 import { sendText as sendWhatsApp } from '../../lib/whatsapp.js'
 import { normalisePhone } from './otp.js'
+import { ACTIVE_ACCOUNT_WHERE, isAccountActive } from './accountStatus.js'
 
 // Long enough to walk to a laptop, short enough that a link left in an inbox
 // is not a standing key to the account.
@@ -91,7 +92,7 @@ export async function requestPasswordReset(email: string, ip: string | null): Pr
     where: { email: email.trim().toLowerCase() },
     select: { id: true, name: true, email: true, phone: true, isActive: true, accountStatus: true, deletedAt: true },
   })
-  if (!user || user.deletedAt || !user.isActive || user.accountStatus !== 'active' || !user.email) {
+  if (!user || !isAccountActive(user) || !user.email) {
     return out
   }
 
@@ -168,7 +169,7 @@ export async function consumeResetToken(token: string): Promise<{ id: string; em
   if (claimed.count !== 1) return null
 
   const user = await prisma.user.findFirst({
-    where: { id: row.userId, deletedAt: null, isActive: true, accountStatus: 'active' },
+    where: { id: row.userId, ...ACTIVE_ACCOUNT_WHERE },
     select: { id: true, email: true },
   })
   if (!user?.email) return null

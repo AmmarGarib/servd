@@ -1,5 +1,5 @@
-// Tip pool — sums Order.tipCents collected during the period, distributes
-// across staff present in the period weighted by hours × role weight, and
+// Tip pool — sums Order.tipCents a brand collected during the period,
+// distributes it across that company's staff who worked in the period, and
 // posts the journal:
 //   On post: records member shareCents (no JE — the liability already exists
 //            from order completion).
@@ -12,14 +12,76 @@ import { requireAuth, APPROVERS, MANAGERS } from '../auth/middleware.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { audit } from '../../lib/audit.js'
 import { postJournalEntry, ACCT } from '../accounting/journal.js'
-import { conceptIdsInScope } from '../../lib/tenantScope.js'
+import { conceptIdsInScope, assertConceptOwned } from '../../lib/tenantScope.js'
+import { getOperationsConfig, tipPoolWeights } from '../../lib/setup-config.js'
+import type { PunchEntry } from '../hr/attendance.js'
 
-const ROLE_WEIGHT_DEFAULT: Record<string, number> = {
-  admin:     0,    // typically out of pool
-  manager:   1.0,
-  cashier:   1.0,
-  expediter: 1.0,
-  kitchen:   0.5,  // BOH gets half-share by convention
+// The rules are the company's, set in /configuration/operations
+// (OperationsConfig): whether pooling is on, how it is split, and the weight
+// of each role (decision 36: servers 1.0, cashiers and baristas 0.75, kitchen
+// 0.5 — setup-config.ts TIP_POOL_DEFAULT_WEIGHTS). A role with no weight is not
+// in the pool. Split:
+//   equal           one share each for everyone in the pool who worked
+//   by_hours        hours worked
+//   by_role_weight  hours worked × role weight
+
+/** Pair in/out punches (sorted) into worked milliseconds. */
+function workedMs(punches: Array<{ type: string; at: Date }>): number {
+  let ms = 0
+  let openIn: Date | null = null
+  for (const p of punches) {
+    if (p.type === 'in') openIn = p.at
+    else if (p.type === 'out' && openIn) { ms += Math.max(0, p.at.getTime() - openIn.getTime()); openIn = null }
+  }
+  return ms
+}
+
+/**
+ * Hours each login worked for THIS company in the window. Someone with an HR
+ * record here is read from that company's attendance punches — a person on
+ * two companies' payrolls is paid by each for its own hours. Someone without
+ * one is read from the punch log, but only when this is their only company
+ * (the punch log does not say which company a punch was for).
+ */
+async function hoursByUser(tenantId: string, from: Date, to: Date) {
+  const users = await prisma.user.findMany({
+    where: { deletedAt: null, OR: [{ tenantId }, { tenantMemberships: { some: { tenantId } } }] },
+    select: { id: true, name: true, role: true, tenantId: true, tenantMemberships: { select: { tenantId: true } } },
+  })
+  const emps = await prisma.hrEmployee.findMany({
+    where: { tenantId, userId: { in: users.map((u) => u.id) } },
+    select: { id: true, userId: true, designationId: true },
+  })
+  const empByUser = new Map(emps.map((e) => [e.userId!, e]))
+  const designations = await prisma.hrOrgUnit.findMany({ where: { tenantId, id: { in: emps.map((e) => e.designationId).filter(Boolean) as string[] } }, select: { id: true, name: true } })
+  const designationName = new Map(designations.map((d) => [d.id, d.name]))
+
+  const dayFrom = new Date(Date.UTC(from.getUTCFullYear(), from.getUTCMonth(), from.getUTCDate()) - 86_400_000)
+  const attendance = emps.length ? await prisma.hrRecord.findMany({
+    where: { tenantId, section: 'attendance', employeeId: { in: emps.map((e) => e.id) }, startDate: { gte: dayFrom, lte: to }, status: { notIn: ['draft', 'rejected', 'cancelled'] } },
+    select: { employeeId: true, data: true },
+  }) : []
+  const soloUserIds = users.filter((u) => !empByUser.has(u.id) && (u.tenantMemberships.every((m) => m.tenantId === tenantId)) && (!u.tenantId || u.tenantId === tenantId)).map((u) => u.id)
+  const logs = soloUserIds.length ? await prisma.clockLog.findMany({
+    where: { userId: { in: soloUserIds }, recordedAt: { gte: from, lte: to } },
+    orderBy: { recordedAt: 'asc' }, select: { userId: true, type: true, recordedAt: true },
+  }) : []
+
+  return users.map((u) => {
+    const emp = empByUser.get(u.id)
+    let punches: Array<{ type: string; at: Date }>
+    if (emp) {
+      punches = attendance.filter((a) => a.employeeId === emp.id)
+        .flatMap((a) => (((a.data as Record<string, unknown>)['_punches'] as PunchEntry[] | undefined) ?? []))
+        .map((p) => ({ type: p.type, at: new Date(p.at) }))
+        .filter((p) => p.at >= from && p.at <= to)
+        .sort((a, b) => a.at.getTime() - b.at.getTime())
+    } else {
+      punches = logs.filter((l) => l.userId === u.id).map((l) => ({ type: l.type, at: l.recordedAt }))
+    }
+    const designation = emp?.designationId ? designationName.get(emp.designationId) ?? null : null
+    return { userId: u.id, name: u.name, role: u.role, designation, hours: workedMs(punches) / 3_600_000 }
+  })
 }
 
 export async function tipPoolRoutes(fastify: FastifyInstance) {
@@ -27,12 +89,16 @@ export async function tipPoolRoutes(fastify: FastifyInstance) {
   fastify.get<{ Querystring: { conceptId?: string } }>(
     '/',
     { preHandler: requireAuth(...MANAGERS) },
-    async (req) => prisma.tipPool.findMany({
-      where: { ...(req.query.conceptId && { conceptId: req.query.conceptId }) },
-      orderBy: { periodStart: 'desc' },
-      include: { _count: { select: { members: true } } },
-      take: 50,
-    }),
+    async (req) => {
+      const inScope = await conceptIdsInScope(req, 'read')
+      const ids = req.query.conceptId ? inScope.filter((c) => c === req.query.conceptId) : inScope
+      return prisma.tipPool.findMany({
+        where: { conceptId: { in: ids } },
+        orderBy: { periodStart: 'desc' },
+        include: { _count: { select: { members: true } }, },
+        take: 50,
+      })
+    },
   )
 
   // GET /tip-pools/:id — full pool with members
@@ -49,81 +115,74 @@ export async function tipPoolRoutes(fastify: FastifyInstance) {
     },
   )
 
-  // Compute draft pool — pulls tips from completed orders + hours from clock
-  // logs in the period. Operator can adjust before posting.
-  fastify.post<{ Body: { conceptId?: string; name: string; periodStart: string; periodEnd: string } }>(
+  // Compute a draft pool for one brand — tips from its completed orders, hours
+  // from its company's punches — split by the company's rules. The operator
+  // can adjust shares before posting.
+  fastify.post<{ Body: { conceptId: string; name: string; periodStart: string; periodEnd: string } }>(
     '/',
     { preHandler: requireAuth(...MANAGERS) },
     async (req, reply) => {
       const body = z.object({
-        conceptId: z.string().uuid().nullable().optional(),
+        // A pool belongs to a brand, and so to one company: tips and hours from
+        // every company can never be pooled together, and post/pay look the
+        // pool up by its brand.
+        conceptId: z.string().uuid(),
         name: z.string().min(1).max(80),
         periodStart: z.string().datetime(),
         periodEnd:   z.string().datetime(),
       }).parse(req.body)
+      const concept = await assertConceptOwned(req, body.conceptId, 'create')
+      if (!concept.tenantId) throw new NotFoundError('Concept', body.conceptId)
+      const cfg = await getOperationsConfig(concept.tenantId)
+      if (!cfg?.tipPoolEnabled) {
+        throw new AppError('TIP_POOL_DISABLED', 'Tip pooling is switched off for this company — turn it on in Configuration → Operations', 422)
+      }
+      const weights = tipPoolWeights(cfg)
+      const mode = (cfg.tipPoolDistribution ?? 'equal') as 'equal' | 'by_hours' | 'by_role_weight'
 
       const periodStart = new Date(body.periodStart)
       const periodEnd   = new Date(body.periodEnd)
+      if (!(periodEnd > periodStart)) throw new AppError('BAD_PERIOD', 'The period must end after it starts', 400)
 
-      // Sum tips from orders completed in window
       const tipAgg = await prisma.order.aggregate({
         where: {
           status: { in: ['completed', 'refunded'] },  // tip stays even on refund — liability owed to staff
           completedAt: { gte: periodStart, lte: periodEnd },
-          ...(body.conceptId && { conceptId: body.conceptId }),
+          conceptId: concept.id,
           deletedAt: null,
         },
         _sum: { tipCents: true },
       })
       const totalTips = tipAgg._sum.tipCents ?? 0
 
-      // Pull users with clock logs in the window
-      const events = await prisma.clockLog.findMany({
-        where: { recordedAt: { gte: periodStart, lte: periodEnd } },
-        orderBy: [{ userId: 'asc' }, { recordedAt: 'asc' }],
-        select: { userId: true, type: true, recordedAt: true },
-      })
-      // Pair in/out into hours per user
-      const byUser = new Map<string, { ms: number; openIn: Date | null }>()
-      for (const e of events) {
-        const slot = byUser.get(e.userId) ?? { ms: 0, openIn: null }
-        if (e.type === 'in') slot.openIn = e.recordedAt
-        else if (e.type === 'out' && slot.openIn) {
-          slot.ms += Math.max(0, e.recordedAt.getTime() - slot.openIn.getTime())
-          slot.openIn = null
-        }
-        byUser.set(e.userId, slot)
-      }
-
-      const userIds = Array.from(byUser.keys())
-      const users = userIds.length > 0
-        ? await prisma.user.findMany({ where: { id: { in: userIds } }, select: { id: true, name: true, role: true } })
-        : []
+      const worked = (await hoursByUser(concept.tenantId, periodStart, periodEnd)).map((w) => {
+        // A barista is a designation, not a login role.
+        const weight = w.designation && /barista/i.test(w.designation) && weights['barista'] != null ? weights['barista']! : weights[w.role] ?? 0
+        const units = mode === 'equal' ? 1 : mode === 'by_hours' ? w.hours : w.hours * weight
+        return { ...w, weight, units }
+      }).filter((w) => w.hours > 0 && w.weight > 0)
 
       return prisma.$transaction(async (tx) => {
         const pool = await tx.tipPool.create({
           data: {
-            conceptId:    body.conceptId ?? null,
+            conceptId:    concept.id,
             name:         body.name,
             periodStart, periodEnd,
             totalTipsCents: totalTips,
             createdById:  req.staffUser?.id ?? null,
           },
         })
-        for (const u of users) {
-          const slot = byUser.get(u.id)!
-          const hours = slot.ms / 3_600_000
-          const weight = ROLE_WEIGHT_DEFAULT[u.role] ?? 0
-          if (hours <= 0 || weight <= 0) continue
+        for (const w of worked) {
           await tx.tipPoolMember.create({
             data: {
               poolId:      pool.id,
-              userId:      u.id,
-              userName:    u.name,
-              hoursWorked: Number(hours.toFixed(2)),
-              roleWeight:  weight,
-              shareUnits:  Number((hours * weight).toFixed(3)),
+              userId:      w.userId,
+              userName:    w.name,
+              hoursWorked: Number(w.hours.toFixed(2)),
+              roleWeight:  w.weight,
+              shareUnits:  Number(w.units.toFixed(3)),
               shareCents:  0,
+              notes:       mode === 'equal' ? 'equal share' : null,
             },
           })
         }
@@ -131,7 +190,7 @@ export async function tipPoolRoutes(fastify: FastifyInstance) {
           where: { id: pool.id },
           include: { members: { orderBy: { userName: 'asc' } } },
         })
-      }).then((r) => reply.status(201).send(r))
+      }).then((r) => reply.status(201).send({ ...r, distribution: mode }))
     },
   )
 
@@ -144,7 +203,15 @@ export async function tipPoolRoutes(fastify: FastifyInstance) {
         shareUnits: z.number().min(0).max(1000).optional(),
         notes: z.string().max(300).optional(),
       }).parse(req.body)
-      return prisma.tipPoolMember.update({ where: { id: req.params.memberId }, data: body })
+      // Through its pool: a member of another company's pool is not found, and
+      // shares are frozen once the pool is posted.
+      const member = await prisma.tipPoolMember.findFirst({
+        where: { id: req.params.memberId, pool: { conceptId: { in: await conceptIdsInScope(req, 'write') } } },
+        include: { pool: { select: { status: true } } },
+      })
+      if (!member) throw new NotFoundError('TipPoolMember', req.params.memberId)
+      if (member.pool.status !== 'draft') throw new AppError('ALREADY_POSTED', `Pool is ${member.pool.status}`, 422)
+      return prisma.tipPoolMember.update({ where: { id: member.id }, data: body })
     },
   )
 

@@ -9,6 +9,7 @@ import { AppError, NotFoundError, UnauthorizedError } from '../../lib/errors.js'
 import { isStaffEmail, normaliseStaffEmail } from '../../lib/staffEmail.js'
 import type { UserRole } from '@prisma/client'
 import { sendMagicLink } from '../../lib/notify.js'
+import { ACTIVE_ACCOUNT_WHERE } from './accountStatus.js'
 
 if (!process.env['JWT_SECRET'] || !process.env['JWT_REFRESH_SECRET']) {
   throw new Error('JWT_SECRET and JWT_REFRESH_SECRET environment variables must be set')
@@ -52,7 +53,7 @@ export async function staffLogin(email: string, password: string) {
   // accounts must not be able to sign in either.
   const user = onDomain
     ? await prisma.user.findFirst({
-        where: { email: normaliseStaffEmail(email), isActive: true, deletedAt: null, accountStatus: 'active' },
+        where: { email: normaliseStaffEmail(email), ...ACTIVE_ACCOUNT_WHERE },
       })
     : null
 
@@ -109,9 +110,7 @@ export async function findOtpLoginStaff(phone: string) {
   const matches = await prisma.user.findMany({
     where: {
       phone: { not: null },
-      isActive: true,
-      deletedAt: null,
-      accountStatus: 'active',
+      ...ACTIVE_ACCOUNT_WHERE,
       role: { in: OTP_LOGIN_ROLES },
     },
     select: { id: true, name: true, email: true, role: true, phone: true },
@@ -179,7 +178,7 @@ export async function refreshStaffToken(refreshToken: string) {
   // an operator puts an ex-employee in — could still refresh its way to a live
   // session. Both login paths gate on this; refresh has to as well.
   const user = await prisma.user.findFirst({
-    where: { id: payload.sub, isActive: true, deletedAt: null, accountStatus: 'active' },
+    where: { id: payload.sub, ...ACTIVE_ACCOUNT_WHERE },
   })
   if (!user) throw new UnauthorizedError('User not found or inactive')
 

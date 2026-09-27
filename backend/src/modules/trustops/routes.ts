@@ -9,7 +9,7 @@
 
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
-import bcrypt from 'bcryptjs'
+import { verifyManagerPin } from '../auth/managerPin.js'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, MANAGERS, ALL_STAFF, ADMIN_ONLY } from '../auth/middleware.js'
 import { flagException } from '../../lib/exceptions.js'
@@ -23,16 +23,14 @@ function generateOtp(): string {
   return Math.floor(1000 + Math.random() * 9000).toString()
 }
 
-async function verifyManagerPin(pin: string | undefined): Promise<{ id: string; name: string; role: string } | null> {
-  if (!pin) return null
-  const managers = await prisma.user.findMany({
-    where: { isActive: true, deletedAt: null, role: { in: ['admin', 'manager'] }, pin: { not: null } },
-    select: { id: true, name: true, role: true, pin: true },
-  })
-  for (const m of managers) {
-    if (m.pin && (await bcrypt.compare(pin, m.pin))) return { id: m.id, name: m.name, role: m.role }
-  }
-  return null
+// Manager PIN: the ONE verifier (auth/managerPin.ts) — active accounts,
+// owner-decision-7 approvers, and only approvers of the company the action
+// happens in. The local copy here had no company filter, so a manager at
+// company B could approve a company-A staff meal or petty-cash top-up.
+async function companyOfConcept(conceptId: string | null | undefined): Promise<string | null> {
+  if (!conceptId) return null
+  const c = await prisma.concept.findUnique({ where: { id: conceptId }, select: { tenantId: true } })
+  return c?.tenantId ?? null
 }
 
 export async function trustopsRoutes(fastify: FastifyInstance) {
@@ -200,7 +198,10 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
     // Top-up limit — above limit requires manager PIN
     let approvedById: string | null = null
     if (body.type === 'topup' && absAmount > box.topUpLimitCents) {
-      const approver = await verifyManagerPin(body.managerOverridePin)
+      // PettyCashBox has no tenantId — the company is its brand's, falling
+      // back to the operator's active company for a brand-less box.
+      const boxTenantId = (await companyOfConcept(box.conceptId)) ?? req.staffUser!.tenantId
+      const approver = await verifyManagerPin(body.managerOverridePin, boxTenantId)
       if (!approver) {
         throw new AppError(
           'TOPUP_OVER_LIMIT',
@@ -461,7 +462,8 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
       managerPin:         z.string().min(4).max(8),                      // mandatory
     }).parse(req.body)
 
-    const approver = await verifyManagerPin(body.managerPin)
+    const mealTenantId = (await companyOfConcept(body.conceptId)) ?? req.staffUser!.tenantId
+    const approver = await verifyManagerPin(body.managerPin, mealTenantId)
     if (!approver) throw new AppError('MANAGER_PIN_REQUIRED', 'Manager PIN required to log a staff meal.', 403)
     // A new row bound to a drawer: the drawer must be the active company's.
     if (body.shiftId) await assertShiftOf(req.staffUser!.tenantId, body.shiftId, false)

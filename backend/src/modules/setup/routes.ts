@@ -737,7 +737,12 @@ export async function setupRoutes(fastify: FastifyInstance) {
       serviceChargeAppliesToChannels: z.array(z.string()).optional(),
       tipPoolEnabled:                 z.boolean().optional(),
       tipPoolDistribution:            z.enum(['equal', 'by_hours', 'by_role_weight']).optional(),
-      tipPoolRoleWeights:             z.record(z.string(), z.number()).nullable().optional(),
+      tipPoolRoleWeights:             z.record(z.string(), z.number().min(0).max(10)).nullable().optional(),
+      // Clock-in geofence (decision 37): the anchors are the company's
+      // Locations with coordinates; these say whether it is enforced and how wide.
+      geofenceEnforced:               z.boolean().optional(),
+      geofenceRadiusMetres:           z.number().int().min(10).max(5000).optional(),
+      selfieRequiredAtClockIn:        z.boolean().optional(),
       invoiceSequenceReset:           z.enum(['yearly', 'monthly', 'never']).optional(),
       invoiceCreditNotePrefix:        z.string().max(10).nullable().optional(),
       withholdingTaxEnabled:          z.boolean().optional(),
@@ -751,8 +756,19 @@ export async function setupRoutes(fastify: FastifyInstance) {
       socialTiktokHandle:             z.string().nullable().optional(),
       socialFacebookUrl:              z.string().url().nullable().optional(),
     }).parse(req.body)
-    const cfg = await findOrCreateSingleton<{ id: string }>('operationsConfig', activeTenantId(req), {})
+    const cfg = await findOrCreateSingleton<{ id: string; geofenceEnforced: boolean }>('operationsConfig', activeTenantId(req), {})
     const { tipPoolRoleWeights, ...rest } = body
+    // Switching the geofence on for a company with no located branch would
+    // lock every non-exempt login out of clocking in. Refuse it here, with the
+    // fix, rather than at 9am on the shop floor.
+    if (body.geofenceEnforced === true && !cfg.geofenceEnforced) {
+      const located = await prisma.location.count({
+        where: { tenantId: activeTenantId(req), isActive: true, deletedAt: null, latitude: { not: null }, longitude: { not: null } },
+      })
+      if (located === 0) {
+        throw new AppError('NO_LOCATED_BRANCH', 'Set the map pin on at least one of this company\'s locations (Configuration → Locations) before enforcing the clock-in geofence', 422)
+      }
+    }
     const updated = await prisma.operationsConfig.update({
       where: { id: cfg.id },
       data: {

@@ -1,11 +1,14 @@
 /**
- * Roles & module-visibility — single source of truth.
+ * Roles & modules — DISPLAY metadata only.
  *
- * Two layers:
- *  1. `APP_ROLES`        – every role the operator can assign / impersonate.
- *  2. `DEFAULT_MODULE_ACCESS` – which sidebar modules each role sees by default.
- *                              The admin can edit these in /configuration/role-modules
- *                              and the override is persisted in localStorage (zustand).
+ * Which roles exist, which may be assigned, and which modules each role gets
+ * by default are decided by the API (backend/src/lib/roles.ts and
+ * backend/src/lib/moduleAccess.ts) and served by GET /permissions/role-modules
+ * ({ defaults, overrides, modules, roles }) and GET /permissions/me
+ * ({ role, modules }). This file holds only what the server cannot: labels,
+ * icons and descriptions for the UI, plus the TypeScript unions that name the
+ * ids. A role or module id added on the server without an entry here still
+ * works; it just renders with a title-cased fallback label.
  *
  * Every nav item in AppShell is tagged with a `module` ID drawn from this list,
  * so the same identifier flows through sidebar filtering + the admin editor.
@@ -86,18 +89,11 @@ export type ModuleId =
   | 'marketing_workspace' | 'crm' | 'campaigns' | 'complaints' | 'reviews' | 'calendar' | 'media' | 'promos' | 'brands' | 'analytics'
   // Finance
   | 'finance_pl' | 'payroll' | 'accounting' | 'gift_cards' | 'reconciliation' | 'exceptions' | 'capital' | 'projections' | 'procurement' | 'reports'
-  // Workforce — `staff_directory` is the unified hub; the per-category ids
-  // gate the sidebar deep-links so the CEO can hide a whole category from a
-  // role without losing the directory itself.
+  // Workforce — `staff_directory` is the unified hub; `staff_hr` is the HR
+  // back office (enforced by the API on the HR admin routes). The seven
+  // per-category ids that used to sit here tagged nothing and were retired.
   | 'staff_directory'
-  | 'staff_management'
-  | 'staff_foh'
-  | 'staff_boh'
-  | 'staff_procurement'
-  | 'staff_marketing'
-  | 'staff_finance'
   | 'staff_hr'
-  | 'kitchen_staff'
   // Setup
   | 'settings'  | 'notifications' | 'help' | 'configuration' | 'onboarding' | 'integrations'
 
@@ -111,7 +107,7 @@ export interface ModuleMeta {
 export const MODULES: ModuleMeta[] = [
   { id: 'ceo_overview',       label: 'CEO Overview',        section: 'Executive' },
   { id: 'business_info',      label: 'Business Info',       section: 'Executive' },
-  { id: 'role_management',    label: 'Roles & Permissions', section: 'Executive' },
+  { id: 'role_management',    label: 'Staff approvals',     section: 'Executive' },
   { id: 'role_modules',       label: 'Module Access',       section: 'Executive' },
   { id: 'audit_log',          label: 'Audit Log',           section: 'Executive' },
   { id: 'accounting_audit',   label: 'Accounting Audit',    section: 'Executive' },
@@ -168,14 +164,7 @@ export const MODULES: ModuleMeta[] = [
   { id: 'reports',            label: 'Reports',             section: 'Finance' },
 
   { id: 'staff_directory',    label: 'Staff Directory',     section: 'Workforce' },
-  { id: 'staff_management',   label: 'Management',          section: 'Workforce' },
-  { id: 'staff_foh',          label: 'Front of House',      section: 'Workforce' },
-  { id: 'staff_boh',          label: 'Back of House',       section: 'Workforce' },
-  { id: 'staff_procurement',  label: 'Procurement',         section: 'Workforce' },
-  { id: 'staff_marketing',    label: 'Marketing',           section: 'Workforce' },
-  { id: 'staff_finance',      label: 'Finance',             section: 'Workforce' },
   { id: 'staff_hr',           label: 'HR',                  section: 'Workforce' },
-  { id: 'kitchen_staff',      label: 'Kitchen Brigade',     section: 'Workforce' },
 
   // Account config — Integrations / Notifications / Help now live in the
   // Executive sidebar section (the standalone "Setup" group was retired).
@@ -189,98 +178,6 @@ export const MODULES: ModuleMeta[] = [
   { id: 'configuration',      label: 'Configuration Hub',   section: 'Setup' },
   { id: 'settings',           label: 'Brands & Stations',   section: 'Setup' },
 ]
-
-const ALL_MODULE_IDS = MODULES.map((m) => m.id)
-
-/**
- * Default mapping role → modules. Admin/CEO see everything; specialised roles
- * see only their work surface. The CEO can edit this in
- * /configuration/role-modules — overrides are stored in zustand.
- */
-export const DEFAULT_MODULE_ACCESS: Record<AppRole, ModuleId[]> = {
-  admin: ALL_MODULE_IDS,
-  // Co-owner: full CEO-level visibility MINUS the governance surfaces. Kept in
-  // sync with OWNER_MODULES in backend/src/lib/moduleAccess.ts — an owner who
-  // could edit roles could promote themselves to admin.
-  // accounting_audit is withheld from co-owners for the same reason
-  // role_management is: it is the record of who moved the books, and the
-  // people it exists to hold to account must not control who reads it.
-  owner: ALL_MODULE_IDS.filter((m) => !['role_management', 'role_modules', 'accounting_audit'].includes(m)),
-  management: ALL_MODULE_IDS.filter((m) => !['chain'].includes(m)),
-
-  foh_management: [
-    'dashboard', 'ops', 'orders', 'refunds', 'curbside', 'kds_all', 'expo_station',
-    'pos', 'reservations', 'reservations_admin', 'scheduling', 'tables', 'dispatch', 'riders',
-    'crm', 'complaints', 'reviews', 'campaigns',
-    'staff_directory', 'staff_foh', 'kitchen_staff',
-    'reports',
-    'integrations',
-  ],
-  boh_management: [
-    'dashboard', 'ops', 'orders', 'kds_all', 'kds_dashboard', 'expo_station',
-    'menu', 'components', 'recipes', 'par_sheet', 'inventory', 'kds_config', 'food_safety',
-    'procurement', 'staff_directory', 'staff_boh', 'staff_procurement', 'kitchen_staff',
-    'reports',
-  ],
-  foh: [
-    'pos', 'reservations', 'tables', 'dispatch', 'orders', 'curbside',
-  ],
-  boh: [
-    'kds_all', 'kds_dashboard', 'inventory', 'recipes', 'par_sheet', 'food_safety',
-  ],
-  // Line cook's surface: the Kitchen view dashboard + Par sheet. They do NOT
-  // get the Expo Station (that's the expediter's pass-station overview) and
-  // they do NOT get KDS Config (admin-only station CRUD). 2026-05-14: dropped
-  // kds_all so the per-station injections + Expo Station vanish from the cook's
-  // sidebar — /kds is now the single entry point.
-  kitchen:   ['kds_dashboard', 'par_sheet', 'food_safety'],
-  expediter: ['kds_all', 'expo_station', 'orders', 'par_sheet', 'food_safety'],
-  cashier:   ['dashboard', 'pos', 'orders', 'curbside', 'tables'],
-
-  procurement: ['procurement', 'inventory', 'reports'],
-
-  marketing: [
-    'marketing_workspace', 'crm', 'campaigns', 'complaints', 'reviews',
-    'calendar', 'media', 'promos', 'brands', 'analytics',
-  ],
-
-  // Brand Manager — the Brand dashboard + the full marketing surface. No ops
-  // (refunds, kds, inventory) — they own growth, not the floor.
-  brand_manager: [
-    'brand_dashboard',
-    'marketing_workspace', 'crm', 'campaigns', 'complaints', 'reviews',
-    'calendar', 'media', 'promos', 'brands', 'analytics',
-  ],
-
-  // F&B Manager — the F&B dashboard + the kitchen & service surfaces they run
-  // across BOH + FOH: menu, recipes, inventory, KDS, reservations, floor,
-  // reports, plus food-quality complaints/reviews and the staff they manage.
-  fnb_manager: [
-    'fnb_dashboard',
-    'dashboard', 'ops', 'orders', 'refunds', 'curbside',
-    'kds_all', 'kds_dashboard', 'expo_station',
-    'menu', 'components', 'recipes', 'par_sheet', 'inventory', 'kds_config', 'food_safety',
-    'pos', 'reservations', 'reservations_admin', 'scheduling', 'tables', 'dispatch', 'riders',
-    'complaints', 'reviews',
-    'staff_directory', 'staff_foh', 'staff_boh', 'kitchen_staff',
-    // Owner policy: F&B manager is a company-financials viewer (P&L + accounting
-    // + revenue reports) alongside finance + CEO. Matches the backend
-    // FINANCIALS_VIEWERS tier; operational FOH/BOH managers are excluded.
-    'finance_pl', 'accounting', 'reports',
-  ],
-
-  finance: [
-    'dashboard', 'orders',
-    'finance_pl', 'payroll', 'accounting', 'gift_cards', 'reconciliation',
-    'exceptions', 'capital', 'projections', 'reports',
-  ],
-
-  hr: [
-    'staff_directory', 'staff_management', 'staff_foh', 'staff_boh',
-    'staff_procurement', 'staff_marketing', 'staff_finance', 'staff_hr',
-    'kitchen_staff', 'payroll', 'scheduling',
-  ],
-}
 
 /**
  * Executive tier — the CEO and any co-owner. Use for VISIBILITY decisions

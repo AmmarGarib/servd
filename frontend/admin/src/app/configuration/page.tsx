@@ -76,8 +76,8 @@ export default function ConfigurationHubPage() {
       category: 'core', status: stationsReady ? 'ready' : 'incomplete',
       hint: stationsReady ? `${stations.length} stations` : 'Define your kitchen layout' },
 
-    { href: '/settings',  icon: '👥', title: 'Staff & Roles',
-      desc: 'Logins, PINs, manager / cashier / cook.',
+    { href: '/workforce',  icon: '👥', title: 'Staff & Roles',
+      desc: 'Accounts, companies, override PINs, pending signups.',
       category: 'core', status: staffReady ? 'ready' : 'incomplete',
       hint: staffReady ? `${users.length} users` : 'Add team members' },
 
@@ -89,9 +89,9 @@ export default function ConfigurationHubPage() {
       desc: 'Point your own URLs (e.g. order.yourbrand.pk) to brand storefronts.',
       category: 'channels', status: 'optional', hint: 'DNS-verified, SSL automatic' },
 
-    { href: '/configuration/roles',  icon: '🔒', title: 'Permissions',
-      desc: 'What admins, managers, cashiers, cooks, riders can each do.',
-      category: 'core', status: 'ready', hint: '5 built-in roles, fully editable matrix' },
+    { href: '/configuration/role-modules',  icon: '🔒', title: 'Module Access',
+      desc: 'Which areas each role can open — enforced by the API.',
+      category: 'core', status: 'ready', hint: 'Per-role defaults, CEO-editable' },
 
     { href: '/settings',  icon: '📍', title: 'Location & Geofence',
       desc: 'Force on-site clock-in for floor staff.',

@@ -16,7 +16,24 @@ interface Cfg {
   withholdingTaxEnabled: boolean
   withholdingTaxPct: number
   withholdingTaxRecoverable: boolean
+  geofenceEnforced: boolean
+  geofenceRadiusMetres: number
+  selfieRequiredAtClockIn: boolean
 }
+
+// Who is in the tip pool and at what weight (decision 36). Mirrors
+// TIP_POOL_DEFAULT_WEIGHTS in backend/src/lib/setup-config.ts — these only
+// fill the editor for a role the company has not set.
+const TIP_ROLES: Array<{ key: string; label: string; fallback: number }> = [
+  { key: 'foh', label: 'Servers', fallback: 1 },
+  { key: 'cashier', label: 'Cashiers', fallback: 0.75 },
+  { key: 'barista', label: 'Baristas (HR designation)', fallback: 0.75 },
+  { key: 'kitchen', label: 'Kitchen', fallback: 0.5 },
+  { key: 'boh', label: 'Line cooks (BOH)', fallback: 0.5 },
+  { key: 'expediter', label: 'Expediters', fallback: 0.5 },
+  { key: 'foh_management', label: 'Floor managers', fallback: 0 },
+  { key: 'boh_management', label: 'Head chefs', fallback: 0 },
+]
 
 const CHANNELS = ['pos', 'storefront', 'whatsapp']
 
@@ -29,6 +46,7 @@ export default function OperationsPage() {
     mutationFn: () => api.patch('/setup/operations-config', form),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['operations-config'] }),
   })
+  const saveError = save.error as Error | null
 
   if (isLoading) return <div className="p-8 text-white/60">Loading…</div>
   function patch<K extends keyof Cfg>(k: K, v: Cfg[K]) { setForm((p) => ({ ...p, [k]: v })) }
@@ -81,9 +99,31 @@ export default function OperationsPage() {
               <option value="by_role_weight">Weighted by role (kitchen vs cashier)</option>
             </select>
           </Field>
-          {form.tipPoolDistribution === 'by_role_weight' && (
-            <p className="text-[10px] text-white/40 italic">Role weights are configured under Tip Pool → Role weights.</p>
-          )}
+          <div>
+            <label className="text-xs text-white/55">Who is in the pool, and their weight</label>
+            <p className="text-[10px] text-white/30 mt-0.5">0 = not in the pool. Weights multiply hours when the split is by role; with the other splits they only decide who is in.</p>
+            <div className="grid grid-cols-2 gap-2 mt-2">
+              {TIP_ROLES.map((r) => (
+                <label key={r.key} className="flex items-center justify-between gap-2 rounded-lg px-3 py-1.5" style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                  <span className="text-xs text-white/70">{r.label}</span>
+                  <input type="number" step="0.05" min={0} max={10} className="w-20 rounded bg-white/[0.03] border border-white/[0.08] px-2 py-1 text-sm text-white/85 text-right"
+                    value={form.tipPoolRoleWeights?.[r.key] ?? r.fallback}
+                    onChange={(e) => patch('tipPoolRoleWeights', { ...Object.fromEntries(TIP_ROLES.map((x) => [x.key, form.tipPoolRoleWeights?.[x.key] ?? x.fallback])), ...(form.tipPoolRoleWeights ?? {}), [r.key]: Math.max(0, parseFloat(e.target.value) || 0) })} />
+                </label>
+              ))}
+            </div>
+          </div>
+        </Section>
+
+        <Section title="Clock-in" desc="One rule for the whole company. Staff may clock in at any of the company's branches; the map pins set under Configuration → Locations are the fence.">
+          <Toggle label="Only allow clock-in on-site (geofence)" checked={!!form.geofenceEnforced} onChange={(v) => patch('geofenceEnforced', v)} />
+          <Field label="Fence radius (metres)">
+            <input type="number" min={10} max={5000} step={10} value={form.geofenceRadiusMetres ?? 150} onChange={(e) => patch('geofenceRadiusMetres', parseInt(e.target.value, 10) || 150)} className={fieldCls} />
+          </Field>
+          <Toggle label="Require a selfie at clock-in" checked={!!form.selfieRequiredAtClockIn} onChange={(v) => patch('selfieRequiredAtClockIn', v)} />
+          <p className="text-[10px] text-white/40">
+            A branch with no map pin cannot be clocked in at while the fence is on — <Link href="/configuration/locations" className="underline">set the pins</Link> first.
+          </p>
         </Section>
 
         <Section title="Tax invoice numbering">
@@ -108,7 +148,8 @@ export default function OperationsPage() {
           <Toggle label="Recoverable (asset, not expense)" checked={!!form.withholdingTaxRecoverable} onChange={(v) => patch('withholdingTaxRecoverable', v)} />
         </Section>
 
-        <div className="flex justify-end gap-3 pt-4 border-t border-white/[0.05]">
+        <div className="flex justify-end items-center gap-3 pt-4 border-t border-white/[0.05]">
+          {saveError && <p className="text-xs text-red-400 mr-auto">{saveError.message}</p>}
           <button onClick={() => save.mutate()} disabled={save.isPending}
             className="rounded-xl bg-kds-green px-5 py-2.5 text-sm font-black text-black hover:opacity-90 disabled:opacity-50">
             {save.isPending ? 'Saving…' : 'Save changes'}

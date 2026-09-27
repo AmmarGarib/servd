@@ -4,127 +4,106 @@ import type { UserRole } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, ADMIN_ONLY, ALL_STAFF } from '../auth/middleware.js'
 import {
-  PERMISSIONS,
-  invalidatePermissionCache,
-  permissionsForRole,
-  effectivePermissionsForUser,
-} from '../../lib/permissions.js'
-import { DEFAULT_MODULE_ACCESS, isKnownModuleId, invalidateModuleAccessCache } from '../../lib/moduleAccess.js'
+  DEFAULT_MODULE_ACCESS,
+  MODULE_IDS,
+  isKnownModuleId,
+  isRetiredModuleId,
+  knownModulesOnly,
+  invalidateModuleAccessCache,
+  effectiveModulesForUser,
+} from '../../lib/moduleAccess.js'
+import { ALL_ROLES, ASSIGNABLE_ROLES, LEGACY_ROLES, OVERRIDE_APPROVERS } from '../../lib/roles.js'
 import { audit } from '../../lib/audit.js'
 
-// Keep aligned with the UserRole enum in backend/prisma/schema.prisma and the
-// AppRole list in frontend/admin/src/lib/appRoles.ts. The matrix editor renders
-// one column per role in this order.
-const ROLES = [
-  'admin', 'manager', 'management', 'foh_management', 'boh_management',
-  'foh', 'boh', 'kitchen', 'expediter', 'cashier',
-  'procurement', 'marketing', 'brand_manager', 'fnb_manager', 'finance', 'hr',
-] as UserRole[]
-const ROLE_VALUES = ROLES as readonly string[]
+// ── Access control is MODULE ACCESS (owner decision 34, 2026-09-27) ─────────
+//
+// The per-action permission matrix (/permissions/matrix, /catalogue, /reset,
+// requirePermission, the Workforce per-user action chips) is gone. It enforced
+// nothing: requirePermission had no caller, so unticking "orders:refund" for a
+// role changed no behaviour anywhere — a UI promise with no enforcement, which
+// is worse than having no switch at all. It also had no 'owner' column.
+//
+// What remains, and is enforced:
+//   • module access — role defaults + the CEO's per-role overrides + per-user
+//     moduleAllow/moduleDeny, checked by the auth middleware on the gated
+//     prefixes (lib/moduleAccess.ts);
+//   • role arrays on each route (requireAuth(...MANAGERS) etc.) for hard gates.
+//
+// The role_permissions table and the permissionAllow/permissionDeny columns
+// are kept (history); nothing reads them.
+
+/** Roles whose module list the CEO may edit: every role except the CEO seat. */
+const EDITABLE_ROLES = ALL_ROLES.filter((r) => r !== 'admin')
 
 export async function permissionRoutes(fastify: FastifyInstance) {
-  // GET /permissions/catalogue — full list of permission keys + metadata.
-  // Open to all logged-in staff so the frontend can render labels in tooltips.
-  fastify.get('/catalogue', { preHandler: requireAuth(...ALL_STAFF) }, async () => {
-    return PERMISSIONS.map((p) => ({
-      key: p.key, label: p.label, desc: p.desc, category: p.category,
-    }))
-  })
-
-  // GET /permissions/me — the current user's EFFECTIVE permissions list.
-  // Used by the frontend useCan() hook on every page load. Resolves the
-  // role baseline against the user's permissionAllow/permissionDeny
-  // overrides so per-user grants/revokes ride through to the UI.
+  // GET /permissions/me — who am I and which modules do I have.
+  //
+  // `modules` is the caller's EFFECTIVE set from the same resolver the API
+  // enforces with (role override ?? role default, plus this user's
+  // moduleAllow, minus moduleDeny). The sidebar should render from this for
+  // the real user instead of recomputing from a browser-side copy.
   fastify.get('/me', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
     const me = await prisma.user.findUnique({
       where:  { id: req.staffUser!.id },
-      select: { role: true, permissionAllow: true, permissionDeny: true },
+      select: { role: true, moduleAllow: true, moduleDeny: true },
     })
-    if (!me) return { role: req.staffUser!.role, permissions: [] }
-    return {
-      role: me.role,
-      permissions: await effectivePermissionsForUser(prisma, me),
-    }
-  })
-
-  // GET /permissions/matrix — full role × permission grid for the editor.
-  fastify.get('/matrix', { preHandler: requireAuth(...ADMIN_ONLY) }, async () => {
-    const rows = await prisma.rolePermission.findMany({
-      select: { role: true, permission: true, enabled: true },
+    const role = me?.role ?? req.staffUser!.role
+    const modules = await effectiveModulesForUser({
+      role,
+      moduleAllow: me?.moduleAllow ?? [],
+      moduleDeny:  me?.moduleDeny ?? [],
     })
-    // Build a (role → permission → enabled) map for the UI
-    const matrix: Record<string, Record<string, boolean>> = {}
-    for (const role of ROLES) matrix[role] = {}
-    for (const r of rows) {
-      const roleKey = matrix[r.role]
-      if (roleKey) roleKey[r.permission] = r.enabled
-    }
-    return { roles: ROLES, matrix }
+    return { role, modules: Array.from(modules) }
   })
 
-  // PATCH /permissions/matrix — bulk update. Body shape mirrors GET /matrix.
-  fastify.patch('/matrix', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req, reply) => {
-    const body = z.object({
-      changes: z.array(z.object({
-        role: z.string().refine((v) => ROLE_VALUES.includes(v), 'Unknown role'),
-        permission: z.string().min(1),
-        enabled: z.boolean(),
-      })),
-    }).parse(req.body)
-
-    // Reject any attempt to lock admin out of admin-only permissions.
-    // Admin role always has everything via short-circuit in userCan(); we
-    // still persist these flips for visibility in the matrix, but a future
-    // bug that removes the short-circuit shouldn't lock admins out.
-    const validKeys = new Set(PERMISSIONS.map((p) => p.key))
-    for (const c of body.changes) {
-      if (!validKeys.has(c.permission)) {
-        return reply.status(400).send({ error: { code: 'UNKNOWN_PERMISSION', message: `Permission '${c.permission}' is not in the catalogue` } })
-      }
-    }
-
-    // Upsert each change (the seed has already inserted every cell, so the
-    // typical path is an update — but use upsert for resilience)
-    for (const c of body.changes) {
-      await prisma.rolePermission.upsert({
-        where: { role_permission: { role: c.role as UserRole, permission: c.permission } },
-        create: { role: c.role as UserRole, permission: c.permission, enabled: c.enabled },
-        update: { enabled: c.enabled },
-      })
-    }
-
-    invalidatePermissionCache()
-    return { ok: true, applied: body.changes.length }
-  })
-
-  // GET /permissions/role-modules — role → module allow-list. `defaults` are
-  // the in-code baselines; `overrides` are the CEO's saved rows (full
-  // allow-list per role). Open to all staff so every admin browser renders the
-  // same sidebar rules instead of whatever its localStorage last saw.
+  // GET /permissions/role-modules — everything the admin needs to render
+  // module visibility for ANY role (the CEO's view-as switcher and the Module
+  // Access editor), all from the server:
+  //   defaults  — the in-code baselines the API enforces
+  //   overrides — the CEO's saved rows (full allow-list per role)
+  //   modules   — every valid module id
+  //   roles     — which roles exist / may be assigned / may be edited here /
+  //               may approve with a manager PIN
+  // Open to all staff so every admin browser renders the same rules.
   fastify.get('/role-modules', { preHandler: requireAuth(...ALL_STAFF) }, async () => {
     const rows = await prisma.roleModuleAccess.findMany({ select: { role: true, modules: true } })
     return {
       defaults:  DEFAULT_MODULE_ACCESS,
-      overrides: Object.fromEntries(rows.map((r) => [r.role, r.modules])),
+      overrides: Object.fromEntries(rows.map((r) => [r.role, knownModulesOnly(r.modules)])),
+      modules:   MODULE_IDS,
+      roles: {
+        all:        ALL_ROLES,
+        assignable: ASSIGNABLE_ROLES,
+        editable:   EDITABLE_ROLES,
+        legacy:     LEGACY_ROLES,
+        overrideApprovers: OVERRIDE_APPROVERS,
+      },
     }
   })
 
   // PUT /permissions/role-modules — CEO saves one role's full allow-list.
   // `modules: null` resets the role back to defaults (deletes the row).
+  // Any role except admin — including 'owner', which the old hand-kept role
+  // list left out, so the owner column never actually saved.
   fastify.put('/role-modules', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req, reply) => {
     const body = z.object({
-      role:    z.string().refine((v) => ROLE_VALUES.includes(v), 'Unknown role'),
+      role:    z.string().refine((v) => (ALL_ROLES as readonly string[]).includes(v), 'Unknown role'),
       modules: z.array(z.string()).nullable(),
     }).parse(req.body)
 
     if (body.role === 'admin') {
       return reply.status(400).send({ error: { code: 'ADMIN_IMMUTABLE', message: 'The CEO role always has every module — it cannot be edited.' } })
     }
+    let modules: string[] | null = null
     if (body.modules) {
-      const unknown = body.modules.filter((m) => !isKnownModuleId(m))
+      // Retired ids (from rows saved before they were removed) are dropped
+      // quietly so an old row can still be edited; anything else unknown is a
+      // typo and is refused.
+      const unknown = body.modules.filter((m) => !isKnownModuleId(m) && !isRetiredModuleId(m))
       if (unknown.length) {
         return reply.status(400).send({ error: { code: 'UNKNOWN_MODULE', message: `Unknown module id(s): ${unknown.join(', ')}` } })
       }
+      modules = Array.from(new Set(knownModulesOnly(body.modules)))
     }
 
     // Read the outgoing allow-list first — "what changed" is the whole value of
@@ -134,13 +113,13 @@ export async function permissionRoutes(fastify: FastifyInstance) {
       select: { modules: true },
     })
 
-    if (body.modules === null) {
+    if (modules === null) {
       await prisma.roleModuleAccess.deleteMany({ where: { role: body.role as UserRole } })
     } else {
       await prisma.roleModuleAccess.upsert({
         where:  { role: body.role as UserRole },
-        create: { role: body.role as UserRole, modules: body.modules },
-        update: { modules: body.modules },
+        create: { role: body.role as UserRole, modules },
+        update: { modules },
       })
     }
     invalidateModuleAccessCache()
@@ -156,46 +135,8 @@ export async function permissionRoutes(fastify: FastifyInstance) {
       userEmail: req.staffUser?.email ?? null,
       tenantId: req.staffUser?.tenantId ?? null,
       before: { modules: previous?.modules ?? null },
-      after: { role: body.role, modules: body.modules },
+      after: { role: body.role, modules },
     })
-    return { ok: true, role: body.role, modules: body.modules }
+    return { ok: true, role: body.role, modules }
   })
-
-  // POST /permissions/reset — reset all permissions back to catalogue defaults.
-  // Useful if an admin accidentally locks themselves out of something.
-  fastify.post('/reset', { preHandler: requireAuth(...ADMIN_ONLY) }, async () => {
-    const updates: Array<Promise<unknown>> = []
-    for (const perm of PERMISSIONS) {
-      for (const role of ROLES) {
-        updates.push(prisma.rolePermission.upsert({
-          where: { role_permission: { role, permission: perm.key } },
-          create: { role, permission: perm.key, enabled: perm.defaultsByRole[role] ?? false },
-          update: { enabled: perm.defaultsByRole[role] ?? false },
-        }))
-      }
-    }
-    await Promise.all(updates)
-    invalidatePermissionCache()
-    return { ok: true, reset: updates.length }
-  })
-}
-
-// Convenience middleware: use in route handlers that need a finer-grained check
-// than the role-array `requireAuth(...)`. Always pair with `requireAuth` first.
-//
-// Usage:
-//   fastify.post('/orders/:id/refund', {
-//     preHandler: [requireAuth(...ALL_STAFF), requirePermission('orders:refund')],
-//   }, ...)
-export function requirePermission(permission: string) {
-  return async (req: { staffUser?: { role: UserRole } }) => {
-    const { ForbiddenError } = await import('../../lib/errors.js')
-    const role = req.staffUser?.role
-    if (!role) throw new ForbiddenError('Not authenticated')
-    if (role === 'admin') return        // Admins bypass — same short-circuit as userCan()
-    const perms = await permissionsForRole(prisma, role)
-    if (!perms.includes(permission)) {
-      throw new ForbiddenError(`Missing permission: ${permission}`)
-    }
-  }
 }

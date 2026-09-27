@@ -10,6 +10,8 @@ import { setRlsContext } from '../../lib/rlsContext.js'
 import { isRevoked } from '../../lib/tokenRevocation.js'
 import { readCookie, ACCESS_COOKIE } from '../../lib/cookies.js'
 import { enforceModuleAccess } from '../../lib/moduleAccess.js'
+import { isAccountActive } from './accountStatus.js'
+import { ALL_ROLES } from '../../lib/roles.js'
 
 // Staff access token comes from EITHER a Bearer header (tablet / mobile) OR the
 // httpOnly session cookie (manager web). The web app no longer holds the token
@@ -80,7 +82,7 @@ async function attachStaffPrincipal(req: FastifyRequest, payload: { sub: string;
   // Revocation-on-deactivation: a JWT outlives its user's employment unless we
   // re-check status on every request. Without this, a fired/suspended staffer
   // keeps full API access until their token expires.
-  if (!u || !u.isActive || u.deletedAt !== null || u.accountStatus !== 'active') {
+  if (!u || !isAccountActive(u)) {
     throw new UnauthorizedError('Account is no longer active')
   }
 
@@ -224,7 +226,7 @@ export const ADMIN_ONLY = ['admin'] as UserRole[]
 // APPROVERS — who may sign off on a submission (recipes, payroll runs,
 // reconciliation, tip-pool posting, capex). The CEO plus co-owners. Owners
 // approve STAFF work; anything an owner submitted escalates to the CEO, which
-// is enforced per-request by assertNotSelfApproval() below.
+// is enforced per-request by assertNotSelfApproval() in lib/separation-of-duties.ts.
 export const APPROVERS = ['admin', 'owner'] as UserRole[]
 // fnb_manager is a full ops manager (BOH + FOH) — folded into MANAGERS so it
 // passes every manager-tier endpoint (reports, kds, inventory, reservations…).
@@ -273,31 +275,10 @@ export function usesOtpLogin(role: UserRole | string | null | undefined): boolea
   return !!role && (OTP_LOGIN_ROLES as string[]).includes(role)
 }
 
-export const ALL_STAFF = [
-  'admin', 'owner', 'manager', 'management', 'foh_management', 'boh_management',
-  'foh', 'boh', 'kitchen', 'expediter', 'cashier',
-  'procurement', 'marketing', 'brand_manager', 'fnb_manager', 'finance', 'hr',
-] as UserRole[]
+// Every staff role — derived from the Prisma enum (lib/roles.ts), so a role
+// added to the schema can sign in without anyone remembering this list.
+export const ALL_STAFF = [...ALL_ROLES] as UserRole[]
 
-/**
- * Enforce the owner-escalation rule: a co-owner may approve STAFF submissions
- * but never their own — those must escalate to the CEO (`admin`), who is the
- * final authority and may approve anything.
- *
- * Call this at the top of every approval handler, passing whoever submitted
- * the thing being approved (Recipe.submittedById, PayrollRun.createdBy, …).
- * A null submitter means the record predates submitter tracking; treat it as
- * not-self so legacy items stay approvable.
- */
-export function assertNotSelfApproval(
-  req: FastifyRequest,
-  submittedById: string | null | undefined,
-): void {
-  const user = req.staffUser!
-  if (user.role === 'admin') return              // CEO is the final boss
-  if (submittedById && submittedById === user.id) {
-    throw new ForbiddenError(
-      'You submitted this — it needs the CEO to approve. Owners cannot approve their own work.',
-    )
-  }
-}
+// The owner-escalation / separation-of-duties rule lives in ONE place:
+// lib/separation-of-duties.ts assertNotSelfApproval (CEO exempt, flags every
+// blocked attempt). The second copy that used to live here is gone.

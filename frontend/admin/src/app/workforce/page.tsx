@@ -8,87 +8,22 @@
 // editor.
 //
 // Sidebar deep-links pass `?role=foh,foh_management` so the chip highlights
-// itself on load. Roles are read from src/lib/appRoles.ts so a new role only
-// needs to be added in one place.
+// itself on load; `?status=pending` opens the pending-signup queue (the CEO's
+// sidebar badge points here — /configuration/pending-approvals is retired).
+// Which roles may be ASSIGNED comes from the API (GET /permissions/role-modules
+// → roles.assignable); the categories below only group and label them.
 
 import { useState, useMemo, Suspense, useEffect } from 'react'
 import Link from 'next/link'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../lib/api'
-import { roleLabel, MODULES, type AppRole, type ModuleId } from '../../lib/appRoles'
+import { roleLabel, type AppRole } from '../../lib/appRoles'
 import { usePermissions } from '../../hooks/useCan'
-import { modulesForRole, useRoleModules } from '../../store/roleModules'
 import { useViewAllTenants } from '../../components/ui/TenantSwitcher'
 import { PositionsView } from './positions/view'
 
 interface TenantLite { id: string; name: string; slug: string }
-
-interface PermissionMeta {
-  key: string
-  label: string
-  desc: string
-  category: 'live' | 'service' | 'kitchen' | 'menu' | 'finance' | 'crm' | 'platform'
-}
-interface PermissionsMatrix {
-  roles: string[]
-  matrix: Record<string, Record<string, boolean>>
-}
-
-const PERMISSION_CATEGORY_META: Record<PermissionMeta['category'], { label: string; emoji: string }> = {
-  live:     { label: 'Live operations',     emoji: '⚡' },
-  service:  { label: 'Service / floor',     emoji: '💳' },
-  kitchen:  { label: 'Kitchen',             emoji: '🍳' },
-  menu:     { label: 'Menu & storefront',   emoji: '📝' },
-  finance:  { label: 'Finance & reports',   emoji: '💰' },
-  crm:      { label: 'Customers & CRM',     emoji: '👥' },
-  platform: { label: 'Platform & settings', emoji: '🎛' },
-}
-const PERMISSION_CATEGORY_ORDER: PermissionMeta['category'][] = [
-  'live', 'service', 'kitchen', 'menu', 'finance', 'crm', 'platform',
-]
-
-// Hand-tuned labels for resource ids that don't title-case cleanly. Anything
-// missing falls back to a generic Capitalize(resource). Keep this small —
-// most catalogue keys are already nicely named ("orders", "menu", "tables").
-const RESOURCE_LABELS: Record<string, string> = {
-  pos:           'POS',
-  kds:           'KDS',
-  crm:           'CRM',
-  ap:            'Accounts payable',
-  ar:            'Accounts receivable',
-  storefront:    'Storefront',
-  procurement:   'Procurement',
-  reservations:  'Reservations',
-  inventory:     'Inventory',
-  reports:       'Reports',
-  accounting:    'Accounting',
-  riders:        'Riders / dispatch',
-  tables:        'Floor plan',
-  chain:         'Chain rollup',
-  recipes:       'Recipes',
-  dashboard:     'Dashboard',
-  orders:        'Orders',
-  menu:          'Menu',
-  campaigns:     'Campaigns',
-  customers:     'Customers',
-  discounts:     'Discounts',
-  payroll:       'Payroll',
-  settings:      'Settings',
-  permissions:   'Permissions',
-}
-function resourceLabel(resource: string): string {
-  return RESOURCE_LABELS[resource] ?? (resource.charAt(0).toUpperCase() + resource.slice(1))
-}
-
-// Pull the action half of a `resource:action` key and humanise it.
-// e.g. "orders:refund" → "Refund", "pos:open_shift" → "Open shift".
-function actionLabel(permKey: string): string {
-  const idx = permKey.indexOf(':')
-  if (idx < 0) return permKey
-  const action = permKey.slice(idx + 1).replace(/_/g, ' ')
-  return action.charAt(0).toUpperCase() + action.slice(1)
-}
 
 interface StaffUser {
   id: string
@@ -104,11 +39,8 @@ interface StaffUser {
   tenantId: string | null
   tenant?: TenantLite | null
   tenants?: TenantLite[]
-  // Per-user overrides on top of the role's baseline. Empty arrays = follow
-  // the role default exactly. Resolution rule (matches backend):
-  //   effective = (role_default ∪ allow) \ deny
-  permissionAllow?: string[]
-  permissionDeny?:  string[]
+  // Per-user module overrides on top of the role's baseline (enforced by the
+  // API). Empty arrays = follow the role default exactly.
   moduleAllow?:     string[]
   moduleDeny?:      string[]
   // Stations this user is rostered to work. Drives /kds (Kitchen view) —
@@ -133,6 +65,13 @@ interface Category {
 }
 
 const CATEGORIES: Category[] = [
+  {
+    key: 'owners',
+    label: 'Owners',
+    emoji: '🔑',
+    blurb: 'Co-owners — see what the CEO sees and approve staff work; their own submissions escalate to the CEO.',
+    roles: ['owner'],
+  },
   {
     key: 'management',
     label: 'Management',
@@ -190,13 +129,40 @@ const STATUS_META: Record<StaffUser['accountStatus'], { label: string; color: st
   suspended: { label: 'Suspended', color: '#FF4D4F', bg: 'rgba(255,77,79,0.10)' },
 }
 
+// The API derives the status in one place (auth/accountStatus.ts) — including
+// accounts switched off through the legacy isActive column — so the page
+// reads it as given instead of re-deriving it.
 function statusOf(u: StaffUser): StaffUser['accountStatus'] {
-  if (!u.isActive) return 'suspended'
   return u.accountStatus
 }
 
 function categoryOf(role: AppRole): Category | undefined {
   return CATEGORIES.find((c) => c.roles.includes(role))
+}
+
+/**
+ * Roles the API accepts on the staff editor (GET /permissions/role-modules →
+ * roles.assignable). Null while loading, in which case callers fall back to
+ * the category's own list — the API still validates every save.
+ */
+function useAssignableRoles(): Set<string> | null {
+  const { data } = useQuery<{ roles?: { assignable?: string[] } }>({
+    queryKey: ['permissions', 'role-modules'],
+    queryFn:  () => api.get('/permissions/role-modules'),
+    staleTime: 60_000,
+  })
+  const list = data?.roles?.assignable
+  return list ? new Set(list) : null
+}
+
+/** First role of a category the API will accept — the "primary" for new staff. */
+function primaryRoleOf(cat: Category | undefined, assignable: Set<string> | null): AppRole | undefined {
+  if (!cat) return undefined
+  return cat.roles.find((r) => !assignable || assignable.has(r))
+}
+
+function assignableCategories(assignable: Set<string> | null): Category[] {
+  return CATEGORIES.filter((c) => !!primaryRoleOf(c, assignable))
 }
 
 // ─── Page ────────────────────────────────────────────────────────────────────
@@ -228,8 +194,13 @@ function WorkforcePageInner() {
     return hit?.key ?? 'all'
   }, [sp])
 
+  const initialStatus = useMemo<'all' | StaffUser['accountStatus']>(() => {
+    const raw = sp.get('status')
+    return raw === 'pending' || raw === 'active' || raw === 'suspended' ? raw : 'all'
+  }, [sp])
+
   const [activeCategory, setActiveCategory] = useState<string>(initialCategory)
-  const [statusFilter, setStatusFilter] = useState<'all' | StaffUser['accountStatus']>('all')
+  const [statusFilter, setStatusFilter] = useState<'all' | StaffUser['accountStatus']>(initialStatus)
   const [search, setSearch] = useState('')
   const [addOpen, setAddOpen] = useState(false)
   // Inline edit: which row, if any, is in edit mode.
@@ -252,6 +223,9 @@ function WorkforcePageInner() {
     setActiveCategory(initialCategory)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialCategory])
+  useEffect(() => {
+    setStatusFilter(initialStatus)
+  }, [initialStatus])
 
   const { data: users = [], isLoading } = useQuery<StaffUser[]>({
     queryKey: ['workforce', 'users'],
@@ -300,12 +274,13 @@ function WorkforcePageInner() {
               </p>
             </div>
             <div className="flex items-center gap-2">
-              {pendingCount > 0 && (
-                <Link href="/configuration/pending-approvals"
+              {pendingCount > 0 && statusFilter !== 'pending' && (
+                <button
+                  onClick={() => { setActiveTab('people'); setActiveCategory('all'); setStatusFilter('pending'); router.replace('/workforce?status=pending') }}
                   className="rounded-lg px-3 py-2 text-xs font-bold border transition-colors"
                   style={{ background: 'rgba(245,158,11,0.10)', borderColor: 'rgba(245,158,11,0.35)', color: '#F59E0B' }}>
                   ⏳ Review {pendingCount} pending
-                </Link>
+                </button>
               )}
               {canEdit && activeTab === 'people' && (
                 <button onClick={() => setAddOpen(true)}
@@ -396,9 +371,11 @@ function WorkforcePageInner() {
               <p className="text-4xl mb-2">📭</p>
               <p className="text-sm font-semibold">No staff here yet</p>
               <p className="text-xs text-kds-subtext mt-1">
-                {activeCategory === 'all'
-                  ? 'Tap + Add staff or share the self-signup link with your team.'
-                  : `No ${CATEGORIES.find((c) => c.key === activeCategory)?.label} staff on file. Add one to get started.`}
+                {statusFilter === 'pending'
+                  ? 'Nobody is waiting for approval.'
+                  : activeCategory === 'all'
+                    ? 'Tap + Add staff to create an account.'
+                    : `No ${CATEGORIES.find((c) => c.key === activeCategory)?.label} staff on file. Add one to get started.`}
               </p>
             </div>
           )}
@@ -605,7 +582,8 @@ function InlineEditor({
   const [email, setEmail]       = useState(user.email ?? '')
   const [phone, setPhone]       = useState(user.phone ?? '')
   const [jobTitle, setJobTitle] = useState(user.jobTitle ?? '')
-  const [category, setCategory] = useState<string>(categoryOf(user.role)?.key ?? 'management')
+  const assignable = useAssignableRoles()
+  const [category, setCategory] = useState<string>(categoryOf(user.role)?.key ?? '')
   const [role, setRole]         = useState<AppRole>(user.role)
   // Primary company (anchor — drives User.tenantId).
   const [tenantId, setTenantId] = useState<string>(user.tenantId ?? '')
@@ -651,117 +629,19 @@ function InlineEditor({
       .sort((a, b) => a.conceptName.localeCompare(b.conceptName))
   }, [allStations])
 
-  // Keep role consistent with category: if the category changes and the
-  // current role doesn't fit the new category, fall back to its primary.
-  useEffect(() => {
-    const cat = CATEGORIES.find((c) => c.key === category)
+  // Keep role consistent with category — but ONLY when the operator picks a
+  // category. This used to run on mount too, so opening any account whose
+  // role sat in no category (legacy 'manager', 'owner') silently rewrote its
+  // role to the Management primary on the next save — a promotion to the
+  // company P&L nobody asked for.
+  function pickCategory(key: string) {
+    setCategory(key)
+    const cat = CATEGORIES.find((c) => c.key === key)
     if (cat && !cat.roles.includes(role)) {
-      setRole(cat.roles[0]!)
+      const primary = primaryRoleOf(cat, assignable)
+      if (primary) setRole(primary)
     }
-  }, [category])  // eslint-disable-line react-hooks/exhaustive-deps
-
-  // ── Per-user permission overrides ─────────────────────────────────────
-  // Each action chip is tri-state for THIS staff member:
-  //   - 'default': follow the role's baseline (set in /configuration/roles)
-  //   - 'allow':   force-grant (in user.permissionAllow)
-  //   - 'deny':    force-revoke (in user.permissionDeny)
-  // Click cycles: default → allow → deny → default.
-
-  type OverrideState = 'default' | 'allow' | 'deny'
-
-  const { data: permsCatalogue = [] } = useQuery<PermissionMeta[]>({
-    queryKey: ['permissions', 'catalogue'],
-    queryFn:  () => api.get('/permissions/catalogue'),
-    staleTime: 5 * 60_000,
-  })
-  const { data: permsMatrix } = useQuery<PermissionsMatrix>({
-    queryKey: ['permissions', 'matrix'],
-    queryFn:  () => api.get('/permissions/matrix'),
-    staleTime: 30_000,
-  })
-
-  // Local edit buffer keyed by permission key. Tracks the user's override
-  // state — falls back to "default" when not in this map.
-  const [permOverrides, setPermOverrides] = useState<Record<string, OverrideState>>(() => {
-    const out: Record<string, OverrideState> = {}
-    for (const k of user.permissionAllow ?? []) out[k] = 'allow'
-    for (const k of user.permissionDeny  ?? []) out[k] = 'deny'
-    return out
-  })
-
-  function getPermState(permKey: string): OverrideState {
-    return permOverrides[permKey] ?? 'default'
   }
-  function getRoleDefault(permKey: string): boolean {
-    return permsMatrix?.matrix[role]?.[permKey] ?? false
-  }
-  function getEffectivePerm(permKey: string): boolean {
-    const state = getPermState(permKey)
-    if (state === 'allow') return true
-    if (state === 'deny')  return false
-    return getRoleDefault(permKey)
-  }
-  function cyclePerm(permKey: string) {
-    setPermOverrides((cur) => {
-      const next = { ...cur }
-      const state = next[permKey] ?? 'default'
-      // default → allow → deny → default
-      const nextState: OverrideState = state === 'default' ? 'allow' : state === 'allow' ? 'deny' : 'default'
-      if (nextState === 'default') delete next[permKey]
-      else next[permKey] = nextState
-      return next
-    })
-  }
-
-  // Dirty when the override map diverges from what the server has on file.
-  const permsDirty = useMemo(() => {
-    const serverAllow = new Set(user.permissionAllow ?? [])
-    const serverDeny  = new Set(user.permissionDeny  ?? [])
-    const draftAllow  = new Set(Object.entries(permOverrides).filter(([, v]) => v === 'allow').map(([k]) => k))
-    const draftDeny   = new Set(Object.entries(permOverrides).filter(([, v]) => v === 'deny').map(([k]) => k))
-    if (serverAllow.size !== draftAllow.size || serverDeny.size !== draftDeny.size) return true
-    for (const k of draftAllow) if (!serverAllow.has(k)) return true
-    for (const k of draftDeny)  if (!serverDeny.has(k))  return true
-    return false
-  }, [permOverrides, user.permissionAllow, user.permissionDeny])
-
-  // Group catalogue permissions by category, then by resource within each
-  // category. Permission keys follow a `resource:action` convention
-  // (`orders:view`, `orders:refund`, `menu:edit`, …) so splitting on the
-  // colon gives us a natural "Orders → [View, Refund, Cancel]" structure
-  // — a per-action chip row per resource, which is what the operator
-  // actually thinks in.
-  interface ResourceGroup {
-    resource: string         // e.g. 'orders'
-    label: string            // operator-readable resource name
-    actions: PermissionMeta[] // each action on this resource
-  }
-  const groupedByCategory = useMemo(() => {
-    const cats: Record<string, ResourceGroup[]> = {}
-    const byCatThenRes = new Map<string, Map<string, PermissionMeta[]>>()
-    for (const p of permsCatalogue) {
-      const cat = byCatThenRes.get(p.category) ?? new Map<string, PermissionMeta[]>()
-      const [resource] = p.key.split(':')
-      const r = resource ?? p.key
-      const arr = cat.get(r) ?? []
-      arr.push(p)
-      cat.set(r, arr)
-      byCatThenRes.set(p.category, cat)
-    }
-    for (const [cat, resMap] of byCatThenRes) {
-      cats[cat] = Array.from(resMap.entries()).map(([resource, actions]) => ({
-        resource,
-        // Title-case the resource id ("orders" → "Orders") unless the only
-        // action's label happens to start with the resource (e.g. "Operate
-        // POS"), in which case fall back to a tidy name.
-        label: resourceLabel(resource),
-        actions: actions.sort((a, b) => a.key.localeCompare(b.key)),
-      }))
-    }
-    return cats
-  }, [permsCatalogue])
-
-  const derivedPin = phone.replace(/\D/g, '').slice(-4)
 
   const save = useMutation({
     mutationFn: async () => {
@@ -776,16 +656,6 @@ function InlineEditor({
       const nextIds = [...tenantIds].sort().join(',')
       if (existingIds !== nextIds) patch.tenantIds = tenantIds
       if (pin.trim()) patch.pin = pin.trim()
-
-      // Permission overrides — full replacement arrays. Backend stores the
-      // allow/deny lists verbatim; resolution against role baseline happens
-      // at read time (effectivePermissionsForUser).
-      if (permsDirty) {
-        patch.permissionAllow = Object.entries(permOverrides)
-          .filter(([, v]) => v === 'allow').map(([k]) => k)
-        patch.permissionDeny  = Object.entries(permOverrides)
-          .filter(([, v]) => v === 'deny').map(([k]) => k)
-      }
 
       // Station assignments — full replacement. Compare sorted-joined strings
       // so order-only diffs don't trigger a no-op PATCH.
@@ -846,33 +716,28 @@ function InlineEditor({
           <input value={email} onChange={(e) => setEmail(e.target.value)} type="email"
             placeholder="staff@gsfoods.pk" className={inputCls} />
         </Field>
-        <Field label="Phone" hint={derivedPin ? `PIN can derive to ${derivedPin}.` : undefined}>
+        <Field label="Phone">
           <input value={phone} onChange={(e) => setPhone(e.target.value)}
             placeholder="03XX-XXXXXXX" className={inputCls} />
         </Field>
         <Field label="Category">
-          <select value={category} onChange={(e) => setCategory(e.target.value)} className={inputCls}>
-            {CATEGORIES.map((c) => (
+          <select value={category} onChange={(e) => pickCategory(e.target.value)} className={inputCls}>
+            {/* A role in no category (legacy 'manager') keeps its own entry so
+                opening the row never changes it. */}
+            {!categoryOf(user.role) && <option value="">{roleLabel(user.role)} (unchanged)</option>}
+            {assignableCategories(assignable).map((c) => (
               <option key={c.key} value={c.key}>{c.emoji} {c.label}</option>
             ))}
           </select>
         </Field>
-        {/* PIN sits in the slot the old "Specific role" dropdown vacated —
-            keeps the form compact and surfaces the login gate next to the
-            role definition. Category alone decides the bucket; the
-            permission matrix below decides what the role can do. */}
-        <Field label="PIN" hint={user.hasPin ? 'Type a new PIN to replace.' : 'Set a 4-digit PIN to enable login.'}>
-          <div className="flex gap-2">
-            <input value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))}
-              maxLength={8} placeholder={user.hasPin ? '• • • •' : (derivedPin || '4-digit PIN')}
-              className={inputCls + ' flex-1'} />
-            {derivedPin && (
-              <button type="button" onClick={() => setPin(derivedPin)}
-                className="rounded-lg px-3 py-2 text-xs font-bold border border-kds-border text-kds-subtext hover:text-kds-text whitespace-nowrap">
-                Use {derivedPin}
-              </button>
-            )}
-          </div>
+        {/* Manager-override PIN: typed at the till to approve an over-cap
+            discount, void, comp, refund, petty-cash top-up or staff meal. Only
+            the management tiers can approve with it. It is never derived from
+            the phone number — the last four digits of a phone are public. */}
+        <Field label="Override PIN" hint={user.hasPin ? 'Type a new PIN to replace.' : '4–8 digits, not guessable.'}>
+          <input value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))}
+            maxLength={8} placeholder={user.hasPin ? '• • • •' : '4–8 digit PIN'}
+            className={inputCls} />
         </Field>
         {tenants.length > 0 && (
           <div className="md:col-span-2">
@@ -974,103 +839,6 @@ function InlineEditor({
         </div>
       )}
 
-      {/* ── Per-user permission overrides ───────────────────────────────
-          {roleLabel(role)} has a baseline matrix in /configuration/roles.
-          Use the chips below to subjectively grant or revoke actions for
-          THIS staff member without touching the role default. Click cycles:
-            • greyed = follow role default
-            • ★ teal = force-grant
-            • ✕ red  = force-revoke
-          Chip background also shows what the role default is (subtle), so
-          you can tell a default-allow + user-deny from a default-deny that
-          just hasn't been overridden. */}
-      <div className="rounded-lg border border-kds-border bg-kds-bg/60 p-3 space-y-2.5">
-        <div className="flex items-center justify-between flex-wrap gap-2">
-          <div>
-            <p className="text-[11px] font-bold uppercase tracking-wider text-kds-subtext">
-              Override actions for {user.name || 'this staff'}
-            </p>
-            <p className="text-[10px] text-kds-subtext/70">
-              Baseline = {roleLabel(role)} role default. Click a chip to grant or revoke just for this person.
-              <Link href="/configuration/roles" className="text-kds-green font-bold hover:opacity-80 ml-1.5">
-                Edit role defaults →
-              </Link>
-            </p>
-          </div>
-          {permsDirty && (
-            <span className="text-[10px] font-bold uppercase tracking-wider rounded px-1.5 py-0.5"
-              style={{ background: 'rgba(245,158,11,0.15)', color: '#F59E0B' }}>
-              Unsaved overrides
-            </span>
-          )}
-        </div>
-
-        <div className="space-y-3">
-          {PERMISSION_CATEGORY_ORDER.map((catKey) => {
-            const resources = groupedByCategory[catKey]
-            if (!resources || resources.length === 0) return null
-            const catMeta = PERMISSION_CATEGORY_META[catKey]
-            return (
-              <div key={catKey} className="rounded-md border border-kds-border/60 bg-kds-card/40 p-2.5">
-                <p className="text-[10px] font-bold uppercase tracking-wider text-kds-subtext mb-2">
-                  {catMeta.emoji} {catMeta.label}
-                </p>
-                <div className="space-y-1.5">
-                  {resources.map((res) => (
-                    <div key={res.resource}
-                      className="grid grid-cols-[140px_1fr] items-center gap-3 px-1.5 py-1 rounded hover:bg-kds-bg/40">
-                      <p className="text-[12px] font-semibold text-kds-text leading-tight truncate">
-                        {res.label}
-                      </p>
-                      <div className="flex flex-wrap gap-1.5">
-                        {res.actions.map((perm) => {
-                          const state         = getPermState(perm.key)
-                          const roleDefault   = getRoleDefault(perm.key)
-                          const effective     = getEffectivePerm(perm.key)
-                          const tooltip = `${perm.desc ?? perm.label}\n— Role default: ${roleDefault ? 'allowed' : 'denied'}\n— This user: ${state === 'default' ? '(follows role)' : state}\n— Effective: ${effective ? 'allowed' : 'denied'}`
-                          // Style by the user's override state. The "default"
-                          // chip also reflects the role baseline (faint teal
-                          // when the role allows; faint grey when it denies)
-                          // so the operator sees the inherited state.
-                          let style: React.CSSProperties
-                          let prefix: string
-                          if (state === 'allow') {
-                            style  = { background: 'rgba(0,212,177,0.22)', color: '#00D4B1', borderColor: 'rgba(0,212,177,0.6)' }
-                            prefix = '★'
-                          } else if (state === 'deny') {
-                            style  = { background: 'rgba(255,77,79,0.18)', color: '#FF8A8C', borderColor: 'rgba(255,77,79,0.45)' }
-                            prefix = '✕'
-                          } else if (roleDefault) {
-                            style  = { background: 'rgba(0,212,177,0.06)', color: 'rgba(0,212,177,0.7)', borderColor: 'rgba(0,212,177,0.18)' }
-                            prefix = '✓'
-                          } else {
-                            style  = { background: 'rgba(255,255,255,0.02)', color: 'rgba(255,255,255,0.4)', borderColor: 'rgba(255,255,255,0.08)' }
-                            prefix = '·'
-                          }
-                          return (
-                            <button key={perm.key}
-                              type="button"
-                              onClick={() => cyclePerm(perm.key)}
-                              title={tooltip}
-                              className="text-[11px] font-bold rounded-full px-2.5 py-0.5 border transition-all"
-                              style={style}>
-                              {prefix} {actionLabel(perm.key)}
-                            </button>
-                          )
-                        })}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )
-          })}
-        </div>
-        {permsCatalogue.length === 0 && (
-          <p className="text-[11px] text-kds-subtext italic">Permissions catalogue loading…</p>
-        )}
-      </div>
-
       {err && <p className="text-xs font-bold text-red-400">{err}</p>}
 
       <div className="flex flex-wrap items-center gap-2 pt-1">
@@ -1087,7 +855,11 @@ function InlineEditor({
         <div className="ml-auto flex flex-wrap items-center gap-1.5">
           {status === 'pending' && (
             <>
-              <button onClick={() => approve.mutate()} disabled={approve.isPending}
+              {!user.tenantId && (
+                <span className="text-[10px] text-amber-400">Tick a company and save before approving.</span>
+              )}
+              <button onClick={() => approve.mutate()} disabled={approve.isPending || !user.tenantId}
+                title='Approving issues no password: use "New password" afterwards.'
                 className="rounded-md px-2 py-1.5 text-[11px] font-bold bg-amber-400/15 border border-amber-400/30 text-amber-400 hover:bg-amber-400/25">
                 Approve
               </button>
@@ -1186,11 +958,12 @@ function AddStaffModal({
   // Primary tenant is the first entry of tenantIds (drives User.tenantId).
   const primaryTenantId = tenantIds[0] ?? ''
 
-  // Category drives the primary role enum value — first entry in roles[].
+  // Category drives the primary role enum value — the first entry in roles[]
+  // that the API accepts (roles.assignable).
+  const assignable = useAssignableRoles()
   const primaryRole = useMemo(() => {
-    const c = CATEGORIES.find((cc) => cc.key === category)
-    return c?.roles[0] ?? 'cashier'
-  }, [category])
+    return primaryRoleOf(CATEGORIES.find((cc) => cc.key === category), assignable) ?? 'cashier'
+  }, [category, assignable])
 
   const create = useMutation({
     mutationFn: () => api.post<StaffUser & { temporaryPassword?: string }>('/auth/users', {
@@ -1322,7 +1095,7 @@ function AddStaffModal({
           )}
           <Field label="Category">
             <select value={category} onChange={(e) => setCategory(e.target.value)} className={inputCls}>
-              {CATEGORIES.map((c) => (
+              {assignableCategories(assignable).map((c) => (
                 <option key={c.key} value={c.key}>{c.emoji} {c.label}</option>
               ))}
             </select>
@@ -1339,9 +1112,8 @@ function AddStaffModal({
         </div>
 
         <p className="mt-3 text-[11px] text-kds-subtext">
-          Tick the company / category / role title now. You can fine-tune what this role
-          <em> does</em> inside the row's edit panel — every staff form has the permission
-          matrix folded in.
+          Tick the company / category / role title now. What each role can open is set
+          per role in Module Access.
         </p>
 
         {err && <p className="mt-2 text-xs font-bold text-red-400">{err}</p>}

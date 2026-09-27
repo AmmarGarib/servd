@@ -13,6 +13,7 @@ import { HR_ADMIN_ROLES, PAYROLL_APPROVER_ROLES, type HrFormat, type HrSectionIn
 const NAV: Array<{ href: string; label: string; staff?: boolean }> = [
   { href: '/hr', label: 'Dashboard' },
   { href: '/hr/employees', label: 'Employees' },
+  { href: '/hr/attendance', label: 'Attendance' },
   { href: '/hr/sections', label: 'All sections' },
   { href: '/hr/documents', label: 'Documents' },
   { href: '/hr/payroll', label: 'Payroll' },

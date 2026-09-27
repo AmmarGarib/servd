@@ -21,14 +21,15 @@ interface Concept {
   tenant?: { id: string; name: string; slug: string } | null
 }
 interface Station { id: string; name: string; concept: { name: string } }
-interface User { id: string; name: string; email: string; role: string; isActive: boolean; hasPin: boolean }
 
-type Section = 'concepts' | 'stations' | 'users' | 'location' | 'shifts' | 'preferences'
+// Staff accounts are managed on /workforce only. The old 'Staff' tab here
+// threw away the one-time password it generated, offered only legacy roles and
+// could not set companies — it was removed rather than kept as a second editor.
+type Section = 'concepts' | 'stations' | 'location' | 'shifts' | 'preferences'
 
 const SECTIONS: { id: Section; label: string; icon: string; desc: string }[] = [
   { id: 'concepts',    label: 'Concepts',     icon: '🏷',  desc: 'Brands, tax, visibility' },
   { id: 'stations',    label: 'Stations',     icon: '🍳',  desc: 'Kitchen + KDS stations' },
-  { id: 'users',       label: 'Staff',        icon: '👤',  desc: 'Logins, roles, PINs' },
   { id: 'location',    label: 'Location',     icon: '📍',  desc: 'On-site sign-in enforcement' },
   { id: 'shifts',      label: 'Shift Report', icon: '🕐',  desc: 'Clock-in / out logs' },
   { id: 'preferences', label: 'Preferences',  icon: '⚙️',  desc: 'Language, printer, display' },
@@ -41,7 +42,7 @@ export default function SettingsPage() {
     <div className="h-screen flex flex-col bg-kds-bg overflow-hidden">
       <header className="border-b border-kds-border px-4 py-3 md:px-6 md:py-4">
         <h1 className="text-xl md:text-2xl font-black text-kds-text mt-0.5">Settings</h1>
-        <p className="text-xs md:text-sm text-kds-subtext">Concepts, stations, and staff management</p>
+        <p className="text-xs md:text-sm text-kds-subtext">Concepts, stations, sign-in location and shift report. Staff accounts live in <Link href="/workforce" className="text-kds-green font-semibold">Workforce</Link>.</p>
       </header>
 
       {/* ── Mobile tab strip ── */}
@@ -80,7 +81,6 @@ export default function SettingsPage() {
         <div className="flex-1 overflow-y-auto p-4 md:p-6">
           {section === 'concepts'    && <ConceptsSection />}
           {section === 'stations'    && <StationsSection />}
-          {section === 'users'       && <UsersSection />}
           {section === 'location'    && <LocationSection />}
           {section === 'shifts'      && <ShiftsSection />}
           {section === 'preferences' && <PreferencesSection />}
@@ -366,205 +366,6 @@ function StationsSection() {
           </div>
         ))}
         {(stations ?? []).length === 0 && <p className="px-4 py-8 text-center text-kds-subtext text-sm">No stations yet</p>}
-      </div>
-    </div>
-  )
-}
-
-// ─── Users ────────────────────────────────────────────────────────────────────
-
-const ROLE_COLORS: Record<string, string> = {
-  admin:     'bg-purple-900/40 text-purple-400',
-  manager:   'bg-blue-900/40 text-kds-blue',
-  cashier:   'bg-kds-bg text-kds-subtext',
-  kitchen:   'bg-green-900/40 text-green-400',
-  expediter: 'bg-yellow-900/40 text-yellow-400',
-}
-
-function UsersSection() {
-  const qc = useQueryClient()
-  const [showAdd,   setShowAdd]   = useState(false)
-  const [editPin,   setEditPin]   = useState<string | null>(null)  // userId being PIN-edited
-  const [newPin,    setNewPin]    = useState('')
-  const [form, setForm] = useState({ name: '', email: '', pin: '', role: 'cashier' })
-
-  const { data } = useQuery({
-    queryKey: ['users'],
-    queryFn:  () => api.get<User[]>('/auth/users'),
-  })
-
-  const addMut = useMutation({
-    mutationFn: () => api.post('/auth/users', { name: form.name, email: form.email, pin: form.pin, role: form.role }),
-    onSuccess:  () => { void qc.invalidateQueries({ queryKey: ['users'] }); setShowAdd(false); setForm({ name: '', email: '', pin: '', role: 'cashier' }) },
-  })
-
-  const patchMut = useMutation({
-    mutationFn: ({ id, body }: { id: string; body: Record<string, unknown> }) =>
-      api.patch<User>(`/auth/users/${id}`, body),
-    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['users'] }); setEditPin(null); setNewPin('') },
-  })
-
-  const deleteMut = useMutation({
-    mutationFn: (id: string) => api.delete(`/auth/users/${id}`),
-    onSuccess:  () => void qc.invalidateQueries({ queryKey: ['users'] }),
-  })
-
-  return (
-    <div className="max-w-2xl mx-auto space-y-4">
-      <p className="text-sm text-kds-subtext">
-        Staff sign in using their PIN only. Set each person&apos;s PIN here — they&apos;ll use it on the login screen.
-      </p>
-
-      {/* Add form */}
-      {showAdd ? (
-        <div className="rounded-xl border border-kds-green bg-kds-card p-4 space-y-3">
-          <p className="font-bold text-kds-text text-sm">Add staff member</p>
-          <Row2>
-            <F label="Full name">
-              <input type="text" placeholder="Ahmad Khan"
-                value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className={fi} />
-            </F>
-            <F label="Email (for records)">
-              <input type="email" placeholder="ahmad@servd.pk"
-                value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} className={fi} />
-            </F>
-            <F label="PIN (4–8 digits)">
-              <input type="number" placeholder="e.g. 1234"
-                value={form.pin} onChange={(e) => setForm({ ...form, pin: e.target.value })}
-                className={fi} maxLength={8} />
-            </F>
-            <F label="Role">
-              <select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })} className={fi}>
-                <option value="cashier">Cashier</option>
-                <option value="kitchen">Kitchen</option>
-                <option value="expediter">Expediter</option>
-                <option value="manager">Manager</option>
-                <option value="admin">Admin</option>
-              </select>
-            </F>
-          </Row2>
-          {addMut.isError && (
-            <p className="text-xs text-red-400">{(addMut.error as Error).message}</p>
-          )}
-          <div className="flex gap-2">
-            <button
-              onClick={() => addMut.mutate()}
-              disabled={!form.name || !form.email || form.pin.length < 4 || addMut.isPending}
-              className="rounded-xl bg-kds-green text-black font-bold px-4 py-2 text-sm hover:opacity-90 disabled:opacity-50">
-              {addMut.isPending ? 'Adding…' : 'Add Staff Member'}
-            </button>
-            <button onClick={() => setShowAdd(false)}
-              className="rounded-xl border border-kds-border text-kds-subtext px-4 py-2 text-sm">
-              Cancel
-            </button>
-          </div>
-        </div>
-      ) : (
-        <button onClick={() => setShowAdd(true)}
-          className="rounded-xl bg-kds-green text-black font-bold px-4 py-2 text-sm hover:opacity-90">
-          + Add Staff Member
-        </button>
-      )}
-
-      {/* Staff list */}
-      <div className="rounded-xl border border-kds-border overflow-hidden">
-        {(data ?? []).length === 0 && (
-          <p className="px-4 py-8 text-center text-kds-subtext text-sm">No staff yet</p>
-        )}
-        {(data ?? []).map((u) => (
-          <div key={u.id}
-            className="border-b border-kds-border last:border-0"
-            style={{ background: u.isActive ? '' : 'rgba(255,255,255,0.01)' }}>
-
-            {/* Main row */}
-            <div className="flex items-center gap-3 px-4 py-3">
-              {/* Avatar */}
-              <div className="h-9 w-9 rounded-full shrink-0 flex items-center justify-center text-sm font-black"
-                style={{
-                  background: u.isActive
-                    ? 'linear-gradient(135deg, rgba(0,212,177,0.2), rgba(99,102,241,0.2))'
-                    : 'rgba(255,255,255,0.04)',
-                  color: u.isActive ? '#00D4B1' : 'rgba(255,255,255,0.2)',
-                  border: `1px solid ${u.isActive ? 'rgba(0,212,177,0.2)' : 'rgba(255,255,255,0.06)'}`,
-                }}>
-                {u.name.charAt(0).toUpperCase()}
-              </div>
-
-              {/* Info */}
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
-                  <p className={`text-sm font-semibold truncate ${u.isActive ? 'text-kds-text' : 'text-kds-subtext line-through'}`}>
-                    {u.name}
-                  </p>
-                  <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full capitalize shrink-0 ${ROLE_COLORS[u.role] ?? ''}`}>
-                    {u.role}
-                  </span>
-                </div>
-                <div className="flex items-center gap-2 mt-0.5">
-                  <p className="text-xs text-kds-subtext truncate">{u.email}</p>
-                  <span className={`text-[10px] font-semibold shrink-0 ${u.hasPin ? 'text-kds-green' : 'text-red-400'}`}>
-                    {u.hasPin ? '🔢 PIN set' : '⚠ No PIN'}
-                  </span>
-                </div>
-              </div>
-
-              {/* Actions */}
-              <div className="flex items-center gap-2 shrink-0">
-                {/* Active toggle */}
-                <Toggle
-                  value={u.isActive}
-                  onChange={(v) => patchMut.mutate({ id: u.id, body: { isActive: v } })}
-                />
-                {/* Set/Change PIN */}
-                <button
-                  onClick={() => { setEditPin(u.id); setNewPin('') }}
-                  className="text-xs px-2.5 py-1.5 rounded-lg font-semibold transition-colors"
-                  style={{
-                    background:  'rgba(0,212,177,0.08)',
-                    border:      '1px solid rgba(0,212,177,0.2)',
-                    color:       '#00D4B1',
-                  }}
-                  onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(0,212,177,0.15)')}
-                  onMouseLeave={(e) => (e.currentTarget.style.background = 'rgba(0,212,177,0.08)')}>
-                  {u.hasPin ? 'Change PIN' : 'Set PIN'}
-                </button>
-                {/* Delete */}
-                <button
-                  onClick={() => { if (confirm(`Remove ${u.name}? This cannot be undone.`)) deleteMut.mutate(u.id) }}
-                  className="text-xs px-2 py-1.5 rounded-lg text-kds-subtext transition-colors hover:text-red-400 hover:bg-red-900/20">
-                  ✕
-                </button>
-              </div>
-            </div>
-
-            {/* Inline PIN editor */}
-            {editPin === u.id && (
-              <div className="px-4 pb-3 flex items-center gap-3"
-                style={{ borderTop: '1px solid rgba(255,255,255,0.04)', paddingTop: '10px', background: 'rgba(0,212,177,0.03)' }}>
-                <p className="text-xs text-kds-subtext shrink-0">New PIN for {u.name}:</p>
-                <input
-                  type="number"
-                  placeholder="e.g. 3742"
-                  value={newPin}
-                  onChange={(e) => setNewPin(e.target.value)}
-                  className={`${fi} w-32`}
-                  maxLength={8}
-                  autoFocus
-                />
-                <button
-                  onClick={() => patchMut.mutate({ id: u.id, body: { pin: newPin } })}
-                  disabled={newPin.length < 4 || patchMut.isPending}
-                  className="rounded-lg bg-kds-green text-black font-bold px-3 py-1.5 text-xs hover:opacity-90 disabled:opacity-40">
-                  {patchMut.isPending ? 'Saving…' : 'Save PIN'}
-                </button>
-                <button onClick={() => { setEditPin(null); setNewPin('') }}
-                  className="text-xs text-kds-subtext hover:text-kds-text">
-                  Cancel
-                </button>
-              </div>
-            )}
-          </div>
-        ))}
       </div>
     </div>
   )
