@@ -11,11 +11,17 @@
 // Migration: the first time a company's settings are read and it has none, the
 // old global values are copied into its own keys (one time — later edits to
 // either company never touch the other). With no global rows either, the
-// bootstrap defaults in lib/loyaltySettings.ts apply. This module changes no
-// values (owner decision 12 still governs the point value).
+// bootstrap defaults in lib/loyaltySettings.ts apply.
+//
+// Point value (owner decision 12): one point is worth PKR 0.10. Customers have
+// always been shown and paid 10 paisa a point at checkout, while the admin
+// setting defaulted to PKR 1. So that balances keep the value customers see,
+// every company's stored point value is set to 10 once (marker key
+// `loyalty.migrated.point_value_d12.<tenantId>`), and any value copied in from
+// the legacy global keys is copied as 10. Later edits in admin are respected.
 
 import { prisma } from '../../lib/prisma.js'
-import { LOYALTY_SETTING_KEYS, LOYALTY_DEFAULTS } from '../../lib/loyaltySettings.js'
+import { LOYALTY_SETTING_KEYS, LOYALTY_DEFAULTS, POINT_VALUE_CENTS } from '../../lib/loyaltySettings.js'
 
 export type LoyaltySettingKey = typeof LOYALTY_SETTING_KEYS[number]
 export type LoyaltyValues = typeof LOYALTY_DEFAULTS
@@ -47,13 +53,47 @@ export async function loadCompanyLoyaltySettings(tenantId: string): Promise<Loya
     const legacy = await prisma.setting.findMany({ where: { key: { in: [...LOYALTY_SETTING_KEYS] } } })
     if (legacy.length > 0) {
       await prisma.setting.createMany({
-        data: legacy.map((r) => ({ key: companyLoyaltyKey(r.key as LoyaltySettingKey, tenantId), value: r.value })),
+        data: legacy.map((r) => ({
+          key: companyLoyaltyKey(r.key as LoyaltySettingKey, tenantId),
+          // Decision 12: the point value is never inherited from the old global row.
+          value: r.key === 'loyalty.point_value_cents' ? String(POINT_VALUE_CENTS) : r.value,
+        })),
         skipDuplicates: true,
       })
       rows = await prisma.setting.findMany({ where: { key: { in: keys } } })
     }
   }
+  if (await applyPointValueDecision(tenantId, rows)) {
+    rows = await prisma.setting.findMany({ where: { key: { in: keys } } })
+  }
   return parse(tenantId, rows)
+}
+
+/** Marker recording that decision 12 has been applied to a company's stored point value. */
+export const pointValueMarkerKey = (tenantId: string): string => `loyalty.migrated.point_value_d12.${tenantId}`
+
+/**
+ * One-time correction (owner decision 12): a company's stored point value is
+ * set to PKR 0.10. Runs once per company, before any operator edit made after
+ * this release, so it never overrides a deliberate later change. Returns true
+ * when it wrote.
+ */
+async function applyPointValueDecision(tenantId: string, rows: Array<{ key: string; value: string }>): Promise<boolean> {
+  const marker = pointValueMarkerKey(tenantId)
+  const done = await prisma.setting.findUnique({ where: { key: marker }, select: { key: true } })
+  if (done) return false
+  const key = companyLoyaltyKey('loyalty.point_value_cents', tenantId)
+  const stored = rows.find((r) => r.key === key)
+  const writes = [prisma.setting.create({ data: { key: marker, value: new Date().toISOString() } })]
+  if (stored && stored.value !== String(POINT_VALUE_CENTS)) {
+    writes.push(prisma.setting.update({ where: { key }, data: { value: String(POINT_VALUE_CENTS) } }))
+  }
+  try {
+    await prisma.$transaction(writes)
+  } catch {
+    return false   // a concurrent load wrote the marker first
+  }
+  return writes.length > 1
 }
 
 /** Write the keys present in `patch` for one company only. */

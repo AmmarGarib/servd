@@ -6,6 +6,7 @@ import { usePosStore } from '../../../store/pos'
 import { useAuthStore } from '../../../store/auth'
 import { useCurrentShift } from '../../../hooks/useCurrentShift'
 import { fmtPkrWhole } from '../../../lib/money'
+import { VendorPayoutPanel, CodPayInPanel } from './DrawerPanels'
 
 export default function ShiftPage() {
   const { shiftId, setShiftId } = usePosStore()
@@ -77,8 +78,15 @@ export default function ShiftPage() {
               <p className="text-sm font-semibold text-kds-green">Shift Active</p>
               <p className="text-xs text-kds-subtext font-mono">{shiftId}</p>
             </div>
+            {/* Owner decision 2: the cashier counts BLIND. Nothing on this
+                screen (or anything a cashier can open) shows the expected
+                cash before the count is submitted — the Z-report with the
+                expected figure and the variance appears only after close. */}
             <div>
               <label className="mb-1 block text-sm text-kds-subtext">Closing Cash Count (PKR)</label>
+              <p className="mb-2 text-xs text-kds-subtext">
+                Count every note and coin in the drawer and enter the total. The expected amount is shown after you close.
+              </p>
               <input
                 type="number"
                 value={closingFloat}
@@ -96,6 +104,9 @@ export default function ShiftPage() {
             </button>
           </div>
         )}
+
+        {shiftId && <CodPayInPanel shiftId={shiftId} />}
+        {shiftId && <VendorPayoutPanel shiftId={shiftId} />}
 
         <div className="text-center">
           <a href="/pos" className="text-kds-green underline text-sm">← Back to POS</a>

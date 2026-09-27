@@ -3,7 +3,7 @@ import { Prisma } from '@prisma/client'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, MANAGERS, ADMIN_ONLY } from '../auth/middleware.js'
-import { NotFoundError } from '../../lib/errors.js'
+import { AppError, NotFoundError } from '../../lib/errors.js'
 import { resolveTenantScope, tenantWhere } from '../../lib/tenantScope.js'
 
 // An uploaded artwork URL: either what the R2 presigner returns
@@ -54,7 +54,7 @@ const createConceptSchema = z.object({
   mascotUrl: brandArtworkUrl,
   // Per-brand reservations master toggle (false = brand isn't accepting bookings)
   reservationsEnabled: z.boolean().optional(),
-  // Brand strategy brief â€” captured during onboarding
+  // Brand strategy brief — captured during onboarding
   conceptStatement:    z.string().max(280).nullable().optional(),
   cuisine:             z.string().max(60).nullable().optional(),
   heroProduct:         z.string().max(120).nullable().optional(),
@@ -67,24 +67,37 @@ const createConceptSchema = z.object({
   brandVoice:          z.string().max(500).nullable().optional(),
 })
 
-// Full brand-edit schema. Adds geo, FBR / tax, and isActive on top of the
-// base creation fields. Slug is omitted intentionally â€” slug changes break
+// Full brand-edit schema — the ONE brand writer (admin → Storefront → Brands,
+// /marketing/brands). Adds tax / FBR / SRB, contact and isActive on top of the
+// base creation fields. Slug is omitted intentionally — slug changes break
 // URLs + storefront SEO; expose it as a separate admin-only operation later.
+//
+// What is NOT here, on purpose:
+//   • address / latitude / longitude — the physical kitchen's address and map
+//     pin live on its Location (owner decision 18). Concept.address/latitude/
+//     longitude are a read-only mirror of the brand's primary Location, kept
+//     in step by the locations routes (syncConceptLocationMirror).
+//   • deliveryRadiusKm — delivery coverage is the brand's DeliveryZone bands
+//     (owner decision 19); the column is kept but no editor writes it.
+// A request that still sends one of those gets a 422 naming where the field
+// lives now, rather than a silent "saved" that changed nothing.
+//
+// The legacy single taxRate is still accepted (onboarding sets it from the
+// province, and the FBR adapter still reads it) but no admin form edits it —
+// every order is charged at taxRateCash / taxRateCard.
 const updateConceptSchema = createConceptSchema.partial().omit({ slug: true }).extend({
   isActive: z.boolean().optional(),
   storefrontLayout: z.array(z.record(z.string(), z.unknown())).optional().nullable(),
-  // Delivery geography
-  latitude:        z.number().min(-90).max(90).nullable().optional(),
-  longitude:       z.number().min(-180).max(180).nullable().optional(),
-  deliveryRadiusKm: z.number().min(0).max(50).optional(),
-  // Public-facing contact + address. Surfaces on the storefront /visit page,
-  // /locations geo pages, schema.org Restaurant JSON-LD, brand microsite
-  // footer + Maps link. NAP must be byte-identical with GBP / foodpanda
-  // (per the local-seo skill) — operator owns the canonical strings here.
+  // Public-facing contact — per brand (decision 18). Surfaces on the
+  // storefront /visit page, schema.org Restaurant JSON-LD, the brand
+  // microsite footer and every "message us" WhatsApp link.
   phone:           z.string().max(40).nullable().optional(),
   whatsapp:        z.string().max(40).nullable().optional(),
-  address:         z.string().max(500).nullable().optional(),
+  // The neighbourhood label on the storefront pill. Location has no locality
+  // column yet, so this one address-ish label is still brand-level.
   addressLocality: z.string().max(200).nullable().optional(),
+  // Expected monthly portions — the opex-per-portion denominator on recipes.
+  forecastPortionsPerMonth: z.number().int().min(0).max(10_000_000).optional(),
   // FBR / tax invoice details
   strn:             z.string().max(40).nullable().optional(),
   ntn:              z.string().max(40).nullable().optional(),
@@ -93,14 +106,30 @@ const updateConceptSchema = createConceptSchema.partial().omit({ slug: true }).e
   invoiceAddress:   z.string().max(500).nullable().optional(),
   invoicePrefix:    z.string().max(10).nullable().optional(),
   fbrPosId:         z.number().int().nullable().optional(),
+  // SRB (Sindh) POSID — without it SRB submission skips the brand.
+  srbPosId:         z.number().int().nullable().optional(),
 })
 
+/** Brand fields that moved off the brand editor, and where they live now. */
+export const MOVED_CONCEPT_FIELDS: Record<string, string> = {
+  address:          'The address is set on the kitchen\'s Location (Storefront → Locations)',
+  latitude:         'The map pin is set on the kitchen\'s Location (Storefront → Locations)',
+  longitude:        'The map pin is set on the kitchen\'s Location (Storefront → Locations)',
+  deliveryRadiusKm: 'Delivery coverage is set as delivery zones (Configuration → Delivery zones)',
+}
+
+function assertNoMovedFields(body: unknown): void {
+  if (!body || typeof body !== 'object') return
+  const hit = Object.keys(body).find((k) => k in MOVED_CONCEPT_FIELDS && (body as Record<string, unknown>)[k] !== undefined)
+  if (hit) throw new AppError('FIELD_MOVED', `${hit}: ${MOVED_CONCEPT_FIELDS[hit]}`, 422)
+}
+
 export async function conceptRoutes(fastify: FastifyInstance) {
-  // GET /concepts â€” list concepts under the active tenant
+  // GET /concepts — list concepts under the active tenant
   // Reads honour portfolio mode: when the operator has flipped to "All
   // companies", every tenant they're a member of is included via the
   // `x-servd-portfolio` header. Writes (POST/PATCH/DELETE below) stay
-  // scoped to the single active tenant â€” portfolio writes are gated at
+  // scoped to the single active tenant — portfolio writes are gated at
   // the client layer.
   // ── GET /concepts/resolve-maps-link?url=… ────────────────────────────────
   // Turns a Google Maps share link (maps.app.goo.gl/…, goo.gl/maps/…, or a
@@ -190,7 +219,7 @@ export async function conceptRoutes(fastify: FastifyInstance) {
     return concepts
   })
 
-  // GET /concepts/:id â€” must belong to the active tenant
+  // GET /concepts/:id — must belong to the active tenant
   fastify.get<{ Params: { id: string } }>('/:id', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
     const concept = await prisma.concept.findFirst({
       where: { id: req.params.id, deletedAt: null, tenantId: req.staffUser!.tenantFilter },
@@ -199,8 +228,9 @@ export async function conceptRoutes(fastify: FastifyInstance) {
     return concept
   })
 
-  // POST /concepts â€” created under the active tenant
+  // POST /concepts — created under the active tenant
   fastify.post('/', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req, reply) => {
+    assertNoMovedFields(req.body)
     const body = createConceptSchema.parse(req.body)
     const concept = await prisma.concept.create({
       data: { ...body, tenantId: req.staffUser!.tenantId! },
@@ -208,8 +238,9 @@ export async function conceptRoutes(fastify: FastifyInstance) {
     return reply.status(201).send(concept)
   })
 
-  // PATCH /concepts/:id â€” managers can edit storefront content; admin-only for structural changes
+  // PATCH /concepts/:id — managers can edit storefront content; admin-only for structural changes
   fastify.patch<{ Params: { id: string } }>('/:id', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
+    assertNoMovedFields(req.body)
     const body = updateConceptSchema.parse(req.body)
     // Verify the concept belongs to the active tenant before mutating.
     const owned = await prisma.concept.findFirst({
@@ -228,7 +259,7 @@ export async function conceptRoutes(fastify: FastifyInstance) {
     return concept
   })
 
-  // DELETE /concepts/:id (soft delete) â€” must belong to active tenant
+  // DELETE /concepts/:id (soft delete) — must belong to active tenant
   fastify.delete<{ Params: { id: string } }>('/:id', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req, reply) => {
     const owned = await prisma.concept.findFirst({
       where: { id: req.params.id, tenantId: req.staffUser!.tenantFilter, deletedAt: null },

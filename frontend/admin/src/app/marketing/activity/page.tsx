@@ -102,7 +102,7 @@ export default function MarketingActivityPage() {
           {team.length === 0 ? (
             <div className="rounded-xl p-5 text-sm text-white/45"
               style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)' }}>
-              No marketing-role users yet. Create one in <Link href="/settings" className="text-kds-green hover:underline">Settings → Staff</Link> with role = <code>marketing</code>.
+              No marketing-role users yet. Create one in <Link href="/workforce" className="text-kds-green hover:underline">Workforce</Link> with role = <code>marketing</code>.
             </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">

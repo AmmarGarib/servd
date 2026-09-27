@@ -3,7 +3,7 @@ import { useState, useEffect, useMemo, type ElementType } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import type { Concept } from '../../lib/concept'
-import { locationFor } from '../../lib/brandLocations'
+import { locationFromConcept, whatsappLink } from '../../lib/brandLocations'
 import { formatBrandName, brandSurface, brandWordmark } from '../../lib/concept'
 import { useBrandSlug, getServdHost } from '../../lib/host'
 import { isLight } from '../../lib/ui'
@@ -162,10 +162,11 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
   // The carded-nav brands keep the bar lean — just the useful stuff (Menu,
   // Book, Visit). The logo already covers "home" and the story lives in the
   // footer; everything else is killed. Other brands keep the fuller set.
-  // "Visit" goes straight to the operator's Google Maps link when one is
-  // configured (brandLocations.mapsUrl) — opens in a new tab so the site
-  // stays put. Falls back to the internal /visit page otherwise.
-  const mapsUrl = locationFor(concept.slug)?.mapsUrl
+  // "Visit" goes straight to Google Maps — the kitchen's live pin (the
+  // brand's Location, via the concept row), else the bundled API-down share
+  // link — in a new tab so the site stays put. Falls back to the internal
+  // /visit page when neither exists.
+  const mapsUrl = locationFromConcept(concept).mapsUrl
   const visitLink = mapsUrl
     ? { href: mapsUrl,          label: 'Visit', external: true }
     : { href: `${base}/visit`,  label: 'Visit', external: false }
@@ -482,11 +483,15 @@ function BrandFooter({ concept, onBrandHost, accent }: { concept: Concept; onBra
     return () => { alive = false }
   }, [concept.slug, fallback])
 
+  // Social links come from the footer config; the WhatsApp number is the
+  // brand's own (Concept.whatsapp, admin → Brands → Contact) — the ONE place
+  // it is kept, so this icon and every "message us" link agree.
+  const loc = useMemo(() => locationFromConcept(concept), [concept])
   const socials = [
     { key: 'instagram', label: 'Instagram', href: cfg.social.instagram },
     { key: 'tiktok',    label: 'TikTok',    href: cfg.social.tiktok },
     { key: 'facebook',  label: 'Facebook',  href: cfg.social.facebook },
-    { key: 'whatsapp',  label: 'WhatsApp',  href: cfg.social.whatsapp },
+    { key: 'whatsapp',  label: 'WhatsApp',  href: loc.whatsapp ? whatsappLink(loc) : undefined },
   ].filter((s) => s.href)
 
   const surface = brandSurface(concept.slug)
@@ -566,9 +571,8 @@ function BrandFooter({ concept, onBrandHost, accent }: { concept: Concept; onBra
                   (same source as the nav's Visit), else the internal page. */}
               <li>
                 {(() => {
-                  // Own lookup: this footer is a separate component from the
-                  // nav, so the nav's mapsUrl isn't in scope here.
-                  const m = locationFor(concept.slug)?.mapsUrl
+                  // Same source as the nav's Visit link.
+                  const m = loc.mapsUrl
                   return m
                     ? <a href={m} target="_blank" rel="noopener noreferrer" style={linkStyle}>Find us</a>
                     : <Link href={onBrandHost ? '/visit' : `/brand/${concept.slug}/visit`} style={linkStyle}>Find us</Link>

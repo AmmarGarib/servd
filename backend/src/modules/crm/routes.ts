@@ -4,14 +4,16 @@ import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, MANAGERS, ALL_STAFF } from '../auth/middleware.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
-import { sendEmail, sendSms } from '../../lib/notify.js'
+import { sendEmail, whatsappNumber } from '../../lib/notify.js'
 import { sendText } from '../../lib/whatsapp.js'
-import { reachableCustomer, companyAudience, unsubscribeUrl } from '../../lib/marketingAudience.js'
-import { computeAllSegments, getSegmentsWithMembers } from './segmentComputation.js'
+import { reachableAtCompany, companyAudience, unsubscribeUrl } from '../../lib/marketingAudience.js'
+import {
+  computeAllSegments, getSegmentsWithMembers, companySegments, segmentMemberIds, isSegmentSlug, SEGMENT_DEFS,
+} from './segmentComputation.js'
 import { deliverToCustomer } from '../../lib/customer-channels.js'
 import { scopeTenantWhere, assertConceptOwned, conceptIdsInScope, type TenantIdWhere } from '../../lib/tenantScope.js'
 import {
-  customerScopeWhere, customerOfCompanies, findCustomerInScope, tenantIdsOf,
+  customerOfCompanies, findCustomerInScope, tenantIdsOf,
   strikeCompanies, banCompanies, inCompanies, userOfCompanies,
 } from './customerScope.js'
 
@@ -43,46 +45,33 @@ function trackedText(body: string, sendId: string, apiBase: string): string {
   return body.replace(URL_RX, (m) => trackUrl(m, sendId, apiBase))
 }
 
-const segmentFilterSchema = z.object({
-  minSpendCents: z.number().int().optional(),
-  maxSpendCents: z.number().int().optional(),
-  minOrders: z.number().int().optional(),
-  daysSinceLastOrder: z.number().int().optional(),
-  preferredConceptId: z.string().uuid().optional(),
-})
-
+// Channels: email and WhatsApp only (owner decision 17 — Twilio SMS is gone).
+// A campaign targets one customer segment (./segmentComputation.ts) or, with
+// none, everyone reachable in the chosen brands.
 const createCampaignSchema = z
   .object({
     name: z.string().min(1),
-    segmentId: z.string().uuid().nullable().optional(),
-    channel: z.enum(['email', 'sms', 'whatsapp']),
+    segment: z.string().max(40).nullable().optional(),
+    channel: z.enum(['email', 'whatsapp']),
     subject: z.string().optional(),
     body: z.string().min(1),
     scheduledAt: z.string().datetime().optional(),
-    // Empty or omitted = every brand.
+    // Empty or omitted = every brand of the active company.
     conceptIds: z.array(z.string().uuid()).max(50).optional(),
   })
   .refine((d) => d.channel !== 'email' || (d.subject && d.subject.length > 0), {
     message: 'subject is required for email campaigns',
     path: ['subject'],
   })
+  .refine((d) => !d.segment || isSegmentSlug(d.segment), { message: 'unknown segment', path: ['segment'] })
 
 const safeCustomerSelect = {
   id: true, name: true, email: true, phone: true,
   marketingOptIn: true, birthdayMmDd: true,
   firstOrderAt: true, lastOrderAt: true,
   totalSpentCents: true, walletBalance: true,
-  isBlacklisted: true, blacklistReason: true,
   preferredConceptId: true, createdAt: true, updatedAt: true,
 } as const
-
-type SegmentFilters = {
-  minSpendCents?: number
-  maxSpendCents?: number
-  minOrders?: number
-  daysSinceLastOrder?: number
-  preferredConceptId?: string
-}
 
 type CompanyStat = { id: string; n: number; spent: number; lastAt: Date | null }
 
@@ -113,70 +102,79 @@ async function companyConceptIds(tenantId: string | null): Promise<string[]> {
   return rows.map((r) => r.id)
 }
 
+// ─── Campaign → segment ───────────────────────────────────────────────────────
+// Campaign.segmentId still points at the legacy `segments` table, and there is
+// no column yet for a CustomerSegment (see report: Campaign.customerSegment).
+// Until it lands, a campaign's segment is recorded as a pointer row in
+// `segments` for the campaign's company — name `segment:<slug>`, filters
+// { customerSegment: <slug> } — and these two functions are the only code that
+// knows that. Saved-filter segments are gone; a legacy campaign still bound to
+// one cannot be sent (it would silently widen to everyone).
+
+const POINTER_PREFIX = 'segment:'
+
+async function segmentPointerId(tenantId: string, slug: string): Promise<string> {
+  const name = `${POINTER_PREFIX}${slug}`
+  const found = await prisma.segment.findFirst({ where: { tenantId, name }, select: { id: true } })
+  if (found) return found.id
+  const created = await prisma.segment.create({
+    data: { tenantId, name, description: 'Customer segment (see /crm/segments)', filters: { customerSegment: slug } },
+    select: { id: true },
+  })
+  return created.id
+}
+
+/** The customer segment a campaign targets: null = none, 'legacy' = an old saved filter. */
+function campaignSegmentOf(segment: { filters: unknown } | null | undefined): string | null | 'legacy' {
+  if (!segment) return null
+  const f = segment.filters as { customerSegment?: unknown } | null
+  return typeof f?.customerSegment === 'string' && isSegmentSlug(f.customerSegment) ? f.customerSegment : 'legacy'
+}
+
+const segmentName = (slug: string | null | 'legacy'): string | null =>
+  slug === null ? null : slug === 'legacy' ? 'Old saved filter (retarget before sending)' : (SEGMENT_DEFS.find((d) => d.slug === slug)?.name ?? slug)
+
 /**
- * The recipient filter for a campaign: reachable (opt-out model) ∩ the owning
- * company's brand audience ∩ segment filters ∩ has a contact for the channel.
- * Shared by the audience preview and the real send so the number shown is the
- * number sent. `companyConcepts` is every brand of the campaign's company; an
- * empty `conceptIds` means all of those, never the platform.
+ * The recipient filter for a campaign — reachable at the owning company
+ * (lib/marketingAudience.ts: opt-out model, this company's bans) ∩ the
+ * company's brand audience ∩ the segment's members ∩ has a contact for the
+ * channel. Shared by the audience preview and the real send so the number
+ * shown is the number sent. An empty `conceptIds` means every brand of the
+ * company, never the platform.
  */
 async function campaignAudienceWhere(c: {
+  tenantId: string
   companyConcepts: string[]
   conceptIds?: string[] | null
-  segment?: { filters: unknown } | null
+  segment?: string | null
   channel?: string | null
 }): Promise<Prisma.CustomerWhereInput> {
-  const f = (c.segment?.filters ?? null) as SegmentFilters | null
-  const and: Prisma.CustomerWhereInput[] = [reachableCustomer, companyAudience(c.companyConcepts, c.conceptIds)]
+  const and: Prisma.CustomerWhereInput[] = [await reachableAtCompany(c.tenantId), companyAudience(c.companyConcepts, c.conceptIds)]
   if (c.channel === 'email') and.push({ email: { not: null } })
   if (c.channel === 'sms' || c.channel === 'whatsapp') and.push({ phone: { not: null } })
-  if (f?.preferredConceptId) {
-    and.push(c.companyConcepts.includes(f.preferredConceptId) ? { preferredConceptId: f.preferredConceptId } : { id: { in: [] } })
-  }
-  const needsStats = f && (f.minSpendCents !== undefined || f.maxSpendCents !== undefined
-    || f.daysSinceLastOrder !== undefined || (f.minOrders !== undefined && f.minOrders > 0))
-  if (f && needsStats) {
-    // Spend / order count / recency at THIS company's brands. Resolved to ids
-    // up front: Prisma cannot filter on a relation aggregate.
-    const stats = await companyCustomerStats(c.companyConcepts)
-    const include = (pred: (s: CompanyStat) => boolean) => and.push({ id: { in: stats.filter(pred).map((s) => s.id) } })
-    if (f.minSpendCents !== undefined) include((s) => s.spent >= f.minSpendCents!)
-    if (f.maxSpendCents !== undefined) {
-      // Customers with no orders here have spent 0, so they stay in.
-      and.push({ id: { notIn: stats.filter((s) => s.spent > f.maxSpendCents!).map((s) => s.id) } })
-    }
-    if (f.daysSinceLastOrder !== undefined) {
-      const cutoff = Date.now() - f.daysSinceLastOrder * 86_400_000
-      include((s) => !!s.lastAt && s.lastAt.getTime() < cutoff)
-    }
-    if (f.minOrders !== undefined && f.minOrders > 0) include((s) => s.n >= f.minOrders!)
-  }
+  if (c.segment) and.push({ id: { in: await segmentMemberIds(c.segment, [c.tenantId]) } })
   return { AND: and }
 }
 
-const isVip = (x: CompanyStat) => x.spent >= 5_000_000          // PKR 50,000 (decision 16)
-const isRepeat = (x: CompanyStat) => x.n >= 2
-const isFrequent = (x: CompanyStat) => x.n >= 3
-const isOneTime = (x: CompanyStat) => x.n === 1
-const isDormant = (x: CompanyStat, cutoff: Date) => !!x.lastAt && x.lastAt < cutoff
-
 /**
- * "Zero orders" for a company: people connected to it — booked at one of its
- * brands, or signed up through one (preferred brand) — who have no completed
- * order at any of its brands.
+ * Each customer's active ban raised by one of these companies (decision 15),
+ * keyed by customer. Ban attribution: crm/customerScope.banCompanies.
  */
-function zeroOrdersWhere(conceptIds: string[]): Prisma.CustomerWhereInput {
-  return {
-    deletedAt: null,
-    AND: [
-      { OR: [
-        { preferredConceptId: { in: conceptIds } },
-        { reservations: { some: { conceptId: { in: conceptIds } } } },
-        { orders: { some: { conceptId: { in: conceptIds }, deletedAt: null } } },
-      ] },
-      { orders: { none: { conceptId: { in: conceptIds }, status: 'completed', deletedAt: null } } },
-    ],
+async function bansInScope(customerIds: string[], scope: string[]): Promise<Map<string, { id: string; reason: string; bannedAt: Date }>> {
+  const out = new Map<string, { id: string; reason: string; bannedAt: Date }>()
+  if (customerIds.length === 0) return out
+  const now = new Date()
+  const bans = await prisma.customerBan.findMany({
+    where: { customerId: { in: customerIds }, liftedAt: null, OR: [{ expiresAt: null }, { expiresAt: { gt: now } }] },
+    select: { id: true, customerId: true, bannedById: true, reason: true, bannedAt: true },
+    orderBy: { bannedAt: 'desc' },
+  })
+  const bc = await banCompanies(bans)
+  for (const b of bans) {
+    if (!b.customerId || out.has(b.customerId)) continue
+    if (inCompanies(bc.get(b.id), scope, true)) out.set(b.customerId, { id: b.id, reason: b.reason, bannedAt: b.bannedAt })
   }
+  return out
 }
 
 /**
@@ -234,6 +232,8 @@ export async function crmRoutes(fastify: FastifyInstance) {
 
     const hasMore = customers.length > limit
     if (hasMore) customers.pop()
+    // Blocked = an active ban raised by this company (decision 15).
+    const bans = await bansInScope(customers.map((c) => c.id), tenantIdsOf(t))
 
     // PII-export audit + threshold flag — bulk customer reads above the
     // operator's threshold fire a flag so the owner can spot exfiltration.
@@ -254,7 +254,11 @@ export async function crmRoutes(fastify: FastifyInstance) {
       }
     }
 
-    return { data: customers, cursor: hasMore ? (customers[customers.length - 1]?.id ?? null) : null, hasMore }
+    return {
+      data: customers.map((c) => ({ ...c, activeBan: bans.get(c.id) ?? null })),
+      cursor: hasMore ? (customers[customers.length - 1]?.id ?? null) : null,
+      hasMore,
+    }
   })
 
   // GET /crm/customers/:id
@@ -277,14 +281,15 @@ export async function crmRoutes(fastify: FastifyInstance) {
             where: { concept: { ...t, deletedAt: null } },
             orderBy: { placedAt: 'desc' },
             take: 20,
-            include: { concept: { select: { name: true } } },
+            include: { concept: { select: { name: true } }, items: { select: { name: true, quantity: true } } },
           },
           loyaltyAccount: { include: { transactions: { take: 10, orderBy: { createdAt: 'desc' } } } },
           preferredConcept: { select: { name: true, slug: true } },
         },
       })
       if (!customer) throw new NotFoundError('Customer', req.params.id)
-      return customer
+      const bans = await bansInScope([customer.id], tenantIdsOf(t))
+      return { ...customer, activeBan: bans.get(customer.id) ?? null }
     },
   )
 
@@ -310,8 +315,7 @@ export async function crmRoutes(fastify: FastifyInstance) {
           ...customerOfCompanies(t),
         },
         select: {
-          id: true, name: true, email: true, phone: true, isBlacklisted: true,
-          blacklistReason: true, birthdayMmDd: true,
+          id: true, name: true, email: true, phone: true, birthdayMmDd: true,
           firstOrderAt: true, lastOrderAt: true, lastVisitAt: true,
           totalSpentCents: true, walletBalance: true, staffNotes: true,
           // Rollup fields — denormalized so this endpoint is fast.
@@ -320,7 +324,7 @@ export async function crmRoutes(fastify: FastifyInstance) {
           lastReviewedAt: true,
           // Naughty list — surfaced front-and-center so a host opening a
           // reservation immediately sees risk + recent strike history.
-          strikeCount: true, bannedAt: true,
+          strikeCount: true,
           loyaltyAccount: { select: { tier: true, pointsBalance: true, lifetimePoints: true } },
           preferredConcept: { select: { name: true, slug: true } },
         },
@@ -370,8 +374,8 @@ export async function crmRoutes(fastify: FastifyInstance) {
         }),
         prisma.customerSegmentMembership.findMany({
           where: { customerId: customer.id },
-          select: { segment: { select: { name: true } } },
-        }).catch(() => [] as Array<{ segment: { name: string } | null }>),
+          select: { segment: { select: { name: true, slug: true } } },
+        }).catch(() => [] as Array<{ segment: { name: string; slug: string } | null }>),
         prisma.customerStrike.findMany({
           where: { customerId: customer.id },
           orderBy: { recordedAt: 'desc' },
@@ -390,10 +394,15 @@ export async function crmRoutes(fastify: FastifyInstance) {
         .slice(0, 5)
         .map(({ customerId: _c, sourceType: _t, sourceId: _s, recordedById: _r, ...rest }) => rest)
 
+      // This company's segments and this company's ban only.
+      const ban = (await bansInScope([customer.id], scope)).get(customer.id) ?? null
+      const ours = (slug: string) => scope.some((tid) => slug.endsWith(`.${tid}`))
       return {
         ...customer,
+        bannedAt: ban?.bannedAt ?? null,
+        activeBan: ban,
         recent: { orders, reservations, openComplaints: complaints, reviews, strikes: recentStrikes },
-        segments: segments.map((s) => s.segment?.name).filter((n): n is string => n != null),
+        segments: [...new Set(segments.filter((s) => s.segment && ours(s.segment.slug)).map((s) => s.segment!.name))],
       }
     },
   )
@@ -418,148 +427,31 @@ export async function crmRoutes(fastify: FastifyInstance) {
     },
   )
 
-  // POST /crm/segments — a saved filter belongs to the ACTIVE company.
-  fastify.post('/segments', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
-    const body = z
-      .object({ name: z.string().min(1), description: z.string().optional(), filters: segmentFilterSchema })
-      .parse(req.body)
-    const own = await scopeTenantWhere(req, 'create')
-    if (typeof own.tenantId !== 'string') throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company before saving a segment', 422)
-    if (body.filters.preferredConceptId) await assertConceptOwned(req, body.filters.preferredConceptId, 'create')
-    const segment = await prisma.segment.create({ data: { ...body, filters: body.filters, tenantId: own.tenantId } })
-    return reply.status(201).send(segment)
-  })
-
-  // GET /crm/segments
-  fastify.get('/segments', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
-    return prisma.segment.findMany({ where: await scopeTenantWhere(req, 'read'), orderBy: { name: 'asc' } })
-  })
-
-  // GET /crm/smart-segments — auto-computed live counts, for THIS company:
-  // customers who ordered or booked at its brands, with spend / order count /
-  // recency measured at its brands only (the customer rollups are global).
-  // Definitions follow owner decision 16: VIP = PKR 50k lifetime spend,
-  // dormant (lapsed) = no order in 60 days with at least one earlier order.
-  fastify.get('/smart-segments', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
-    const now = new Date()
-    const d30 = new Date(now.getTime() - 30 * 86_400_000)
-    const d60 = new Date(now.getTime() - 60 * 86_400_000)
-    const d10 = new Date(now.getTime() - 10 * 86_400_000)
-
+  // GET /crm/summary — the customer KPIs and segment counts for the companies
+  // in view: total customers, repeat rate (3+ orders), average order value,
+  // and every segment's size (./segmentComputation.ts — the one segment
+  // system; the old live-counted /crm/smart-segments is gone). Spend and
+  // order counts are measured at the companies' own brands.
+  fastify.get('/summary', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
+    const t = await scopeTenantWhere(req, 'read')
     const conceptIds = await conceptIdsInScope(req, 'read')
-    const inScope = await customerScopeWhere(req, 'read')
-
-    const [stats, newCustomers, zeroOrders, totalCustomers, cartAbandonerCount] = await Promise.all([
+    const [stats, totalCustomers, segments] = await Promise.all([
       companyCustomerStats(conceptIds),
-      prisma.customer.count({ where: { createdAt: { gte: d30 }, deletedAt: null, ...inScope } }),
-      prisma.customer.count({ where: zeroOrdersWhere(conceptIds) }),
-      prisma.customer.count({ where: { deletedAt: null, ...inScope } }),
-      prisma.abandonedCart.count({ where: { abandonedAt: { gte: d10 }, recoveredAt: null, conceptId: { in: conceptIds } } }),
+      prisma.customer.count({ where: { deletedAt: null, ...customerOfCompanies(t) } }),
+      companySegments(tenantIdsOf(t)),
     ])
-    const count = (pred: (x: CompanyStat) => boolean) => stats.filter(pred).length
-    const totalWithOrders = stats.length
-    const revenue = stats.reduce((sum, x) => sum + x.spent, 0)
-    const frequent = count(isFrequent)
-
-    const avgOrderValue = totalWithOrders > 0 ? Math.round(revenue / totalWithOrders) : 0
-    const repeatRate = totalWithOrders > 0 ? Math.round((frequent / totalWithOrders) * 100) : 0
-
+    const withOrders = stats.length
+    const orders = stats.reduce((n, x) => n + x.n, 0)
+    const revenue = stats.reduce((n, x) => n + x.spent, 0)
     return {
       summary: {
         totalCustomers,
-        repeatRate,
-        avgOrderValueCents: avgOrderValue,
+        repeatRate: withOrders > 0 ? Math.round((stats.filter((x) => x.n >= 3).length / withOrders) * 100) : 0,
+        avgOrderValueCents: orders > 0 ? Math.round(revenue / orders) : 0,
       },
-      segments: [
-        { key: 'new', label: 'New Customers', desc: 'Joined in last 30 days', count: newCustomers },
-        { key: 'vip', label: 'VIP Customers', desc: 'Spent 50k PKR+', count: count(isVip) },
-        { key: 'repeat', label: 'Repeat Buyers', desc: 'More than 1 order', count: count(isRepeat) },
-        { key: 'zero', label: 'Zero Orders', desc: 'Never ordered', count: zeroOrders },
-        { key: 'dormant', label: 'Dormant Customers', desc: 'No orders in 60 days', count: count((x) => isDormant(x, d60)) },
-        { key: 'frequent', label: 'Frequent Buyers', desc: '3+ orders', count: frequent },
-        { key: 'cart_abandoners', label: 'Cart Abandoners', desc: 'Left items in cart (10 days)', count: cartAbandonerCount },
-        { key: 'one_time', label: 'One-time Buyers', desc: 'Only one order placed', count: count(isOneTime) },
-      ],
+      segments: segments.map((sg) => ({ key: sg.slug, label: sg.name, desc: sg.description, count: sg.memberCount, lastComputedAt: sg.lastComputedAt })),
     }
   })
-
-  // GET /crm/smart-segments/:key — this company's customers in a smart segment
-  fastify.get<{ Params: { key: string }; Querystring: { limit?: string } }>(
-    '/smart-segments/:key',
-    { preHandler: requireAuth(...MANAGERS) },
-    async (req) => {
-      const limit = Math.min(parseInt(req.query.limit ?? '100', 10), 500)
-      const now = new Date()
-      const d30 = new Date(now.getTime() - 30 * 86_400_000)
-      const d60 = new Date(now.getTime() - 60 * 86_400_000)
-      const d10 = new Date(now.getTime() - 10 * 86_400_000)
-
-      const baseSelect = { id: true, name: true, phone: true, email: true, totalSpentCents: true, lastOrderAt: true, createdAt: true, loyaltyAccount: { select: { pointsBalance: true, tier: true } }, walletBalance: true, isBlacklisted: true }
-      const conceptIds = await conceptIdsInScope(req, 'read')
-      const inScope = await customerScopeWhere(req, 'read')
-
-      // Spend and last order are shown as measured at THIS company's brands.
-      const withCompanyStats = async <T extends { id: string; totalSpentCents: number; lastOrderAt: Date | null }>(rows: T[]) => {
-        const st = new Map((await companyCustomerStats(conceptIds, rows.map((r) => r.id))).map((x) => [x.id, x]))
-        return rows.map((r) => ({ ...r, totalSpentCents: st.get(r.id)?.spent ?? 0, lastOrderAt: st.get(r.id)?.lastAt ?? null }))
-      }
-
-      const key = req.params.key
-      if (key === 'new') {
-        return withCompanyStats(await prisma.customer.findMany({ where: { createdAt: { gte: d30 }, deletedAt: null, ...inScope }, select: baseSelect, take: limit }))
-      }
-      if (key === 'zero') {
-        return withCompanyStats(await prisma.customer.findMany({ where: zeroOrdersWhere(conceptIds), select: baseSelect, take: limit }))
-      }
-      if (key === 'cart_abandoners') {
-        return prisma.abandonedCart.findMany({
-          where: { abandonedAt: { gte: d10 }, recoveredAt: null, conceptId: { in: conceptIds } },
-          take: limit,
-          select: { customerId: true, customerPhone: true, customerEmail: true, subtotalCents: true },
-        })
-      }
-
-      const preds: Record<string, (x: CompanyStat) => boolean> = {
-        vip: isVip,
-        dormant: (x) => isDormant(x, d60),
-        frequent: isFrequent,
-        one_time: isOneTime,
-        repeat: isRepeat,
-      }
-      const pred = preds[key] ?? preds['repeat']!
-      const ids = (await companyCustomerStats(conceptIds)).filter(pred).map((x) => x.id)
-      const rows = await prisma.customer.findMany({ where: { id: { in: ids }, deletedAt: null }, select: baseSelect, take: limit })
-      return withCompanyStats(rows)
-    },
-  )
-
-  // PATCH /crm/customers/:id/blacklist
-  fastify.patch<{ Params: { id: string }; Body: { isBlacklisted: boolean; reason?: string } }>(
-    '/customers/:id/blacklist',
-    { preHandler: requireAuth(...MANAGERS) },
-    async (req, reply) => {
-      const { isBlacklisted, reason } = z.object({
-        isBlacklisted: z.boolean(),
-        reason: z.string().optional(),
-      }).parse(req.body)
-      // Only allow blacklisting customers that have ordered from one of our
-      // tenant's concepts. (Customer is a global table; this prevents one
-      // tenant from globally blacklisting another tenant's customer.)
-      const t = await scopeTenantWhere(req, 'write')
-      const owned = await prisma.customer.findFirst({
-        where: {
-          id: req.params.id,
-          orders: { some: { concept: { ...t, deletedAt: null } } },
-        },
-      })
-      if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Customer not found in your active company' } })
-      return prisma.customer.update({
-        where: { id: req.params.id },
-        data: { isBlacklisted, blacklistReason: isBlacklisted ? (reason ?? null) : null },
-        select: safeCustomerSelect,
-      })
-    },
-  )
 
   // POST /crm/campaigns — a campaign belongs to the ACTIVE company. Every brand
   // it names must be one of that company's (404 otherwise); none named means
@@ -570,20 +462,20 @@ export async function crmRoutes(fastify: FastifyInstance) {
     if (typeof own.tenantId !== 'string') throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company before creating a campaign', 422)
     const conceptIds = [...new Set(body.conceptIds ?? [])]
     for (const id of conceptIds) await assertConceptOwned(req, id, 'create')
-    if (body.segmentId) {
-      const seg = await prisma.segment.findFirst({ where: { id: body.segmentId, tenantId: own.tenantId }, select: { id: true } })
-      if (!seg) throw new NotFoundError('Segment', body.segmentId)
-    }
+    const { segment, ...fields } = body
     const campaign = await prisma.campaign.create({
       data: {
-        ...body,
+        ...fields,
         conceptIds,
         tenantId: own.tenantId,
-        status: body.scheduledAt ? 'scheduled' : 'draft',
-        scheduledAt: body.scheduledAt ? new Date(body.scheduledAt) : null,
+        segmentId: segment ? await segmentPointerId(own.tenantId, segment) : null,
+        // Nothing sends scheduled campaigns yet (Campaign.scheduledAt is read by
+        // no worker), so a campaign is a draft until someone presses send.
+        status: 'draft',
+        scheduledAt: null,
       },
     })
-    return reply.status(201).send(campaign)
+    return reply.status(201).send({ ...campaign, segment: segment ? { slug: segment, name: segmentName(segment) } : null })
   })
 
   // POST /crm/campaigns/:id/send — immediately broadcast
@@ -599,11 +491,17 @@ export async function crmRoutes(fastify: FastifyInstance) {
       })
       if (!campaign) throw new NotFoundError('Campaign', req.params.id)
 
+      if (!campaign.tenantId) throw new NotFoundError('Campaign', req.params.id)
+      // A segment row of another company is never trusted: no audience at all.
+      const seg = campaign.segment && campaign.segment.tenantId !== campaign.tenantId ? 'legacy' : campaignSegmentOf(campaign.segment)
+      if (seg === 'legacy') {
+        throw new AppError('LEGACY_SEGMENT', 'This campaign targets an old saved filter. Create it again with a segment from /crm/segments.', 422)
+      }
       const where = await campaignAudienceWhere({
+        tenantId: campaign.tenantId,
         companyConcepts: await companyConceptIds(campaign.tenantId),
         conceptIds: campaign.conceptIds,
-        // A segment of another company is ignored rather than trusted.
-        segment: campaign.segment && campaign.segment.tenantId === campaign.tenantId ? campaign.segment : null,
+        segment: seg,
         channel: campaign.channel,
       })
       const recipientCount = await prisma.customer.count({ where })
@@ -645,13 +543,10 @@ export async function crmRoutes(fastify: FastifyInstance) {
                 const html = trackedHtml(campaign.body, send.id, apiBase) +
                   `<p style="font-size:11px;color:#888;margin-top:24px">Don't want these? <a href="${stop}">Unsubscribe</a>.</p>`
                 await sendEmail(c.email, campaign.subject ?? campaign.name, html)
-              } else if (campaign.channel === 'whatsapp' && c.phone) {
-                // Through the configured WhatsApp gateway. This used to call
-                // sendSms (Twilio), which is not configured, so every WhatsApp
-                // campaign failed one recipient at a time.
-                await sendText(c.phone, `${trackedText(campaign.body, send.id, apiBase)}\n\nStop these messages: ${stop}`)
-              } else if (campaign.channel === 'sms' && c.phone) {
-                await sendSms(c.phone, `${trackedText(campaign.body, send.id, apiBase)} Stop: ${stop}`)
+              } else if ((campaign.channel === 'whatsapp' || campaign.channel === 'sms') && c.phone) {
+                // Phone messages go through the WhatsApp gateway (owner
+                // decision 17). A legacy 'sms' campaign is sent the same way.
+                await sendText(whatsappNumber(c.phone), `${trackedText(campaign.body, send.id, apiBase)}\n\nStop these messages: ${stop}`)
               } else {
                 await prisma.campaignSend.update({ where: { id: send.id }, data: { status: 'failed', errorMsg: 'no contact for channel' } })
                 continue
@@ -680,19 +575,18 @@ export async function crmRoutes(fastify: FastifyInstance) {
   // GET /crm/campaigns/audience — how many people a campaign would reach, so
   // the operator sees the number before pressing send rather than after.
   // Previewed for the ACTIVE company, the one a new campaign is created in.
-  fastify.get<{ Querystring: { conceptIds?: string; segmentId?: string; channel?: string } }>(
+  fastify.get<{ Querystring: { conceptIds?: string; segment?: string; channel?: string } }>(
     '/campaigns/audience',
     { preHandler: requireAuth(...MANAGERS) },
     async (req) => {
       const own = await scopeTenantWhere(req, 'create')
+      if (typeof own.tenantId !== 'string') throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company first', 422)
       const conceptIds = [...new Set((req.query.conceptIds ?? '').split(',').filter(Boolean))]
       for (const id of conceptIds) await assertConceptOwned(req, id, 'create')
-      const segment = req.query.segmentId
-        ? await prisma.segment.findFirst({ where: { id: req.query.segmentId, ...own } })
-        : null
-      if (req.query.segmentId && !segment) throw new NotFoundError('Segment', req.query.segmentId)
-      const companyConcepts = await companyConceptIds(typeof own.tenantId === 'string' ? own.tenantId : null)
-      const where = await campaignAudienceWhere({ companyConcepts, conceptIds, segment, channel: req.query.channel ?? null })
+      const segment = req.query.segment || null
+      if (segment && !isSegmentSlug(segment)) throw new NotFoundError('Segment', segment)
+      const companyConcepts = await companyConceptIds(own.tenantId)
+      const where = await campaignAudienceWhere({ tenantId: own.tenantId, companyConcepts, conceptIds, segment, channel: req.query.channel ?? null })
       const [total, optedOut] = await Promise.all([
         prisma.customer.count({ where }),
         prisma.customer.count({
@@ -705,60 +599,50 @@ export async function crmRoutes(fastify: FastifyInstance) {
 
   // GET /crm/campaigns — this company's campaigns only.
   fastify.get('/campaigns', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
-    return prisma.campaign.findMany({
+    const rows = await prisma.campaign.findMany({
       where: await scopeTenantWhere(req, 'read'),
-      include: { segment: { select: { name: true } } },
+      include: { segment: { select: { filters: true } } },
       orderBy: { createdAt: 'desc' },
+    })
+    return rows.map(({ segment, ...c }) => {
+      const slug = campaignSegmentOf(segment)
+      return { ...c, segment: slug ? { slug, name: segmentName(slug) } : null }
     })
   })
 
-  // GET /crm/behavioral-segments — all 15 computed segments, counted over THIS
-  // company's customers. Memberships are computed platform-wide (the table has
-  // no company column), so the count and member list are narrowed at read.
+  // GET /crm/behavioral-segments — every segment, computed per company, for
+  // the companies in view (portfolio mode sums them).
   fastify.get(
     '/behavioral-segments',
     { preHandler: requireAuth(...MANAGERS) },
     async (req) => {
-      const inScope = await customerScopeWhere(req, 'read')
-      const [segments, counts] = await Promise.all([
-        prisma.customerSegment.findMany({
-          select: {
-            id: true, slug: true, name: true, description: true,
-            color: true, emoji: true, memberCount: true, lastComputedAt: true,
-          },
-        }),
-        prisma.customerSegmentMembership.groupBy({
-          by: ['segmentId'],
-          where: { customer: { deletedAt: null, ...inScope } },
-          _count: { _all: true },
-        }),
-      ])
-      const n = new Map(counts.map((c) => [c.segmentId, c._count._all]))
-      return segments
-        .map((sg) => ({ ...sg, memberCount: n.get(sg.id) ?? 0 }))
-        .sort((x, y) => y.memberCount - x.memberCount || x.name.localeCompare(y.name))
+      const segments = await companySegments(tenantIdsOf(await scopeTenantWhere(req, 'read')))
+      return segments.sort((x, y) => y.memberCount - x.memberCount || x.name.localeCompare(y.name))
     },
   )
 
-  // GET /crm/behavioral-segments/:slug/members — this company's customers only.
+  // GET /crm/behavioral-segments/:slug/members — members at the companies in view.
   fastify.get<{ Params: { slug: string }; Querystring: { limit?: string } }>(
     '/behavioral-segments/:slug/members',
     { preHandler: requireAuth(...MANAGERS) },
     async (req) => {
       const limit = Math.min(parseInt(req.query.limit ?? '200', 10), 500)
-      return getSegmentsWithMembers(req.params.slug, limit, { deletedAt: null, ...(await customerScopeWhere(req, 'read')) })
+      if (!isSegmentSlug(req.params.slug)) throw new NotFoundError('Segment', req.params.slug)
+      return getSegmentsWithMembers(req.params.slug, tenantIdsOf(await scopeTenantWhere(req, 'read')), limit)
     },
   )
 
-  // POST /crm/behavioral-segments/compute — trigger recomputation (admin/manager)
+  // POST /crm/behavioral-segments/compute — recompute now, for the companies
+  // the operator can write to.
   fastify.post(
     '/behavioral-segments/compute',
     { preHandler: requireAuth(...MANAGERS) },
-    async (_, reply) => {
+    async (req, reply) => {
+      const tenantIds = tenantIdsOf(await scopeTenantWhere(req, 'write'))
       // Fire and forget — client polls /behavioral-segments for updated counts
       setImmediate(async () => {
         try {
-          await computeAllSegments()
+          await computeAllSegments(tenantIds)
         } catch (err) {
           console.error('[segments] Manual compute failed:', (err as Error).message)
         }
@@ -948,7 +832,6 @@ export async function crmRoutes(fastify: FastifyInstance) {
             { OR: [
               { bannedAt:    { not: null } },
               { strikeCount: { gt: 0 } },
-              { isBlacklisted: true },
             ] },
           ],
           ...(bannedOnly && { bannedAt: { not: null } }),
@@ -956,7 +839,6 @@ export async function crmRoutes(fastify: FastifyInstance) {
         select: {
           id: true, name: true, email: true, phone: true,
           strikeCount: true, bannedAt: true,
-          isBlacklisted: true, blacklistReason: true,
           totalSpentCents: true, lastOrderAt: true,
         },
         orderBy: [{ bannedAt: 'desc' }, { strikeCount: 'desc' }],
@@ -977,12 +859,14 @@ export async function crmRoutes(fastify: FastifyInstance) {
       const [sc, bc] = await Promise.all([strikeCompanies(strikeRows), banCompanies(banRows)])
       const strikes = strikeRows.filter((st) => inCompanies(sc.get(st.id), scope, true))
       const ourActiveBan = new Map<string, Date>()
-      const hasAnyBan = new Set<string>()
+      const ourActiveBanId = new Map<string, string>()
       for (const b of banRows) {
         if (!b.customerId) continue
-        hasAnyBan.add(b.customerId)
         const active = !b.liftedAt && (!b.expiresAt || b.expiresAt > now)
-        if (active && inCompanies(bc.get(b.id), scope, true) && !ourActiveBan.has(b.customerId)) ourActiveBan.set(b.customerId, b.bannedAt)
+        if (active && inCompanies(bc.get(b.id), scope, true) && !ourActiveBan.has(b.customerId)) {
+          ourActiveBan.set(b.customerId, b.bannedAt)
+          ourActiveBanId.set(b.customerId, b.id)
+        }
       }
 
       // Group + summarise per customer
@@ -1001,11 +885,11 @@ export async function crmRoutes(fastify: FastifyInstance) {
           const bannedAt = ourActiveBan.get(c.id) ?? null
           return {
             customer: { ...c, bannedAt, strikeCount: active.reduce((n, st) => n + st.severity, 0) },
+            activeBanId: ourActiveBanId.get(c.id) ?? null,
             activeStrikes: active.length,
             totalStrikes:  list.length,
             strikes: list.slice(0, 10),    // most recent 10 for the row
-            // A legacy blacklist flag with no ban row behind it is shown as is.
-            _keep: list.length > 0 || !!bannedAt || (c.isBlacklisted && !hasAnyBan.has(c.id)),
+            _keep: list.length > 0 || !!bannedAt,
           }
         })
         .filter((r) => r._keep && (!bannedOnly || r.customer.bannedAt))
@@ -1128,8 +1012,9 @@ export async function crmRoutes(fastify: FastifyInstance) {
           liftReason:  body.reason,
         },
       })
-      // Sync the denormalized customer flag — only when no other ban on the
+      // Sync the denormalized customer flags — only when no other ban on the
       // customer is still active (another company's ban stays in force).
+      // isBlacklisted is written for old readers only; nothing here reads it.
       if (ban.customerId) {
         const now = new Date()
         const stillBanned = await prisma.customerBan.findFirst({
@@ -1147,10 +1032,11 @@ export async function crmRoutes(fastify: FastifyInstance) {
     },
   )
 
-  // POST /crm/bans — operator-initiated ban. For when a customer hasn't hit
-  // 3 strikes yet but they've done something egregious. Doesn't bypass the
-  // strikes — just creates the ban directly. Only a customer of the ACTIVE
-  // company; the ban is attributed to it through bannedById.
+  // POST /crm/bans — operator-initiated ban: the CRM "Block" button, and the
+  // naughty list. The ONE way to block a customer (owner decision 15: it
+  // applies at the active company's brands only; lift it with
+  // /crm/bans/:id/lift). Only a customer of the ACTIVE company; the ban is
+  // attributed to it through bannedById.
   fastify.post(
     '/bans',
     { preHandler: requireAuth(...MANAGERS) },
@@ -1181,13 +1067,22 @@ export async function crmRoutes(fastify: FastifyInstance) {
       }
       // A known customer must be one this company has served. (An unknown
       // contact becomes a watchlist entry with no customer attached.)
-      if (customerId) await findCustomerInScope(req, customerId, 'create')
+      const known = customerId ? await findCustomerInScope(req, customerId, 'create') : null
+      // One active ban per customer per company is enough: blocking twice
+      // returns the ban already in force.
+      if (known) {
+        const existing = (await bansInScope([known.id], tenantIdsOf(await scopeTenantWhere(req, 'create')))).get(known.id)
+        if (existing) return reply.status(200).send(await prisma.customerBan.findUnique({ where: { id: existing.id } }))
+      }
 
       const ban = await prisma.customerBan.create({
         data: {
           customerId,
-          email:      body.email?.toLowerCase() ?? null,
-          phone:      body.phone ?? null,
+          // The fingerprints come from the customer record when the body names
+          // only the customer. A ban with no email or phone never matched the
+          // signup / reservation gates, so "block" left those doors open.
+          email:      (body.email ?? known?.email)?.toLowerCase() ?? null,
+          phone:      body.phone ?? known?.phone ?? null,
           reason:     body.reason,
           bannedById: req.staffUser!.id,
           expiresAt:  body.expiresAt ? new Date(body.expiresAt) : null,

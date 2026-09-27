@@ -8,6 +8,11 @@
 //
 // Route kept as /finance/capital-ledger so old bookmarks still work. Title +
 // sidebar label both read "Investment".
+//
+// "On the books" (owner decision 24): capex instalments post as supplier
+// advances when paid and delivered items are capitalised onto the
+// fixed-asset register, so this page shows what is already an asset vs
+// what has been advanced but not yet capitalised.
 
 import { useMemo } from 'react'
 import Link from 'next/link'
@@ -68,6 +73,7 @@ interface Project {
     totalAskCents: number
     varianceVsEnvelopeCents: number
   }
+  books?: { capitalisedCents: number; advancedCents: number; notYetCapitalisedCents: number; prepaidCents: number; expensedCents: number }
 }
 
 const SCOPE_META: Record<string, { emoji: string; label: string; color: string }> = {
@@ -265,6 +271,31 @@ export default function InvestmentDashboardPage() {
                 value={PKR_LAKHS(agg.burnPerMonth)}
                 subValue={`over last 90 days`}
                 bg="rgba(236,72,153,0.05)" border="rgba(236,72,153,0.22)" color="#F9A8D4"
+              />
+            </div>
+
+            {/* ── On the books ─────────────────────────────────────────── */}
+            <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
+              <KpiTile
+                label="On the books as assets"
+                hint="capitalised onto the fixed-asset register"
+                value={PKR_LAKHS(projects.reduce((t, p) => t + (p.books?.capitalisedCents ?? 0), 0))}
+                subValue={PKR(projects.reduce((t, p) => t + (p.books?.capitalisedCents ?? 0), 0))}
+                bg="rgba(134,239,172,0.05)" border="rgba(134,239,172,0.22)" color="#86EFAC"
+              />
+              <KpiTile
+                label="Not yet capitalised"
+                hint="advanced to suppliers, item not on the register yet"
+                value={PKR_LAKHS(projects.reduce((t, p) => t + (p.books?.notYetCapitalisedCents ?? 0), 0))}
+                subValue={PKR(projects.reduce((t, p) => t + (p.books?.notYetCapitalisedCents ?? 0), 0))}
+                bg="rgba(252,211,77,0.05)" border="rgba(252,211,77,0.22)" color="#FCD34D"
+              />
+              <KpiTile
+                label="Prepaid rent · fees expensed"
+                hint="rent advances (1310) · broker / consultant fees (6110)"
+                value={PKR_LAKHS(projects.reduce((t, p) => t + (p.books?.prepaidCents ?? 0) + (p.books?.expensedCents ?? 0), 0))}
+                subValue={`${PKR(projects.reduce((t, p) => t + (p.books?.prepaidCents ?? 0), 0))} prepaid · ${PKR(projects.reduce((t, p) => t + (p.books?.expensedCents ?? 0), 0))} fees`}
+                bg="rgba(165,180,252,0.05)" border="rgba(165,180,252,0.22)" color="#A5B4FC"
               />
             </div>
 

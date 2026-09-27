@@ -1,26 +1,24 @@
 // Aggregated setup module — handles 13 of the 18 newly-shipped configuration
 // areas. Some are full CRUD (modifier templates, delivery zones, notification
-// templates, bank accounts, kds devices, webhooks, custom fields, scheduled
-// reports), some are single-record settings (refund policy, reservation
-// policy, receipt config, operations config — service charge, tip pool, tax
-// numbering, withholding, brand assets).
+// templates, bank accounts, kds devices, custom fields, scheduled reports),
+// some are single-record settings (refund policy, reservation policy, receipt
+// config, operations config — service charge, tip pool, tax numbering,
+// withholding, clock-in geofence).
 //
 // Single record settings use the `scope='global'` convention with auto-create
 // on first read so the editor always has something to render — one global
 // row PER COMPANY (unique on tenantId + scope + scopeId).
 //
 // Company scoping: everything here is company master data. Rows that carry a
-// tenantId (modifier templates, bank accounts, KDS devices, webhooks, the
-// four singleton configs) are read through `scopeTenantWhere` and created
+// tenantId (modifier templates, bank accounts, KDS devices, the four
+// singleton configs) are read through `scopeTenantWhere` and created
 // against the ACTIVE company. Rows anchored to a brand (delivery zones,
-// notification templates, scheduled reports, service hours, blockouts, brand
-// identity) are reached only through brands of a company in scope — a
+// notification templates, scheduled reports, service hours) are reached only through brands of a company in scope — a
 // guessed id from another company 404s, and a create can never bind to a
 // brand of a company other than the one the operator is acting in.
 
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
-import { randomBytes } from 'crypto'
 import { Prisma } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
 import { audit } from '../../lib/audit.js'
@@ -451,52 +449,11 @@ export async function setupRoutes(fastify: FastifyInstance) {
   })
 
   // ════════════════════════════════════════════════════════════════════════
-  // 6. Webhook subscriptions
+  // 6. Webhook subscriptions live in /webhooks/endpoints (modules/webhooks):
+  // ONE writer of WebhookSubscription, company-scoped, with the SSRF guard on
+  // create / edit / test, a delivery log and a test ping. The copy that lived
+  // here (/setup/webhooks) had none of those and was removed with its page.
   // ════════════════════════════════════════════════════════════════════════
-
-  fastify.get('/webhooks', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req) => {
-    const list = await prisma.webhookSubscription.findMany({
-      where: { deletedAt: null, ...(await scopeTenantWhere(req, 'read')) },
-      orderBy: { createdAt: 'desc' },
-    })
-    // Don't ship the secret in plaintext on list
-    return list.map((w) => ({ ...w, secret: w.secret ? `${w.secret.slice(0, 8)}…` : null }))
-  })
-  fastify.post('/webhooks', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req, reply) => {
-    const body = z.object({
-      url:    z.string().url(),
-      events: z.array(z.string()).min(1),
-      notes:  z.string().nullable().optional(),
-    }).parse(req.body)
-    const secret = 'whsec_' + randomBytes(24).toString('base64url')
-    const created = await prisma.webhookSubscription.create({
-      data: { ...body, secret, createdById: req.staffUser!.id, tenantId: activeTenantId(req) },
-    })
-    // Return the full secret on create — UI shows once, then truncates after
-    return reply.status(201).send(created)
-  })
-  fastify.patch<{ Params: { id: string } }>('/webhooks/:id', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req) => {
-    const body = z.object({
-      events:   z.array(z.string()).min(1).optional(),
-      isActive: z.boolean().optional(),
-      notes:    z.string().nullable().optional(),
-    }).parse(req.body)
-    const existing = await prisma.webhookSubscription.findFirst({
-      where: { id: req.params.id, deletedAt: null, ...(await scopeTenantWhere(req, 'write')) },
-      select: { id: true },
-    })
-    if (!existing) throw new NotFoundError('WebhookSubscription', req.params.id)
-    return prisma.webhookSubscription.update({ where: { id: existing.id }, data: body })
-  })
-  fastify.delete<{ Params: { id: string } }>('/webhooks/:id', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req, reply) => {
-    const existing = await prisma.webhookSubscription.findFirst({
-      where: { id: req.params.id, deletedAt: null, ...(await scopeTenantWhere(req, 'write')) },
-      select: { id: true },
-    })
-    if (!existing) throw new NotFoundError('WebhookSubscription', req.params.id)
-    await prisma.webhookSubscription.update({ where: { id: existing.id }, data: { deletedAt: new Date(), isActive: false } })
-    return reply.status(204).send()
-  })
 
   // ════════════════════════════════════════════════════════════════════════
   // 7. Custom fields
@@ -722,7 +679,7 @@ export async function setupRoutes(fastify: FastifyInstance) {
 
   // ════════════════════════════════════════════════════════════════════════
   // 12. Operations config (singleton — service charge, tip pool, tax numbering,
-  // withholding, brand assets)
+  // withholding, clock-in geofence)
   // ════════════════════════════════════════════════════════════════════════
 
   fastify.get('/operations-config', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
@@ -745,13 +702,11 @@ export async function setupRoutes(fastify: FastifyInstance) {
       withholdingTaxEnabled:          z.boolean().optional(),
       withholdingTaxPct:              z.number().min(0).max(1).optional(),
       withholdingTaxRecoverable:      z.boolean().optional(),
-      secondaryColors:                z.array(z.string()).optional(),
-      fontHeading:                    z.string().nullable().optional(),
-      fontBody:                       z.string().nullable().optional(),
-      brandVoiceNotes:                z.string().nullable().optional(),
-      socialInstagramHandle:          z.string().nullable().optional(),
-      socialTiktokHandle:             z.string().nullable().optional(),
-      socialFacebookUrl:              z.string().url().nullable().optional(),
+      // The company-level brand-asset columns (secondaryColors, fonts,
+      // brandVoiceNotes, social handles) are no longer written: nothing read
+      // them. Brand voice is Concept.brandVoice, the WhatsApp number is
+      // Concept.whatsapp (both per brand, on Storefront → Brands), and social
+      // links are the brand footer (Storefront → Brand Footers). Columns kept.
     }).parse(req.body)
     const cfg = await findOrCreateSingleton<{ id: string; geofenceEnforced: boolean }>('operationsConfig', activeTenantId(req), {})
     const { tipPoolRoleWeights, ...rest } = body
@@ -848,65 +803,6 @@ export async function setupRoutes(fastify: FastifyInstance) {
   })
 
   // ════════════════════════════════════════════════════════════════════════
-  // 14. Period locks — passes through to existing PeriodLock model
-  // ════════════════════════════════════════════════════════════════════════
-
-  // Closing a period freezes THIS company's books only.
-  fastify.get('/period-locks', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
-    return prisma.periodLock.findMany({
-      where: await scopeTenantWhere(req, 'read'),
-      orderBy: { lockedThrough: 'desc' },
-    })
-  })
-  fastify.post('/period-locks', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req, reply) => {
-    const body = z.object({
-      lockedThrough: z.string(),                                 // ISO date — books are closed up to and including this
-      note:          z.string().max(500).optional(),
-    }).parse(req.body)
-    const created = await prisma.periodLock.create({
-      data: {
-        tenantId: activeTenantId(req),
-        lockedThrough: new Date(body.lockedThrough),
-        note:          body.note,
-        lockedBy:      req.staffUser!.id,
-      },
-    })
-    return reply.status(201).send(created)
-  })
-  fastify.delete<{ Params: { id: string } }>('/period-locks/:id', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req, reply) => {
-    const lock = await prisma.periodLock.findFirst({
-      where: { id: req.params.id, ...(await scopeTenantWhere(req, 'write')) },
-    })
-    if (!lock) throw new NotFoundError('PeriodLock', req.params.id)
-    await prisma.periodLock.delete({ where: { id: lock.id } })
-
-    // Reopening a closed period is the single most-abused accounting move
-    // when someone wants to backdate a fix. Flag every removal for review.
-    if (lock) {
-      const { flagException } = await import('../../lib/exceptions.js')
-      await flagException({
-        tenantId: lock.tenantId,
-        kind: 'period_reopened',
-        severity: 'high',
-        title: `Period reopened — books unlocked through ${lock.lockedThrough.toISOString().slice(0, 10)}`,
-        description: `${req.staffUser!.email} removed a period lock. Postings dated on/before ${lock.lockedThrough.toISOString().slice(0, 10)} are now allowed again. Audit any new entries before re-locking.`,
-        entityType: 'PeriodLock',
-        entityId: req.params.id,
-        actorId: req.staffUser!.id,
-        metadata: { lockedThrough: lock.lockedThrough, originalLockedBy: lock.lockedBy, note: lock.note },
-      })
-      await audit({ category: 'identity',
-        action: 'period_lock.removed',
-        entity: 'PeriodLock',
-        entityId: req.params.id,
-        userId: req.staffUser!.id, tenantId: req.staffUser?.tenantId ?? null,
-        userEmail: req.staffUser!.email,
-        before: lock,
-      })
-    }
-
-    return reply.status(204).send()
-  })
 
   // ════════════════════════════════════════════════════════════════════════
   // 15. Dietary tags + allergens — stored as JSON in two Setting key-value rows.
@@ -1002,23 +898,8 @@ export async function setupRoutes(fastify: FastifyInstance) {
   // ════════════════════════════════════════════════════════════════════════
 
   // ════════════════════════════════════════════════════════════════════════
-  // 18. Brand identity — logo / hero / palette / fonts (per concept)
-  // Operates on Concept fields directly so the storefront picks up changes
-  // without a separate join.
+  // 18. Brand identity is edited in ONE place: PATCH /concepts/:id, from
+  // admin → Storefront → Brands. The PATCH /setup/brand-identity/:conceptId
+  // copy here had no caller and was removed.
   // ════════════════════════════════════════════════════════════════════════
-
-  fastify.patch<{ Params: { conceptId: string } }>('/brand-identity/:conceptId',
-    { preHandler: requireAuth(...MANAGERS) },
-    async (req) => {
-      const body = z.object({
-        logoUrl:            z.string().url().nullable().optional(),
-        primaryColor:       z.string().nullable().optional(),
-        heroTagline:        z.string().max(140).nullable().optional(),
-        announcementBanner: z.string().max(280).nullable().optional(),
-        description:        z.string().max(1000).nullable().optional(),
-      }).parse(req.body)
-      const concept = await assertConceptOwned(req, req.params.conceptId, 'write')
-      return prisma.concept.update({ where: { id: concept.id }, data: body })
-    },
-  )
 }

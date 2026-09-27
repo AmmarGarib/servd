@@ -39,7 +39,9 @@ export default function DeliveryZonesPage() {
           <div>
             <h1 className="text-2xl font-black text-white/90">🛵 Delivery zones</h1>
             <p className="text-sm text-white/40 mt-1 max-w-2xl">
-              Radius-based delivery rings. Each zone has its own fee, minimum order, and free-delivery threshold.
+              Radius-based delivery rings, measured from the brand's kitchen (its Location's map pin). Each zone has its own
+              fee, minimum order, and free-delivery threshold. These bands are the only thing that decides delivery: an
+              address beyond a brand's last zone is refused at checkout, and a brand with no active zone takes pickup only.
             </p>
           </div>
           <button onClick={() => setAdding(true)} className="rounded-xl bg-kds-green px-4 py-2.5 text-sm font-black text-black hover:opacity-90">+ New zone</button>

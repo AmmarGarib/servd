@@ -17,6 +17,25 @@ interface AccountInfo {
   loyaltyAccount: { pointsBalance: number } | null
 }
 
+// GET /storefront/quote — the server's bill for this basket.
+interface Quote {
+  tender: 'cash' | 'card'
+  taxRatePct: number
+  itemTotalCents: number
+  taxCents: number
+  deliveryFeeCents: number
+  serviceChargeCents: number
+  pricedTotalCents: number
+  promo: { code: string; discountCents: number; description: string } | null
+  promoError: { code: string; message: string } | null
+  loyaltyPoints: number
+  loyaltyDiscountCents: number
+  walletCents: number
+  tipCents: number
+  giftCardCents: number
+  totalCents: number
+}
+
 interface CustomerAddress {
   id: string; label: string; address: string; lat?: number | null; lng?: number | null; isDefault: boolean
 }
@@ -63,11 +82,12 @@ export default function CheckoutPage() {
   const { concept: slug } = useParams<{ concept: string }>()
   const router = useRouter()
   const searchParams = useSearchParams()
-  // taxCents/totalCents from the store are deprecated for this page —
-  // the page computes both locally so it can react to paymentMethod
-  // (see taxCentsLive / totalLive below). We still pull totalCents to
-  // hand to the promo-preview endpoint as the baseline.
-  const { items, subtotalCents, totalCents, itemCount, clearCart, hydrateFromReorder } = useCart()
+  // The page prices NOTHING itself: every figure on it — GST (by tender,
+  // decision 9), delivery fee, service charge, promo, points, wallet, tip,
+  // gift card, total — comes from GET /storefront/quote, which prices with
+  // the same server function checkout charges with (lib/pricing.ts). It used
+  // to hardcode 15% / 8% here while the server always charged 8%.
+  const { items, subtotalCents, itemCount, clearCart, hydrateFromReorder } = useCart()
   const token = useCustomerAuth((s) => s.token)
 
   // Per-brand ordering skin. Same class system as /[concept]/page.tsx so
@@ -116,10 +136,20 @@ export default function CheckoutPage() {
   const [account,    setAccount]    = useState<AccountInfo | null>(null)
   const [promoCode,  setPromoCode]  = useState('')
   const [promoStatus,       setPromoStatus]       = useState<'idle' | 'checking' | 'valid' | 'invalid'>('idle')
-  const [promoDiscountCents, setPromoDiscountCents] = useState(0)
   const [promoMessage,      setPromoMessage]      = useState('')
+  // The code the customer pressed Apply on — sent to the quote.
+  const [appliedPromo,      setAppliedPromo]      = useState('')
   const [useWallet,  setUseWallet]  = useState(false)
   const [loyaltyPts, setLoyaltyPts] = useState(0)
+  // The company's redeem minimum (GET /loyalty/program): below it the server
+  // refuses the redemption, so the stepper jumps from 0 straight to it.
+  const [minRedeemPts, setMinRedeemPts] = useState(0)
+  useEffect(() => {
+    fetch(`${API_URL}/api/v1/loyalty/program?conceptSlug=${encodeURIComponent(slug)}`)
+      .then((r) => (r.ok ? r.json() as Promise<{ minRedeemPoints: number }> : null))
+      .then((p) => { if (p) setMinRedeemPts(p.minRedeemPoints ?? 0) })
+      .catch(() => {})
+  }, [slug])
 
   // Fulfilment type. Curbside is a customer convenience — they tap "I'm
   // here" on arrival via /[concept]/order/[id], staff sees the queue at
@@ -147,7 +177,6 @@ export default function CheckoutPage() {
   const [tipMode,   setTipMode]   = useState<'none' | '5' | '10' | '15' | '20' | 'custom'>('10')
   const [customTip, setCustomTip] = useState('')
   const [giftCard,  setGiftCard]  = useState('')
-  const tipPctTable: Record<string, number> = { none: 0, '5': 0.05, '10': 0.10, '15': 0.15, '20': 0.20 }
   const _orderPlaced = useRef(false)
 
   // Payment method
@@ -179,6 +208,72 @@ export default function CheckoutPage() {
       }
     }).catch(() => {})
   }, [token])
+
+  // Delivery drop point: the chosen saved address's pin. The server needs
+  // it for the zone fee (and refuses delivery without it).
+  const selectedAddress = savedAddresses.find((a) => a.id === selectedAddressId && !showNewAddressInput) ?? null
+  const deliveryLat = selectedAddress?.lat ?? null
+  const deliveryLng = selectedAddress?.lng ?? null
+
+  // Server quote — refreshed whenever anything that changes the bill does.
+  const [quote,      setQuote]      = useState<Quote | null>(null)
+  const [quoteError, setQuoteError] = useState('')
+  const basketKey = JSON.stringify(items.map((i) => [i.menuItemId, i.quantity, (i.modifiers ?? []).map((m) => m.modifierId ?? '')]))
+  const tipParams: Record<string, string> = fulfilmentType !== 'delivery' || tipMode === 'none'
+    ? {}
+    : tipMode === 'custom'
+      ? { tipCents: String(Math.max(0, Math.round((parseFloat(customTip) || 0) * 100))) }
+      : { tipPct: tipMode }
+  const tipKey = JSON.stringify(tipParams)
+  useEffect(() => {
+    if (items.length === 0) return
+    const params = new URLSearchParams({
+      conceptSlug: slug,
+      type: fulfilmentType,
+      paymentGateway: paymentMethod,
+      items: JSON.stringify(items.map((i) => ({
+        menuItemId: i.menuItemId,
+        quantity: i.quantity,
+        modifiers: (i.modifiers ?? []).filter((m) => m.modifierId).map((m) => ({ modifierId: m.modifierId! })),
+      }))),
+      ...(fulfilmentType === 'delivery' && deliveryLat != null && deliveryLng != null && {
+        deliveryLat: String(deliveryLat), deliveryLng: String(deliveryLng),
+      }),
+      ...(appliedPromo && { promoCode: appliedPromo }),
+      ...(loyaltyPts > 0 && { loyaltyPointsToRedeem: String(loyaltyPts) }),
+      ...(useWallet && { useWallet: 'true' }),
+      ...(giftCardStatus === 'valid' && giftCard.trim() && { giftCardCode: giftCard.trim().toUpperCase() }),
+      ...tipParams,
+    })
+    const ctrl = new AbortController()
+    const t = setTimeout(() => {
+      fetch(`${API_URL}/api/v1/storefront/quote?${params.toString()}`, {
+        signal: ctrl.signal,
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      })
+        .then(async (res) => {
+          const data = await res.json()
+          if (!res.ok) {
+            setQuote(null)
+            setQuoteError((data as { error?: { message?: string } })?.error?.message ?? 'Could not price your order')
+            return
+          }
+          const q = data as Quote
+          setQuote(q)
+          setQuoteError('')
+          if (appliedPromo) {
+            if (q.promo) { setPromoStatus('valid'); setPromoMessage(q.promo.description) }
+            else { setPromoStatus('invalid'); setPromoMessage(q.promoError?.message ?? 'Promo code is invalid') }
+          }
+        })
+        .catch((e: unknown) => {
+          if ((e as { name?: string })?.name === 'AbortError') return
+          setQuoteError('Could not price your order. Check your connection.')
+        })
+    }, 250)
+    return () => { clearTimeout(t); ctrl.abort() }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [basketKey, slug, fulfilmentType, paymentMethod, deliveryLat, deliveryLng, appliedPromo, loyaltyPts, useWallet, giftCardStatus, giftCard, tipKey, token])
 
   useEffect(() => {
     if (items.length > 0) {
@@ -239,61 +334,21 @@ export default function CheckoutPage() {
   const walletBalance    = account?.walletBalance ?? 0
   const loyaltyBalance   = account?.loyaltyAccount?.pointsBalance ?? 0
 
-  // GST is payment-method-aware (per the admin tax config): cash pays
-  // the full 15% rate, card-rails — Keenu, JazzCash, EasyPaisa — get
-  // the discounted 8% rate that the processor passes through. We
-  // compute it locally here because the cart store can't know payment
-  // method at the time it builds the basket. `taxCentsLive` and
-  // `totalLive` replace the cart store's tax/total helpers throughout
-  // this page.
-  const taxRate = paymentMethod === 'cash' ? 0.15 : 0.08
-  const taxCentsLive = Math.round(subtotalCents() * taxRate)
-  const totalLive    = subtotalCents() + taxCentsLive
+  // Every figure below is the server's (GET /storefront/quote).
+  const tipCents          = quote?.tipCents ?? 0
+  const loyaltyDeduction  = quote?.loyaltyDiscountCents ?? 0
+  const walletDeduction   = quote?.walletCents ?? 0
+  const promoDiscountCents = quote?.promo?.discountCents ?? 0
+  const giftCardDeduction = quote?.giftCardCents ?? 0
+  const displayTotal      = quote?.totalCents ?? null
 
-  const loyaltyDeduction = Math.min(loyaltyPts * 10, totalLive)
-  const walletDeduction  = useWallet ? Math.min(walletBalance, Math.max(0, totalLive - loyaltyDeduction)) : 0
-  // Tip — computed against subtotal + tax. Only applies to delivery
-  // orders (no rider on dine-in / pickup / curbside, so no tip to
-  // pool); we zero it out regardless of the chip the user happened to
-  // leave selected.
-  const tipCents = fulfilmentType !== 'delivery' ? 0 :
-    tipMode === 'custom'
-      ? Math.max(0, Math.round((parseFloat(customTip) || 0) * 100))
-      : Math.round(totalLive * (tipPctTable[tipMode] ?? 0))
-  // Gift card deduction — capped at order total
-  const giftCardDeduction = giftCardStatus === 'valid'
-    ? Math.min(giftCardBalance, Math.max(0, totalLive - loyaltyDeduction - walletDeduction - promoDiscountCents))
-    : 0
-  const displayTotal     = Math.max(0, totalLive - loyaltyDeduction - walletDeduction - promoDiscountCents - giftCardDeduction) + tipCents
-
-  const applyPromo = async () => {
+  // Apply = ask the quote to price the code (same evaluation as checkout).
+  const applyPromo = () => {
     const code = promoCode.trim().toUpperCase()
     if (!code) return
     setPromoStatus('checking')
-    setPromoDiscountCents(0)
     setPromoMessage('')
-    try {
-      const params = new URLSearchParams({
-        code,
-        conceptSlug: slug,
-        subtotalCents: String(totalCents()),
-      })
-      const res = await fetch(`${API_URL}/api/v1/storefront/promo-preview?${params.toString()}`)
-      const data = await res.json() as
-        | { valid: true;  discountCents: number; description: string }
-        | { valid: false; reason: string }
-      if (data.valid) {
-        setPromoStatus('valid')
-        setPromoDiscountCents(data.discountCents)
-        setPromoMessage(data.description)
-      } else {
-        setPromoStatus('invalid')
-        setPromoMessage(data.reason)
-      }
-    } catch {
-      setPromoStatus('invalid')
-      setPromoMessage('Could not validate code. Try again.')
-    }
+    setAppliedPromo(code)
   }
 
   const checkGiftCardBalance = async () => {
@@ -348,6 +403,7 @@ export default function CheckoutPage() {
             type: fulfilmentType,
             ...(fulfilmentType === 'delivery' && {
               deliveryAddress: deliveryAddress.trim(),
+              ...(deliveryLat != null && deliveryLng != null && { deliveryLat, deliveryLng }),
               ...(deliveryNotes.trim() && { notes: deliveryNotes.trim() }),
             }),
             ...(fulfilmentType === 'curbside' && {
@@ -357,7 +413,7 @@ export default function CheckoutPage() {
             ...(fulfilmentType === 'dine-in' && {
               tableLabel: tableLabel.trim(),
             }),
-            promoCode: promoCode.trim() || undefined,
+            promoCode: appliedPromo || undefined,
             useWallet,
             loyaltyPointsToRedeem: loyaltyPts,
             paymentGateway: paymentMethod,
@@ -383,9 +439,9 @@ export default function CheckoutPage() {
           throw new Error(d?.error?.message ?? 'Failed to place order')
         }
         const order = await res.json() as { id: string }
-        if (promoCode.trim()) trackPromoApplied(promoCode.trim(), slug, subtotalCents() - displayTotal)
+        if (appliedPromo) trackPromoApplied(appliedPromo, slug, promoDiscountCents)
         _orderPlaced.current = true
-        trackOrderPlaced(order.id, slug, displayTotal, paymentMethod)
+        trackOrderPlaced(order.id, slug, displayTotal ?? 0, paymentMethod)
         clearCart()
         router.push(`/${slug}/order/${order.id}`)
       } else {
@@ -729,19 +785,25 @@ export default function CheckoutPage() {
 
           <div className="rounded-xl p-3.5 space-y-2"
             style={{ background: 'rgba(0,0,0,0.04)', border: '1px solid rgba(0,0,0,0.06)' }}>
-            <PriceLine label="Subtotal"    value={fmt(subtotalCents())} />
-            <PriceLine label={`GST (${(taxRate * 100).toFixed(0)}%)`} value={fmt(taxCentsLive)} />
+            <PriceLine label="Subtotal"    value={quote ? fmt(quote.itemTotalCents) : '…'} />
+            <PriceLine label={quote ? `GST (${quote.taxRatePct}%)` : 'GST'} value={quote ? fmt(quote.taxCents) : '…'} />
+            {quote && quote.deliveryFeeCents > 0 && (
+              <PriceLine label="Delivery" value={fmt(quote.deliveryFeeCents)} />
+            )}
+            {quote && quote.serviceChargeCents > 0 && (
+              <PriceLine label="Service charge" value={fmt(quote.serviceChargeCents)} />
+            )}
             {tipCents > 0 && (
               <PriceLine label="Tip" value={fmt(tipCents)} accent="var(--servd-green-dark)" />
             )}
             {loyaltyDeduction > 0 && (
-              <PriceLine label={`Points (${loyaltyPts} pts)`} value={`−${fmt(loyaltyDeduction)}`} accent="var(--servd-green-dark)" />
+              <PriceLine label={`Points (${quote?.loyaltyPoints ?? loyaltyPts} pts)`} value={`−${fmt(loyaltyDeduction)}`} accent="var(--servd-green-dark)" />
             )}
             {walletDeduction > 0 && (
               <PriceLine label="Wallet credit" value={`−${fmt(walletDeduction)}`} accent="var(--servd-green-dark)" />
             )}
             {promoDiscountCents > 0 && (
-              <PriceLine label={`Promo (${promoCode.trim().toUpperCase()})`} value={`−${fmt(promoDiscountCents)}`} accent="var(--servd-green-dark)" />
+              <PriceLine label={`Promo (${appliedPromo})`} value={`−${fmt(promoDiscountCents)}`} accent="var(--servd-green-dark)" />
             )}
             {giftCardDeduction > 0 && (
               <PriceLine label={`Gift card (${giftCard.trim().toUpperCase()})`} value={`−${fmt(giftCardDeduction)}`} accent="var(--servd-green-dark)" />
@@ -749,8 +811,11 @@ export default function CheckoutPage() {
             <div className="flex justify-between items-center pt-2.5"
               style={{ borderTop: '1px solid rgba(0,0,0,0.08)' }}>
               <span className="font-black text-base" style={{ color: 'var(--servd-ink)' }}>Total</span>
-              <span className="font-black text-xl" style={{ color: 'var(--servd-green-dark)' }}>{fmt(displayTotal)}</span>
+              <span className="font-black text-xl" style={{ color: 'var(--servd-green-dark)' }}>{displayTotal != null ? fmt(displayTotal) : '…'}</span>
             </div>
+            {quoteError && (
+              <p className="text-xs pt-1" style={{ color: 'var(--servd-mute)' }} role="status">{quoteError}</p>
+            )}
           </div>
         </Panel>
 
@@ -772,7 +837,7 @@ export default function CheckoutPage() {
                       // Reset validation when user edits the code
                       if (promoStatus !== 'idle') {
                         setPromoStatus('idle')
-                        setPromoDiscountCents(0)
+                        setAppliedPromo('')
                         setPromoMessage('')
                       }
                     }}
@@ -836,16 +901,16 @@ export default function CheckoutPage() {
             )}
 
             {/* Loyalty points */}
-            {loyaltyBalance > 0 && (
+            {loyaltyBalance > 0 && loyaltyBalance >= minRedeemPts && (
               <Panel icon="" label="Redeem Points">
                 <div className="flex items-center justify-between">
                   <p className="text-xs" style={{ color: 'var(--servd-mute)' }}>
                     {loyaltyBalance} pts available · <span style={{ color: 'var(--servd-ink)' }}>{loyaltyPts} selected</span>
                   </p>
                   <div className="flex items-center gap-2">
-                    <StepBtn onClick={() => setLoyaltyPts(p => Math.max(0, p - 10))}>−</StepBtn>
+                    <StepBtn onClick={() => setLoyaltyPts(p => (p - 10 < Math.max(minRedeemPts, 1) ? 0 : p - 10))}>−</StepBtn>
                     <span className="font-black text-sm w-10 text-center" style={{ color: 'var(--servd-ink)' }}>{loyaltyPts}</span>
-                    <StepBtn onClick={() => setLoyaltyPts(p => Math.min(loyaltyBalance, p + 10))}>+</StepBtn>
+                    <StepBtn onClick={() => setLoyaltyPts(p => Math.min(loyaltyBalance, p === 0 ? Math.max(minRedeemPts, 10) : p + 10))}>+</StepBtn>
                   </div>
                 </div>
               </Panel>
@@ -1002,7 +1067,7 @@ export default function CheckoutPage() {
             boxShadow: loading ? 'none' : '0 0 32px rgba(58,14,105,0.28)',
           }}>
           <span>{ctaLabel}</span>
-          <span>{fmt(displayTotal)}</span>
+          <span>{displayTotal != null ? fmt(displayTotal) : '…'}</span>
         </button>
       </div>
     </main>

@@ -1,6 +1,7 @@
 'use client'
 import { useState, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import Link from 'next/link'
 import { api } from '../../../lib/api'
 
 // Mirrors GET /api/v1/integrations/social/status. `configured` tells us
@@ -188,23 +189,37 @@ export default function IntegrationsPage() {
           )}
         </div>
 
-        {/* WhatsApp — already built */}
+        {/* Messaging channels. Configured in ONE place each: the WhatsApp
+            gateway at /configuration/whatsapp and SMTP at /configuration/email
+            (both stored in the database, read by lib/whatsapp.ts and
+            lib/mailer.ts — the same resolvers /health checks). This card used
+            to tell operators to set WHATSAPP_TOKEN / WHATSAPP_PHONE_NUMBER_ID,
+            which no outbound code reads, and had no email section at all. */}
         <div className="rounded-xl border border-kds-border bg-kds-card p-5">
-          <div className="flex items-start justify-between">
-            <div className="flex items-center gap-3">
-              <span className="text-3xl">💬</span>
-              <div>
-                <h2 className="font-bold text-kds-text">WhatsApp Business</h2>
-                <p className="text-sm text-kds-subtext">Customer ordering via WhatsApp. Requires Meta WhatsApp Business API.</p>
-              </div>
+          <div className="flex items-center gap-3">
+            <span className="text-3xl">💬</span>
+            <div>
+              <h2 className="font-bold text-kds-text">WhatsApp &amp; email</h2>
+              <p className="text-sm text-kds-subtext">How servd reaches customers and staff: signup and sign-in codes, password resets, order and reservation messages.</p>
             </div>
-            <span className="rounded-full border border-kds-border px-3 py-1 text-xs text-kds-subtext">
-              {process.env['NEXT_PUBLIC_WHATSAPP_ENABLED'] === 'true' ? '✓ Active' : 'Env-gated'}
-            </span>
           </div>
-          <div className="mt-3 rounded-lg bg-kds-bg p-3 text-xs text-kds-subtext">
-            Set <code className="bg-kds-border px-1 rounded">WHATSAPP_TOKEN</code>, <code className="bg-kds-border px-1 rounded">WHATSAPP_PHONE_NUMBER_ID</code>, and <code className="bg-kds-border px-1 rounded">WHATSAPP_VERIFY_TOKEN</code> in your backend .env to enable.
+          <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <Link href="/configuration/whatsapp"
+              className="rounded-lg bg-kds-bg p-3 hover:bg-kds-border/40 transition-colors">
+              <p className="text-sm font-semibold text-kds-text">WhatsApp gateway →</p>
+              <p className="text-xs text-kds-subtext mt-0.5">Gateway URL and key, with a test send.</p>
+            </Link>
+            <Link href="/configuration/email"
+              className="rounded-lg bg-kds-bg p-3 hover:bg-kds-border/40 transition-colors">
+              <p className="text-sm font-semibold text-kds-text">Email (SMTP) →</p>
+              <p className="text-xs text-kds-subtext mt-0.5">The backup channel when WhatsApp is down, with a test send.</p>
+            </Link>
           </div>
+          <p className="mt-3 text-xs text-kds-subtext">
+            Inbound WhatsApp (customers and suppliers messaging you on the Meta Cloud API) is separate: it is verified with
+            <code className="bg-kds-border px-1 rounded mx-1">WHATSAPP_VERIFY_TOKEN</code> and
+            <code className="bg-kds-border px-1 rounded mx-1">APP_SECRET</code> in the backend environment.
+          </p>
         </div>
 
         {/* FBR PRAL — federal sales tax on goods. */}

@@ -26,6 +26,7 @@ export default function GiftCardsPage() {
   const [showNew, setShowNew] = useState(false)
   const [redeemCode, setRedeemCode] = useState('')
   const [redeemAmt,  setRedeemAmt]  = useState<number | ''>('')
+  const [redeemOrder, setRedeemOrder] = useState('')
   const [feedback,   setFeedback]   = useState<{ ok: boolean; msg: string } | null>(null)
 
   const { data, isLoading } = useQuery({
@@ -33,12 +34,19 @@ export default function GiftCardsPage() {
     queryFn: () => api.get<GiftCard[]>('/gift-cards'),
   })
 
+  // A card is always spent against an order (the one redeem engine lowers
+  // that order's bill by what the card paid; a till sale the card fully
+  // covers is closed). Cards of another company are not found (decision 14).
   const redeem = useMutation({
-    mutationFn: () => api.post('/gift-cards/redeem', { code: redeemCode, amountCents: Number(redeemAmt) * 100 }),
-    onSuccess: () => {
-      setFeedback({ ok: true, msg: 'Redeemed.' })
+    mutationFn: () => api.post<{ appliedCents: number; remainingDueCents: number; completed: boolean }>('/gift-cards/redeem', {
+      code: redeemCode,
+      orderId: redeemOrder.trim(),
+      ...(redeemAmt ? { amountCents: Math.round(Number(redeemAmt) * 100) } : {}),
+    }),
+    onSuccess: (r) => {
+      setFeedback({ ok: true, msg: `Applied ${fmtPkr(r.appliedCents)}. ${r.completed ? 'Bill settled.' : `Still due: ${fmtPkr(r.remainingDueCents)}.`}` })
       void qc.invalidateQueries({ queryKey: ['gift-cards'] })
-      setRedeemCode(''); setRedeemAmt('')
+      setRedeemCode(''); setRedeemAmt(''); setRedeemOrder('')
     },
     onError: (e: { message?: string }) => setFeedback({ ok: false, msg: e.message ?? 'Failed' }),
   })
@@ -56,8 +64,13 @@ export default function GiftCardsPage() {
       <div className="p-6 max-w-5xl mx-auto space-y-4">
         {/* Quick redeem */}
         <div className="s-card p-4">
-          <h2 className="text-sm font-bold mb-3">Quick redeem</h2>
+          <h2 className="text-sm font-bold mb-1">Apply a card to an order</h2>
+          <p className="text-xs text-s-muted mb-3">At the till, use the gift-card tender on the bill. Here: the order it pays for, and optionally how much (blank = as much as the card and the bill allow).</p>
           <div className="flex gap-2 flex-wrap items-end">
+            <label className="flex-1 min-w-[220px]">
+              <span className="block text-xs text-s-muted mb-1">Order ID</span>
+              <input value={redeemOrder} onChange={(e) => setRedeemOrder(e.target.value)} placeholder="order id" className="w-full bg-white border border-s-border rounded px-2 py-1.5 text-sm font-mono" />
+            </label>
             <label className="flex-1 min-w-[160px]">
               <span className="block text-xs text-s-muted mb-1">Card code</span>
               <input value={redeemCode} onChange={(e) => setRedeemCode(e.target.value)} placeholder="GS-XXXX-XXXX" className="w-full bg-white border border-s-border rounded px-2 py-1.5 text-sm font-mono uppercase" />
@@ -66,8 +79,8 @@ export default function GiftCardsPage() {
               <span className="block text-xs text-s-muted mb-1">Amount (PKR)</span>
               <input type="number" min={1} value={redeemAmt} onChange={(e) => setRedeemAmt(e.target.value === '' ? '' : Number(e.target.value))} className="w-full bg-white border border-s-border rounded px-2 py-1.5 text-sm" />
             </label>
-            <button onClick={() => redeem.mutate()} disabled={!redeemCode.trim() || !redeemAmt || redeem.isPending} className="s-btn-primary text-sm">
-              {redeem.isPending ? 'Redeeming…' : 'Redeem'}
+            <button onClick={() => redeem.mutate()} disabled={!redeemCode.trim() || !redeemOrder.trim() || redeem.isPending} className="s-btn-primary text-sm">
+              {redeem.isPending ? 'Applying…' : 'Apply'}
             </button>
           </div>
           {feedback && <p className={`text-xs mt-2 ${feedback.ok ? 'text-s-teal' : 'text-s-red'}`}>{feedback.msg}</p>}

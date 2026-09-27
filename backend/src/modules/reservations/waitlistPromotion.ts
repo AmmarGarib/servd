@@ -22,7 +22,7 @@
 
 import { randomBytes } from 'crypto'
 import { prisma } from '../../lib/prisma.js'
-import { sendSms, sendEmail } from '../../lib/notify.js'
+import { sendPhoneMessage, sendEmail } from '../../lib/notify.js'
 import { emitReservationEvent } from '../../lib/ws.js'
 
 const PROMOTION_TTL_MIN = 30
@@ -88,7 +88,7 @@ export async function tryPromoteWaitlist(freed: FreedSlot): Promise<{ promoted: 
   // Best-effort delivery. We don't block on either channel — if SMS fails but
   // email succeeds, the guest still gets the offer.
   if (candidate.guestPhone) {
-    void sendSms(
+    void sendPhoneMessage(
       candidate.guestPhone,
       `${candidate.concept.name}: a table just opened up for ${candidate.partySize} on ${when} PKT. Confirm in 30 min: ${claimUrl}`,
     ).catch(() => {})

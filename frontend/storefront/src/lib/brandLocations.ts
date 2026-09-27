@@ -1,18 +1,25 @@
-// Canonical name + address + phone per brand, with a hardcoded fallback
-// shape but the live values pulled from the admin-editable Concept fields.
+// Canonical name + address + phone per brand, built from the live data:
 //
-// Per the local-seo skill in the marketing bundle: NAP (name, address,
-// phone) MUST be byte-identical across Google Business Profile, the
-// website, Instagram bio, foodpanda, Zomato, and every directory.
-// Inconsistent NAP dilutes Maps prominence. So there's exactly one place
-// — the Concept row, edited from the CEO dashboard — that holds the
-// canonical strings; everything downstream (schema.org JSON-LD, footer,
-// brand microsite address line, /locations geo pages, "message us"
-// WhatsApp links) reads from here.
+//   • name, phone, WhatsApp, cuisine, price tier — the brand's Concept row
+//     (admin → Storefront → Brands). Per brand, owner decision 18.
+//   • street address + map pin — the brand's KITCHEN (Location, admin →
+//     Storefront → Locations). A kitchen running several brands has one
+//     address. The API mirrors the primary kitchen's address and pin onto
+//     Concept.address / latitude / longitude, so a Concept row already carries
+//     them; fetchBrandKitchens() lists every kitchen when a page needs all.
 //
-// The DEFAULT_BRAND_LOCATIONS block below is a fallback used when the
-// operator hasn't filled the admin fields yet — clearly marked TODO_FILL
-// so a wrong value can't silently ship to Google.
+// Per the local-seo skill: NAP (name, address, phone) MUST be byte-identical
+// across Google Business Profile, the website, Instagram bio and every
+// directory. So everything downstream (schema.org JSON-LD, footer, brand
+// microsite address line, /locations geo pages, "message us" WhatsApp links)
+// reads through here.
+//
+// DEFAULT_BRAND_LOCATIONS is an API-DOWN FALLBACK ONLY. It is never read ahead
+// of the live data: locationFromConcept() lets every live value win, and
+// locationFor() — the bare fallback — is for the rare render that has no
+// concept row at all. It carries no phone numbers (the old placeholder
+// +92 300 1234567… numbers were live on the site) and the cuisines are the
+// current ones.
 
 import { formatBrandName, type Concept } from './concept'
 
@@ -45,8 +52,8 @@ const DEFAULT_BRAND_LOCATIONS: Record<string, BrandLocation> = {
     area:                'Ittehad Commercial, DHA Phase 6',
     city:                'Karachi',
     country:             'Pakistan',
-    phone:               '+923001234567',
-    whatsapp:            '923001234567',
+    phone:               '',
+    whatsapp:            '',
     // Pinned from the operator's Google Maps link (maps.app.goo.gl/gJQMwRKsZdEEfoKV6).
     geo:                 { lat: 24.8014954, lng: 67.0735636 },
     cuisine:             'Small plates',
@@ -62,11 +69,12 @@ const DEFAULT_BRAND_LOCATIONS: Record<string, BrandLocation> = {
     area:                'Ittehad Commercial, DHA Phase 6',
     city:                'Karachi',
     country:             'Pakistan',
-    phone:               '+923001234568',
-    whatsapp:            '923001234568',
+    phone:               '',
+    whatsapp:            '',
     // Pinned from the operator's Google Maps link (maps.app.goo.gl/wa3fEKMevo1CZhkS8).
     geo:                 { lat: 24.8015505, lng: 67.0735747 },
-    cuisine:             'Smash burger',
+    // A scratch-cooking café and small market — not a burger brand.
+    cuisine:             'Café',
     priceRange:          '$$',
     acceptsReservations: false,
     locationSlug:        'stackd-kitchen',
@@ -79,10 +87,10 @@ const DEFAULT_BRAND_LOCATIONS: Record<string, BrandLocation> = {
     area:                'TODO_FILL_AREA',
     city:                'Karachi',
     country:             'Pakistan',
-    phone:               '+923001234569',
-    whatsapp:            '923001234569',
+    phone:               '',
+    whatsapp:            '',
     geo:                 { lat: 24.8054, lng: 67.0517 },
-    cuisine:             'Fried chicken',
+    cuisine:             'Burgers',
     priceRange:          '$$',
     acceptsReservations: false,
     locationSlug:        'flipd-court',
@@ -96,12 +104,29 @@ const PRICE_TIER_TO_RANGE: Record<string, string> = {
   luxury:  '$$$$',
 }
 
+/** One of a brand's kitchens, as GET /locations/public returns it. */
+export interface BrandKitchen {
+  slug:      string
+  name:      string
+  address:   string | null
+  city:      string | null
+  latitude:  number | null
+  longitude: number | null
+  isPrimary: boolean
+}
+
+/** Google Maps link for a pin — the fallback when there is no share link. */
+export function mapsLinkFor(geo: { lat: number; lng: number }): string {
+  return `https://www.google.com/maps/search/?api=1&query=${geo.lat},${geo.lng}`
+}
+
 /**
- * Build a BrandLocation from a live Concept row + the fallback baseline.
- * Live admin-edited values win; missing values fall back to the defaults
- * so the storefront still renders sensibly during a partial setup.
+ * Build a BrandLocation from a live Concept row (and, when the page has it,
+ * the brand's primary kitchen). Live values always win; the fallback only
+ * fills what the live data does not have yet, so the storefront still renders
+ * sensibly during a partial setup.
  */
-export function locationFromConcept(c: Concept): BrandLocation {
+export function locationFromConcept(c: Concept, kitchen?: BrandKitchen | null): BrandLocation {
   const base = DEFAULT_BRAND_LOCATIONS[c.slug] ?? {
     slug:                c.slug,
     name:                formatBrandName(c.name),
@@ -123,19 +148,28 @@ export function locationFromConcept(c: Concept): BrandLocation {
   // unset and the public dial number is a WhatsApp Business one (common).
   const whatsappDigits = (c.whatsapp ?? c.phone ?? '').replace(/[^\d]/g, '')
 
+  // Street + pin: the kitchen, then the brand's mirror of it, then fallback.
+  const street = kitchen?.address ?? c.address ?? base.street
+  const liveGeo = (kitchen?.latitude != null && kitchen?.longitude != null)
+    ? { lat: kitchen.latitude, lng: kitchen.longitude }
+    : (c.latitude != null && c.longitude != null)
+      ? { lat: c.latitude, lng: c.longitude }
+      : null
+
   return {
     ...base,
     slug:                c.slug,
     // Lowercase brands (simmer, stackd) must read lowercase everywhere the
     // NAP name surfaces — JSON-LD, footer, /locations pages.
     name:                formatBrandName(c.name),
-    street:              c.address ?? base.street,
+    street,
     area:                c.addressLocality ?? base.area,
     phone:               c.phone ?? base.phone,
     whatsapp:            whatsappDigits || base.whatsapp,
-    geo: (c.latitude != null && c.longitude != null)
-      ? { lat: c.latitude, lng: c.longitude }
-      : base.geo,
+    geo:                 liveGeo ?? base.geo,
+    // A live pin beats the fallback share link: the share link points at
+    // wherever the kitchen was when it was pasted into code.
+    mapsUrl:             liveGeo ? mapsLinkFor(liveGeo) : base.mapsUrl,
     cuisine:             c.cuisine ?? base.cuisine,
     priceRange:          (c.priceTier && PRICE_TIER_TO_RANGE[c.priceTier]) || base.priceRange,
     acceptsReservations: c.reservationsEnabled !== false,
@@ -145,7 +179,7 @@ export function locationFromConcept(c: Concept): BrandLocation {
 /**
  * Server-side helper — fetch the concept list and build the brand-location
  * map. Used by every server component that previously imported the const.
- * Falls back to DEFAULT_BRAND_LOCATIONS if the API is unreachable.
+ * Falls back to DEFAULT_BRAND_LOCATIONS only if the API is unreachable.
  */
 export async function fetchBrandLocations(apiBase: string): Promise<Record<string, BrandLocation>> {
   try {
@@ -161,20 +195,36 @@ export async function fetchBrandLocations(apiBase: string): Promise<Record<strin
   }
 }
 
+/**
+ * Every active kitchen a brand runs from, primary first (GET
+ * /locations/public). Empty when none is linked or the API is down.
+ */
+export async function fetchBrandKitchens(apiBase: string, slug: string): Promise<BrandKitchen[]> {
+  try {
+    const res = await fetch(`${apiBase}/api/v1/locations/public?brand=${encodeURIComponent(slug)}`, { cache: 'no-store' })
+    if (!res.ok) return []
+    const rows = (await res.json()) as BrandKitchen[]
+    return Array.isArray(rows) ? rows : []
+  } catch {
+    return []
+  }
+}
+
 /** Location-page slugs that used to be live. Kept resolving so an indexed
  *  or printed URL doesn't 404 after a move — maps to the brand slug. */
 export const LEGACY_LOCATION_SLUGS: Record<string, string> = {
   'bukhari-commercial': 'simmer',
 }
 
-/** Synchronous lookup of the fallback default for a given slug. Use for
- *  client components that don't have access to the live concept list. */
+/** API-DOWN FALLBACK: the bundled default for a slug. Only for a render that
+ *  has no concept row at all — anything holding a Concept must use
+ *  locationFromConcept(concept) so the admin-edited values win. */
 export function locationFor(slug: string): BrandLocation | undefined {
   return DEFAULT_BRAND_LOCATIONS[slug]
 }
 
-/** Backwards-compat const export so existing imports keep building. New
- *  code should prefer fetchBrandLocations() to get live admin-edited data. */
+/** API-DOWN FALLBACK, kept so existing imports keep building. Never read it
+ *  ahead of the live data: use fetchBrandLocations() / locationFromConcept(). */
 export const BRAND_LOCATIONS = DEFAULT_BRAND_LOCATIONS
 
 /** "Ittehad Commercial, DHA Phase 6 · Karachi" — skips TODO_FILL parts. */
@@ -183,7 +233,8 @@ export function addressLine(loc: BrandLocation): string {
   return parts.join(' · ')
 }
 
-/** wa.me link with optional pre-filled message. */
+/** wa.me link with optional pre-filled message. With no number on file it
+ *  opens WhatsApp's share sheet rather than a fake number. */
 export function whatsappLink(loc: BrandLocation, prefilledText?: string): string {
   const base = `https://wa.me/${loc.whatsapp}`
   return prefilledText ? `${base}?text=${encodeURIComponent(prefilledText)}` : base

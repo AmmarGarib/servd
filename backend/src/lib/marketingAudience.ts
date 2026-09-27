@@ -1,5 +1,8 @@
-// Who marketing can reach — one definition, used by campaigns and by the
-// automated loyalty messages alike.
+// Who marketing can reach — ONE definition, used by campaigns and by every
+// automated message (workers/loyaltyTriggers.ts). Nothing else may filter an
+// audience on marketingOptOutAt / bannedAt by hand; the triggers used to, and
+// banned customers kept getting birthday and win-back messages while the
+// milestone note even went to people who had unsubscribed.
 //
 // OPT-OUT. Everyone we hold contact details for is reachable unless they have
 // unsubscribed. The old rule was opt-in on Customer.marketingOptIn, which
@@ -15,11 +18,33 @@ import type { Prisma } from '@prisma/client'
 
 const API_BASE = () => process.env['API_URL'] ?? 'http://localhost:3001'
 
-/** Base reachability: not deleted, not banned, not unsubscribed. */
+/**
+ * Platform-level reachability, for automated messages that no one company
+ * sends (birthday, activation, first-order welcome, milestones, referrals):
+ * not deleted, not unsubscribed, and under no active ban anywhere (bannedAt is
+ * the synced "some company has an active ban" flag — we cannot tell which
+ * company's customer a platform message speaks for, so any ban excludes).
+ */
 export const reachableCustomer: Prisma.CustomerWhereInput = {
   deletedAt: null,
   bannedAt: null,
   marketingOptOutAt: null,
+}
+
+/**
+ * Reachability for a message ONE company sends (campaigns, win-back): not
+ * deleted, not unsubscribed, and not banned BY THAT COMPANY (owner decision
+ * 15 — another company's ban is not this company's business). Combine with
+ * `companyAudience` for the brand audience.
+ */
+export async function reachableAtCompany(tenantId: string): Promise<Prisma.CustomerWhereInput> {
+  const { bannedCustomerIdsAtCompany } = await import('./strikes.js')
+  const banned = await bannedCustomerIdsAtCompany(tenantId)
+  return {
+    deletedAt: null,
+    marketingOptOutAt: null,
+    ...(banned.length > 0 && { id: { notIn: banned } }),
+  }
 }
 
 /**

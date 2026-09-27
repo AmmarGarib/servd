@@ -334,7 +334,7 @@ export const posApi = {
   // which shift this user is on.
   currentShift: () => api.get<{ shift: { id: string; openedAt: string; openingFloatCents: number; tenantId: string | null } | null }>('/pos/shifts/current'),
   // The one comp engine: capped, PIN-approved above the cashier cap, on the drawer.
-  compOrder: (orderId: string, body: { amountCents: number; reason: string; shiftId: string; managerOverridePin?: string }) =>
+  compOrder: (orderId: string, body: { amountCents: number; reason: string; shiftId: string; managerOverridePin?: string; staffMealFor?: string }) =>
     api.post<{ id: string; orderCompleted: boolean }>(`/pos/orders/${orderId}/comp`, body),
 }
 

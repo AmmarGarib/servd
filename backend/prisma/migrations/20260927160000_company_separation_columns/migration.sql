@@ -3,7 +3,8 @@
 -- API treats them as the owning company's defaults, never shared.
 
 -- DropIndex
-DROP INDEX "cost_allocation_rules_sourceAccountCode_key";
+-- (the old global unique; IF EXISTS so a replay on a schema that already moved it is harmless)
+DROP INDEX IF EXISTS "cost_allocation_rules_sourceAccountCode_key";
 -- AlterTable
 ALTER TABLE "gift_cards" ADD COLUMN     "tenantId" TEXT;
 -- AlterTable

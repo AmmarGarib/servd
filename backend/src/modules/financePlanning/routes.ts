@@ -1,13 +1,27 @@
-// Finance planning module: capital ledger, capex projects, pro-forma scenarios.
-// All three are CRUD-heavy with light computed totals; UI does the heavy
-// lifting on rendering monthly P&L curves.
+// Finance planning module: the CapEx project tracker (quotes, status,
+// budget) and the read-only history of the old capital ledger.
+//
+// ONE path for capital spend (owner decision 24, financePlanning/
+// capexPosting.ts): a capex instalment marked paid posts as an advance to the
+// supplier (or a prepayment / a fee, by what the line is), and a delivered
+// item is capitalised through the fixed-asset register. The old capital-ledger
+// writer (POST/PATCH/DELETE /finance/capital-ledger) is gone — it posted
+// nothing and no page wrote to it. The ProForma scenarios (/finance/
+// projections) are gone too: /projections is the one projections module.
 
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { Prisma } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, MANAGERS, ADMIN_ONLY } from '../auth/middleware.js'
-import { NotFoundError } from '../../lib/errors.js'
+import { NotFoundError, AppError } from '../../lib/errors.js'
+import { scopeTenantWhere, resolveTenantScope, assertConceptOwned } from '../../lib/tenantScope.js'
+import { syncSourcePosting } from '../accounting/sourcePosting.js'
+import { ASSET_CATEGORIES, type AssetCategory } from '../fixedAssets/service.js'
+import { audit } from '../../lib/audit.js'
+import {
+  syncCapexPaymentPosting, capitaliseCapexLine, capexLedgerState, capexTreatmentOf, CAPEX_SOURCE,
+} from './capexPosting.js'
 import { flagException } from '../../lib/exceptions.js'
 import {
   requireActiveCompany, assertConceptAttachable, assertLocationOfCompany,
@@ -71,6 +85,33 @@ function withRollups<T extends { lines: Array<{ unitCostCents: number; quantity:
   }
 }
 
+// The books' view of each project (owner decision 24): per line what its
+// posted instalments put on the books (advances, prepayments, fees) and the
+// asset it was capitalised as; per project what is on the books as assets vs
+// still sitting in advances, not yet capitalised.
+async function withLedger<P extends { lines: Array<{ id: string; payments: Array<{ id: string }> }> }>(tenantIds: string[], projects: P[]) {
+  const state = await capexLedgerState(tenantIds, projects.flatMap((p) => p.lines))
+  return projects.map((p) => {
+    const lines = p.lines.map((l) => ({ ...l, ledger: state.get(l.id) ?? null }))
+    const sum = (f: (x: NonNullable<ReturnType<typeof state.get>>) => number) =>
+      lines.reduce((t, l) => t + (l.ledger ? f(l.ledger) : 0), 0)
+    const capitalisedCents = lines.reduce((t, l) => t + (l.ledger?.asset?.costCents ?? 0), 0)
+    const advancedCents = sum((x) => x.advancedCents)
+    const advancedOnCapitalised = lines.reduce((t, l) => t + (l.ledger?.asset ? l.ledger.advancedCents : 0), 0)
+    return {
+      ...p,
+      lines,
+      books: {
+        capitalisedCents,
+        advancedCents,
+        notYetCapitalisedCents: advancedCents - advancedOnCapitalised,
+        prepaidCents: sum((x) => x.prepaidCents),
+        expensedCents: sum((x) => x.expensedCents),
+      },
+    }
+  })
+}
+
 // Recompute line.paidCents from its CapexPayment children (paid only).
 async function recalcLinePaid(lineId: string): Promise<void> {
   const sum = await prisma.capexPayment.aggregate({
@@ -123,16 +164,21 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
   // Capital Ledger
   // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
+  // Read-only history of the old Excel-mirror capital ledger. Nothing writes
+  // to it any more and nothing counts it: capital spend is the capex tracker's
+  // payments (posted as advances) and the fixed-asset register.
   fastify.get<{ Querystring: { conceptId?: string; projectId?: string; days?: string } }>(
     '/capital-ledger',
     { preHandler: requireAuth(...MANAGERS) },
     async (req) => {
       const { conceptId, projectId } = req.query
+      if (conceptId) await assertConceptOwned(req, conceptId, 'read')
       const days = req.query.days ? parseInt(req.query.days, 10) : 365 * 5
       const since = new Date(Date.now() - days * 86_400_000)
       const entries = await prisma.capitalLedgerEntry.findMany({
         where: {
-          deletedAt: null, tenantId: req.staffUser!.tenantFilter,
+          deletedAt: null,
+          ...(await scopeTenantWhere(req, 'read')),
           date: { gte: since },
           ...(conceptId && { conceptId }),
           ...(projectId && { projectId }),
@@ -140,69 +186,7 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
         orderBy: { date: 'desc' },
       })
       const totalCents = entries.reduce((s, e) => s + e.amountCents, 0)
-      return { entries, totalCents, count: entries.length }
-    },
-  )
-
-  fastify.post(
-    '/capital-ledger',
-    { preHandler: requireAuth(...MANAGERS) },
-    async (req, reply) => {
-      const body = z.object({
-        date:        z.string(),
-        amountCents: z.number().int().positive(),
-        description: z.string().min(1).max(200),
-        paidTo:      z.string().max(200).optional(),
-        invoiceUrl:  z.string().url().optional(),
-        category:    z.string().max(40).optional(),
-        conceptId:   z.string().uuid().optional(),
-        projectId:   z.string().optional(),
-      }).parse(req.body)
-      // A new entry binds to the ACTIVE company; any brand or capex project
-      // it names must be that company's.
-      const tenantId = requireActiveCompany(req)
-      if (body.conceptId) await assertConceptAttachable(req, body.conceptId)
-      if (body.projectId) await assertCapexProjectOfCompany(tenantId, body.projectId)
-      const entry = await prisma.capitalLedgerEntry.create({
-        data: { ...body, date: new Date(body.date), tenantId, createdById: req.staffUser!.id },
-      })
-      return reply.status(201).send(entry)
-    },
-  )
-
-  fastify.patch<{ Params: { id: string } }>(
-    '/capital-ledger/:id',
-    { preHandler: requireAuth(...MANAGERS) },
-    async (req, reply) => {
-      const body = z.object({
-        date:        z.string().optional(),
-        amountCents: z.number().int().positive().optional(),
-        description: z.string().min(1).max(200).optional(),
-        paidTo:      z.string().max(200).nullable().optional(),
-        category:    z.string().max(40).nullable().optional(),
-        invoiceUrl:  z.string().url().nullable().optional(),
-      }).parse(req.body)
-      const owned = await prisma.capitalLedgerEntry.findFirst({
-        where: { id: req.params.id, tenantId: req.staffUser!.tenantFilter, deletedAt: null },
-      })
-      if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Entry not found in your active company' } })
-      return prisma.capitalLedgerEntry.update({
-        where: { id: req.params.id },
-        data: { ...body, ...(body.date && { date: new Date(body.date) }) },
-      })
-    },
-  )
-
-  fastify.delete<{ Params: { id: string } }>(
-    '/capital-ledger/:id',
-    { preHandler: requireAuth(...MANAGERS) },
-    async (req, reply) => {
-      const owned = await prisma.capitalLedgerEntry.findFirst({
-        where: { id: req.params.id, tenantId: req.staffUser!.tenantFilter, deletedAt: null },
-      })
-      if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Entry not found in your active company' } })
-      await prisma.capitalLedgerEntry.update({ where: { id: req.params.id }, data: { deletedAt: new Date() } })
-      return reply.status(204).send()
+      return { entries, totalCents, count: entries.length, readOnly: true, note: 'Historical entries only — capital spend is booked through CapEx payments and the fixed-asset register.' }
     },
   )
 
@@ -212,11 +196,11 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
 
   fastify.get('/capex', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
     const projects = await prisma.capexProject.findMany({
-      where: { deletedAt: null, tenantId: req.staffUser!.tenantFilter },
+      where: { deletedAt: null, ...(await scopeTenantWhere(req, 'read')) },
       include: { lines: { orderBy: { sortOrder: 'asc' }, include: { quotes: true, payments: true } }, _count: { select: { lines: true } } },
       orderBy: { createdAt: 'desc' },
     })
-    return projects.map((p) => withRollups(p))
+    return withLedger((await resolveTenantScope(req)).tenantIds, projects.map((p) => withRollups(p)))
   })
 
   fastify.get<{ Params: { id: string } }>(
@@ -224,7 +208,7 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuth(...MANAGERS) },
     async (req) => {
       const p = await prisma.capexProject.findFirst({
-        where: { id: req.params.id, tenantId: req.staffUser!.tenantFilter },
+        where: { id: req.params.id, ...(await scopeTenantWhere(req, 'read')) },
         include: {
           lines: {
             orderBy: [{ scope: 'asc' }, { sortOrder: 'asc' }],
@@ -233,7 +217,7 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
         },
       })
       if (!p) throw new NotFoundError('CapexProject', req.params.id)
-      return withRollups(p)
+      return (await withLedger((await resolveTenantScope(req)).tenantIds, [withRollups(p)]))[0]
     },
   )
 
@@ -314,7 +298,7 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
         })).nullable().optional(),
       }).parse(req.body)
       const owned = await prisma.capexProject.findFirst({
-        where: { id: req.params.id, tenantId: req.staffUser!.tenantFilter, deletedAt: null },
+        where: { id: req.params.id, deletedAt: null, ...(await scopeTenantWhere(req, 'write')) },
       })
       if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'CapEx project not found in your active company' } })
       // Re-pointing the location or owner: must be the PROJECT's company's.
@@ -346,7 +330,7 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuth(...MANAGERS) },
     async (req, reply) => {
       const owned = await prisma.capexProject.findFirst({
-        where: { id: req.params.id, tenantId: req.staffUser!.tenantFilter, deletedAt: null },
+        where: { id: req.params.id, deletedAt: null, ...(await scopeTenantWhere(req, 'write')) },
       })
       if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'CapEx project not found in your active company' } })
       await prisma.capexProject.update({
@@ -363,7 +347,7 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
     async (req, reply) => {
       const body = lineSchema.parse(req.body)
       const project = await prisma.capexProject.findFirst({
-        where: { id: req.params.id, tenantId: req.staffUser!.tenantFilter, deletedAt: null },
+        where: { id: req.params.id, deletedAt: null, ...(await scopeTenantWhere(req, 'write')) },
       })
       if (!project) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'CapEx project not found in your active company' } })
       if (body.assignedToId) await assertMemberOfCompany(project.tenantId, body.assignedToId)
@@ -395,7 +379,7 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
       const owned = await prisma.capexLine.findFirst({
         where: {
           id: req.params.lineId,
-          project: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
+          project: { deletedAt: null, ...(await scopeTenantWhere(req, 'write')) },
         },
         include: { project: { select: { tenantId: true } } },
       })
@@ -426,7 +410,7 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
       const owned = await prisma.capexLine.findFirst({
         where: {
           id: req.params.lineId,
-          project: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
+          project: { deletedAt: null, ...(await scopeTenantWhere(req, 'write')) },
         },
       })
       if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'CapEx line not found in your active company' } })
@@ -453,7 +437,7 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
       const ownedLine = await prisma.capexLine.findFirst({
         where: {
           id: req.params.lineId,
-          project: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
+          project: { deletedAt: null, ...(await scopeTenantWhere(req, 'write')) },
         },
       })
       if (!ownedLine) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'CapEx line not found in your active company' } })
@@ -474,7 +458,7 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
       const q = await prisma.capexQuote.findFirst({
         where: {
           id: req.params.quoteId,
-          line: { project: { tenantId: req.staffUser!.tenantFilter, deletedAt: null } },
+          line: { project: { deletedAt: null, ...(await scopeTenantWhere(req, 'write')) } },
         },
       })
       if (!q) throw new NotFoundError('CapexQuote', req.params.quoteId)
@@ -502,7 +486,7 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
       const owned = await prisma.capexQuote.findFirst({
         where: {
           id: req.params.quoteId,
-          line: { project: { tenantId: req.staffUser!.tenantFilter, deletedAt: null } },
+          line: { project: { deletedAt: null, ...(await scopeTenantWhere(req, 'write')) } },
         },
       })
       if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Quote not found in your active company' } })
@@ -513,6 +497,21 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
 
   // â”€â”€â”€ Payments â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
+  // Marking an instalment paid posts it to the books in the SAME transaction
+  // (owner decision 24, capexPosting.ts): a capital item as an advance to
+  // the supplier (1340), a rent advance as a prepayment (1310), a broker /
+  // consultant fee as an expense (6110) — from the bank (or cash). A payment
+  // the ledger refuses (closed month, project with no company) is not saved.
+  const capexPaymentBody = {
+    paidAt:      z.string().nullable().optional(),
+    paidAmountCents: z.number().int().nonnegative().nullable().optional(),
+    paymentRef:  z.string().max(120).nullable().optional(),
+    notes:       z.string().nullable().optional(),
+    // How it is booked — defaults from what the line is (capexTreatmentOf).
+    treatment:   z.enum(['capital', 'prepaid', 'expense']).optional(),
+    payFrom:     z.enum(['bank', 'cash']).optional(),
+  }
+
   fastify.post<{ Params: { lineId: string } }>('/capex/lines/:lineId/payments',
     { preHandler: requireAuth(...MANAGERS) },
     async (req, reply) => {
@@ -520,54 +519,56 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
         label:       z.enum(['deposit', 'midpoint', 'balance', 'extra']).default('deposit'),
         amountCents: z.number().int().nonnegative(),
         dueDate:     z.string().nullable().optional(),
-        paidAt:      z.string().nullable().optional(),
-        paidAmountCents: z.number().int().nonnegative().nullable().optional(),
-        paymentRef:  z.string().max(120).nullable().optional(),
-        notes:       z.string().nullable().optional(),
+        ...capexPaymentBody,
       }).parse(req.body)
       const ownedLine = await prisma.capexLine.findFirst({
         where: {
           id: req.params.lineId,
-          project: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
+          project: { deletedAt: null, ...(await scopeTenantWhere(req, 'write')) },
         },
       })
       if (!ownedLine) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'CapEx line not found in your active company' } })
-      const p = await prisma.capexPayment.create({
-        data: {
-          ...body,
-          lineId: req.params.lineId,
-          dueDate: body.dueDate ? new Date(body.dueDate) : null,
-          paidAt:  body.paidAt  ? new Date(body.paidAt)  : null,
-        },
+      const { treatment, payFrom, ...data } = body
+      const result = await prisma.$transaction(async (tx) => {
+        const p = await tx.capexPayment.create({
+          data: {
+            ...data,
+            lineId: req.params.lineId,
+            dueDate: data.dueDate ? new Date(data.dueDate) : null,
+            paidAt:  data.paidAt  ? new Date(data.paidAt)  : null,
+          },
+        })
+        const ledger = await syncCapexPaymentPosting(p.id, { tx, postedBy: req.staffUser!.id, treatment, payFrom })
+        return { ...p, ledger }
       })
       // Bump line.paidCents from sum of paid payments
       await recalcLinePaid(req.params.lineId)
-      return reply.status(201).send(p)
+      return reply.status(201).send(result)
     },
   )
 
   fastify.patch<{ Params: { paymentId: string } }>('/capex/payments/:paymentId',
     { preHandler: requireAuth(...MANAGERS) },
     async (req, reply) => {
-      const body = z.object({
-        paidAt:      z.string().nullable().optional(),
-        paidAmountCents: z.number().int().nonnegative().nullable().optional(),
-        paymentRef:  z.string().max(120).nullable().optional(),
-        notes:       z.string().nullable().optional(),
-      }).parse(req.body)
+      const body = z.object(capexPaymentBody).parse(req.body)
       const ownedPayment = await prisma.capexPayment.findFirst({
         where: {
           id: req.params.paymentId,
-          line: { project: { tenantId: req.staffUser!.tenantFilter, deletedAt: null } },
+          line: { project: { deletedAt: null, ...(await scopeTenantWhere(req, 'write')) } },
         },
       })
       if (!ownedPayment) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Payment not found in your active company' } })
-      const updated = await prisma.capexPayment.update({
-        where: { id: req.params.paymentId },
-        data: {
-          ...body,
-          paidAt: body.paidAt !== undefined ? (body.paidAt ? new Date(body.paidAt) : null) : undefined,
-        },
+      const { treatment, payFrom, ...data } = body
+      const updated = await prisma.$transaction(async (tx) => {
+        const updated = await tx.capexPayment.update({
+          where: { id: ownedPayment.id },
+          data: {
+            ...data,
+            paidAt: data.paidAt !== undefined ? (data.paidAt ? new Date(data.paidAt) : null) : undefined,
+          },
+        })
+        const ledger = await syncCapexPaymentPosting(updated.id, { tx, postedBy: req.staffUser!.id, treatment, payFrom })
+        return { ...updated, ledger }
       })
       await recalcLinePaid(updated.lineId)
       return updated
@@ -580,350 +581,97 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
       const p = await prisma.capexPayment.findFirst({
         where: {
           id: req.params.paymentId,
-          line: { project: { tenantId: req.staffUser!.tenantFilter, deletedAt: null } },
+          line: { project: { deletedAt: null, ...(await scopeTenantWhere(req, 'write')) } },
         },
+        include: { line: { select: { project: { select: { tenantId: true } } } } },
       })
       if (!p) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Payment not found in your active company' } })
-      await prisma.capexPayment.delete({ where: { id: req.params.paymentId } })
+      const tenantId = p.line.project.tenantId
+      await prisma.$transaction(async (tx) => {
+        // A posted instalment is reversed before its row goes.
+        if (tenantId) {
+          await syncSourcePosting({ tenantId, sourceType: CAPEX_SOURCE, id: p.id, desired: null, postedBy: req.staffUser!.id, reason: 'Capex payment deleted', tx })
+        }
+        await tx.capexPayment.delete({ where: { id: p.id } })
+      })
       await recalcLinePaid(p.lineId)
       return reply.status(204).send()
     },
   )
 
-  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-  // Pro-forma projections
-  // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-
-  fastify.get('/projections', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
-    return prisma.proForma.findMany({
-      where: { deletedAt: null, tenantId: req.staffUser!.tenantFilter },
-      orderBy: { updatedAt: 'desc' },
-    })
-  })
-
-  fastify.get<{ Params: { id: string } }>(
-    '/projections/:id',
-    { preHandler: requireAuth(...MANAGERS) },
+  // POST /finance/capex/:id/post-payments — put a project's paid instalments
+  // that predate the posting rule on the books (admin, dry run by default).
+  // Idempotent: an instalment already posted is left as it is; one dated in a
+  // closed month is listed, never forced.
+  fastify.post<{ Params: { id: string } }>('/capex/:id/post-payments',
+    { preHandler: requireAuth(...ADMIN_ONLY) },
     async (req) => {
-      const p = await prisma.proForma.findFirst({
-        where: { id: req.params.id, tenantId: req.staffUser!.tenantFilter },
-        include: {
-          channels:   { orderBy: { sortOrder: 'asc' } },
-          fixedCosts: { orderBy: { sortOrder: 'asc' } },
-          months:     { orderBy: { monthIndex: 'asc' } },
-        },
+      const body = z.object({ dryRun: z.boolean().default(true) }).parse(req.body ?? {})
+      const project = await prisma.capexProject.findFirst({
+        where: { id: req.params.id, deletedAt: null, ...(await scopeTenantWhere(req, 'write')) },
+        include: { lines: { include: { payments: { where: { paidAt: { not: null } }, select: { id: true } } } } },
       })
-      if (!p) throw new NotFoundError('ProForma', req.params.id)
-
-      // Compute steady-state monthly revenue from channels
-      const ssMonthly = p.channels.reduce((s, c) => {
-        const weeklyOrders =
-          (c.ordersMon + c.ordersTue + c.ordersWed + c.ordersThu + c.ordersFri + c.ordersSat + c.ordersSun)
-        const monthlyOrders = (weeklyOrders / 7) * p.tradingDaysPerMonth
-        return s + Math.round(monthlyOrders * c.checkAvgCents)
-      }, 0)
-
-      // Live labour line from workforce/positions. Pulls tenantCostShareCents
-      // for any active position attached to this concept (if the ProForma is
-      // concept-scoped) or all tenant-wide positions otherwise. Surfaced as
-      // a synthetic fixed-cost row in the response so the UI can render it
-      // distinctly ("Auto · from workforce") and operators see budget edits
-      // here update projections on next load.
-      // Narrow tenantFilter (Position.tenantId is non-nullable).
-      const laborTenantFilter = req.staffUser!.tenantFilter ?? { in: [] as string[] }
-      const laborPositions = await prisma.position.findMany({
-        where: {
-          tenantId: laborTenantFilter,
-          status: { in: ['open', 'filled', 'frozen'] },
-          ...(p.conceptId ? { conceptId: p.conceptId } : {}),
-        },
-        select: { tenantCostShareCents: true, headcount: true },
-      })
-      const autoLaborGross = laborPositions.reduce(
-        (s, q) => s + q.tenantCostShareCents * q.headcount, 0,
-      )
-
-      // Apply inter-tenant contributions to tenant-wide ProForma scenarios.
-      // Concept-scoped scenarios get only their concept's labour, so
-      // contributions (which are tenant-level) don't apply there. For
-      // tenant-wide projections (no conceptId), incoming contributions
-      // reduce labour cost; outgoing add to it.
-      let contributionAdjustment = 0
-      if (!p.conceptId) {
-        const tenantsArr = typeof laborTenantFilter === 'string'
-          ? [laborTenantFilter]
-          : laborTenantFilter.in
-        const contributions = await prisma.tenantContribution.findMany({
-          where: {
-            isActive: true,
-            OR: [
-              { destinationTenantId: { in: tenantsArr } },
-              { sourceTenantId:      { in: tenantsArr } },
-            ],
-          },
-        })
-        for (const c of contributions) {
-          if (tenantsArr.includes(c.destinationTenantId)) contributionAdjustment -= c.monthlyCents
-          if (tenantsArr.includes(c.sourceTenantId))      contributionAdjustment += c.monthlyCents
+      if (!project) throw new NotFoundError('CapexProject', req.params.id)
+      if (!project.tenantId) throw new AppError('PROJECT_HAS_NO_COMPANY', 'This capex project is not bound to a company', 422)
+      const state = await capexLedgerState([project.tenantId], project.lines)
+      const rows: Array<{ paymentId: string; outcome: string }> = []
+      for (const l of project.lines) {
+        for (const p of l.payments) {
+          if (state.get(l.id)?.payments[p.id]?.status === 'posted') { rows.push({ paymentId: p.id, outcome: 'already_posted' }); continue }
+          if (body.dryRun) { rows.push({ paymentId: p.id, outcome: `would_post:${capexTreatmentOf(l)}` }); continue }
+          try {
+            const r = await prisma.$transaction((tx) => syncCapexPaymentPosting(p.id, { tx, postedBy: req.staffUser!.id }))
+            rows.push({ paymentId: p.id, outcome: r.outcome })
+          } catch (err) {
+            rows.push({ paymentId: p.id, outcome: `error:${(err as Error).message}` })
+          }
         }
       }
-      const autoLaborMonthly = autoLaborGross + contributionAdjustment
-
-      // Per-month rendered P&L. totalFixed = manual fixed-cost lines (or
-      // legacy aggregate) PLUS the auto labor line, so labor flows in
-      // without operators having to mirror salaries twice.
-      const totalManualFixed = p.fixedCosts.length > 0
-        ? p.fixedCosts.reduce((s, f) => s + f.monthlyCents, 0)
-        : p.monthlyFixedCostsCents
-      const totalFixed = totalManualFixed + autoLaborMonthly
-
-      const monthsRendered = p.months.map((m) => {
-        const revenue   = Math.round(ssMonthly * m.rampPct)
-        const variable  = Math.round(revenue * p.variableCostPct)
-        const opex      = totalFixed + variable
-        const profit    = revenue - opex
-        return {
-          monthIndex: m.monthIndex,
-          rampPct:    m.rampPct,
-          revenueCents: revenue,
-          variableCents: variable,
-          fixedCents: totalFixed,
-          opexCents: opex,
-          profitCents: profit,
-        }
-      })
-
-      // Cumulative cash flow starting from -workingCapital
-      let cumulative = -p.workingCapitalCents
-      const monthsWithCum = monthsRendered.map((m) => {
-        cumulative += m.profitCents
-        return { ...m, cumulativeCashCents: cumulative }
-      })
-
-      // Payback: first month index where cumulative >= 0
-      const paybackMonth = monthsWithCum.find((m) => m.cumulativeCashCents >= 0)?.monthIndex ?? null
-
-      return {
-        ...p,
-        steadyStateMonthlyCents: ssMonthly,
-        totalFixedMonthlyCents:  totalFixed,
-        // Surface the auto labor split so the UI can render it as its own
-        // (non-editable, synthetic) fixed-cost row pointing back at workforce.
-        autoLaborMonthlyCents:   autoLaborMonthly,
-        autoLaborGrossCents:     autoLaborGross,
-        contributionAdjustmentCents: contributionAdjustment,
-        manualFixedMonthlyCents: totalManualFixed,
-        autoLaborPositionCount:  laborPositions.reduce((s, q) => s + q.headcount, 0),
-        months: monthsWithCum,
-        paybackMonth,
-      }
+      return { dryRun: body.dryRun, rows }
     },
   )
 
-  fastify.post('/projections', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
-    const body = z.object({
-      name:      z.string().min(1).max(120),
-      conceptId: z.string().uuid().optional(),
-      scenario:  z.enum(['base', 'aggressive', 'conservative']).default('base'),
-      totalAskCents:           z.number().int().nonnegative().default(0),
-      capexCents:              z.number().int().nonnegative().default(0),
-      workingCapitalCents:     z.number().int().nonnegative().default(0),
-      brokerFeeCents:          z.number().int().nonnegative().default(0),
-      rentAdvanceSecurityCents:z.number().int().nonnegative().default(0),
-      monthlyFixedCostsCents:  z.number().int().nonnegative().default(0),
-      variableCostPct:         z.number().min(0).max(1).default(0.40),
-      tradingDaysPerMonth:     z.number().int().min(1).max(31).default(26),
-      notes:     z.string().optional(),
-    }).parse(req.body)
-    const tenantId = requireActiveCompany(req)
-    if (body.conceptId) await assertConceptAttachable(req, body.conceptId)
-    const created = await prisma.proForma.create({
-      data: {
-        ...body, tenantId,
-        createdById: req.staffUser!.id,
-        // Default 12 months at 100% steady state â€” operator tunes after creation
-        months: { create: Array.from({ length: 12 }, (_, i) => ({ monthIndex: i + 1, rampPct: 1.0 })) },
-      },
-      include: { months: true },
-    })
-    return reply.status(201).send(created)
-  })
-
-  fastify.patch<{ Params: { id: string } }>(
-    '/projections/:id',
-    { preHandler: requireAuth(...MANAGERS) },
-    async (req, reply) => {
-      const body = z.object({
-        name:                    z.string().min(1).max(120).optional(),
-        scenario:                z.enum(['base', 'aggressive', 'conservative']).optional(),
-        totalAskCents:           z.number().int().nonnegative().optional(),
-        capexCents:              z.number().int().nonnegative().optional(),
-        workingCapitalCents:     z.number().int().nonnegative().optional(),
-        brokerFeeCents:          z.number().int().nonnegative().optional(),
-        rentAdvanceSecurityCents:z.number().int().nonnegative().optional(),
-        monthlyFixedCostsCents:  z.number().int().nonnegative().optional(),
-        variableCostPct:         z.number().min(0).max(1).optional(),
-        tradingDaysPerMonth:     z.number().int().min(1).max(31).optional(),
-        notes:                   z.string().nullable().optional(),
-      }).parse(req.body)
-      const owned = await prisma.proForma.findFirst({
-        where: { id: req.params.id, tenantId: req.staffUser!.tenantFilter, deletedAt: null },
-      })
-      if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Projection not found in your active company' } })
-      return prisma.proForma.update({ where: { id: req.params.id }, data: body })
-    },
-  )
-
-  fastify.delete<{ Params: { id: string } }>(
-    '/projections/:id',
+  // POST /finance/capex/lines/:lineId/capitalise — a delivered item goes on
+  // the fixed-asset register: Dr 15x0 / Cr 1340 for what was advanced, Cr
+  // 2010 for what is still owed. Depreciation then runs from the register.
+  fastify.post<{ Params: { lineId: string } }>('/capex/lines/:lineId/capitalise',
     { preHandler: requireAuth(...ADMIN_ONLY) },
     async (req, reply) => {
-      const owned = await prisma.proForma.findFirst({
-        where: { id: req.params.id, tenantId: req.staffUser!.tenantFilter, deletedAt: null },
-      })
-      if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Projection not found in your active company' } })
-      await prisma.proForma.update({ where: { id: req.params.id }, data: { deletedAt: new Date() } })
-      return reply.status(204).send()
-    },
-  )
-
-  // Channels
-  fastify.post<{ Params: { id: string } }>(
-    '/projections/:id/channels',
-    { preHandler: requireAuth(...MANAGERS) },
-    async (req, reply) => {
       const body = z.object({
-        name:           z.string().min(1).max(40),
-        checkAvgCents:  z.number().int().nonnegative(),
-        ordersMon:      z.number().int().nonnegative().default(0),
-        ordersTue:      z.number().int().nonnegative().default(0),
-        ordersWed:      z.number().int().nonnegative().default(0),
-        ordersThu:      z.number().int().nonnegative().default(0),
-        ordersFri:      z.number().int().nonnegative().default(0),
-        ordersSat:      z.number().int().nonnegative().default(0),
-        ordersSun:      z.number().int().nonnegative().default(0),
+        category: z.enum(Object.keys(ASSET_CATEGORIES) as [AssetCategory, ...AssetCategory[]]),
+        usefulLifeMonths: z.number().int().min(1).max(600),
+        salvageCents: z.number().int().min(0).default(0),
+        name: z.string().min(1).max(120).optional(),
+        acquiredAt: z.string().regex(/^\d{4}-\d{2}-\d{2}/).optional(),
+        costCents: z.number().int().positive().optional(),
       }).parse(req.body)
-      const owned = await prisma.proForma.findFirst({
-        where: { id: req.params.id, tenantId: req.staffUser!.tenantFilter, deletedAt: null },
+      const line = await prisma.capexLine.findFirst({
+        where: { id: req.params.lineId, project: { deletedAt: null, ...(await scopeTenantWhere(req, 'write')) } },
+        select: { id: true, project: { select: { tenantId: true } } },
       })
-      if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Projection not found in your active company' } })
-      const created = await prisma.proFormaChannel.create({ data: { ...body, proFormaId: req.params.id } })
-      return reply.status(201).send(created)
+      if (!line) throw new NotFoundError('CapexLine', req.params.lineId)
+      const result = await capitaliseCapexLine({
+        lineId: line.id,
+        category: body.category,
+        usefulLifeMonths: body.usefulLifeMonths,
+        salvageCents: body.salvageCents,
+        name: body.name,
+        acquiredAt: body.acquiredAt ? new Date(body.acquiredAt) : undefined,
+        costCents: body.costCents,
+        postedBy: req.staffUser!.id,
+      })
+      await audit({
+        category: 'accounting', action: 'fixed_asset.capitalise_capex', entity: 'FixedAsset', entityId: result.asset.id,
+        userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: line.project.tenantId,
+        after: result.asset, metadata: { capexLineId: line.id, advancedCents: result.advancedCents, owedCents: result.owedCents },
+      })
+      return reply.status(201).send(result)
     },
   )
 
-  fastify.patch<{ Params: { channelId: string } }>(
-    '/projections/channels/:channelId',
-    { preHandler: requireAuth(...MANAGERS) },
-    async (req, reply) => {
-      const body = z.object({
-        name:           z.string().min(1).max(40).optional(),
-        checkAvgCents:  z.number().int().nonnegative().optional(),
-        ordersMon:      z.number().int().nonnegative().optional(),
-        ordersTue:      z.number().int().nonnegative().optional(),
-        ordersWed:      z.number().int().nonnegative().optional(),
-        ordersThu:      z.number().int().nonnegative().optional(),
-        ordersFri:      z.number().int().nonnegative().optional(),
-        ordersSat:      z.number().int().nonnegative().optional(),
-        ordersSun:      z.number().int().nonnegative().optional(),
-      }).parse(req.body)
-      const owned = await prisma.proFormaChannel.findFirst({
-        where: {
-          id: req.params.channelId,
-          proForma: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
-        },
-      })
-      if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Channel not found in your active company' } })
-      return prisma.proFormaChannel.update({ where: { id: req.params.channelId }, data: body })
-    },
-  )
-
-  fastify.delete<{ Params: { channelId: string } }>(
-    '/projections/channels/:channelId',
-    { preHandler: requireAuth(...MANAGERS) },
-    async (req, reply) => {
-      const owned = await prisma.proFormaChannel.findFirst({
-        where: {
-          id: req.params.channelId,
-          proForma: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
-        },
-      })
-      if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Channel not found in your active company' } })
-      await prisma.proFormaChannel.delete({ where: { id: req.params.channelId } })
-      return reply.status(204).send()
-    },
-  )
-
-  // Fixed costs
-  fastify.post<{ Params: { id: string } }>(
-    '/projections/:id/fixed-costs',
-    { preHandler: requireAuth(...MANAGERS) },
-    async (req, reply) => {
-      const body = z.object({
-        category:     z.string().min(1).max(60),
-        monthlyCents: z.number().int().nonnegative(),
-        notes:        z.string().optional(),
-      }).parse(req.body)
-      const owned = await prisma.proForma.findFirst({
-        where: { id: req.params.id, tenantId: req.staffUser!.tenantFilter, deletedAt: null },
-      })
-      if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Projection not found in your active company' } })
-      const created = await prisma.proFormaFixedCost.create({ data: { ...body, proFormaId: req.params.id } })
-      return reply.status(201).send(created)
-    },
-  )
-
-  fastify.patch<{ Params: { costId: string } }>(
-    '/projections/fixed-costs/:costId',
-    { preHandler: requireAuth(...MANAGERS) },
-    async (req, reply) => {
-      const body = z.object({
-        category:     z.string().min(1).max(60).optional(),
-        monthlyCents: z.number().int().nonnegative().optional(),
-        notes:        z.string().nullable().optional(),
-      }).parse(req.body)
-      const owned = await prisma.proFormaFixedCost.findFirst({
-        where: {
-          id: req.params.costId,
-          proForma: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
-        },
-      })
-      if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Cost not found in your active company' } })
-      return prisma.proFormaFixedCost.update({ where: { id: req.params.costId }, data: body })
-    },
-  )
-
-  fastify.delete<{ Params: { costId: string } }>(
-    '/projections/fixed-costs/:costId',
-    { preHandler: requireAuth(...MANAGERS) },
-    async (req, reply) => {
-      const owned = await prisma.proFormaFixedCost.findFirst({
-        where: {
-          id: req.params.costId,
-          proForma: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
-        },
-      })
-      if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Cost not found in your active company' } })
-      await prisma.proFormaFixedCost.delete({ where: { id: req.params.costId } })
-      return reply.status(204).send()
-    },
-  )
-
-  // Month ramp tweak
-  fastify.patch<{ Params: { id: string; monthIndex: string } }>(
-    '/projections/:id/months/:monthIndex',
-    { preHandler: requireAuth(...MANAGERS) },
-    async (req, reply) => {
-      const body = z.object({ rampPct: z.number().min(0).max(2) }).parse(req.body)
-      const monthIndex = parseInt(req.params.monthIndex, 10)
-      const owned = await prisma.proForma.findFirst({
-        where: { id: req.params.id, tenantId: req.staffUser!.tenantFilter, deletedAt: null },
-      })
-      if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Projection not found in your active company' } })
-      return prisma.proFormaMonth.update({
-        where: { proFormaId_monthIndex: { proFormaId: req.params.id, monthIndex } },
-        data: body,
-      })
-    },
-  )
+  // There are no /finance/projections routes. The ProForma scenarios were a
+  // second projections module (it counted frozen seats and read no ramp);
+  // /projections is the one module, and its labour line follows the one
+  // budgeted-labour rule (projections/labour.ts). The pro_formas* tables are
+  // kept as history.
 }

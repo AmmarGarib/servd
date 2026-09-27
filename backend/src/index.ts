@@ -199,6 +199,10 @@ async function build() {
   registerBrandScope(fastify)
 
   const { isAllowedOrigin, describeAllowlist } = await import('./lib/corsAllowlist.js')
+  // Brand domains for CORS come from the Domain table; load them before the
+  // allowlist is described, and refresh them on a timer.
+  const { startDomainOriginRefresh } = await import('./modules/domains/hostCache.js')
+  await startDomainOriginRefresh()
   fastify.log.info(describeAllowlist())
   await fastify.register(cors, {
     origin: (origin, cb) => {

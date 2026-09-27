@@ -10,6 +10,7 @@
 // Per-concept:
 //   Concept.fbrPosId — the POSID assigned by FBR at POS registration
 
+import { allocateTaxCents, gstRatePct, lineTaxRatePct, tenderOfPayments } from '../../lib/pricing.js'
 import { redis } from '../../lib/redis.js'
 import { serviceClient as prisma } from '../../lib/prisma.js'
 
@@ -221,10 +222,10 @@ export async function buildFbrDataForOrder(orderId: string): Promise<FbrOrderDat
   const order = await prisma.order.findUnique({
     where: { id: orderId },
     include: {
-      concept: { select: { taxRate: true, fbrPosId: true } },
+      concept: { select: { taxRateCash: true, taxRateCard: true, fbrPosId: true } },
       items: {
         where: { status: { not: 'voided' } },
-        include: { modifiers: true },
+        include: { modifiers: true, menuItem: { select: { taxClassification: true, overrideTaxRate: true } } },
       },
       payments: { where: { status: 'paid' } },
       customer: { select: { name: true, phone: true, ntn: true, cnic: true } },
@@ -236,25 +237,35 @@ export async function buildFbrDataForOrder(orderId: string): Promise<FbrOrderDat
 
   const invoiceNumber = `INV-${order.id.slice(-10).toUpperCase()}`
 
-  const items = order.items.map((item) => {
+  // The rate and the tax are the ORDER's, as priced by lib/pricing.ts — never
+  // recomputed here (this used to re-tax every line at the legacy
+  // concept.taxRate, 17%, while the order had been charged 15% or 8%). The
+  // stored tax is split across the lines by each line's taxable weight (its
+  // value × its item's tax-class rate), so the lines sum to exactly the GST
+  // the customer paid. An order priced before Order.taxRatePct existed falls
+  // back to the rate of the tender it was paid with.
+  const standardRate = order.taxRatePct ?? gstRatePct(order.concept, tenderOfPayments(order.payments.map((p) => p.method)))
+  const lineValues = order.items.map((item) => {
     const modTotal = item.modifiers.reduce((s, m) => s + m.priceDeltaCents * item.quantity, 0)
-    const lineCents = item.unitPriceCents * item.quantity + modTotal
-    const taxRate = order.concept.taxRate / 100
-    const taxCents = Math.round(lineCents * taxRate)
-    return {
-      name: item.name,
-      quantity: item.quantity,
-      unitPriceCents: item.unitPriceCents,
-      taxCents,
-      discountCents: 0,
-    }
+    return item.unitPriceCents * item.quantity + modTotal
   })
+  const lineTax = allocateTaxCents(
+    order.items.map((item, i) => lineValues[i]! * lineTaxRatePct(item.menuItem, standardRate)),
+    order.taxCents,
+  )
+  const items = order.items.map((item, i) => ({
+    name: item.name,
+    quantity: item.quantity,
+    unitPriceCents: item.unitPriceCents,
+    taxCents: lineTax[i]!,
+    discountCents: 0,
+  }))
 
   return {
     orderId: order.id,
     invoiceNumber,
     posId: order.concept.fbrPosId,
-    taxRate: order.concept.taxRate,
+    taxRate: standardRate,
     items,
     discountCents: order.discountCents,
     taxCents: order.taxCents,

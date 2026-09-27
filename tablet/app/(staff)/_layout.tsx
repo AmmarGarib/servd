@@ -1,9 +1,15 @@
 // Staff shell — persistent left rail nav + content slot. All staff routes
 // live under this layout so the rail is always visible and the socket
 // connection persists across screen switches.
+//
+// The tablet is NOT a till (owner decision 1): the till is the admin web POS
+// (/pos), with its shift, blind count and Z-report. The tablet's POS, tender,
+// shift and active-orders (void / comp / refund) screens were retired; it
+// keeps the kitchen and floor jobs — KDS / expo, dispatch, curbside,
+// bookings, floor, customer lookup and the time clock.
 
 import { useEffect } from 'react'
-import { View, Text, Pressable, Alert, ScrollView, AppState } from 'react-native'
+import { View, Text, Pressable, Alert, ScrollView } from 'react-native'
 import { Slot, useRouter, usePathname } from 'expo-router'
 
 import { theme } from '../../src/lib/theme'
@@ -11,19 +17,14 @@ import { useSessionStore, sessionStore } from '../../src/store/session'
 import { getSocket } from '../../src/lib/socket'
 import { StatusDot } from '../../src/components/StatusDot'
 import { initials } from '../../src/lib/format'
-import { onDrawerError } from '../../src/lib/api'
-import { syncShift } from '../../src/store/shift'
 
 const NAV = [
   { key: 'kds',           label: 'KDS',          icon: '🍳', path: '/(staff)/kds' },
-  { key: 'pos',           label: 'POS',          icon: '🧾', path: '/(staff)/pos' },
-  { key: 'active-orders', label: 'Active',       icon: '🔥', path: '/(staff)/active-orders' },
   { key: 'floor',         label: 'Floor',        icon: '🪑', path: '/(staff)/floor' },
   { key: 'reservations',  label: 'Bookings',     icon: '📅', path: '/(staff)/reservations' },
   { key: 'curbside',      label: 'Curbside',     icon: '🚗', path: '/(staff)/curbside' },
   { key: 'dispatch',      label: 'Dispatch',     icon: '🛵', path: '/(staff)/dispatch' },
   { key: 'customer',      label: 'Customer',     icon: '👤', path: '/(staff)/customer' },
-  { key: 'shift',         label: 'Shift',        icon: '💰', path: '/(staff)/shift' },
   { key: 'time-clock',    label: 'Time clock',   icon: '⏱️', path: '/(staff)/time-clock' },
   { key: 'settings',      label: 'Settings',     icon: '⚙️', path: '/(staff)/settings' },
 ] as const
@@ -36,17 +37,8 @@ export default function StaffLayout() {
   // Boot the socket as soon as we enter the staff area.
   useEffect(() => { getSocket() }, [])
 
-  // Which drawer this user is on comes from the server: on entry, whenever
-  // the app comes back to the foreground, and after any drawer error.
-  useEffect(() => {
-    void syncShift()
-    onDrawerError(() => { void syncShift() })
-    const sub = AppState.addEventListener('change', (state) => { if (state === 'active') void syncShift() })
-    return () => { onDrawerError(null); sub.remove() }
-  }, [user?.id])
-
   function signOut() {
-    Alert.alert('Sign out?', `End shift for ${user?.name ?? 'this user'}?`, [
+    Alert.alert('Sign out?', `Sign ${user?.name ?? 'this user'} out of this tablet?`, [
       { text: 'Cancel', style: 'cancel' },
       { text: 'Sign out', style: 'destructive', onPress: async () => {
         await sessionStore.getState().clear()
@@ -106,7 +98,7 @@ export default function StaffLayout() {
             </Text>
           </View>
           <Text style={{ color: theme.textMuted, fontSize: 10, fontWeight: '700', letterSpacing: 0.5 }}>
-            END SHIFT
+            SIGN OUT
           </Text>
         </Pressable>
       </View>

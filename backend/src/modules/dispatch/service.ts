@@ -35,8 +35,8 @@ export async function assignRider(orderId: string, riderId: string) {
     throw new AppError('RIDER_NOT_IN_COMPANY', "Rider does not belong to the order's company", 422)
   }
   if (rider.status === 'offline') throw new AppError('RIDER_OFFLINE', 'Rider is offline', 422)
-  // A completed order can still take a rider — expo completes a delivery when
-  // it hands the bag over, and the dispatcher may record the rider after.
+  // A completed order can still take a rider — a till-paid order can go out
+  // for delivery, and the dispatcher may record the rider after the fact.
   if (['cancelled', 'rejected', 'refunded'].includes(order.status)) {
     throw new AppError('ORDER_NOT_ACTIVE', `Order is ${order.status} — there is nothing to deliver`, 409)
   }
@@ -62,25 +62,36 @@ export async function unassignRider(orderId: string) {
 }
 
 /**
- * The rider dropped the order off. Stamps deliveredAt once (the claim), counts
- * the delivery, and frees the rider if it was their last active order. The
- * order keeps its riderId, so it shows in the rider's history.
+ * The rider dropped the order off — decision 8: THIS is when a delivery is
+ * complete (expo handing the bag to the rider is not). Two doors come here:
+ * the dispatcher / rider pressing "Mark delivered"
+ * (POST /dispatch/orders/:id/delivered) and the customer's OTP being verified
+ * at the door (POST /trustops/orders/:id/verify-otp, `otpVerified`).
  *
- * Order status: a 'ready' order is completed through the canonical
- * updateOrderStatus (ledger, invoice, loyalty — it used to be written as
- * 'completed' directly, with none of that); one expo already completed is left
- * as it is. An order the kitchen has not finished cannot have been delivered.
- * When a delivery counts as complete — expo hand-off or drop-off — is the
- * owner's open question; this keeps today's behaviour of both.
+ *   - The kitchen must have finished it: 'ready' (or already 'completed' — a
+ *     till-paid order that went out with a rider); anything earlier is 409.
+ *   - A 'ready' order is completed through the canonical updateOrderStatus →
+ *     completeOrder (ledger, invoice, FBR/SRB, loyalty, rollups — once). It
+ *     used to be written 'completed' directly, with none of that.
+ *   - deliveredAt is stamped once (the claim): the rider's delivery is counted
+ *     and the rider freed if it was their last active order. The order keeps
+ *     its riderId, so it shows in the rider's history.
+ *
+ * A rider is required for "Mark delivered"; an OTP verified at the door
+ * completes the order even when no rider was recorded on it.
  */
-export async function markDelivered(orderId: string) {
+export async function markDelivered(
+  orderId: string,
+  opts: { otpVerified?: boolean; actor?: { id: string; email?: string | null; tenantId?: string | null } | null } = {},
+) {
   const order = await prisma.order.findFirst({
     where: { id: orderId, deletedAt: null },
     select: { id: true, status: true, riderId: true, deliveredAt: true },
   })
   if (!order) throw new NotFoundError('Order', orderId)
-  if (!order.riderId) throw new AppError('NO_RIDER', 'Assign a rider before marking the order delivered', 422)
-  if (order.deliveredAt) return { order, alreadyDelivered: true }
+  if (!order.riderId && !opts.otpVerified) {
+    throw new AppError('NO_RIDER', 'Assign a rider before marking the order delivered', 422)
+  }
   if (order.status !== 'ready' && order.status !== 'completed') {
     throw new AppError(
       'NOT_READY',
@@ -91,20 +102,34 @@ export async function markDelivered(orderId: string) {
     )
   }
 
+  // Complete first (idempotent), so a drop-off that was stamped before a
+  // failed completion is still completed on the retry.
   if (order.status === 'ready') {
     const { updateOrderStatus } = await import('../orders/service.js')
-    await updateOrderStatus(order.id, 'completed')
+    await updateOrderStatus(order.id, 'completed', {
+      actor: opts.actor ?? null,
+      via: opts.otpVerified ? 'otp_verified' : 'rider_delivered',
+    })
   }
 
   const riderId = order.riderId
+  const now = new Date()
   const delivered = await prisma.$transaction(async (tx) => {
+    if (opts.otpVerified) {
+      await tx.order.updateMany({
+        where: { id: order.id, deliveryOtpVerifiedAt: null },
+        data: { deliveryOtpVerifiedAt: now },
+      })
+    }
     const claimed = await tx.order.updateMany({
       where: { id: order.id, deliveredAt: null },
-      data: { deliveredAt: new Date() },
+      data: { deliveredAt: now },
     })
     if (claimed.count === 0) return false
-    await tx.rider.update({ where: { id: riderId }, data: { totalDeliveries: { increment: 1 } } })
-    await releaseIfIdle(tx, riderId, order.id)
+    if (riderId) {
+      await tx.rider.update({ where: { id: riderId }, data: { totalDeliveries: { increment: 1 } } })
+      await releaseIfIdle(tx, riderId, order.id)
+    }
     return true
   })
   const fresh = await prisma.order.findUniqueOrThrow({ where: { id: order.id } })

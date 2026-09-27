@@ -187,32 +187,20 @@ describe('petty cash boxes belong to one company', () => {
 // ─── Staff meals ──────────────────────────────────────────────────────────────
 
 describe('staff meals are scoped', () => {
-  it('POST refuses a staff member of another company', async () => {
-    const r = await call('mgrA', 'POST', '/trustops/staff-meals', { staffId: users['cookB']!.id, description: 'Club sandwich', estimatedCostCents: 50_000, managerPin: PIN })
-    expect(r.statusCode).toBe(422)
-    expect(r.json().error.code).toBe('STAFF_NOT_IN_COMPANY')
-    expect((await call('mgrA', 'POST', '/trustops/staff-meals', { staffId: users['cookA']!.id, conceptId: conceptB, description: 'x', managerPin: PIN })).statusCode).toBe(404)
+  it('the manual staff-meal POST is retired: meals ring through the till as comps (decision 11)', async () => {
+    const r = await call('mgrA', 'POST', '/trustops/staff-meals', { staffId: users['cookA']!.id, description: 'Club sandwich', managerPin: PIN })
+    expect(r.statusCode).toBe(410)
   })
 
-  it('GET without a brand returns only the operator\'s companies\' meals', async () => {
-    const a = await call('mgrA', 'POST', '/trustops/staff-meals', { staffId: users['cookA']!.id, description: 'Club sandwich', estimatedCostCents: 250_000, managerPin: PIN })
-    expect(a.statusCode).toBe(201)
-    const b = await call('mgrB', 'POST', '/trustops/staff-meals', { staffId: users['cookB']!.id, conceptId: conceptB, description: 'Croissant', estimatedCostCents: 1_000, managerPin: '6147' })
-    expect(b.statusCode).toBe(201)
-
+  it("GET without a brand returns only the operator's companies' meals", async () => {
+    const a = await prisma.staffMeal.create({ data: { tenantId: tenantA, staffId: users['cookA']!.id, approvedById: users['mgrA']!.id, description: 'Club sandwich', estimatedCostCents: 250_000 } })
+    const b = await prisma.staffMeal.create({ data: { tenantId: tenantB, staffId: users['cookB']!.id, approvedById: users['mgrB']!.id, conceptId: conceptB, description: 'Croissant', estimatedCostCents: 1_000 } })
     const seenByB = (await call('mgrB', 'GET', '/trustops/staff-meals')).json() as Array<{ id: string }>
-    expect(seenByB.map((m) => m.id)).toContain(b.json().id)
-    expect(seenByB.map((m) => m.id)).not.toContain(a.json().id)
+    expect(seenByB.map((m) => m.id)).toContain(b.id)
+    expect(seenByB.map((m) => m.id)).not.toContain(a.id)
     const seenByA = (await call('mgrA', 'GET', '/trustops/staff-meals')).json() as Array<{ id: string }>
-    expect(seenByA.map((m) => m.id)).toContain(a.json().id)
-    expect(seenByA.map((m) => m.id)).not.toContain(b.json().id)
-
-    // A foreign brand filter is 404, not "B's meals".
-    expect((await call('mgrA', 'GET', `/trustops/staff-meals?conceptId=${conceptB}`)).statusCode).toBe(404)
-
-    // The heavy-meal flag (PKR 2,500 in a week) lands in A's inbox.
-    const flag = await prisma.exceptionFlag.findFirst({ where: { kind: 'shrinkage', entityType: 'User', entityId: users['cookA']!.id } })
-    expect(flag?.tenantId).toBe(tenantA)
+    expect(seenByA.map((m) => m.id)).toContain(a.id)
+    expect(seenByA.map((m) => m.id)).not.toContain(b.id)
   })
 })
 

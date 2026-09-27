@@ -26,11 +26,13 @@ export interface Concept {
   // — used for the brand-page promo strip and hero subhead respectively.
   heroTagline?: string | null
   announcementBanner?: string | null
-  // Physical presence — included in /storefront/concepts response. NAP is
-  // edited from admin CEO dashboard so the operator can fix a wrong number
-  // on Google without a code deploy. brandLocations.ts merges these over a
-  // hardcoded fallback so the storefront still renders sensibly while the
-  // operator is filling them in for the first time.
+  // Physical presence — included in /storefront/concepts response.
+  //   phone / whatsapp / addressLocality / cuisine / priceTier — per brand,
+  //     edited in admin → Storefront → Brands.
+  //   address / latitude / longitude — the brand's primary KITCHEN
+  //     (Location, admin → Storefront → Locations), mirrored onto the brand
+  //     by the API; never edited on the brand (owner decision 18).
+  // brandLocations.ts lets these win over its bundled API-down fallback.
   phone?:           string | null
   whatsapp?:        string | null
   address?:         string | null

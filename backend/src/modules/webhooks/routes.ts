@@ -118,50 +118,18 @@ export async function webhookRoutes(fastify: FastifyInstance) {
     }
 
     if (payload.order_id && payload.transaction_id && payload.status) {
-      const statusMap: Record<string, string> = { SUCCESS: 'paid', FAILED: 'failed', REFUNDED: 'refunded' }
-      const mappedStatus = statusMap[payload.status] ?? 'pending'
-
-      // Before flipping an order to PAID, verify the gateway actually collected
-      // (at least) what we billed. Keenu sends `amount` in paisa
-      // (adapters/payment/keenu.ts), matching Payment.amountCents. This closes
-      // the hole where a partial/wrong-amount SUCCESS marked an order fully paid.
-      if (mappedStatus === 'paid') {
-        const payment = await prisma.payment.findFirst({
-          where: { orderId: payload.order_id, gatewayRef: payload.transaction_id },
-          select: { id: true, amountCents: true },
-        })
-        if (!payment) {
-          fastify.log.warn({ orderId: payload.order_id, txn: payload.transaction_id }, 'Keenu SUCCESS for unknown payment — ignoring')
-          return reply.status(200).send({ received: true, unmatched: true })
-        }
-        if (typeof payload.amount === 'number' && payload.amount < payment.amountCents) {
-          fastify.log.error(
-            { orderId: payload.order_id, txn: payload.transaction_id, expectedCents: payment.amountCents, gotCents: payload.amount },
-            'Keenu amount underpayment — NOT marking paid',
-          )
-          return reply.status(200).send({ received: true, amountMismatch: true })
-        }
-      }
-
-      await prisma.payment.updateMany({
-        where: { orderId: payload.order_id, gatewayRef: payload.transaction_id },
-        data: { status: mappedStatus as never },
-      })
-
-      // A till card the drawer's close already booked as "awaiting gateway
-      // confirmation" (1030) and the gateway has now failed: move it to the
-      // customer's receivable. No-op for anything else (open drawer, online
-      // order); idempotent per payment. Never fails the webhook.
-      if (mappedStatus === 'failed') {
-        const failed = await prisma.payment.findMany({
-          where: { orderId: payload.order_id, gatewayRef: payload.transaction_id, shiftId: { not: null } },
-          select: { id: true },
-        })
-        const { postPosCardFailure } = await import('../accounting/shiftPosting.js')
-        for (const p of failed) {
-          await postPosCardFailure(p.id).catch((err: Error) =>
-            fastify.log.error({ paymentId: p.id, err: err.message }, 'Keenu failure could not be posted to the ledger'))
-        }
+      // ONE settlement path (paymentGateways/keenuSettle.ts): the same rules
+      // as the till and the check split — amount verified, order completed
+      // when covered, a failed till card moved to the customer's receivable.
+      const { applyKeenuCallback } = await import('../paymentGateways/keenuSettle.js')
+      const out = await applyKeenuCallback(
+        { orderId: payload.order_id, transactionId: payload.transaction_id, status: payload.status, amount: payload.amount },
+        fastify.log,
+      )
+      if (out.result === 'unmatched') return reply.status(200).send({ received: true, unmatched: true })
+      if (out.result === 'amount_mismatch') {
+        fastify.log.error(out, 'Keenu underpayment — NOT settled')
+        return reply.status(200).send({ received: true, amountMismatch: true })
       }
     }
 

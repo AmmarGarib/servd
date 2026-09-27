@@ -15,10 +15,13 @@ export function startSegmentComputationWorker() {
   const worker = new Worker(
     QUEUE_NAME,
     async (job) => {
-      console.log(`[segments] Computing all behavioral segments (job ${job.id})`)
+      // Every company, every segment (modules/crm/segmentComputation.ts). The
+      // lapsed segment this writes is the win-back audience (loyaltyTriggers).
+      console.log(`[segments] Computing customer segments per company (job ${job.id})`)
       const results = await computeAllSegments()
       const total = results.reduce((s, r) => s + Math.max(r.count, 0), 0)
-      console.log(`[segments] Done — ${results.length} segments, ${total} total memberships`)
+      const failed = results.filter((r) => r.count < 0).length
+      console.log(`[segments] Done — ${results.length} company segments, ${total} memberships${failed ? `, ${failed} FAILED` : ''}`)
       return results
     },
     { connection: redis, concurrency: 1 },

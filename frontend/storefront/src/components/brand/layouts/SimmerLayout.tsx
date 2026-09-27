@@ -13,12 +13,40 @@
 // /brand/simmer/menu route renders the full menu in the locked format.
 // This page leads with brand identity and routes to menu / reserve / order.
 
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import type { Concept } from '../../../lib/concept'
 import { conceptHeroImage } from '../../../lib/concept'
 import { CrossBrandStrip } from '../parts/CrossBrandStrip'
 import { SpeakeasyFridgeHero } from '../../kinetic/SpeakeasyFridgeHero'
-import { locationFor, whatsappLink } from '../../../lib/brandLocations'
+import { locationFromConcept, whatsappLink } from '../../../lib/brandLocations'
+import { parseBrandFooterBlock, defaultBrandFooter, type BrandFooterConfig } from '../../../lib/brandFooterConfig'
+
+// simmer's own accounts. API-DOWN FALLBACK ONLY: the live links are the brand
+// footer config (admin → Storefront → Brand Footers), the same source the
+// footer below renders, so these buttons and the footer can never disagree.
+const FALLBACK_SOCIAL = {
+  instagram: 'https://instagram.com/simmer_down',
+  tiktok:    'https://tiktok.com/@simmer_down',
+  facebook:  'https://facebook.com/simmerdown',
+}
+
+/** The brand footer's social links, falling back per link to the bundled set. */
+function useBrandSocial(concept: Concept): BrandFooterConfig['social'] {
+  const [social, setSocial] = useState<BrandFooterConfig['social']>({})
+  useEffect(() => {
+    let alive = true
+    const base = process.env['NEXT_PUBLIC_API_URL'] ?? ''
+    fetch(`${base}/api/v1/site-layouts/brand:${encodeURIComponent(concept.slug)}:footer`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((body: { blocks?: unknown } | null) => {
+        if (alive && body) setSocial(parseBrandFooterBlock(body.blocks, defaultBrandFooter(concept)).social)
+      })
+      .catch(() => { /* keep the fallback */ })
+    return () => { alive = false }
+  }, [concept])
+  return social
+}
 
 interface Props {
   concept: Concept
@@ -268,6 +296,7 @@ function MailIcon() {
 }
 
 export function SimmerLayout({ concept, concepts }: Props) {
+  const social = useBrandSocial(concept)
   // Hours + reservations CTA live in the chiller hero; this page no
   // longer needs the hoursData hook or the reservations gate.
 
@@ -442,24 +471,22 @@ export function SimmerLayout({ concept, concepts }: Props) {
             gap: 'clamp(1rem, 4vw, 2rem)',
           }}>
             {(() => {
-              // Pull canonical NAP from lib/brandLocations so the WhatsApp + Maps
-              // links are byte-identical with the Restaurant schema on this page,
-              // the /locations/ittehad-commercial geo page, and the GBP listing
-              // (per the local-seo skill — inconsistent NAP dilutes Maps prominence).
-              const loc = locationFor('simmer')
-              // Prefer the operator's own Maps share link — it opens the exact
-              // listing rather than a text search that might land elsewhere.
-              const mapsHref = loc?.mapsUrl
-                ?? (loc
-                  ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${loc.name} ${loc.area} ${loc.city}`)}`
-                  : 'https://www.google.com/maps/search/?api=1&query=Simmer+Karachi')
-              const waHref = loc ? whatsappLink(loc, 'hi simmer') : 'https://wa.me/'
+              // Canonical NAP from the live concept row (its WhatsApp number,
+              // its kitchen's pin) through lib/brandLocations, so these links
+              // are byte-identical with the Restaurant schema on this page and
+              // the GBP listing (per the local-seo skill — inconsistent NAP
+              // dilutes Maps prominence). The bundled defaults only fill in
+              // when the API is down.
+              const loc = locationFromConcept(concept)
+              const mapsHref = loc.mapsUrl
+                ?? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${loc.name} ${loc.area} ${loc.city}`)}`
+              const waHref = whatsappLink(loc, 'hi simmer')
               return (
                 <>
-                  <ElsewhereButton ariaLabel="instagram" href="https://instagram.com/simmer_down" icon={<InstagramIcon />} />
-                  <ElsewhereButton ariaLabel="tiktok"    href="https://tiktok.com/@simmer_down"   icon={<TikTokIcon />} />
-                  <ElsewhereButton ariaLabel="facebook"  href="https://facebook.com/simmerdown"   icon={<FacebookIcon />} />
-                  <ElsewhereButton ariaLabel="whatsapp"  href={waHref}                            icon={<WhatsAppIcon />} />
+                  <ElsewhereButton ariaLabel="instagram" href={social.instagram ?? FALLBACK_SOCIAL.instagram} icon={<InstagramIcon />} />
+                  <ElsewhereButton ariaLabel="tiktok"    href={social.tiktok ?? FALLBACK_SOCIAL.tiktok}       icon={<TikTokIcon />} />
+                  <ElsewhereButton ariaLabel="facebook"  href={social.facebook ?? FALLBACK_SOCIAL.facebook}   icon={<FacebookIcon />} />
+                  {loc.whatsapp && <ElsewhereButton ariaLabel="whatsapp" href={waHref} icon={<WhatsAppIcon />} />}
                   <ElsewhereButton ariaLabel="maps"      href={mapsHref}                          icon={<MapsIcon />} />
                   <ElsewhereButton ariaLabel="email"     href="mailto:hello@eatsimmer.com"        icon={<MailIcon />} />
                 </>

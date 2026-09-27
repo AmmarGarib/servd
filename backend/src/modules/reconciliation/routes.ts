@@ -1,13 +1,14 @@
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
-import { requireAuth, MANAGERS, APPROVERS } from '../auth/middleware.js'
+import { requireAuth, MANAGERS, APPROVERS, ADMIN_ONLY } from '../auth/middleware.js'
 import {
   importBankStatement,
   adjustStatementLine,
 } from './service.js'
 import { drawerExpectationOf, drawerVariance, cashVarianceLimitCents, isDrawerBalanced } from '../../lib/drawer.js'
-import { scopeTenantWhere, shiftWhere, shiftTenantId, SHIFT_COMPANY_INCLUDE } from '../../lib/tenantScope.js'
+import { scopeTenantWhere, shiftWhere, shiftTenantId, SHIFT_COMPANY_INCLUDE, resolveTenantScope } from '../../lib/tenantScope.js'
+import { audit } from '../../lib/audit.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 
 const importBankSchema = z.object({
@@ -226,4 +227,31 @@ export async function reconciliationRoutes(fastify: FastifyInstance) {
     },
   )
 
+  // POST /reconciliation/backfill-unposted — owner decision 6. Closed shifts
+  // that never reached the books (closed through the old /reconciliation
+  // close, or refused as unbalanced) post into their own month while it is
+  // open, otherwise into the CURRENT open month with a memo naming the
+  // shift's original close date. A locked month is never reopened. Admin
+  // only; dry run unless { dryRun: false }. The companies in view (the
+  // portfolio header expands). Idempotent — a shift posts once.
+  fastify.post('/backfill-unposted', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req) => {
+    const body = z.object({ dryRun: z.boolean().default(true) }).parse(req.body ?? {})
+    const scope = await resolveTenantScope(req)
+    if (scope.tenantIds.length === 0) throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company first', 422)
+    const { backfillUnpostedShifts } = await import('../accounting/shiftPosting.js')
+    const result = await backfillUnpostedShifts({ tenantIds: scope.tenantIds, dryRun: body.dryRun, postedBy: req.staffUser!.id })
+    if (!body.dryRun) {
+      await audit({
+        category: 'accounting',
+        action: 'shift.backfill_unposted',
+        entity: 'Shift',
+        userId: req.staffUser!.id,
+        userEmail: req.staffUser!.email,
+        tenantId: req.staffUser!.tenantId ?? null,
+        after: result.summary,
+        metadata: { shiftIds: result.rows.filter((r) => r.outcome.startsWith('posted')).map((r) => r.shiftId) },
+      })
+    }
+    return { dryRun: body.dryRun, ...result }
+  })
 }

@@ -169,3 +169,82 @@ export async function reverseStrike(
 
   return { unbanned }
 }
+
+// ─── Per-company ban checks (owner decision 15) ──────────────────────────────
+//
+// ONE blocking mechanism: CustomerBan. The CRM "block" button raises a ban and
+// "unblock" lifts it (crm/routes.ts); Customer.isBlacklisted is only a synced
+// flag and is not read. A ban applies only at the brands of the company that
+// raised it. CustomerBan has no company column yet, so the company is
+// attributed the way the naughty list does it (crm/customerScope.banCompanies:
+// the staff member who raised it, or the strikes behind an auto-ban). A ban
+// that cannot be attributed (legacy rows) applies everywhere — the
+// conservative reading. When `tenantId` lands on CustomerBan, banAppliesAt
+// becomes a plain column comparison.
+
+type BanMatch = { customerId?: string | null; email?: string | null; phone?: string | null }
+
+function activeBanWhere(m: BanMatch, now: Date) {
+  const or: Array<Record<string, unknown>> = []
+  if (m.customerId) or.push({ customerId: m.customerId })
+  if (m.email)      or.push({ email: m.email.toLowerCase() })
+  if (m.phone)      or.push({ phone: m.phone })
+  if (or.length === 0) return null
+  return { AND: [{ OR: or }, { liftedAt: null }, { OR: [{ expiresAt: null }, { expiresAt: { gt: now } }] }] }
+}
+
+/** This company's active ban matching the customer, their email or phone — or null. */
+export async function activeBanAtCompany(args: BanMatch & { tenantId: string | null }): Promise<{ id: string; reason: string; bannedAt: Date; ipAddresses: string[] } | null> {
+  const where = activeBanWhere(args, new Date())
+  if (!where) return null
+  const bans = await defaultPrisma.customerBan.findMany({
+    where,
+    select: { id: true, customerId: true, bannedById: true, reason: true, bannedAt: true, ipAddresses: true },
+    orderBy: { bannedAt: 'desc' },
+  })
+  if (bans.length === 0) return null
+  if (!args.tenantId) return bans[0]!
+  const { banCompanies } = await import('../modules/crm/customerScope.js')
+  const companies = await banCompanies(bans)
+  return bans.find((b) => {
+    const c = companies.get(b.id)
+    return c === null || (c !== undefined && c.has(args.tenantId!))
+  }) ?? null
+}
+
+/**
+ * Refuse an order/booking at a brand of `tenantId` when that company has an
+ * active ban on this customer. Records the IP on the ban as a forensic signal.
+ */
+export async function assertNotBannedAtCompany(args: BanMatch & {
+  tenantId: string | null
+  ip?: string | null
+  intent?: 'order' | 'reservation' | 'signup'
+}): Promise<void> {
+  const ban = await activeBanAtCompany(args)
+  if (!ban) return
+  if (args.ip && !ban.ipAddresses.includes(args.ip)) {
+    await defaultPrisma.customerBan.update({ where: { id: ban.id }, data: { ipAddresses: { push: args.ip } } }).catch(() => {})
+  }
+  const verb = args.intent === 'reservation' ? 'book' : args.intent === 'signup' ? 'sign up' : 'order'
+  const { AppError } = await import('./errors.js')
+  throw new AppError('BANNED', `This account can't ${verb} here. If you think this is a mistake, contact the venue directly.`, 403)
+}
+
+/** Customers with an active ban that applies at `tenantId` (for marketing reach). */
+export async function bannedCustomerIdsAtCompany(tenantId: string): Promise<string[]> {
+  const now = new Date()
+  const bans = await defaultPrisma.customerBan.findMany({
+    where: { customerId: { not: null }, liftedAt: null, OR: [{ expiresAt: null }, { expiresAt: { gt: now } }] },
+    select: { id: true, customerId: true, bannedById: true },
+  })
+  if (bans.length === 0) return []
+  const { banCompanies } = await import('../modules/crm/customerScope.js')
+  const companies = await banCompanies(bans)
+  const out = new Set<string>()
+  for (const b of bans) {
+    const c = companies.get(b.id)
+    if (c === null || c?.has(tenantId)) out.add(b.customerId!)
+  }
+  return [...out]
+}

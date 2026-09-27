@@ -25,6 +25,7 @@
 // DISCOUNTED orders the spec figure differs from what was charged. This adapter
 // follows the spec; aligning the POS charge is a separate finance decision.
 
+import { gstRatePct, tenderOfPayments } from '../../lib/pricing.js'
 import { serviceClient as prisma } from '../../lib/prisma.js'
 
 const SRB_URL = 'https://pos.srb.gos.pk/ePOSGateway/v1/SalesInvoiceService.api'
@@ -176,7 +177,7 @@ export async function buildSrbDataForOrder(orderId: string): Promise<SrbOrderDat
   const order = await prisma.order.findUnique({
     where: { id: orderId },
     include: {
-      concept: { select: { name: true, invoiceLegalName: true, ntn: true, srbPosId: true, taxRateCash: true, taxRateCard: true, taxRate: true } },
+      concept: { select: { name: true, invoiceLegalName: true, ntn: true, srbPosId: true, taxRateCash: true, taxRateCard: true } },
       items: { where: { status: { not: 'voided' } }, include: { modifiers: true } },
       payments: { where: { status: 'paid' } },
       customer: { select: { name: true, phone: true, ntn: true, cnic: true } },
@@ -191,11 +192,13 @@ export async function buildSrbDataForOrder(orderId: string): Promise<SrbOrderDat
   const isCash = methods.length > 0 && methods.every((m) => m === 'cash')
   const modeOfPay: 'Cash' | 'Card' = isCash ? 'Cash' : 'Card'
 
-  // Statutory rate that was applied at the till (servd splits GST by tender:
-  // cash → taxRateCash, card → taxRateCard). SRB expects 8 or 15.
-  const rateValue = Math.round(isCash
-    ? (order.concept.taxRateCash ?? order.concept.taxRate)
-    : (order.concept.taxRateCard ?? order.concept.taxRate))
+  // The statutory rate this order was CHARGED at — Order.taxRatePct, stamped
+  // by lib/pricing.ts priceOrder (cash 15% / card 8%, decision 9; the till
+  // re-prices to the tender actually used). It used to be inferred from the
+  // paid tender, which disagreed with the tax charged whenever the ring-up
+  // tender and the paid tender differed. An order priced before the column
+  // existed falls back to the tender it was paid with. SRB expects 8 or 15.
+  const rateValue = Math.round(order.taxRatePct ?? gstRatePct(order.concept, tenderOfPayments(methods)))
 
   // saleValue = gross taxable sale, PRE-discount, ex-tax. Computed straight from
   // the line items so it's correct for EVERY order source (POS, storefront,

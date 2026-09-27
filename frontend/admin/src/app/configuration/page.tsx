@@ -66,12 +66,12 @@ export default function ConfigurationHubPage() {
 
   const tiles: Tile[] = [
     // ── Core ──────────────────────────────────────────────────────────────
-    { href: '/settings',  icon: '🏷', title: 'Brands & Concepts',
-      desc: 'Concept name, tax rate, hero tagline, banner.',
+    { href: '/marketing/brands',  icon: '🏷', title: 'Brands',
+      desc: 'The one brand editor — identity, contact, brief, storefront copy, cash / card GST, FBR / SRB.',
       category: 'core', status: conceptsReady ? 'ready' : 'incomplete',
       hint: conceptsReady ? `${concepts.length} concepts configured` : 'Add at least one concept' },
 
-    { href: '/settings',  icon: '🍳', title: 'Kitchen Stations',
+    { href: '/kds/config',  icon: '🍳', title: 'Kitchen Stations',
       desc: 'Stations that show up on KDS — grill, fryer, expediter.',
       category: 'core', status: stationsReady ? 'ready' : 'incomplete',
       hint: stationsReady ? `${stations.length} stations` : 'Define your kitchen layout' },
@@ -82,7 +82,7 @@ export default function ConfigurationHubPage() {
       hint: staffReady ? `${users.length} users` : 'Add team members' },
 
     { href: '/configuration/locations',  icon: '📍', title: 'Locations',
-      desc: 'Physical kitchens / branches. Multi-concept kitchens link many brands.',
+      desc: 'Physical kitchens: the address and map pin customers see, the delivery origin and the clock-in anchor. One kitchen can run many brands.',
       category: 'core', status: 'incomplete', hint: 'Set up locations to filter accounting per branch' },
 
     { href: '/configuration/domains',  icon: '🌐', title: 'Custom Domains',
@@ -110,9 +110,9 @@ export default function ConfigurationHubPage() {
       desc: 'Hours, layout, hero, announcement banner.',
       category: 'channels', status: 'unknown' },
 
-    { href: '/settings/integrations',  icon: '💬', title: 'WhatsApp Ordering',
-      desc: 'Cloud API token + webhook for direct chat orders.',
-      category: 'channels', status: 'optional' },
+    { href: '/configuration/whatsapp',  icon: '💬', title: 'WhatsApp',
+      desc: 'The gateway that sends signup codes, password resets, staff sign-in codes and customer messages.',
+      category: 'channels', status: 'unknown' },
 
     { href: '/qrcodes',  icon: '📱', title: 'QR Codes / Table Ordering',
       desc: 'Per-table scan-to-order links.',
@@ -120,7 +120,7 @@ export default function ConfigurationHubPage() {
 
     // ── Finance ───────────────────────────────────────────────────────────
     { href: '/settings/integrations',  icon: '🧾', title: 'Tax Rates & FBR',
-      desc: 'FBR / SRB credentials and e-invoice status. Cash and card GST rates are set per brand in Settings → Concepts.',
+      desc: 'FBR / SRB credentials and e-invoice status. Cash and card GST rates and the POS IDs are set per brand in Storefront → Brands.',
       category: 'finance', status: 'incomplete', hint: 'FBR submission worker active' },
 
     { href: '/configuration/payment-methods',  icon: '💳', title: 'Payment Methods',
@@ -146,16 +146,12 @@ export default function ConfigurationHubPage() {
       category: 'operations', status: 'unknown' },
 
     { href: '/configuration/email',  icon: '✉️', title: 'Email',
-      desc: 'Backup channel for codes and password resets when WhatsApp is down.',
-      category: 'operations', status: 'unknown' },
-
-    { href: '/configuration/whatsapp',  icon: '💬', title: 'WhatsApp',
-      desc: 'The gateway that sends signup codes, password resets and staff sign-in codes.',
-      category: 'operations', status: 'unknown' },
+      desc: 'SMTP for every email servd sends — the backup channel for codes and password resets when WhatsApp is down.',
+      category: 'channels', status: 'unknown' },
 
     // ── Platform ──────────────────────────────────────────────────────────
     { href: '/settings/integrations',  icon: '🔌', title: 'Integrations',
-      desc: 'R2 storage, SMTP, Twilio SMS, Sentry, Meta Ads.',
+      desc: 'Meta (Facebook + Instagram), FBR / SRB e-invoicing, the supplier portal. WhatsApp and email have their own screens.',
       category: 'platform', status: 'incomplete', hint: 'Most are optional' },
 
     // B07: API tokens tile removed — no third-party integrations need them in v1.
@@ -164,8 +160,8 @@ export default function ConfigurationHubPage() {
       desc: 'FAQ, WhatsApp support, email, docs.',
       category: 'platform', status: 'ready', hint: 'WhatsApp reply within 1h business hours' },
 
-    { href: '/settings',  icon: '🌐', title: 'Language & Localisation',
-      desc: 'English / اردو (Settings → Preferences).',
+    { href: '/configuration/language',  icon: '🌐', title: 'Language & Localisation',
+      desc: 'English / اردو for this browser.',
       category: 'platform', status: 'ready', hint: 'Bilingual KDS active' },
 
     { href: '/configuration/audit-log',  icon: '📜', title: 'Audit Log',
@@ -186,7 +182,7 @@ export default function ConfigurationHubPage() {
       category: 'finance', status: 'incomplete', hint: 'Configure platform-wide ops rules' },
 
     { href: '/configuration/delivery-zones', icon: '🛵', title: 'Delivery zones',
-      desc: 'Radius bands with per-zone fees, minimum order, free-above thresholds.',
+      desc: 'Radius bands with per-zone fees, minimum order, free-above thresholds. Beyond the last zone, delivery is refused.',
       category: 'channels', status: 'incomplete' },
 
     { href: '/configuration/receipts', icon: '🧾', title: 'Receipt + cash drawer',
@@ -213,12 +209,8 @@ export default function ConfigurationHubPage() {
       desc: 'Add/edit ledger codes to mirror your accountant\'s tree.',
       category: 'finance', status: 'ready' },
 
-    { href: '/configuration/period-locks', icon: '🔒', title: 'Period locks',
-      desc: 'Close the books — block postings dated on/before locked period.',
-      category: 'finance', status: 'optional' },
-
     { href: '/configuration/webhooks', icon: '🪝', title: 'Outbound webhooks',
-      desc: 'Push events to your accountant\'s software, BI tool, or Slack bot. HMAC-signed.',
+      desc: 'Push order events to your accountant\'s software, BI tool, or Slack bot. HMAC-signed, with a test ping and delivery log.',
       category: 'platform', status: 'optional' },
 
     { href: '/configuration/custom-fields', icon: '🧩', title: 'Custom fields',
@@ -229,13 +221,9 @@ export default function ConfigurationHubPage() {
       desc: 'Daily/weekly digests delivered to your inbox. P&L, low stock, AP aging.',
       category: 'platform', status: 'optional' },
 
-    { href: '/configuration/brand-assets', icon: '🎨', title: 'Brand assets',
-      desc: 'Extended palette, fonts, voice guidelines, social handles.',
+    { href: '/storefront-footer', icon: '🔗', title: 'Brand footers & social links',
+      desc: 'Per-brand footer copy and Instagram / TikTok / Facebook links.',
       category: 'channels', status: 'optional' },
-
-    { href: '/configuration/brand-identity', icon: '✨', title: 'Brand identity',
-      desc: 'Logo, primary colour, hero tagline, announcement banner — per brand.',
-      category: 'channels', status: 'incomplete', hint: 'Surfaces on storefront, receipts, emails' },
 
     { href: '/configuration/dietary-tags', icon: '🥗', title: 'Dietary tags & allergens',
       desc: 'Taxonomy your menu items pick from — Vegan, Halal, Gluten-free, etc.',

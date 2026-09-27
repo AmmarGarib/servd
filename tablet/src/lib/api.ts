@@ -52,16 +52,6 @@ async function refreshAccessToken(): Promise<string | null> {
   return refreshInFlight
 }
 
-// Drawer errors — the stored shift is no longer an open shift of this
-// company (closed from admin /reconciliation or the other till). The staff
-// layout registers a handler that re-syncs the drawer from the server, so the
-// tablet is never stranded on a dead shift id.
-const DRAWER_ERROR_CODES = new Set(['SHIFT_CLOSED', 'SHIFT_NOT_IN_COMPANY'])
-let drawerErrorHandler: (() => void) | null = null
-export function onDrawerError(handler: (() => void) | null): void {
-  drawerErrorHandler = handler
-}
-
 async function request<T>(path: string, options: RequestInit = {}, retrying = false): Promise<T> {
   const token = sessionStore.getState().token
   const res = await fetch(`${API_URL}/api/v1${path}`, {
@@ -87,8 +77,6 @@ async function request<T>(path: string, options: RequestInit = {}, retrying = fa
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: { message: 'Request failed' } }))
     const msg = (body as { error?: { message?: string } }).error?.message ?? `HTTP ${res.status}`
-    const code = (body as { error?: { code?: string } }).error?.code
-    if (code && DRAWER_ERROR_CODES.has(code)) drawerErrorHandler?.()
     throw new ApiError(res.status, msg, body)
   }
   if (res.status === 204) return undefined as T

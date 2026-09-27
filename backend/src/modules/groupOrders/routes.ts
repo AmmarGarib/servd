@@ -16,6 +16,7 @@ import { prisma } from '../../lib/prisma.js'
 import { requireCustomerAuth } from '../auth/middleware.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { ingestOrder } from '../orders/service.js'
+import { priceOrder } from '../../lib/pricing.js'
 import type { OrderDTO } from '@servd/types'
 
 function genShareCode(): string {
@@ -243,19 +244,20 @@ export async function groupOrderRoutes(fastify: FastifyInstance) {
       // email, but group-order submit checked neither — so a barred customer
       // could open a group, add the whole order themselves, and fire a kitchen
       // ticket through a door nobody was watching.
+      // One mechanism, per company (owner decision 15): an active CustomerBan
+      // raised by the group's brand's company blocks the submit.
       const submitter0 = await prisma.customer.findUnique({
         where: { id: req.customer!.id },
-        select: { isBlacklisted: true, email: true, phone: true },
+        select: { email: true, phone: true },
       })
-      if (submitter0?.isBlacklisted) {
-        throw new AppError('BLACKLISTED', 'Your account is not permitted to place orders', 403)
-      }
-      const { assertNotBanned } = await import('../../lib/banCheck.js')
-      await assertNotBanned({
-        email: submitter0?.email ?? null,
-        phone: submitter0?.phone ?? null,
-        ip:    req.ip ?? null,
-        intent: 'order',
+      const { assertNotBannedAtCompany } = await import('../../lib/strikes.js')
+      await assertNotBannedAtCompany({
+        customerId: req.customer!.id,
+        email:    submitter0?.email ?? null,
+        phone:    submitter0?.phone ?? null,
+        tenantId: go.concept.tenantId,
+        ip:       req.ip ?? null,
+        intent:   'order',
       })
 
       // Auth: submitter must be a group member (joining is required upstream,
@@ -264,20 +266,17 @@ export async function groupOrderRoutes(fastify: FastifyInstance) {
         throw new AppError('FORBIDDEN', 'Only group members can submit the order', 403)
       }
 
-      const subtotal = go.items.reduce((s, i) => s + i.unitPriceCents * i.quantity, 0)
-      // GST is split by tender: taxRateCash (15%) for cash, taxRateCard (8%)
-      // for card and digital — see pos/service.ts. concept.taxRate is the
-      // legacy single rate, still defaulting to 17%, and this was the only
-      // place still using it, so a group bill was charged roughly nine points
-      // more GST than the same food ordered at the till or online.
-      //
-      // A group order settles at the till under whatever tender the table
-      // chooses, which isn't known here, so it takes the cash rate — the same
-      // default the POS applies when the cashier hasn't picked a method, and
-      // the conservative side of the two.
-      const taxRate  = (go.concept.taxRateCash ?? go.concept.taxRate) / 100
-      const taxCents = Math.round(subtotal * taxRate)
-      const total    = subtotal + taxCents
+      // THE order pricing (lib/pricing.ts). A group order is one table's bill
+      // settled at the till, so it takes the rate of the tender used there
+      // (decision 9). That tender isn't known yet: it is priced at the cash
+      // rate — the conservative side — and the till re-prices it if the table
+      // pays by card (pos/service processPayment). Service charge as for a
+      // till sale; item tax classes apply. (concept.taxRate, the legacy 17%,
+      // is never read.)
+      const lines = go.items.map((i) => ({ menuItemId: i.menuItemId, unitPriceCents: i.unitPriceCents, quantity: i.quantity }))
+      const price = await priceOrder(lines, 'cash', 'group', go.concept)
+      const taxCents = price.taxCents
+      const total    = price.totalCents
 
       // Submitter is the "responsible diner" recorded on the Order; check-split
       // will re-allocate per-member from here.
@@ -323,7 +322,7 @@ export async function groupOrderRoutes(fastify: FastifyInstance) {
         fulfilment_type: 'dine_in',
         raw_payload: { channel: 'group_order', shareCode: go.shareCode },
       }
-      const { order, created } = await ingestOrder(dto)
+      const { order, created } = await ingestOrder(dto, { price })
 
       // One pending Payment row so the check-split flow has something to
       // replace, and so an order without any Payment doesn't slip through

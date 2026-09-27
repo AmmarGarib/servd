@@ -36,11 +36,21 @@ interface CustomerAddress {
 // share the same colours and labels. statusFor handles unknown statuses.
 import { statusFor } from '../../lib/orderStatus'
 const TIER_COLOR: Record<string, string> = { bronze: '#cd7f32', silver: '#c0c0c0', gold: '#ffd700' }
-const TIER_THRESHOLDS = [
-  { name: 'bronze', label: 'Bronze', nextAt: 1000 },
-  { name: 'silver', label: 'Silver', nextAt: 5000 },
-  { name: 'gold',   label: 'Gold',   nextAt: null },
-]
+
+// Where the customer stands, from GET /loyalty/status: the balance and what it
+// is worth at the company's point value (owner decision 12: PKR 0.10), and the
+// tier ladder the operator configured — tiers unlock on lifetime SPEND (owner
+// decision 13), not points. Nothing here is hardcoded any more.
+interface LoyaltyStatus {
+  pointsBalance: number
+  pointsValueCents: number
+  pointValueCents: number
+  tier: { slug: string; name: string }
+  nextTier: { slug: string; name: string; unlockSpendCents: number } | null
+  lifetimeSpendCents: number
+  spendToNextCents: number
+  progressPct: number
+}
 
 export default function AccountPage() {
   const router = useRouter()
@@ -52,6 +62,7 @@ export default function AccountPage() {
   const [showAddAddr, setShowAddAddr] = useState(false)
   const [addrForm, setAddrForm] = useState({ label: '', address: '', isDefault: false })
   const [addrSaving, setAddrSaving] = useState(false)
+  const [loyalty, setLoyalty] = useState<LoyaltyStatus | null>(null)
 
   const fetchAddresses = useCallback(() => {
     if (!token) return
@@ -72,10 +83,14 @@ export default function AccountPage() {
         }),
       fetch(`${API_URL}/api/v1/storefront/addresses`, { headers: { Authorization: `Bearer ${token}` } })
         .then(r => r.ok ? r.json() : []),
+      fetch(`${API_URL}/api/v1/loyalty/status`, { headers: { Authorization: `Bearer ${token}` } })
+        .then(r => r.ok ? r.json() as Promise<LoyaltyStatus> : null)
+        .catch(() => null),
     ])
-      .then(([prof, addrs]) => {
+      .then(([prof, addrs, status]) => {
         if (prof) setProfile(prof)
         setAddresses(addrs as CustomerAddress[])
+        setLoyalty(status)
       })
       .catch((e: Error) => setError(e.message))
       .finally(() => setLoading(false))
@@ -148,15 +163,11 @@ export default function AccountPage() {
   )
 
   const initials      = (profile.name ?? 'A').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()
-  const tier          = profile.loyaltyAccount?.tier ?? 'bronze'
-  const pts           = profile.loyaltyAccount?.pointsBalance ?? 0
-  const tierIdx       = TIER_THRESHOLDS.findIndex(t => t.name === tier)
-  const current       = TIER_THRESHOLDS[Math.max(0, tierIdx)]
-  const next          = TIER_THRESHOLDS[tierIdx + 1]
-  const prevThreshold = tierIdx > 0 ? (TIER_THRESHOLDS[tierIdx - 1]?.nextAt ?? 0) : 0
-  const progress      = next
-    ? Math.min(100, Math.max(0, ((pts - prevThreshold) / ((next.nextAt ?? 0) - prevThreshold)) * 100))
-    : 100
+  const tier          = loyalty?.tier.slug ?? profile.loyaltyAccount?.tier ?? 'bronze'
+  const tierLabel     = loyalty?.tier.name ?? tier
+  const pts           = loyalty?.pointsBalance ?? profile.loyaltyAccount?.pointsBalance ?? 0
+  const next          = loyalty?.nextTier ?? null
+  const progress      = loyalty?.progressPct ?? 0
   const lifetimeSpend = profile.orders.reduce((s, o) => s + o.totalCents, 0)
   const totalOrders   = profile.orders.length
   const tc            = TIER_COLOR[tier] ?? '#cd7f32'
@@ -257,13 +268,15 @@ export default function AccountPage() {
                   <p className="text-[0.55rem] uppercase tracking-[0.28em] font-black" style={{ color: 'var(--servd-mute)' }}>Points</p>
                   <span className="text-[0.55rem] font-black uppercase tracking-wider px-2 py-0.5 rounded-full"
                     style={{ background: `${tc}1e`, color: tc }}>
-                    {current?.label ?? tier}
+                    {tierLabel}
                   </span>
                 </div>
                 <p className="font-black leading-none tabular-nums" style={{ fontSize: 'clamp(2rem, 9vw, 3.2rem)', color: 'var(--servd-ink)' }}>
                   {pts.toLocaleString()}
                 </p>
-                <p className="text-[0.6rem] mt-1" style={{ color: 'var(--servd-mute)' }}>≈ {fmt(pts * 10)} value</p>
+                {loyalty && (
+                  <p className="text-[0.6rem] mt-1" style={{ color: 'var(--servd-mute)' }}>≈ {fmt(loyalty.pointsValueCents)} value</p>
+                )}
 
                 <div className="mt-auto pt-3">
                   {next ? (
@@ -274,7 +287,7 @@ export default function AccountPage() {
                           style={{ width: `${progress}%`, background: `linear-gradient(90deg, ${tc}88, ${tc})` }} />
                       </div>
                       <p className="text-[0.55rem]" style={{ color: 'var(--servd-mute)' }}>
-                        {(next.nextAt! - pts).toLocaleString()} pts to {next.label}
+                        Spend {fmt(loyalty?.spendToNextCents ?? 0)} more to reach {next.name}
                       </p>
                     </>
                   ) : (

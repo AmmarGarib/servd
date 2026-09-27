@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { resolveBrandSlug, BRAND_HOST_HEADER, BRAND_REWRITE_PATHS } from './lib/brandDomains'
+import { resolveBrandHost, BRAND_HOST_HEADER, BRAND_REWRITE_PATHS } from './lib/brandDomains'
 
 // Host-based brand routing.
 //
@@ -44,9 +44,9 @@ function passThrough(req: NextRequest) {
   return NextResponse.next({ request: { headers } })
 }
 
-export function middleware(req: NextRequest) {
+export async function middleware(req: NextRequest) {
   const host = req.headers.get('host') ?? ''
-  const slug = resolveBrandSlug(host)
+  const slug = await resolveBrandHost(host)
   if (!slug) return passThrough(req)
 
   const { pathname } = req.nextUrl

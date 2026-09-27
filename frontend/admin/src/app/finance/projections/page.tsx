@@ -69,6 +69,7 @@ interface CombinedMonth {
   revenueCents: number
   variableCents: number
   staffCents: number
+  headOfficeLabourCents?: number
   opexCents: number
   totalCostCents: number
   profitCents: number
@@ -316,6 +317,9 @@ export default function ProjectionsPage() {
                 <CombinedRow label="Revenue" months={combined} pick={(m) => m.revenueCents} />
                 <CombinedRow label="MC (variable cost)" months={combined} pick={(m) => m.variableCents} negative />
                 <CombinedRow label="Fixed costs" months={combined} pick={(m) => m.staffCents + m.opexCents} negative />
+                {/* Head-office seats, net of the JV contribution (owner decision 25) —
+                    a company cost no brand carries. Frozen seats are never counted. */}
+                <CombinedRow label="Head office labour (net of JV)" months={combined} pick={(m) => m.headOfficeLabourCents ?? 0} negative />
                 <CombinedRow label="Total opex" months={combined} pick={(m) => m.totalCostCents} negative bold />
                 <CombinedRow label="Profit" months={combined} pick={(m) => m.profitCents} bold highlightSign />
                 <CombinedRow label="Profit after tax" months={combined} pick={(m) => m.profitAfterTaxCents} bold highlightSign />

@@ -17,7 +17,6 @@ interface Concept {
   description: string | null
   logoUrl: string | null
   primaryColor: string | null
-  taxRate: number
   isActive: boolean
   storefrontVisible: boolean
   reservationsEnabled: boolean
@@ -28,9 +27,31 @@ interface Concept {
   // existed — so clearing one is safe, not a broken image.
   wordmarkUrl: string | null
   mascotUrl: string | null
+  // Contact — per brand (owner decision 18).
+  phone: string | null
+  whatsapp: string | null
+  addressLocality: string | null
+  // Read-only mirror of the brand's primary Location (decision 18). Edited
+  // on Storefront → Locations, never here.
+  address: string | null
   latitude: number | null
   longitude: number | null
-  deliveryRadiusKm: number
+  // Brand brief (captured at onboarding, editable here).
+  conceptStatement: string | null
+  cuisine: string | null
+  heroProduct: string | null
+  anchoringExperience: string | null
+  targetCustomer: string | null
+  priceTier: string | null
+  daypartFocus: string[]
+  competitors: string[]
+  differentiator: string | null
+  brandVoice: string | null
+  // Tax — every order is charged at the tender split; the legacy single
+  // taxRate is not edited here.
+  taxRateCash: number
+  taxRateCard: number
+  forecastPortionsPerMonth: number
   strn: string | null
   ntn: string | null
   province: string | null
@@ -38,11 +59,45 @@ interface Concept {
   invoiceAddress: string | null
   invoicePrefix: string | null
   fbrPosId: number | null
+  srbPosId: number | null
   // Surfaced by the backend in portfolio mode so the operator can tell which
   // company each brand belongs to without bouncing out of "All companies".
   tenantId?: string | null
   tenant?: { id: string; name: string; slug: string } | null
 }
+
+interface LocationRow {
+  id: string
+  name: string
+  address: string | null
+  city: string | null
+  latitude: number | null
+  longitude: number | null
+  isActive: boolean
+  concepts: Array<{ conceptId: string; isPrimary: boolean }>
+}
+
+interface ZoneRow {
+  id: string
+  tenantId: string | null
+  conceptId: string | null
+  name: string
+  radiusKmMin: number | null
+  radiusKmMax: number | null
+  feeCents: number
+  minOrderCents: number
+  isActive: boolean
+}
+
+const PRICE_TIERS = [
+  { value: '',        label: '— pick —' },
+  { value: 'budget',  label: 'Budget ($)' },
+  { value: 'mid',     label: 'Mid ($$)' },
+  { value: 'premium', label: 'Premium ($$$)' },
+  { value: 'luxury',  label: 'Luxury ($$$$)' },
+]
+
+const DAYPARTS = ['breakfast', 'lunch', 'afternoon', 'dinner', 'late_night']
 
 const PROVINCES = [
   { code: 'PB',  label: 'Punjab' },
@@ -57,13 +112,24 @@ const PROVINCES = [
 export default function BrandEditorPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const { data: tenants = [] } = useMyTenants()
+  // includeInactive: this is the ONE brand editor, so it is also where a
+  // retired brand (isActive=false) is seen and reactivated. Everywhere else
+  // in the admin retired brands are hidden.
   const { data: concepts = [], isLoading } = useQuery<Concept[]>({
-    queryKey: ['concepts'],
-    queryFn: () => api.get('/concepts'),
+    queryKey: ['concepts', 'all'],
+    queryFn: () => api.get('/concepts?includeInactive=1'),
   })
 
+  // /marketing/brands?id=<conceptId> opens that brand (the "new brand" flow
+  // lands here). Read once on mount; the picker drives it afterwards.
   useEffect(() => {
-    if (!selectedId && concepts.length > 0) setSelectedId(concepts[0]!.id)
+    const want = new URLSearchParams(window.location.search).get('id')
+    if (want) setSelectedId(want)
+  }, [])
+
+  useEffect(() => {
+    if (concepts.length === 0) return
+    if (!selectedId || !concepts.some((c) => c.id === selectedId)) setSelectedId(concepts[0]!.id)
   }, [concepts, selectedId])
 
   const selected = concepts.find((c) => c.id === selectedId) ?? null
@@ -74,7 +140,9 @@ export default function BrandEditorPage() {
         <p className="text-[10px] font-black uppercase tracking-[0.3em] text-white/30">Marketing</p>
         <h1 className="text-2xl font-black text-white/90 mt-1">Brand Editor</h1>
         <p className="text-sm text-white/40 mt-1">
-          Edit every brand-facing field — logo, tagline, hero, hours, delivery radius, tax invoice details.
+          The one place a brand is edited — identity, contact, brief, storefront copy and tax. The kitchen address and map pin
+          live on <Link href="/configuration/locations" className="text-kds-green hover:underline">Locations</Link>, delivery
+          coverage on <Link href="/configuration/delivery-zones" className="text-kds-green hover:underline">Delivery zones</Link>.
         </p>
       </header>
 
@@ -89,7 +157,7 @@ export default function BrandEditorPage() {
             {isLoading && <option value="">Loading…</option>}
             {concepts.map((c) => (
               <option key={c.id} value={c.id}>
-                {c.name}{!c.isActive ? ' (paused)' : ''} · {c.slug}
+                {c.name}{!c.isActive ? ' (retired)' : ''} · {c.slug}
               </option>
             ))}
           </select>
@@ -120,7 +188,7 @@ export default function BrandEditorPage() {
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-1.5 flex-wrap">
                     <p className="font-bold text-sm text-white/85 truncate">{c.name}</p>
-                    {!c.isActive && <span className="text-[9px] font-bold text-white/30 px-1 py-0.5 rounded bg-white/5">PAUSED</span>}
+                    {!c.isActive && <span className="text-[9px] font-bold text-white/30 px-1 py-0.5 rounded bg-white/5">RETIRED</span>}
                     {/* Indigo brand chip in portfolio view — shows which
                         company this brand belongs to so the CEO doesn't have
                         to flip out of "All companies" to know. */}
@@ -131,16 +199,16 @@ export default function BrandEditorPage() {
               </div>
             </button>
           ))}
-          <Link href="/settings"
+          <Link href="/onboarding"
             className="block rounded-xl border border-dashed border-white/10 p-3 text-center text-xs text-white/45 hover:text-white hover:border-white/30">
-            + Add brand (Settings)
+            + Add brand
           </Link>
         </aside>
 
         {/* Editor */}
         <main className="flex-1 overflow-y-auto p-7">
           {selected ? (
-            <BrandForm concept={selected} />
+            <BrandForm key={selected.id} concept={selected} onDeleted={() => setSelectedId(null)} />
           ) : (
             <div className="text-center mt-20 text-white/40">Select a brand to edit</div>
           )}
@@ -150,17 +218,35 @@ export default function BrandEditorPage() {
   )
 }
 
-function BrandForm({ concept }: { concept: Concept }) {
+type TabKey = 'identity' | 'contact' | 'brief' | 'storefront' | 'delivery' | 'tax'
+
+function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => void }) {
   const qc = useQueryClient()
-  const [tab, setTab] = useState<'identity' | 'storefront' | 'delivery' | 'tax'>('identity')
+  const [tab, setTab] = useState<TabKey>('identity')
   const palette = brandPalette(concept.slug)
 
-  // Form state
+  // Form state. The component is keyed on the brand id, so picking another
+  // brand remounts it with fresh state — no re-sync effect needed.
   const [name, setName] = useState(concept.name)
   const [description, setDescription] = useState(concept.description ?? '')
   const [logoUrl, setLogoUrl] = useState(concept.logoUrl ?? '')
   const [primaryColor, setPrimaryColor] = useState(concept.primaryColor ?? '#00D4B1')
   const [isActive, setIsActive] = useState(concept.isActive)
+
+  const [phone, setPhone] = useState(concept.phone ?? '')
+  const [whatsapp, setWhatsapp] = useState(concept.whatsapp ?? '')
+  const [addressLocality, setAddressLocality] = useState(concept.addressLocality ?? '')
+
+  const [conceptStatement, setConceptStatement] = useState(concept.conceptStatement ?? '')
+  const [cuisine, setCuisine] = useState(concept.cuisine ?? '')
+  const [priceTier, setPriceTier] = useState(concept.priceTier ?? '')
+  const [heroProduct, setHeroProduct] = useState(concept.heroProduct ?? '')
+  const [anchoringExperience, setAnchoringExperience] = useState(concept.anchoringExperience ?? '')
+  const [targetCustomer, setTargetCustomer] = useState(concept.targetCustomer ?? '')
+  const [differentiator, setDifferentiator] = useState(concept.differentiator ?? '')
+  const [brandVoice, setBrandVoice] = useState(concept.brandVoice ?? '')
+  const [daypartFocus, setDaypartFocus] = useState<string[]>(concept.daypartFocus ?? [])
+  const [competitors, setCompetitors] = useState((concept.competitors ?? []).join(', '))
 
   const [heroTagline, setHeroTagline] = useState(concept.heroTagline ?? '')
   const [announcementBanner, setAnnouncementBanner] = useState(concept.announcementBanner ?? '')
@@ -169,11 +255,9 @@ function BrandForm({ concept }: { concept: Concept }) {
   const [wordmarkUrl, setWordmarkUrl] = useState(concept.wordmarkUrl ?? '')
   const [mascotUrl, setMascotUrl] = useState(concept.mascotUrl ?? '')
 
-  const [latitude, setLatitude] = useState(concept.latitude !== null ? String(concept.latitude) : '')
-  const [longitude, setLongitude] = useState(concept.longitude !== null ? String(concept.longitude) : '')
-  const [deliveryRadiusKm, setDeliveryRadiusKm] = useState(String(concept.deliveryRadiusKm))
-
-  const [taxRate, setTaxRate] = useState(String(concept.taxRate))
+  const [taxRateCash, setTaxRateCash] = useState(String(concept.taxRateCash ?? 15))
+  const [taxRateCard, setTaxRateCard] = useState(String(concept.taxRateCard ?? 8))
+  const [forecastPortions, setForecastPortions] = useState(String(concept.forecastPortionsPerMonth ?? 0))
   const [strn, setStrn] = useState(concept.strn ?? '')
   const [ntn, setNtn] = useState(concept.ntn ?? '')
   const [province, setProvince] = useState(concept.province ?? '')
@@ -181,49 +265,65 @@ function BrandForm({ concept }: { concept: Concept }) {
   const [invoiceAddress, setInvoiceAddress] = useState(concept.invoiceAddress ?? '')
   const [invoicePrefix, setInvoicePrefix] = useState(concept.invoicePrefix ?? '')
   const [fbrPosId, setFbrPosId] = useState(concept.fbrPosId !== null ? String(concept.fbrPosId) : '')
+  const [srbPosId, setSrbPosId] = useState(concept.srbPosId != null ? String(concept.srbPosId) : '')
 
   const [savedAt, setSavedAt] = useState<number | null>(null)
+  const [saveError, setSaveError] = useState('')
   const [uploading, setUploading] = useState(false)
   const [uploadError, setUploadError] = useState('')
+  const [confirmDelete, setConfirmDelete] = useState(false)
 
-  // Re-sync when the user picks a different brand from the sidebar
-  useEffect(() => {
-    setName(concept.name); setDescription(concept.description ?? ''); setLogoUrl(concept.logoUrl ?? '')
-    setPrimaryColor(concept.primaryColor ?? '#00D4B1'); setIsActive(concept.isActive)
-    setHeroTagline(concept.heroTagline ?? ''); setAnnouncementBanner(concept.announcementBanner ?? '')
-    setWordmarkUrl(concept.wordmarkUrl ?? ''); setMascotUrl(concept.mascotUrl ?? '')
-    setStorefrontVisible(concept.storefrontVisible)
-    setReservationsEnabled(concept.reservationsEnabled)
-    setLatitude(concept.latitude !== null ? String(concept.latitude) : '')
-    setLongitude(concept.longitude !== null ? String(concept.longitude) : '')
-    setDeliveryRadiusKm(String(concept.deliveryRadiusKm))
-    setTaxRate(String(concept.taxRate))
-    setStrn(concept.strn ?? ''); setNtn(concept.ntn ?? ''); setProvince(concept.province ?? '')
-    setInvoiceLegalName(concept.invoiceLegalName ?? ''); setInvoiceAddress(concept.invoiceAddress ?? '')
-    setInvoicePrefix(concept.invoicePrefix ?? '')
-    setFbrPosId(concept.fbrPosId !== null ? String(concept.fbrPosId) : '')
-  }, [concept.id])  // eslint-disable-line react-hooks/exhaustive-deps
+  const num = (v: string, fallback: number) => {
+    const n = parseFloat(v)
+    return Number.isFinite(n) ? n : fallback
+  }
 
   const save = useMutation({
     mutationFn: () => api.patch(`/concepts/${concept.id}`, {
       name, description: description || null, logoUrl: logoUrl || null,
       primaryColor: primaryColor || null, isActive,
+      phone: phone.trim() || null,
+      // wa.me wants digits only — strip what people paste (+, spaces, dashes).
+      whatsapp: whatsapp.replace(/[^\d]/g, '') || null,
+      addressLocality: addressLocality.trim() || null,
+      conceptStatement: conceptStatement || null,
+      cuisine: cuisine || null,
+      priceTier: priceTier || null,
+      heroProduct: heroProduct || null,
+      anchoringExperience: anchoringExperience || null,
+      targetCustomer: targetCustomer || null,
+      differentiator: differentiator || null,
+      brandVoice: brandVoice || null,
+      daypartFocus,
+      competitors: competitors.split(',').map((c) => c.trim()).filter(Boolean).slice(0, 10),
       heroTagline: heroTagline || null, announcementBanner: announcementBanner || null,
       wordmarkUrl: wordmarkUrl || null, mascotUrl: mascotUrl || null,
       storefrontVisible,
       reservationsEnabled,
-      latitude: latitude ? parseFloat(latitude) : null,
-      longitude: longitude ? parseFloat(longitude) : null,
-      deliveryRadiusKm: parseFloat(deliveryRadiusKm) || 0,
-      taxRate: parseFloat(taxRate) || 0,
+      taxRateCash: num(taxRateCash, 15),
+      taxRateCard: num(taxRateCard, 8),
+      forecastPortionsPerMonth: Math.max(0, Math.round(num(forecastPortions, 0))),
       strn: strn || null, ntn: ntn || null, province: province || null,
       invoiceLegalName: invoiceLegalName || null, invoiceAddress: invoiceAddress || null,
       invoicePrefix: invoicePrefix || null,
       fbrPosId: fbrPosId ? parseInt(fbrPosId, 10) : null,
+      srbPosId: srbPosId ? parseInt(srbPosId, 10) : null,
     }),
     onSuccess: () => {
-      setSavedAt(Date.now())
+      setSavedAt(Date.now()); setSaveError('')
       void qc.invalidateQueries({ queryKey: ['concepts'] })
+    },
+    onError: (err) => setSaveError((err as Error).message || 'Save failed'),
+  })
+
+  // Soft delete: the backend stamps deletedAt + isActive=false so historical
+  // orders and books still resolve the name; the brand leaves every picker,
+  // the POS and the storefront.
+  const del = useMutation({
+    mutationFn: () => api.delete(`/concepts/${concept.id}`),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['concepts'] })
+      onDeleted()
     },
   })
 
@@ -274,10 +374,12 @@ function BrandForm({ concept }: { concept: Concept }) {
 
   const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => uploadBrandImage(e, setLogoUrl)
 
-  const TABS: Array<{ key: typeof tab; label: string; emoji: string }> = [
+  const TABS: Array<{ key: TabKey; label: string; emoji: string }> = [
     { key: 'identity',   label: 'Identity',   emoji: '🏷' },
+    { key: 'contact',    label: 'Contact',    emoji: '📞' },
+    { key: 'brief',      label: 'Brief',      emoji: '🧭' },
     { key: 'storefront', label: 'Storefront', emoji: '🛍' },
-    { key: 'delivery',   label: 'Delivery',   emoji: '🛵' },
+    { key: 'delivery',   label: 'Kitchen & delivery', emoji: '📍' },
     { key: 'tax',        label: 'Tax & FBR',  emoji: '🧾' },
   ]
 
@@ -305,14 +407,15 @@ function BrandForm({ concept }: { concept: Concept }) {
       {savedAt && Date.now() - savedAt < 4000 && (
         <p className="text-xs text-kds-green">✓ Saved</p>
       )}
+      {saveError && <p className="text-xs text-kds-red">{saveError}</p>}
 
       {/* Tabs */}
-      <div className="flex gap-1 border-b border-white/[0.05]">
+      <div className="flex gap-1 border-b border-white/[0.05] overflow-x-auto">
         {TABS.map((t) => (
           <button
             key={t.key}
             onClick={() => setTab(t.key)}
-            className="px-4 py-2.5 text-xs font-bold transition-all relative"
+            className="px-4 py-2.5 text-xs font-bold transition-all relative shrink-0"
             style={{ color: tab === t.key ? '#00D4B1' : 'rgba(255,255,255,0.45)' }}
           >
             {t.emoji} {t.label}
@@ -326,7 +429,7 @@ function BrandForm({ concept }: { concept: Concept }) {
       {/* ── Identity ─────────────────────────────────────────────────────── */}
       {tab === 'identity' && (
         <div className="space-y-5">
-          <Section title="Brand identity" subtitle="Name, logo, primary colour, description">
+          <Section title="Brand identity" subtitle="Name, logo, colour, description">
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-5">
               {/* Logo upload */}
               <div>
@@ -352,13 +455,15 @@ function BrandForm({ concept }: { concept: Concept }) {
                   <input value={name} onChange={(e) => setName(e.target.value)}
                     className="s-input w-full" />
                 </Field>
-                <Field label="Description" hint="Shown on /brand/<slug> microsite + admin tooltips.">
+                <Field label="Description" hint="Shown in page titles, JSON-LD and cross-brand cards on the storefront.">
                   <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={3}
-                    placeholder="e.g. Smash burgers and loaded fries. House-made sauces, double-smash technique."
                     className="s-input w-full resize-none" />
                 </Field>
                 <div className="grid grid-cols-2 gap-3">
-                  <Field label="Primary colour" hint="Used as accent across brand microsite + dashboards.">
+                  <Field label="Primary colour"
+                    hint={palette
+                      ? 'Not used on this brand’s live microsite — its colours come from the storefront palette (Storefront tab). Used for admin chips and dashboards only.'
+                      : 'Used as the accent on the brand microsite and in dashboards.'}>
                     <div className="flex items-center gap-2">
                       <input type="color" value={primaryColor} onChange={(e) => setPrimaryColor(e.target.value)}
                         className="h-10 w-12 rounded-lg cursor-pointer bg-transparent border border-white/10" />
@@ -372,7 +477,7 @@ function BrandForm({ concept }: { concept: Concept }) {
                       </button>
                     )}
                   </Field>
-                  <Field label="Status">
+                  <Field label="Status" hint="Off = retired: hidden from the POS, pickers and the storefront. History is kept.">
                     <label className="flex items-center gap-2 mt-2 text-xs text-white/65 cursor-pointer">
                       <input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} className="accent-kds-green" />
                       Brand is active
@@ -382,7 +487,107 @@ function BrandForm({ concept }: { concept: Concept }) {
               </div>
             </div>
           </Section>
+
+          <Section title="Delete brand" subtitle="Removes the brand from the POS, pickers and storefront. Orders and books keep its name.">
+            {confirmDelete ? (
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs text-amber-400">Delete <span className="font-bold">{concept.name}</span>?</span>
+                <button onClick={() => setConfirmDelete(false)}
+                  className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-white/55">Cancel</button>
+                <button onClick={() => del.mutate()} disabled={del.isPending}
+                  className="rounded-lg bg-kds-red px-3 py-1.5 text-xs font-bold text-white disabled:opacity-50">
+                  {del.isPending ? 'Deleting…' : 'Yes, delete'}
+                </button>
+                {del.isError && <span className="text-xs text-kds-red">{(del.error as Error).message}</span>}
+              </div>
+            ) : (
+              <button onClick={() => setConfirmDelete(true)}
+                className="rounded-lg border border-kds-red/40 px-3 py-1.5 text-xs text-kds-red hover:bg-kds-red/10">
+                Delete brand
+              </button>
+            )}
+          </Section>
         </div>
+      )}
+
+      {/* ── Contact ──────────────────────────────────────────────────────── */}
+      {tab === 'contact' && (
+        <Section title="Public contact" subtitle="Per brand. Feeds schema.org rich results, the microsite footer, the WhatsApp buttons and /press — no deploy needed.">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <Field label="Phone (E.164)" hint="The number Google lists. Keep it identical to the Google Business Profile.">
+              <input value={phone} onChange={(e) => setPhone(e.target.value)}
+                placeholder="+923001234567" className="s-input w-full font-mono text-sm" />
+            </Field>
+            <Field label="WhatsApp" hint="The brand's one WhatsApp number — every WhatsApp button on its microsite uses it. Digits only; blank falls back to the phone.">
+              <input value={whatsapp} onChange={(e) => setWhatsapp(e.target.value)}
+                placeholder="923001234567" className="s-input w-full font-mono text-sm" />
+            </Field>
+            <Field label="Area label" hint="The neighbourhood shown in the storefront pill, e.g. “Ittehad Commercial, DHA Phase 6”.">
+              <input value={addressLocality} onChange={(e) => setAddressLocality(e.target.value)}
+                className="s-input w-full" />
+            </Field>
+          </div>
+          <p className="text-[11px] text-white/40">
+            Street address and map pin belong to the kitchen, not the brand — see the Kitchen &amp; delivery tab.
+            Social links (Instagram, TikTok, Facebook) are set on <Link href="/storefront-footer" className="text-kds-green hover:underline">Brand Footers</Link>.
+          </p>
+        </Section>
+      )}
+
+      {/* ── Brief ────────────────────────────────────────────────────────── */}
+      {tab === 'brief' && (
+        <Section title="Brand brief" subtitle="Captured at onboarding. Feeds schema.org cuisine / price range, CRM segments and marketing copy.">
+          <Field label="Concept statement" hint="One line: what the brand is.">
+            <input value={conceptStatement} onChange={(e) => setConceptStatement(e.target.value)} maxLength={280}
+              className="s-input w-full" />
+          </Field>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <Field label="Cuisine" hint="schema.org servesCuisine.">
+              <input value={cuisine} onChange={(e) => setCuisine(e.target.value)} maxLength={60} className="s-input w-full" />
+            </Field>
+            <Field label="Price tier" hint="schema.org priceRange.">
+              <select value={priceTier} onChange={(e) => setPriceTier(e.target.value)} className="s-input w-full">
+                {PRICE_TIERS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
+              </select>
+            </Field>
+            <Field label="Hero product">
+              <input value={heroProduct} onChange={(e) => setHeroProduct(e.target.value)} maxLength={120} className="s-input w-full" />
+            </Field>
+            <Field label="Target customer">
+              <input value={targetCustomer} onChange={(e) => setTargetCustomer(e.target.value)} maxLength={280} className="s-input w-full" />
+            </Field>
+          </div>
+          <Field label="Anchoring experience" hint="The memorable thing.">
+            <input value={anchoringExperience} onChange={(e) => setAnchoringExperience(e.target.value)} maxLength={280} className="s-input w-full" />
+          </Field>
+          <Field label="Differentiator">
+            <input value={differentiator} onChange={(e) => setDifferentiator(e.target.value)} maxLength={280} className="s-input w-full" />
+          </Field>
+          <Field label="Brand voice" hint="Tone notes for anyone writing as the brand. This is the one place brand voice is kept.">
+            <textarea value={brandVoice} onChange={(e) => setBrandVoice(e.target.value)} maxLength={500} rows={3}
+              className="s-input w-full resize-none" />
+          </Field>
+          <Field label="Daypart focus">
+            <div className="flex flex-wrap gap-2">
+              {DAYPARTS.map((d) => {
+                const on = daypartFocus.includes(d)
+                return (
+                  <button key={d} type="button"
+                    onClick={() => setDaypartFocus(on ? daypartFocus.filter((x) => x !== d) : [...daypartFocus, d])}
+                    className="text-xs font-semibold px-3 py-1 rounded-full"
+                    style={on
+                      ? { background: 'rgba(0,212,177,0.12)', color: '#00D4B1', border: '1px solid rgba(0,212,177,0.35)' }
+                      : { background: 'rgba(255,255,255,0.03)', color: 'rgba(255,255,255,0.55)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                    {d.replace('_', ' ')}
+                  </button>
+                )
+              })}
+            </div>
+          </Field>
+          <Field label="Competitors" hint="Comma-separated, up to 10.">
+            <input value={competitors} onChange={(e) => setCompetitors(e.target.value)} className="s-input w-full" />
+          </Field>
+        </Section>
       )}
 
       {/* ── Storefront ───────────────────────────────────────────────────── */}
@@ -392,10 +597,9 @@ function BrandForm({ concept }: { concept: Concept }) {
             <div className="space-y-4">
               <Field label="Hero tagline" hint="One punchy line under the brand name. Max 120 chars.">
                 <input value={heroTagline} onChange={(e) => setHeroTagline(e.target.value)} maxLength={120}
-                  placeholder="e.g. Late-night biryani with a side of jazz."
                   className="s-input w-full" />
               </Field>
-              <Field label="Announcement banner" hint="Big pinned message at the top. Use for closures, promos, holidays. Empty = no banner.">
+              <Field label="Announcement banner" hint="Pinned message at the top. Use for closures, promos, holidays. Empty = no banner.">
                 <input value={announcementBanner} onChange={(e) => setAnnouncementBanner(e.target.value)} maxLength={300}
                   placeholder="e.g. Closed for Eid 10–12 May. Pre-order opens 13 May."
                   className="s-input w-full" />
@@ -457,38 +661,27 @@ function BrandForm({ concept }: { concept: Concept }) {
           )}
           <div className="rounded-xl p-4 text-xs text-white/55"
             style={{ background: 'rgba(99,102,241,0.05)', border: '1px solid rgba(99,102,241,0.18)' }}>
-            💡 For the visual page builder (hero blocks, gallery, menu strip, footer), open <Link href="/storefront" className="text-kds-green underline">Storefront Designer</Link> — that's the layout-level editor.
+            💡 For the visual page builder (hero blocks, gallery, menu strip), open <Link href="/storefront" className="text-kds-green underline">Storefront Designer</Link>. Footer copy and social links are on <Link href="/storefront-footer" className="text-kds-green underline">Brand Footers</Link>.
           </div>
         </div>
       )}
 
-      {/* ── Delivery ─────────────────────────────────────────────────────── */}
-      {tab === 'delivery' && (
-        <Section title="Delivery geography" subtitle="Where you deliver from + radius for your own fleet">
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <Field label="Latitude" hint="Decimal degrees, e.g. 31.5204">
-              <input value={latitude} onChange={(e) => setLatitude(e.target.value)}
-                placeholder="31.5204" className="s-input w-full font-mono text-sm" />
-            </Field>
-            <Field label="Longitude" hint="Decimal degrees, e.g. 74.3587">
-              <input value={longitude} onChange={(e) => setLongitude(e.target.value)}
-                placeholder="74.3587" className="s-input w-full font-mono text-sm" />
-            </Field>
-            <Field label="Delivery radius (km)" hint="Customers outside this radius see 'pickup only'.">
-              <input value={deliveryRadiusKm} onChange={(e) => setDeliveryRadiusKm(e.target.value)}
-                type="number" step="0.5" min="0" max="50" className="s-input w-full" />
-            </Field>
-          </div>
-        </Section>
-      )}
+      {/* ── Kitchen & delivery (read-only here) ──────────────────────────── */}
+      {tab === 'delivery' && <KitchenAndDelivery concept={concept} />}
 
       {/* ── Tax & FBR ────────────────────────────────────────────────────── */}
       {tab === 'tax' && (
         <Section title="Tax & FBR invoicing" subtitle="Required for Tier-1 businesses under SRO 1307(I)/2022">
-          <Field label="GST rate %" hint="Standard rate 17%. Override per item in Menu Editor for reduced/exempt items.">
-            <input value={taxRate} onChange={(e) => setTaxRate(e.target.value)}
-              type="number" step="0.1" min="0" max="100" className="s-input w-full max-w-[140px]" />
-          </Field>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <Field label="GST — cash tender %" hint="Charged on cash and cash-on-delivery sales.">
+              <input value={taxRateCash} onChange={(e) => setTaxRateCash(e.target.value)}
+                type="number" step="0.5" min="0" max="100" className="s-input w-full max-w-[140px]" />
+            </Field>
+            <Field label="GST — card / online %" hint="Charged on card, wallet and paid-online sales.">
+              <input value={taxRateCard} onChange={(e) => setTaxRateCard(e.target.value)}
+                type="number" step="0.5" min="0" max="100" className="s-input w-full max-w-[140px]" />
+            </Field>
+          </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Field label="STRN" hint="Sales Tax Registration Number from FBR.">
               <input value={strn} onChange={(e) => setStrn(e.target.value)}
@@ -513,20 +706,27 @@ function BrandForm({ concept }: { concept: Concept }) {
           </Field>
           <Field label="Invoice address" hint="Billing address printed on tax invoices.">
             <textarea value={invoiceAddress} onChange={(e) => setInvoiceAddress(e.target.value)} rows={2}
-              placeholder="House #5, Street 12, DHA Phase 2, Lahore."
               className="s-input w-full resize-none" />
           </Field>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <Field label="Invoice prefix" hint="Concept-scoped sequence prefix, e.g. STX-">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <Field label="Invoice prefix" hint="Brand-scoped sequence prefix, e.g. STK-">
               <input value={invoicePrefix} onChange={(e) => setInvoicePrefix(e.target.value)}
-                placeholder="STX-" maxLength={10}
+                placeholder="STK-" maxLength={10}
                 className="s-input w-full font-mono text-sm" />
             </Field>
-            <Field label="FBR POS ID" hint="POSID assigned by FBR PRAL at registration. Required for real-time submission.">
+            <Field label="FBR POS ID" hint="POSID assigned by FBR PRAL. Required for real-time submission.">
               <input value={fbrPosId} onChange={(e) => setFbrPosId(e.target.value.replace(/[^0-9]/g, ''))}
                 placeholder="123456" className="s-input w-full font-mono text-sm" />
             </Field>
+            <Field label="SRB POS ID" hint="POSID assigned by the Sindh Revenue Board. Sindh restaurants only.">
+              <input value={srbPosId} onChange={(e) => setSrbPosId(e.target.value.replace(/[^0-9]/g, ''))}
+                placeholder="123456" className="s-input w-full font-mono text-sm" />
+            </Field>
           </div>
+          <Field label="Forecast portions / month" hint="Steady-state portions — the denominator for opex per portion on recipes and menu engineering.">
+            <input value={forecastPortions} onChange={(e) => setForecastPortions(e.target.value.replace(/[^0-9]/g, ''))}
+              className="s-input w-full max-w-[180px] font-mono text-sm" />
+          </Field>
           {(!strn || !ntn || !invoiceLegalName) && (
             <div className="rounded-xl p-3 text-xs text-amber-400"
               style={{ background: 'rgba(245,158,11,0.06)', border: '1px solid rgba(245,158,11,0.2)' }}>
@@ -535,6 +735,92 @@ function BrandForm({ concept }: { concept: Concept }) {
           )}
         </Section>
       )}
+    </div>
+  )
+}
+
+/**
+ * Where the brand cooks and how far it delivers — shown here, edited where
+ * each lives. The kitchen address and pin are the Location's (decision 18;
+ * the brand's address fields are a read-only mirror of its primary Location)
+ * and coverage is the delivery-zone bands (decision 19: beyond the last zone,
+ * delivery is refused).
+ */
+function KitchenAndDelivery({ concept }: { concept: Concept }) {
+  const { data: locations = [], isLoading: locLoading } = useQuery<LocationRow[]>({
+    queryKey: ['locations'],
+    queryFn: () => api.get('/locations'),
+  })
+  const { data: zones = [], isLoading: zoneLoading } = useQuery<ZoneRow[]>({
+    queryKey: ['delivery-zones'],
+    queryFn: () => api.get('/setup/delivery-zones'),
+  })
+  const mine = locations
+    .filter((l) => l.concepts.some((c) => c.conceptId === concept.id))
+    .sort((a, b) => Number(b.concepts.find((c) => c.conceptId === concept.id)?.isPrimary ?? false)
+      - Number(a.concepts.find((c) => c.conceptId === concept.id)?.isPrimary ?? false))
+  const myZones = zones
+    .filter((z) => z.isActive && (z.conceptId === concept.id
+      || (z.conceptId === null && (!concept.tenantId || z.tenantId === concept.tenantId))))
+    .sort((a, b) => (a.radiusKmMin ?? 0) - (b.radiusKmMin ?? 0))
+  const reach = myZones.reduce<number | null>((m, z) =>
+    z.radiusKmMax == null ? Number.POSITIVE_INFINITY : Math.max(m ?? 0, z.radiusKmMax), null)
+  const pkr = (c: number) => `PKR ${(c / 100).toLocaleString()}`
+
+  return (
+    <div className="space-y-5">
+      <Section title="Kitchen" subtitle="The address and map pin customers see belong to the physical kitchen (Location). A kitchen that runs several brands has one address.">
+        {locLoading ? <p className="text-xs text-white/40">Loading…</p> : mine.length === 0 ? (
+          <p className="text-xs text-amber-400">
+            No kitchen is linked to this brand yet, so the storefront has no address or pin for it and delivery cannot be quoted.
+            Link it on <Link href="/configuration/locations" className="underline">Locations</Link>.
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {mine.map((l, i) => (
+              <div key={l.id} className="rounded-xl p-3 text-xs" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                <p className="font-bold text-white/85">{l.name}{i === 0 ? ' · primary' : ''}{!l.isActive ? ' · inactive' : ''}</p>
+                <p className="text-white/55 mt-0.5">{[l.address, l.city].filter(Boolean).join(', ') || 'No address set'}</p>
+                <p className="text-white/40 font-mono mt-0.5">
+                  {l.latitude != null && l.longitude != null
+                    ? <a className="hover:underline" target="_blank" rel="noreferrer"
+                        href={`https://www.google.com/maps/search/?api=1&query=${l.latitude},${l.longitude}`}>{l.latitude.toFixed(5)}, {l.longitude.toFixed(5)} ↗</a>
+                    : 'No map pin'}
+                </p>
+              </div>
+            ))}
+          </div>
+        )}
+        <Link href="/configuration/locations" className="inline-block text-xs font-bold text-kds-green hover:underline">
+          Edit on Locations →
+        </Link>
+      </Section>
+
+      <Section title="Delivery coverage" subtitle="Delivery zones decide the fee, the minimum order and how far this brand delivers. Beyond the last zone, delivery is refused.">
+        {zoneLoading ? <p className="text-xs text-white/40">Loading…</p> : myZones.length === 0 ? (
+          <p className="text-xs text-amber-400">No active delivery zone covers this brand — the storefront refuses delivery orders for it (pickup still works).</p>
+        ) : (
+          <div className="space-y-1.5">
+            {myZones.map((z) => (
+              <div key={z.id} className="flex items-center justify-between gap-3 text-xs rounded-lg px-3 py-2"
+                style={{ background: 'rgba(255,255,255,0.03)' }}>
+                <span className="text-white/80 font-semibold">{z.name}{z.conceptId === null ? ' (all brands)' : ''}</span>
+                <span className="text-white/50 font-mono">
+                  {z.radiusKmMin ?? 0}–{z.radiusKmMax ?? '∞'} km · {pkr(z.feeCents)}{z.minOrderCents > 0 ? ` · min ${pkr(z.minOrderCents)}` : ''}
+                </span>
+              </div>
+            ))}
+            {reach !== null && (
+              <p className="text-[11px] text-white/40 pt-1">
+                Delivers up to {Number.isFinite(reach) ? `${reach} km` : 'any distance'} from the kitchen.
+              </p>
+            )}
+          </div>
+        )}
+        <Link href="/configuration/delivery-zones" className="inline-block text-xs font-bold text-kds-green hover:underline">
+          Edit delivery zones →
+        </Link>
+      </Section>
     </div>
   )
 }

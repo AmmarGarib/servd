@@ -15,6 +15,7 @@
 // so re-running a month, or adding an asset after the month was run, can
 // never double-charge or skip.
 
+import type { Prisma, PrismaClient } from '@prisma/client'
 import { serviceClient as prisma } from '../../lib/prisma.js'
 import { AppError } from '../../lib/errors.js'
 import { postJournalEntry } from '../accounting/journal.js'
@@ -40,6 +41,11 @@ export const FUNDING = {
   cash:     { label: 'Paid in cash',                   account: '1010' },
   payable:  { label: 'On credit from the supplier',    account: '2010' },
   existing: { label: 'Already owned (opening balance)', account: '3010' },
+  // Capex (owner decision 24): instalments were booked as advances to the
+  // supplier (Dr 1340 / Cr bank) as they were paid; on delivery the asset is
+  // capitalised against those advances. Only through capitaliseCapexLine —
+  // the register's own form never offers it.
+  advance:  { label: 'Paid as supplier advances (capex)', account: '1340' },
 } as const
 export type Funding = keyof typeof FUNDING
 
@@ -91,24 +97,41 @@ export function chargeFor(
   return Math.min(remaining, Math.floor(depreciable / asset.usefulLifeMonths))
 }
 
-export async function postAcquisition(assetId: string, postedBy?: string) {
-  const a = await prisma.fixedAsset.findUniqueOrThrow({ where: { id: assetId } })
+type Tx = Prisma.TransactionClient | PrismaClient
+
+/**
+ * Capitalise an asset: Dr its 15x0 account / Cr how it was paid for. `credits`
+ * splits the credit side (a capex line paid partly in advances, the rest owed
+ * to the supplier); it must add up to the cost. Default: one credit to the
+ * asset's funding account.
+ */
+export async function postAcquisition(
+  assetId: string,
+  postedBy?: string,
+  opts: { tx?: Tx; credits?: Array<{ accountCode: string; amountCents: number; memo?: string }>; description?: string } = {},
+) {
+  const db = (opts.tx ?? prisma) as typeof prisma
+  const a = await db.fixedAsset.findUniqueOrThrow({ where: { id: assetId } })
   if (!a.acquisitionCreditCode) throw new AppError('ASSET_FUNDING', 'Say how this asset was paid for', 422)
   const assetAccount = ASSET_CATEGORIES[a.category as AssetCategory]?.account
   if (!assetAccount) throw new AppError('ASSET_CATEGORY', `Unknown asset category ${a.category}`, 422)
+  const credits = opts.credits ?? [{ accountCode: a.acquisitionCreditCode, amountCents: a.costCents }]
+  if (credits.reduce((t, c) => t + c.amountCents, 0) !== a.costCents) {
+    throw new AppError('ASSET_FUNDING_SPLIT', 'How the asset was paid for must add up to its cost', 422)
+  }
   return postJournalEntry({
     tenantId: a.tenantId,
     sourceType: 'fixed_asset.acquire',
     sourceId: a.id,
-    description: `Acquired ${a.name}`,
+    description: opts.description ?? `Acquired ${a.name}`,
     entryDate: a.acquiredAt,
     postedBy: postedBy ?? 'system',
     reference: a.assetTag ?? undefined,
     lines: [
       { accountCode: assetAccount, type: 'debit', amountCents: a.costCents, conceptId: a.conceptId, memo: a.name },
-      { accountCode: a.acquisitionCreditCode, type: 'credit', amountCents: a.costCents, memo: a.name },
+      ...credits.map((c) => ({ accountCode: c.accountCode, type: 'credit' as const, amountCents: c.amountCents, memo: c.memo ?? a.name })),
     ],
-  })
+  }, { tx: opts.tx })
 }
 
 /**

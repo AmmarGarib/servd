@@ -690,16 +690,9 @@ export async function authRoutes(fastify: FastifyInstance) {
     const otpVerified = verified.deliveredToPhone
     const emailVerified = verified.deliveredToEmail
 
-    // Naughty-list gate. Reject signup if the email or device matches an
-    // active ban. Throws AppError(403, 'BANNED') which the global error
-    // handler turns into a clean response.
-    const { assertNotBanned } = await import('../../lib/banCheck.js')
-    await assertNotBanned({
-      email: body.email,
-      ip: req.ip ?? null,
-      deviceFingerprint: body.deviceFingerprint ?? null,
-      intent: 'signup',
-    })
+    // Bans apply per company (owner decision 15). Signup has no company, so
+    // a banned customer may still hold an account; each company's brands
+    // refuse their orders and bookings at checkout / booking time instead.
 
     try {
       const result = await customerRegister(

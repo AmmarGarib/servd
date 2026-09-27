@@ -204,15 +204,18 @@ export async function dispatchRoutes(fastify: FastifyInstance) {
     },
   )
 
-  // POST /dispatch/orders/:id/delivered — the rider dropped it off. Counts the
-  // delivery once, frees the rider, and completes a still-'ready' order
-  // through the canonical status path.
+  // POST /dispatch/orders/:id/delivered — the rider dropped it off. This is
+  // when a delivery completes (decision 8): a still-'ready' order goes through
+  // the one completion routine; the delivery is counted once and the rider
+  // freed.
   fastify.post<{ Params: { id: string } }>(
     '/orders/:id/delivered',
     { preHandler: requireAuth(...ALL_STAFF) },
     async (req) => {
       const order = await findOrderInScope(req, req.params.id)
-      return markDelivered(order.id)
+      return markDelivered(order.id, {
+        actor: { id: req.staffUser!.id, email: req.staffUser!.email, tenantId: req.staffUser!.tenantId ?? null },
+      })
     },
   )
 

@@ -1197,6 +1197,8 @@ model CustomerBan {
   deviceFingerprints String[] @default([])
 
   reason     String // free-form: "3 strikes — see strikes table"
+  // The company that raised the ban (owner decision 15); null = every company (legacy).
+  tenantId   String?
   bannedById String? // null = auto-promoted by system at 3-strike threshold
   bannedAt   DateTime  @default(now())
   // Bans are permanent by default. Operators can lift via /crm/bans/:id/lift.
@@ -1212,6 +1214,7 @@ model CustomerBan {
   @@index([phone])
   @@index([bannedAt])
   @@index([liftedAt])
+  @@index([tenantId, customerId])
   @@map("customer_bans")
 }
 
@@ -1307,7 +1310,9 @@ model TriggerLog {
 // out-of-the-box without any admin intervention.
 model TierConfig {
   id   String @id @default(uuid())
-  tier String @unique // 'bronze' | 'silver' | 'gold' | 'insider' | custom slug
+  // Each company has its own ladder (owner decision 13).
+  tenantId String?
+  tier String // 'bronze' | 'silver' | 'gold' | 'insider' | custom slug
 
   // Display name shown on the storefront (e.g. "Insider Gold"). The `tier`
   // field above is the immutable slug used by code; `displayName` is the
@@ -1363,6 +1368,7 @@ model TierConfig {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
+  @@unique([tenantId, tier])
   @@map("tier_configs")
 }
 
@@ -1569,6 +1575,8 @@ model Order {
   promoDiscountCents    Int            @default(0)
   walletAmountCents     Int            @default(0)
   taxCents              Int            @default(0)
+  // The GST rate the order was priced at (15 cash / 8 card); null on old rows.
+  taxRatePct            Float?
   // Service charge: house-imposed % on subtotal, recognised as revenue (4100).
   serviceChargeCents    Int            @default(0)
   // Tips: customer-discretionary, paid through to staff. Liability (2090

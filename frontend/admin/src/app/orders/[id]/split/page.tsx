@@ -60,8 +60,12 @@ export default function SplitPage() {
     onError: (e: { message?: string }) => setFeedback(e.message ?? 'Failed'),
   })
 
+  // Settling a split takes the money on the cashier's open drawer; a card or
+  // QR split needs the terminal's reference (owner decision 4).
+  const { data: currentShift } = useQuery({ queryKey: ['pos-current-shift'], queryFn: () => api.get<{ id: string } | null>('/pos/shifts/current') })
   const settle = useMutation({
-    mutationFn: (paymentId: string) => api.post(`/check-split/payments/${paymentId}/settle`, {}),
+    mutationFn: ({ paymentId, gatewayRef }: { paymentId: string; gatewayRef?: string }) =>
+      api.post(`/check-split/payments/${paymentId}/settle`, { shiftId: currentShift?.id, ...(gatewayRef && { gatewayRef }) }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['order-split', id] }),
   })
 
@@ -94,7 +98,13 @@ export default function SplitPage() {
                     <td className="px-4 py-2"><span className={`text-[10px] uppercase font-bold tracking-wider ${p.status === 'paid' ? 'text-s-teal' : 'text-s-amber'}`}>{p.status}</span></td>
                     <td className="px-4 py-2 text-right">
                       {p.status === 'pending' && (
-                        <button onClick={() => settle.mutate(p.id)} className="text-xs text-s-teal hover:underline">Settle →</button>
+                        <button onClick={() => {
+                          // A card / QR split carries the terminal's reference (owner decision 4).
+                          const isCard = p.method !== 'cash'
+                          const gatewayRef = isCard ? (window.prompt('Terminal reference for this card / QR payment') ?? '').trim() : ''
+                          if (isCard && !gatewayRef) return
+                          settle.mutate({ paymentId: p.id, ...(gatewayRef && { gatewayRef }) })
+                        }} className="text-xs text-s-teal hover:underline">Settle →</button>
                       )}
                     </td>
                   </tr>

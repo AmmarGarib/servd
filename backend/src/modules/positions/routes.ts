@@ -151,17 +151,22 @@ export async function positionRoutes(fastify: FastifyInstance) {
   fastify.get('/summary', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
     const f = (await scopeTenantWhere(req, 'read')).tenantId
     const tenantIds = typeof f === 'string' ? [f] : f.in
+    // One labour rule (projections/labour.ts): open + filled seats at the
+    // company's cost share, JV contribution netted (owner decision 25).
+    const { monthlyLabourCents } = await import('../projections/labour.js')
+    const perCompany = await Promise.all(tenantIds.map((t) => monthlyLabourCents(t)))
+    const seatsCents = perCompany.reduce((a, l) => a + l.seatsCents, 0)
     const b = await budgetedLabour(tenantIds)
     return {
       totalPositions: b.positions,
-      totalHeadcount: b.headcount,
-      totalGrossMonthlyCents:       b.grossMonthlyCents,
-      totalTenantShareMonthlyCents: b.shareMonthlyCents,
-      netMonthlyCents:              b.netMonthlyCents,
+      totalHeadcount: perCompany.reduce((a, l) => a + l.headcount, 0),
+      totalGrossMonthlyCents:       perCompany.reduce((a, l) => a + l.grossSalaryCents, 0),
+      totalTenantShareMonthlyCents: seatsCents,
+      netMonthlyCents:              seatsCents + b.outgoingContributionMonthlyCents - b.incomingContributionMonthlyCents,
       incomingContributionMonthlyCents: b.incomingContributionMonthlyCents,
       outgoingContributionMonthlyCents: b.outgoingContributionMonthlyCents,
-      annualisedTenantShareCents: b.shareMonthlyCents * 12,
-      annualisedNetCents:         b.netMonthlyCents * 12,
+      annualisedTenantShareCents: seatsCents * 12,
+      annualisedNetCents:         (seatsCents + b.outgoingContributionMonthlyCents - b.incomingContributionMonthlyCents) * 12,
       // Frozen seats are shown, never budgeted.
       frozenShareMonthlyCents: b.frozenShareMonthlyCents,
       byConcept: b.byConcept,

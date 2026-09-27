@@ -302,6 +302,138 @@ export async function pnlByConcept(tenantIds: string[], dateFrom: Date, dateTo: 
   return Array.from(buckets.values())
 }
 
+// ─── Brand P&L with the head-office line (owner decision 22) ─────────────────
+// The ONE per-brand P&L reader for dashboards. Every figure is measured from
+// the ledger: brand-tagged lines are that brand's; a shared cost reaches a
+// brand only through a POSTED allocation (the /allocations rules post their
+// runs with each debit tagged to its brand). Whatever no rule has allocated —
+// head-office rent, untagged overhead, manual entries, older postings — is
+// shown as ONE "Head office (unallocated)" line, never spread across brands
+// by revenue share. Labour is the wage accounts (6030–6035): tagged wages are
+// the brand's, untagged wages are head office's.
+
+export const WAGE_CODES = ['6030', '6031', '6032', '6035'] as const
+export const HEAD_OFFICE_LABEL = 'Head office (unallocated)'
+
+export interface BrandPnlRow {
+  conceptId: string | null          // null = head office (unallocated)
+  name: string
+  revenueCents: number
+  contraCents: number
+  netRevenueCents: number
+  cogsCents: number
+  opexCents: number                 // includes labour
+  labourCents: number
+  grossProfitCents: number
+  netProfitCents: number
+  grossMarginPct: number
+  netMarginPct: number
+  foodCostPct: number
+  labourPct: number
+  primeCostPct: number
+}
+
+export interface BrandPnlReport {
+  brands: BrandPnlRow[]
+  headOffice: BrandPnlRow
+  company: BrandPnlRow
+  basis: {
+    source: 'ledger'
+    allocation: 'posted-allocations+head-office-unallocated'
+    /** Share of company opex (ex-labour) that sits on brands (measured or allocated). */
+    allocatedOpexPct: number
+    headOfficeOpexCents: number
+    headOfficeLabourCents: number
+  }
+}
+
+function brandRow(conceptId: string | null, name: string, m: { revenue: number; contra: number; cogs: number; opex: number; labour: number }): BrandPnlRow {
+  const netRevenueCents  = m.revenue - m.contra
+  const grossProfitCents = m.revenue - m.contra - m.cogs
+  const netProfitCents   = grossProfitCents - m.opex
+  const pctOf = (c: number) => (m.revenue > 0 ? Number(((c / m.revenue) * 100).toFixed(2)) : 0)
+  return {
+    conceptId, name,
+    revenueCents: m.revenue, contraCents: m.contra, netRevenueCents,
+    cogsCents: m.cogs, opexCents: m.opex, labourCents: m.labour,
+    grossProfitCents, netProfitCents,
+    grossMarginPct: pctOf(grossProfitCents),
+    netMarginPct: pctOf(netProfitCents),
+    foodCostPct: pctOf(m.cogs),
+    labourPct: pctOf(m.labour),
+    primeCostPct: pctOf(m.cogs + m.labour),
+  }
+}
+
+/**
+ * Per-brand P&L for `brands` (the brands in view, with display names) over
+ * the companies in `tenantIds`. Lines tagged with a brand outside `brands`
+ * (another company's, a deleted brand) fall into the head-office line so the
+ * three blocks always add up to the company.
+ */
+export async function brandPnl(
+  tenantIds: string[],
+  dateFrom: Date,
+  dateTo: Date,
+  brands: Array<{ id: string; name: string }>,
+): Promise<BrandPnlReport> {
+  const grouped = await prisma.journalLine.groupBy({
+    by: ['conceptId', 'accountId', 'type'],
+    _sum: { amountCents: true },
+    where: { journalEntry: { tenantId: { in: tenantIds }, entryDate: { gte: dateFrom, lte: dateTo } } },
+  })
+  const accounts = await prisma.account.findMany({
+    where: { id: { in: Array.from(new Set(grouped.map((g) => g.accountId))) } },
+    select: { id: true, code: true, type: true },
+  })
+  const accMap = new Map(accounts.map((a) => [a.id, a]))
+  const known = new Map(brands.map((b) => [b.id, b.name]))
+  type M = { revenue: number; contra: number; cogs: number; opex: number; labour: number }
+  const zero = (): M => ({ revenue: 0, contra: 0, cogs: 0, opex: 0, labour: 0 })
+  const perBrand = new Map<string, M>(brands.map((b) => [b.id, zero()]))
+  const ho = zero()
+  for (const row of grouped) {
+    const acc = accMap.get(row.accountId)
+    if (!acc) continue
+    const amt = row._sum.amountCents ?? 0
+    if (amt === 0) continue
+    const bucket = row.conceptId && known.has(row.conceptId) ? perBrand.get(row.conceptId)! : ho
+    if (acc.type === 'revenue') {
+      bucket.revenue += row.type === 'credit' ? amt : -amt
+    } else if (acc.type === 'expense') {
+      const signed = row.type === 'debit' ? amt : -amt
+      if (acc.code.startsWith(COGS_PREFIX)) bucket.cogs += signed
+      else if (acc.code.startsWith(CONTRA_REVENUE_PREFIX)) bucket.contra += signed
+      else {
+        bucket.opex += signed
+        if ((WAGE_CODES as readonly string[]).includes(acc.code)) bucket.labour += signed
+      }
+    }
+  }
+  const brandRows = brands
+    .map((b) => brandRow(b.id, b.name, perBrand.get(b.id)!))
+    .filter((r) => r.revenueCents !== 0 || r.cogsCents !== 0 || r.opexCents !== 0 || r.contraCents !== 0)
+    .sort((a, b) => b.revenueCents - a.revenueCents)
+  const total = zero()
+  for (const m of [...perBrand.values(), ho]) {
+    total.revenue += m.revenue; total.contra += m.contra; total.cogs += m.cogs; total.opex += m.opex; total.labour += m.labour
+  }
+  const opexExLabour = total.opex - total.labour
+  const brandOpexExLabour = opexExLabour - (ho.opex - ho.labour)
+  return {
+    brands: brandRows,
+    headOffice: brandRow(null, HEAD_OFFICE_LABEL, ho),
+    company: brandRow(null, 'Company', total),
+    basis: {
+      source: 'ledger',
+      allocation: 'posted-allocations+head-office-unallocated',
+      allocatedOpexPct: opexExLabour > 0 ? Number(((brandOpexExLabour / opexExLabour) * 100).toFixed(1)) : 0,
+      headOfficeOpexCents: ho.opex - ho.labour,
+      headOfficeLabourCents: ho.labour,
+    },
+  }
+}
+
 // ─── Cash flow (indirect-method-lite) ───────────────────────────────────────
 // True cash-flow categorisation requires tagging every JE with operating /
 // investing / financing intent. v1 takes a pragmatic shortcut: for each cash
@@ -329,7 +461,10 @@ export interface CashFlowReport {
   totals: { inflowCents: number; outflowCents: number; netCents: number }
 }
 
-function categorise(code: string): 'operating' | 'investing' | 'financing' {
+function categorise(code: string, reference?: string | null): 'operating' | 'investing' | 'financing' {
+  // Capex instalments are advances to suppliers (1340) until the asset is
+  // delivered and capitalised (owner decision 24) — still investing cash.
+  if (reference?.startsWith('capex.payment')) return 'investing'
   if (code.startsWith('15')) return 'investing'  // fixed assets
   if (code.startsWith('30')) return 'financing'  // owner capital / drawings
   return 'operating'
@@ -374,7 +509,7 @@ export async function cashFlow(tenantIds: string[], dateFrom: Date, dateTo: Date
     const nonCashLines = entry.lines.filter((l) => !cashAccountIds.has(l.accountId))
     if (nonCashLines.length === 0) continue
     const dominant = nonCashLines.reduce((a, b) => (a.amountCents >= b.amountCents ? a : b))
-    const category = categorise(dominant.account.code)
+    const category = categorise(dominant.account.code, entry.reference)
     const cashLines = entry.lines.filter((l) => cashAccountIds.has(l.accountId))
     const inflow  = cashLines.filter((l) => l.type === 'debit').reduce((s, l) => s + l.amountCents, 0)
     const outflow = cashLines.filter((l) => l.type === 'credit').reduce((s, l) => s + l.amountCents, 0)

@@ -1,6 +1,8 @@
 // Loyalty points expiration worker.
 //
-// Points older than EXPIRY_DAYS that haven't been redeemed are reclaimed: a
+// Points older than the company's loyalty.expiry_months (admin → Loyalty; it
+// used to be a hardcoded 365 days here, so the setting did nothing) that
+// haven't been redeemed are reclaimed: a
 // "expire" loyalty transaction is recorded and the breakage liability is
 // derecognised back to Marketing. Runs once daily.
 //
@@ -15,8 +17,8 @@ import { Queue, Worker } from 'bullmq'
 import { redis } from '../lib/redis.js'
 import { serviceClient as prisma } from '../lib/prisma.js'
 import { postLoyaltyExpire } from '../modules/accounting/loyaltyPosting.js'
-
-const EXPIRY_DAYS = 365
+import { loadLoyaltySettings } from '../lib/loyaltySettings.js'
+import { loyaltyCompanyOf } from '../modules/loyalty/service.js'
 const QUEUE_NAME = 'loyalty-expiration'
 const RUN_EVERY_MS = 24 * 60 * 60 * 1000  // daily
 
@@ -46,7 +48,6 @@ export function startLoyaltyExpirationWorker() {
 }
 
 async function runExpirationSweep(): Promise<void> {
-  const cutoff = new Date(Date.now() - EXPIRY_DAYS * 24 * 60 * 60 * 1000)
   const accounts = await prisma.loyaltyAccount.findMany({
     where: { pointsBalance: { gt: 0 } },
     select: { id: true, customerId: true, pointsBalance: true },
@@ -54,6 +55,13 @@ async function runExpirationSweep(): Promise<void> {
 
   for (const account of accounts) {
     try {
+      // The account's company (where the customer last ordered — the same one
+      // the books use) decides how long points live. 0 = never expire.
+      const months = (await loadLoyaltySettings(await loyaltyCompanyOf(account.customerId)))['loyalty.expiry_months']
+      if (!months || months <= 0) continue
+      const cutoff = new Date()
+      cutoff.setMonth(cutoff.getMonth() - months)
+
       // Sum stale earn / redeem / already-expired
       const grouped = await prisma.loyaltyTransaction.groupBy({
         by: ['type'],
@@ -85,7 +93,7 @@ async function runExpirationSweep(): Promise<void> {
           loyaltyAccountId: account.id,
           type: 'expire',
           pointsDelta: -toExpire,
-          description: `${toExpire} pts expired (older than ${EXPIRY_DAYS} days)`,
+          description: `${toExpire} pts expired (older than ${months} months)`,
         },
       })
       await postLoyaltyExpire(tx.id)

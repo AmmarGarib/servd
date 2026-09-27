@@ -2,10 +2,11 @@ import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { randomBytes } from 'crypto'
 import { promises as dns } from 'dns'
-import { prisma } from '../../lib/prisma.js'
+import { prisma, serviceClient } from '../../lib/prisma.js'
 import { requireAuth, MANAGERS, ADMIN_ONLY } from '../auth/middleware.js'
 import { NotFoundError, AppError } from '../../lib/errors.js'
 import { assertConceptOwned } from '../../lib/tenantScope.js'
+import { refreshDomainOrigins } from './hostCache.js'
 
 const STOREFRONT_TARGET = process.env['SERVD_STOREFRONT_HOST'] ?? 'storefront.servd.pk'
 
@@ -151,13 +152,16 @@ export async function domainRoutes(fastify: FastifyInstance) {
         if (!concept) return reply.status(422).send({ error: { code: 'BRAND_NOT_IN_COMPANY', message: 'That brand is not part of this domain\'s company' } })
       }
 
-      return prisma.domain.update({
+      const updated = await prisma.domain.update({
         where: { id: req.params.id },
         data: {
           ...body,
           ...(body.status === 'active' && !dom.sslIssuedAt && { sslIssuedAt: new Date() }),
         },
       })
+      // Going active / inactive changes which origins the API accepts.
+      if (body.status !== undefined) await refreshDomainOrigins()
+      return updated
     },
   )
 
@@ -174,26 +178,64 @@ export async function domainRoutes(fastify: FastifyInstance) {
         where: { id: req.params.id },
         data: { deletedAt: new Date(), status: 'disabled' },
       })
+      await refreshDomainOrigins()
       return reply.status(204).send()
     },
   )
 
-  // GET /domains/lookup?hostname=… — used by the storefront's middleware to
-  // resolve an incoming Host header to a concept. Public endpoint.
+  // GET /domains/lookup?hostname=… — resolve one incoming Host header to a
+  // brand. Public: a hostname → brand mapping is public DNS anyway.
   fastify.get<{ Querystring: { hostname: string } }>(
     '/lookup',
     async (req) => {
-      const host = req.query.hostname?.toLowerCase().trim()
+      const host = req.query.hostname?.toLowerCase().trim().replace(/:\d+$/, '')
       if (!host) return null
-      const dom = await prisma.domain.findUnique({ where: { hostname: host } })
+      const dom = await serviceClient.domain.findUnique({ where: { hostname: host } })
       if (!dom || dom.status !== 'active' || dom.deletedAt) return null
+      const concept = dom.conceptId
+        ? await serviceClient.concept.findFirst({
+            where: { id: dom.conceptId, deletedAt: null },
+            select: { slug: true },
+          })
+        : null
       return {
         conceptId: dom.conceptId,
+        slug:      concept?.slug ?? null,
         purpose:   dom.purpose,
         tenantId:  dom.tenantId,
       }
     },
   )
+
+  // GET /domains/hosts — every ACTIVE custom domain with the brand slug it
+  // serves. Public, and small. The Domain table is the ONE source of truth for
+  // brand hosts: the storefront middleware maps Host → brand from this list
+  // (cached), and the API's CORS allowlist is built from the same rows
+  // (domains/hostCache.ts). The hardcoded storefront BRAND_DOMAIN_MAP and the
+  // DEFAULT_BRAND_HOSTS list in lib/corsAllowlist.ts are gone.
+  fastify.get('/hosts', async (_req, reply) => {
+    reply.header('cache-control', 'public, max-age=60')
+    return { hosts: await activeDomainHosts() }
+  })
+}
+
+/** Active domains with the brand slug each serves (slug null = no brand). */
+export async function activeDomainHosts(): Promise<Array<{ hostname: string; slug: string | null; purpose: string }>> {
+  const rows = await serviceClient.domain.findMany({
+    where: { status: 'active', deletedAt: null },
+    select: { hostname: true, conceptId: true, purpose: true },
+    orderBy: { hostname: 'asc' },
+  })
+  const ids = Array.from(new Set(rows.map((r) => r.conceptId).filter((x): x is string => !!x)))
+  const concepts = ids.length > 0
+    ? await serviceClient.concept.findMany({ where: { id: { in: ids }, deletedAt: null }, select: { id: true, slug: true } })
+    : []
+  const slugOf = new Map(concepts.map((c) => [c.id, c.slug]))
+  return rows.map((r) => ({
+    hostname: r.hostname,
+    slug: r.conceptId ? slugOf.get(r.conceptId) ?? null : null,
+    purpose: r.purpose,
+  }))
 }
 
 function dnsInstructions(hostname: string, token: string) {

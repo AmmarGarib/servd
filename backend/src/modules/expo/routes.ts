@@ -9,12 +9,37 @@
 // we don't try to predict; we just notify when the deps clear.
 
 import type { FastifyInstance } from 'fastify'
+import type { Prisma } from '@prisma/client'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, ALL_STAFF, MANAGERS } from '../auth/middleware.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { getIOSafe } from '../../lib/ws.js'
 import { scopeTenantWhere } from '../../lib/tenantScope.js'
+
+const HANDOFF_ACTION = 'expo.handoff'
+
+/**
+ * Expo's ready column: 'ready' orders expo has not handed over yet. A
+ * delivery handed to its rider, or a till sale served but not yet paid, stays
+ * 'ready' until the rider drops it off / the till takes payment (decision 8)
+ * — the hand-off audit row is what takes it off the pass.
+ */
+async function readyNotHandedOff<I extends Prisma.OrderInclude>(conceptScope: Prisma.ConceptWhereInput, include: I) {
+  const ready = await prisma.order.findMany({
+    where: { status: 'ready', concept: conceptScope, deletedAt: null },
+    include,
+    orderBy: { placedAt: 'asc' },
+    take: 80,
+  })
+  if (ready.length === 0) return ready
+  const handed = await prisma.auditLog.findMany({
+    where: { entity: 'Order', action: HANDOFF_ACTION, entityId: { in: ready.map((o) => o.id) } },
+    select: { entityId: true },
+  })
+  const gone = new Set(handed.map((h) => h.entityId))
+  return ready.filter((o) => !gone.has(o.id)).slice(0, 40)
+}
 
 export async function expoRoutes(fastify: FastifyInstance) {
 
@@ -58,12 +83,7 @@ export async function expoRoutes(fastify: FastifyInstance) {
           orderBy: { placedAt: 'asc' },
           take: 80,
         }),
-        prisma.order.findMany({
-          where: { status: 'ready', concept: conceptScope, deletedAt: null },
-          include: orderInclude,
-          orderBy: { placedAt: 'asc' },
-          take: 40,
-        }),
+        readyNotHandedOff(conceptScope, orderInclude),
         prisma.station.findMany({
           where: { concept: conceptScope, isActive: true },
           select: {
@@ -414,11 +434,18 @@ export async function expoRoutes(fastify: FastifyInstance) {
   )
 
   // POST /expo/orders/:id/handoff — expo signs off a `ready` order to the
-  // next stage of the journey. Copy on the front-end button switches by
-  // fulfilmentType, but the server action is the same: flip to completed
-  // (server takes to table / customer collects at counter / rider takes the
-  // delivery). For deliveries we also stamp the order with a hand-off
-  // timestamp so the dispatch queue can pick it up.
+  // next stage of the journey (server takes it to the table / customer
+  // collects at the counter / rider takes the bag). What that means for the
+  // order is decision 8 (orders/service completionDoor):
+  //   - pickup / dine-in ordered online → COMPLETED here, through the one
+  //     completion routine (ledger, invoice, FBR/SRB, loyalty, rollups).
+  //   - delivery → NOT completed: the bag is with the rider; the order
+  //     completes when the rider marks it delivered or the customer's OTP is
+  //     verified (POST /dispatch/orders/:id/delivered, /trustops verify-otp).
+  //   - a till sale (rung at the POS, or a group bill) → NOT completed: it
+  //     completes when it is paid at the till.
+  // Either way the hand-off is recorded ('expo.handoff' audit row), which is
+  // what takes the order off expo's ready column.
   fastify.post<{ Params: { id: string } }>(
     '/orders/:id/handoff',
     { preHandler: requireAuth(...ALL_STAFF) },
@@ -429,8 +456,8 @@ export async function expoRoutes(fastify: FastifyInstance) {
       })
       if (!order) throw new NotFoundError('Order', req.params.id)
       // Only `ready` orders can be handed off. If expo presses too early,
-      // the state machine refuses with a clear 409 — better than completing
-      // an order with un-bumped items.
+      // refuse with a clear 409 — better than handing over an order with
+      // un-bumped items.
       if (order.status !== 'ready') {
         throw new AppError(
           'NOT_READY',
@@ -438,19 +465,23 @@ export async function expoRoutes(fastify: FastifyInstance) {
           409,
         )
       }
-      const { updateOrderStatus } = await import('../orders/service.js')
-      await updateOrderStatus(req.params.id, 'completed')
-      try {
-        const { audit } = await import('../../lib/audit.js')
-        await audit({ category: 'identity',
-          userId:   req.staffUser!.id,
-          entity:   'Order',
-          entityId: order.id,
-          action:   'expo.handoff',
-          metadata: { fulfilmentType: order.fulfilmentType },
-        })
-      } catch { /* */ }
-      return reply.status(200).send({ ok: true, fulfilmentType: order.fulfilmentType })
+      const { updateOrderStatus, completionDoor } = await import('../orders/service.js')
+      const door = completionDoor(order)
+      const actor = { id: req.staffUser!.id, email: req.staffUser!.email, tenantId: req.staffUser!.tenantId ?? null }
+      if (door === 'handoff') {
+        await updateOrderStatus(order.id, 'completed', { actor, via: 'expo_handoff' })
+      }
+      const { audit } = await import('../../lib/audit.js')
+      await audit({ category: 'identity',
+        userId:   req.staffUser!.id,
+        userEmail: req.staffUser!.email,
+        tenantId: req.staffUser!.tenantId ?? null,
+        entity:   'Order',
+        entityId: order.id,
+        action:   HANDOFF_ACTION,
+        metadata: { fulfilmentType: order.fulfilmentType, completed: door === 'handoff', completesOn: door },
+      })
+      return reply.status(200).send({ ok: true, fulfilmentType: order.fulfilmentType, completed: door === 'handoff', completesOn: door })
     },
   )
 

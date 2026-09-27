@@ -69,7 +69,10 @@ export default function LocationsPage() {
           <div>
             <h1 className="text-2xl font-black text-white/90">📍 Locations</h1>
             <p className="text-sm text-white/40 mt-1 max-w-2xl">
-              Physical places where you operate. A single location can host multiple brands (multi-concept kitchens, food-court units). Accounting + reports filter by location independently of brand.
+              Physical places where you operate. A single location can host multiple brands (multi-concept kitchens, food-court units).
+              A location's address and map pin are what customers see for every brand it runs (storefront, Maps links, JSON-LD),
+              the origin delivery is measured from, and the clock-in anchor — edit them here, not on the brand. A brand's
+              phone and WhatsApp stay on the brand (Storefront → Brands). Accounting + reports filter by location independently of brand.
             </p>
           </div>
           <button

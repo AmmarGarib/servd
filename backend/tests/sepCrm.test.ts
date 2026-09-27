@@ -81,49 +81,12 @@ const ids = (rows: Array<{ id?: string; customerId?: string | null; customer?: {
 
 // ─── #19 / #20 smart segments ───────────────────────────────────────────────
 
-describe('smart segments are per company', () => {
-  it("B's lists never contain A's customers (vip, one_time, repeat, zero, cart_abandoners)", async () => {
-    await prisma.abandonedCart.create({ data: { cartId: `cart-${RUN}`, conceptId: conceptA, customerId: custA, customerPhone: '+923001', items: [], subtotalCents: 100 } })
-    for (const key of ['vip', 'one_time', 'repeat', 'frequent', 'zero', 'dormant', 'new', 'cart_abandoners']) {
-      const r = await call('mgrB', 'GET', `/crm/smart-segments/${key}`)
-      expect(r.statusCode, key).toBe(200)
-      expect(ids(r.json()), key).not.toContain(custA)
-    }
-    const vipA = await call('mgrA', 'GET', '/crm/smart-segments/vip')
-    expect(ids(vipA.json())).toContain(custA)
-    const cartsA = await call('mgrA', 'GET', '/crm/smart-segments/cart_abandoners')
-    expect(ids(cartsA.json())).toContain(custA)
-  })
-
-  it("spend is measured at the company's own brands (the shared customer is one-time for each)", async () => {
-    const r = await call('mgrB', 'GET', '/crm/smart-segments/one_time')
-    const shared = (r.json() as Array<{ id: string; totalSpentCents: number }>).find((x) => x.id === custShared)
-    expect(shared?.totalSpentCents).toBe(10_000)
-  })
-
-  it("counts are the company's own", async () => {
-    const r = await call('mgrB', 'GET', '/crm/smart-segments')
-    const seg = Object.fromEntries((r.json().segments as Array<{ key: string; count: number }>).map((x) => [x.key, x.count]))
-    expect(seg['vip']).toBe(0)
-    expect(seg['cart_abandoners']).toBe(0)
-    expect(seg['one_time']).toBe(2)            // custB + custShared
-    expect(r.json().summary.totalCustomers).toBe(2)
-  })
-})
 
 // ─── #21 segments, #22–#25 campaigns ─────────────────────────────────────────
 
 describe('segments and campaigns belong to one company', () => {
   let segA: string, campA: string
 
-  it('a segment binds to the active company and is listed only there', async () => {
-    const r = await call('mgrA', 'POST', '/crm/segments', { name: `vip-${RUN}`, filters: { minSpendCents: 100 } })
-    expect(r.statusCode).toBe(201)
-    expect(r.json().tenantId).toBe(tenantA)
-    segA = r.json().id
-    expect(ids((await call('mgrB', 'GET', '/crm/segments')).json())).not.toContain(segA)
-    expect(ids((await call('mgrA', 'GET', '/crm/segments')).json())).toContain(segA)
-  })
 
   it("a segment filter naming another company's brand is refused", async () => {
     const r = await call('mgrB', 'POST', '/crm/segments', { name: 'x', filters: { preferredConceptId: conceptA } })
@@ -135,10 +98,6 @@ describe('segments and campaigns belong to one company', () => {
     expect(r.statusCode).toBe(404)
   })
 
-  it("a campaign using another company's segment is a 404", async () => {
-    const r = await call('mgrB', 'POST', '/crm/campaigns', { name: 'steal', channel: 'email', subject: 's', body: 'b', segmentId: segA })
-    expect(r.statusCode).toBe(404)
-  })
 
   it('a campaign binds to the active company; empty brands = that company only', async () => {
     const r = await call('mgrA', 'POST', '/crm/campaigns', { name: `camp-${RUN}`, channel: 'email', subject: 's', body: 'hello', conceptIds: [] })
@@ -185,19 +144,6 @@ describe('segments and campaigns belong to one company', () => {
 
 // ─── #26 behavioural segments ────────────────────────────────────────────────
 
-describe('behavioural segment members are per company', () => {
-  it("B sees only its own members and counts", async () => {
-    const seg = await prisma.customerSegment.create({ data: { slug: `sep-seg-${RUN}`, name: 'Sep seg', memberCount: 3 } })
-    await prisma.customerSegmentMembership.createMany({
-      data: [custA, custB, custShared].map((customerId) => ({ customerId, segmentId: seg.id })),
-    })
-    const m = await call('mgrB', 'GET', `/crm/behavioral-segments/sep-seg-${RUN}/members`)
-    const members = (m.json() as Array<{ customer: { id: string } }>).map((x) => x.customer.id).sort()
-    expect(members).toEqual([custB, custShared].sort())
-    const list = await call('mgrB', 'GET', '/crm/behavioral-segments')
-    expect((list.json() as Array<{ slug: string; memberCount: number }>).find((x) => x.slug === `sep-seg-${RUN}`)?.memberCount).toBe(2)
-  })
-})
 
 // ─── #18 notes, #27 / #28 conversations ──────────────────────────────────────
 

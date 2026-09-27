@@ -1,15 +1,20 @@
 import { prisma } from '../../lib/prisma.js'
 import { ingestOrder } from '../orders/service.js'
 import { NotFoundError, AppError } from '../../lib/errors.js'
-import { getFbrQueue, getSrbQueue } from '../../lib/queue.js'
-import { getRefundPolicy, getOperationsConfig, computeServiceCharge } from '../../lib/setup-config.js'
+import { getSrbQueue } from '../../lib/queue.js'
+import { getRefundPolicy, getOperationsConfig } from '../../lib/setup-config.js'
 import { audit } from '../../lib/audit.js'
 import { sendEmail } from '../../lib/notify.js'
 import { flagException } from '../../lib/exceptions.js'
 import { emitItemUpdated } from '../../lib/ws.js'
+import { priceOrder, tenderOf, tenderOfPayments, gstRatePct } from '../../lib/pricing.js'
 import { drawerExpectation, drawerExpectationOf, drawerVariance, cashVarianceLimitCents, isDrawerBalanced } from '../../lib/drawer.js'
-import { shiftTenantId } from '../../lib/tenantScope.js'
-import { SHIFT_SALE_PAYMENT_INCLUDE, summariseShiftSales } from '../accounting/shiftPosting.js'
+import { shiftTenantId, assertShiftOf, shiftOfCompany } from '../../lib/tenantScope.js'
+import { SHIFT_SALE_PAYMENT_INCLUDE, summariseShiftSales, TENDER_ROUNDING_CENTS } from '../accounting/shiftPosting.js'
+import { postRefundPayment } from '../accounting/orderPosting.js'
+import { postJournalEntry, ACCT } from '../accounting/journal.js'
+import { PAYOUT_CATEGORIES, type PayoutCategory } from '../accounting/expenseCategories.js'
+import { cogsForSoldLines } from '../../lib/recipeCost.js'
 import type { OrderDTO } from '@servd/types'
 import type { Order, PaymentMethod, Prisma } from '@prisma/client'
 // Manager-override PIN: the ONE verifier (company-scoped, active accounts,
@@ -158,24 +163,14 @@ export async function createPosOrder(input: PosOrderInput) {
     }
   }
 
-  // CEO policy: GST is split by tender — cash @ taxRateCash, card/digital @
-  // taxRateCard. Cashier picks the method up front (`input.paymentMethod`);
-  // for unknown / pending methods we default to the cash rate so the
-  // customer never gets a smaller bill than they actually owe.
-  const intendedMethod = input.paymentMethod ?? 'cash'
-  const effectiveRate = intendedMethod === 'cash'
-    ? (concept.taxRateCash ?? concept.taxRate)
-    : (concept.taxRateCard ?? concept.taxRate)
-  const taxRate = effectiveRate / 100
-  // SRB POS rule: GST is charged on the PRE-discount sale value — the discount
-  // does NOT reduce the taxable base. So taxAmount = saleValue × rate, and the
-  // discount then comes off the tax-inclusive total:
-  //   net = saleValue + tax − discount   (matches the SRB invoice payload)
-  const taxCents = Math.round(itemTotal * taxRate)
-  const netAfterDiscount = itemTotal + taxCents - discount
-  // Service charge sits on top of the net (food + tax − discount).
-  const serviceChargeCents = await computeServiceCharge(netAfterDiscount, 'pos', tenantId)
-  const totalCents = netAfterDiscount + serviceChargeCents
+  // THE order pricing (lib/pricing.ts): GST by the tender the cashier rang
+  // it up under (cash 15% / card 8%, decision 9; not chosen → cash, so the
+  // customer is never billed less than they owe), on the pre-discount base
+  // (SRB POS rule), item tax classes applied, then the discount, then the
+  // company's service charge for the till. If the customer ends up paying
+  // with the other tender, processPayment re-prices before taking the money.
+  const price = await priceOrder(input.items, tenderOf(input.paymentMethod), 'pos', concept, { discountCents: discount })
+  const totalCents = price.totalCents
 
   const dto: OrderDTO = {
     source: 'pos',
@@ -203,16 +198,14 @@ export async function createPosOrder(input: PosOrderInput) {
     estimated_pickup: null,
   }
 
-  const { order } = await ingestOrder(dto)
-
-  // Update with calculated values
-  const updated = await prisma.order.update({
+  // The bill is written as the order is created (ingestOrder stamps GST, the
+  // rate, the discount and the service charge from `price`), so the ticket
+  // never fires with a bill the till then has to patch.
+  const { order } = await ingestOrder(dto, { price })
+  return prisma.order.findUniqueOrThrow({
     where: { id: order.id },
-    data: { discountCents: discount, taxCents, serviceChargeCents, totalCents },
     include: { items: { include: { modifiers: true } } },
   })
-
-  return updated
 }
 
 // ─── POS payment processing ───────────────────────────────────────────────────
@@ -229,72 +222,309 @@ export interface ProcessPaymentInput {
   }>
 }
 
-// Card / wallet payments require gateway confirmation before being marked 'paid'.
-// Cash settles instantly at the till. A comp is NOT a tender: it goes through
-// compOrder (caps, manager PIN, audit, owner notify), which settles the order
-// the same way once it is covered.
-const INSTANT_SETTLE: Set<PaymentMethod> = new Set(['cash'])
+// Every tender taken at the till settles there and then. Cash is in the
+// drawer; a card or Keenu QR tender carries the terminal's reference number
+// (owner decision 4) — the terminal approved it, so it is money receivable
+// from the processor (1030) from that moment, and the sale completes, files
+// its FBR / SRB invoice and reaches the drawer's close like a cash sale. If
+// the processor later fails it, the Keenu webhook moves it to the customer's
+// receivable (shiftPosting.ts postPosCardFailure). Card and QR tenders used to
+// wait as 'pending' for a webhook that never matched them, so every card sale
+// at the till sat in 'received' with no revenue record and no tax filing.
+// A comp is NOT a tender: it goes through compOrder (caps, manager PIN, audit,
+// owner notify). 'split' is not a tender either — it is the group-order
+// placeholder that check-split replaces with the real tenders.
+const TILL_TENDERS: ReadonlySet<PaymentMethod> = new Set(['cash', 'card', 'keenu_qr'] as PaymentMethod[])
 
 type Tx = Prisma.TransactionClient
 
 /**
  * Close out a till sale that is now fully covered: mark it completed and write
  * its FinancialEntry (once). Runs inside the caller's transaction. Shared by
- * the tender path (processPayment) and the comp path (compOrder) so a comped
- * sale completes exactly like a paid one.
+ * every settle (tender, check-split portion, gateway confirmation) and the
+ * comp path, so a comped sale completes exactly like a paid one.
  */
 async function completeTillSaleTx(
   tx: Tx,
-  order: Pick<Order, 'id' | 'conceptId' | 'source' | 'totalCents' | 'discountCents' | 'taxCents'>,
+  order: Pick<Order, 'id'>,
 ): Promise<void> {
-  await tx.order.update({
-    where: { id: order.id },
+  // The till's own status write (a till sale goes received → completed at
+  // payment, which the kitchen state machine does not model). Conditional, so
+  // an order that already ended is never re-completed. Everything a completion
+  // triggers — ledger, tax invoice, FBR / SRB, loyalty, rollups, webhook —
+  // runs once in orders/service completeOrder, called by afterTillSale after
+  // this transaction commits. (The FinancialEntry register row this used to
+  // write is gone — owner decision 39: the ledger is the record.)
+  await tx.order.updateMany({
+    where: { id: order.id, status: { notIn: ['completed', 'refunded', 'cancelled', 'rejected'] } },
     data: { status: 'completed', completedAt: new Date() },
   })
-  const existingEntry = await tx.financialEntry.findFirst({ where: { orderId: order.id } })
-  if (!existingEntry) {
-    // Own-fleet ordering only — no aggregator commission to deduct.
-    await tx.financialEntry.create({
-      data: {
-        orderId: order.id,
-        conceptId: order.conceptId,
-        channel: order.source,
-        grossCents: order.totalCents,
-        commissionCents: 0,
-        discountCents: order.discountCents,
-        taxCents: order.taxCents,
-        netCents: order.totalCents - order.discountCents,
-      },
-    })
-  }
+}
+
+/** Receipts that cover the bill: paid rows, positive amounts (comps included). */
+function coveredCents(payments: Array<{ status: string; amountCents: number }>): number {
+  return payments.filter((p) => p.status === 'paid' && p.amountCents > 0).reduce((t, p) => t + p.amountCents, 0)
 }
 
 /**
- * After a till sale completes (outside the transaction): the FBR / SRB
- * invoices and the customer's order-history rollups. Never fails the sale.
+ * After a settle, inside its transaction: when the order is now covered, void
+ * any leftover pending rows (the group order's 'split' placeholder, an online
+ * tender superseded at the till) so nothing is left "awaiting" money that has
+ * already been taken, and complete the sale when the settle is what completes
+ * it — a till sale (source 'pos'), or a dine-in bill settled at the till
+ * (owner decision 8). Delivery and pickup orders complete on fulfilment, so a
+ * rider's cash paid into the drawer or an online payment confirmed by the
+ * gateway never completes them here.
  */
-async function afterTillSale(orderId: string, customerId: string | null): Promise<{ srbInvoiceId: string; qrCodeLink: string | null } | null> {
-  // Tax-invoicing fan-out. FBR (federal) stays fire-and-forget. SRB (Sindh) is
-  // attempted SYNCHRONOUSLY so the invoice-verification QR can print on the
-  // receipt (the SRB spec requires the QR on the invoice) — but it NEVER blocks
-  // or fails the sale: on timeout/error submitSrbForReceipt falls back to the
-  // async retry queue.
-  getFbrQueue()
-    ?.add('submit', { orderId })
-    .catch((err: Error) => console.warn('[FBR] Failed to enqueue invoice submission:', err.message))
-  const srb = await submitSrbForReceipt(orderId)
-
-  // Refresh the customer's denormalised order history. The till completes an
-  // order inside its own transaction rather than going through
-  // updateOrderStatus, so it never reached the rollup bump that path does —
-  // meaning firstOrderAt, lastOrderAt and totalSpentCents stayed stale for
-  // every counter and dine-in sale, which is most of them. Fire-and-forget:
-  // a rollup must never fail a sale that has already been paid for.
-  if (customerId) {
-    const { bumpCustomerRollups } = await import('../../lib/customerRollups.js')
-    bumpCustomerRollups(customerId)
+async function applyCoverageTx(tx: Tx, orderId: string, via: 'till' | 'gateway'): Promise<{ covered: boolean; completedNow: boolean; customerId: string | null; source: string }> {
+  const order = await tx.order.findUniqueOrThrow({
+    where: { id: orderId },
+    include: { payments: { select: { id: true, status: true, amountCents: true } } },
+  })
+  const covered = coveredCents(order.payments) >= order.totalCents - TENDER_ROUNDING_CENTS
+  if (!covered) return { covered, completedNow: false, customerId: order.customerId, source: order.source }
+  await tx.payment.updateMany({
+    where: { orderId, status: 'pending' },
+    data: { status: 'failed', processedAt: new Date() },
+  })
+  const completes = order.source === 'pos' || (via === 'till' && order.fulfilmentType === 'dine_in')
+  const open = !['completed', 'refunded', 'cancelled', 'rejected'].includes(order.status)
+  if (completes && open) {
+    await completeTillSaleTx(tx, order)
+    return { covered, completedNow: true, customerId: order.customerId, source: order.source }
   }
-  return srb
+  return { covered, completedNow: false, customerId: order.customerId, source: order.source }
+}
+
+/**
+ * After a till sale completes (outside the transaction): THE completion
+ * routine (orders/service completeOrder) — ledger (a non-till order settled
+ * at the till, such as a group bill, gets its own 'order.complete' entry
+ * there; a till sale posts with its shift close), tax invoice, FBR, SRB tried
+ * synchronously so the verification QR can print on the receipt, loyalty earn,
+ * customer rollups, webhook and notice. Exactly once per order, and it never
+ * fails the sale. Returns the SRB result for the receipt.
+ */
+async function afterTillSale(
+  orderId: string,
+  _customerId?: string | null,
+  _source?: string,
+): Promise<{ srbInvoiceId: string; qrCodeLink: string | null } | null> {
+  try {
+    const { completeOrder } = await import('../orders/service.js')
+    const { srb } = await completeOrder(orderId, null, { via: 'till_payment', syncSrb: true })
+    return srb
+  } catch (err) {
+    console.error(`[complete] till sale ${orderId} completion effects failed:`, (err as Error).message)
+    return null
+  }
+}
+
+// ─── The one settle ──────────────────────────────────────────────────────────
+//
+// settlePayment marks ONE pending payment row paid. It is the only way a
+// pending row becomes money received: a check-split portion paid at the till,
+// a storefront cash-on-delivery amount the rider pays into a drawer (owner
+// decision 4 — it lands on that drawer's Z-report), and a gateway
+// confirmation from the Keenu webhook. At the till it needs an OPEN drawer of
+// the order's company and, for card / QR, the terminal reference; from the
+// gateway it keeps the row's drawer (if any). Then the one coverage rule runs
+// (applyCoverageTx).
+
+export interface SettleInput {
+  paymentId: string
+  via: 'till' | 'gateway'
+  /** The open drawer taking the money — required at the till. */
+  shiftId?: string | null
+  /** Card terminal / gateway transaction reference. Required for card and QR at the till. */
+  gatewayRef?: string | null
+  /** Cash handed over, for the change calculation. */
+  tenderedCents?: number | null
+}
+
+export async function settlePayment(input: SettleInput) {
+  const payment = await prisma.payment.findUnique({
+    where: { id: input.paymentId },
+    select: {
+      id: true, status: true, method: true, amountCents: true, gatewayRef: true, shiftId: true,
+      order: { select: { id: true, concept: { select: { tenantId: true } } } },
+    },
+  })
+  if (!payment) throw new NotFoundError('Payment', input.paymentId)
+  if (payment.status === 'paid') return { payment, alreadySettled: true, orderCompleted: false, srb: null }
+  if (payment.status !== 'pending') throw new AppError('NOT_PENDING', `Payment is ${payment.status}, not pending`, 422)
+  if (payment.method === 'comp') {
+    throw new AppError('COMP_NOT_A_TENDER', 'Comps go through POST /pos/orders/:id/comp — re-split this bill without the comp line', 422)
+  }
+  if (payment.method === 'split') {
+    throw new AppError('SPLIT_PLACEHOLDER', 'This is the group bill placeholder — split the bill (or take one tender at the till) instead of settling it', 422)
+  }
+  const gatewayRef = input.gatewayRef?.trim() || payment.gatewayRef || null
+  if (input.via === 'till') {
+    if (!input.shiftId) throw new AppError('SHIFT_REQUIRED', 'Open a drawer before taking a payment', 422)
+    // The drawer must be an OPEN shift of the ORDER's company.
+    await assertShiftOf(payment.order.concept.tenantId, input.shiftId, true)
+    if (payment.method !== 'cash' && !gatewayRef) {
+      throw new AppError('GATEWAY_REF_REQUIRED', `${payment.method} payments require the card terminal's reference number`, 400)
+    }
+  }
+
+  const result = await prisma.$transaction(async (tx) => {
+    const claimed = await tx.payment.updateMany({
+      where: { id: payment.id, status: 'pending' },
+      data: {
+        status: 'paid',
+        ...(input.via === 'till' && { shiftId: input.shiftId! }),
+        gatewayRef,
+        ...(input.tenderedCents != null && {
+          tenderedCents: input.tenderedCents,
+          changeCents: payment.method === 'cash' ? Math.max(0, input.tenderedCents - payment.amountCents) : null,
+        }),
+        processedAt: new Date(),
+      },
+    })
+    if (claimed.count === 0) throw new AppError('ALREADY_SETTLED', 'Payment is not pending', 409)
+    const coverage = await applyCoverageTx(tx, payment.order.id, input.via)
+    const settled = await tx.payment.findUniqueOrThrow({ where: { id: payment.id } })
+    return { settled, coverage }
+  })
+
+  const srb = result.coverage.completedNow
+    ? await afterTillSale(payment.order.id, result.coverage.customerId, result.coverage.source)
+    : null
+  return { payment: result.settled, alreadySettled: false, orderCompleted: result.coverage.completedNow, srb }
+}
+
+/**
+ * Re-price an unpaid till sale for the tender it is being paid with (decision
+ * 9) through THE pricing function, inside the payment's transaction. Returns
+ * the order's total due. A no-op when the tender's rate is the one the order
+ * was priced at, when the order was not priced through lib/pricing (legacy
+ * rows: no taxRatePct), when it is not a till sale, or when customer credits
+ * (promo, wallet, gift card, tip) already sit on its total — re-pricing would
+ * drop them.
+ */
+async function repriceForTenderTx(
+  tx: Tx,
+  order: Pick<Order, 'id' | 'conceptId' | 'source' | 'rawPayload' | 'totalCents' | 'discountCents' | 'taxRatePct' | 'promoDiscountCents' | 'walletAmountCents' | 'tipCents'>,
+  methods: PaymentMethod[],
+): Promise<number> {
+  if (order.taxRatePct == null) return order.totalCents
+  const { isTillSale } = await import('../orders/service.js')
+  if (!isTillSale(order)) return order.totalCents
+  if (order.promoDiscountCents > 0 || order.walletAmountCents > 0 || order.tipCents > 0) return order.totalCents
+  if ((await tx.giftCardRedemption.count({ where: { orderId: order.id } })) > 0) return order.totalCents
+
+  const concept = await tx.concept.findUniqueOrThrow({
+    where: { id: order.conceptId },
+    select: { id: true, tenantId: true, taxRateCash: true, taxRateCard: true },
+  })
+  const tender = tenderOfPayments(methods)
+  if (gstRatePct(concept, tender) === order.taxRatePct) return order.totalCents
+  const items = await tx.orderItem.findMany({
+    where: { orderId: order.id, status: { not: 'voided' } },
+    select: { menuItemId: true, unitPriceCents: true, quantity: true, modifiers: { select: { priceDeltaCents: true } } },
+  })
+  const price = await priceOrder(items, tender, order.source === 'pos' ? 'pos' : 'group', concept, {
+    discountCents: order.discountCents,
+    db: tx,
+  })
+  await tx.order.update({
+    where: { id: order.id },
+    data: {
+      taxCents: price.taxCents,
+      taxRatePct: price.taxRatePct,
+      serviceChargeCents: price.serviceChargeCents,
+      totalCents: price.totalCents,
+    },
+  })
+  return price.totalCents
+}
+
+export async function processPayment(input: ProcessPaymentInput) {
+  if (input.payments.length === 0) {
+    throw new AppError('NO_PAYMENTS', 'At least one payment is required', 400)
+  }
+  if (input.payments.some((p) => p.amountCents <= 0)) {
+    throw new AppError('INVALID_AMOUNT', 'Payment amounts must be positive', 400)
+  }
+  if (input.payments.some((p) => p.method === 'comp')) {
+    throw new AppError('COMP_NOT_A_TENDER', 'A comp is not a tender — use POST /pos/orders/:id/comp (reason, caps and manager PIN apply)', 400)
+  }
+  if (input.payments.some((p) => !TILL_TENDERS.has(p.method))) {
+    throw new AppError('NOT_A_TENDER', 'Take cash, card or Keenu QR at the till — split the bill first to pay it in parts', 400)
+  }
+  // Card and QR need the card terminal's reference number (owner decision 4).
+  for (const p of input.payments) {
+    if (p.method !== 'cash' && !p.gatewayRef?.trim()) {
+      throw new AppError('GATEWAY_REF_REQUIRED', `${p.method} payments require the card terminal's reference number`, 400)
+    }
+  }
+
+  const result = await prisma.$transaction(async (tx) => {
+    const order = await tx.order.findUnique({
+      where: { id: input.orderId },
+      include: { payments: true },
+    })
+    if (!order) throw new NotFoundError('Order', input.orderId)
+
+    const alreadyPaid = coveredCents(order.payments)
+    if (alreadyPaid >= order.totalCents) {
+      throw new AppError('ALREADY_PAID', 'Order is already fully paid', 400)
+    }
+
+    // Decision 9: a till sale is taxed at the rate of the tender it is paid
+    // with. Rung up as cash and paid by card (or a group bill, priced at the
+    // cash rate until the table chooses) → re-priced here, before any money
+    // is taken, so the bill, the GST filed and the tender agree.
+    const totalDue = alreadyPaid === 0
+      ? await repriceForTenderTx(tx, order, input.payments.map((p) => p.method))
+      : order.totalCents
+    const remainingDue = totalDue - alreadyPaid
+    const submittedTotal = input.payments.reduce((s, p) => s + p.amountCents, 0)
+
+    // Allow up to 2 paisa rounding tolerance — protect against under/overcharge
+    if (Math.abs(submittedTotal - remainingDue) > TENDER_ROUNDING_CENTS) {
+      throw new AppError(
+        'AMOUNT_MISMATCH',
+        `Payments total ${submittedTotal} but ${remainingDue} is due`,
+        400,
+      )
+    }
+
+    const createdPayments = []
+    for (const p of input.payments) {
+      const changeCents =
+        p.method === 'cash' && p.tenderedCents !== undefined
+          ? Math.max(0, p.tenderedCents - p.amountCents)
+          : undefined
+      const payment = await tx.payment.create({
+        data: {
+          orderId: input.orderId,
+          shiftId: input.shiftId,
+          method: p.method,
+          amountCents: p.amountCents,
+          status: 'paid',
+          gateway: (p.gateway as never) ?? 'none',
+          gatewayRef: p.gatewayRef?.trim() || null,
+          tenderedCents: p.tenderedCents ?? null,
+          changeCents: changeCents ?? null,
+          processedAt: new Date(),
+        },
+      })
+      createdPayments.push(payment)
+    }
+
+    // The tenders cover what was due, so the one coverage rule completes the
+    // sale (and voids a leftover placeholder row).
+    const coverage = await applyCoverageTx(tx, order.id, 'till')
+    return { payments: createdPayments, coverage }
+  })
+
+  const srb = result.coverage.completedNow
+    ? await afterTillSale(input.orderId, result.coverage.customerId, result.coverage.source)
+    : null
+  return { payments: result.payments, orderCompleted: result.coverage.completedNow, srb }
 }
 
 function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
@@ -302,31 +532,6 @@ function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
     p,
     new Promise<T>((_, reject) => setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms)),
   ])
-}
-
-// SRB submission for the receipt QR. Tries the live gateway synchronously (so
-// the QR can print on the receipt) but NEVER blocks the sale: on any error or
-// timeout it falls back to the async retry queue and returns null. Returns the
-// SRB invoice id + QR link on success. Silently returns null when the concept
-// isn't SRB-registered.
-async function submitSrbForReceipt(orderId: string): Promise<{ srbInvoiceId: string; qrCodeLink: string | null } | null> {
-  try {
-    const { buildSrbDataForOrder, submitSrbInvoice } = await import('../../adapters/srb/index.js')
-    const data = await buildSrbDataForOrder(orderId)
-    if (!data) return null // not SRB-registered — nothing to do
-    const result = await withTimeout(submitSrbInvoice(data), 8000, 'SRB submit')
-    await prisma.order.update({
-      where: { id: orderId },
-      data: { srbInvoiceNumber: result.srbInvoiceId, srbQrCodeLink: result.qrCodeLink },
-    })
-    return result
-  } catch (err) {
-    console.warn(`[SRB] sync submit failed for ${orderId}; falling back to queue: ${(err as Error).message}`)
-    getSrbQueue()
-      ?.add('submit', { orderId })
-      .catch((e: Error) => console.warn('[SRB] Failed to enqueue fallback submission:', e.message))
-    return null
-  }
 }
 
 // SRB sales-return for a refund (invoiceType 2). Tries synchronously so the
@@ -347,103 +552,6 @@ async function submitSrbReturnForRefund(orderId: string, refundAmountCents: numb
       .catch((e: Error) => console.error(`[SRB] COMPLIANCE: failed to enqueue sales-return retry for ${orderId}: ${e.message}`))
     return null
   }
-}
-
-export async function processPayment(input: ProcessPaymentInput) {
-  if (input.payments.length === 0) {
-    throw new AppError('NO_PAYMENTS', 'At least one payment is required', 400)
-  }
-  if (input.payments.some((p) => p.amountCents <= 0)) {
-    throw new AppError('INVALID_AMOUNT', 'Payment amounts must be positive', 400)
-  }
-  if (input.payments.some((p) => p.method === 'comp')) {
-    throw new AppError('COMP_NOT_A_TENDER', 'A comp is not a tender — use POST /pos/orders/:id/comp (reason, caps and manager PIN apply)', 400)
-  }
-
-  const result = await prisma.$transaction(async (tx) => {
-    const order = await tx.order.findUnique({
-      where: { id: input.orderId },
-      include: { payments: true },
-    })
-    if (!order) throw new NotFoundError('Order', input.orderId)
-
-    const alreadyPaid = order.payments
-      .filter((p) => p.status === 'paid')
-      .reduce((sum, p) => sum + p.amountCents, 0)
-
-    if (alreadyPaid >= order.totalCents) {
-      throw new AppError('ALREADY_PAID', 'Order is already fully paid', 400)
-    }
-
-    const remainingDue = order.totalCents - alreadyPaid
-    const submittedTotal = input.payments.reduce((s, p) => s + p.amountCents, 0)
-
-    // Allow up to 2 PKR rounding tolerance — protect against under/overcharge
-    if (Math.abs(submittedTotal - remainingDue) > 2) {
-      throw new AppError(
-        'AMOUNT_MISMATCH',
-        `Payments total ${submittedTotal} but ${remainingDue} is due`,
-        400,
-      )
-    }
-
-    // Card/wallet payments without gatewayRef must remain pending
-    for (const p of input.payments) {
-      if (!INSTANT_SETTLE.has(p.method) && !p.gatewayRef) {
-        throw new AppError(
-          'GATEWAY_REF_REQUIRED',
-          `${p.method} payments require a gateway reference`,
-          400,
-        )
-      }
-    }
-
-    const createdPayments = []
-
-    for (const p of input.payments) {
-      const changeCents =
-        p.method === 'cash' && p.tenderedCents !== undefined
-          ? Math.max(0, p.tenderedCents - p.amountCents)
-          : undefined
-
-      const status = INSTANT_SETTLE.has(p.method) ? 'paid' : 'pending'
-
-      const payment = await tx.payment.create({
-        data: {
-          orderId: input.orderId,
-          shiftId: input.shiftId,
-          method: p.method,
-          amountCents: p.amountCents,
-          status,
-          gateway: (p.gateway as never) ?? 'none',
-          gatewayRef: p.gatewayRef ?? null,
-          tenderedCents: p.tenderedCents ?? null,
-          changeCents: changeCents ?? null,
-          processedAt: status === 'paid' ? new Date() : null,
-        },
-      })
-      createdPayments.push(payment)
-    }
-
-    // Only mark order completed (and write its financial entry) if all
-    // payments settled instantly. Otherwise it stays in its current status
-    // until the gateway webhook confirms and creates the entry from there.
-    const allInstant = input.payments.every((p) => INSTANT_SETTLE.has(p.method))
-    if (allInstant) await completeTillSaleTx(tx, order)
-
-    return { payments: createdPayments, customerId: order.customerId }
-  })
-
-  // Invoices + rollups only for instant-settle orders; card/wallet orders
-  // submit from the gateway webhook once the payment confirms.
-  const allInstantSettle = input.payments.every((p) => INSTANT_SETTLE.has(p.method))
-  let srb: { srbInvoiceId: string; qrCodeLink: string | null } | null = null
-  if (allInstantSettle) srb = await afterTillSale(input.orderId, result.customerId)
-
-  // customerId was only carried out of the transaction to drive the rollup
-  // above; it isn't part of the settle response.
-  const { customerId: _customerId, ...response } = result
-  return { ...response, srb }
 }
 
 // ─── Shift management ─────────────────────────────────────────────────────────
@@ -817,6 +925,22 @@ export interface CompRefundInput {
 export interface CompInput extends CompRefundInput {
   /** The open drawer the comp is rung on — required, like any settlement. */
   shiftId: string
+  /**
+   * A staff meal (owner decision 11): the meal is rung through the till like
+   * any order — so its stock comes out through the normal order path and its
+   * food cost is booked by the drawer's close — and comped in full, with a
+   * manager PIN. The staff-meal log (/trustops/staff-meals) is the record of
+   * these comps.
+   */
+  staffMeal?: { staffId: string }
+}
+
+async function isMemberOf(userId: string, tenantId: string): Promise<boolean> {
+  const u = await prisma.user.findFirst({
+    where: { id: userId, deletedAt: null, OR: [{ tenantId }, { tenantMemberships: { some: { tenantId } } }] },
+    select: { id: true },
+  })
+  return !!u
 }
 
 /**
@@ -827,22 +951,29 @@ export interface CompInput extends CompRefundInput {
  * check-split is gone: it had no RefundPolicy cap, no manager PIN, no audit
  * and no owner notify. Here the comp is capped and PIN-approved, sits on the
  * drawer it was rung on (so the Z-report's comps and the shift JE's 7030 line
- * see it), can never exceed what is still due, and settles the order exactly
- * like a paid sale once it is covered.
+ * see it — a comp with no drawer left the order's revenue on the close with
+ * only the cash debited), can never exceed what is still due, and settles the
+ * order exactly like a paid sale once it is covered (applyCoverageTx).
+ *
+ * Staff meals are comps too (owner decision 11) — see CompInput.staffMeal.
  */
 export async function compOrder(input: CompInput) {
   const order = await prisma.order.findUnique({
     where: { id: input.orderId },
-    include: { concept: { select: { tenantId: true } } },
+    include: {
+      concept: { select: { tenantId: true } },
+      items: { select: { name: true, quantity: true, menuItemId: true, status: true } },
+    },
   })
   if (!order) throw new NotFoundError('Order', input.orderId)
   if (['cancelled', 'rejected', 'refunded'].includes(order.status)) {
     throw new AppError('ORDER_NOT_OPEN', `Cannot comp a ${order.status} order`, 422)
   }
   const tenantId = order.concept.tenantId
+  const reason = input.staffMeal ? `staff_meal: ${input.reason}` : input.reason
 
   const policy = await getRefundPolicy(tenantId)
-  const { approverId } = await ensureCapOrManagerOverride(
+  let { approverId } = await ensureCapOrManagerOverride(
     input.amountCents,
     policy.cashierCompLimitCents,
     policy.managerCompLimitCents,
@@ -855,22 +986,38 @@ export async function compOrder(input: CompInput) {
     tenantId,
   )
 
+  if (input.staffMeal) {
+    if (!tenantId) throw new AppError('NO_COMPANY', 'This brand is not bound to a company', 422)
+    if (order.source !== 'pos') throw new AppError('STAFF_MEAL_AT_TILL', 'A staff meal is rung up at the till', 422)
+    if (!(await isMemberOf(input.staffMeal.staffId, tenantId))) {
+      throw new AppError('STAFF_NOT_IN_COMPANY', 'That staff member is not a member of this company', 422)
+    }
+    // Every staff meal is approved by a manager — at any amount — like the
+    // manual log it replaces.
+    if (!approverId && !isOverrideApprover(input.actorRole)) {
+      if (!input.managerOverridePin) throw new AppError('MANAGER_OVERRIDE_REQUIRED', 'Manager PIN required for a staff meal', 403)
+      const approver = await verifyManagerPin(input.managerOverridePin, tenantId)
+      if (!approver) throw new AppError('INVALID_MANAGER_PIN', 'Manager PIN did not match any active manager', 403)
+      approverId = approver.id
+    }
+  }
+
   const result = await prisma.$transaction(async (tx) => {
     // What is still due, read inside the transaction the comp is written in.
     // Comping a paid order used to overpay it.
-    const paid = await tx.payment.aggregate({
-      where: { orderId: order.id, status: 'paid' },
-      _sum: { amountCents: true },
-    })
-    const alreadyPaid = paid._sum.amountCents ?? 0
+    const rows = await tx.payment.findMany({ where: { orderId: order.id }, select: { status: true, amountCents: true } })
+    const alreadyPaid = coveredCents(rows)
     const due = order.totalCents - alreadyPaid
     if (due <= 0) throw new AppError('ALREADY_PAID', 'Order is already fully paid', 400)
     if (input.amountCents > due) {
       throw new AppError('COMP_EXCEEDS_DUE', `Comp of ${input.amountCents} exceeds the ${due} still due on this order`, 400)
     }
+    if (input.staffMeal && input.amountCents !== due) {
+      throw new AppError('STAFF_MEAL_IN_FULL', 'A staff meal is comped in full', 400)
+    }
 
     // Comp = settlement at zero cost: a `comp` payment line for the amount,
-    // on the drawer it was rung on.
+    // on the drawer it was rung on. Why, and for whom, rides on the row.
     const payment = await tx.payment.create({
       data: {
         orderId: order.id,
@@ -879,50 +1026,151 @@ export async function compOrder(input: CompInput) {
         amountCents: input.amountCents,
         status: 'paid',
         gateway: 'none',
+        gatewayMeta: {
+          comp: {
+            kind: input.staffMeal ? 'staff_meal' : 'comp',
+            reason: input.reason,
+            approverId,
+            ...(input.staffMeal && { staffId: input.staffMeal.staffId }),
+          },
+        },
         processedAt: new Date(),
       },
     })
 
-    const covered = alreadyPaid + input.amountCents >= order.totalCents
-    if (covered) await completeTillSaleTx(tx, order)
-    return { payment, covered }
+    const coverage = await applyCoverageTx(tx, order.id, 'till')
+    return { payment, coverage }
   })
 
+  // The staff-meal log row — the view of this comp in /trustops/staff-meals,
+  // costed at the plate cost the shift close books as COGS.
+  let staffMealId: string | null = null
+  if (input.staffMeal && tenantId) {
+    const costCents = await cogsForSoldLines(order.items)
+    const summary = order.items.filter((i) => i.status !== 'voided').map((i) => `${i.quantity}× ${i.name}`).join(', ')
+    const meal = await prisma.staffMeal.create({
+      data: {
+        tenantId,
+        staffId: input.staffMeal.staffId,
+        approvedById: approverId ?? input.actorId,
+        shiftId: input.shiftId,
+        conceptId: order.conceptId,
+        description: `Till order #${order.id.slice(0, 8)} — ${summary}`.slice(0, 200),
+        estimatedCostCents: costCents,
+        reason: 'shift_meal',
+      },
+    })
+    staffMealId = meal.id
+    await flagHeavyStaffMeals(input.staffMeal.staffId, tenantId, order.conceptId, approverId ?? input.actorId)
+  }
+
   await audit({ category: 'identity',
-    action: 'order_comp',
+    action: input.staffMeal ? 'order_staff_meal' : 'order_comp',
     entity: 'Order',
     entityId: input.orderId,
     userId: input.actorId,
-    metadata: { amountCents: input.amountCents, reason: input.reason, photoUrl: input.photoUrl, approverId, paymentId: result.payment.id, shiftId: input.shiftId },
+    tenantId,
+    metadata: { amountCents: input.amountCents, reason, photoUrl: input.photoUrl, approverId, paymentId: result.payment.id, shiftId: input.shiftId, staffMealId },
   })
-  await notifyOwnerIfThreshold(input.amountCents, policy, 'comp', input.orderId, input.reason, input.actorId)
+  await notifyOwnerIfThreshold(input.amountCents, policy, 'comp', input.orderId, reason, input.actorId)
 
-  const srb = result.covered ? await afterTillSale(order.id, order.customerId) : null
-  return { ...result.payment, orderCompleted: result.covered, srb }
+  const srb = result.coverage.completedNow ? await afterTillSale(order.id, order.customerId, order.source) : null
+  return { ...result.payment, orderCompleted: result.coverage.completedNow, staffMealId, srb }
 }
 
-export async function refundOrder(input: CompRefundInput) {
+/** The weekly staff-meal cap flag (PKR 2,000 per person per 7 days, per company). */
+async function flagHeavyStaffMeals(staffId: string, tenantId: string, conceptId: string, approverId: string): Promise<void> {
+  const since = new Date(Date.now() - 7 * 86_400_000)
+  const agg = await prisma.staffMeal.aggregate({
+    where: { staffId, tenantId, consumedAt: { gte: since } },
+    _sum: { estimatedCostCents: true },
+    _count: { _all: true },
+  })
+  const cumulative = agg._sum.estimatedCostCents ?? 0
+  if (cumulative < 200_000) return
+  const staff = await prisma.user.findUnique({ where: { id: staffId }, select: { name: true, role: true } })
+  await flagException({
+    tenantId,
+    conceptId,
+    kind: 'shrinkage',
+    severity: cumulative >= 500_000 ? 'high' : 'medium',
+    title: `Heavy staff meal log: ${staff?.name ?? 'staff'}`,
+    description: `${staff?.name ?? 'Staff'} (${staff?.role ?? 'role unknown'}) has had PKR ${(cumulative / 100).toFixed(0)} in staff meals across ${agg._count._all} entries in the last 7 days. Confirm policy compliance.`,
+    entityType: 'User',
+    entityId: staffId,
+    actorId: approverId,
+    amountCents: cumulative,
+    metadata: { weeklyTotal: cumulative, count: agg._count._all },
+  })
+}
+
+// ─── Refund — the ONE refund engine ──────────────────────────────────────────
+//
+// /refunds, the order page and the till all refund through here. What it does:
+//   • RefundPolicy caps + manager PIN above the cashier's cap; reason required.
+//   • Any amount up to what is still refundable (partial refunds allowed).
+//   • The refundable base is what was received: paid tenders (comps are not
+//     money and are never refunded). A completed online order whose payment
+//     row nothing ever settled (storefront cash-on-delivery, online card) is
+//     refundable up to its pending rows — the order completed, so the
+//     customer paid.
+//   • A CASH refund leaves the drawer that is open NOW (owner decision 3) —
+//     the refunding cashier's own open drawer, or the one named — and is
+//     recorded on that shift, so its Z-report and expected cash see it. The
+//     sale's own drawer is usually closed and posted already. Card / QR
+//     refunds sit on the refunder's open drawer when there is one.
+//   • The refund row and its journal entry ('order.refund', orderPosting.ts)
+//     are written in ONE transaction: a refund the ledger refuses (closed
+//     period, unbalanced) is not recorded either.
+//   • Refunded in full → status 'refunded' through the order state machine,
+//     which restores loyalty points, wallet credit and gift-card balance,
+//     issues the credit note, fires the webhook and tells the customer.
+//   • The SRB sales-return is filed only against an invoice that was filed.
+
+export interface RefundInput extends CompRefundInput {
+  /** The open drawer a cash refund leaves from. Defaults to the actor's own open drawer. */
+  shiftId?: string | null
+  /** How the money goes back. Defaults to the tender of the most recent receipt. */
+  method?: 'cash' | 'card' | 'keenu_qr'
+}
+
+const REFUNDABLE_TENDERS = new Set(['cash', 'card', 'keenu_qr'])
+
+export async function refundOrder(input: RefundInput) {
   const order = await prisma.order.findUnique({
     where: { id: input.orderId },
     include: {
-      payments: { where: { status: 'paid' } },
+      payments: { orderBy: { createdAt: 'asc' } },
       concept: { select: { tenantId: true } },
     },
   })
   if (!order) throw new NotFoundError('Order', input.orderId)
+  if (order.status === 'refunded') throw new AppError('ALREADY_REFUNDED', 'This order has been refunded in full', 409)
+  if (order.status !== 'completed') {
+    throw new AppError(
+      'NOT_REFUNDABLE',
+      `A ${order.status} order has not been sold yet — cancel it instead (POST /orders/:id/cancel)`,
+      422,
+    )
+  }
   const tenantId = order.concept.tenantId
+  if (!tenantId) throw new AppError('NO_COMPANY', 'This brand is not bound to a company', 422)
 
-  // A refund is recorded as a NEW negative payment row; the original 'paid'
-  // rows are left untouched. So comparing against the paid total alone let the
-  // same order be refunded in full over and over. Subtract what has already
-  // been refunded to get what is actually still refundable.
-  const paidTotal = order.payments.reduce((s, p) => s + p.amountCents, 0)
-  const refundedRows = await prisma.payment.findMany({
-    where: { orderId: input.orderId, status: 'refunded' },
-    select: { amountCents: true },
-  })
-  const alreadyRefunded = refundedRows.reduce((s, p) => s + Math.abs(p.amountCents), 0)
+  // The refundable base: money received.
+  const receipts = order.payments.filter((p) => p.status === 'paid' && p.amountCents > 0 && REFUNDABLE_TENDERS.has(p.method))
+  const pendingDigital = order.payments.filter((p) => p.status === 'pending' && p.amountCents > 0 && REFUNDABLE_TENDERS.has(p.method))
+  const base = receipts.length > 0
+    ? receipts
+    : order.source !== 'pos' ? pendingDigital : []
+  const paidTotal = base.reduce((s, p) => s + p.amountCents, 0)
+  // A refund is a NEW negative payment row; the original 'paid' rows stay
+  // untouched. Subtract what has already been refunded, or the same order
+  // could be refunded in full over and over.
+  const alreadyRefunded = order.payments
+    .filter((p) => p.status === 'refunded')
+    .reduce((s, p) => s + Math.abs(p.amountCents), 0)
   const refundable = paidTotal - alreadyRefunded
+  if (input.amountCents <= 0) throw new AppError('INVALID_AMOUNT', 'Refund amount must be positive', 400)
   if (input.amountCents > refundable) {
     throw new AppError(
       'REFUND_EXCEEDS_PAID',
@@ -947,49 +1195,239 @@ export async function refundOrder(input: CompRefundInput) {
     tenantId,
   )
 
-  // Mark the most recent paid payment(s) as refunded up to the amount.
-  // Partial-payment refunds get a proportional negative adjustment line.
-  let remaining = input.amountCents
-  const adjustments: { paymentId: string; amount: number }[] = []
-  for (const p of [...order.payments].sort((a, b) => +b.processedAt! - +a.processedAt!)) {
-    if (remaining <= 0) break
-    const apply = Math.min(remaining, p.amountCents)
-    adjustments.push({ paymentId: p.id, amount: apply })
-    remaining -= apply
+  // How the money goes back: as asked, else the tender of the latest receipt.
+  const latest = [...base].sort((a, b) => +(b.processedAt ?? b.createdAt) - +(a.processedAt ?? a.createdAt))[0]
+  const method = (input.method ?? latest?.method ?? 'cash') as 'cash' | 'card' | 'keenu_qr'
+
+  // Which drawer it leaves from: the one named (the route checked it is an
+  // open drawer of this company), else the refunder's own open drawer here.
+  let shiftId = input.shiftId ?? null
+  if (!shiftId) {
+    const own = await prisma.shift.findFirst({
+      where: { userId: input.actorId, status: 'open', ...shiftOfCompany({ tenantId }) },
+      orderBy: { openedAt: 'desc' },
+      select: { id: true },
+    })
+    shiftId = own?.id ?? null
+  }
+  if (method === 'cash' && !shiftId) {
+    throw new AppError(
+      'OPEN_DRAWER_REQUIRED',
+      'A cash refund comes out of an open drawer — open a shift (or pick the open drawer the cash is leaving) first',
+      422,
+    )
   }
 
-  // Single negative-amount payment row carries the refund total. Reuses the
-  // method of the most-recent paid payment so reports attribute the refund
-  // to the same tender. Status='refunded' is what the Z-report counts as void.
-  const originalMethod = order.payments[0]?.method ?? 'cash'
-  // Attach the refund to the same drawer as the sale. Without a shiftId the
-  // Z-report never saw refunds at all: the cash was out of the till but
-  // expected cash still counted the full sale, so the shift closed "short".
-  const refundShiftId = order.payments[0]?.shiftId ?? order.shiftId ?? null
-  const refundPayment = await prisma.payment.create({
-    data: {
-      orderId: input.orderId,
-      shiftId: refundShiftId,
-      method: originalMethod,
-      amountCents: -input.amountCents,
-      status: 'refunded',
-      gateway: 'none',
-      processedAt: new Date(),
-    },
+  const { refundPayment, entryId } = await prisma.$transaction(async (tx) => {
+    const refundPayment = await tx.payment.create({
+      data: {
+        orderId: input.orderId,
+        shiftId,
+        method,
+        amountCents: -input.amountCents,
+        status: 'refunded',
+        gateway: 'none',
+        gatewayMeta: { refund: { reason: input.reason, approverId, actorId: input.actorId } },
+        processedAt: new Date(),
+      },
+    })
+    const posted = await postRefundPayment(refundPayment.id, { tx, postedBy: input.actorId })
+    if (!posted.entryId) {
+      throw new AppError('REFUND_NOT_POSTED', `The refund could not be booked: ${posted.reason ?? 'unknown'}`, 422)
+    }
+    return { refundPayment, entryId: posted.entryId }
   })
 
-  // File the SRB sales-return (invoiceType 2) for the refunded value.
-  const srbReturnInvoiceNo = await submitSrbReturnForRefund(input.orderId, input.amountCents, refundPayment.id)
+  // Refunded in full → the order's own terminal transition and its restores.
+  const refundedInFull = alreadyRefunded + input.amountCents >= paidTotal
+  if (refundedInFull) {
+    const { updateOrderStatus } = await import('../orders/service.js')
+    await updateOrderStatus(order.id, 'refunded').catch((err: Error) =>
+      console.error(`[refund] status → refunded failed for ${order.id}: ${err.message}`))
+  }
+
+  // SRB sales-return (invoiceType 2) — only against an invoice that was filed.
+  // A till sale whose own filing is still queued gets its return queued behind
+  // it; a sale never filed (storefront today) has nothing to return against.
+  let srbReturnInvoiceNo: string | null = null
+  let srbReturn: 'filed' | 'queued' | 'not_filed_original' = 'not_filed_original'
+  if (order.srbInvoiceNumber) {
+    srbReturnInvoiceNo = await submitSrbReturnForRefund(input.orderId, input.amountCents, refundPayment.id)
+    srbReturn = srbReturnInvoiceNo ? 'filed' : 'queued'
+  } else if (order.source === 'pos') {
+    getSrbQueue()
+      ?.add('submit', { orderId: input.orderId, kind: 'return', refundAmountCents: input.amountCents, refundRef: refundPayment.id }, { delay: 5 * 60_000 })
+      .catch((e: Error) => console.error(`[SRB] COMPLIANCE: failed to enqueue sales-return for ${input.orderId}: ${e.message}`))
+    srbReturn = 'queued'
+  }
 
   await audit({ category: 'identity',
     action: 'order_refund',
     entity: 'Order',
     entityId: input.orderId,
     userId: input.actorId,
-    metadata: { amountCents: input.amountCents, reason: input.reason, photoUrl: input.photoUrl, approverId, refundPaymentId: refundPayment.id, adjustments, srbReturnInvoiceNo },
+    tenantId,
+    before: { status: order.status, refundedCents: alreadyRefunded },
+    after: { status: refundedInFull ? 'refunded' : order.status, refundedCents: alreadyRefunded + input.amountCents },
+    metadata: { amountCents: input.amountCents, method, shiftId, reason: input.reason, photoUrl: input.photoUrl, approverId, refundPaymentId: refundPayment.id, entryId, srbReturn, srbReturnInvoiceNo },
   })
   await notifyOwnerIfThreshold(input.amountCents, policy, 'refund', input.orderId, input.reason, input.actorId)
-  return { ...refundPayment, srbReturnInvoiceNo }
+  return { ...refundPayment, entryId, orderRefunded: refundedInFull, srbReturnInvoiceNo }
+}
+
+// ─── Drawer cash movements ───────────────────────────────────────────────────
+//
+// drop / add / pay-in move cash between the drawer and the safe; the shift
+// close books each as its own balanced pair. A PAY-OUT to a vendor (owner
+// decision 5) is allowed from the till with a manager PIN and under a cap,
+// and is booked the way a petty-cash spend is: either against an open
+// supplier bill (a cash SupplierPayment — Dr 2010 / Cr 1010 — plus the cash
+// leaving the drawer, Dr 1010 / Cr 1015), or straight to its expense category
+// (Dr 6xxx / Cr 1015). Each pay-out posts its own entry ('pos.payout', keyed
+// on the movement), which the shift close then skips — pay-outs used to land
+// on 8010 as "unclassified" for the accountant to dig out.
+
+/** Default pay-out cap until OperationsConfig carries drawerPayoutCapCents. */
+export const DEFAULT_DRAWER_PAYOUT_CAP_CENTS = 500_000 // PKR 5,000
+
+export interface CashMovementInput {
+  shiftId: string
+  type: 'drop' | 'add' | 'payout' | 'payin'
+  amountCents: number
+  reason: string
+  actorId: string
+  actorRole: string
+  managerOverridePin?: string
+  /** Pay-out only: what it was spent on (PAYOUT_CATEGORIES). */
+  category?: PayoutCategory
+  /** Pay-out only: the open supplier bill this cash pays. */
+  supplierBillId?: string | null
+  vendorName?: string | null
+  receiptUrl?: string | null
+}
+
+export async function recordCashMovement(input: CashMovementInput) {
+  if (input.type !== 'payout') {
+    return prisma.cashMovement.create({
+      data: { shiftId: input.shiftId, type: input.type, amountCents: input.amountCents, reason: input.reason, recordedById: input.actorId },
+    })
+  }
+
+  const shift = await prisma.shift.findUniqueOrThrow({
+    where: { id: input.shiftId },
+    include: { location: { select: { tenantId: true } }, user: { select: { tenantId: true } } },
+  })
+  const tenantId = shiftTenantId(shift)
+  if (!tenantId) throw new AppError('SHIFT_HAS_NO_COMPANY', 'This drawer is not bound to a company', 422)
+
+  const ops = await getOperationsConfig(tenantId)
+  const configured = (ops as unknown as Record<string, unknown> | null)?.['drawerPayoutCapCents']
+  const cap = typeof configured === 'number' ? configured : DEFAULT_DRAWER_PAYOUT_CAP_CENTS
+  if (input.amountCents > cap) {
+    throw new AppError('OVER_PAYOUT_CAP', `Pay-outs from the till are capped at PKR ${(cap / 100).toFixed(0)} — pay larger amounts from petty cash or the bank`, 403)
+  }
+  // The manager PIN, always — unless the person at the till is an approver.
+  let approverId: string | null = null
+  if (isOverrideApprover(input.actorRole)) approverId = input.actorId
+  else {
+    if (!input.managerOverridePin) throw new AppError('MANAGER_OVERRIDE_REQUIRED', 'Manager PIN required to pay a vendor from the till', 403)
+    const approver = await verifyManagerPin(input.managerOverridePin, tenantId)
+    if (!approver) throw new AppError('INVALID_MANAGER_PIN', 'Manager PIN did not match any active manager', 403)
+    approverId = approver.id
+  }
+
+  // What the cash pays: a supplier bill of this company, or an expense category.
+  let bill: { id: string; supplierId: string; billNumber: string; supplierName: string } | null = null
+  let expenseCode: string | null = null
+  if (input.supplierBillId) {
+    const found = await prisma.supplierBill.findFirst({
+      where: { id: input.supplierBillId, supplier: { tenantId } },
+      select: { id: true, supplierId: true, billNumber: true, status: true, totalCents: true, whtCents: true, paidCents: true, supplier: { select: { name: true } } },
+    })
+    if (!found) throw new AppError('BILL_NOT_IN_COMPANY', 'That supplier bill is not one of this drawer\'s company\'s', 422)
+    if (found.status === 'void' || found.status === 'paid') throw new AppError('BILL_NOT_OPEN', `Bill ${found.billNumber} is ${found.status}`, 422)
+    const { billDueCents } = await import('../procurement/service.js')
+    const due = billDueCents(found)
+    if (input.amountCents > due) throw new AppError('OVER_APPLIED', `Only ${due} is still due on bill ${found.billNumber}`, 400)
+    bill = { id: found.id, supplierId: found.supplierId, billNumber: found.billNumber, supplierName: found.supplier.name }
+  } else {
+    const cat = PAYOUT_CATEGORIES.find((c) => c.key === input.category)
+    if (!cat) {
+      throw new AppError('PAYOUT_CATEGORY_REQUIRED', `Say what the pay-out was for (${PAYOUT_CATEGORIES.map((c) => c.key).join(', ')}) or pick the supplier bill it pays`, 400)
+    }
+    expenseCode = cat.code
+  }
+
+  // Blind count (owner decision 2): the drawer total is never shown, but a
+  // pay-out can't take out more cash than the drawer should hold.
+  const expected = await drawerExpectation(input.shiftId)
+  if (input.amountCents > expected.expectedCents) {
+    throw new AppError('INSUFFICIENT_DRAWER_CASH', 'That is more cash than this drawer should hold', 422)
+  }
+
+  const { movement, supplierPaymentId } = await prisma.$transaction(async (tx) => {
+    const movement = await tx.cashMovement.create({
+      data: {
+        shiftId: input.shiftId,
+        type: 'payout',
+        amountCents: input.amountCents,
+        reason: input.reason,
+        recordedById: input.actorId,
+        // The approver, never the PIN itself.
+        managerOverridePin: approverId ? `approved-by:${approverId}` : null,
+      },
+    })
+    let supplierPaymentId: string | null = null
+    const tag = `(shift ${input.shiftId.slice(0, 8)})`
+    const memo = `Till pay-out: ${input.reason}${input.vendorName ? ` — ${input.vendorName}` : ''} ${tag}`.slice(0, 250)
+    if (bill) {
+      const { createPaymentTx } = await import('../procurement/service.js')
+      const payment = await createPaymentTx(tx, {
+        supplierId: bill.supplierId,
+        paymentDate: new Date().toISOString(),
+        method: 'cash',
+        reference: `till pay-out ${tag}`,
+        amountCents: input.amountCents,
+        notes: input.reason,
+        applications: [{ billId: bill.id, amountAppliedCents: input.amountCents }],
+        createdBy: input.actorId,
+      })
+      supplierPaymentId = payment.id
+    }
+    await postJournalEntry({
+      tenantId,
+      sourceType: 'pos.payout',
+      sourceId: movement.id,
+      description: bill ? `Till pay-out against bill ${bill.billNumber} (${bill.supplierName})` : `Till pay-out — ${input.reason}`,
+      postedBy: input.actorId,
+      lines: bill
+        ? [
+            { accountCode: ACCT.CASH_ON_HAND, type: 'debit',  amountCents: input.amountCents, memo },
+            { accountCode: ACCT.CASH_DRAWER,  type: 'credit', amountCents: input.amountCents, memo },
+          ]
+        : [
+            { accountCode: expenseCode!,      type: 'debit',  amountCents: input.amountCents, memo },
+            { accountCode: ACCT.CASH_DRAWER,  type: 'credit', amountCents: input.amountCents, memo },
+          ],
+    }, { tx })
+    return { movement, supplierPaymentId }
+  })
+
+  if (supplierPaymentId) {
+    const { postSupplierPayment } = await import('../accounting/supplierPosting.js')
+    await postSupplierPayment(supplierPaymentId).catch((err: Error) =>
+      console.error(`[journal] till pay-out supplier payment ${supplierPaymentId} did not post: ${err.message}`))
+  }
+  await audit({ category: 'identity',
+    action: 'drawer.payout',
+    entity: 'CashMovement',
+    entityId: movement.id,
+    userId: input.actorId,
+    tenantId,
+    after: { amountCents: input.amountCents, reason: input.reason, category: input.category ?? null, supplierBillId: bill?.id ?? null },
+    metadata: { approverId, supplierPaymentId, receiptUrl: input.receiptUrl ?? null, vendorName: input.vendorName ?? null },
+  })
+  return movement
 }
 
 // ─── Discount / price-override helpers ───────────────────────────────────────
@@ -1026,3 +1464,36 @@ async function detectPriceOverrides(input: PosOrderInput): Promise<Array<{ menuI
   return out
 }
 
+
+// ─── Gift-card tender (owner decision 14) ─────────────────────────────────────
+//
+// A gift card is accepted at the till. It is not a Payment row (PaymentMethod
+// has no gift-card value, and a card is a liability, not money in the drawer):
+// the one redeem engine (giftCards/service.redeemGiftCard) drains the card —
+// the order's company only — and lowers the bill by what it paid. The cashier
+// takes the rest through processPayment as usual; when the card covers
+// everything still owed, the sale closes here exactly as a paid one does.
+export async function applyGiftCardTender(input: {
+  orderId: string
+  code: string
+  amountCents?: number
+  staffId?: string | null
+}) {
+  const order = await prisma.order.findUnique({ where: { id: input.orderId }, select: { id: true, source: true, fulfilmentType: true } })
+  if (!order) throw new NotFoundError('Order', input.orderId)
+  if (order.source !== 'pos' && order.fulfilmentType !== 'dine_in') {
+    throw new AppError('NOT_A_TILL_SALE', 'The gift-card tender is for bills settled at the till', 422)
+  }
+
+  const { redeemGiftCard } = await import('../giftCards/service.js')
+  const redeemed = await redeemGiftCard({
+    code: input.code,
+    orderId: input.orderId,
+    amountCents: input.amountCents,
+    redeemedById: input.staffId ?? null,
+  })
+
+  const coverage = await prisma.$transaction((tx) => applyCoverageTx(tx, input.orderId, 'till'))
+  const srb = coverage.completedNow ? await afterTillSale(input.orderId, coverage.customerId, coverage.source) : null
+  return { ...redeemed, completed: coverage.completedNow, srb }
+}

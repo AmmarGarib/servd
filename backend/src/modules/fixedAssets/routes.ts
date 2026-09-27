@@ -17,7 +17,9 @@ import {
 const createSchema = z.object({
   name: z.string().min(1).max(120),
   category: z.enum(Object.keys(ASSET_CATEGORIES) as [AssetCategory, ...AssetCategory[]]),
-  funding: z.enum(Object.keys(FUNDING) as [Funding, ...Funding[]]),
+  // 'advance' is capex capitalised against supplier advances — only through
+  // POST /finance/capex/lines/:lineId/capitalise, which knows the advances.
+  funding: z.enum(Object.keys(FUNDING).filter((k) => k !== 'advance') as [Funding, ...Funding[]]),
   acquiredAt: z.string().datetime({ offset: true }).or(z.string().regex(/^\d{4}-\d{2}-\d{2}$/)),
   costCents: z.number().int().positive(),
   salvageCents: z.number().int().min(0).default(0),

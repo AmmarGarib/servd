@@ -12,7 +12,7 @@ interface PaymentModalProps {
 }
 
 // F-PAY02: wallet methods removed in v1 — re-add when adapters ship.
-type PaymentMethod = 'cash' | 'card' | 'keenu_qr' | 'comp'
+type PaymentMethod = 'cash' | 'card' | 'keenu_qr' | 'comp' | 'staff_meal'
 
 export function PaymentModal({ taxRate, onClose }: PaymentModalProps) {
   const { cart, totalCents, discountCents, discountReason, conceptId, shiftId, tableId, customerId, clearCart } = usePosStore()
@@ -34,6 +34,8 @@ export function PaymentModal({ taxRate, onClose }: PaymentModalProps) {
       : `pos-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
   }
 
+  const [gatewayRef, setGatewayRef] = useState('')
+  const [staffMealFor, setStaffMealFor] = useState('')
   const tenderedCents = method === 'cash' ? Math.round(parseFloat(tendered || '0') * 100) : 0
   const changeCents = method === 'cash' ? Math.max(0, tenderedCents - total) : 0
 
@@ -65,11 +67,14 @@ export function PaymentModal({ taxRate, onClose }: PaymentModalProps) {
       // (policy caps, manager PIN above the cashier's cap, audit, on this
       // drawer), which completes the order once the comp covers it. A retry
       // after a PIN prompt reuses the same order (idempotency key above).
-      if (method === 'comp') {
+      if (method === 'comp' || method === 'staff_meal') {
+        // A staff meal is a comp rung through the till (owner decision 11):
+        // stock is taken and the cost booked like any other order.
         return posApi.compOrder(order.id, {
           amountCents: order.totalCents,
-          reason: compReason.trim(),
+          reason: method === 'staff_meal' ? 'staff_meal' : compReason.trim(),
           shiftId: shiftId!,
+          ...(method === 'staff_meal' && { staffMealFor: staffMealFor.trim() }),
           ...(managerPin && { managerOverridePin: managerPin }),
         })
       }
@@ -83,6 +88,8 @@ export function PaymentModal({ taxRate, onClose }: PaymentModalProps) {
             method,
             amountCents: total,
             ...(method === 'cash' && { tenderedCents }),
+            // A card / QR sale carries the terminal's reference (owner decision 4).
+            ...((method === 'card' || method === 'keenu_qr') && { gatewayRef: gatewayRef.trim() }),
           },
         ],
       })
@@ -121,6 +128,7 @@ export function PaymentModal({ taxRate, onClose }: PaymentModalProps) {
     { id: 'cash', label: 'Cash', emoji: '💵' },
     { id: 'card', label: 'Card / Keenu', emoji: '💳' },
     { id: 'keenu_qr', label: 'Keenu QR', emoji: '⬜' },
+    { id: 'staff_meal', label: 'Staff meal', emoji: '🍽' },
     { id: 'comp', label: 'Comp', emoji: '🎁' },
   ]
 
@@ -169,6 +177,36 @@ export function PaymentModal({ taxRate, onClose }: PaymentModalProps) {
             </button>
           ))}
         </div>
+
+        {/* Terminal reference — a card / QR sale is settled at the till against it */}
+        {(method === 'card' || method === 'keenu_qr') && (
+          <div className="mb-4">
+            <label className="mb-1 block text-sm text-kds-subtext">Terminal reference</label>
+            <input
+              type="text"
+              value={gatewayRef}
+              onChange={(e) => setGatewayRef(e.target.value)}
+              placeholder="Reference printed by the card machine"
+              className="w-full rounded-lg border border-kds-border bg-kds-bg px-4 py-3 text-lg font-bold text-kds-green"
+              autoFocus
+            />
+          </div>
+        )}
+
+        {/* Staff meal — who is eating; rung through as a comp */}
+        {method === 'staff_meal' && (
+          <div className="mb-4">
+            <label className="mb-1 block text-sm text-kds-subtext">Staff member</label>
+            <input
+              type="text"
+              value={staffMealFor}
+              onChange={(e) => setStaffMealFor(e.target.value)}
+              placeholder="Name or employee code"
+              className="w-full rounded-lg border border-kds-border bg-kds-bg px-4 py-3 text-lg font-bold text-kds-green"
+              autoFocus
+            />
+          </div>
+        )}
 
         {/* Cash tendered input */}
         {method === 'cash' && (
@@ -248,7 +286,9 @@ export function PaymentModal({ taxRate, onClose }: PaymentModalProps) {
             disabled={
               createAndPay.isPending ||
               (method === 'cash' && tenderedCents < total) ||
-              (method === 'comp' && !compReason.trim())
+              (method === 'comp' && !compReason.trim()) ||
+              ((method === 'card' || method === 'keenu_qr') && !gatewayRef.trim()) ||
+              (method === 'staff_meal' && !staffMealFor.trim())
             }
             className="w-full rounded-xl bg-kds-green py-4 text-lg font-bold text-white disabled:opacity-30 active:scale-95"
           >

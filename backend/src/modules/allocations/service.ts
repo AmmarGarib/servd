@@ -12,14 +12,21 @@ import { postJournalEntry, revenueCodeForConcept, type JournalLineInput } from '
 
 const BPS_TOTAL = 10_000
 
-// Net debit balance for an account in a period — what's left to allocate.
+// Net debit balance for an account in a period — the cost to allocate.
+// Allocation runs' own lines are excluded: a run debits the brands and
+// credits the source on the SAME account when no target code is set, so
+// counting them would make an overlapping later run (January, then Q1) see
+// January's cost again and allocate it twice.
 async function netDebitForAccount(accountId: string, periodStart: Date, periodEnd: Date): Promise<number> {
   const sums = await prisma.journalLine.groupBy({
     by: ['type'],
     _sum: { amountCents: true },
     where: {
       accountId,
-      journalEntry: { entryDate: { gte: periodStart, lte: periodEnd } },
+      journalEntry: {
+        entryDate: { gte: periodStart, lte: periodEnd },
+        NOT: { reference: { startsWith: 'allocation.run:' } },
+      },
     },
   })
   let debit = 0, credit = 0
@@ -87,6 +94,21 @@ export async function runAllocationRule(input: {
       'WEIGHT_NOT_IN_COMPANY',
       `Rule weights name brands of another company (${foreign.map((w) => w.concept.slug).join(', ')}) — edit the rule`,
       422,
+    )
+  }
+
+  if (!(input.periodEnd > input.periodStart)) throw new AppError('BAD_PERIOD', 'Period end must be after its start', 400)
+  // One run per rule per stretch of time: a run whose period overlaps an
+  // earlier run of the same rule would allocate that cost a second time.
+  const overlapping = await prisma.costAllocationRun.findFirst({
+    where: { ruleId: rule.id, periodStart: { lte: input.periodEnd }, periodEnd: { gte: input.periodStart } },
+    select: { periodStart: true, periodEnd: true },
+  })
+  if (overlapping) {
+    throw new AppError(
+      'RUN_OVERLAPS',
+      `This rule already ran for ${overlapping.periodStart.toISOString().slice(0, 10)}–${overlapping.periodEnd.toISOString().slice(0, 10)} — pick a period that does not overlap it`,
+      409,
     )
   }
 
@@ -160,38 +182,49 @@ export async function runAllocationRule(input: {
     throw new AppError('NO_ALLOCATIONS', 'All allocations rounded to zero', 422)
   }
 
+  // Each debit is TAGGED with its brand, so the allocated cost becomes that
+  // brand's measured cost in pnlByConcept and the CEO brand P&L; the credit
+  // stays untagged and takes the cost out of the shared (head-office) bucket.
+  // Without the tag a run was Dr 6010 / Cr 6010 with no brand on either side
+  // — it changed no report at all.
   const lines: JournalLineInput[] = perConcept.map((p) => ({
     accountCode: p.targetAccountCode,
     type: 'debit',
     amountCents: p.amountCents,
     memo: `Allocated to ${p.conceptSlug}`,
+    conceptId: p.conceptId,
   }))
   lines.push({
     accountCode: rule.sourceAccountCode,
     type: 'credit',
     amountCents: totalCents,
     memo: `Allocated out for ${input.periodStart.toISOString().slice(0,10)}–${input.periodEnd.toISOString().slice(0,10)}`,
+    conceptId: null,
   })
 
-  const run = await prisma.costAllocationRun.create({
-    data: {
+  // The run row and its entry together: a run the ledger refuses (closed
+  // period, missing account) leaves no run row behind to block a retry.
+  const run = await prisma.$transaction(async (tx) => {
+    const run = await tx.costAllocationRun.create({
+      data: {
+        tenantId: input.tenantId,
+        ruleId: rule.id,
+        periodStart: input.periodStart,
+        periodEnd: input.periodEnd,
+        totalAmountCents: totalCents,
+        postedById: input.postedById,
+      },
+    })
+    await postJournalEntry({
       tenantId: input.tenantId,
-      ruleId: rule.id,
-      periodStart: input.periodStart,
-      periodEnd: input.periodEnd,
-      totalAmountCents: totalCents,
-      postedById: input.postedById,
-    },
-  })
-
-  await postJournalEntry({
-    tenantId: input.tenantId,
-    sourceType: 'allocation.run',
-    sourceId: run.id,
-    description: `${rule.name}: ${rule.sourceAccountCode} allocated across concepts`,
-    entryDate: input.periodEnd,
-    postedBy: input.postedById,
-    lines,
+      sourceType: 'allocation.run',
+      sourceId: run.id,
+      description: `${rule.name}: ${rule.sourceAccountCode} allocated across concepts`,
+      entryDate: input.periodEnd,
+      postedBy: input.postedById,
+      lines,
+    }, { tx })
+    return run
   })
 
   return { runId: run.id, totalAmountCents: totalCents, allocations: perConcept }

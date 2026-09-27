@@ -70,20 +70,26 @@ export async function issueInvoiceForOrder(input: IssueInvoiceInput) {
     const prefix = concept.invoicePrefix ?? concept.slug.toUpperCase()
     const invoiceNumber = `${prefix}-${year}-${padded}`
 
-    // Money math — derive snapshot fields. The Concept stores its tax rate;
-    // we don't try to split federal vs provincial here because that mapping
-    // is operator policy. Until the operator sets explicit per-province
-    // fields, all `taxCents` lands in fbrTaxCents.
-    const subtotal       = order.items.reduce((s, i) => {
-      const modSum = i.modifiers.reduce((ms, m) => ms + m.priceDeltaCents, 0)
-      return s + (i.unitPriceCents + modSum) * i.quantity
-    }, 0)
+    // Money snapshot — the order's STORED figures, never a recomputation:
+    // the GST is Order.taxCents, charged at Order.taxRatePct by
+    // lib/pricing.ts priceOrder (tender rate, decision 9). We don't split
+    // federal vs provincial here because that mapping is operator policy;
+    // until the operator sets explicit per-province fields, all of it lands
+    // in fbrTaxCents. The taxable value is the PRE-discount item value — GST
+    // is charged on it before any discount (SRB POS rule), so taxable × rate
+    // matches the tax on the invoice.
+    const subtotal       = order.items
+      .filter((i) => i.status !== 'voided')
+      .reduce((s, i) => {
+        const modSum = i.modifiers.reduce((ms, m) => ms + m.priceDeltaCents, 0)
+        return s + (i.unitPriceCents + modSum) * i.quantity
+      }, 0)
     const discount       = order.discountCents + order.promoDiscountCents
-    const taxable        = Math.max(0, subtotal - discount)
+    const taxable        = subtotal
     const fbrTax         = order.taxCents
     const serviceCharge  = order.serviceChargeCents
     const tip            = order.tipCents
-    const total          = taxable + fbrTax + serviceCharge + tip
+    const total          = Math.max(0, subtotal - discount) + fbrTax + serviceCharge + tip
 
     const invoice = await tx.taxInvoice.create({
       data: {
@@ -108,7 +114,7 @@ export async function issueInvoiceForOrder(input: IssueInvoiceInput) {
         tipCents: tip,
         totalCents: total,
         lines: {
-          create: order.items.map((i) => {
+          create: order.items.filter((i) => i.status !== 'voided').map((i) => {
             const modSum = i.modifiers.reduce((ms, m) => ms + m.priceDeltaCents, 0)
             const unitPrice = i.unitPriceCents + modSum
             return {

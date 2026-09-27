@@ -508,6 +508,69 @@ export async function accountingRoutes(fastify: FastifyInstance) {
   )
 
   // ─── Period close ────────────────────────────────────────────────────────
+  //
+  // THE one write path for period locks (the /setup/period-locks copy is
+  // gone). A lock is a PKT end-of-day, only ever moves forward, and every
+  // close and reopen is on the books' audit trail (category 'accounting').
+  // Reopening (owner decision 21) is admin only, removes only the LATEST
+  // lock, needs a reason, is audited and raises a high-severity exception.
+
+  fastify.get('/period-close/history', { preHandler: requireAuth(...FINANCIALS_VIEWERS) }, async (req) => {
+    const tenantId = req.staffUser!.tenantId
+    if (!tenantId) return { locks: [] }
+    const locks = await prisma.periodLock.findMany({
+      where: { tenantId },
+      orderBy: { lockedThrough: 'desc' },
+      take: 60,
+      select: { id: true, lockedThrough: true, lockedAt: true, lockedBy: true, note: true },
+    })
+    const users = await prisma.user.findMany({
+      where: { id: { in: Array.from(new Set(locks.map((l) => l.lockedBy))) } },
+      select: { id: true, name: true, email: true },
+    })
+    const byId = new Map(users.map((u) => [u.id, u]))
+    return {
+      locks: locks.map((l) => ({
+        ...l,
+        lockedThroughLabel: fmtPktDate(l.lockedThrough),
+        lockedByName: byId.get(l.lockedBy)?.name ?? byId.get(l.lockedBy)?.email ?? null,
+      })),
+    }
+  })
+
+  fastify.post('/period-close/reopen', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req) => {
+    const body = z.object({ reason: z.string().trim().min(5).max(500) }).parse(req.body)
+    const tenantId = req.staffUser!.tenantId
+    if (!tenantId) throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company — books are closed per company', 422)
+    const latest = await prisma.periodLock.findFirst({ where: { tenantId }, orderBy: { lockedThrough: 'desc' } })
+    if (!latest) throw new AppError('NOTHING_TO_REOPEN', 'This company has no closed period', 422)
+    await prisma.periodLock.delete({ where: { id: latest.id } })
+    const now = await prisma.periodLock.findFirst({ where: { tenantId }, orderBy: { lockedThrough: 'desc' }, select: { lockedThrough: true } })
+
+    await audit({ category: 'accounting',
+      action: 'period.reopen',
+      entity: 'PeriodLock',
+      entityId: latest.id,
+      userId: req.staffUser!.id, tenantId,
+      userEmail: req.staffUser!.email,
+      before: latest,
+      after: { lockedThrough: now?.lockedThrough ?? null },
+      metadata: { reason: body.reason, ip: req.ip },
+    })
+    const { flagException } = await import('../../lib/exceptions.js')
+    await flagException({
+      tenantId,
+      kind: 'period_reopened',
+      severity: 'high',
+      title: `Period reopened — books were closed through ${fmtPktDate(latest.lockedThrough)}`,
+      description: `${req.staffUser!.email} reopened the books. Postings dated after ${now ? fmtPktDate(now.lockedThrough) : 'the start of the ledger'} are allowed again. Reason: ${body.reason}. Review any new entries before re-closing.`,
+      entityType: 'PeriodLock',
+      entityId: latest.id,
+      actorId: req.staffUser!.id,
+      metadata: { lockedThrough: latest.lockedThrough, originalLockedBy: latest.lockedBy, note: latest.note, reason: body.reason },
+    })
+    return { reopened: { lockedThrough: latest.lockedThrough }, lockedThrough: now?.lockedThrough ?? null }
+  })
 
   fastify.get('/period-close', { preHandler: requireAuth(...FINANCIALS_VIEWERS) }, async (req) => {
     // Each company closes its own books, so this reports the ACTIVE company's

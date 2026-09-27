@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
-import { requireAuth, MANAGERS, ADMIN_ONLY } from '../auth/middleware.js'
+import { requireAuth, FINANCE_TEAM, ADMIN_ONLY } from '../auth/middleware.js'
 import { runAllocationRule } from './service.js'
 import { audit } from '../../lib/audit.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
@@ -27,11 +27,12 @@ const runSchema = z.object({
 
 export async function allocationRoutes(fastify: FastifyInstance) {
   // Rules and runs belong to one company each (CostAllocationRule.tenantId,
-  // CostAllocationRun.tenantId). Lists are view-aware; edits/deletes/runs
+  // CostAllocationRun.tenantId). Lists are view-aware and readable by finance
+  // too (MANAGERS left the finance officer out); edits/deletes/runs
   // reach every company the operator belongs to; a new rule binds to the
   // ACTIVE company only.
 
-  fastify.get('/rules', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
+  fastify.get('/rules', { preHandler: requireAuth(...FINANCE_TEAM) }, async (req) => {
     return prisma.costAllocationRule.findMany({
       where: await scopeTenantWhere(req, 'read'),
       include: { weights: { include: { concept: { select: { name: true, slug: true } } } } },
@@ -135,7 +136,7 @@ export async function allocationRoutes(fastify: FastifyInstance) {
     },
   )
 
-  fastify.get('/runs', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
+  fastify.get('/runs', { preHandler: requireAuth(...FINANCE_TEAM) }, async (req) => {
     const scope = await scopeTenantWhere(req, 'read')
     return prisma.costAllocationRun.findMany({
       // Runs are stamped with their company; a run from before the column

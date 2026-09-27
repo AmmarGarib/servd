@@ -4,6 +4,7 @@ import { Fragment, useState } from 'react'
 import { api, posApi, type ZReport } from '../../lib/api'
 import { fmtPkr, todayPktIso } from '../../lib/money'
 import { format } from 'date-fns'
+import { BackfillUnposted } from './BackfillUnposted'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -404,6 +405,8 @@ export default function ReconciliationPage() {
       </header>
 
       <div className="p-6 max-w-5xl mx-auto space-y-4">
+
+        {tab === 'shifts' && <BackfillUnposted />}
 
         {/* Summary KPI strip (shifts tab) */}
         {tab === 'shifts' && summary && (

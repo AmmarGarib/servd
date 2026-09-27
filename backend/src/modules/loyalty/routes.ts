@@ -1,15 +1,16 @@
-import { scopeTenantWhere } from '../../lib/tenantScope.js'
-import { primaryTenantId } from '../../lib/setup-config.js'
+import { scopeTenantWhere, activeTenantId } from '../../lib/tenantScope.js'
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
 import { requireCustomerAuth, requireAuth, MANAGERS } from '../auth/middleware.js'
 import { NotFoundError, AppError } from '../../lib/errors.js'
 import {
-  LOYALTY_SETTING_KEYS, LOYALTY_DEFAULTS, loadLoyaltySettings,
-  calculatePointsEarned, calculatePointsValue, invalidateLoyaltySettings,
+  LOYALTY_SETTING_KEYS, LOYALTY_DEFAULTS, calculatePointsValue, invalidateLoyaltySettings,
 } from '../../lib/loyaltySettings.js'
 import { loadCompanyLoyaltySettings, saveCompanyLoyaltySettings } from './settings.js'
+import {
+  awardOrderPoints, companyOfConceptSlug, loyaltyCompanyOf, loyaltyProgram, redeemPointsOnOrder, tierStatus,
+} from './service.js'
 
 // ─── Points configuration ────────────────────────────────────────────────
 // Live values are read from the Settings table (key-value store) so the
@@ -54,188 +55,76 @@ export async function loyaltyRoutes(fastify: FastifyInstance) {
     })
     if (!account) throw new NotFoundError('LoyaltyAccount')
 
+    // One account spans companies; the balance is valued at the company the
+    // customer last ordered from (the same company the books use).
     return {
       ...account,
-      // One loyalty account spans companies; the balance is shown at the
-      // primary company's point value (a per-company account is an owner call).
-      pointsValueCents: await calculatePointsValue(account.pointsBalance, await primaryTenantId()),
+      pointsValueCents: await calculatePointsValue(account.pointsBalance, await loyaltyCompanyOf(req.customer!.id)),
     }
   })
 
-  // POST /loyalty/redeem — redeem points against an order
+  // GET /loyalty/program?conceptSlug= — public: what a point is worth and the
+  // redeem minimum at this brand's company. Checkout and the account page
+  // read these instead of hardcoding a value.
+  fastify.get<{ Querystring: { conceptSlug?: string } }>('/program', async (req) => {
+    return loyaltyProgram(await companyOfConceptSlug(req.query.conceptSlug))
+  })
+
+  // GET /loyalty/status?conceptSlug= — the signed-in customer's balance, its
+  // value, and where they stand on the tier ladder (TierConfig, unlocked on
+  // lifetime spend at the company — owner decision 13). Without a brand, the
+  // company they last ordered from.
+  fastify.get<{ Querystring: { conceptSlug?: string } }>('/status', { preHandler: requireCustomerAuth }, async (req) => {
+    const customerId = req.customer!.id
+    const tenantId = (await companyOfConceptSlug(req.query.conceptSlug)) ?? (await loyaltyCompanyOf(customerId))
+    const [account, program, tiers] = await Promise.all([
+      prisma.loyaltyAccount.findUnique({ where: { customerId }, select: { pointsBalance: true, lifetimePoints: true } }),
+      loyaltyProgram(tenantId),
+      tierStatus(customerId, tenantId),
+    ])
+    const pointsBalance = account?.pointsBalance ?? 0
+    return {
+      pointsBalance,
+      lifetimePoints: account?.lifetimePoints ?? 0,
+      pointsValueCents: pointsBalance * program.pointValueCents,
+      ...program,
+      ...tiers,
+    }
+  })
+
+  // POST /loyalty/redeem — redeem points against one of the customer's open
+  // orders. The one redeem engine (./service.ts): the company's point value,
+  // min_redeem_points, and the bill and pending payment come down.
   fastify.post('/redeem', { preHandler: requireCustomerAuth }, async (req, reply) => {
     const { orderId, pointsToRedeem } = z
       .object({ orderId: z.string().uuid(), pointsToRedeem: z.number().int().min(1) })
       .parse(req.body)
-
-    // Verify order belongs to this customer
-    const order = await prisma.order.findFirst({ where: { id: orderId, customerId: req.customer!.id }, include: { concept: { select: { tenantId: true } } } })
-    if (!order) throw new NotFoundError('Order', orderId)
-
-    // The order has to still be open. Ownership was the only check, so a
-    // customer could redeem against an order that was already completed,
-    // cancelled or refunded — incrementing discountCents on a settled bill,
-    // which inflates the discount line in the P&L and makes postLoyaltyRedeem
-    // discharge liability against a transaction that is closed.
-    const SETTLED: string[] = ['completed', 'cancelled', 'rejected', 'refunded']
-    if (SETTLED.includes(order.status)) {
-      throw new AppError('ORDER_NOT_OPEN', 'That order is already closed — points cannot be redeemed against it.', 422)
-    }
-
-    // And it has to be redeemable once. There was no idempotency at all, so the
-    // same order could be redeemed against repeatedly, each call adding to
-    // discountCents.
-    const already = await prisma.loyaltyTransaction.findFirst({
-      where: { orderId, type: 'redeem' },
-      select: { id: true },
-    })
-    if (already) {
-      throw new AppError('ALREADY_REDEEMED', 'Points have already been redeemed on this order.', 409)
-    }
-
-    // Points are worth what the brand's company says (settings are per company).
-    const discountCents = await calculatePointsValue(pointsToRedeem, order.concept.tenantId)
-
-    // Atomic: conditional update prevents race condition where two concurrent requests
-    // both pass a balance check and both decrement, driving balance negative
-    const result = await prisma.$transaction(async (tx) => {
-      const updated = await tx.loyaltyAccount.updateMany({
-        where: { customerId: req.customer!.id, pointsBalance: { gte: pointsToRedeem } },
-        data: { pointsBalance: { decrement: pointsToRedeem } },
-      })
-      if (updated.count === 0) throw new AppError('INSUFFICIENT_POINTS', 'Not enough points', 400)
-
-      const account = await tx.loyaltyAccount.findUnique({
-        where: { customerId: req.customer!.id },
-        select: { id: true, pointsBalance: true },
-      })
-
-      const ltx = await tx.loyaltyTransaction.create({
-        data: {
-          loyaltyAccountId: account!.id,
-          orderId,
-          type: 'redeem',
-          pointsDelta: -pointsToRedeem,
-          description: `Redeemed ${pointsToRedeem} pts for PKR ${discountCents / 100} discount`,
-        },
-      })
-      await tx.order.update({
-        where: { id: orderId },
-        data: { discountCents: { increment: discountCents } },
-      })
-      return { newBalance: account!.pointsBalance, loyaltyTxId: ltx.id }
-    })
-
-    // Fire-and-forget liability discharge — posting failures are non-blocking
-    const { postLoyaltyRedeem } = await import('../accounting/loyaltyPosting.js')
-    postLoyaltyRedeem(result.loyaltyTxId).catch((err) =>
-      req.log.error({ err: (err as Error).message, ltxId: result.loyaltyTxId }, 'postLoyaltyRedeem failed'),
-    )
-
-    return reply.status(200).send({
-      pointsRedeemed: pointsToRedeem,
-      discountCents,
-      newBalance: result.newBalance,
-    })
+    const result = await redeemPointsOnOrder({ customerId: req.customer!.id, orderId, points: pointsToRedeem })
+    return reply.status(200).send(result)
   })
 
-  // POST /loyalty/earn (internal — called after order completion)
+  // POST /loyalty/earn — manager back-fill: award a completed order's points
+  // if they were never awarded (the till completed sales without earning
+  // before the loyalty service existed). Idempotent: the one order earn
+  // (awardOrderPoints) runs at most once per order.
   fastify.post(
     '/earn',
     { preHandler: requireAuth(...MANAGERS) },
     async (req, reply) => {
-      const { customerId, orderId, totalCents, conceptSlug } = z.object({
-        customerId: z.string().uuid(),
-        orderId: z.string().uuid(),
-        totalCents: z.number().int().positive(),
-        conceptSlug: z.string().min(1).max(80),
-      }).parse(req.body)
-
-      // Verify the order belongs to one of our tenant's concepts.
+      const { orderId } = z.object({ orderId: z.string().uuid() }).parse(req.body)
       const order = await prisma.order.findFirst({
-        where: {
-          id: orderId,
-          customerId,
-          concept: { ...(await scopeTenantWhere(req, 'write')), deletedAt: null },
-        },
-        include: { concept: { select: { tenantId: true } } },
+        where: { id: orderId, concept: { ...(await scopeTenantWhere(req, 'write')), deletedAt: null } },
+        select: { id: true, status: true, customerId: true },
       })
-      if (!order) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Order not found in your active company' } })
-
-      // Points come from what the order is actually worth, not from a number in
-      // the request body. `totalCents` was taken on trust and fed straight into
-      // calculatePointsEarned, so whoever called this decided how many points
-      // to mint — and the liability posted to the ledger followed the same
-      // number. The body value is now only accepted if it matches the order.
-      if (totalCents !== order.totalCents) {
-        return reply.status(422).send({
-          error: {
-            code: 'TOTAL_MISMATCH',
-            message: `Order total is ${order.totalCents}, not ${totalCents}. Points are earned on the order's real total.`,
-          },
-        })
+      if (!order) throw new NotFoundError('Order', orderId)
+      if (order.status !== 'completed' || !order.customerId) {
+        throw new AppError('ORDER_NOT_ELIGIBLE', 'Only a completed order with a customer earns points', 422)
       }
-
-      // Earning is once per order. There was no idempotency, so re-calling this
-      // minted a fresh batch of points and a fresh liability accrual every time.
-      const earned = await prisma.loyaltyTransaction.findFirst({
-        where: { orderId, type: 'earn' },
-        select: { id: true },
-      })
-      if (earned) {
-        return reply.status(409).send({
-          error: { code: 'ALREADY_EARNED', message: 'Points have already been awarded for this order.' },
-        })
+      const result = await awardOrderPoints(order.id)
+      if (!result?.credited) {
+        return reply.status(409).send({ error: { code: 'ALREADY_EARNED', message: 'Points have already been awarded for this order.' } })
       }
-
-      let account = await prisma.loyaltyAccount.findUnique({ where: { customerId } })
-      if (!account) {
-        account = await prisma.loyaltyAccount.create({
-          data: { customerId, stampCounts: {} },
-        })
-      }
-
-      const settings = await loadLoyaltySettings(order.concept.tenantId)
-      const points = await calculatePointsEarned(order.totalCents, order.concept.tenantId)
-      const stampThreshold = settings['loyalty.stamp_threshold'] || 9
-
-      // Stamp card logic
-      const stampCounts: Record<string, number> =
-        account.stampCounts && typeof account.stampCounts === 'object' && !Array.isArray(account.stampCounts)
-          ? (account.stampCounts as Record<string, number>)
-          : {}
-      const currentStamps = stampCounts[conceptSlug] ?? 0
-      const newStamps = (currentStamps + 1) % (stampThreshold + 1)
-      const earnedFreeItem = newStamps === 0 && currentStamps === stampThreshold
-      stampCounts[conceptSlug] = newStamps
-
-      const [, earnTx] = await prisma.$transaction([
-        prisma.loyaltyAccount.update({
-          where: { id: account.id },
-          data: {
-            pointsBalance: { increment: points },
-            lifetimePoints: { increment: points },
-            stampCounts,
-          },
-        }),
-        prisma.loyaltyTransaction.create({
-          data: {
-            loyaltyAccountId: account.id,
-            orderId,
-            type: 'earn',
-            pointsDelta: points,
-            description: `Earned ${points} pts from order`,
-          },
-        }),
-      ])
-
-      // Accrue the liability for the points just issued
-      const { postLoyaltyEarn } = await import('../accounting/loyaltyPosting.js')
-      postLoyaltyEarn(earnTx.id).catch((err) =>
-        req.log.error({ err: (err as Error).message, ltxId: earnTx.id }, 'postLoyaltyEarn failed'),
-      )
-
-      return reply.status(200).send({ pointsEarned: points, earnedFreeItem, stamps: stampCounts })
+      return reply.status(200).send({ earned: true, earnedFreeItem: result.earnedFreeItem, stamps: result.stamps })
     },
   )
 
@@ -270,12 +159,14 @@ export async function loyaltyRoutes(fastify: FastifyInstance) {
   })
 
   // ─── Admin: tier CRUD ──────────────────────────────────────────────────
-  // Tiers are global (not per-tenant) since loyalty membership applies
-  // platform-wide across every kitchen. Operator manages them from
-  // /configuration/loyalty.
+  // THE tier ladder (owner decision 13): free tiers unlock on lifetime spend
+  // (unlockSpendCents) and are assigned by the loyalty service when an order
+  // completes; the storefront reads the ladder via GET /loyalty/status.
+  // Each company has its own ladder (owner decision 13): the list shows the
+  // companies in view, and every write pins to the active company.
 
-  fastify.get('/tiers', { preHandler: requireAuth(...MANAGERS) }, async () => {
-    const tiers = await prisma.tierConfig.findMany({ orderBy: [{ rank: 'asc' }, { tier: 'asc' }] })
+  fastify.get('/tiers', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
+    const tiers = await prisma.tierConfig.findMany({ where: await scopeTenantWhere(req, 'read'), orderBy: [{ rank: 'asc' }, { tier: 'asc' }] })
     // Member counts per tier come off LoyaltyAccount.tier (not Customer —
     // the tier field lives on the account row). Informative for the admin
     // list: shows operator how many are on each tier before they touch
@@ -293,9 +184,10 @@ export async function loyaltyRoutes(fastify: FastifyInstance) {
     if (body.isPaid && (body.monthlyPriceCents == null || body.monthlyPriceCents <= 0)) {
       return reply.status(400).send({ error: { code: 'VALIDATION', message: 'Paid tiers must have a monthlyPriceCents > 0' } })
     }
-    const exists = await prisma.tierConfig.findUnique({ where: { tier: body.tier } })
+    const tenantId = activeTenantId(req, 'a tier ladder belongs to one company')
+    const exists = await prisma.tierConfig.findUnique({ where: { tenantId_tier: { tenantId, tier: body.tier } } })
     if (exists) return reply.status(409).send({ error: { code: 'TIER_EXISTS', message: `Tier "${body.tier}" already exists` } })
-    const created = await prisma.tierConfig.create({ data: body })
+    const created = await prisma.tierConfig.create({ data: { ...body, tenantId } })
     return reply.status(201).send(created)
   })
 
@@ -307,9 +199,10 @@ export async function loyaltyRoutes(fastify: FastifyInstance) {
       // Don't let an operator rename the slug if it's already in use —
       // tier slugs are referenced by Customer.loyaltyTier and silently
       // changing one would unhook every customer from their tier.
+      const existing = await prisma.tierConfig.findFirst({ where: { id: req.params.id, ...(await scopeTenantWhere(req, 'write')) } })
+      if (!existing) throw new NotFoundError('TierConfig', req.params.id)
       if (body.tier) {
-        const existing = await prisma.tierConfig.findUnique({ where: { id: req.params.id } })
-        if (existing && existing.tier !== body.tier) {
+        if (existing.tier !== body.tier) {
           return reply.status(400).send({ error: { code: 'IMMUTABLE_SLUG', message: 'Tier slug can\'t change after creation. Delete + recreate if you need a different slug.' } })
         }
       }
@@ -322,7 +215,7 @@ export async function loyaltyRoutes(fastify: FastifyInstance) {
     '/tiers/:id',
     { preHandler: requireAuth(...MANAGERS) },
     async (req, reply) => {
-      const tier = await prisma.tierConfig.findUnique({ where: { id: req.params.id } })
+      const tier = await prisma.tierConfig.findFirst({ where: { id: req.params.id, ...(await scopeTenantWhere(req, 'write')) } })
       if (!tier) throw new NotFoundError('TierConfig', req.params.id)
       // Refuse deletion if customers are assigned — operator should toggle
       // isActive instead (already supported via PATCH). Prevents orphan

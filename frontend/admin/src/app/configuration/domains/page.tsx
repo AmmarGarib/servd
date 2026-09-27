@@ -71,6 +71,8 @@ export default function DomainsPage() {
             <h1 className="text-2xl font-black text-white/90">🌐 Custom Domains</h1>
             <p className="text-sm text-white/40 mt-1 max-w-2xl">
               Point your own domains (e.g. <code className="font-mono text-xs text-white/65">order.mubarakbiryani.pk</code>) at servd. Each domain maps to a brand. SSL is automatic once DNS verifies.
+              This list is the only one: once a domain is <span className="text-white/65">Live</span>, the storefront serves the brand on it and
+              the API accepts browser calls from it (within a minute). Add both the bare domain and its www form.
             </p>
           </div>
           <button onClick={() => setAdding(true)}

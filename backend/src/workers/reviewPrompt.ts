@@ -16,7 +16,7 @@
 import { Queue, Worker } from 'bullmq'
 import { redis } from '../lib/redis.js'
 import { serviceClient as prisma } from '../lib/prisma.js'
-import { sendSms, sendEmail } from '../lib/notify.js'
+import { sendPhoneMessage, sendEmail } from '../lib/notify.js'
 
 const QUEUE_NAME = 'review-prompts'
 const RUN_EVERY_MS = 5 * 60_000
@@ -97,7 +97,7 @@ async function runPromptSweep(): Promise<void> {
       <p style="color:#666;font-size:12px">Honest feedback only — we read every word, and we use it to make things better.</p>`
 
     if (order.customer.phone) {
-      await sendSms(order.customer.phone, sms).catch((err) => {
+      await sendPhoneMessage(order.customer.phone, sms).catch((err) => {
         console.error(`[reviewPrompt] SMS failed for order ${order.id}:`, (err as Error).message)
       })
     }

@@ -1,4 +1,3 @@
-import twilio from 'twilio'
 import { AppError } from './errors.js'
 import { sendEmail as sendMail, emailConfigured } from './mailer.js'
 
@@ -6,21 +5,16 @@ const isProd = process.env['NODE_ENV'] === 'production'
 
 // ─── Startup warnings ─────────────────────────────────────────────────────────
 // Loud, visible signal at boot if notification rails aren't configured. Without
-// this, prod silently swallows every customer email/SMS and you only find out
-// when a customer asks where their order receipt went.
+// this, prod silently swallows every customer email and you only find out
+// when a customer asks where their order receipt went. (Phone messages go
+// through the WhatsApp gateway, configured in admin and checked by /health.)
 {
   // Env only — the database may well carry credentials this early check cannot
   // see, so the wording below says "check admin" rather than asserting an outage.
   const emailMissing = !process.env['SMTP_USER'] || !process.env['SMTP_PASS']
-  const smsMissing = !process.env['TWILIO_SID'] || !process.env['TWILIO_TOKEN']
   if (emailMissing) {
     const msg = '[notify] no SMTP_* in the environment — email will work only if it is configured in admin → Configuration → Email'
     if (isProd) console.error(msg + ' (production — verify at /health that email is configured)')
-    else console.warn(msg)
-  }
-  if (smsMissing) {
-    const msg = '[notify] SMS DISABLED — TWILIO_SID/TWILIO_TOKEN not set; sendSms() is a no-op'
-    if (isProd) console.error(msg + ' (THIS IS PRODUCTION — customers will not get SMS)')
     else console.warn(msg)
   }
 }
@@ -48,24 +42,37 @@ export async function sendEmail(to: string, subject: string, html: string): Prom
   await sendMail({ to, subject, html })
 }
 
-// ─── SMS ──────────────────────────────────────────────────────────────────────
+// ─── Phone (WhatsApp) ─────────────────────────────────────────────────────────
+//
+// Owner decision 17: the phone channel is WhatsApp (plus email) only. Twilio
+// SMS is gone — it had no admin configuration and, with TWILIO_* unset in
+// production, every order-status text, reservation confirmation, review
+// prompt and birthday / win-back text was logged and dropped while OTPs
+// arrived fine over the WhatsApp gateway.
 
-function getSmsClient() {
-  const sid = process.env['TWILIO_SID']
-  const token = process.env['TWILIO_TOKEN']
-  if (!sid || !token) return null
-  return twilio(sid, token)
+/** A stored phone number as the WhatsApp gateway wants it: digits only, E.164 without the +. */
+export function whatsappNumber(raw: string): string {
+  const digits = raw.replace(/\D/g, '')
+  if (digits.startsWith('92')) return digits
+  if (digits.startsWith('0')) return '92' + digits.slice(1)
+  if (digits.length === 10) return '92' + digits
+  return digits
 }
 
-export async function sendSms(to: string, body: string): Promise<void> {
-  const client = getSmsClient()
-  if (!client) {
-    console.log(`[notify] SMS to ${to}: ${body}`)
+export async function sendPhoneMessage(to: string, body: string): Promise<void> {
+  const { sendText, whatsappConfigured } = await import('./whatsapp.js')
+  if (!(await whatsappConfigured())) {
+    console.log(`[notify] WhatsApp (not configured) to ${to}: ${body}`)
     return
   }
-  const from = process.env['TWILIO_FROM'] ?? ''
-  await client.messages.create({ from, to, body })
+  await sendText(whatsappNumber(to), body)
 }
+
+/**
+ * @deprecated Same as sendPhoneMessage — WhatsApp, not SMS. Kept only so the
+ * callers outside this batch (reservations, waitlist, review prompt,
+ * reservation reminders) keep compiling until they are renamed.
+ */
 
 // ─── Magic link ───────────────────────────────────────────────────────────────
 
@@ -86,7 +93,7 @@ export async function sendMagicLink(
        <p style="color:#888;font-size:12px;">If you didn't request this, ignore this email.</p>`,
     )
   } else {
-    await sendSms(emailOrPhone, `Your servd login link: ${link}`)
+    await sendPhoneMessage(emailOrPhone, `Your servd login link: ${link}`)
   }
 }
 
@@ -172,12 +179,14 @@ export async function sendOrderStatusUpdate(opts: {
       await sendEmail(opts.email, `${copy.subject} — ${opts.conceptName}`, html)
     }
   } else if (opts.phone) {
-    const tpl = await renderTemplate({ event, channel: 'sms', conceptId: opts.conceptId, vars })
+    // The operator's WhatsApp template wins; an old 'sms' template is the fallback copy.
+    const tpl = (await renderTemplate({ event, channel: 'whatsapp', conceptId: opts.conceptId, vars }))
+      ?? (await renderTemplate({ event, channel: 'sms', conceptId: opts.conceptId, vars }))
     if (tpl) {
-      await sendSms(opts.phone, tpl.body)
+      await sendPhoneMessage(opts.phone, tpl.body)
     } else {
       const fmt = (s: string) => s.toLowerCase()
-      await sendSms(opts.phone, `${opts.conceptName}: ${fmt(copy.headline)}. Track: ${trackUrl}`)
+      await sendPhoneMessage(opts.phone, `${opts.conceptName}: ${fmt(copy.headline)}. Track: ${trackUrl}`)
     }
   }
 }
@@ -213,6 +222,6 @@ export async function sendOrderReceipt(opts: {
   if (opts.email) {
     await sendEmail(opts.email, `Order confirmed — ${opts.conceptName}`, html)
   } else if (opts.phone) {
-    await sendSms(opts.phone, `Order confirmed at ${opts.conceptName}. Total ${fmt(opts.totalCents)}. Track: ${trackUrl}`)
+    await sendPhoneMessage(opts.phone, `Order confirmed at ${opts.conceptName}. Total ${fmt(opts.totalCents)}. Track: ${trackUrl}`)
   }
 }

@@ -1,20 +1,23 @@
 // Gift cards.
 //
 // Issuance: Dr Cash/Card / Cr Gift Card Liability (2080).
-// Redemption: Dr Gift Card Liability / Cr Revenue (or Cr cash receivable when used at POS).
+// Redemption: ./service.ts (the one redeem engine — storefront checkout, the
+// till tender and POST /gift-cards/redeem). The liability is not yet debited
+// on redemption; see service.ts.
 //
 // Codes are 12 chars in groups of 4 (GS-XXXX-XXXX), generated from a 32-char
 // alphabet. Looked up case-insensitively.
 
-import type { FastifyInstance, FastifyRequest } from 'fastify'
+import type { FastifyInstance } from 'fastify'
 import { randomBytes } from 'crypto'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, MANAGERS, ALL_STAFF } from '../auth/middleware.js'
-import { AppError, NotFoundError } from '../../lib/errors.js'
+import { NotFoundError } from '../../lib/errors.js'
 import { audit } from '../../lib/audit.js'
 import { postJournalEntry, ACCT } from '../accounting/journal.js'
 import { scopeTenantWhere, assertConceptOwned, activeTenantId } from '../../lib/tenantScope.js'
+import { redeemGiftCard } from './service.js'
 
 const ALPHABET = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ'  // no 0/O/1/I confusion
 function generateCode(): string {
@@ -137,75 +140,44 @@ export async function giftCardRoutes(fastify: FastifyInstance) {
     },
   )
 
-  // Redeem
-  fastify.post<{ Body: { code: string; amountCents: number; orderId?: string } }>(
+  // Redeem — against an order, always. The one redeem engine (./service.ts).
+  // A bill settled at the till (a till sale or a dine-in bill) goes through the
+  // POS gift-card tender, which also closes the sale when the card covers what
+  // is left; any other open order just has its bill lowered.
+  // The order must be one the operator can act on; the card must be of that
+  // order's company (owner decision 14) or it is "not found".
+  fastify.post<{ Body: { code: string; orderId: string; amountCents?: number } }>(
     '/redeem',
     { preHandler: requireAuth(...ALL_STAFF), config: { rateLimit: { max: 20, timeWindow: '1 minute' } } },
-    async (req, reply) => {
+    async (req) => {
       const body = z.object({
         code:        z.string().min(8),
-        amountCents: z.number().int().min(1),
-        orderId:     z.string().uuid().optional(),
+        orderId:     z.string().uuid(),
+        amountCents: z.number().int().min(1).optional(),
       }).parse(req.body)
-      const code = body.code.trim().toUpperCase()
 
-      // Which company is spending the card: the order's brand's company when
-      // an order is named (and that order must be one the operator can act
-      // on), else the till's active company. The card is looked up by code
-      // AND that company, so another company's card is simply "not found" —
-      // a cashier at one company can never drain another company's card, and
-      // a card never pays for another company's order.
-      let tenantId: string
-      if (body.orderId) {
-        const order = await prisma.order.findFirst({
-          where: { id: body.orderId, concept: { ...(await scopeTenantWhere(req, 'write')) } },
-          select: { concept: { select: { tenantId: true } } },
-        })
-        if (!order?.concept.tenantId) throw new NotFoundError('Order', body.orderId)
-        tenantId = order.concept.tenantId
-      } else {
-        tenantId = activeTenantId(req)
-      }
-
-      return prisma.$transaction(async (tx) => {
-        // Read first only to surface friendly errors (expired, inactive, not-found).
-        const card = await tx.giftCard.findFirst({ where: { code, tenantId } })
-        if (!card) throw new NotFoundError('GiftCard', code)
-        if (card.status !== 'active') throw new AppError('GIFTCARD_INACTIVE', `Card is ${card.status}`, 422)
-        if (card.expiresAt && card.expiresAt < new Date()) {
-          await tx.giftCard.update({ where: { id: card.id }, data: { status: 'expired' } })
-          throw new AppError('GIFTCARD_EXPIRED', 'Gift card has expired', 422)
-        }
-
-        // Atomic conditional decrement: only succeeds if balance still covers the
-        // requested amount. Two concurrent /redeem calls cannot both pass — the
-        // second updateMany returns count=0 because the WHERE clause no longer matches.
-        const dec = await tx.giftCard.updateMany({
-          where: { id: card.id, tenantId, status: 'active', balanceCents: { gte: body.amountCents } },
-          data: { balanceCents: { decrement: body.amountCents } },
-        })
-        if (dec.count === 0) {
-          throw new AppError('INSUFFICIENT_BALANCE', `Card has only PKR ${(card.balanceCents / 100).toFixed(2)} remaining (race or already redeemed)`, 422)
-        }
-
-        // Re-read to get the post-decrement balance and finalise status if 0.
-        const post = await tx.giftCard.findUniqueOrThrow({ where: { id: card.id } })
-        const updated = post.balanceCents === 0 && post.status === 'active'
-          ? await tx.giftCard.update({ where: { id: card.id }, data: { status: 'redeemed_full' } })
-          : post
-
-        const redemption = await tx.giftCardRedemption.create({
-          data: {
-            giftCardId: card.id,
-            orderId: body.orderId ?? null,
-            amountCents: body.amountCents,
-            balanceAfter: updated.balanceCents,
-            redeemedById: req.staffUser?.id ?? null,
-          },
-        })
-
-        return { card: updated, redemption }
+      const order = await prisma.order.findFirst({
+        where: { id: body.orderId, concept: { ...(await scopeTenantWhere(req, 'write')) } },
+        select: { id: true, source: true, fulfilmentType: true },
       })
+      if (!order) throw new NotFoundError('Order', body.orderId)
+
+      if (order.source === 'pos' || order.fulfilmentType === 'dine_in') {
+        const { applyGiftCardTender } = await import('../pos/service.js')
+        return applyGiftCardTender({
+          orderId: order.id,
+          code: body.code,
+          amountCents: body.amountCents,
+          staffId: req.staffUser?.id ?? null,
+        })
+      }
+      const r = await redeemGiftCard({
+        code: body.code,
+        orderId: order.id,
+        amountCents: body.amountCents,
+        redeemedById: req.staffUser?.id ?? null,
+      })
+      return { ...r, completed: false }
     },
   )
 

@@ -8,7 +8,7 @@ import { verifyCustomerToken } from '../auth/service.js'
 import { ingestOrder } from '../orders/service.js'
 import { NotFoundError, AppError } from '../../lib/errors.js'
 import { reserveItem, settleCart, getAvailability, getBatchAvailability } from '../../lib/reservation.js'
-import { computeServiceCharge, computeDeliveryFee, tenantForConcept } from '../../lib/setup-config.js'
+import { priceOrder, tenderOf, deliveryFeeFor } from '../../lib/pricing.js'
 import { haversineKm } from '../../lib/geo.js'
 import type { OrderDTO } from '@servd/types'
 import { redis } from '../../lib/redis.js'
@@ -78,6 +78,80 @@ const reserveSchema = z.object({
 const releaseSchema = z.object({
   cartId: z.string().min(1),
   menuItemId: z.string().uuid(),
+})
+
+/**
+ * Resolve a storefront basket against the DB: every item must be an
+ * available item of this brand, every modifier one attached to that item's
+ * groups (names and price deltas come from the DB, never the client — a
+ * client-sent priceDelta of -9999999 used to zero the bill). Shared by
+ * checkout and GET /storefront/quote so the two can never price different
+ * baskets.
+ */
+async function resolveCheckoutItems(
+  conceptId: string,
+  items: Array<{ menuItemId: string; quantity: number; notes?: string; modifiers: Array<{ modifierId: string }> }>,
+) {
+  const resolvedItems: Array<{
+    externalItemId: string
+    menuItemId: string
+    name: string
+    quantity: number
+    unitPriceCents: number
+    modifiers: Array<{ modifierId: string; name: string; priceDeltaCents: number }>
+    notes?: string
+  }> = []
+  let itemTotal = 0
+  for (const item of items) {
+    const menuItem = await prisma.menuItem.findFirst({
+      where: { id: item.menuItemId, conceptId, isAvailable: true, deletedAt: null },
+      include: { modifierGroups: { include: { modifiers: { where: { deletedAt: null } } } } },
+    })
+    if (!menuItem) throw new AppError('ITEM_UNAVAILABLE', `Item ${item.menuItemId} is not available`, 400)
+
+    const validMods = new Map<string, { id: string; name: string; priceDeltaCents: number }>()
+    for (const g of menuItem.modifierGroups) {
+      for (const m of g.modifiers) validMods.set(m.id, { id: m.id, name: m.name, priceDeltaCents: m.priceDeltaCents })
+    }
+    const resolvedMods: Array<{ modifierId: string; name: string; priceDeltaCents: number }> = []
+    let modTotal = 0
+    for (const incoming of item.modifiers) {
+      const m = validMods.get(incoming.modifierId)
+      if (!m) {
+        throw new AppError('INVALID_MODIFIER', `Modifier ${incoming.modifierId} does not belong to item ${menuItem.name}`, 400)
+      }
+      modTotal += m.priceDeltaCents
+      resolvedMods.push({ modifierId: m.id, name: m.name, priceDeltaCents: m.priceDeltaCents })
+    }
+    itemTotal += (menuItem.priceCents + modTotal) * item.quantity
+    resolvedItems.push({
+      externalItemId: item.menuItemId,
+      menuItemId: item.menuItemId,
+      name: menuItem.name,
+      quantity: item.quantity,
+      unitPriceCents: menuItem.priceCents,
+      modifiers: resolvedMods,
+      notes: item.notes,
+    })
+  }
+  return { resolvedItems, itemTotal }
+}
+
+const quoteQuerySchema = z.object({
+  conceptSlug: z.string().min(1),
+  type: z.enum(['delivery', 'pickup', 'dine-in', 'curbside']).default('pickup'),
+  paymentGateway: z.enum(['keenu', 'jazzcash', 'easypaisa', 'cash', 'wallet']).default('cash'),
+  // The basket, as JSON: [{ menuItemId, quantity, modifiers: [{ modifierId }] }]
+  items: z.string().min(2).max(20_000),
+  deliveryLat: z.coerce.number().optional(),
+  deliveryLng: z.coerce.number().optional(),
+  promoCode: z.string().max(40).optional(),
+  loyaltyPointsToRedeem: z.coerce.number().int().min(0).default(0),
+  useWallet: z.enum(['true', 'false', '1', '0']).optional(),
+  tipCents: z.coerce.number().int().min(0).max(1_000_000).default(0),
+  // A percentage tip (the page's chips) — of food + GST. Ignored when tipCents is set.
+  tipPct: z.coerce.number().min(0).max(100).optional(),
+  giftCardCode: z.string().max(40).optional(),
 })
 
 export async function storefrontRoutes(fastify: FastifyInstance) {
@@ -418,6 +492,118 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
   // `promoClaim` is set at the moment of the increment and cleared once the
   // usage row exists, so this only ever fires for a claim that never became a
   // real usage.
+  // GET /storefront/quote — the checkout bill, priced by the server. The
+  // checkout page shows exactly this and computes nothing itself: the same
+  // basket resolver, THE pricing function (GST by tender — cash on delivery
+  // 15%, paid online 8%, decision 9 — item tax classes, the zone's delivery
+  // fee, service charge), THE promo evaluation (percentage on food only,
+  // decision 10) and THE loyalty redeem quote as checkout, in checkout's order:
+  // priced total − promo − points − wallet, + tip, − gift card. Nothing is
+  // claimed or reserved. A customer bearer is optional; without one, points and
+  // wallet are not applied and the per-customer promo limit is not checked.
+  fastify.get('/quote', { config: { rateLimit: { max: 60, timeWindow: '1 minute' } } }, async (req) => {
+    const q = quoteQuerySchema.parse(req.query)
+    let items: z.infer<typeof createDirectOrderSchema>['items']
+    try {
+      items = createDirectOrderSchema.shape.items.parse(JSON.parse(q.items))
+    } catch {
+      throw new AppError('INVALID_BASKET', 'items must be a JSON array of { menuItemId, quantity, modifiers }', 400)
+    }
+    const concept = await prisma.concept.findFirst({ where: { slug: q.conceptSlug, isActive: true } })
+    if (!concept) throw new NotFoundError('Concept', q.conceptSlug)
+
+    // Optional customer session (points, wallet, per-customer promo limit).
+    let customerId: string | null = null
+    const auth = req.headers.authorization
+    if (auth?.startsWith('Bearer ')) {
+      try { customerId = verifyCustomerToken(auth.slice(7)).sub } catch { customerId = null }
+    }
+
+    const { resolvedItems, itemTotal } = await resolveCheckoutItems(concept.id, items)
+    const deliveryFeeCents = q.type === 'delivery'
+      ? (await deliveryFeeFor(concept, itemTotal, q.deliveryLat, q.deliveryLng)).feeCents
+      : 0
+    const price = await priceOrder(resolvedItems, tenderOf(q.paymentGateway), 'storefront', concept, { deliveryFeeCents })
+
+    let due = price.totalCents
+    let promo: { code: string; discountCents: number; description: string } | null = null
+    let promoError: { code: string; message: string } | null = null
+    if (q.promoCode?.trim()) {
+      const { evaluatePromo } = await import('../../lib/promoEval.js')
+      const ev = await evaluatePromo({
+        code: q.promoCode,
+        tenantId: concept.tenantId,
+        conceptId: concept.id,
+        foodSubtotalCents: itemTotal,
+        customerId,
+      })
+      if (ev.ok) {
+        promo = { code: ev.promo.code, discountCents: ev.discountCents, description: ev.description }
+        due -= ev.discountCents
+      } else {
+        promoError = { code: ev.reason, message: ev.message }
+      }
+    }
+
+    let loyalty = { points: 0, discountCents: 0 }
+    if (customerId && q.loyaltyPointsToRedeem > 0) {
+      const { quoteRedemption } = await import('../loyalty/service.js')
+      const r = await quoteRedemption({
+        customerId,
+        requestedPoints: q.loyaltyPointsToRedeem,
+        tenantId: concept.tenantId,
+        capCents: Math.max(0, due),
+      })
+      loyalty = { points: r.points, discountCents: r.discountCents }
+      due -= r.discountCents
+    }
+
+    let walletCents = 0
+    if (customerId && (q.useWallet === 'true' || q.useWallet === '1')) {
+      const c = await prisma.customer.findUnique({ where: { id: customerId }, select: { walletBalance: true } })
+      walletCents = Math.max(0, Math.min(c?.walletBalance ?? 0, due))
+      due -= walletCents
+    }
+
+    const tipCents = q.tipCents > 0
+      ? q.tipCents
+      : Math.round(((price.itemTotalCents + price.taxCents) * (q.tipPct ?? 0)) / 100)
+    due = Math.max(0, due) + tipCents
+
+    // Gift card: an estimate from the card's balance (a card of this brand's
+    // company, active, not expired — decision 14). The redeem at checkout is
+    // what actually applies it.
+    let giftCardCents = 0
+    if (q.giftCardCode?.trim()) {
+      const card = await prisma.giftCard.findFirst({
+        where: { code: q.giftCardCode.trim().toUpperCase(), tenantId: concept.tenantId, status: 'active' },
+        select: { balanceCents: true, expiresAt: true },
+      })
+      if (card && (!card.expiresAt || card.expiresAt.getTime() >= Date.now())) {
+        giftCardCents = Math.max(0, Math.min(card.balanceCents, due))
+        due -= giftCardCents
+      }
+    }
+
+    return {
+      tender: price.tender,
+      taxRatePct: price.taxRatePct,
+      itemTotalCents: price.itemTotalCents,
+      taxCents: price.taxCents,
+      deliveryFeeCents: price.deliveryFeeCents,
+      serviceChargeCents: price.serviceChargeCents,
+      pricedTotalCents: price.totalCents,
+      promo,
+      promoError,
+      loyaltyPoints: loyalty.points,
+      loyaltyDiscountCents: loyalty.discountCents,
+      walletCents,
+      tipCents,
+      giftCardCents,
+      totalCents: due,
+    }
+  })
+
   fastify.post('/orders', {
     preHandler: requireCustomerAuth,
     onError: async (req, _reply, _err) => {
@@ -435,143 +621,64 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
     const body = createDirectOrderSchema.parse(req.body)
     const customerId = req.customer!.id
 
-    // Blacklist check
     const customer = await prisma.customer.findUnique({ where: { id: customerId } })
-    if (customer?.isBlacklisted) throw new AppError('BLACKLISTED', 'Your account is not permitted to place orders', 403)
-
-    // Naughty-list ban check — blocks email + phone + device fingerprint matches.
-    const { assertNotBanned } = await import('../../lib/banCheck.js')
-    await assertNotBanned({
-      email:  customer?.email,
-      phone:  customer?.phone,
-      ip:     req.ip ?? null,
-      intent: 'order',
-    })
-
     const concept = await prisma.concept.findFirst({ where: { slug: body.conceptSlug, isActive: true } })
     if (!concept) throw new NotFoundError('Concept', body.conceptSlug)
 
-    const resolvedItems = []
-    let itemTotal = 0
+    // Ban check — one mechanism (CustomerBan), per company (owner decision
+    // 15): an active ban raised by THIS brand's company, matched on the
+    // customer, their email or their phone. Customer.isBlacklisted is no
+    // longer read; the CRM block button raises a ban.
+    const { assertNotBannedAtCompany } = await import('../../lib/strikes.js')
+    await assertNotBannedAtCompany({
+      customerId,
+      email:    customer?.email,
+      phone:    customer?.phone,
+      tenantId: concept.tenantId,
+      ip:       req.ip ?? null,
+      intent:   'order',
+    })
 
-    for (const item of body.items) {
-      const menuItem = await prisma.menuItem.findFirst({
-        where: { id: item.menuItemId, conceptId: concept.id, isAvailable: true, deletedAt: null },
-        include: {
-          modifierGroups: {
-            include: { modifiers: { where: { deletedAt: null } } },
-          },
-        },
-      })
-      if (!menuItem) throw new AppError('ITEM_UNAVAILABLE', `Item ${item.menuItemId} is not available`, 400)
+    // Items and modifiers resolved from the DB (the one resolver, shared
+    // with GET /storefront/quote).
+    const { resolvedItems, itemTotal } = await resolveCheckoutItems(concept.id, body.items)
 
-      // Build the lookup table from the DB — only modifiers actually
-      // attached to this menu item's groups are accepted. Stops the bill
-      // being tampered with by submitting negative priceDelta values or
-      // unrelated modifier ids.
-      const validMods = new Map<string, { id: string; name: string; priceDeltaCents: number }>()
-      for (const g of menuItem.modifierGroups) {
-        for (const m of g.modifiers) {
-          validMods.set(m.id, { id: m.id, name: m.name, priceDeltaCents: m.priceDeltaCents })
-        }
-      }
+    // THE order pricing (lib/pricing.ts), the same function GET
+    // /storefront/quote shows the customer. GST by tender (decision 9): cash
+    // on delivery / cash at pickup is the cash rate (15%), paid online (Keenu,
+    // JazzCash, EasyPaisa, wallet) the card rate (8%) — this used to charge
+    // the card rate always while the checkout page showed 15% for cash. Item
+    // tax classes apply; service charge sits on food + GST, never on the
+    // delivery fee. The delivery fee is the zone's (coordinates required,
+    // decision 19 coverage, zone minimum).
+    const deliveryFeeCents = body.type === 'delivery'
+      ? (await deliveryFeeFor(concept, itemTotal, body.deliveryLat, body.deliveryLng)).feeCents
+      : 0
+    const price = await priceOrder(resolvedItems, tenderOf(body.paymentGateway), 'storefront', concept, { deliveryFeeCents })
+    const taxCents = price.taxCents
 
-      const resolvedMods: Array<{ modifierId: string; name: string; priceDeltaCents: number }> = []
-      let modTotal = 0
-      for (const incoming of item.modifiers) {
-        const m = validMods.get(incoming.modifierId)
-        if (!m) {
-          throw new AppError(
-            'INVALID_MODIFIER',
-            `Modifier ${incoming.modifierId} does not belong to item ${menuItem.name}`,
-            400,
-          )
-        }
-        modTotal += m.priceDeltaCents
-        resolvedMods.push({ modifierId: m.id, name: m.name, priceDeltaCents: m.priceDeltaCents })
-      }
+    let subtotal = price.totalCents
 
-      const lineTotal = (menuItem.priceCents + modTotal) * item.quantity
-      itemTotal += lineTotal
-
-      resolvedItems.push({
-        externalItemId: item.menuItemId,
-        menuItemId: item.menuItemId,
-        name: menuItem.name,
-        quantity: item.quantity,
-        unitPriceCents: menuItem.priceCents,
-        modifiers: resolvedMods,
-        notes: item.notes,
-      })
-    }
-
-    // Storefront orders settle digitally (card / wallet / Keenu / cash-on-
-    // delivery via rider PIN). Default to the card GST rate per CEO policy.
-    // If the customer flips to cash-on-delivery during checkout, recompute
-    // server-side before the order row is created (TODO when COD lands).
-    const taxRateStorefront = (concept as { taxRateCard?: number }).taxRateCard ?? concept.taxRate
-    const taxCents = Math.round(itemTotal * (taxRateStorefront / 100))
-
-    // Delivery fee — lookup zone by haversine distance from concept to drop point.
-    // Only applies to delivery orders that supply lat/lng. Throws if order
-    // is below the zone's minimum.
-    let deliveryFeeCents = 0
-    if (body.type === 'delivery') {
-      // Coordinates are REQUIRED for delivery. They were optional, and the fee
-      // block was guarded on them being present, so a client that simply left
-      // them out got free delivery and skipped the zone's minimum-order check
-      // as well — no error, no fee, order accepted. Omitting them is also not
-      // survivable further down the line: dispatch has no drop point to send a
-      // rider to and the live tracker has nothing to draw.
-      if (body.deliveryLat == null || body.deliveryLng == null) {
-        throw new AppError(
-          'DELIVERY_LOCATION_REQUIRED',
-          'We need your delivery location to work out the fee and send a rider. Please pick your address on the map.',
-          400,
-        )
-      }
-      if (concept.latitude == null || concept.longitude == null) {
-        throw new AppError(
-          'DELIVERY_UNAVAILABLE',
-          "This kitchen hasn't set its location yet, so we can't quote delivery. Please choose pickup.",
-          409,
-        )
-      }
-    }
-    if (body.type === 'delivery' && body.deliveryLat != null && body.deliveryLng != null && concept.latitude != null && concept.longitude != null) {
-      const distKm = haversineKm(concept.latitude, concept.longitude, body.deliveryLat, body.deliveryLng)
-      const zone = await computeDeliveryFee(itemTotal, distKm, concept.id)
-      if (zone.zoneId && !zone.meetsMinimum) {
-        throw new AppError('BELOW_ZONE_MINIMUM', `Order does not meet the delivery minimum for ${zone.zoneName}`, 400)
-      }
-      deliveryFeeCents = zone.feeCents
-    }
-
-    // Service charge — applied to (food + tax + delivery) for storefront orders.
-    const serviceChargeCents = await computeServiceCharge(itemTotal + taxCents + deliveryFeeCents, 'storefront', await tenantForConcept(concept.id))
-
-    let subtotal = itemTotal + taxCents + deliveryFeeCents + serviceChargeCents
-
-    // Promo code — validated atomically to prevent race conditions on usage limits
+    // Promo code — THE evaluation (lib/promoEval.ts, shared with
+    // /promo-preview): a percentage discounts the FOOD subtotal only (owner
+    // decision 10), which is also the minimum-order base. The usage claim
+    // below is atomic to prevent races on usage limits.
     let promoCodeId: string | null = null
     let promoDiscountCents = 0
     // Redis key held while a promo is being applied, released once the usage
     // row exists (or on the error paths below).
     let promoLock: string | null = null
     if (body.promoCode) {
-      // A code from another company is an unknown code: promos belong to the
-      // brand's company (owner decision, company separation sweep).
-      const promo = await prisma.promoCode.findFirst({ where: { code: body.promoCode.toUpperCase(), tenantId: concept.tenantId } })
-      const now = new Date()
-      if (!promo || !promo.isActive || promo.startAt > now || promo.endAt < now) {
-        throw new AppError('INVALID_PROMO', 'Promo code is invalid or expired', 400)
-      }
-      if (promo.conceptId && promo.conceptId !== concept.id) {
-        throw new AppError('PROMO_WRONG_CONCEPT', 'Promo code not valid for this brand', 400)
-      }
-      if (promo.minOrderCents != null && subtotal < promo.minOrderCents) {
-        throw new AppError('PROMO_MIN_ORDER', `Minimum order of PKR ${(promo.minOrderCents / 100).toFixed(0)} required`, 400)
-      }
+      const { evaluatePromo } = await import('../../lib/promoEval.js')
+      const ev = await evaluatePromo({
+        code: body.promoCode,
+        tenantId: concept.tenantId,
+        conceptId: concept.id,
+        foodSubtotalCents: itemTotal,
+        customerId,
+      })
+      if (!ev.ok) throw new AppError(ev.reason, ev.message, 400)
+      const promo = ev.promo
 
       // Atomic increment: only succeeds if limit not yet reached
       if (promo.maxUsageCount != null) {
@@ -600,6 +707,7 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
         if (promo.maxUsageCount != null) {
           await prisma.promoCode.update({ where: { id: promo.id }, data: { usedCount: { decrement: 1 } } }).catch(() => {})
         }
+        ;(req as { promoClaim?: unknown }).promoClaim = undefined
         throw new AppError('PROMO_LIMIT_REACHED', 'This promo code is already being applied to another order', 400)
       }
       promoLock = promoLockKey
@@ -608,6 +716,7 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
         if (claim) claim.lockKey = promoLockKey
       }
 
+      // Re-count under the lock (evaluatePromo counted before it was held).
       const usageCount = await prisma.promoCodeUsage.count({ where: { promoCodeId: promo.id, customerId } })
       if (usageCount >= promo.perCustomerLimit) {
         // Undo the increment if we already bumped it
@@ -622,27 +731,29 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
         throw new AppError('PROMO_LIMIT_REACHED', 'You have already used this promo code', 400)
       }
 
-      if (promo.discountType === 'percentage') {
-        promoDiscountCents = Math.round(subtotal * (promo.discountValue / 100))
-        if (promo.maxDiscountCents != null) promoDiscountCents = Math.min(promoDiscountCents, promo.maxDiscountCents)
-      } else {
-        promoDiscountCents = Math.min(Math.round(promo.discountValue * 100), subtotal)
-      }
+      promoDiscountCents = ev.discountCents
       promoCodeId = promo.id
       subtotal -= promoDiscountCents
     }
 
-    // Loyalty points redemption — 1 point = 10 cents (PKR 0.10)
-    let loyaltyPointsRedeemed = 0
-    let loyaltyDiscountCents = 0
+    // Loyalty points — THE redeem (modules/loyalty/service.ts): the company's
+    // point value (owner decision 12: PKR 0.10), min_redeem_points, capped at
+    // what is left of the bill. The points are claimed once the order exists;
+    // the discount is recorded on the order (discountCents) so the books see
+    // it, and the liability is discharged.
+    const loyaltySvc = await import('../loyalty/service.js')
+    let loyaltyQuote = { points: 0, discountCents: 0, pointValueCents: 0 }
     if (body.loyaltyPointsToRedeem > 0) {
-      const loyaltyAccount = await prisma.loyaltyAccount.findUnique({ where: { customerId } })
-      const available = loyaltyAccount?.pointsBalance ?? 0
-      loyaltyPointsRedeemed = Math.min(body.loyaltyPointsToRedeem, available)
-      loyaltyDiscountCents = Math.min(loyaltyPointsRedeemed * 10, subtotal)
-      loyaltyPointsRedeemed = Math.ceil(loyaltyDiscountCents / 10) // recalc in case capped by subtotal
-      subtotal -= loyaltyDiscountCents
+      loyaltyQuote = await loyaltySvc.quoteRedemption({
+        customerId,
+        requestedPoints: body.loyaltyPointsToRedeem,
+        tenantId: concept.tenantId,
+        capCents: Math.max(0, subtotal),
+      })
+      subtotal -= loyaltyQuote.discountCents
     }
+    let loyaltyPointsRedeemed = loyaltyQuote.points
+    let loyaltyDiscountCents = loyaltyQuote.discountCents
 
     // Wallet payment — atomic deduction to prevent double-spend
     let walletAmountCents = 0
@@ -683,19 +794,22 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
       delivery_notes: body.deliveryAddress ?? null,
       estimated_pickup: null,
       tax_cents: taxCents,
+      // Decision 8 keys completion on this: a delivery completes at the
+      // drop-off, pickup / curbside / dine-in at the expo hand-off. It was
+      // never sent, so every storefront delivery was stored as 'takeout'.
+      fulfilment_type: body.type === 'delivery' ? 'delivery' : body.type === 'dine-in' ? 'dine_in' : 'takeout',
       promo_code_id: promoCodeId,
       promo_discount_cents: promoDiscountCents,
       wallet_amount_cents: walletAmountCents,
     }
 
-    const { order } = await ingestOrder(dto)
+    const { order } = await ingestOrder(dto, { price })
 
     // Persist computed surcharges + curbside details. ingestOrder() doesn't
     // know about zones / service charge / curbside so we patch after creation.
+    // (GST, its rate and the service charge were written by ingestOrder from
+    // `price`.)
     const orderPatch: Record<string, unknown> = {}
-    if (serviceChargeCents > 0 || deliveryFeeCents > 0) {
-      orderPatch.serviceChargeCents = serviceChargeCents
-    }
     if (body.type === 'curbside') {
       if (!body.curbsideVehicle) {
         // Schema-level validation should have caught this, but defend anyway.
@@ -745,59 +859,16 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
       })
     }
     if (body.giftCardCode) {
-      // Apply up to the (post-tip) total, decrement balance, derecognise liability.
-      const total = order.totalCents + (body.tipCents > 0 ? body.tipCents : 0)
+      // THE gift-card redeem (modules/giftCards/service.ts): a card of this
+      // brand's company only (owner decision 14), up to what is owed on the
+      // (post-tip) bill, with the bill and pending payment lowered in the same
+      // transaction. An unusable card leaves the bill as it is.
       try {
-        // A card from another company is "not found": cards are spent only at
-        // the selling company's brands (owner decision 14).
-        const card = await prisma.giftCard.findFirst({ where: { code: body.giftCardCode.toUpperCase(), tenantId: concept.tenantId } })
-        // Expiry is enforced on the redeem endpoint; it has to be enforced
-        // here too or an expired card still pays for a checkout.
-        const expired = !!card?.expiresAt && card.expiresAt.getTime() < Date.now()
-        if (card && card.status === 'active' && card.balanceCents > 0 && !expired) {
-          const apply = Math.min(card.balanceCents, total)
-          // Conditional decrement inside the update: the balance is read and
-          // written in ONE statement guarded by `balanceCents >= apply`, so two
-          // checkouts racing on the same card can't both succeed. The previous
-          // read-then-write-absolute-value let both write the same result and
-          // spend the card twice.
-          const spent = await prisma.giftCard.updateMany({
-            where: { id: card.id, status: 'active', balanceCents: { gte: apply } },
-            data: { balanceCents: { decrement: apply } },
-          })
-          if (spent.count === 1) {
-            const after = await prisma.giftCard.findUnique({
-              where: { id: card.id },
-              select: { balanceCents: true },
-            })
-            await prisma.giftCardRedemption.create({
-              data: { giftCardId: card.id, orderId: order.id, amountCents: apply, balanceAfter: after?.balanceCents ?? 0 },
-            })
-            if ((after?.balanceCents ?? 0) === 0) {
-              await prisma.giftCard.update({
-                where: { id: card.id },
-                data: { status: 'redeemed_full' as never },
-              })
-            }
-            // The card has paid part of this bill, so the bill has to come
-            // down by that much. Draining the balance and leaving totalCents
-            // alone charged the guest twice: the card was spent AND the full
-            // amount was still due on the pending payment. No Payment row of
-            // method 'gift_card' is created here either, so nothing else was
-            // accounting for the money.
-            await prisma.order.update({
-              where: { id: order.id },
-              data: { totalCents: { decrement: apply } },
-            })
-            order.totalCents -= apply
-            await prisma.payment.updateMany({
-              where: { orderId: order.id, status: 'pending' },
-              data: { amountCents: { decrement: apply } },
-            })
-          }
-        }
+        const { redeemGiftCard } = await import('../giftCards/service.js')
+        const gc = await redeemGiftCard({ code: body.giftCardCode, orderId: order.id })
+        order.totalCents -= gc.appliedCents
       } catch (err) {
-        req.log.error({ err: (err as Error).message }, 'gift card redemption failed')
+        req.log.warn({ err: (err as Error).message }, 'gift card not applied at checkout')
       }
     }
 
@@ -840,44 +911,14 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
         })
       }
     }
-    // Loyalty points deduction — atomic to prevent double-spend
+    // Loyalty points — claim what was quoted. If the balance moved and nothing
+    // was taken, the discount goes back on the bill (and the pending payment),
+    // exactly as the wallet path above does.
     if (loyaltyPointsRedeemed > 0) {
-      const loyaltyUpdate = await prisma.loyaltyAccount.updateMany({
-        where: { customerId, pointsBalance: { gte: loyaltyPointsRedeemed } },
-        data: { pointsBalance: { decrement: loyaltyPointsRedeemed } },
-      })
-      if (loyaltyUpdate.count > 0) {
-        const la = await prisma.loyaltyAccount.findUnique({ where: { customerId } })
-        if (la) {
-          const ltx = await prisma.loyaltyTransaction.create({
-            data: { loyaltyAccountId: la.id, orderId: order.id, type: 'redeem', pointsDelta: -loyaltyPointsRedeemed, description: `Redeemed on order ${order.id}` },
-          })
-          const { postLoyaltyRedeem } = await import('../accounting/loyaltyPosting.js')
-          postLoyaltyRedeem(ltx.id).catch((err) =>
-            req.log.error({ err: (err as Error).message, ltxId: ltx.id }, 'postLoyaltyRedeem failed'),
-          )
-        }
-      } else {
-        // The balance moved between reading it and spending it, so NO points
-        // were taken — but the order was already created at the discounted
-        // price. Zeroing the locals here (and nothing else) handed the customer
-        // the discount for free, and the response then reported
-        // loyaltyDiscountCents: 0, so nothing downstream showed it either.
-        //
-        // Fire N checkouts at once with the same balance and exactly one
-        // deduction wins; before this, the other N-1 all kept their discount
-        // and the points were never spent, so one balance bought an unlimited
-        // number of discounts. Put the money back on the bill, exactly as the
-        // wallet path above does.
-        await prisma.order.update({
-          where: { id: order.id },
-          data: { totalCents: { increment: loyaltyDiscountCents } },
-        })
+      const claimed = await loyaltySvc.claimRedemption({ customerId, orderId: order.id, quote: loyaltyQuote })
+      if (!claimed) {
+        await loyaltySvc.adjustOrderBill(order.id, -loyaltyDiscountCents)
         order.totalCents += loyaltyDiscountCents
-        await prisma.payment.updateMany({
-          where: { orderId: order.id, status: 'pending' },
-          data: { amountCents: { increment: loyaltyDiscountCents } },
-        })
         loyaltyPointsRedeemed = 0
         loyaltyDiscountCents  = 0
       }
@@ -1129,34 +1170,29 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
   // by the /account page to render the "what your tier gets you" panel and
   // by mobile to show the same.
   fastify.get('/my-perks', { preHandler: requireCustomerAuth }, async (req) => {
-    const { getCustomerPerks } = await import('../../lib/tierPerks.js')
+    const { getTierPerks } = await import('../../lib/tierPerks.js')
+    const { tierStatus, loyaltyCompanyOf } = await import('../loyalty/service.js')
+    const customerId = req.customer!.id
     const account = await prisma.loyaltyAccount.findUnique({
-      where: { customerId: req.customer!.id },
+      where: { customerId },
       select: { pointsBalance: true, lifetimePoints: true, tier: true },
     })
     if (!account) return { tier: 'bronze', pointsBalance: 0, lifetimePoints: 0, perks: null, nextTier: null }
 
-    const perks = await getCustomerPerks(req.customer!.id)
-    // Show next-tier teaser to motivate progression.
-    const tierThresholds: Record<string, number> = { silver: 1000, gold: 5000 }
-    const nextTier = account.tier === 'bronze' ? 'silver' : account.tier === 'silver' ? 'gold' : null
-    const pointsToNextTier = nextTier ? Math.max(0, tierThresholds[nextTier]! - account.lifetimePoints) : 0
-
-    let nextPerks = null
-    if (nextTier) {
-      nextPerks = await getCustomerPerks(req.customer!.id).then(async () => {
-        const { getTierPerks } = await import('../../lib/tierPerks.js')
-        return getTierPerks(nextTier as 'silver' | 'gold')
-      })
-    }
+    // Tiers are the company's ladder and unlock on lifetime spend (owner
+    // decision 13); tierStatus knows the ladder, the spend and what is next.
+    const tenantId = await loyaltyCompanyOf(customerId)
+    const status = await tierStatus(customerId, tenantId)
+    const perks = await getTierPerks(account.tier, tenantId)
+    const nextPerks = status.nextTier ? await getTierPerks(status.nextTier.slug, tenantId) : null
 
     return {
       tier: account.tier,
       pointsBalance: account.pointsBalance,
       lifetimePoints: account.lifetimePoints,
       perks,
-      nextTier,
-      pointsToNextTier,
+      nextTier: status.nextTier?.slug ?? null,
+      spendToNextCents: status.spendToNextCents,
       nextPerks,
     }
   })
@@ -1408,71 +1444,41 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
   // ── Homepage Promos ────────────────────────────────────────────────────────
 
   // GET /storefront/promo-preview — validate a promo code without consuming it.
-  // Used by the checkout page's "Apply" button to give real-time feedback.
+  // Used by the checkout page's "Apply" button. Same evaluation as checkout
+  // (lib/promoEval.ts): `subtotalCents` is the FOOD subtotal (items and
+  // modifiers, before GST, delivery, service charge and tip), which is what a
+  // percentage applies to and what the minimum order is measured on (owner
+  // decision 10). With a customer bearer the per-customer limit applies too.
   fastify.get<{ Querystring: { code?: string; conceptSlug?: string; subtotalCents?: string } }>(
     '/promo-preview',
     { config: { rateLimit: { max: 20, timeWindow: '1 minute' } } },
     async (req, reply) => {
       const code = (req.query.code ?? '').trim().toUpperCase()
       const conceptSlug = (req.query.conceptSlug ?? '').trim()
-      const subtotalCents = parseInt(req.query.subtotalCents ?? '0', 10) || 0
-
+      const foodSubtotalCents = parseInt(req.query.subtotalCents ?? '0', 10) || 0
       if (!code) return reply.send({ valid: false, reason: 'No code provided' })
 
-      // Resolve concept (optional — promo may be brand-wide)
-      let conceptId: string | null = null
-      let tenantId: string | null = null
-      if (conceptSlug) {
-        const concept = await prisma.concept.findFirst({ where: { slug: conceptSlug, isActive: true }, select: { id: true, tenantId: true } })
-        conceptId = concept?.id ?? null
-        tenantId = concept?.tenantId ?? null
-      }
+      const concept = conceptSlug
+        ? await prisma.concept.findFirst({ where: { slug: conceptSlug, isActive: true }, select: { id: true, tenantId: true } })
+        : null
       // Without a brand there is no company to look the code up in.
-      if (!tenantId) return reply.send({ valid: false, reason: 'This code isn’t valid' })
+      if (!concept?.tenantId) return reply.send({ valid: false, reason: 'This code isn’t valid' })
 
-      const promo = await prisma.promoCode.findFirst({
-        where: {
-          code,
-          isActive: true,
-          tenantId,
-          ...(conceptId ? { OR: [{ conceptId }, { conceptId: null }] } : {}),
-        },
-      })
-
-      if (!promo) return reply.send({ valid: false, reason: 'This code isn’t valid' })
-
-      const now = new Date()
-      // Same generic reason for not-yet-active / expired as for not-found, so the
-      // endpoint can't be used to enumerate which codes actually exist.
-      if (promo.startAt > now) return reply.send({ valid: false, reason: 'This code isn’t valid' })
-      if (promo.endAt   < now) return reply.send({ valid: false, reason: 'This code isn’t valid' })
-      if (promo.minOrderCents != null && subtotalCents < promo.minOrderCents) {
-        const min = (promo.minOrderCents / 100).toFixed(0)
-        return reply.send({ valid: false, reason: `Minimum order of PKR ${min} required` })
-      }
-      if (promo.maxUsageCount != null && promo.usedCount >= promo.maxUsageCount) {
-        return reply.send({ valid: false, reason: 'Code usage limit reached' })
+      let customerId: string | null = null
+      const bearer = req.headers.authorization
+      if (bearer?.startsWith('Bearer ')) {
+        try { customerId = verifyCustomerToken(bearer.slice(7)).sub } catch { /* anonymous preview */ }
       }
 
-      // Calculate discount
-      let discountCents: number
-      if (promo.discountType === 'percentage') {
-        discountCents = Math.round(subtotalCents * (promo.discountValue / 100))
-        if (promo.maxDiscountCents != null) discountCents = Math.min(discountCents, promo.maxDiscountCents)
-      } else {
-        discountCents = Math.min(Math.round(promo.discountValue * 100), subtotalCents)
+      const { evaluatePromo } = await import('../../lib/promoEval.js')
+      const ev = await evaluatePromo({ code, tenantId: concept.tenantId, conceptId: concept.id, foodSubtotalCents, customerId })
+      if (!ev.ok) {
+        // Unknown, not-yet-active and expired codes answer alike, so the
+        // endpoint can't be used to enumerate which codes exist.
+        const generic = ev.reason === 'INVALID_PROMO' || ev.reason === 'PROMO_NOT_STARTED' || ev.reason === 'PROMO_EXPIRED'
+        return reply.send({ valid: false, reason: generic ? 'This code isn’t valid' : ev.message })
       }
-
-      // Build human-readable description
-      const expiryStr = promo.endAt.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
-      const typeStr = promo.discountType === 'percentage'
-        ? `${promo.discountValue}% off`
-        : `PKR ${(promo.discountValue).toFixed(0)} off`
-      const description = promo.description
-        ? promo.description
-        : `${typeStr} · expires ${expiryStr}`
-
-      return reply.send({ valid: true, discountCents, description })
+      return reply.send({ valid: true, discountCents: ev.discountCents, description: ev.description })
     },
   )
 

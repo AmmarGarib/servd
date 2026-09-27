@@ -24,6 +24,9 @@ interface Payment {
   paidAt: string | null
   paymentRef: string | null
   notes: string | null
+  // The ledger is the actual (owner decision 23): a paid payment posts
+  // Dr expense / Cr the line's bank account when it is recorded.
+  ledger?: { status: 'posted' | 'unposted' | 'payroll' | 'not_paid'; entryId: string | null; accountCode: string | null }
 }
 interface Line {
   id: string
@@ -636,7 +639,11 @@ function PaymentHistory({ line, onChange }: { line: Line; onChange: () => void }
   const [periodStart, setPeriodStart] = useState(today)
   const [periodEnd, setPeriodEnd] = useState(monthEnd.toISOString().slice(0, 10))
   const [actualCents, setActual] = useState(line.amountCents)
+  const [expenseAccountCode, setExpenseAccountCode] = useState('')
 
+  // Recording a payment as paid posts it to the books in the same step; if
+  // the ledger refuses (closed month, category with no expense account, bank
+  // account with no chart code) nothing is saved and the reason shows here.
   const add = useMutation({
     mutationFn: () => api.post('/opex/payments', {
       lineId: line.id,
@@ -645,9 +652,11 @@ function PaymentHistory({ line, onChange }: { line: Line; onChange: () => void }
       expectedCents: line.amountCents,
       actualCents,
       paidAt: new Date().toISOString(),
+      ...(expenseAccountCode.trim() && { expenseAccountCode: expenseAccountCode.trim() }),
     }),
-    onSuccess: () => { setAdding(false); onChange() },
+    onSuccess: () => { setAdding(false); setExpenseAccountCode(''); onChange() },
   })
+  const addError = add.error as { code?: string; message?: string } | null
 
   return <Section heading={`Payment history · ${line.payments.length}`}>
     <div className="space-y-1.5">
@@ -666,7 +675,13 @@ function PaymentHistory({ line, onChange }: { line: Line; onChange: () => void }
                 </p>
               )}
             </div>
-            {p.paidAt && <span className="text-[10px] font-black text-[#00D4B1]">✓ PAID</span>}
+            {p.paidAt && (
+              p.ledger?.status === 'posted'
+                ? <span className="text-[10px] font-black text-[#00D4B1]" title={p.ledger.accountCode ? `Booked to ${p.ledger.accountCode}` : undefined}>PAID · ON THE BOOKS</span>
+                : p.ledger?.status === 'payroll'
+                  ? <span className="text-[10px] font-black text-white/55" title="HR payroll books wages">PAID · VIA PAYROLL</span>
+                  : <span className="text-[10px] font-black text-[#FCD34D]" title="Paid before payments posted to the books — an admin can post it">PAID · NOT POSTED</span>
+            )}
             {p.paymentRef && <span className="text-[10px] font-mono text-white/45">{p.paymentRef}</span>}
           </div>
         )
@@ -679,6 +694,14 @@ function PaymentHistory({ line, onChange }: { line: Line; onChange: () => void }
           <input type="date" value={periodEnd}   onChange={(e) => setPeriodEnd(e.target.value)}   className={fieldCls} />
           <MoneyInput value={actualCents} onChange={setActual} className={fieldCls} placeholder="Actual paid (PKR)" />
         </div>
+        {addError?.code === 'CATEGORY_NOT_MAPPED' && (
+          <div className="mt-2">
+            <label htmlFor={`exp-${line.id}`} className="text-[11px] text-white/55">Expense account (6xxx) this is booked to</label>
+            <input id={`exp-${line.id}`} value={expenseAccountCode} onChange={(e) => setExpenseAccountCode(e.target.value)}
+              placeholder="e.g. 6040" className={fieldCls} inputMode="numeric" />
+          </div>
+        )}
+        {addError && <p role="alert" className="text-[11px] text-[#FCA5A5] mt-2">{addError.message}</p>}
         <div className="flex justify-end gap-2 mt-2">
           <button onClick={() => setAdding(false)} className="text-xs text-white/55 hover:text-white">Cancel</button>
           <button onClick={() => add.mutate()} disabled={add.isPending}

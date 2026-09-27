@@ -16,6 +16,10 @@ interface Segment {
   lastComputedAt: string | null
 }
 
+interface Summary {
+  summary: { totalCustomers: number; repeatRate: number; avgOrderValueCents: number }
+}
+
 interface Member {
   customer: {
     id: string
@@ -25,7 +29,7 @@ interface Member {
     totalSpentCents: number
     lastOrderAt: string | null
     walletBalance: number
-    marketingOptIn: boolean
+    marketingOptOutAt: string | null
   }
   joinedAt: string
 }
@@ -50,6 +54,13 @@ export default function SegmentsPage() {
     queryKey: ['behavioral-segments'],
     queryFn: () => api.get('/crm/behavioral-segments'),
     refetchInterval: computing ? 3000 : false,
+  })
+
+  // Customer KPIs for the companies in view (GET /crm/summary — the same
+  // numbers the CEO dashboard shows).
+  const { data: summary } = useQuery<Summary>({
+    queryKey: ['crm-summary'],
+    queryFn: () => api.get('/crm/summary'),
   })
 
   const { data: members = [], isLoading: membersLoading } = useQuery<Member[]>({
@@ -84,9 +95,14 @@ export default function SegmentsPage() {
           <Link href="/crm" className="text-xs text-neutral-400 hover:text-neutral-600 mb-1 inline-block">← CRM</Link>
           <h1 className="text-xl font-semibold text-neutral-900">Customer Segments</h1>
           <p className="text-sm text-neutral-500 mt-0.5">
-            {totalMembers.toLocaleString()} memberships across {segments.length} behavioral groups
+            {totalMembers.toLocaleString()} memberships across {segments.length} segments, computed per company
             {lastRun && <> · last computed {timeAgo(lastRun)}</>}
           </p>
+          {summary && (
+            <p className="text-xs text-neutral-500 mt-1">
+              {summary.summary.totalCustomers.toLocaleString()} customers · repeat rate (3+ orders) {summary.summary.repeatRate}% · avg order {fmtPkrWhole(summary.summary.avgOrderValueCents)}
+            </p>
+          )}
         </div>
         <button
           onClick={recompute}
@@ -205,10 +221,10 @@ export default function SegmentsPage() {
                           {timeAgo(c.lastOrderAt)}
                         </td>
                         <td className="px-4 py-2.5 text-center">
-                          {c.marketingOptIn ? (
-                            <span className="text-green-600 text-xs font-medium">✓ opt-in</span>
+                          {c.marketingOptOutAt ? (
+                            <span className="text-neutral-400 text-xs">unsubscribed</span>
                           ) : (
-                            <span className="text-neutral-300 text-xs">—</span>
+                            <span className="text-green-600 text-xs font-medium">reachable</span>
                           )}
                         </td>
                       </tr>

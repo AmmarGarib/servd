@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useState } from 'react'
 import { usePathname } from 'next/navigation'
-import { resolveBrandSlug, BRAND_REWRITE_PATHS } from './brandDomains'
+import { resolveBrandHost, BRAND_REWRITE_PATHS } from './brandDomains'
 
 // Canonical servd host URL (no trailing slash). Used when navigating from a
 // brand-domain cart into the servd checkout. Set to e.g. https://servd.app in
@@ -24,7 +24,9 @@ export function useBrandSlug(initial: string | null = null): string | null {
   const [slug, setSlug] = useState<string | null>(initial)
   useEffect(() => {
     if (typeof window === 'undefined') return
-    setSlug(resolveBrandSlug(window.location.host))
+    let alive = true
+    void resolveBrandHost(window.location.host).then((s) => { if (alive) setSlug(s) })
+    return () => { alive = false }
   }, [])
   return slug
 }

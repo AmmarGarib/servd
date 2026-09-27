@@ -1,15 +1,19 @@
 'use client'
 
 // Refund management. Lists recent orders the manager could refund or cancel,
-// captures a reason, and triggers /orders/:id/refund (paid) or the one staff
-// cancel, /orders/:id/cancel (unpaid). Audit trail, restores and reversing
-// journal entries fire automatically.
+// captures a reason, and calls the ONE refund engine, POST /pos/orders/:id/
+// refund (a sold order — any amount up to what is still refundable, caps and
+// a manager PIN above your limit, cash out of the drawer open now), or the
+// one staff cancel, /orders/:id/cancel (not sold yet). The refund's own
+// journal entry, the SRB return and — once refunded in full — the restores
+// and the credit note all happen server-side.
 
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api, ordersApi } from '../../lib/api'
 import { fmtPkr } from '../../lib/money'
+import { refundThroughEngine } from './refundEngine'
 
 interface Order {
   id: string
@@ -38,6 +42,8 @@ export default function RefundsPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [reason, setReason] = useState('')
   const [mode, setMode] = useState<'refund' | 'cancel'>('refund')
+  const [amount, setAmount] = useState('')
+  const [method, setMethod] = useState<'' | 'cash' | 'card'>('')
   const [feedback, setFeedback] = useState<{ ok: boolean; msg: string } | null>(null)
 
   const { data, isLoading } = useQuery({
@@ -46,12 +52,21 @@ export default function RefundsPage() {
   })
 
   const refund = useMutation({
-    mutationFn: (orderId: string) => mode === 'cancel'
-      ? ordersApi.cancel(orderId, reason)
-      : api.post(`/orders/${orderId}/refund`, { reason }),
-    onSuccess: () => {
-      setFeedback({ ok: true, msg: `Order ${mode === 'cancel' ? 'cancelled' : 'refunded'} and reversal posted to the ledger.` })
-      setSelectedId(null); setReason('')
+    mutationFn: async (order: Order) => {
+      if (mode === 'cancel') { await ordersApi.cancel(order.id, reason); return null }
+      const amountCents = amount.trim() ? Math.round(parseFloat(amount) * 100) : order.totalCents
+      return refundThroughEngine(order.id, { amountCents, reason: reason.trim(), ...(method && { method }) })
+    },
+    onSuccess: (r) => {
+      setFeedback({
+        ok: true,
+        msg: mode === 'cancel'
+          ? 'Order cancelled — wallet, gift card and points given back.'
+          : r?.orderRefunded
+            ? `Refunded in full (${fmtPkr(r.amountCents * -1)}) and booked. Credit note and customer restores issued.`
+            : `Refunded ${fmtPkr((r?.amountCents ?? 0) * -1)} and booked. The rest of the order still stands.`,
+      })
+      setSelectedId(null); setReason(''); setAmount(''); setMethod('')
       void qc.invalidateQueries({ queryKey: ['refundable-orders'] })
     },
     onError: (err: { message?: string }) => setFeedback({ ok: false, msg: err.message ?? 'Refund failed' }),
@@ -66,7 +81,7 @@ export default function RefundsPage() {
         <p className="text-xs text-s-muted">Operations</p>
         <h1 className="text-xl font-bold text-s-text">Refunds & cancellations</h1>
         <p className="text-xs text-s-muted mt-1">
-          Refunds reverse the original journal posting and auto-issue a credit note. Reason is required and audit-logged.
+          A refund books its own entry (revenue and GST back), comes out of the drawer open now if paid in cash, and — once the order is refunded in full — issues the credit note and gives back points, wallet and gift-card balance. Reason required; a manager PIN above your limit.
         </p>
       </header>
 
@@ -159,6 +174,30 @@ export default function RefundsPage() {
                   </div>
                 </div>
 
+                {mode === 'refund' && selectedOrder.status !== 'completed' && (
+                  <p className="text-xs text-s-amber">This order has not been sold yet — cancel it instead.</p>
+                )}
+                {mode === 'refund' && (
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="space-y-1">
+                      <label htmlFor="refund-amount" className="text-xs font-semibold text-s-muted">Amount (PKR)</label>
+                      <input id="refund-amount" type="number" min="1" step="1" inputMode="decimal"
+                        value={amount} onChange={(e) => setAmount(e.target.value)}
+                        placeholder={(selectedOrder.totalCents / 100).toFixed(0)}
+                        className="w-full bg-white border border-s-border rounded px-2 py-1.5 text-sm text-s-text" />
+                    </div>
+                    <div className="space-y-1">
+                      <label htmlFor="refund-method" className="text-xs font-semibold text-s-muted">Give back as</label>
+                      <select id="refund-method" value={method} onChange={(e) => setMethod(e.target.value as '' | 'cash' | 'card')}
+                        className="w-full bg-white border border-s-border rounded px-2 py-1.5 text-sm text-s-text">
+                        <option value="">Same as paid</option>
+                        <option value="cash">Cash (from my open drawer)</option>
+                        <option value="card">Card reversal</option>
+                      </select>
+                    </div>
+                  </div>
+                )}
+
                 <div className="space-y-1">
                   <label className="text-xs font-semibold text-s-muted">Reason (required)</label>
                   <select
@@ -179,14 +218,16 @@ export default function RefundsPage() {
                 </div>
 
                 <button
-                  onClick={() => refund.mutate(selectedOrder.id)}
-                  disabled={refund.isPending || reason.trim().length < 3}
+                  onClick={() => refund.mutate(selectedOrder)}
+                  disabled={refund.isPending || reason.trim().length < 3 || (mode === 'refund' && selectedOrder.status !== 'completed')}
                   className="w-full py-2 rounded font-bold text-sm bg-s-red text-white disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {refund.isPending ? 'Processing…' : `${mode === 'cancel' ? 'Cancel' : 'Refund'} this order`}
                 </button>
                 <p className="text-[10px] text-s-dim">
-                  This will: reverse the journal entry, auto-issue a credit note, log the action, and notify the customer.
+                  {mode === 'refund'
+                    ? 'Leave the amount blank to refund in full. A cash refund needs an open drawer (yours).'
+                    : 'Cancelling gives back what the customer spent at checkout and returns the stock.'}
                 </p>
               </div>
             )}

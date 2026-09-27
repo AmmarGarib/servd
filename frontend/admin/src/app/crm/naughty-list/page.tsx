@@ -17,8 +17,6 @@ interface Customer {
   id: string; name: string; email: string | null; phone: string | null
   strikeCount: number
   bannedAt: string | null
-  isBlacklisted: boolean
-  blacklistReason: string | null
   totalSpentCents: number
   lastOrderAt: string | null
 }
@@ -80,7 +78,8 @@ export default function NaughtyListPage() {
         <h1 className="text-2xl font-black text-white/90 mt-2">Naughty list</h1>
         <p className="text-sm text-white/40 mt-1 max-w-2xl">
           Three strikes and you&rsquo;re out. Customers who no-show, refuse cash deliveries, or refuse food at the door rack up strikes.
-          At 3 active strikes their email + phone get added to the ban list and they can&rsquo;t sign up, reserve, or order again until a manager lifts it.
+          At 3 active strikes their email + phone get added to the ban list and they can&rsquo;t reserve or order at this company&rsquo;s brands again until a manager lifts it.
+          A ban applies only to the company that raised it; the Block button on a customer&rsquo;s CRM profile raises one too.
         </p>
       </header>
 

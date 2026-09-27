@@ -159,9 +159,14 @@ function RefundModal({
   const [mode, setMode] = useState<'refund' | 'cancel'>('refund')
 
   const refund = useMutation({
-    mutationFn: () => mode === 'cancel'
-      ? ordersApi.cancel(orderId, reason)
-      : api.post(`/orders/${orderId}/refund`, { reason }),
+    // Refund in full through the ONE refund engine (caps, manager PIN prompt
+    // above your limit, cash out of your open drawer); part refunds are on /refunds.
+    mutationFn: async () => {
+      if (mode === 'cancel') return ordersApi.cancel(orderId, reason)
+      const { refundThroughEngine } = await import('../../refunds/refundEngine')
+      const order = await api.get<{ totalCents: number }>(`/orders/${orderId}`)
+      return refundThroughEngine(orderId, { amountCents: order.totalCents, reason: reason.trim() })
+    },
     onSuccess: () => { onDone(); onClose() },
   })
 

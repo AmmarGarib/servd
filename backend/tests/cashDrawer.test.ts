@@ -294,7 +294,9 @@ describe('comps — one engine', () => {
     expect(rest.orderCompleted).toBe(true)
     const order = await prisma.order.findUniqueOrThrow({ where: { id: o.id } })
     expect(order.status).toBe('completed')
-    expect(await prisma.financialEntry.count({ where: { orderId: o.id } })).toBe(1)
+    // The sales register is gone (owner decision 39): a till sale reaches the
+    // books through the ledger only.
+    expect(await prisma.financialEntry.count({ where: { orderId: o.id } })).toBe(0)
     await expect(compOrder({ orderId: o.id, shiftId: shift.id, amountCents: 1, reason: 'Again', ...actor }))
       .rejects.toMatchObject({ code: 'ALREADY_PAID' })
 

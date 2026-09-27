@@ -1,3 +1,4 @@
+import { isDomainOriginAllowed, describeDomainOrigins } from '../modules/domains/hostCache.js'
 // Origin allowlist for the API.
 //
 // Background:
@@ -43,22 +44,14 @@ const CANONICAL_HOSTS = [
   'servd-app.garibsons.app',
 ]
 
-const DEFAULT_BRAND_HOSTS = [
-  'eatstax.com',
-  'eatstrata.com',
-  'eatflipd.com',
-  'bukharirice.com',
-  'eatsimmer.com',
-  'craveman.pk',
-  'garnish.pk',
-]
-
 const BRAND_HOSTS = (process.env['BRAND_HOSTS'] ?? '')
   .split(',')
   .map((s) => s.trim())
   .filter(Boolean)
 
-const RESOLVED_BRAND_HOSTS = BRAND_HOSTS.length > 0 ? BRAND_HOSTS : DEFAULT_BRAND_HOSTS
+// Brand hosts come from the Domain table (modules/domains/hostCache.ts);
+// BRAND_HOSTS is only for local dev.
+const RESOLVED_BRAND_HOSTS = BRAND_HOSTS
 
 // An Origin header is scheme + host + optional port, never a path and never a
 // trailing slash. WEB_URL, though, is written by hand into a .env file and is
@@ -90,10 +83,11 @@ export function isAllowedOrigin(origin: string | undefined): boolean {
   const o = normaliseOrigin(origin)
   if (STATIC_ALLOWED.has(o)) return true
   if (WILDCARD_PATTERNS.some((p) => p.test(o))) return true
+  if (isDomainOriginAllowed(o)) return true  // brand domains from the Domain table
   return false
 }
 
 // For diagnostics / boot logging.
 export function describeAllowlist(): string {
-  return `cors: ${STATIC_ALLOWED.size} static + ${WILDCARD_PATTERNS.length} wildcard patterns`
+  return `cors: ${STATIC_ALLOWED.size} static + ${WILDCARD_PATTERNS.length} wildcard patterns + ${describeDomainOrigins()}`
 }

@@ -17,6 +17,7 @@
 // printing, POS service charge) — route via serviceClient so the singleton
 // config tables don't have to add a customer-readable clause.
 import { serviceClient as prisma } from './prisma.js'
+import { AppError } from './errors.js'
 
 const CACHE_TTL_MS = 60_000
 type Cached<T> = { value: T; expiresAt: number }
@@ -223,8 +224,20 @@ export async function findDeliveryZone(distanceKm: number, conceptId: string | n
 
 /**
  * Compute delivery fee for a given subtotal + distance + concept. Honours
- * `freeAboveCents` thresholds. Returns 0 if no matching zone (caller decides
- * whether that's "free" or "out of range").
+ * `freeAboveCents` thresholds.
+ *
+ * DeliveryZone bands are the ONE source of delivery coverage (owner decision
+ * 19, 2026-09-27): delivery beyond the brand's last zone is REFUSED. This
+ * used to return a zero fee and no minimum when no zone matched, so a
+ * customer inside the old Concept.deliveryRadiusKm but past the last band —
+ * or anyone posting straight to /storefront/orders from further out — got
+ * free delivery with no minimum order. Brands that only had a radius were
+ * given one zone at their current fee by data migration, so nothing that was
+ * deliverable before stops being deliverable.
+ *
+ * Throws AppError (422):
+ *   DELIVERY_UNAVAILABLE   — the brand (and its company) has no active zone
+ *   OUTSIDE_DELIVERY_AREA  — zones exist, the drop point is beyond all of them
  */
 export async function computeDeliveryFee(
   subtotalCents: number,
@@ -232,12 +245,49 @@ export async function computeDeliveryFee(
   conceptId: string | null,
 ): Promise<{ feeCents: number; zoneId: string | null; zoneName: string | null; meetsMinimum: boolean }> {
   const zone = await findDeliveryZone(distanceKm, conceptId)
-  if (!zone) return { feeCents: 0, zoneId: null, zoneName: null, meetsMinimum: true }
+  if (!zone) {
+    const reach = await deliveryReachKm(conceptId)
+    if (reach === null) {
+      throw new AppError('DELIVERY_UNAVAILABLE', 'This kitchen is not delivering right now. Please choose pickup.', 422)
+    }
+    throw new AppError(
+      'OUTSIDE_DELIVERY_AREA',
+      `That address is ${distanceKm.toFixed(1)} km away — we deliver up to ${reach.toFixed(1)} km from this kitchen. Please choose pickup or a closer address.`,
+      422,
+    )
+  }
   const meetsMinimum = subtotalCents >= zone.minOrderCents
   if (zone.freeAboveCents != null && subtotalCents >= zone.freeAboveCents) {
     return { feeCents: 0, zoneId: zone.id, zoneName: zone.name, meetsMinimum }
   }
   return { feeCents: zone.feeCents, zoneId: zone.id, zoneName: zone.name, meetsMinimum }
+}
+
+/**
+ * How far a brand delivers: the outer edge of its furthest active zone (its
+ * own zones plus its company's "All brands" zones). `Infinity` when a zone is
+ * open-ended (no radiusKmMax), `null` when there is no active zone at all —
+ * i.e. the brand does not deliver. This is what the storefront brand list
+ * should filter on instead of Concept.deliveryRadiusKm.
+ */
+export async function deliveryReachKm(conceptId: string | null): Promise<number | null> {
+  const tenantId = await tenantForConcept(conceptId)
+  if (!tenantId) return null
+  const zones = await prisma.deliveryZone.findMany({
+    where: {
+      isActive: true,
+      tenantId,
+      OR: [{ conceptId: null }, ...(conceptId ? [{ conceptId }] : [])],
+    },
+    select: { radiusKmMax: true },
+  })
+  if (zones.length === 0) return null
+  let reach = 0
+  for (const z of zones) {
+    if (z.radiusKmMax == null) return Number.POSITIVE_INFINITY
+    reach = Math.max(reach, z.radiusKmMax)
+  }
+  return reach
 }
 
 // Haversine lives in lib/geo.ts (D16). Re-exported for existing importers of

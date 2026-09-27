@@ -18,6 +18,7 @@ import { requireAuth, MANAGERS } from '../auth/middleware.js'
 import { scopeTenantWhere } from '../../lib/tenantScope.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { requireActiveCompany, assertConceptAttachable, assertConceptOfCompany } from '../financePlanning/companyRefs.js'
+import { monthlyLabourCents } from './labour.js'
 
 const brandInputSchema = z.object({
   conceptId:           z.string(),
@@ -121,23 +122,17 @@ export async function projectionsRoutes(fastify: FastifyInstance) {
 
       const conceptIds = visibleBrandInputs.map((b) => b.conceptId)
 
-      // Aggregate staff cost per concept. Frozen and archived seats are out
-      // (decision 25); tenantCostShareCents is already this company's share
-      // of a shared / JV seat.
-      const positions = await prisma.position.findMany({
-        where: {
-          tenantId,
-          conceptId: { in: conceptIds },
-          status: { in: ['open', 'filled'] },
-        },
-        select: { conceptId: true, tenantCostShareCents: true, headcount: true },
-      })
-      const staffByBrand = new Map<string, number>()
-      for (const p of positions) {
-        if (!p.conceptId) continue
-        const total = p.tenantCostShareCents * p.headcount
-        staffByBrand.set(p.conceptId, (staffByBrand.get(p.conceptId) ?? 0) + total)
-      }
+      // Labour: THE budgeted-labour rule (projections/labour.ts, owner
+      // decision 25) — open and filled seats only (frozen seats are out), at
+      // this company's cost share, with JV / head-office contributions netted
+      // on the company line below. The same figure the OpEx payroll budget
+      // shows.
+      const labour = await monthlyLabourCents(tenantId)
+      const staffByBrand = labour.byConcept
+      // Company-level labour that no brand carries: head-office seats, plus
+      // what this company pays towards another's shared staff, minus what it
+      // receives (the JV contribution). Charged every month of the scenario.
+      const headOfficeLabourMonthlyCents = labour.headOfficeCents + labour.outgoingContributionCents - labour.incomingContributionCents
 
       // Aggregate monthly-equivalent opex per concept
       const opexLines = await prisma.opexLine.findMany({
@@ -243,10 +238,11 @@ export async function projectionsRoutes(fastify: FastifyInstance) {
         }
       })
 
-      // Combined sum across brands
+      // Combined sum across brands, plus the company-level labour line (head
+      // office net of the JV contribution) — a scenario is one company's.
       const combined: Array<{
         month: number; revenueCents: number; variableCents: number
-        staffCents: number; opexCents: number; totalCostCents: number
+        staffCents: number; headOfficeLabourCents: number; opexCents: number; totalCostCents: number
         profitCents: number; profitAfterTaxCents: number; cumulativeCents: number
       }> = []
       let combinedCum = 0
@@ -261,9 +257,12 @@ export async function projectionsRoutes(fastify: FastifyInstance) {
           profitCents   += m.profitCents
           profitAfterTaxCents += m.profitAfterTaxCents
         }
-        const totalCostCents = variableCents + staffCents + opexCents
+        const headOfficeLabourCents = headOfficeLabourMonthlyCents
+        profitCents -= headOfficeLabourCents
+        profitAfterTaxCents -= headOfficeLabourCents
+        const totalCostCents = variableCents + staffCents + headOfficeLabourCents + opexCents
         combinedCum += profitAfterTaxCents
-        combined.push({ month: i + 1, revenueCents, variableCents, staffCents, opexCents, totalCostCents, profitCents, profitAfterTaxCents, cumulativeCents: combinedCum })
+        combined.push({ month: i + 1, revenueCents, variableCents, staffCents, headOfficeLabourCents, opexCents, totalCostCents, profitCents, profitAfterTaxCents, cumulativeCents: combinedCum })
       }
 
       // Capital ask summary (PDF: totalCapex + 3 × steady-state monthly cost)
@@ -279,6 +278,14 @@ export async function projectionsRoutes(fastify: FastifyInstance) {
         projection: { id: projection.id, name: projection.name, rampCurve: projection.rampCurve, updatedAt: projection.updatedAt },
         brands,
         combined,
+        labour: {
+          rule: 'open + filled seats at the company cost share; frozen seats excluded; JV contribution netted',
+          brandSeatsMonthlyCents: labour.seatsCents - labour.headOfficeCents,
+          headOfficeSeatsMonthlyCents: labour.headOfficeCents,
+          incomingContributionMonthlyCents: labour.incomingContributionCents,
+          outgoingContributionMonthlyCents: labour.outgoingContributionCents,
+          netMonthlyCents: labour.netCents,
+        },
         summary: {
           totalCapexCents,
           workingCapitalCents,

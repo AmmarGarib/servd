@@ -17,12 +17,12 @@
 // Which orders a shift books, and how the money side is debited:
 //   • A till order (source 'pos') is booked ONCE, by its home shift: the
 //     drawer that holds its earliest receipt. Receipts on this drawer are
-//     debited — cash 1015, card / QR 1030, comp 7030. A card / QR tender taken
-//     at the till but not yet confirmed by the gateway is a receivable from
-//     the processor from the moment of sale, so it is debited to 1030 too
-//     (memo'd "awaiting gateway confirmation"); nothing needs posting when
-//     the gateway later confirms it, and postPosCardFailure moves it to 1110
-//     if the gateway fails it after the close.
+//     debited — cash 1015, card / QR 1030, comp 7030. Every till card / QR
+//     tender carries the terminal's reference and settles at the till (owner
+//     decision 4), so it is 1030 from the moment of sale; an older row still
+//     'pending' with a reference is debited to 1030 too (memo'd "awaiting
+//     gateway confirmation"), and postPosCardFailure moves a tender the
+//     gateway fails after the close to 1110.
 //   • Whatever of the order was NOT received on its home drawer (a split
 //     still open, a failed card, a part paid on another drawer) is debited to
 //     1110 Customer receivable; a receipt for that order on another drawer
@@ -44,16 +44,17 @@
 //   pay-out         Dr 8010 (unclassified)    / Cr 1015 Drawer
 //   over / short    Dr/Cr 8010                / Cr/Dr 1015
 //
-// Interim lines, until their own postings exist (see the owner questions on
-// the refund and pay-out duplicates):
-//   • refunds are booked here, gross, to 7040 — without the GST share. A
-//     refund payment that already has its own journal entry (reference
-//     `<type>:<paymentId>`) is skipped, so a refund-time posting added later
-//     cannot double-book it. A refund attached to a drawer that is already
-//     closed is not booked by anyone yet — whose cash pays it is the open
-//     owner question.
-//   • pay-outs keep today's account (8010) on their own line, memo'd for the
-//     accountant to reclassify; a pay-out with its own entry is skipped too.
+// Refunds and pay-outs post their OWN entries, at the moment they happen:
+//   • every refund row → 'order.refund:<paymentId>' (orderPosting.ts
+//     postRefundPayment, written by the one refund engine), on the drawer
+//     that is open when the cash leaves (owner decision 3);
+//   • every vendor pay-out → 'pos.payout:<movementId>' (pos/service.ts
+//     recordCashMovement), to its expense category or supplier bill (owner
+//     decision 5).
+// A refund or pay-out that has its own entry is skipped here. Only rows from
+// before those postings existed are still booked by the close — refunds gross
+// to 7040 without their GST share, pay-outs to 8010 memo'd for the accountant
+// to reclassify — so a legacy drawer still balances.
 
 import { prisma } from '../../lib/prisma.js'
 import { ACCT, postJournalEntry, revenueCodeForConcept, type JournalLineInput } from './journal.js'
@@ -422,7 +423,16 @@ export async function buildShiftCloseEntry(shiftId: string): Promise<ShiftCloseE
   return { ok: true, tenantId, entryDate: shift.closedAt ?? new Date(), lines, debits, credits, diagnostics }
 }
 
-export async function postShiftClose(shiftId: string): Promise<{ posted: boolean; entryId: string | null; reason?: string }> {
+export interface PostShiftCloseOptions {
+  /**
+   * Post into the current open month instead of the shift's own close date
+   * (owner decision 6 — a shift whose month is already closed). The note is
+   * added to the entry's description and every line's memo.
+   */
+  intoCurrentMonth?: { note: string; postedBy?: string }
+}
+
+export async function postShiftClose(shiftId: string, opts: PostShiftCloseOptions = {}): Promise<{ posted: boolean; entryId: string | null; reason?: string }> {
   const entry = await buildShiftCloseEntry(shiftId)
   if (!entry.ok) return { posted: false, entryId: null, reason: entry.reason }
 
@@ -440,16 +450,102 @@ export async function postShiftClose(shiftId: string): Promise<{ posted: boolean
     return { posted: false, entryId: null, reason: 'unbalanced' }
   }
 
+  const late = opts.intoCurrentMonth
   const result = await postJournalEntry({
     tenantId: entry.tenantId,
     sourceType: 'shift.close',
     sourceId: shiftId,
-    description: `POS shift ${shiftId.slice(0, 8)} closeout`,
-    entryDate: entry.entryDate,
-    postedBy: 'system',
-    lines: entry.lines,
+    description: late
+      ? `POS shift ${shiftId.slice(0, 8)} closeout — ${late.note}`
+      : `POS shift ${shiftId.slice(0, 8)} closeout`,
+    entryDate: late ? new Date() : entry.entryDate,
+    postedBy: late?.postedBy ?? 'system',
+    lines: late
+      ? entry.lines.map((l) => ({ ...l, memo: `${l.memo ?? ''} [${late.note}]`.trim().slice(0, 250) }))
+      : entry.lines,
   })
   return { posted: result.posted, entryId: result.entryId }
+}
+
+// ─── Backfill: closed shifts that never reached the books (decision 6) ──────
+//
+// Shifts closed through the old /reconciliation close were never posted, and
+// a close whose entry would not balance was refused. This finds every closed
+// shift of the given companies with no 'shift.close' entry and (unless dry
+// run) posts it:
+//   • its own close date when that month is still open;
+//   • otherwise into the CURRENT open month, with a memo naming the shift's
+//     original close date — a locked month is never reopened for it (owner
+//     decision 6);
+//   • unbalanced / company-less shifts are listed, never forced.
+// Idempotent: postJournalEntry is keyed on 'shift.close:<shiftId>'.
+
+export interface BackfillRow {
+  shiftId: string
+  closedAt: string | null
+  tenantId: string | null
+  outcome: 'posted' | 'posted_into_current_month' | 'would_post' | 'would_post_into_current_month'
+    | 'unbalanced' | 'shift_has_no_company' | 'no_postable_activity' | 'shift_not_found' | 'already_posted' | 'error'
+  detail: string
+}
+
+export async function backfillUnpostedShifts(opts: { tenantIds: string[]; dryRun: boolean; postedBy?: string }): Promise<{ rows: BackfillRow[]; summary: Record<string, number> }> {
+  const { shiftOfCompany } = await import('../../lib/tenantScope.js')
+  const { fmtPktDate } = await import('./dates.js')
+  const closed = await prisma.shift.findMany({
+    where: { status: 'closed', ...shiftOfCompany({ tenantId: { in: opts.tenantIds } }) },
+    select: { id: true, closedAt: true },
+    orderBy: { closedAt: 'asc' },
+  })
+  const posted = new Set(
+    (await prisma.journalEntry.findMany({
+      where: { tenantId: { in: opts.tenantIds }, reference: { startsWith: 'shift.close:' } },
+      select: { reference: true },
+    })).map((e) => e.reference!.slice('shift.close:'.length)),
+  )
+  const locks = new Map<string, Date | null>()
+  const lockedThrough = async (tenantId: string) => {
+    if (!locks.has(tenantId)) {
+      const lock = await prisma.periodLock.findFirst({ where: { tenantId }, orderBy: { lockedThrough: 'desc' }, select: { lockedThrough: true } })
+      locks.set(tenantId, lock?.lockedThrough ?? null)
+    }
+    return locks.get(tenantId) ?? null
+  }
+
+  const rows: BackfillRow[] = []
+  for (const s of closed) {
+    if (posted.has(s.id)) continue
+    const closedAt = s.closedAt?.toISOString() ?? null
+    const entry = await buildShiftCloseEntry(s.id)
+    if (!entry.ok) { rows.push({ shiftId: s.id, closedAt, tenantId: null, outcome: entry.reason, detail: '' }); continue }
+    // Only this call's companies — the shift→company precedence can differ
+    // from the query's OR in an edge case, so check the resolved company.
+    if (!opts.tenantIds.includes(entry.tenantId)) continue
+    if (entry.debits !== entry.credits) {
+      rows.push({ shiftId: s.id, closedAt, tenantId: entry.tenantId, outcome: 'unbalanced', detail: `debits ${entry.debits} credits ${entry.credits}; ${entry.diagnostics}` })
+      continue
+    }
+    const lock = await lockedThrough(entry.tenantId)
+    const locked = !!lock && entry.entryDate <= lock
+    const note = `closed ${fmtPktDate(entry.entryDate)}, posted late into the open month (books closed through ${lock ? fmtPktDate(lock) : '—'})`
+    if (opts.dryRun) {
+      rows.push({ shiftId: s.id, closedAt, tenantId: entry.tenantId, outcome: locked ? 'would_post_into_current_month' : 'would_post', detail: locked ? note : entry.diagnostics })
+      continue
+    }
+    try {
+      const r = await postShiftClose(s.id, locked ? { intoCurrentMonth: { note, postedBy: opts.postedBy } } : {})
+      rows.push({
+        shiftId: s.id, closedAt, tenantId: entry.tenantId,
+        outcome: r.posted ? (locked ? 'posted_into_current_month' : 'posted') : 'already_posted',
+        detail: r.entryId ?? r.reason ?? '',
+      })
+    } catch (err) {
+      rows.push({ shiftId: s.id, closedAt, tenantId: entry.tenantId, outcome: 'error', detail: (err as Error).message })
+    }
+  }
+  const summary: Record<string, number> = {}
+  for (const r of rows) summary[r.outcome] = (summary[r.outcome] ?? 0) + 1
+  return { rows, summary }
 }
 
 /**

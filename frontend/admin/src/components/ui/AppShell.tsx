@@ -73,7 +73,8 @@ const NAV: NavSection[] = [
         { href: '/finance/projections', label: 'Projections', module: 'projections' },
       ]},
       { href: '/configuration/role-modules',    label: 'Module Access',       icon: '🗂', module: 'role_modules' },
-      { href: '/settings',                      label: 'Tenants & Brands',    icon: '🏷', module: 'tenants' },
+      // 'Tenants & Brands' (/settings) is retired: brands are edited in ONE
+      // place, Storefront → Brands; adding a brand or company is /onboarding.
       // ── Account config (relocated from the retired "Setup" section). These
       // are one-time-per-account surfaces: connect Meta (FB+IG) / WhatsApp /
       // FBR PRAL / the Supplier Portal, push to staff devices, read the docs.
@@ -180,7 +181,8 @@ const NAV: NavSection[] = [
       { href: '/storefront-hero',   label: 'Landing Hero',  icon: '🖼', module: 'brands' },
       { href: '/storefront-footer', label: 'Brand Footers', icon: '🔗', module: 'brands' },
       { href: '/menu',              label: 'Menu',          icon: '📝', module: 'menu' },
-      { href: '/business-info',     label: 'Business Info', icon: '🏢', module: 'business_info' },
+      // Business Info is folded into Brands (contact + brief tabs); the
+      // kitchen address and pin are on Locations (decision 18).
       { href: '/configuration/locations', label: 'Locations', icon: '📍', module: 'business_info' },
     ],
   },

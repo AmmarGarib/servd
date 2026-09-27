@@ -3,7 +3,7 @@ import { notFound } from 'next/navigation'
 import type { Concept, ServiceHourSlot } from '../../../../lib/concept'
 import { typeLabel } from '../../../../lib/concept'
 import { faqSchema, jsonLdScript } from '../../../../lib/jsonLd'
-import { locationFor } from '../../../../lib/brandLocations'
+import { locationFromConcept, fetchBrandKitchens, mapsLinkFor } from '../../../../lib/brandLocations'
 
 // force-dynamic + cache: 'no-store' so a single API outage at deploy
 // time can't poison the ISR cache and return 404s for the lifetime of
@@ -57,7 +57,17 @@ export default async function BrandVisitPage({ params }: { params: Promise<{ slu
   const concept = await getConcept(slug)
   if (!concept) notFound()
 
-  const hasGeo = concept.latitude != null && concept.longitude != null
+  // Where the brand cooks: its kitchens (Locations), primary first. The
+  // address and pin are the kitchen's, not the brand's (owner decision 18);
+  // the concept row carries a mirror of the primary kitchen for when the
+  // kitchen list is unavailable.
+  const kitchens = await fetchBrandKitchens(API_URL, slug)
+  const primary = kitchens[0] ?? null
+  const address = primary?.address ?? concept.address ?? null
+  const lat = primary?.latitude ?? concept.latitude ?? null
+  const lng = primary?.longitude ?? concept.longitude ?? null
+  const hasGeo = lat != null && lng != null
+  const otherKitchens = kitchens.slice(1)
   const hoursTable = buildHoursTable(concept.serviceHours ?? [])
 
   // FAQ schema — LLMs (Perplexity, ChatGPT, Google AI Overviews) lift
@@ -66,18 +76,19 @@ export default async function BrandVisitPage({ params }: { params: Promise<{ slu
   // AI-citation move from the ai-seo skill. Per concept, tuned to the
   // brand's actual posture; falls back to generic restaurant FAQ if
   // brandLocations isn't filled in.
-  const loc = locationFor(slug)
+  const loc = locationFromConcept(concept, primary)
+  const placeKnown = !loc.area.startsWith('TODO')
   const faq = [
     { question: `Where is ${concept.name} located?`,
-      answer:    loc ? `${concept.name} is at ${loc.area}, ${loc.city}.` : `${concept.name} is in Karachi.` },
+      answer:    placeKnown ? `${concept.name} is at ${loc.area}, ${loc.city}.` : `${concept.name} is in ${loc.city}.` },
     { question: `Does ${concept.name} take reservations?`,
-      answer:    loc?.acceptsReservations
+      answer:    loc.acceptsReservations
         ? `Yes — book a table at /reserve/${slug}, or message us on WhatsApp.`
         : `${concept.name} is walk-in friendly. For delivery and pickup, order at /${slug}.` },
     { question: `Is the food halal?`,
       answer:    `All ${concept.name} kitchens serve halal-only meat. No pork, no alcohol on the cooking line.` },
     { question: `Does ${concept.name} deliver?`,
-      answer:    loc?.acceptsReservations === false
+      answer:    loc.acceptsReservations === false
         ? `Yes — order at /${slug} for delivery, pickup, or curbside.`
         : `${concept.name} is primarily dine-in. For delivery from our sister kitchens, see /browse.` },
     { question: `What's the dress code?`,
@@ -110,11 +121,12 @@ export default async function BrandVisitPage({ params }: { params: Promise<{ slu
           <div>
             <h2 style={{ fontSize: '1.25rem', marginBottom: '1rem' }}>Our address</h2>
 
-            {concept.address ? (
+            {address ? (
               <p style={{ color: 'var(--servd-ink)', fontSize: '1rem', lineHeight: 1.6, marginBottom: '0.75rem' }}>
-                {concept.address.split('\n').map((line, i) => (
-                  <span key={i}>{line}{i < concept.address!.split('\n').length - 1 && <br />}</span>
+                {address.split('\n').map((line, i, all) => (
+                  <span key={i}>{line}{i < all.length - 1 && <br />}</span>
                 ))}
+                {primary?.city ? <><br />{primary.city}</> : null}
               </p>
             ) : (
               <p style={{ color: 'var(--servd-mute)', fontSize: '0.9rem', marginBottom: '0.75rem' }}>
@@ -135,7 +147,7 @@ export default async function BrandVisitPage({ params }: { params: Promise<{ slu
             <div style={{ marginTop: '1.5rem' }}>
               {hasGeo ? (
                 <iframe
-                  src={`https://maps.google.com/maps?q=${concept.latitude},${concept.longitude}&z=15&output=embed`}
+                  src={`https://maps.google.com/maps?q=${lat},${lng}&z=15&output=embed`}
                   width="100%"
                   height="300"
                   style={{ border: 0, borderRadius: '1rem', display: 'block' }}
@@ -143,7 +155,7 @@ export default async function BrandVisitPage({ params }: { params: Promise<{ slu
                   loading="lazy"
                   title={`${concept.name} location`}
                 />
-              ) : concept.address ? (
+              ) : address ? (
                 <div style={{
                   padding: '1.25rem',
                   borderRadius: '1rem',
@@ -158,10 +170,29 @@ export default async function BrandVisitPage({ params }: { params: Promise<{ slu
                     <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/>
                     <circle cx="12" cy="10" r="3"/>
                   </svg>
-                  {concept.address}
+                  {address}
                 </div>
               ) : null}
             </div>
+
+            {/* A brand cooked in more than one kitchen lists the others too. */}
+            {otherKitchens.length > 0 && (
+              <div style={{ marginTop: '1.5rem' }}>
+                <h3 style={{ fontSize: '1rem', marginBottom: '0.6rem' }}>Also at</h3>
+                <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'grid', gap: '0.6rem' }}>
+                  {otherKitchens.map((k) => (
+                    <li key={k.slug} style={{ fontSize: '0.95rem', color: 'var(--servd-ink)' }}>
+                      <strong>{k.name}</strong>
+                      {(k.address || k.city) && <span style={{ color: 'var(--servd-mute)' }}> · {[k.address, k.city].filter(Boolean).join(', ')}</span>}
+                      {k.latitude != null && k.longitude != null && (
+                        <> · <a href={mapsLinkFor({ lat: k.latitude, lng: k.longitude })} target="_blank" rel="noopener noreferrer"
+                          style={{ color: 'var(--servd-green-dark)', fontWeight: 600 }}>Directions</a></>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </div>
 
           {/* Hours */}

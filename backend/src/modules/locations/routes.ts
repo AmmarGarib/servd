@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
-import { prisma } from '../../lib/prisma.js'
+import { prisma, serviceClient } from '../../lib/prisma.js'
 import { requireAuth, ALL_STAFF, MANAGERS } from '../auth/middleware.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { resolveTenantScope, tenantWhere } from '../../lib/tenantScope.js'
@@ -34,6 +34,40 @@ async function assertConceptsBelongTo(tenantId: string, conceptIds: string[]): P
   return ids
 }
 
+/**
+ * Keep each brand's Concept.address / latitude / longitude a read-only
+ * mirror of its primary Location (owner decision 18: the address and map pin
+ * belong to the physical kitchen; phone and WhatsApp stay per brand).
+ *
+ * Why a mirror rather than moving every reader: the storefront NAP, JSON-LD,
+ * the delivery-quote origin and the brand list all read those Concept
+ * columns. Mirroring means they now show the Location's values without each
+ * reader having to learn about ConceptLocation, and no editor writes the
+ * Concept copy any more (PATCH /concepts rejects those fields).
+ *
+ * "Primary location" for a brand: the link flagged isPrimary, else the oldest
+ * link — to an active, non-deleted location. A value the Location does not
+ * have yet (no address typed, no pin dropped) leaves the brand's existing
+ * value alone, so a half-filled location never blanks a live storefront.
+ */
+export async function syncConceptLocationMirror(conceptIds: string[]): Promise<void> {
+  const ids = Array.from(new Set(conceptIds))
+  for (const conceptId of ids) {
+    const link = await serviceClient.conceptLocation.findFirst({
+      where: { conceptId, location: { deletedAt: null, isActive: true } },
+      orderBy: [{ isPrimary: 'desc' }, { createdAt: 'asc' }],
+      select: { location: { select: { address: true, latitude: true, longitude: true } } },
+    })
+    const loc = link?.location
+    if (!loc) continue
+    const data: { address?: string; latitude?: number; longitude?: number } = {}
+    if (loc.address && loc.address.trim()) data.address = loc.address.trim()
+    if (loc.latitude != null && loc.longitude != null) { data.latitude = loc.latitude; data.longitude = loc.longitude }
+    if (Object.keys(data).length === 0) continue
+    await serviceClient.concept.updateMany({ where: { id: conceptId, deletedAt: null }, data })
+  }
+}
+
 const conceptInclude = {
   concepts: {
     include: { concept: { select: { id: true, name: true, slug: true } } },
@@ -61,6 +95,31 @@ export async function locationRoutes(fastify: FastifyInstance) {
       },
       orderBy: { name: 'asc' },
     })
+  })
+
+  // GET /locations/public?brand=<slug> — the storefront's view of where a
+  // brand is: its active linked kitchens, primary first. Public (it is the
+  // address on the shop door), so only public fields are returned — never the
+  // company, counts or the kitchen's internal phone line (a brand's public
+  // phone and WhatsApp are on the brand, decision 18).
+  fastify.get<{ Querystring: { brand?: string } }>('/public', async (req, reply) => {
+    const slug = (req.query.brand ?? '').trim().toLowerCase()
+    if (!slug) return reply.status(400).send({ error: { code: 'BRAND_REQUIRED', message: 'brand is required' } })
+    const concept = await serviceClient.concept.findFirst({
+      where: { slug, deletedAt: null, isActive: true, storefrontVisible: true },
+      select: { id: true },
+    })
+    if (!concept) return []
+    const links = await serviceClient.conceptLocation.findMany({
+      where: { conceptId: concept.id, location: { deletedAt: null, isActive: true } },
+      orderBy: [{ isPrimary: 'desc' }, { createdAt: 'asc' }],
+      select: {
+        isPrimary: true,
+        location: { select: { slug: true, name: true, address: true, city: true, latitude: true, longitude: true } },
+      },
+    })
+    reply.header('cache-control', 'public, max-age=60')
+    return links.map((l, i) => ({ ...l.location, isPrimary: i === 0 }))
   })
 
   // POST /locations — create a new physical location in the active company
@@ -98,6 +157,7 @@ export async function locationRoutes(fastify: FastifyInstance) {
       },
       include: conceptInclude,
     })
+    await syncConceptLocationMirror(conceptIds)
     return reply.status(201).send(location)
   })
 
@@ -129,6 +189,10 @@ export async function locationRoutes(fastify: FastifyInstance) {
       const tenantId = existing.tenantId ?? req.staffUser!.tenantId
       if (!tenantId) throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company before editing a location', 422)
 
+      const previouslyLinked = (await prisma.conceptLocation.findMany({
+        where: { locationId: existing.id }, select: { conceptId: true },
+      })).map((l) => l.conceptId)
+
       // Sync brand links if provided — only brands of the same company.
       if (body.conceptIds) {
         const conceptIds = await assertConceptsBelongTo(tenantId, body.conceptIds)
@@ -148,11 +212,15 @@ export async function locationRoutes(fastify: FastifyInstance) {
 
       const { conceptIds: _ignored, ...rest } = body
       void _ignored
-      return prisma.location.update({
+      const updated = await prisma.location.update({
         where: { id: existing.id },
         data: { ...rest, tenantId },
         include: conceptInclude,
       })
+      // The brands linked now, plus any just unlinked (their primary kitchen
+      // may have changed to another location).
+      await syncConceptLocationMirror([...updated.concepts.map((c) => c.conceptId), ...previouslyLinked])
+      return updated
     },
   )
 
@@ -163,7 +231,7 @@ export async function locationRoutes(fastify: FastifyInstance) {
     async (req, reply) => {
       const existing = await prisma.location.findFirst({
         where: { id: req.params.id, deletedAt: null, tenantId: req.staffUser!.tenantFilter },
-        select: { id: true },
+        select: { id: true, concepts: { select: { conceptId: true } } },
       })
       if (!existing) throw new NotFoundError('Location', req.params.id)
 
@@ -176,6 +244,8 @@ export async function locationRoutes(fastify: FastifyInstance) {
           data: { deletedAt: new Date(), isActive: false },
         }),
       ])
+      // Brands that were here fall back to their next kitchen, if any.
+      await syncConceptLocationMirror(existing.concepts.map((c) => c.conceptId))
       return reply.status(204).send()
     },
   )

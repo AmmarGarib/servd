@@ -2,9 +2,10 @@ import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, CASHIERS, MANAGERS } from '../auth/middleware.js'
-import { createPosOrder, processPayment, openShift, closeShift, getZReport, voidOrderItem, refundOrder, compOrder } from './service.js'
+import { createPosOrder, processPayment, settlePayment, openShift, closeShift, getZReport, voidOrderItem, refundOrder, compOrder, recordCashMovement } from './service.js'
+import { PAYOUT_CATEGORIES } from '../accounting/expenseCategories.js'
 import { assertConceptAccess } from '../../lib/conceptAccess.js'
-import { AppError } from '../../lib/errors.js'
+import { AppError, NotFoundError } from '../../lib/errors.js'
 import { scopeTenantWhere, assertConceptOwned, shiftWhere, findShiftInScope, assertShiftOf } from '../../lib/tenantScope.js'
 import { buildReceiptHtml, buildReceiptData } from './receipt.js'
 
@@ -59,11 +60,15 @@ const paymentSchema = z.object({
   payments: z.array(
     z.object({
       // F-PAY02: dropped wallet methods. No 'comp': a comp is not a tender,
-      // it goes through POST /pos/orders/:id/comp (caps, PIN, audit).
-      method: z.enum(['cash', 'card', 'keenu_qr', 'split']),
+      // it goes through POST /pos/orders/:id/comp (caps, PIN, audit). No
+      // 'split': that is the group-order placeholder, not money — split the
+      // bill (check-split) and settle each portion.
+      method: z.enum(['cash', 'card', 'keenu_qr']),
       amountCents: z.number().int().min(0),
       tenderedCents: z.number().int().optional(),
-      gatewayRef: z.string().optional(),
+      // The card terminal's reference number — required for card / QR
+      // (owner decision 4).
+      gatewayRef: z.string().trim().max(120).optional(),
       gateway: z.enum(['keenu', 'jazzcash', 'easypaisa', 'none']).optional(),
     }),
   ),
@@ -118,13 +123,13 @@ export async function posRoutes(fastify: FastifyInstance) {
     return reply.status(201).send(order)
   })
 
-  // POST /pos/payments
+  // POST /pos/payments — take tenders at the till for what is due.
   fastify.post('/payments', { preHandler: requireAuth(...CASHIERS) }, async (req, reply) => {
     const body = paymentSchema.parse(req.body)
     const order = await prisma.order.findFirst({
       where: {
         id: body.orderId,
-        concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
+        concept: { deletedAt: null, ...(await scopeTenantWhere(req, 'write')) },
       },
       select: { id: true, concept: { select: { tenantId: true } } },
     })
@@ -133,6 +138,48 @@ export async function posRoutes(fastify: FastifyInstance) {
     await assertShiftOf(order.concept.tenantId, body.shiftId, true)
     const result = await processPayment(body)
     return reply.status(201).send(result)
+  })
+
+  // POST /pos/payments/:id/settle — take the money for ONE pending payment row
+  // on an open drawer: a check-split portion, or a storefront cash-on-delivery
+  // amount the rider pays into the till (owner decision 4 — it lands on this
+  // drawer's Z-report). The one settle (settlePayment), shared with
+  // /check-split and the Keenu webhook.
+  fastify.post<{ Params: { id: string } }>(
+    '/payments/:id/settle',
+    { preHandler: requireAuth(...CASHIERS) },
+    async (req) => {
+      const body = z.object({
+        shiftId: z.string().uuid(),
+        gatewayRef: z.string().trim().max(120).optional(),
+        tenderedCents: z.number().int().min(0).optional(),
+      }).parse(req.body)
+      const payment = await prisma.payment.findFirst({
+        where: { id: req.params.id, order: { concept: { deletedAt: null, ...(await scopeTenantWhere(req, 'write')) } } },
+        select: { id: true },
+      })
+      if (!payment) throw new NotFoundError('Payment', req.params.id)
+      return settlePayment({ paymentId: payment.id, via: 'till', shiftId: body.shiftId, gatewayRef: body.gatewayRef, tenderedCents: body.tenderedCents })
+    },
+  )
+
+  // GET /pos/cod-due — delivered cash-on-delivery orders whose cash has not
+  // been paid into a drawer yet, for the rider pay-in screen.
+  fastify.get('/cod-due', { preHandler: requireAuth(...CASHIERS) }, async (req) => {
+    const rows = await prisma.payment.findMany({
+      where: {
+        method: 'cash',
+        status: 'pending',
+        order: { source: { not: 'pos' }, status: 'completed', concept: { deletedAt: null, ...(await scopeTenantWhere(req, 'write')) } },
+      },
+      select: {
+        id: true, amountCents: true, createdAt: true,
+        order: { select: { id: true, completedAt: true, customerName: true, concept: { select: { name: true } } } },
+      },
+      orderBy: { createdAt: 'asc' },
+      take: 200,
+    })
+    return { payments: rows }
   })
 
   // GET /pos/shifts/current — the caller's open drawer, or null.
@@ -255,6 +302,10 @@ export async function posRoutes(fastify: FastifyInstance) {
         shiftId: z.string().uuid(),
         photoUrl: z.string().url().optional(),
         managerOverridePin: z.string().optional(),
+        // A staff meal (owner decision 11): who ate. The meal is comped in
+        // full with a manager PIN and appears in the staff-meal log.
+        // Either a login id or the HR employee code — the till only knows the code.
+        staffMealFor: z.string().min(1).max(64).optional(),
       }).parse(req.body)
       const order = await prisma.order.findFirst({
         where: {
@@ -266,6 +317,22 @@ export async function posRoutes(fastify: FastifyInstance) {
       if (!order) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Order not found in your active company' } })
       // Like a payment: the drawer must be an OPEN shift of the order's own company.
       await assertShiftOf(order.concept.tenantId, body.shiftId, true)
+      // A staff meal names a member of THIS company: resolve a code or a login
+      // id to the staff member's login, never trust a foreign id.
+      let staffMealUserId: string | undefined
+      if (body.staffMealFor) {
+        const tenantId = order.concept.tenantId
+        if (!tenantId) return reply.status(422).send({ error: { code: 'NO_COMPANY', message: 'This brand belongs to no company; a staff meal needs one' } })
+        const emp = await prisma.hrEmployee.findFirst({
+          where: { tenantId, status: { in: ['active', 'on_leave'] }, OR: [{ employeeCode: body.staffMealFor }, { userId: body.staffMealFor }] },
+          select: { userId: true, fullName: true },
+        })
+        const user = !emp && /^[0-9a-f-]{36}$/i.test(body.staffMealFor)
+          ? await prisma.user.findFirst({ where: { id: body.staffMealFor, OR: [{ tenantId }, { tenantMemberships: { some: { tenantId } } }] }, select: { id: true } })
+          : null
+        staffMealUserId = emp?.userId ?? user?.id ?? undefined
+        if (!staffMealUserId) return reply.status(422).send({ error: { code: 'STAFF_NOT_IN_COMPANY', message: `No staff member "${body.staffMealFor}" with a login in this company — check the employee code` } })
+      }
       const result = await compOrder({
         orderId: req.params.orderId,
         shiftId: body.shiftId,
@@ -275,6 +342,7 @@ export async function posRoutes(fastify: FastifyInstance) {
         actorId: req.staffUser!.id,
         actorRole: req.staffUser!.role,
         managerOverridePin: body.managerOverridePin,
+        ...(staffMealUserId && { staffMeal: { staffId: staffMealUserId } }),
       })
       return reply.status(200).send(result)
     },
@@ -296,6 +364,12 @@ export async function posRoutes(fastify: FastifyInstance) {
         amountCents: z.number().int().min(1),
         reason:      z.string().min(1).max(200),
         managerOverridePin: z.string().min(4).max(8).optional(),
+        // Pay-out to a vendor (owner decision 5): what it paid for, or the
+        // supplier bill it pays. Manager PIN and the pay-out cap apply.
+        category:       z.enum(PAYOUT_CATEGORIES.map((c) => c.key) as [string, ...string[]]).optional(),
+        supplierBillId: z.string().uuid().nullable().optional(),
+        vendorName:     z.string().max(120).nullable().optional(),
+        receiptUrl:     z.string().url().nullable().optional(),
       }).parse(req.body)
 
       // Recording against an EXISTING drawer: any company the operator belongs to.
@@ -309,19 +383,26 @@ export async function posRoutes(fastify: FastifyInstance) {
         return reply.status(403).send({ error: { code: 'NOT_YOUR_SHIFT', message: 'Only the shift owner or a manager can record cash movements' } })
       }
 
-      const movement = await prisma.cashMovement.create({
-        data: {
-          shiftId: req.params.id,
-          type: body.type,
-          amountCents: body.amountCents,
-          reason: body.reason,
-          recordedById: req.staffUser!.id,
-          managerOverridePin: body.managerOverridePin,
-        },
+      // The PIN is verified, never stored (the old route wrote it to the row).
+      const movement = await recordCashMovement({
+        shiftId: shift.id,
+        type: body.type,
+        amountCents: body.amountCents,
+        reason: body.reason,
+        actorId: req.staffUser!.id,
+        actorRole: req.staffUser!.role,
+        managerOverridePin: body.managerOverridePin,
+        category: body.category as never,
+        supplierBillId: body.supplierBillId ?? null,
+        vendorName: body.vendorName ?? null,
+        receiptUrl: body.receiptUrl ?? null,
       })
       return reply.status(201).send(movement)
     },
   )
+
+  // GET /pos/payout-categories — what a till pay-out can be for.
+  fastify.get('/payout-categories', { preHandler: requireAuth(...CASHIERS) }, async () => ({ categories: PAYOUT_CATEGORIES }))
 
   fastify.get<{ Params: { id: string } }>(
     '/shifts/:id/cash-movements',
@@ -357,32 +438,48 @@ export async function posRoutes(fastify: FastifyInstance) {
     },
   )
 
-  // POST /pos/orders/:orderId/refund — issue a refund against a paid order.
+  // POST /pos/orders/:orderId/refund — THE refund engine's route (refundOrder).
+  // /refunds, the order page and the till all call this. Caps + manager PIN
+  // (403 MANAGER_OVERRIDE_REQUIRED → prompt for a PIN and resend), any amount
+  // up to what is still refundable, the cash out of an OPEN drawer (owner
+  // decision 3), its own journal entry, and status 'refunded' once in full.
   fastify.post<{ Params: { orderId: string } }>(
     '/orders/:orderId/refund',
     { preHandler: requireAuth(...CASHIERS) },
     async (req, reply) => {
       const body = z.object({
         amountCents: z.number().int().min(1),
-        reason: z.string().min(1).max(200),
+        reason: z.string().trim().min(3).max(200),
         photoUrl: z.string().url().optional(),
         managerOverridePin: z.string().optional(),
+        // How the money goes back (defaults to the tender of the sale).
+        method: z.enum(['cash', 'card', 'keenu_qr']).optional(),
+        // The open drawer a cash refund leaves from (defaults to the
+        // refunder's own open drawer).
+        shiftId: z.string().uuid().optional(),
       }).parse(req.body)
+      // Refunding an EXISTING order: any company the operator belongs to,
+      // through the shared helper (never the raw tenantFilter).
       const order = await prisma.order.findFirst({
         where: {
           id: req.params.orderId,
-          concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
+          concept: { deletedAt: null, ...(await scopeTenantWhere(req, 'write')) },
         },
+        select: { id: true, concept: { select: { tenantId: true } } },
       })
       if (!order) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Order not found in your active company' } })
+      // A named drawer must be an OPEN drawer of the order's company.
+      if (body.shiftId) await assertShiftOf(order.concept.tenantId, body.shiftId, true)
       const result = await refundOrder({
-        orderId: req.params.orderId,
+        orderId: order.id,
         amountCents: body.amountCents,
         reason: body.reason,
         photoUrl: body.photoUrl,
         actorId: req.staffUser!.id,
         actorRole: req.staffUser!.role,
         managerOverridePin: body.managerOverridePin,
+        method: body.method,
+        shiftId: body.shiftId ?? null,
       })
       return reply.status(200).send(result)
     },

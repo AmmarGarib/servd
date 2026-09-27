@@ -15,6 +15,7 @@
 // liability discharge against the contra-revenue line so total revenue and
 // expense recognition stays correct.
 
+import { calculatePointsValue } from '../../lib/loyaltySettings.js'
 import { prisma } from '../../lib/prisma.js'
 import { ACCT, postJournalEntry } from './journal.js'
 import { primaryTenantId } from '../../lib/setup-config.js'
@@ -53,7 +54,6 @@ async function loyaltyTenantId(orderId: string | null, customerId?: string | nul
   return primaryTenantId()
 }
 
-const POINTS_VALUE_CENTS_PER_POINT = 1  // mirrors loyalty/routes.ts
 
 const LOYALTY_MARKETING_ACCOUNT = '6060'  // Marketing & Promo
 
@@ -65,10 +65,11 @@ export async function postLoyaltyEarn(loyaltyTxId: string): Promise<{ posted: bo
   if (!tx) return { posted: false, entryId: null, reason: 'tx_not_found' }
   if (tx.type !== 'earn' || tx.pointsDelta <= 0) return { posted: false, entryId: null, reason: 'not_earn_tx' }
 
-  const valueCents = tx.pointsDelta * POINTS_VALUE_CENTS_PER_POINT
+  const tenantId = await loyaltyTenantId(tx.orderId, tx.loyaltyAccount?.customerId ?? null)
+  // A point is worth what the company's loyalty setting says (owner decision 12).
+  const valueCents = await calculatePointsValue(tx.pointsDelta, tenantId)
   if (valueCents <= 0) return { posted: false, entryId: null, reason: 'zero_value' }
 
-  const tenantId = await loyaltyTenantId(tx.orderId, tx.loyaltyAccount?.customerId ?? null)
   if (!tenantId) return { posted: false, entryId: null, reason: 'no_company' }
 
   const result = await postJournalEntry({
@@ -94,11 +95,11 @@ export async function postLoyaltyRedeem(loyaltyTxId: string): Promise<{ posted: 
   if (!tx) return { posted: false, entryId: null, reason: 'tx_not_found' }
   if (tx.type !== 'redeem' || tx.pointsDelta >= 0) return { posted: false, entryId: null, reason: 'not_redeem_tx' }
 
-  const valueCents = Math.abs(tx.pointsDelta) * POINTS_VALUE_CENTS_PER_POINT
-  if (valueCents <= 0) return { posted: false, entryId: null, reason: 'zero_value' }
-
   const tenantId = await loyaltyTenantId(tx.orderId, tx.loyaltyAccount?.customerId ?? null)
   if (!tenantId) return { posted: false, entryId: null, reason: 'no_company' }
+  // A point is worth what the company's loyalty setting says (owner decision 12).
+  const valueCents = await calculatePointsValue(Math.abs(tx.pointsDelta), tenantId)
+  if (valueCents <= 0) return { posted: false, entryId: null, reason: 'zero_value' }
 
   const result = await postJournalEntry({
     tenantId,
@@ -123,11 +124,11 @@ export async function postLoyaltyExpire(loyaltyTxId: string): Promise<{ posted: 
   if (!tx) return { posted: false, entryId: null, reason: 'tx_not_found' }
   if (tx.type !== 'expire' || tx.pointsDelta >= 0) return { posted: false, entryId: null, reason: 'not_expire_tx' }
 
-  const valueCents = Math.abs(tx.pointsDelta) * POINTS_VALUE_CENTS_PER_POINT
-  if (valueCents <= 0) return { posted: false, entryId: null, reason: 'zero_value' }
-
   const tenantId = await loyaltyTenantId(tx.orderId, tx.loyaltyAccount?.customerId ?? null)
   if (!tenantId) return { posted: false, entryId: null, reason: 'no_company' }
+  // A point is worth what the company's loyalty setting says (owner decision 12).
+  const valueCents = await calculatePointsValue(Math.abs(tx.pointsDelta), tenantId)
+  if (valueCents <= 0) return { posted: false, entryId: null, reason: 'zero_value' }
 
   const result = await postJournalEntry({
     tenantId,

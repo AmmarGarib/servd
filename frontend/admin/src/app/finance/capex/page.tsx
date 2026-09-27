@@ -64,6 +64,16 @@ interface Line {
   notes: string | null
   quotes: Quote[]
   payments: Payment[]
+  // The books' view (owner decision 24): posted instalments by kind, and the
+  // fixed asset the line was capitalised as.
+  ledger?: {
+    advancedCents: number
+    prepaidCents: number
+    expensedCents: number
+    settledPayableCents: number
+    asset: { id: string; costCents: number; status: string } | null
+    payments: Record<string, { status: 'posted' | 'unposted'; accountCode: string | null }>
+  } | null
 }
 interface ScopeDef { key: string; label: string; emoji?: string | null; hint?: string | null }
 
@@ -96,6 +106,13 @@ interface Project {
     contingencyCents: number
     totalAskCents: number
     varianceVsEnvelopeCents: number
+  }
+  books?: {
+    capitalisedCents: number
+    advancedCents: number
+    notYetCapitalisedCents: number
+    prepaidCents: number
+    expensedCents: number
   }
 }
 
@@ -424,6 +441,17 @@ function CapexTab({ project, overBudget, linesByScope, onEditLine, onAddLineScop
           accent={overBudget ? '#FCA5A5' : '#86EFAC'}
         />
       </div>
+
+      {/* The books: capex instalments post as supplier advances and delivered
+          items are capitalised onto the fixed-asset register. */}
+      {project.books && (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          <Stat label="On the books as assets"     value={PKR(project.books.capitalisedCents)} accent="#86EFAC" />
+          <Stat label="Advanced, not capitalised"  value={PKR(project.books.notYetCapitalisedCents)} accent="#FCD34D" />
+          <Stat label="Rent paid in advance"       value={PKR(project.books.prepaidCents)} accent="#A5B4FC" />
+          <Stat label="Fees expensed"              value={PKR(project.books.expensedCents)} accent="#9CA3AF" />
+        </div>
+      )}
 
       {/* Customize sections */}
       <div className="flex justify-end">
@@ -1366,7 +1394,9 @@ function PaymentPanel({ line, onChange }: { line: Line; onChange: () => void }) 
             {p.paidAt && <span className="text-[#00D4B1] ml-2">· paid {new Date(p.paidAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}</span>}
           </span>
           {p.paidAt ? (
-            <span className="text-[10px] font-black text-[#00D4B1]">✓ PAID</span>
+            line.ledger?.payments[p.id]?.status === 'posted'
+              ? <span className="text-[10px] font-black text-[#00D4B1]" title={`Booked to ${line.ledger.payments[p.id]!.accountCode ?? ''}`}>PAID · ON THE BOOKS</span>
+              : <span className="text-[10px] font-black text-[#FCD34D]" title="Paid before capex posted to the books — an admin can post it">PAID · NOT POSTED</span>
           ) : (
             <button onClick={() => markPaid.mutate(p)} className="rounded-lg bg-kds-green px-2.5 py-1 text-[10px] font-bold text-black">Mark paid</button>
           )}
@@ -1374,6 +1404,9 @@ function PaymentPanel({ line, onChange }: { line: Line; onChange: () => void }) 
         </div>
       ))}
     </div>
+
+    {(markPaid.error || remove.error) && <ErrorBanner error={markPaid.error ?? remove.error} />}
+    <CapitalisePanel line={line} onChange={onChange} />
 
     {adding ? (
       <div className="rounded-xl p-3 mt-2"
@@ -1401,6 +1434,55 @@ function PaymentPanel({ line, onChange }: { line: Line; onChange: () => void }) 
       </button>
     )}
   </Section>
+}
+
+// Capitalise a delivered item onto the fixed-asset register (owner decision
+// 24): Dr the asset / Cr the advances already paid, Cr the supplier for the
+// rest. Admin only on the server; the register then charges depreciation.
+const ASSET_CATEGORY_OPTIONS = [
+  { key: 'kitchen_equipment',  label: 'Kitchen equipment' },
+  { key: 'furniture_fixtures', label: 'Furniture & fixtures' },
+  { key: 'it_equipment',       label: 'IT equipment' },
+  { key: 'vehicles',           label: 'Vehicles' },
+  { key: 'leasehold',          label: 'Leasehold improvements' },
+] as const
+const DELIVERED: Status[] = ['delivered', 'installed', 'commissioned', 'done'] as Status[]
+
+function CapitalisePanel({ line, onChange }: { line: Line; onChange: () => void }) {
+  const [category, setCategory] = useState<string>('kitchen_equipment')
+  const [lifeMonths, setLifeMonths] = useState(60)
+  const cap = useMutation({
+    mutationFn: () => api.post(`/finance/capex/lines/${line.id}/capitalise`, { category, usefulLifeMonths: lifeMonths }),
+    onSuccess: () => onChange(),
+  })
+  if (line.ledger?.asset) {
+    return (
+      <p className="text-[11px] text-[#86EFAC] mt-2">
+        On the fixed-asset register at {PKR(line.ledger.asset.costCents)} — <a href="/accounting/fixed-assets" className="underline">view</a>
+      </p>
+    )
+  }
+  if (!DELIVERED.includes(line.status) && !line.actualDeliveryDate) return null
+  if ((line.ledger?.prepaidCents ?? 0) > 0 || (line.ledger?.expensedCents ?? 0) > 0) return null
+  return (
+    <div className="rounded-xl p-3 mt-2" style={{ background: 'rgba(134,239,172,0.05)', border: '1px solid rgba(134,239,172,0.2)' }}>
+      <p className="text-xs text-white/70 mb-2">Delivered — put it on the fixed-asset register ({PKR(line.ledger?.advancedCents ?? 0)} advanced so far).</p>
+      <div className="grid grid-cols-3 gap-2">
+        <label className="sr-only" htmlFor={`cap-cat-${line.id}`}>Asset category</label>
+        <select id={`cap-cat-${line.id}`} value={category} onChange={(e) => setCategory(e.target.value)} className={fieldCls}>
+          {ASSET_CATEGORY_OPTIONS.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
+        </select>
+        <label className="sr-only" htmlFor={`cap-life-${line.id}`}>Useful life (months)</label>
+        <input id={`cap-life-${line.id}`} type="number" min={1} max={600} value={lifeMonths}
+          onChange={(e) => setLifeMonths(parseInt(e.target.value || '0', 10))} className={fieldCls} />
+        <button onClick={() => cap.mutate()} disabled={cap.isPending || lifeMonths < 1}
+          className="rounded-lg bg-kds-green px-3 py-1.5 text-xs font-bold text-black disabled:opacity-50">
+          {cap.isPending ? 'Capitalising…' : 'Capitalise'}
+        </button>
+      </div>
+      {cap.error && <ErrorBanner error={cap.error} />}
+    </div>
+  )
 }
 
 // ─── Shared bits ──────────────────────────────────────────────────────────

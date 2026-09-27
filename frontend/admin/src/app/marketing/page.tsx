@@ -81,7 +81,7 @@ export default function MarketingWorkspacePage() {
           <p className="text-[10px] font-black uppercase tracking-[0.24em] text-white/45 mb-3">Tools</p>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             <Tool href="/crm/campaigns"        emoji="✉️" title="Campaigns"        desc="Email / SMS / WhatsApp blasts to customer segments." color="#00D4B1" />
-            <Tool href="/crm/segments"         emoji="🎯" title="Segments"         desc="Build + save audience filters: VIPs, dormant, new." color="#6366F1" />
+            <Tool href="/crm/segments"         emoji="🎯" title="Segments"         desc="Computed per company: VIPs, lapsed, first-timers, repeat." color="#6366F1" />
             <Tool href="/promos"               emoji="🎟" title="Promo codes"      desc="Create + retire promo codes; track redemptions." color="#22C55E" />
             <Tool href="/discounts"            emoji="🏷" title="Discounts"        desc="Time-limited section / category discounts." color="#F59E0B" />
             <Tool href="/calendar"             emoji="📅" title="Content calendar" desc="Schedule social posts; one-click Instagram / Meta publish." color="#EC4899" />

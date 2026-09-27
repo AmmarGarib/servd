@@ -12,7 +12,8 @@
 
 import { prisma } from './prisma.js'
 
-export type TierName = 'bronze' | 'silver' | 'gold'
+// Tier slugs are per company now (owner decision 13), so any string.
+export type TierName = string
 
 export interface ResolvedPerks {
   tier: TierName
@@ -40,11 +41,14 @@ const NO_PERKS: Omit<ResolvedPerks, 'tier'> = {
 const cache: Map<string, { value: ResolvedPerks; expiresAt: number }> = new Map()
 const CACHE_TTL_MS = 60_000
 
-export async function getTierPerks(tier: TierName): Promise<ResolvedPerks> {
-  const cached = cache.get(tier)
+export async function getTierPerks(tier: TierName, tenantId: string | null): Promise<ResolvedPerks> {
+  // A ladder is per company: no company, no perks.
+  if (!tenantId) return { tier, ...NO_PERKS }
+  const key = `${tenantId}:${tier}`
+  const cached = cache.get(key)
   if (cached && cached.expiresAt > Date.now()) return cached.value
 
-  const row = await prisma.tierConfig.findUnique({ where: { tier } })
+  const row = await prisma.tierConfig.findUnique({ where: { tenantId_tier: { tenantId, tier } } })
   const resolved: ResolvedPerks = row
     ? {
         tier,
@@ -58,7 +62,7 @@ export async function getTierPerks(tier: TierName): Promise<ResolvedPerks> {
         freeBirthdayItem:        row.freeBirthdayItem,
       }
     : { tier, ...NO_PERKS }
-  cache.set(tier, { value: resolved, expiresAt: Date.now() + CACHE_TTL_MS })
+  cache.set(key, { value: resolved, expiresAt: Date.now() + CACHE_TTL_MS })
   return resolved
 }
 
@@ -68,14 +72,17 @@ export function invalidateTierPerksCache(): void {
 
 // Returns the perks for whichever tier the customer is currently on. Bronze
 // (or no loyalty account) → no perks.
-export async function getCustomerPerks(customerId: string | null): Promise<ResolvedPerks> {
+export async function getCustomerPerks(customerId: string | null, tenantId?: string | null): Promise<ResolvedPerks> {
   if (!customerId) return { tier: 'bronze', ...NO_PERKS }
   const account = await prisma.loyaltyAccount.findUnique({
     where: { customerId },
     select: { tier: true },
   })
   const tier = (account?.tier as TierName | undefined) ?? 'bronze'
-  return getTierPerks(tier)
+  // The perks are the company's ladder; resolve it from the customer when
+  // the caller does not know it (the loyalty account is one across companies).
+  const company = tenantId ?? await (await import('../modules/loyalty/service.js')).loyaltyCompanyOf(customerId)
+  return getTierPerks(tier, company)
 }
 
 // True if this customer's tier qualifies them for free delivery on an order

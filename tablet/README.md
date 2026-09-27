@@ -7,7 +7,6 @@ Android-first landscape Expo app for in-shift staff. Companion to the customer
 
 - **PIN login** — multi-user, geofence-enforced, optional selfie
 - **KDS** — all-orders expediter view + per-station ticket lanes
-- **POS** — menu grid order entry with split tender + receipt print
 - **Reservations** — host stand day view with seat / no-show actions
 - **Curbside** — "Cars here" / "En route" queue with arrived button
 - **Time clock** — selfie + geo punch
@@ -15,7 +14,11 @@ Android-first landscape Expo app for in-shift staff. Companion to the customer
 - **Customer** — phone lookup with strikes / loyalty / order history
 - **Dispatch** — live rider map + assign rider
 
-Live updates via Socket.IO. Receipts via Bluetooth ESC/POS thermal printer
+Not a till (owner decision 1, 2026-09-27): orders are rung up, paid and the
+drawer is counted on the admin web POS (`/pos`). The tablet's POS, tender,
+shift and active-orders screens were retired.
+
+Live updates via Socket.IO. Bluetooth ESC/POS thermal printer pairing
 (generic 58mm/80mm — protocol-based so any cheap Goojprt / Xprinter works).
 
 ## Run

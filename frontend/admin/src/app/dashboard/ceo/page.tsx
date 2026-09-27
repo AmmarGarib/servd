@@ -356,7 +356,7 @@ interface MarketingPerf { campaigns?: number; campaignClicks?: number; campaignO
 function CustomersSection({ scope }: { scope: Scope }) {
   const { conceptId, fromISO, toISO, days } = scope
   const bm = useQuery({ queryKey: ['ceo', 'bm', conceptId, fromISO, toISO], queryFn: () => api.get<BrandMetrics>(`/management/brand-metrics${qs({ conceptId, dateFrom: fromISO, dateTo: toISO })}`), refetchInterval: 120_000 })
-  const seg = useQuery({ queryKey: ['ceo', 'segments'], queryFn: () => api.get<SmartSeg>('/crm/smart-segments'), refetchInterval: 300_000 })
+  const seg = useQuery({ queryKey: ['ceo', 'segments'], queryFn: () => api.get<SmartSeg>('/crm/summary'), refetchInterval: 300_000 })
   const mk = useQuery({ queryKey: ['ceo', 'mk-perf', days], queryFn: () => api.get<MarketingPerf>(`/marketing/performance${qs({ days })}`), refetchInterval: 300_000 })
 
   const k = bm.data?.kpis

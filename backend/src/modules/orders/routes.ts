@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, ALL_STAFF, MANAGERS } from '../auth/middleware.js'
-import { listOrders, getOrder, updateOrderStatus, updateItemStatus, cancelOrder } from './service.js'
+import { listOrders, getOrder, updateOrderStatus, updateItemStatus, cancelOrder, completionDoor } from './service.js'
 import { assertConceptAccess, filterConceptIdsForStaff } from '../../lib/conceptAccess.js'
 import { conceptWhere, scopeTenantWhere, type ScopeMode } from '../../lib/tenantScope.js'
 import { audit } from '../../lib/audit.js'
@@ -31,8 +31,11 @@ async function orderInCompany(req: FastifyRequest, mode: ScopeMode) {
 // Kitchen / service progress only. Cancelling is POST /orders/:id/cancel — it
 // needs a manager, a reason and an audit entry, none of which this route asks
 // for (it used to accept 'cancelled' from any staff role with no reason).
+// Refunding is POST /pos/orders/:orderId/refund, the one refund engine — this
+// route used to accept 'refunded' from ANY staff token, with no reason, no
+// caps, no audit and no money moving.
 const updateOrderStatusSchema = z.object({
-  status: z.enum(['received', 'confirmed', 'preparing', 'ready', 'completed', 'refunded']),
+  status: z.enum(['received', 'confirmed', 'preparing', 'ready', 'completed']),
 })
 
 const cancelOrderSchema = z.object({
@@ -176,11 +179,27 @@ export async function orderRoutes(fastify: FastifyInstance) {
       // an order outside the caller's companies before the scope check.
       const order = await prisma.order.findFirst({
         where: { id: req.params.id, ...(await orderInCompany(req, 'write')) },
-        select: { id: true, conceptId: true },
+        select: { id: true, conceptId: true, source: true, fulfilmentType: true, rawPayload: true },
       })
       if (!order) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Order not found in your active company' } })
       await assertConceptAccess(req.staffUser!, order.conceptId)
-      return updateOrderStatus(req.params.id, status)
+      // Completion has one door per kind of order (decision 8). A staff
+      // "Complete" here is only the expo hand-off door (pickup / dine-in
+      // ordered online); it can't complete a delivery before the drop-off or
+      // a till sale before it is paid.
+      if (status === 'completed') {
+        const door = completionDoor(order)
+        if (door === 'delivery') {
+          throw new AppError('COMPLETE_ON_DELIVERY', 'A delivery completes when the rider marks it delivered (or the customer\'s OTP is verified) — use Dispatch.', 409)
+        }
+        if (door === 'payment') {
+          throw new AppError('COMPLETE_ON_PAYMENT', 'A till sale completes when it is paid at the till.', 409)
+        }
+      }
+      return updateOrderStatus(req.params.id, status, {
+        actor: { id: req.staffUser!.id, email: req.staffUser!.email, tenantId: req.staffUser!.tenantId ?? null },
+        via: 'status_update',
+      })
     },
   )
 
@@ -328,42 +347,13 @@ export async function orderRoutes(fastify: FastifyInstance) {
     },
   )
 
-  // POST /orders/:id/refund — manager-only refund flow with mandatory reason.
-  // Wraps the status change so we always have a reason captured in the audit
-  // log. Use this from the admin UI; never auto-refund. (Cancelling an unpaid
-  // order is POST /orders/:id/cancel — this route used to take mode 'cancel'
-  // as a second way in.)
-  fastify.post<{ Params: { id: string }; Body: { reason: string } }>(
-    '/:id/refund',
-    { preHandler: requireAuth(...MANAGERS) },
-    async (req, reply) => {
-      const body = z.object({
-        reason: z.string().min(3, 'Reason is required').max(500),
-        // Only 'refund' is accepted, so a stale client still sending
-        // mode 'cancel' is refused instead of refunding the order.
-        mode:   z.literal('refund').optional(),
-      }).parse(req.body)
-      // Company-scoped at the lookup — a foreign order 404s before anything
-      // is read, refunded or audited.
-      const order = await getOrder(req.params.id, await orderInCompany(req, 'write'))
-      await assertConceptAccess(req.staffUser!, order.conceptId)
-
-      const updated = await updateOrderStatus(req.params.id, 'refunded')
-
-      await audit({ category: 'identity',
-        action: 'order.refund',
-        entity: 'Order',
-        entityId: order.id,
-        userId: req.staffUser!.id, tenantId: req.staffUser?.tenantId ?? null,
-        userEmail: req.staffUser!.email,
-        before: { status: order.status, totalCents: order.totalCents },
-        after:  { status: 'refunded' },
-        metadata: { reason: body.reason, ip: req.ip, conceptSlug: order.conceptId },
-      })
-
-      return reply.send({ ok: true, order: updated })
-    },
-  )
+  // There is no POST /orders/:id/refund. Refunds go through the ONE refund
+  // engine, POST /pos/orders/:orderId/refund (refundOrder in pos/service.ts):
+  // refund-policy caps and the manager PIN, partial amounts, the money on the
+  // drawer it leaves (owner decision 3), its own journal entry, the SRB
+  // sales-return, and — once refunded in full — status 'refunded' with the
+  // customer-side restores and the credit note. This route flipped the status
+  // with none of the money side, so a till refund never reached the books.
 }
 
 // Separate route prefix for order items

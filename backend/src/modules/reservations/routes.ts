@@ -26,7 +26,7 @@ import { audit } from '../../lib/audit.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { verifyCustomerToken } from '../auth/service.js'
 import { normalisePhone } from '../auth/otp.js'
-import { sendSms, sendEmail } from '../../lib/notify.js'
+import { sendPhoneMessage, sendEmail } from '../../lib/notify.js'
 import { emitReservationEvent } from '../../lib/ws.js'
 import { bumpCustomerRollups } from '../../lib/customerRollups.js'
 
@@ -331,7 +331,7 @@ export async function reservationRoutes(fastify: FastifyInstance) {
     // Best-effort confirmation
     const when = startTime.toLocaleString('en-GB', { timeZone: 'Asia/Karachi', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
     if (body.guestPhone) {
-      void sendSms(body.guestPhone, `${r.concept.name}: reservation confirmed for ${body.partySize} on ${when} PKT. Reply CANCEL to cancel.`)
+      void sendPhoneMessage(body.guestPhone, `${r.concept.name}: reservation confirmed for ${body.partySize} on ${when} PKT. Reply CANCEL to cancel.`)
         .catch((err) => req.log.error({ err: (err as Error).message }, 'reservation SMS failed'))
     }
     if (body.guestEmail) {
@@ -889,10 +889,12 @@ export async function reservationRoutes(fastify: FastifyInstance) {
       // Naughty-list gate. Reject the booking outright if the guest's
       // phone or email matches an active ban — they get the same clean
       // 403 a banned signup gets.
-      const { assertNotBanned } = await import('../../lib/banCheck.js')
-      await assertNotBanned({
+      // A ban applies at the company that raised it (owner decision 15).
+      const { assertNotBannedAtCompany } = await import('../../lib/strikes.js')
+      await assertNotBannedAtCompany({
         email: body.guestEmail ?? null,
         phone: body.guestPhone,
+        tenantId: concept.tenantId,
         ip:    req.ip ?? null,
         intent: 'reservation',
       })
@@ -1069,7 +1071,7 @@ export async function reservationRoutes(fastify: FastifyInstance) {
       const confirmUrl = `${storefrontUrl}/reserve/confirm/${confirmToken}`
       const when = startTime.toLocaleString('en-GB', { timeZone: 'Asia/Karachi', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
 
-      void sendSms(body.guestPhone, `${r.concept.name}: reservation request received for ${body.partySize} on ${when} PKT. Confirm/cancel: ${confirmUrl}`)
+      void sendPhoneMessage(body.guestPhone, `${r.concept.name}: reservation request received for ${body.partySize} on ${when} PKT. Confirm/cancel: ${confirmUrl}`)
         .catch((err) => req.log.error({ err: (err as Error).message }, 'public booking SMS failed'))
       if (body.guestEmail) {
         const html = `<p>Hi ${body.guestName},</p>
@@ -1205,7 +1207,7 @@ export async function reservationRoutes(fastify: FastifyInstance) {
         timeZone: 'Asia/Karachi', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit',
       })
       if (updated.guestPhone) {
-        void sendSms(updated.guestPhone, `${updated.concept.name}: confirmed for ${updated.partySize} on ${when} PKT. See you there.`).catch(() => {})
+        void sendPhoneMessage(updated.guestPhone, `${updated.concept.name}: confirmed for ${updated.partySize} on ${when} PKT. See you there.`).catch(() => {})
       }
       if (updated.guestEmail) {
         void sendEmail(

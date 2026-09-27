@@ -163,13 +163,16 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
         throw new AppError('OTP_MISMATCH', `Wrong OTP (attempt ${attempts}/3). Ask the customer to re-read the code.`, 403)
       }
 
-      // OTP matched — mark delivered + verified
-      await prisma.order.update({
-        where: { id: order.id },
-        data: {
-          status: 'completed', completedAt: new Date(),
-          deliveryOtpVerifiedAt: new Date(),
-        },
+      // OTP matched — the drop-off is proven. It goes through the one
+      // "delivered" rule (dispatch/service markDelivered): stamps the OTP
+      // verification and the drop-off, frees the rider, and completes the
+      // order through the one completion routine (decision 8). It used to
+      // write status 'completed' directly — no ledger entry, no tax invoice,
+      // no FBR/SRB filing, no loyalty earn, no rollups.
+      const { markDelivered } = await import('../dispatch/service.js')
+      await markDelivered(order.id, {
+        otpVerified: true,
+        actor: { id: req.staffUser!.id, email: req.staffUser!.email, tenantId: req.staffUser!.tenantId ?? null },
       })
       return reply.status(200).send({ verified: true })
     },
@@ -548,75 +551,19 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
       .slice(0, 200)
   })
 
-  // POST — manager-PIN approval required. Above PKR cap fires flag.
-  fastify.post('/staff-meals', { preHandler: requireAuth(...ALL_STAFF) }, async (req, reply) => {
-    const body = z.object({
-      staffId:            z.string().uuid(),
-      shiftId:            z.string().uuid().nullable().optional(),
-      conceptId:          z.string().uuid().nullable().optional(),
-      description:        z.string().min(1).max(200),
-      estimatedCostCents: z.number().int().min(0).default(0),
-      // No 'comp': comping a customer's order goes through the till's one
-      // comp engine (POST /pos/orders/:id/comp). Old 'comp' rows are kept.
-      reason:             z.enum(['shift_meal', 'training', 'tasting']).default('shift_meal'),
-      managerPin:         z.string().min(4).max(8),                      // mandatory
-    }).parse(req.body)
-
-    // A new meal binds to the ACTIVE company: its brand, its drawer and the
-    // person who ate must all be that company's (foreign → 404 / 422).
-    const mealTenantId = req.staffUser!.tenantId
-    if (!mealTenantId) throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company before logging a staff meal', 422)
-    if (body.conceptId) await assertConceptOwned(req, body.conceptId, 'create')
-    if (!(await isMemberOf(body.staffId, mealTenantId))) {
-      throw new AppError('STAFF_NOT_IN_COMPANY', 'That staff member is not a member of your active company', 422)
-    }
-    const approver = await verifyManagerPin(body.managerPin, mealTenantId)
-    if (!approver) throw new AppError('MANAGER_PIN_REQUIRED', 'Manager PIN required to log a staff meal.', 403)
-    // A new row bound to a drawer: the drawer must be the active company's.
-    if (body.shiftId) await assertShiftOf(mealTenantId, body.shiftId, false)
-
-    const meal = await prisma.staffMeal.create({
-      data: {
-        staffId: body.staffId,
-        approvedById: approver.id,
-        shiftId: body.shiftId ?? null,
-        conceptId: body.conceptId ?? null,
-        description: body.description,
-        estimatedCostCents: body.estimatedCostCents,
-        reason: body.reason,
+  // POST /trustops/staff-meals — retired (owner decision 11). A staff meal is
+  // rung through the till and comped in full with a manager PIN: POST
+  // /pos/orders/:orderId/comp with { staffMealFor: <staff user id> }. That
+  // takes the stock out through the normal order path, books the food cost
+  // on the drawer's close, and writes the staff-meal row this log lists (with
+  // the weekly cap flag). A hand-typed meal with an estimated cost did none
+  // of that — the food left the kitchen with no stock movement and no cost.
+  fastify.post('/staff-meals', { preHandler: requireAuth(...ALL_STAFF) }, async (_req, reply) => {
+    return reply.status(410).send({
+      error: {
+        code: 'USE_TILL_STAFF_MEAL',
+        message: 'Ring the staff meal up at the till and comp it as a staff meal (POST /pos/orders/:orderId/comp with staffMealFor).',
       },
     })
-
-    // Per-staff cumulative check — if this person has consumed > PKR 2,000 in
-    // the last 7 days AT THIS COMPANY, flag it for this company's review
-    // (configurable later via OperationsConfig). Meals at another company
-    // are that company's business and never counted into this flag.
-    const sevenDaysAgo = new Date(Date.now() - 7 * 86400_000)
-    const weekMeals = await prisma.staffMeal.findMany({
-      where: { staffId: body.staffId, consumedAt: { gte: sevenDaysAgo } },
-      select: { id: true, conceptId: true, shiftId: true, staffId: true, estimatedCostCents: true },
-    })
-    const weekCompany = await mealCompanies(weekMeals)
-    const ours = weekMeals.filter((m) => m.id === meal.id || weekCompany.get(m.id) === mealTenantId)
-    const recent = { _sum: { estimatedCostCents: ours.reduce((t, m) => t + m.estimatedCostCents, 0) }, _count: { _all: ours.length } }
-    const cumulative = recent._sum.estimatedCostCents
-    if (cumulative >= 200000) {       // PKR 2,000
-      const staff = await prisma.user.findUnique({ where: { id: body.staffId }, select: { name: true, role: true } })
-      await flagException({
-        tenantId: mealTenantId,
-        conceptId: body.conceptId ?? null,
-        kind: 'shrinkage',
-        severity: cumulative >= 500000 ? 'high' : 'medium',
-        title: `Heavy staff meal log: ${staff?.name ?? 'staff'}`,
-        description: `${staff?.name ?? 'Staff'} (${staff?.role ?? 'role unknown'}) has logged PKR ${(cumulative / 100).toFixed(0)} in staff meals across ${recent._count._all} entries in the last 7 days. Confirm policy compliance.`,
-        entityType: 'User',
-        entityId: body.staffId,
-        actorId: approver.id,
-        amountCents: cumulative,
-        metadata: { weeklyTotal: cumulative, count: recent._count._all },
-      })
-    }
-
-    return reply.status(201).send(meal)
   })
 }

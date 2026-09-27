@@ -1,14 +1,26 @@
 'use client'
 import { useEffect, useState } from 'react'
+import Link from 'next/link'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../lib/api'
 import { formatDistanceToNowStrict } from 'date-fns'
 import { fmtPkrWhole } from '../../lib/money'
 
+// THE customer list (the /customers page is a redirect here). Segments live on
+// /crm/segments and campaigns on /crm/campaigns — this page used to carry its
+// own copy of both (live-counted "smart segments" and a second composer).
+//
+// Blocking a customer raises a ban for the ACTIVE company (POST /crm/bans —
+// owner decision 15: it applies at that company's brands only) and unblocking
+// lifts it; the old isBlacklisted toggle is gone.
+
+interface ActiveBan { id: string; reason: string; bannedAt: string }
+
 interface Customer {
   id: string; name: string; phone: string | null; email: string | null
   totalSpentCents: number; lastOrderAt: string | null; createdAt: string
-  walletBalance: number; isBlacklisted: boolean; blacklistReason: string | null
+  walletBalance: number
+  activeBan: ActiveBan | null
   loyaltyAccount: { pointsBalance: number; tier: string | null } | null
   // The brand this customer most often orders from. Drives the chip in the
   // CRM list so the operator knows which company they're talking to.
@@ -16,472 +28,15 @@ interface Customer {
   _count: { orders: number }
 }
 
-interface SmartSegment { key: string; label: string; desc: string; count: number }
-interface SmartSegmentsResp {
-  summary: { totalCustomers: number; repeatRate: number; avgOrderValueCents: number }
-  segments: SmartSegment[]
-}
-
-interface Segment { id: string; name: string; description?: string | null; filters: unknown }
-
-interface Campaign {
-  id: string
-  name: string
-  channel: 'email' | 'sms' | 'whatsapp'
-  status: 'draft' | 'scheduled' | 'sending' | 'sent'
-  subject: string | null
-  body: string
-  scheduledAt: string | null
-  sentAt: string | null
-  createdAt: string
-  segmentId: string | null
-  segment?: { name: string } | null
-}
-
-type Tab = 'customers' | 'segments' | 'campaigns'
-
-// ─── Character counter helper ────────────────────────────────────────────────
-function SmsCounter({ body }: { body: string }) {
-  const limit = 160
-  const count = body.length
-  const msgs = count === 0 ? 1 : Math.ceil(count / limit)
-  const color = count > limit * msgs ? 'text-kds-red' : count > limit * 0.85 ? 'text-kds-amber' : 'text-kds-subtext'
-  return (
-    <span className={`text-xs ${color}`}>
-      {count}/160 chars — will use {msgs} SMS
-    </span>
-  )
-}
-
-// ─── Message preview ─────────────────────────────────────────────────────────
-function MessagePreview({
-  channel, subject, body, campaignName,
-}: { channel: 'email' | 'sms' | 'whatsapp'; subject: string; body: string; campaignName: string }) {
-  if (channel === 'email') {
-    return (
-      <div className="rounded-xl border border-kds-border bg-kds-bg overflow-hidden text-sm">
-        <div className="bg-kds-card border-b border-kds-border px-4 py-3">
-          <p className="text-xs text-kds-subtext">From: <span className="text-kds-text">servd Restaurant</span></p>
-          <p className="text-xs text-kds-subtext">Subject: <span className="font-semibold text-kds-text">{subject || '(no subject)'}</span></p>
-        </div>
-        <div className="px-4 py-4 whitespace-pre-wrap text-kds-text leading-relaxed min-h-[80px]">
-          {body || <span className="text-kds-subtext italic">Message body will appear here</span>}
-        </div>
-      </div>
-    )
-  }
-  if (channel === 'whatsapp') {
-    return (
-      <div className="rounded-xl border border-kds-border bg-kds-bg p-4">
-        <div className="flex items-center gap-2 mb-3">
-          <div className="h-8 w-8 rounded-full bg-[#25d366]/20 flex items-center justify-center text-sm">💬</div>
-          <div>
-            <p className="text-xs font-semibold text-kds-text">{campaignName || 'Campaign'}</p>
-            <p className="text-[10px] text-kds-subtext">WhatsApp Business</p>
-          </div>
-        </div>
-        <div className="bg-[#25d366]/10 border border-[#25d366]/20 rounded-xl rounded-tl-none px-3 py-2 text-sm text-kds-text whitespace-pre-wrap leading-relaxed min-h-[60px]">
-          {body || <span className="text-kds-subtext italic">Message body will appear here</span>}
-        </div>
-      </div>
-    )
-  }
-  // SMS
-  return (
-    <div className="rounded-xl border border-kds-border bg-kds-bg p-4">
-      <div className="flex items-center gap-2 mb-3">
-        <div className="h-8 w-8 rounded-full bg-kds-blue/20 flex items-center justify-center text-sm">📱</div>
-        <div>
-          <p className="text-xs font-semibold text-kds-text">SMS</p>
-          <p className="text-[10px] text-kds-subtext">Text Message</p>
-        </div>
-      </div>
-      <div className="bg-kds-card border border-kds-border rounded-xl rounded-tl-none px-3 py-2 text-sm text-kds-text whitespace-pre-wrap leading-relaxed min-h-[60px]">
-        {body || <span className="text-kds-subtext italic">Message body will appear here</span>}
-      </div>
-    </div>
-  )
-}
-
-// ─── Status badge ─────────────────────────────────────────────────────────────
-function StatusBadge({ status }: { status: Campaign['status'] }) {
-  const map: Record<Campaign['status'], string> = {
-    draft: 'text-kds-subtext bg-kds-border/40',
-    scheduled: 'text-kds-amber bg-kds-amber/10',
-    sending: 'text-kds-blue bg-kds-blue/10',
-    sent: 'text-kds-green bg-kds-green/10',
-  }
-  return (
-    <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${map[status] ?? ''}`}>
-      {status}
-    </span>
-  )
-}
-
-// ─── Campaign composer ────────────────────────────────────────────────────────
-function CampaignComposer({
-  segments,
-  smartSegments,
-  onClose,
-  onSaved,
-}: {
-  segments: Segment[]
-  smartSegments: SmartSegment[]
-  onClose: () => void
-  onSaved: () => void
-}) {
-  const [name, setName] = useState('')
-  const [segmentId, setSegmentId] = useState<string>('')
-  const [channel, setChannel] = useState<'email' | 'sms' | 'whatsapp'>('email')
-  const [subject, setSubject] = useState('')
-  const [body, setBody] = useState('')
-  const [schedule, setSchedule] = useState<'now' | 'later'>('now')
-  const [scheduledAt, setScheduledAt] = useState('')
-  const [error, setError] = useState<string | null>(null)
-
-  const bodyLimit = channel === 'sms' ? 480 : 2000  // 3×160 soft cap for SMS, 2000 for email/WA
-
-  const segmentCount = segmentId
-    ? null  // DB segment — no live count available without an extra endpoint
-    : null
-
-  const saveDraft = useMutation({
-    mutationFn: () =>
-      api.post<Campaign>('/crm/campaigns', {
-        name,
-        segmentId: segmentId || null,
-        channel,
-        subject: channel === 'email' ? subject : undefined,
-        body,
-        scheduledAt: schedule === 'later' && scheduledAt ? new Date(scheduledAt).toISOString() : undefined,
-        status: 'draft',
-      }),
-    onSuccess: () => { onSaved(); onClose() },
-    onError: (e: Error) => setError(e.message),
-  })
-
-  const sendNow = useMutation({
-    mutationFn: async () => {
-      const campaign = await api.post<Campaign>('/crm/campaigns', {
-        name,
-        segmentId: segmentId || null,
-        channel,
-        subject: channel === 'email' ? subject : undefined,
-        body,
-        status: 'sending',
-      })
-      return api.post<{ message: string; campaignId: string; recipientCount: number }>(
-        `/crm/campaigns/${campaign.id}/send`,
-        {},
-      )
-    },
-    onSuccess: () => { onSaved(); onClose() },
-    onError: (e: Error) => setError(e.message),
-  })
-
-  const pending = saveDraft.isPending || sendNow.isPending
-
-  const inp = 'rounded-lg border border-kds-border bg-kds-bg px-3 py-2 text-sm text-kds-text focus:border-kds-green focus:outline-none w-full'
-
-  return (
-    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4 overflow-y-auto">
-      <div className="bg-kds-card border border-kds-border rounded-2xl w-full max-w-4xl my-4 flex flex-col max-h-[90vh]">
-        {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-kds-border shrink-0">
-          <p className="font-bold text-kds-text text-lg">New Campaign</p>
-          <button onClick={onClose} className="text-kds-subtext hover:text-kds-text text-xl leading-none">✕</button>
-        </div>
-
-        <div className="flex flex-1 overflow-hidden min-h-0">
-          {/* ── Composer form (left) ── */}
-          <div className="flex-1 overflow-y-auto p-6 space-y-5 border-r border-kds-border">
-            {error && (
-              <div className="rounded-lg bg-kds-red/10 border border-kds-red/30 px-3 py-2 text-sm text-kds-red">
-                {error}
-              </div>
-            )}
-
-            {/* Campaign name */}
-            <div>
-              <label className="text-xs font-semibold text-kds-subtext uppercase tracking-wide block mb-1.5">Campaign Name</label>
-              <input
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="e.g. Weekend Special Offer"
-                className={inp}
-              />
-            </div>
-
-            {/* Segment */}
-            <div>
-              <label className="text-xs font-semibold text-kds-subtext uppercase tracking-wide block mb-1.5">Target Segment</label>
-              <select value={segmentId} onChange={(e) => setSegmentId(e.target.value)} className={inp}>
-                <option value="">All opted-in customers</option>
-                {segments.map((s) => (
-                  <option key={s.id} value={s.id}>{s.name}</option>
-                ))}
-              </select>
-              {/* Segment size hints from smart segments */}
-              {!segmentId && (
-                <p className="text-xs text-kds-subtext mt-1.5">
-                  Sending to all customers who opted in to marketing
-                </p>
-              )}
-              {/* Smart segment count hints (informational) */}
-              {smartSegments.length > 0 && (
-                <div className="mt-2 flex flex-wrap gap-1.5">
-                  {smartSegments.slice(0, 5).map((ss) => (
-                    <span key={ss.key} className="text-[10px] bg-kds-bg border border-kds-border rounded-full px-2 py-0.5 text-kds-subtext">
-                      {ss.label}: {ss.count}
-                    </span>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* Channel */}
-            <div>
-              <label className="text-xs font-semibold text-kds-subtext uppercase tracking-wide block mb-1.5">Channel</label>
-              <div className="flex gap-2">
-                {(['email', 'sms', 'whatsapp'] as const).map((ch) => (
-                  <button
-                    key={ch}
-                    type="button"
-                    onClick={() => setChannel(ch)}
-                    className={`flex-1 py-2 rounded-lg text-sm font-semibold border transition-colors ${
-                      channel === ch
-                        ? 'bg-kds-green text-black border-kds-green'
-                        : 'bg-kds-bg border-kds-border text-kds-subtext hover:text-kds-text'
-                    }`}>
-                    {ch === 'email' ? '✉ Email' : ch === 'sms' ? '📱 SMS' : '💬 WhatsApp'}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Subject (email only) */}
-            {channel === 'email' && (
-              <div>
-                <label className="text-xs font-semibold text-kds-subtext uppercase tracking-wide block mb-1.5">Subject Line</label>
-                <input
-                  value={subject}
-                  onChange={(e) => setSubject(e.target.value)}
-                  placeholder="Your subject line…"
-                  className={inp}
-                />
-              </div>
-            )}
-
-            {/* Message body */}
-            <div>
-              <div className="flex items-center justify-between mb-1.5">
-                <label className="text-xs font-semibold text-kds-subtext uppercase tracking-wide">Message</label>
-                {channel === 'sms'
-                  ? <SmsCounter body={body} />
-                  : <span className="text-xs text-kds-subtext">{body.length}/{bodyLimit}</span>
-                }
-              </div>
-              <textarea
-                value={body}
-                onChange={(e) => setBody(e.target.value.slice(0, bodyLimit))}
-                placeholder={channel === 'sms' ? 'Keep it short and punchy (160 chars = 1 SMS)' : 'Write your message…'}
-                rows={6}
-                className={`${inp} resize-y`}
-              />
-            </div>
-
-            {/* Schedule */}
-            <div>
-              <label className="text-xs font-semibold text-kds-subtext uppercase tracking-wide block mb-1.5">Send Timing</label>
-              <div className="flex gap-2">
-                {(['now', 'later'] as const).map((s) => (
-                  <button
-                    key={s}
-                    type="button"
-                    onClick={() => setSchedule(s)}
-                    className={`flex-1 py-2 rounded-lg text-sm font-semibold border transition-colors ${
-                      schedule === s
-                        ? 'bg-kds-green text-black border-kds-green'
-                        : 'bg-kds-bg border-kds-border text-kds-subtext hover:text-kds-text'
-                    }`}>
-                    {s === 'now' ? 'Send now' : 'Schedule for later'}
-                  </button>
-                ))}
-              </div>
-              {schedule === 'later' && (
-                <input
-                  type="datetime-local"
-                  value={scheduledAt}
-                  onChange={(e) => setScheduledAt(e.target.value)}
-                  className={`${inp} mt-2`}
-                />
-              )}
-            </div>
-          </div>
-
-          {/* ── Preview panel (right) ── */}
-          <div className="w-72 shrink-0 overflow-y-auto p-5 flex flex-col gap-4">
-            <p className="text-xs font-semibold text-kds-subtext uppercase tracking-wide">Preview</p>
-            <MessagePreview channel={channel} subject={subject} body={body} campaignName={name} />
-            <div className="rounded-lg bg-kds-bg border border-kds-border p-3 text-xs text-kds-subtext space-y-1">
-              <p className="font-semibold text-kds-text text-[11px] uppercase tracking-wide mb-1">Summary</p>
-              <p>Channel: <span className="text-kds-text font-medium capitalize">{channel}</span></p>
-              {segmentId ? (
-                <p>Segment: <span className="text-kds-text font-medium">{segments.find((s) => s.id === segmentId)?.name ?? '—'}</span></p>
-              ) : (
-                <p>Audience: <span className="text-kds-text font-medium">All opted-in</span></p>
-              )}
-              <p>Schedule: <span className="text-kds-text font-medium capitalize">{schedule === 'now' ? 'Send immediately' : scheduledAt || 'Not set'}</span></p>
-            </div>
-          </div>
-        </div>
-
-        {/* Footer */}
-        <div className="flex items-center justify-between gap-3 px-6 py-4 border-t border-kds-border shrink-0">
-          <button onClick={onClose} className="rounded-xl border border-kds-border text-kds-subtext text-sm px-4 py-2 hover:border-kds-text">
-            Cancel
-          </button>
-          <div className="flex gap-2">
-            <button
-              onClick={() => { setError(null); saveDraft.mutate() }}
-              disabled={pending || !name || !body}
-              className="rounded-xl border border-kds-border text-kds-subtext text-sm px-4 py-2 hover:border-kds-text hover:text-kds-text disabled:opacity-40 transition-colors">
-              {saveDraft.isPending ? 'Saving…' : 'Save as Draft'}
-            </button>
-            <button
-              onClick={() => { setError(null); sendNow.mutate() }}
-              disabled={pending || !name || !body || (channel === 'email' && !subject)}
-              className="rounded-xl bg-kds-green text-black text-sm font-bold px-4 py-2 hover:opacity-90 disabled:opacity-40 transition-opacity">
-              {sendNow.isPending ? 'Sending…' : 'Send Now'}
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-// ─── Campaigns tab content ────────────────────────────────────────────────────
-function CampaignsPanel() {
-  const qc = useQueryClient()
-  const [composerOpen, setComposerOpen] = useState(false)
-
-  const { data: campaigns = [], isLoading } = useQuery<Campaign[]>({
-    queryKey: ['crm-campaigns'],
-    queryFn: () => api.get<Campaign[]>('/crm/campaigns'),
-  })
-
-  const { data: segments = [] } = useQuery<Segment[]>({
-    queryKey: ['crm-segments'],
-    queryFn: () => api.get<Segment[]>('/crm/segments'),
-  })
-
-  const { data: smartData } = useQuery<SmartSegmentsResp>({
-    queryKey: ['smart-segments'],
-    queryFn: () => api.get<SmartSegmentsResp>('/crm/smart-segments'),
-  })
-
-  function handleSaved() {
-    void qc.invalidateQueries({ queryKey: ['crm-campaigns'] })
-  }
-
-  return (
-    <div className="p-6 space-y-5 max-w-4xl mx-auto">
-      {composerOpen && (
-        <CampaignComposer
-          segments={segments}
-          smartSegments={smartData?.segments ?? []}
-          onClose={() => setComposerOpen(false)}
-          onSaved={handleSaved}
-        />
-      )}
-
-      <div className="flex items-center justify-between">
-        <div>
-          <p className="text-xs font-bold text-kds-subtext uppercase tracking-widest">Campaigns</p>
-          <p className="text-sm text-kds-subtext mt-0.5">{campaigns.length} campaign{campaigns.length !== 1 ? 's' : ''}</p>
-        </div>
-        <button
-          onClick={() => setComposerOpen(true)}
-          className="rounded-xl bg-kds-green text-black text-sm font-bold px-4 py-2 hover:opacity-90 transition-opacity">
-          + New Campaign
-        </button>
-      </div>
-
-      {isLoading && (
-        <div className="space-y-2">
-          {[1, 2, 3].map((i) => (
-            <div key={i} className="h-16 rounded-xl bg-kds-card border border-kds-border animate-pulse" />
-          ))}
-        </div>
-      )}
-
-      {!isLoading && campaigns.length === 0 && (
-        <div className="rounded-xl border border-dashed border-kds-border p-12 text-center">
-          <p className="text-3xl mb-3">📣</p>
-          <p className="font-semibold text-kds-text">No campaigns yet</p>
-          <p className="text-sm text-kds-subtext mt-1">Create your first campaign to reach customers by email, SMS or WhatsApp.</p>
-          <button
-            onClick={() => setComposerOpen(true)}
-            className="mt-4 rounded-xl bg-kds-green text-black text-sm font-bold px-4 py-2 hover:opacity-90 transition-opacity">
-            Create Campaign
-          </button>
-        </div>
-      )}
-
-      {campaigns.length > 0 && (
-        <div className="rounded-xl border border-kds-border overflow-hidden">
-          <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="bg-kds-card border-b border-kds-border">
-              <tr>
-                {['Campaign', 'Channel', 'Segment', 'Status', 'Created'].map((h) => (
-                  <th key={h} className="px-4 py-3 text-left text-xs font-bold text-kds-subtext uppercase tracking-wide">{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-kds-border">
-              {campaigns.map((c) => (
-                <tr key={c.id} className="hover:bg-kds-card/40">
-                  <td className="px-4 py-3">
-                    <p className="font-semibold text-kds-text">{c.name}</p>
-                    {c.subject && <p className="text-xs text-kds-subtext truncate max-w-[200px]">{c.subject}</p>}
-                  </td>
-                  <td className="px-4 py-3">
-                    <span className="text-xs font-medium text-kds-text capitalize">
-                      {c.channel === 'email' ? '✉ Email' : c.channel === 'sms' ? '📱 SMS' : '💬 WhatsApp'}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 text-xs text-kds-subtext">
-                    {c.segment?.name ?? 'All customers'}
-                  </td>
-                  <td className="px-4 py-3">
-                    <StatusBadge status={c.status} />
-                  </td>
-                  <td className="px-4 py-3 text-xs text-kds-subtext">
-                    {formatDistanceToNowStrict(new Date(c.createdAt))} ago
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          </div>
-        </div>
-      )}
-    </div>
-  )
-}
-
 export default function CRMPage() {
   const qc = useQueryClient()
-  const [tab, setTab] = useState<Tab>('customers')
   const [search, setSearch] = useState('')
   const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [blacklistModal, setBlacklistModal] = useState<{ id: string; name: string; current: boolean } | null>(null)
-  const [blacklistReason, setBlacklistReason] = useState('')
+  const [banModal, setBanModal] = useState<{ id: string; name: string; ban: ActiveBan | null } | null>(null)
+  const [banReason, setBanReason] = useState('')
+  const [banError, setBanError] = useState<string | null>(null)
   const [walletModal, setWalletModal] = useState<{ id: string; name: string } | null>(null)
   const [walletAmount, setWalletAmount] = useState('')
-  const [activeSegmentKey, setActiveSegmentKey] = useState<string | null>(null)
 
   // Deep link: /crm?customer=<id> opens that customer's detail pane. There is
   // no /crm/:id page — orders, complaints and the old /customers list link
@@ -489,7 +44,7 @@ export default function CRMPage() {
   // needs no Suspense boundary).
   useEffect(() => {
     const id = new URLSearchParams(window.location.search).get('customer')
-    if (id) { setTab('customers'); setSelectedId(id) }
+    if (id) setSelectedId(id)
   }, [])
 
   const { data: customersResp, isLoading } = useQuery({
@@ -502,32 +57,25 @@ export default function CRMPage() {
     queryKey: ['customer-detail', selectedId],
     queryFn: () => api.get<Customer & {
       orders: { id: string; totalCents: number; status: string; placedAt: string; concept: { name: string }; items: { name: string; quantity: number }[] }[]
-      loyaltyAccount: { pointsBalance: number; tier: string | null; transactions: { id: string; type: string; points: number; createdAt: string }[] } | null
+      loyaltyAccount: { pointsBalance: number; tier: string | null; transactions: { id: string; type: string; pointsDelta: number; createdAt: string }[] } | null
     }>(`/crm/customers/${selectedId}`),
     enabled: !!selectedId,
   })
 
-  const { data: smartData } = useQuery({
-    queryKey: ['smart-segments'],
-    queryFn: () => api.get<SmartSegmentsResp>('/crm/smart-segments'),
-    enabled: tab === 'segments',
-  })
-
-  const { data: segmentCustomers = [] } = useQuery({
-    queryKey: ['smart-segment-customers', activeSegmentKey],
-    queryFn: () => api.get<Customer[]>(`/crm/smart-segments/${activeSegmentKey}?limit=100`),
-    enabled: !!activeSegmentKey,
-  })
-
-  const blacklist = useMutation({
-    mutationFn: ({ id, isBlacklisted, reason }: { id: string; isBlacklisted: boolean; reason?: string }) =>
-      api.patch(`/crm/customers/${id}/blacklist`, { isBlacklisted, reason }),
+  // Block = raise a ban at the active company; unblock = lift that ban.
+  const toggleBan = useMutation({
+    mutationFn: ({ id, ban, reason }: { id: string; ban: ActiveBan | null; reason: string }) =>
+      ban
+        ? api.post(`/crm/bans/${ban.id}/lift`, { reason })
+        : api.post('/crm/bans', { customerId: id, reason }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['customers'] })
       void qc.invalidateQueries({ queryKey: ['customer-detail', selectedId] })
-      setBlacklistModal(null)
-      setBlacklistReason('')
+      setBanModal(null)
+      setBanReason('')
+      setBanError(null)
     },
+    onError: (e: Error) => setBanError(e.message),
   })
 
   const topupWallet = useMutation({
@@ -550,48 +98,50 @@ export default function CRMPage() {
     gold:   'text-kds-amber bg-kds-amber/20',
   }
 
-  const SEGMENT_COLORS: Record<string, string> = {
-    new: 'text-kds-blue bg-kds-blue/10',
-    vip: 'text-kds-amber bg-kds-amber/10',
-    repeat: 'text-kds-green bg-kds-green/10',
-    zero: 'text-kds-subtext bg-kds-bg',
-    dormant: 'text-kds-red bg-kds-red/10',
-    frequent: 'text-purple-400 bg-purple-900/20',
-    cart_abandoners: 'text-orange-400 bg-orange-900/20',
-    one_time: 'text-kds-subtext bg-kds-card',
-  }
-
   const inp = 'rounded-lg border border-kds-border bg-kds-bg px-3 py-2 text-sm text-kds-text focus:border-kds-green focus:outline-none w-full'
 
   return (
     <div className="min-h-screen bg-kds-bg">
       <header className="border-b border-kds-border px-6 py-4">
-        <h1 className="text-2xl font-black text-kds-text mt-0.5">Customers / CRM</h1>
-        <p className="text-sm text-kds-subtext">Customer profiles, smart segments, loyalty and campaigns</p>
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-black text-kds-text mt-0.5">Customers / CRM</h1>
+            <p className="text-sm text-kds-subtext">Customer profiles, loyalty, wallet and blocking</p>
+          </div>
+          <div className="flex gap-2">
+            <Link href="/crm/segments" className="rounded-xl border border-kds-border text-kds-text text-sm font-semibold px-3 py-1.5 hover:border-kds-green">Segments</Link>
+            <Link href="/crm/campaigns" className="rounded-xl border border-kds-border text-kds-text text-sm font-semibold px-3 py-1.5 hover:border-kds-green">Campaigns</Link>
+            <Link href="/crm/naughty-list" className="rounded-xl border border-kds-border text-kds-text text-sm font-semibold px-3 py-1.5 hover:border-kds-green">Naughty list</Link>
+          </div>
+        </div>
       </header>
 
-      {/* Blacklist modal */}
-      {blacklistModal && (
+      {/* Block / unblock modal — raises or lifts this company's ban */}
+      {banModal && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
           <div className="bg-kds-card border border-kds-border rounded-2xl p-6 max-w-sm w-full space-y-4">
             <p className="font-bold text-kds-text">
-              {blacklistModal.current ? 'Remove from blacklist' : 'Blacklist customer'}
+              {banModal.ban ? 'Unblock customer' : 'Block customer'}
             </p>
-            <p className="text-sm text-kds-subtext">{blacklistModal.name}</p>
-            {!blacklistModal.current && (
-              <input value={blacklistReason} onChange={(e) => setBlacklistReason(e.target.value)}
-                placeholder="Reason (optional)" className={inp} />
-            )}
+            <p className="text-sm text-kds-subtext">{banModal.name}</p>
+            <p className="text-xs text-kds-subtext">
+              {banModal.ban
+                ? `Blocked: ${banModal.ban.reason}. Unblocking lifts this company's ban; the record stays on the naughty list.`
+                : "They won't be able to order or book at this company's brands, and won't receive its campaigns. Other companies are not affected."}
+            </p>
+            <input value={banReason} onChange={(e) => setBanReason(e.target.value)}
+              placeholder={banModal.ban ? 'Why unblock? (required)' : 'Reason (required)'} className={inp} />
+            {banError && <p className="text-xs text-kds-red">{banError}</p>}
             <div className="flex gap-3">
               <button
-                onClick={() => blacklist.mutate({ id: blacklistModal.id, isBlacklisted: !blacklistModal.current, ...(blacklistReason ? { reason: blacklistReason } : {}) })}
-                disabled={blacklist.isPending}
+                onClick={() => toggleBan.mutate({ id: banModal.id, ban: banModal.ban, reason: banReason.trim() })}
+                disabled={toggleBan.isPending || banReason.trim().length < 3}
                 className={`flex-1 rounded-xl text-sm font-bold py-2 hover:opacity-90 disabled:opacity-50 ${
-                  blacklistModal.current ? 'bg-kds-green text-black' : 'bg-kds-red text-white'
+                  banModal.ban ? 'bg-kds-green text-black' : 'bg-kds-red text-white'
                 }`}>
-                {blacklist.isPending ? '…' : blacklistModal.current ? 'Unblacklist' : 'Blacklist'}
+                {toggleBan.isPending ? '…' : banModal.ban ? 'Unblock' : 'Block'}
               </button>
-              <button onClick={() => { setBlacklistModal(null); setBlacklistReason('') }}
+              <button onClick={() => { setBanModal(null); setBanReason(''); setBanError(null) }}
                 className="flex-1 rounded-xl border border-kds-border text-kds-subtext text-sm py-2 hover:border-kds-text">
                 Cancel
               </button>
@@ -638,19 +188,7 @@ export default function CRMPage() {
               className="w-full rounded-xl bg-kds-bg border border-kds-border px-3 py-2 text-kds-text text-sm focus:border-kds-green focus:outline-none" />
           </div>
 
-          <div className="flex gap-1 px-3 pt-3 pb-2">
-            {(['customers', 'segments', 'campaigns'] as Tab[]).map((t) => (
-              <button key={t} onClick={() => setTab(t)}
-                className={`flex-1 py-1.5 text-xs font-semibold rounded-lg transition-colors ${
-                  tab === t ? 'bg-kds-green text-black' : 'bg-kds-card text-kds-subtext hover:text-kds-text'
-                }`}>
-                {t === 'segments' ? 'Segments' : t === 'campaigns' ? 'Campaigns' : 'Customers'}
-              </button>
-            ))}
-          </div>
-
-          {tab === 'customers' && (
-            <div className="flex-1 overflow-y-auto">
+          <div className="flex-1 overflow-y-auto">
               {isLoading && <p className="px-4 py-3 text-xs text-kds-subtext">Loading…</p>}
               {!isLoading && customers.length === 0 && (
                 <p className="px-4 py-6 text-center text-xs text-kds-subtext">No customers found</p>
@@ -661,9 +199,9 @@ export default function CRMPage() {
                     selectedId === c.id ? 'bg-kds-card border-l-2 border-l-kds-green' : 'hover:bg-kds-card/50'
                   }`}>
                   <div className={`h-8 w-8 rounded-full shrink-0 flex items-center justify-center text-xs font-black ${
-                    c.isBlacklisted ? 'bg-kds-red/20 text-kds-red' : 'bg-kds-border text-kds-subtext'
+                    c.activeBan ? 'bg-kds-red/20 text-kds-red' : 'bg-kds-border text-kds-subtext'
                   }`}>
-                    {c.isBlacklisted ? '⛔' : (c.name[0]?.toUpperCase() ?? '?')}
+                    {c.activeBan ? '⛔' : (c.name[0]?.toUpperCase() ?? '?')}
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-1.5 mb-0.5">
@@ -684,153 +222,36 @@ export default function CRMPage() {
                   </div>
                 </button>
               ))}
-            </div>
-          )}
+          </div>
 
-          {tab === 'segments' && (
-            <div className="flex-1 overflow-y-auto">
-              {(smartData?.segments ?? []).map((seg) => (
-                <button key={seg.key}
-                  onClick={() => setActiveSegmentKey(activeSegmentKey === seg.key ? null : seg.key)}
-                  className={`w-full flex items-center justify-between px-4 py-3 border-b border-kds-border/40 text-left transition-colors ${
-                    activeSegmentKey === seg.key ? 'bg-kds-card border-l-2 border-l-kds-green' : 'hover:bg-kds-card/50'
-                  }`}>
-                  <div>
-                    <p className="text-sm font-semibold text-kds-text">{seg.label}</p>
-                    <p className="text-xs text-kds-subtext">{seg.desc}</p>
-                  </div>
-                  <span className={`rounded-full px-2.5 py-0.5 text-xs font-bold shrink-0 ${SEGMENT_COLORS[seg.key] ?? 'text-kds-subtext bg-kds-card'}`}>
-                    {seg.count}
-                  </span>
-                </button>
-              ))}
-            </div>
-          )}
-
-          {tab === 'campaigns' && (
-            <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-3">
-              <p className="text-xs text-kds-subtext">Build and send targeted campaigns to your customer segments via email, SMS or WhatsApp.</p>
-              <div className="rounded-xl bg-kds-card border border-kds-border p-3 space-y-1.5 text-xs text-kds-subtext">
-                <p className="font-semibold text-kds-text text-[11px] uppercase tracking-wide">Quick facts</p>
-                <p>SMS: 160 chars = 1 message</p>
-                <p>Email: up to 2,000 chars</p>
-                <p>WhatsApp: same as email limit</p>
-              </div>
-            </div>
-          )}
-
-          {tab === 'customers' && (
-            <div className="border-t border-kds-border px-4 py-3">
-              <p className="text-xs text-kds-subtext">{customers.length} customer{customers.length !== 1 ? 's' : ''} shown</p>
-            </div>
-          )}
-          {tab === 'segments' && smartData && (
-            <div className="border-t border-kds-border px-4 py-3 space-y-1">
-              <p className="text-xs text-kds-subtext">Repeat rate: <span className="text-kds-text font-bold">{smartData.summary.repeatRate}%</span></p>
-              <p className="text-xs text-kds-subtext">Avg order: <span className="text-kds-text font-bold">{fmtPkrWhole(smartData.summary.avgOrderValueCents)}</span></p>
-            </div>
-          )}
+          <div className="border-t border-kds-border px-4 py-3">
+            <p className="text-xs text-kds-subtext">{customers.length} customer{customers.length !== 1 ? 's' : ''} shown</p>
+          </div>
         </aside>
 
         {/* ── Right panel ── */}
         <div className="flex-1 overflow-y-auto">
-          {/* ── Campaigns tab ── */}
-          {tab === 'campaigns' && <CampaignsPanel />}
-
-          {/* Segment customer list */}
-          {tab === 'segments' && activeSegmentKey && (
-            <div className="p-6">
-              <p className="text-xs font-bold text-kds-subtext uppercase tracking-widest mb-4">
-                {smartData?.segments.find((s) => s.key === activeSegmentKey)?.label ?? activeSegmentKey}
-              </p>
-              {segmentCustomers.length === 0 ? (
-                <p className="text-sm text-kds-subtext">No customers in this segment</p>
-              ) : (
-                <div className="rounded-xl border border-kds-border overflow-hidden">
-                  <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead className="bg-kds-card border-b border-kds-border">
-                      <tr>
-                        {['Name', 'Phone', 'Email', 'Spent', 'Last order', 'Wallet'].map((h) => (
-                          <th key={h} className="px-4 py-3 text-left text-xs font-bold text-kds-subtext uppercase">{h}</th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-kds-border">
-                      {segmentCustomers.map((c) => (
-                        <tr key={c.id} className="hover:bg-kds-card/40">
-                          <td className="px-4 py-3 font-semibold text-kds-text">{c.name}</td>
-                          <td className="px-4 py-3 text-kds-subtext text-xs">{c.phone ?? '—'}</td>
-                          <td className="px-4 py-3 text-kds-subtext text-xs">{c.email ?? '—'}</td>
-                          <td className="px-4 py-3 text-kds-green font-bold">{fmtPkrWhole(c.totalSpentCents ?? 0)}</td>
-                          <td className="px-4 py-3 text-kds-subtext text-xs">
-                            {c.lastOrderAt ? formatDistanceToNowStrict(new Date(c.lastOrderAt)) + ' ago' : '—'}
-                          </td>
-                          <td className="px-4 py-3 text-kds-subtext text-xs">{fmtPkrWhole(c.walletBalance ?? 0)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-
-          {tab === 'segments' && !activeSegmentKey && smartData && (
-            <div className="p-6">
-              <div className="grid grid-cols-2 gap-4 max-w-2xl mx-auto">
-                <div className="col-span-2 rounded-xl border border-kds-border bg-kds-card p-5">
-                  <p className="text-xs font-bold text-kds-subtext uppercase tracking-widest mb-4">Summary</p>
-                  <div className="grid grid-cols-3 gap-4">
-                    <div className="text-center">
-                      <p className="text-3xl font-black text-kds-text">{smartData.summary.totalCustomers}</p>
-                      <p className="text-xs text-kds-subtext mt-1">Total customers</p>
-                    </div>
-                    <div className="text-center">
-                      <p className="text-3xl font-black text-kds-green">{smartData.summary.repeatRate}%</p>
-                      <p className="text-xs text-kds-subtext mt-1">Repeat rate</p>
-                    </div>
-                    <div className="text-center">
-                      <p className="text-2xl font-black text-kds-amber">{fmtPkrWhole(smartData.summary.avgOrderValueCents)}</p>
-                      <p className="text-xs text-kds-subtext mt-1">Avg order value</p>
-                    </div>
-                  </div>
-                </div>
-                {smartData.segments.map((seg) => (
-                  <button key={seg.key}
-                    onClick={() => setActiveSegmentKey(seg.key)}
-                    className="rounded-xl border border-kds-border bg-kds-card p-4 text-left hover:border-kds-green transition-colors">
-                    <p className={`text-2xl font-black ${SEGMENT_COLORS[seg.key]?.split(' ')[0] ?? 'text-kds-text'}`}>{seg.count}</p>
-                    <p className="text-sm font-semibold text-kds-text mt-1">{seg.label}</p>
-                    <p className="text-xs text-kds-subtext mt-0.5">{seg.desc}</p>
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
           {/* Customer detail */}
-          {tab === 'customers' && selected && customerDetail && (
+          {selected && customerDetail && (
             <div className="p-6">
               <div className="max-w-2xl mx-auto space-y-5">
                 {/* Profile card */}
                 <div className="rounded-xl border border-kds-border bg-kds-card p-5">
                   <div className="flex items-start gap-4">
                     <div className={`h-14 w-14 rounded-full flex items-center justify-center text-2xl font-black shrink-0 ${
-                      customerDetail.isBlacklisted ? 'bg-kds-red/20 text-kds-red' : 'bg-kds-border text-kds-text'
+                      customerDetail.activeBan ? 'bg-kds-red/20 text-kds-red' : 'bg-kds-border text-kds-text'
                     }`}>
-                      {customerDetail.isBlacklisted ? '⛔' : (customerDetail.name[0]?.toUpperCase() ?? '?')}
+                      {customerDetail.activeBan ? '⛔' : (customerDetail.name[0]?.toUpperCase() ?? '?')}
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
                         <p className="text-xl font-black text-kds-text">{customerDetail.name}</p>
-                        {customerDetail.isBlacklisted && (
-                          <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-kds-red/20 text-kds-red">Blacklisted</span>
+                        {customerDetail.activeBan && (
+                          <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-kds-red/20 text-kds-red">Blocked</span>
                         )}
                       </div>
-                      {customerDetail.blacklistReason && (
-                        <p className="text-xs text-kds-red mt-0.5">Reason: {customerDetail.blacklistReason}</p>
+                      {customerDetail.activeBan && (
+                        <p className="text-xs text-kds-red mt-0.5">Reason: {customerDetail.activeBan.reason}</p>
                       )}
                       <div className="flex flex-wrap gap-3 mt-1">
                         {customerDetail.phone && <span className="text-sm text-kds-subtext">📞 {customerDetail.phone}</span>}
@@ -870,13 +291,13 @@ export default function CRMPage() {
                       + Top up wallet
                     </button>
                     <button
-                      onClick={() => setBlacklistModal({ id: customerDetail.id, name: customerDetail.name, current: customerDetail.isBlacklisted })}
+                      onClick={() => setBanModal({ id: customerDetail.id, name: customerDetail.name, ban: customerDetail.activeBan })}
                       className={`rounded-lg text-xs font-bold px-3 py-1.5 transition-colors ${
-                        customerDetail.isBlacklisted
+                        customerDetail.activeBan
                           ? 'bg-kds-green/20 text-kds-green hover:bg-kds-green/30'
                           : 'bg-kds-red/20 text-kds-red hover:bg-kds-red/30'
                       }`}>
-                      {customerDetail.isBlacklisted ? 'Remove blacklist' : '⛔ Blacklist'}
+                      {customerDetail.activeBan ? 'Unblock' : '⛔ Block'}
                     </button>
                   </div>
                 </div>
@@ -902,8 +323,8 @@ export default function CRMPage() {
                         {customerDetail.loyaltyAccount.transactions.slice(0, 5).map((tx) => (
                           <div key={tx.id} className="flex items-center justify-between text-xs">
                             <span className="text-kds-subtext capitalize">{tx.type}</span>
-                            <span className={tx.points >= 0 ? 'text-kds-green font-bold' : 'text-kds-red font-bold'}>
-                              {tx.points >= 0 ? '+' : ''}{tx.points} pts
+                            <span className={tx.pointsDelta >= 0 ? 'text-kds-green font-bold' : 'text-kds-red font-bold'}>
+                              {tx.pointsDelta >= 0 ? '+' : ''}{tx.pointsDelta} pts
                             </span>
                           </div>
                         ))}
@@ -950,7 +371,7 @@ export default function CRMPage() {
             </div>
           )}
 
-          {tab === 'customers' && !selected && (
+          {!selected && (
             <div className="flex-1 flex items-center justify-center h-full text-kds-subtext">
               <div className="text-center">
                 <p className="text-5xl mb-3">👥</p>

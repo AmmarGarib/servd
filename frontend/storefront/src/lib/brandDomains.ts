@@ -1,38 +1,103 @@
-// Shared between middleware (edge runtime) and client components. Pure data,
-// no imports — safe in both environments. Single source of truth: edit here,
-// the middleware host-resolver and the client `lib/host.ts` both pick it up.
-
-// Only the three live consumer brands. Phantom brand domains
-// (eatstrata, bukharirice, craveman.pk, garnish.pk) were removed in
-// May 2026 — those brands are not real operations.
-//   <brand>.pk  → the brand microsite. This is the live setup: each brand owns
-//                 its own domain so it reads as a real independent restaurant
-//                 and builds its own SEO authority.
-//   servd.pk    → the consumer-facing servd site and the ordering system. It is
-//                 in SERVD_HOSTS below, NOT here.
+// Shared between middleware (edge runtime) and client components — no imports,
+// safe in both environments.
 //
-// A domain missing from this map does not fail loudly — resolveBrandSlug just
-// returns null, the middleware never rewrites `/` onto /brand/<slug>, and the
-// site quietly serves servd chrome on the brand's domain. That is exactly what
-// flipd.pk did until it was noticed. Add the entry the moment DNS is pointed.
-export const BRAND_DOMAIN_MAP: Record<string, string> = {
-  'flipd.pk':        'flipd',
-  'www.flipd.pk':    'flipd',
-  'stackd.pk':       'stackd',
-  'www.stackd.pk':   'stackd',
-  'simmer.pk':       'simmer',
-  'www.simmer.pk':   'simmer',
-  // The eat*.com set predates the .pk domains. Kept because they are
-  // registered and anything already shared on them keeps resolving.
-  'eatstax.com':     'stackd',
-  'eatsimmer.com':   'simmer',
-  'eatflipd.com':    'flipd',
-}
+// Brand hosts come from the Domain table (admin → Configuration → Domains),
+// the ONE list of custom domains, via the public GET /api/v1/domains/hosts.
+// The hardcoded BRAND_DOMAIN_MAP that used to live here is gone: a domain
+// added and made Live in admin never routed, because the middleware read this
+// file instead. The API builds its CORS allowlist from the same rows, so a
+// brand domain that routes here can also call the API.
+//
+//   <brand>.pk  → the brand microsite (Domain.purpose = brand_microsite).
+//   servd.pk    → the consumer-facing servd site and the ordering system. It is
+//                 in SERVD_HOSTS below, never a Domain row.
+//
+// The list is cached in memory for a minute (stale-while-revalidate), and a
+// failed refresh keeps the last good list — an API blip must not unbrand
+// every brand domain. Dev and preview hosts (<slug>.localhost,
+// <slug>.servd.app / .pk) resolve by pattern with no lookup at all.
 
 export const RESERVED_SUBDOMAINS = new Set(['www', 'app', 'admin', 'api', 'cdn', 'media'])
 
 // Hostnames that mean "this is the servd canonical domain, not a brand".
 export const SERVD_HOSTS = new Set(['servd.app', 'servd.pk', 'localhost'])
+
+const HOSTS_TTL_MS = 60_000
+const HOSTS_TIMEOUT_MS = 2_500
+
+let hostMap: Record<string, string> = {}
+let hostsLoadedAt = 0
+let hostsInflight: Promise<void> | null = null
+
+function apiBase(): string {
+  // Written as direct process.env reads so Next inlines the public one into
+  // the client bundle. Server / edge prefer the internal URL.
+  const internal = typeof window === 'undefined' ? process.env['INTERNAL_API_URL'] : undefined
+  return (internal ?? process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001').replace(/\/+$/, '')
+}
+
+function bareHost(host: string): string {
+  return (host.split(':')[0] ?? host).trim().toLowerCase().replace(/\.$/, '')
+}
+
+function patternSlug(bare: string): string | null {
+  const m = bare.match(/^([a-z0-9-]+)\.(localhost|servd\.app|servd\.pk)$/)
+  if (m?.[1] && !RESERVED_SUBDOMAINS.has(m[1])) return m[1]
+  return null
+}
+
+async function loadBrandHosts(): Promise<void> {
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), HOSTS_TIMEOUT_MS)
+  try {
+    const res = await fetch(`${apiBase()}/api/v1/domains/hosts`, { cache: 'no-store', signal: ctrl.signal })
+    if (!res.ok) return
+    const body = (await res.json()) as { hosts?: Array<{ hostname: string; slug: string | null }> }
+    const next: Record<string, string> = {}
+    for (const h of body.hosts ?? []) {
+      if (h.slug) next[bareHost(h.hostname)] = h.slug
+    }
+    hostMap = next
+    hostsLoadedAt = Date.now()
+  } catch {
+    // Keep the last good map.
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+function refreshBrandHosts(): Promise<void> {
+  hostsInflight ??= loadBrandHosts().finally(() => { hostsInflight = null })
+  return hostsInflight
+}
+
+/**
+ * Resolve a Host header (or window.location.host) to a brand slug, or null
+ * for the servd canonical domain / an unknown host. Waits for the Domain list
+ * only on the very first call in this runtime; after that a stale list is
+ * served while it refreshes in the background.
+ */
+export async function resolveBrandHost(host: string): Promise<string | null> {
+  const bare = bareHost(host)
+  if (SERVD_HOSTS.has(bare)) return null
+  if (hostsLoadedAt === 0) await refreshBrandHosts()
+  else if (Date.now() - hostsLoadedAt > HOSTS_TTL_MS) void refreshBrandHosts()
+  return hostMap[bare] ?? patternSlug(bare)
+}
+
+/**
+ * Synchronous variant for render paths that cannot await: answers from the
+ * cached Domain list (plus the dev / preview patterns) and kicks off a load
+ * if there is none yet. Returns null for a custom domain until the list has
+ * loaded once, so anything that must be right on the first call — the
+ * middleware, the client host hook — uses resolveBrandHost().
+ */
+export function resolveBrandSlug(host: string): string | null {
+  const bare = bareHost(host)
+  if (SERVD_HOSTS.has(bare)) return null
+  if (hostsLoadedAt === 0 || Date.now() - hostsLoadedAt > HOSTS_TTL_MS) void refreshBrandHosts()
+  return hostMap[bare] ?? patternSlug(bare)
+}
 
 /**
  * Request header the middleware stamps with the brand slug when it rewrites a
@@ -57,21 +122,6 @@ export const BRAND_HOST_HEADER = 'x-servd-brand-host'
  */
 export const BRAND_REWRITE_PATHS = new Set(['/', '/menu', '/about', '/visit'])
 
-// Resolve a Host header (or window.location.hostname) to a brand slug, or
-// null if it's the servd canonical domain.
-export function resolveBrandSlug(host: string): string | null {
-  const bare = (host.split(':')[0] ?? host).toLowerCase()
-  if (SERVD_HOSTS.has(bare)) return null
-
-  const explicit = BRAND_DOMAIN_MAP[bare]
-  if (explicit) return explicit
-
-  const m = bare.match(/^([a-z0-9-]+)\.(localhost|servd\.app|servd\.pk)$/)
-  if (m?.[1] && !RESERVED_SUBDOMAINS.has(m[1])) return m[1]
-
-  return null
-}
-
 // ─── Canonical origins ────────────────────────────────────────────────────────
 //
 // Which URL each surface calls home. This is what tells Google that the flipd
@@ -87,7 +137,13 @@ export function resolveBrandSlug(host: string): string | null {
 export const SERVD_ORIGIN: string =
   (process.env['NEXT_PUBLIC_SITE_URL'] ?? 'https://servd.pk').replace(/\/+$/, '')
 
-/** Each brand's own domain — the canonical home of its microsite. */
+/**
+ * Each brand's own domain — the canonical home of its microsite, used for
+ * <link rel=canonical>, the sitemap and JSON-LD. Still a code constant: the
+ * canonical URL is rendered synchronously in metadata, and which of a brand's
+ * several Domain rows is canonical is not yet recorded on the table (follow-up:
+ * a `canonical` flag on Domain, then derive this from /domains/hosts).
+ */
 export const BRAND_ORIGIN: Record<string, string> = {
   flipd:  'https://flipd.pk',
   stackd: 'https://stackd.pk',

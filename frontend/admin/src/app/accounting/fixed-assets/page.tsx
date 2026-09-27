@@ -190,7 +190,8 @@ function AddAsset({ reg, concepts, onClose }: { reg: Register; concepts: Concept
         <L t="Category"><select className={inp} value={f.category} onChange={set('category')}>
           {Object.entries(reg.categories).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}</select></L>
         <L t="How it was paid for"><select className={inp} value={f.funding} onChange={set('funding')}>
-          {Object.entries(reg.funding).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}</select></L>
+          {/* 'advance' is capex capitalised from the CapEx tracker, never typed in here. */}
+          {Object.entries(reg.funding).filter(([k]) => k !== 'advance').map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}</select></L>
         <L t="Acquired"><input type="date" className={inp} value={f.acquiredAt} onChange={set('acquiredAt')} /></L>
         <L t="Useful life (months)"><input type="number" min={1} className={inp} value={f.life} onChange={set('life')} /></L>
         <L t="Cost (PKR)"><input type="number" min={0} className={inp} value={f.cost} onChange={set('cost')} /></L>

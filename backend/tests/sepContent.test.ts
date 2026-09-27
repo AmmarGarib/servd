@@ -52,6 +52,7 @@ let app: FastifyInstance
 let tenantA: string
 let tenantB: string
 let conceptA: string
+let slugA = '', slugB = ''
 let conceptB: string
 let catA: string
 let catB: string
@@ -96,8 +97,10 @@ beforeAll(async () => {
   tenantB = (await prisma.tenant.create({ data: { name: 'Sep Co B', slug: `${PREFIX}-b-${STAMP}` } })).id
   await ensureChartOfAccounts(tenantA)
   await ensureChartOfAccounts(tenantB)
-  conceptA = (await prisma.concept.create({ data: { name: 'Sep Brand A', slug: `${PREFIX}-brand-a-${STAMP}`, type: 'restaurant', tenantId: tenantA } })).id
-  conceptB = (await prisma.concept.create({ data: { name: 'Sep Brand B', slug: `${PREFIX}-brand-b-${STAMP}`, type: 'restaurant', tenantId: tenantB } })).id
+  slugA = `${PREFIX}-brand-a-${STAMP}`
+  slugB = `${PREFIX}-brand-b-${STAMP}`
+  conceptA = (await prisma.concept.create({ data: { name: 'Sep Brand A', slug: slugA, type: 'restaurant', tenantId: tenantA } })).id
+  conceptB = (await prisma.concept.create({ data: { name: 'Sep Brand B', slug: slugB, type: 'restaurant', tenantId: tenantB } })).id
   catA = (await prisma.category.create({ data: { conceptId: conceptA, name: 'Mains A' } })).id
   catB = (await prisma.category.create({ data: { conceptId: conceptB, name: 'Mains B' } })).id
   stationA = (await prisma.station.create({ data: { conceptId: conceptA, name: 'Grill A' } })).id
@@ -180,8 +183,9 @@ describe('gift cards (owner decision 14)', () => {
   })
 
   it("B cannot redeem A's card at B's till (404, balance untouched)", async () => {
+    // A redemption is always against an order now (one engine, decision 14).
     const r = await call('POST', '/gift-cards/redeem', auth(userB), { code, amountCents: 1_000 })
-    expect(r.statusCode).toBe(404)
+    expect(r.statusCode).toBe(400)
     const r2 = await call('POST', '/gift-cards/redeem', auth(userB), { code, amountCents: 1_000, orderId: orderB })
     expect(r2.statusCode).toBe(404)
     expect((await prisma.giftCard.findUniqueOrThrow({ where: { id: cardId } })).balanceCents).toBe(50_000)
@@ -201,7 +205,7 @@ describe('gift cards (owner decision 14)', () => {
   it('A redeems its own card against its own order', async () => {
     const r = await call('POST', '/gift-cards/redeem', auth(userA), { code, amountCents: 1_000, orderId: orderA })
     expect(r.statusCode).toBe(200)
-    expect(r.json().card.balanceCents).toBe(49_000)
+    expect((await prisma.giftCard.findUniqueOrThrow({ where: { id: cardId } })).balanceCents).toBe(49_000)
   })
 
   it("B cannot void A's card", async () => {
@@ -310,11 +314,12 @@ describe('promo codes', () => {
   })
 
   it("A's code is not valid at B's brand, and is at A's", async () => {
-    const atB = await call('POST', '/promos/validate', {}, { code, conceptId: conceptB, orderCents: 100_000 })
-    expect(atB.statusCode).toBe(400)
-    expect(atB.json().error.code).toBe('INVALID_PROMO')
-    const atA = await call('POST', '/promos/validate', {}, { code, conceptId: conceptA, orderCents: 100_000 })
-    expect(atA.statusCode).toBe(200)
+    // /promos/validate is gone (one evaluation, lib/promoEval.ts); the public
+    // preview looks a code up in the brand's company.
+    const atB = await call('GET', `/storefront/promo-preview?code=${code}&conceptSlug=${slugB}`, {})
+    expect(atB.json().valid).toBe(false)
+    const atA = await call('GET', `/storefront/promo-preview?code=${code}&conceptSlug=${slugA}`, {})
+    expect(atA.json().valid).toBe(true)
   })
 
   it('a promo cannot be created under, or moved to, a foreign brand', async () => {
