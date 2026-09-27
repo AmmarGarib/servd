@@ -28,6 +28,38 @@
   background: radial-gradient(ellipse at center, #F4C22E 0%, rgba(244, 194, 46, 0) 70%);
   pointer-events: none;
 }
+/* Until the crowd draws (or without WebGL) the floor reads stronger. */
+.stage:not([data-ready]) .counter {
+  background: radial-gradient(ellipse at center, rgba(78, 42, 79, 0.16) 0%, #F4C22E 38%, rgba(244, 194, 46, 0) 72%);
+}
+
+/* ── Stand-ins: three hand-drawn step doodles where the crowd will stand ── */
+.standIns {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-around;
+  padding: 0 12% 3%;
+  pointer-events: none;
+  transition: opacity 300ms ease;
+}
+.stage[data-ready] .standIns { opacity: 0; }
+.standIn {
+  width: clamp(80px, 11vw, 136px);
+  height: auto;
+  fill: none;
+  stroke: #4E2A4F;
+  stroke-width: 4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  overflow: visible;
+}
+.standIn:nth-child(1) { rotate: -6deg; }
+.standIn:nth-child(2) { rotate: 3deg; translate: 0 -8%; }
+.standIn:nth-child(3) { rotate: -2deg; }
+.standFill { fill: #FFF4D6; }
+.standShadow { fill: #F4C22E; stroke: none; }
 
 .stepsWrap {
   position: relative;
@@ -71,7 +103,10 @@
 }
 .step:nth-child(1) { z-index: 3; }
 .step:nth-child(2) { z-index: 2; }
-.step:hover { translate: 0 -6px; box-shadow: 10px 14px 0 #2A1A2B; }
+@media (hover: hover) and (pointer: fine) {
+  .step:hover { translate: 0 -6px; box-shadow: 10px 14px 0 #2A1A2B; }
+}
+.step:active { translate: 0 2px; box-shadow: 5px 5px 0 #2A1A2B; }
 
 .num {
   position: absolute;
@@ -102,13 +137,25 @@
   width: 48px;
   height: 48px;
   border-radius: 14px;
+  padding: 0;
   background: #FFD447;
   border: 2px solid #2A1A2B;
   color: #2A1A2B;
+  font: inherit;
+  cursor: pointer;
   transform: rotate(6deg);
-  transition: transform 300ms cubic-bezier(0.34, 1.56, 0.64, 1);
+  transition: transform 300ms cubic-bezier(0.34, 1.56, 0.64, 1), background-color 120ms ease, color 120ms ease;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
 }
-.step:hover .icon { transform: rotate(-8deg) scale(1.12); }
+.iconFace { display: grid; place-items: center; }
+@media (hover: hover) and (pointer: fine) {
+  .step:hover .icon { transform: rotate(-8deg) scale(1.12); }
+}
+.icon:active { transform: rotate(-4deg) scale(0.92); }
+.icon:focus-visible { outline: 3px solid #2A1A2B; outline-offset: 3px; }
+/* Reduced-motion cheer: a plum flash instead of a bounce. */
+.icon[data-lit] { background: #4E2A4F; color: #FFF4D6; }
 
 .stepTitle {
   margin: 0.4rem 0 0.5rem;
@@ -217,6 +264,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .doodle { animation: none; }
-  .step:hover { translate: none; }
-  .step:hover .icon { transform: rotate(6deg); }
+  .step:hover, .step:active { translate: none; }
+  .step:hover .icon, .icon:active { transform: rotate(6deg); }
+  .standIns { transition: opacity 120ms linear; }
 }

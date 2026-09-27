@@ -1,10 +1,16 @@
 'use client'
-import { useEffect, useState, useRef } from 'react'
+import { useCallback, useEffect, useState, useRef } from 'react'
 import { useParams, useRouter, usePathname } from 'next/navigation'
 import Link from 'next/link'
+import { motion } from 'framer-motion'
 import { fmt, isLight } from '../../../../lib/ui'
 import { useCustomerAuth } from '../../../../store/customerAuth'
 import { LoadingScreen } from '../../../../components/ui/Loader'
+import { formatBrandName } from '../../../../lib/concept'
+import { buzz, celebrate, sfx, usePlay, usePrefersReducedMotion, type Palette } from '@/lib/play'
+import { WaitGame, type WaitRound } from '@/components/play/wait/WaitGame'
+import { Candle } from '@/components/brand/simmer/Candle'
+import w from '@/components/play/wait/wait.module.css'
 
 // /<concept>/order/[id] — live order tracker.
 // Restyled onto the on-system --servd-* tokens. Status icons are inline
@@ -39,9 +45,14 @@ const STEP_INDEX: Record<string, number> = {
   received: 0, confirmed: 1, preparing: 2, ready: 3, completed: 4, cancelled: -1,
 }
 
-// Headline + sub copy moved to lib/orderStatus.ts so all three order
-// surfaces (/orders, /account, this tracker) share the same wording.
-import { statusFor } from '../../../../lib/orderStatus'
+// Status copy lives in lib/orderStatus.ts. /orders and /account use the
+// neutral `statusFor` wording; this tracker speaks in the kitchen's own
+// voice via `trackerLine` (which falls back to the neutral copy, and never
+// jokes on a cancelled or refunded order).
+import { trackerLine } from '../../../../lib/orderStatus'
+
+/** Statuses during which the kitchen's wait game is on the table. */
+const WAITING = new Set(['received', 'confirmed', 'preparing'])
 
 export default function OrderStatusPage() {
   const { concept: slug, id } = useParams<{ concept: string; id: string }>()
@@ -52,6 +63,44 @@ export default function OrderStatusPage() {
   const [notFound, setNotFound] = useState(false)
   const [flash,    setFlash]    = useState(false)
   const prevStatus = useRef<string | null>(null)
+
+  // ── Play (presentation only — never touches polling, auth or the API) ──
+  const reduced = usePrefersReducedMotion()
+  const brand = (order?.concept.slug ?? slug ?? '').toLowerCase()
+  // Tap a finished step to replay its tick.
+  const [replay, setReplay] = useState<Record<string, number>>({})
+  // The simmer candle flares when the order turns ready (no confetti there).
+  const [flare, setFlare] = useState(0)
+  // Curbside: the car drives in and parks once "I'm here" lands.
+  const [parked, setParked] = useState(false)
+  // The best wait-game round played on this visit, for the "nice timing" note.
+  const [played, setPlayed] = useState<WaitRound | null>(null)
+  const bestPatty = usePlay((st) => st.best['patty'])
+  const bestPour = usePlay((st) => st.best['pour'])
+  const seenStatus = useRef<string | null>(null)
+
+  const onRound = useCallback((r: WaitRound) => {
+    setPlayed((p) => (p && p.game === r.game && p.score >= r.score ? p : r))
+  }, [])
+
+  // The ready moment: only on a live transition, never on a page load that
+  // already finds the order ready. Tracked separately from `prevStatus` so
+  // the polling loop stays exactly as it was.
+  useEffect(() => {
+    const st = order?.status
+    if (!st) return
+    const prev = seenStatus.current
+    seenStatus.current = st
+    if (!prev || prev === st || st !== 'ready') return
+    if (brand === 'simmer') {
+      setFlare((f) => f + 1)
+      return
+    }
+    const palette: Palette = brand === 'stackd' ? 'stackd' : brand === 'flipd' ? 'flipd' : 'servd'
+    void celebrate({ power: 'big', palette })
+    buzz(60)
+    sfx('ding')
+  }, [order?.status, brand])
 
   // Guest order viewing is gone — every order tracker requires sign-in.
   // Bounce to login with a return URL so the customer lands back here after
@@ -132,7 +181,10 @@ export default function OrderStatusPage() {
   const isReady     = order.status === 'ready'
   const isPreparing = order.status === 'preparing'
   const isDone      = order.status === 'completed' || isCancelled
-  const cfg         = statusFor(order.status)
+  const cfg         = trackerLine(order.status, brand)
+  const isSimmer    = brand === 'simmer'
+  const showWait    = WAITING.has(order.status)
+  const niceBest    = played ? (played.game === 'patty' ? bestPatty : bestPour) ?? played.score : null
 
   const heroBg     = isCancelled ? 'rgba(239,68,68,0.06)' : `color-mix(in srgb, ${color} 8%, white)`
   const heroBorder = isCancelled ? '1px solid rgba(239,68,68,0.22)' : `1px solid color-mix(in srgb, ${color} 25%, transparent)`
@@ -159,7 +211,7 @@ export default function OrderStatusPage() {
         )}
         <span style={{ color: 'var(--servd-dim)' }}>·</span>
         <span className="font-display text-sm font-semibold" style={{ fontFamily: 'var(--font-display)', color: 'var(--servd-ink)' }}>
-          {order.concept.name}
+          {formatBrandName(order.concept.name)}
         </span>
         {!isDone && !isCancelled && (
           <div className="ml-auto flex items-center gap-1.5">
@@ -180,12 +232,22 @@ export default function OrderStatusPage() {
           )}
 
           <div className="mb-5 flex justify-center" style={{ color }}>
-            <StatusIcon status={order.status} animated={isPreparing} />
+            {isSimmer && isReady ? (
+              // simmer's ready moment: the candle, lit, on a flat green disc.
+              // It flares once on the live transition — no confetti on simmer.
+              <span className={w.simmerDisc} aria-hidden="true">
+                <span key={flare} className={flare > 0 ? w.candleFlare : undefined}>
+                  <Candle lit height={78} />
+                </span>
+              </span>
+            ) : (
+              <StatusIcon status={order.status} animated={isPreparing} />
+            )}
           </div>
 
           {order.customerName && (
             <p className="text-sm font-medium mb-1" style={{ color: 'var(--servd-mute)' }}>
-              Hi, {order.customerName}.
+              {isSimmer ? `hi, ${order.customerName}.` : `Hi, ${order.customerName}.`}
             </p>
           )}
 
@@ -220,24 +282,51 @@ export default function OrderStatusPage() {
                 const done    = i <= stepIdx
                 const current = i === stepIdx
                 const last    = i === STEPS.length - 1
+                const spinning = current && isPreparing
+                const replayable = done && !spinning
+                const circle = (
+                  <div
+                    className="h-9 w-9 rounded-full flex items-center justify-center text-sm transition-all duration-700"
+                    style={{
+                      background: done ? color : 'var(--servd-surface)',
+                      color: done ? (isLight(color) ? '#000' : '#fff') : 'var(--servd-dim)',
+                      boxShadow: current ? `0 0 18px color-mix(in srgb, ${color} 60%, transparent)` : 'none',
+                      transform: current ? 'scale(1.15)' : 'scale(1)',
+                    }}>
+                    {spinning
+                      ? <span className={w.stepSpin}><TimerSmall /></span>
+                      : done
+                        ? (
+                          <motion.span
+                            key={replay[step.key] ?? 0}
+                            className={w.checkDraw}
+                            initial={reduced ? false : { scale: 0.45 }}
+                            animate={{ scale: 1 }}
+                            transition={{ type: 'spring', stiffness: 520, damping: 18 }}
+                          >
+                            <CheckSmall />
+                          </motion.span>
+                        )
+                        : <span className="text-[11px]" style={{ color: 'var(--servd-dim)' }}>{i + 1}</span>
+                    }
+                  </div>
+                )
                 return (
                   <div key={step.key} className="flex items-center flex-1">
                     <div className="flex flex-col items-center gap-2 flex-1">
-                      <div
-                        className="h-9 w-9 rounded-full flex items-center justify-center text-sm transition-all duration-700"
-                        style={{
-                          background: done ? color : 'var(--servd-surface)',
-                          color: done ? (isLight(color) ? '#000' : '#fff') : 'var(--servd-dim)',
-                          boxShadow: current ? `0 0 18px color-mix(in srgb, ${color} 60%, transparent)` : 'none',
-                          transform: current ? 'scale(1.15)' : 'scale(1)',
-                        }}>
-                        {current && isPreparing
-                          ? <span style={{ display: 'inline-block', animation: 'spin 1.2s linear infinite' }} aria-hidden>⏳</span>
-                          : done
-                            ? <CheckSmall />
-                            : <span className="text-[11px]" style={{ color: 'var(--servd-dim)' }}>{i + 1}</span>
-                        }
-                      </div>
+                      {replayable ? (
+                        <button
+                          type="button"
+                          className={w.stepHit}
+                          data-toy="tap"
+                          aria-label={`${step.label.toLowerCase()}: done. replay the tick`}
+                          onClick={() => setReplay((r) => ({ ...r, [step.key]: (r[step.key] ?? 0) + 1 }))}
+                        >
+                          {circle}
+                        </button>
+                      ) : (
+                        <span className={w.stepHit}>{circle}</span>
+                      )}
                       <span className="text-[9px] font-black uppercase tracking-wider text-center leading-tight"
                         style={{ color: done ? 'var(--servd-ink)' : 'var(--servd-dim)' }}>
                         {step.label}
@@ -254,13 +343,28 @@ export default function OrderStatusPage() {
           </div>
         )}
 
+        {/* ── While you wait: the kitchen's own game ── */}
+        {showWait && (
+          <WaitGame slug={brand} status={order.status} onRound={onRound} />
+        )}
+        {isReady && played && niceBest !== null && !isSimmer && (
+          <div className={w.niceTiming} data-skin={brand === 'flipd' || brand === 'stackd' ? brand : 'servd'} role="status">
+            <span className={w.niceKicker}>{brand === 'flipd' ? 'Nice timing.' : 'nice timing'}</span>
+            <span className={w.niceScore}>
+              {played.game === 'patty'
+                ? `Best flip ${niceBest}`
+                : `best pour ${niceBest}`}
+            </span>
+          </div>
+        )}
+
         {/* ── Order items + total ── */}
         <section className="rounded-2xl overflow-hidden"
           style={{ background: 'white', border: '1px solid var(--servd-line)', boxShadow: '0 1px 3px rgba(0,0,0,0.04)' }}>
           <div className="px-4 py-3.5"
             style={{ borderBottom: '1px solid var(--servd-line)' }}>
             <p className="font-display font-black text-sm" style={{ fontFamily: 'var(--font-display)', color: 'var(--servd-ink)' }}>
-              {order.concept.name}
+              {formatBrandName(order.concept.name)}
             </p>
           </div>
 
@@ -319,12 +423,17 @@ export default function OrderStatusPage() {
         {/* ── Curbside flow ── */}
         {order.curbsideVehicle && !order.curbsideArrivedAt && order.status !== 'cancelled' && order.status !== 'completed' && (
           <CurbsideArrivedButton orderId={order.id} onArrived={() => {
+            setParked(true)
             setOrder((o) => o ? { ...o, curbsideArrivedAt: new Date().toISOString() } : o)
           }} />
         )}
         {order.curbsideVehicle && order.curbsideArrivedAt && !order.curbsideRunnerOutAt && (
-          <div className="rounded-2xl px-4 py-3.5 text-center"
+          <div className="rounded-2xl px-4 py-3.5 text-center overflow-hidden"
             style={{ background: 'rgba(58,14,105,0.1)', border: '1px solid rgba(58,14,105,0.35)', color: 'var(--servd-green-dark)' }}>
+            {/* Presentation only: the car drives in and parks. */}
+            <span className={`${w.carBay} ${parked ? w.carPark : ''}`} aria-hidden="true">
+              <CarIcon size={30} />
+            </span>
             <p className="font-black text-sm">We see you. Bringing your food now.</p>
             <p className="text-xs mt-0.5 opacity-70">{order.curbsideVehicle}</p>
           </div>
@@ -423,6 +532,15 @@ function CheckSmall() {
   )
 }
 
+function TimerSmall() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+      <circle cx="8" cy="8" r="6" strokeOpacity="0.35" />
+      <path d="M8 2a6 6 0 0 1 6 6" />
+    </svg>
+  )
+}
+
 function BikeIcon() {
   return (
     <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -433,9 +551,9 @@ function BikeIcon() {
   )
 }
 
-function CarIcon() {
+function CarIcon({ size = 20 }: { size?: number }) {
   return (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="M3 12h18l-2-6H5z"/>
       <path d="M5 12v6M19 12v6"/>
       <circle cx="7.5" cy="18" r="1.5"/>

@@ -86,13 +86,19 @@
   transition: transform 160ms var(--spring), box-shadow 160ms ease, background-color 160ms ease;
 }
 .btn svg { flex-shrink: 0; transition: transform 200ms ease; }
-.btn:hover { transform: translateY(-3px) rotate(-1.5deg); box-shadow: 0 9px 0 var(--ink); }
-.btn:hover svg { transform: translateX(4px); }
+@media (hover: hover) and (pointer: fine) {
+  .btn:hover { transform: translateY(-3px) rotate(-1.5deg); box-shadow: 0 9px 0 var(--ink); }
+  .btn:hover svg { transform: translateX(4px); }
+}
 .btn:active { transform: translateY(4px); box-shadow: 0 2px 0 var(--ink); }
+.btn:active svg { transform: translateX(2px); }
 .btn:focus-visible { outline: 3px solid var(--ink); outline-offset: 4px; }
 
 .btnCream { background: var(--cream); color: var(--ink); }
-.btnCream:hover { transform: translateY(-3px) rotate(1.5deg); }
+@media (hover: hover) and (pointer: fine) {
+  .btnCream:hover { transform: translateY(-3px) rotate(1.5deg); }
+}
+.btnCream:active { transform: translateY(4px); box-shadow: 0 2px 0 var(--ink); }
 
 /* ── Dividers ─────────────────────────────────────────────────────────── */
 .divider {
@@ -102,6 +108,10 @@
   overflow: hidden;
   margin: -1px 0; /* hide sub-pixel seams */
   z-index: 1;
+  /* Tap to ripple — no visible affordance, no tap flash, scroll untouched. */
+  cursor: default;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: pan-y;
 }
 .dividerTrack {
   position: absolute;
@@ -130,6 +140,6 @@
 
 @media (prefers-reduced-motion: reduce) {
   .dividerTrack { animation: none; }
-  .btn:hover, .btnCream:hover { transform: none; }
-  .btn:hover svg { transform: none; }
+  .btn:hover, .btnCream:hover, .btn:active, .btnCream:active { transform: none; }
+  .btn:hover svg, .btn:active svg { transform: none; }
 }

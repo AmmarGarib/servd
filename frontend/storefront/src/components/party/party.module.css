@@ -146,17 +146,22 @@
   box-shadow: 0 6px 0 var(--party-ink);
 }
 .cta svg { fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; transition: transform 200ms ease; }
-.cta:hover { transform: translateY(-3px) rotate(-1.5deg); box-shadow: 0 9px 0 var(--party-ink); }
-.cta:hover svg { transform: translateX(4px); }
-.cta:active { transform: translateY(4px); box-shadow: 0 2px 0 var(--party-ink); }
 
 .ctaGhost {
   background: var(--party-cream);
   color: var(--party-ink);
   box-shadow: 0 6px 0 var(--party-ink);
 }
-.ctaGhost:hover { transform: translateY(-3px) rotate(1.5deg); box-shadow: 0 9px 0 var(--party-ink); }
-.ctaGhost:active { transform: translateY(4px); box-shadow: 0 2px 0 var(--party-ink); }
+
+/* Hover only where a real mouse can hover — a tap must not leave a CTA
+   stuck in its lifted state. :active is the press for every pointer. */
+@media (hover: hover) and (pointer: fine) {
+  .cta:hover { transform: translateY(-3px) rotate(-1.5deg); box-shadow: 0 9px 0 var(--party-ink); }
+  .cta:hover svg { transform: translateX(4px); }
+  .ctaGhost:hover { transform: translateY(-3px) rotate(1.5deg); box-shadow: 0 9px 0 var(--party-ink); }
+}
+.cta:active,
+.ctaGhost:active { transform: translateY(4px) scale(0.96); box-shadow: 0 2px 0 var(--party-ink); }
 
 .cta:focus-visible,
 .ctaGhost:focus-visible {
@@ -183,35 +188,79 @@
   pointer-events: none;
 }
 
-/* ── Doodles ───────────────────────────────────────────────────────────── */
-.doodle {
+/* ── Doodles — pokeable toys ──────────────────────────────────────────
+   The button is the 44px hit area and carries the respawn jitter; the
+   inner span plays the pop / pop-in; the art carries the idle drift. */
+.doodleBtn {
   position: absolute;
-  z-index: 0;
-  pointer-events: none;
+  z-index: 3;
+  display: grid;
+  place-items: center;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 6px;
+  border: 0;
+  border-radius: 999px;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  translate: var(--jx, 0px) var(--jy, 0px);
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
 }
-.doodleStar {
-  width: clamp(28px, 3.6vw, 48px);
-  top: 22%;
-  left: 10%;
-  fill: var(--party-plum);
-  animation: spin 9s linear infinite;
+.doodleBtn:focus-visible {
+  outline: 3px solid var(--party-ink);
+  outline-offset: 2px;
 }
-.doodleSquiggle {
+.doodleBtn[aria-disabled='true'] { cursor: default; }
+
+.doodleInner {
+  display: block;
+  line-height: 0;
+  transition: transform 180ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.doodleArt { display: block; line-height: 0; }
+.doodleArt svg { display: block; width: 100%; height: auto; overflow: visible; }
+
+.placeStar     { top: 22%; left: 10%; }
+.placeSquiggle { top: 16%; right: 9%; }
+.placeDot      { top: 48%; right: 16%; }
+
+.artStar { width: clamp(28px, 3.6vw, 48px); fill: var(--party-plum); }
+.artSquiggle {
   width: clamp(60px, 8vw, 110px);
-  top: 16%;
-  right: 9%;
   fill: none;
   stroke: var(--party-tomato);
   stroke-width: 5;
   stroke-linecap: round;
-  animation: wiggle 3.2s ease-in-out infinite;
 }
-.doodleDot {
-  width: clamp(14px, 1.6vw, 22px);
-  top: 48%;
-  right: 16%;
-  fill: var(--party-tomato);
-  animation: bob 2.6s ease-in-out infinite;
+.artDot { width: clamp(14px, 1.6vw, 22px); fill: var(--party-tomato); }
+
+@media (hover: hover) and (pointer: fine) {
+  .doodleBtn[data-phase='idle']:hover .doodleInner { transform: scale(1.15) rotate(-8deg); }
+}
+.doodleBtn[data-phase='idle']:active .doodleInner { transform: scale(0.88); }
+
+/* Squash to 1.35, then to nothing, spinning half a turn. */
+.doodleBtn[data-phase='popping'] .doodleInner { animation: doodlePop 220ms cubic-bezier(0.5, 0, 0.75, 0) forwards; }
+.doodleBtn[data-phase='gone'] .doodleInner { transform: scale(0); opacity: 0; }
+.doodleBtn[data-phase='in'] .doodleInner { animation: doodleIn 420ms cubic-bezier(0.34, 1.56, 0.64, 1) both; }
+
+@keyframes doodlePop {
+  0%   { transform: scale(1) rotate(0deg); }
+  40%  { transform: scale(1.35) rotate(70deg); }
+  100% { transform: scale(0) rotate(180deg); }
+}
+@keyframes doodleIn {
+  from { transform: scale(0); }
+  to   { transform: scale(1); }
+}
+
+/* Idle drift — only while motion is allowed. */
+@media (prefers-reduced-motion: no-preference) {
+  .artStar     { animation: spin 9s linear infinite; }
+  .artSquiggle { animation: wiggle 3.2s ease-in-out infinite; }
+  .artDot      { animation: bob 2.6s ease-in-out infinite; }
 }
 
 @keyframes spin   { to { transform: rotate(360deg); } }
@@ -220,7 +269,9 @@
 
 /* Phones: the crowd goes FIRST (it's the hook), in a box near-square
    enough that the engine shows its 4 big centre characters instead of
-   six tiny ones; the copy follows. The page scrolls naturally here. */
+   six tiny ones; the copy follows. The page scrolls naturally here.
+   The doodles move to the safe margins: the stage's top corners (clear
+   sky above the characters) and the gap under the stacked CTAs. */
 @media (max-width: 640px) {
   .hero { height: auto; min-height: 100svh; }
   .stage {
@@ -233,14 +284,29 @@
   /* The copy continues right under the stage, so a floor band would end in
      a hard seam — the characters' own contact shadows ground them. */
   .floor { display: none; }
-  .copy { padding-top: 0.5rem; padding-bottom: 3rem; }
-  .doodleSquiggle, .doodleStar { display: none; }
-  .doodleDot { top: 12%; right: 6%; }
+  .copy { padding-top: 0.5rem; padding-bottom: 3.5rem; }
   .ctas { flex-direction: column; align-items: stretch; max-width: 22rem; margin-left: auto; margin-right: auto; }
+
+  .placeStar     { top: 5.25rem; left: 0.25rem; }
+  .placeSquiggle { top: 5.5rem; right: 0.25rem; }
+  .placeDot      { top: auto; bottom: 0.25rem; right: 1rem; }
+  .artStar { width: 30px; }
+  .artSquiggle { width: 56px; }
+  .artDot { width: 16px; }
 }
 
+/* Reduced motion: no drift, no squash or spin — a doodle fades out when
+   popped (the burst is a static ring) and fades back in at its new spot. */
 @media (prefers-reduced-motion: reduce) {
   .word, .lead, .ctas, .underline { animation: none; stroke-dashoffset: 0; }
-  .doodle { animation: none; }
+  .cta, .ctaGhost, .doodleInner { transition: none; }
   .cta:hover, .ctaGhost:hover { transform: none; }
+  .cta:active, .ctaGhost:active { transform: translateY(4px); }
+  .doodleBtn[data-phase] .doodleInner { transform: none; }
+  .doodleBtn[data-phase='popping'] .doodleInner { animation: doodleFadeOut 120ms linear forwards; }
+  .doodleBtn[data-phase='gone'] .doodleInner { opacity: 0; }
+  .doodleBtn[data-phase='in'] .doodleInner { animation: doodleFadeIn 120ms linear both; }
 }
+
+@keyframes doodleFadeOut { to { opacity: 0; } }
+@keyframes doodleFadeIn  { from { opacity: 0; } to { opacity: 1; } }

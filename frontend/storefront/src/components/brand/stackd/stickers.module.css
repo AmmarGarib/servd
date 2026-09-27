@@ -1,11 +1,20 @@
 /* What we do — the sticker wall. Labels are plum-dark on cream/white (13.5:1
-   / 16.1:1); numbers plum on cream (7.77:1). */
+   / 16.1:1); numbers plum on cream (7.77:1). Lore under a peeled seal is
+   cream on the plum wall (9.4:1). Every seal is a <button> that peels:
+   --peel (0..1, on the li) drives the lift, the shadow and the lore. */
 
 .wall {
   position: relative;
   padding: clamp(4rem, 10vh, 7rem) 0 clamp(3rem, 8vh, 5rem);
 }
 .head { max-width: 40rem; }
+.hint {
+  margin: 0.9rem 0 0;
+  font-family: var(--stackd-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.18em;
+  color: var(--stackd-cream-dim);
+}
 
 .grid {
   list-style: none;
@@ -19,16 +28,119 @@
 .sticker {
   --tilt: -2deg;
   --lift: 0px;
+  --peel: 0;
+  --sy: 14px;
+  --sb: 20px;
   position: relative;
   aspect-ratio: 1 / 1;
   transform: translateY(var(--lift)) rotate(var(--tilt));
-  transition: transform 420ms cubic-bezier(0.34, 1.56, 0.64, 1), filter 240ms ease;
-  filter: drop-shadow(0 14px 20px rgba(28, 8, 16, 0.5));
+  transition: transform 420ms cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 .sticker:nth-child(4n + 2) { --tilt: 1.8deg; }
 .sticker:nth-child(4n + 3) { --tilt: -1deg; }
 .sticker:nth-child(4n + 4) { --tilt: 2.6deg; }
-.sticker:hover { --tilt: 0deg; --lift: -8px; filter: drop-shadow(0 26px 26px rgba(28, 8, 16, 0.55)); }
+.sticker[data-peeled] { --peel: 1; }
+@media (hover: hover) and (pointer: fine) {
+  .sticker:hover { --tilt: 0deg; --lift: -8px; --sy: 26px; --sb: 26px; }
+}
+.sticker:active { --tilt: 0deg; --lift: -4px; --sy: 20px; }
+
+/* The seal itself. It lifts from its top edge: rotate + a perspective
+   tilt and skew (the curl), shadow growing as it comes off the wall. */
+.seal {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: block;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 38%;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: center;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transform-origin: 50% 6%;
+  transform:
+    perspective(900px)
+    translateY(calc(var(--peel) * -16%))
+    rotate(calc(var(--peel) * -7deg))
+    rotateX(calc(var(--peel) * 54deg))
+    skewX(calc(var(--peel) * -6deg));
+  filter: drop-shadow(0 calc(var(--sy) + var(--peel) * 24px) calc(var(--sb) + var(--peel) * 18px) rgba(28, 8, 16, 0.5));
+  transition: transform 420ms cubic-bezier(0.34, 1.56, 0.64, 1), filter 420ms ease, opacity 120ms linear;
+}
+.seal:focus-visible { outline: 3px solid var(--stackd-sky); outline-offset: -4px; }
+.sticker[data-dragging] .seal,
+.sticker[data-dragging] .lore { transition: none; }
+
+/* The wall under the seal: a dashed ghost of the die and one line of lore. */
+.under {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 0 17% 17%;
+  pointer-events: none;
+}
+.ghost { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.ghost path { fill: rgba(252, 232, 206, 0.06); stroke: var(--stackd-cream-faint); stroke-width: 2; stroke-dasharray: 6 6; }
+.lore {
+  position: relative;
+  margin: 0;
+  font-family: var(--stackd-display);
+  font-style: italic;
+  font-weight: 600;
+  font-size: clamp(0.8rem, 1.15vw, 0.98rem);
+  line-height: 1.2;
+  text-align: center;
+  text-wrap: balance;
+  color: var(--stackd-cream);
+  opacity: calc(var(--peel) * 1.6 - 0.35);
+  transform: translateY(calc((1 - var(--peel)) * 8px));
+  transition: opacity 300ms ease 60ms, transform 420ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* The lifted corner you can grab — fine pointers only (touch just taps). */
+.corner {
+  position: absolute;
+  right: 8%;
+  bottom: 8%;
+  z-index: 2;
+  display: none;
+  width: 44px;
+  height: 44px;
+  cursor: grab;
+  touch-action: none;
+}
+.corner:active { cursor: grabbing; }
+.corner svg {
+  position: absolute;
+  right: 7px;
+  bottom: 7px;
+  width: 24px;
+  height: 24px;
+  overflow: visible;
+  transform-origin: 100% 100%;
+  transition: transform 240ms cubic-bezier(0.34, 1.56, 0.64, 1), opacity 160ms ease;
+}
+.cornerFlap {
+  fill: var(--stackd-cream);
+  stroke: var(--stackd-plum);
+  stroke-width: 2;
+  stroke-linejoin: round;
+  filter: drop-shadow(-2px -2px 2px rgba(28, 8, 16, 0.35));
+}
+.sticker[data-peeled] .corner svg { opacity: 0; }
+@media (hover: hover) and (pointer: fine) {
+  .corner { display: block; }
+  .sticker:hover .corner svg { transform: scale(1.3) rotate(-6deg); }
+}
 
 /* Slapped on: hidden until the wall is first seen (only when JS armed it). */
 .armed .sticker { opacity: 0; }
@@ -61,6 +173,7 @@
   padding: 0 0 14%;
 }
 .num {
+  display: block;
   margin-top: 0.35rem;
   font-family: var(--stackd-mono);
   font-size: 0.72rem;
@@ -68,6 +181,7 @@
   color: var(--stackd-plum);
 }
 .label {
+  display: block;
   margin: 0.25rem 0 0;
   font-family: var(--stackd-display);
   font-weight: 700;
@@ -164,10 +278,18 @@
   .vig { width: 3.6rem; }
   .label { font-size: 0.86rem; }
   .num { font-size: 0.64rem; margin-top: 0.15rem; }
+  .under { padding: 0 14% 15%; }
+  .lore { font-size: 0.72rem; }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .sticker, .sticker:hover { transition: none; transform: rotate(var(--tilt)); }
+  /* The peel becomes a cross-fade: the seal fades off, the lore fades in. */
+  .seal { transform: none; transition: opacity 120ms linear; filter: drop-shadow(0 14px 20px rgba(28, 8, 16, 0.5)); }
+  .sticker[data-peeled] .seal { opacity: 0; }
+  .lore { transform: none; opacity: 0; transition: opacity 120ms linear; }
+  .sticker[data-peeled] .lore { opacity: 1; }
+  .corner { display: none; }
   .armed .sticker, .armed.seen .sticker { opacity: 1; animation: none; }
   .vig *, .live .vig * { animation: none !important; }
   .steamG path { opacity: 0.7; }

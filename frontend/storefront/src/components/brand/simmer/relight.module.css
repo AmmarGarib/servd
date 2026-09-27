@@ -1,0 +1,91 @@
+/* simmer — the relightable sign-off candle.
+   Flat shapes only: no white, no gradients, one orange signal (the flame and
+   its wick glow are the same signal). Motion stays under 700ms. */
+
+.relight {
+  appearance: none;
+  background: none;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  min-width: 44px;
+  min-height: 44px;
+  border-radius: 2px;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.relight:focus { outline: none; }
+.relight:focus-visible {
+  outline: 1px solid var(--simmer-bone);
+  outline-offset: 8px;
+}
+.relight:active { transform: translateY(1px) scale(0.985); }
+
+@media (hover: hover) and (pointer: fine) {
+  .relight:hover { transform: translateY(-2px); }
+  .relight:hover:active { transform: translateY(0) scale(0.985); }
+}
+
+/* The flame grows from nothing, catches with a short flicker, then hands
+   over to the candle's own flicker loop (on the inner shapes). */
+.ignite {
+  transform-box: fill-box;
+  transform-origin: 50% 100%;
+  animation: ignite 500ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+@keyframes ignite {
+  0%   { transform: scale(0, 0);        opacity: 0; }
+  22%  { transform: scale(0.45, 0.7);   opacity: 1; }
+  40%  { transform: scale(0.8, 1.18); }
+  58%  { transform: scale(1.12, 0.9); }
+  76%  { transform: scale(0.96, 1.06); }
+  100% { transform: scale(1, 1); }
+}
+
+.haloIn {
+  animation: haloIn 500ms ease-out both;
+}
+@keyframes haloIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* The wick tip glows while it burns. */
+.wickGlow {
+  transform-box: fill-box;
+  transform-origin: 50% 50%;
+  animation: wickGlow 1.3s ease-in-out infinite;
+}
+@keyframes wickGlow {
+  0%, 100% { opacity: 0.55; transform: scale(1); }
+  50%      { opacity: 0.9;  transform: scale(1.25); }
+}
+
+/* Going out: the flame shrinks back to the wick before the smoke curl
+   returns. Applied on top of .ignite / .haloIn / .wickGlow. */
+.goOut {
+  transform-box: fill-box;
+  transform-origin: 50% 100%;
+  animation: goOut 380ms cubic-bezier(0.55, 0, 0.8, 0.4) forwards;
+}
+@keyframes goOut {
+  0%   { transform: scale(1, 1);      opacity: 1; }
+  45%  { transform: scale(0.8, 1.12); opacity: 0.9; }
+  100% { transform: scale(0, 0);      opacity: 0; }
+}
+
+/* Reduced motion: the flame simply appears and simply goes. */
+@media (prefers-reduced-motion: reduce) {
+  .relight,
+  .relight:active { transition: none; transform: none; }
+  .ignite,
+  .haloIn,
+  .wickGlow { animation: none; opacity: 1; transform: none; }
+  .goOut { animation: none; opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) and (hover: hover) and (pointer: fine) {
+  .relight:hover { transform: none; }
+}

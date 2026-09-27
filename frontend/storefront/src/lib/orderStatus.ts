@@ -97,3 +97,63 @@ export function statusFor(s: string | undefined | null): OrderStatusVisual {
   if (!s) return ORDER_STATUS.received
   return ORDER_STATUS[s as OrderStatus] ?? ORDER_STATUS.received
 }
+
+// ── Brand-voiced tracker lines ──────────────────────────────────────────────
+// The tracker hero speaks in the kitchen's own voice. /orders and /account
+// keep the neutral `statusFor` copy; only the live tracker uses these.
+//
+//   simmer — lowercase, calm, never an exclamation mark.
+//   stackd — a warm café and market: bread, pastries, cups on the bar.
+//   flipd  — a terse diner counter.
+//
+// Cancelled and refunded are never played for a joke: they always use the
+// neutral copy (lowercased on simmer, which is lowercase everywhere).
+
+export interface TrackerLine { headline: string; sub: string }
+
+type LiveStatus = Exclude<OrderStatus, 'cancelled' | 'refunded'>
+
+const TRACKER_LINES: Record<string, Record<LiveStatus, TrackerLine>> = {
+  simmer: {
+    received:  { headline: 'we have your order.',  sub: 'the kitchen will confirm it in a moment.' },
+    confirmed: { headline: 'confirmed.',           sub: 'the pot is warming.' },
+    preparing: { headline: 'on the flame.',        sub: 'the kitchen has it. take your time.' },
+    ready:     { headline: 'ready at the pass.',   sub: 'come find us.' },
+    completed: { headline: 'that was supper.',     sub: 'thank you for sitting with us.' },
+  },
+  stackd: {
+    received:  { headline: 'got your order',       sub: 'it’s on the rail. confirming now.' },
+    confirmed: { headline: 'you’re on the bar',    sub: 'your cups and wraps are being set out.' },
+    preparing: { headline: 'stacking it now',      sub: 'bread’s toasting, cups are out.' },
+    ready:     { headline: 'ready on the bar',     sub: 'grab it at the counter, by the chiller.' },
+    completed: { headline: 'all yours',            sub: 'enjoy it. the cup’s a keeper.' },
+  },
+  flipd: {
+    received:  { headline: 'Ticket in.',           sub: 'Waiting on the grill cook.' },
+    confirmed: { headline: 'Confirmed.',           sub: 'Grill’s heating.' },
+    preparing: { headline: 'On the grill.',        sub: 'Smashing it now.' },
+    ready:     { headline: 'Order up.',            sub: 'Hot at the counter.' },
+    completed: { headline: 'Done.',                sub: 'Come back hungry.' },
+  },
+}
+
+/** Tracker hero copy for a status, in the brand's voice. Unknown brands (and
+ *  unknown statuses) fall back to the neutral `statusFor` headline/sub. */
+export function trackerLine(status: string, slug: string | null | undefined): TrackerLine {
+  const brand = (slug ?? '').trim().toLowerCase()
+  const neutral = statusFor(status)
+  if (status === 'cancelled' || status === 'refunded') {
+    return brand === 'simmer'
+      ? { headline: neutral.headline.toLowerCase(), sub: neutral.sub.toLowerCase() }
+      : { headline: neutral.headline, sub: neutral.sub }
+  }
+  const lines = TRACKER_LINES[brand]
+  const line = lines?.[status as LiveStatus]
+  if (line) return line
+  // A known brand with an unknown status still falls back to the neutral
+  // copy, lowercased on simmer.
+  if (brand === 'simmer') {
+    return { headline: neutral.headline.toLowerCase(), sub: neutral.sub.toLowerCase() }
+  }
+  return { headline: neutral.headline, sub: neutral.sub }
+}

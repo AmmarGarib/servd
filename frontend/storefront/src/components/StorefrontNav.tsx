@@ -2,8 +2,16 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useEffect, useState } from 'react'
+import { motion } from 'framer-motion'
 import { useCustomerAuth } from '../store/customerAuth'
 import { useOnBrandMicrosite } from '../lib/host'
+import { usePrefersReducedMotion } from '@/lib/play'
+import { LogoBadge } from './nav/LogoBadge'
+import { NavBasket } from './nav/NavBasket'
+import s from './nav/nav.module.css'
+
+// The shared "pop" spring (stiffness 520, damping 18) for every press.
+const POP = { type: 'spring' as const, stiffness: 520, damping: 18 }
 
 // Pages that manage their own header (full-screen splashes, brand
 // microsites with their own nav, the per-concept ordering experience).
@@ -23,16 +31,17 @@ interface Props {
 
 export function StorefrontNav({ initialBrandSlug = null }: Props) {
   const pathname = usePathname() ?? '/'
-  const token = useCustomerAuth((s) => s.token)
+  const token = useCustomerAuth((st) => st.token)
 
   // Stands down on a brand microsite; see useOnBrandMicrosite for why this
   // cannot be answered by the path alone, or once in a layout.
   const onBrandMicrosite = useOnBrandMicrosite(initialBrandSlug)
+  const reduced = usePrefersReducedMotion()
+  const tap = reduced ? undefined : { scale: 0.94 }
+  const [logoPress, setLogoPress] = useState(0)
 
-  // On dark-hero pages, the sticky nav is transparent and renders white
-  // text. Once the user scrolls past the hero into the white sections,
-  // the white text becomes invisible — so flip to the blurred-glass look
-  // (white bg + ink text) after the first 60vh of scroll.
+  // On the home the nav starts transparent over the hero, then flips to the
+  // blurred-glass look after the first 60vh of scroll.
   const [scrolledPastHero, setScrolledPastHero] = useState(false)
   useEffect(() => {
     if (!TRANSPARENT_PATHS.has(pathname)) return
@@ -54,9 +63,6 @@ export function StorefrontNav({ initialBrandSlug = null }: Props) {
   }
 
   const transparent = TRANSPARENT_PATHS.has(pathname) && !scrolledPastHero
-  // The home hero is a light butter-yellow stage (the food crowd), so the
-  // transparent nav stays ink-on-light — no white text, no dark scrim.
-  const onDarkHero  = false
 
   return (
     <nav
@@ -64,8 +70,7 @@ export function StorefrontNav({ initialBrandSlug = null }: Props) {
       style={{
         // Not sticky — the header lives at the top of the page and scrolls away
         // with the content. On the home it's ABSOLUTE so the hero's full-bleed
-        // background image sits behind it (the servd mark is immersed in the
-        // image, video expands in front); elsewhere a normal top-of-page header.
+        // background sits behind it; elsewhere a normal top-of-page header.
         position: pathname === '/' ? 'absolute' : 'relative',
         top: 0, left: 0, right: 0,
         zIndex: 50,
@@ -77,113 +82,58 @@ export function StorefrontNav({ initialBrandSlug = null }: Props) {
         transition: 'background 220ms ease',
       }}
     >
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          maxWidth: 1200,
-          margin: '0 auto',
-          width: '100%',
-        }}
-      >
-      {/* Brand-mark — circular logo placeholder + name (new system, matches the
-          brand microsites). Name goes white over the dark hero, plum elsewhere. */}
-      <Link
-        href="/"
-        aria-label="servd home"
-        style={{ display: 'inline-flex', alignItems: 'center', gap: '0.6rem', textDecoration: 'none' }}
-      >
-        <span aria-hidden="true" style={{
-          width: '2.3rem', height: '2.3rem', borderRadius: '50%', flexShrink: 0,
-          background: 'var(--servd-green)', color: 'white',
-          display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-          fontFamily: 'var(--font-display)', fontWeight: 900, fontSize: '1.05rem',
-          letterSpacing: '-0.02em', boxShadow: '0 2px 10px rgba(0,0,0,0.25)',
-        }}>s</span>
-        <span style={{
-          fontFamily: 'var(--font-wordmark)',
-          fontSize: '1.5rem',
-          fontWeight: 800,
-          letterSpacing: '-0.03em',
-          lineHeight: 1,
-          color: onDarkHero ? 'white' : 'var(--servd-black)',
-        }}>
-          servd<span style={{ color: 'var(--servd-green)' }}>.</span>
-        </span>
-      </Link>
-
-      <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+      <div className={s.bar}>
+        {/* Brand-mark: the googly-eyed badge + wordmark. A normal Link; the
+            badge squashes and winks on press while the route changes. */}
         <Link
-          href="/browse"
-          style={{
-            color: onDarkHero ? 'rgba(255,255,255,0.75)' : 'var(--servd-mute)',
-            fontWeight: 600,
-            fontSize: '0.92rem',
-            padding: '0.7rem 0.95rem',
-            textDecoration: 'none',
-            borderRadius: '0.6rem',
-            transition: 'color 160ms ease',
-            display: 'inline-flex',
-            alignItems: 'center',
-            minHeight: '44px',
-          }}
+          href="/"
+          aria-label="servd home"
+          className={s.home}
+          onClick={() => setLogoPress((n) => n + 1)}
         >
-          Browse
+          <LogoBadge pressSignal={logoPress} />
+          <span className={s.wordmark}>
+            servd<span style={{ color: 'var(--servd-green)' }}>.</span>
+          </span>
         </Link>
 
-        {token ? (
-          <Link
-            href="/account"
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '0.5rem',
-              padding: '0.6rem 1rem',
-              minHeight: '44px',
-              borderRadius: '999px',
-              background: onDarkHero ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.04)',
-              border: onDarkHero ? '1px solid rgba(255,255,255,0.18)' : '1px solid var(--servd-line)',
-              color: onDarkHero ? 'white' : 'var(--servd-ink)',
-              fontWeight: 600,
-              fontSize: '0.88rem',
-              textDecoration: 'none',
-            }}
-          >
-            <span
-              aria-hidden="true"
-              style={{
-                width: '1.4rem',
-                height: '1.4rem',
-                borderRadius: '50%',
-                background: 'var(--servd-green)', color: 'white',
-                display: 'inline-flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                fontSize: '0.7rem',
-                fontWeight: 900,
-              }}
-            >A</span>
-            Account
-          </Link>
-        ) : (
-          /* Single Sign in button — the login page already has a "create
-             account" path, so a separate Sign up CTA is redundant. */
-          <Link
-            href="/login"
-            className="brand-pill"
-            style={{
-              ['--brand-accent' as string]: 'var(--servd-green)',
-              ['--brand-ink' as string]:    'white',
-              padding: '0.7rem 1.3rem',
-              fontSize: '0.92rem',
-              minHeight: '44px',
-            }}
-          >
-            Sign in
-          </Link>
-        )}
-      </div>
+        <div className={s.actions}>
+          <motion.span className={s.press} whileTap={tap} transition={POP}>
+            <Link href="/browse" className={`${s.browse} ${s.hoverPop}`}>
+              <svg className={s.browseIcon} aria-hidden="true" focusable="false" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="11" cy="11" r="6.5" />
+                <path d="M16 16 L20.5 20.5" />
+              </svg>
+              <span className={s.browseLabel}>Browse</span>
+            </Link>
+          </motion.span>
+
+          <NavBasket />
+
+          {token ? (
+            <motion.span className={s.press} whileTap={tap} transition={POP}>
+              <Link href="/account" aria-label="account" className={`${s.account} ${s.hoverPop}`}>
+                <span aria-hidden="true" className={s.avatar}>A</span>
+                <span className={s.accountLabel}>Account</span>
+              </Link>
+            </motion.span>
+          ) : (
+            /* Single Sign in button — the login page already has a "create
+               account" path, so a separate Sign up CTA is redundant. */
+            <motion.span className={s.press} whileTap={tap} transition={POP}>
+              <Link
+                href="/login"
+                className={`brand-pill ${s.signIn} ${s.hoverPop}`}
+                style={{
+                  ['--brand-accent' as string]: 'var(--servd-green)',
+                  ['--brand-ink' as string]:    'white',
+                }}
+              >
+                Sign in
+              </Link>
+            </motion.span>
+          )}
+        </div>
       </div>
     </nav>
   )

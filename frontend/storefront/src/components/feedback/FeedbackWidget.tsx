@@ -82,23 +82,18 @@ export function FeedbackWidget() {
     <>
       {/* Floating trigger */}
       {!open && (
+        // Presentation lives in globals.css (.servd-feedback-fab): safe-area
+        // offsets, and an icon-only 44px circle under 640px.
         <button
+          type="button"
           onClick={() => setOpen(true)}
-          aria-label="Send feedback"
-          style={{
-            position: 'fixed', right: '1rem', bottom: '1rem', zIndex: 50,
-            background: '#000', color: '#fff', border: 'none',
-            borderRadius: '999px', padding: '0.85rem 1.25rem',
-            fontSize: '0.85rem', fontWeight: 700,
-            boxShadow: '0 4px 16px rgba(0,0,0,0.18)',
-            display: 'flex', alignItems: 'center', gap: '0.4rem',
-            cursor: 'pointer',
-          }}>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-            strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          aria-label="feedback"
+          className="servd-feedback-fab">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
             <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>
           </svg>
-          Feedback
+          <span className="servd-feedback-fab__label">Feedback</span>
         </button>
       )}
 
@@ -125,7 +120,9 @@ export function FeedbackWidget() {
 
             {done ? (
               <div style={{ textAlign: 'center', padding: '1rem 0' }}>
-                <div style={{ fontSize: '2.5rem', marginBottom: '0.5rem' }}>🙏</div>
+                <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '0.5rem' }}>
+                  <Glyph name="heart" size={40} />
+                </div>
                 <h3 style={{ fontSize: '1.25rem', fontWeight: 800, marginBottom: '0.5rem' }}>Thanks for telling us.</h3>
                 <p style={{ color: 'var(--servd-mute)', marginBottom: '1.5rem', fontSize: '0.9rem' }}>
                   Every word lands somewhere real. We&rsquo;ll do better.
@@ -139,9 +136,9 @@ export function FeedbackWidget() {
                   Quick honest feedback &mdash; we read every word.
                 </p>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                  <ModeButton emoji="🌟" label="Would you recommend us?" sub="30 sec · NPS" onClick={() => setMode('nps')} />
-                  <ModeButton emoji="😊" label="How was your experience?"  sub="10 sec · CSAT" onClick={() => setMode('csat')} />
-                  <ModeButton emoji="💡" label="Got an idea?"              sub="freeform"      onClick={() => setMode('open')} />
+                  <ModeButton icon="star" label="Would you recommend us?" sub="30 sec · NPS" onClick={() => setMode('nps')} />
+                  <ModeButton icon="smile" label="How was your experience?"  sub="10 sec · CSAT" onClick={() => setMode('csat')} />
+                  <ModeButton icon="bulb" label="Got an idea?"              sub="freeform"      onClick={() => setMode('open')} />
                 </div>
               </>
             ) : mode === 'nps' ? (
@@ -183,11 +180,11 @@ export function FeedbackWidget() {
                 <h3 style={{ fontSize: '1.05rem', fontWeight: 800, marginBottom: '1rem' }}>How was your most recent experience?</h3>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '0.5rem', marginBottom: '1rem' }}>
                   {[
-                    { n: 1, emoji: '😡', label: 'Bad' },
-                    { n: 2, emoji: '🙁', label: 'Meh' },
-                    { n: 3, emoji: '😐', label: 'OK'  },
-                    { n: 4, emoji: '🙂', label: 'Good' },
-                    { n: 5, emoji: '😍', label: 'Loved it' },
+                    { n: 1, label: 'Bad' },
+                    { n: 2, label: 'Meh' },
+                    { n: 3, label: 'OK'  },
+                    { n: 4, label: 'Good' },
+                    { n: 5, label: 'Loved it' },
                   ].map((o) => (
                     <button key={o.n} onClick={() => setScore(o.n)} type="button"
                       style={{
@@ -196,7 +193,7 @@ export function FeedbackWidget() {
                         background: score === o.n ? '#fef3c7' : '#fff',
                         borderRadius: '0.75rem', textAlign: 'center', cursor: 'pointer',
                       }}>
-                      <div style={{ fontSize: '1.5rem' }}>{o.emoji}</div>
+                      <div style={{ display: 'flex', justifyContent: 'center' }}><Face n={o.n} /></div>
                       <div style={{ fontSize: '0.7rem', fontWeight: 600, marginTop: '0.25rem', color: '#374151' }}>{o.label}</div>
                     </button>
                   ))}
@@ -229,7 +226,39 @@ export function FeedbackWidget() {
   )
 }
 
-function ModeButton({ emoji, label, sub, onClick }: { emoji: string; label: string; sub: string; onClick: () => void }) {
+// Hand-drawn line icons in place of emoji (no emoji as structural icons).
+function Glyph({ name, size = 24 }: { name: 'star' | 'smile' | 'bulb' | 'heart'; size?: number }) {
+  const common = {
+    width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor',
+    strokeWidth: 1.8, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const,
+    'aria-hidden': true, focusable: false,
+  }
+  switch (name) {
+    case 'star':
+      return <svg {...common}><path d="M12 3.5l2.6 5.3 5.8.8-4.2 4.1 1 5.8L12 16.8l-5.2 2.7 1-5.8-4.2-4.1 5.8-.8z" /></svg>
+    case 'smile':
+      return <svg {...common}><circle cx="12" cy="12" r="8.5" /><path d="M8.5 14q3.5 3.5 7 0" /><path d="M9 9.5v.5M15 9.5v.5" /></svg>
+    case 'bulb':
+      return <svg {...common}><path d="M9 17.5h6M10 20.5h4" /><path d="M8.2 14.2A6 6 0 1 1 15.8 14.2c-.8.7-1.3 1.6-1.3 2.6V17.5h-5v-.7c0-1-.5-1.9-1.3-2.6z" /></svg>
+    case 'heart':
+      return <svg {...common}><path d="M12 20s-7.5-4.4-7.5-10.1A4.2 4.2 0 0 1 12 7.4a4.2 4.2 0 0 1 7.5 2.5C19.5 15.6 12 20 12 20z" /></svg>
+  }
+}
+
+// CSAT faces, 1 (bad) to 5 (loved it): the mouth curves from frown to grin.
+function Face({ n }: { n: number }) {
+  const curve = [-3, -1.6, 0, 1.8, 3.4][Math.min(4, Math.max(0, n - 1))] ?? 0
+  return (
+    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="1.8" strokeLinecap="round" aria-hidden="true" focusable="false" style={{ color: '#374151' }}>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M9 9.8v.4M15 9.8v.4" />
+      <path d={`M8 ${15 - curve / 2}Q12 ${15 + curve} 16 ${15 - curve / 2}`} />
+    </svg>
+  )
+}
+
+function ModeButton({ icon, label, sub, onClick }: { icon: 'star' | 'smile' | 'bulb'; label: string; sub: string; onClick: () => void }) {
   return (
     <button onClick={onClick} type="button" style={{
       display: 'flex', alignItems: 'center', gap: '0.85rem', textAlign: 'left',
@@ -237,7 +266,7 @@ function ModeButton({ emoji, label, sub, onClick }: { emoji: string; label: stri
       background: '#f9fafb', border: '1px solid var(--servd-line)', borderRadius: '0.85rem',
       cursor: 'pointer', width: '100%',
     }}>
-      <span style={{ fontSize: '1.5rem' }}>{emoji}</span>
+      <span style={{ display: 'inline-flex', color: '#111827' }}><Glyph name={icon} /></span>
       <span style={{ flex: 1 }}>
         <div style={{ fontSize: '0.9rem', fontWeight: 700, color: '#111827' }}>{label}</div>
         <div style={{ fontSize: '0.7rem', color: 'var(--servd-mute)', marginTop: '0.1rem' }}>{sub}</div>

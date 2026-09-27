@@ -7,6 +7,8 @@ import { useCustomerAuth } from '../../../store/customerAuth'
 import { fmt } from '../../../lib/ui'
 import { decodeCartToken } from '../../../lib/cartHandoff'
 import { trackCheckoutStarted, trackCheckoutAbandoned, trackOrderPlaced, trackPromoApplied, trackPromoFailed } from '../../../lib/analytics'
+import { formatBrandName } from '../../../lib/concept'
+import { emptyBasketCopy } from '@/lib/basketCopy'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -192,7 +194,13 @@ export default function CheckoutPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  if (itemCount() === 0) return (
+  if (itemCount() === 0) {
+    // Brand names go through formatBrandName (simmer / stackd are always
+    // lowercase; Flipd keeps its capital). Copy is shared with the menu
+    // page's empty basket via lib/basketCopy.
+    const brandName = (s: string) => formatBrandName(s.charAt(0).toUpperCase() + s.slice(1))
+    const empty = emptyBasketCopy(slug)
+    return (
     <main className={`flex min-h-dvh flex-col items-center justify-center gap-5 px-4${brandSkinClass ? ' ' + brandSkinClass : ''}`}
       style={{ background: 'transparent' }}>
       <svg width="80" height="80" viewBox="0 0 24 24" fill="none" stroke="var(--servd-mute)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -202,16 +210,16 @@ export default function CheckoutPage() {
       </svg>
       <div className="text-center space-y-2">
         <p className="font-black text-2xl tracking-tight" style={{ color: 'var(--servd-ink)' }}>
-          Your cart&rsquo;s empty
+          {empty.title}
         </p>
         <p className="text-sm" style={{ color: 'var(--servd-mute)' }}>
-          Pick something from {slug ? slug.charAt(0).toUpperCase() + slug.slice(1) : 'the menu'} to get going.
+          {empty.body}
         </p>
       </div>
       <Link href={`/${slug}`}
         className="mt-1 rounded-2xl font-black px-8 py-4 text-sm transition-all hover:scale-[1.02] active:scale-[0.98]"
         style={{ background: 'var(--servd-green)', color: 'white', boxShadow: '0 6px 18px rgba(58,14,105,0.28)' }}>
-        See the {slug ? slug.charAt(0).toUpperCase() + slug.slice(1) : ''} menu
+        {empty.cta}
       </Link>
       {/* Quick switch to the other brands so an empty-cart visitor doesn't
           have to back out to the home page to change kitchens. */}
@@ -228,13 +236,14 @@ export default function CheckoutPage() {
                 color: 'var(--servd-ink)',
                 border: '1px solid var(--servd-line)',
               }}>
-              {s.charAt(0).toUpperCase() + s.slice(1)}
+              {brandName(s)}
             </Link>
           ))}
         </div>
       </div>
     </main>
-  )
+    )
+  }
 
   const walletBalance    = account?.walletBalance ?? 0
   const loyaltyBalance   = account?.loyaltyAccount?.pointsBalance ?? 0

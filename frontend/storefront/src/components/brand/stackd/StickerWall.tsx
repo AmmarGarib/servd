@@ -3,9 +3,16 @@
 // scroll in. Each seal carries a small moving drawing in the brand's ink:
 // a pan that steams, a sandwich that stacks itself, a glass being poured,
 // a bag swinging on its way out. Loops run only while the wall is on screen.
+//
+// Every seal peels. Drag its lifted corner (fine pointer) or tap it (touch,
+// Enter, Space — each seal is a real <button>): it lifts off the wall with a
+// curl and shows a line of house lore printed on the wall underneath, then
+// sticks itself back down after five seconds. Peel them all and the tin
+// gets the 'peel' sticker. Reduced motion: the reveal is a plain cross-fade.
 
-import { useEffect, useState, type CSSProperties } from 'react'
-import { Die } from './Die'
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
+import { buzz, collect, sfx, usePrefersReducedMotion } from '@/lib/play'
+import { Die, STACKD_DIE } from './Die'
 import { useInView } from './hooks'
 import s from './stickers.module.css'
 import ui from './ui.module.css'
@@ -20,6 +27,22 @@ function kindFor(label: string): Kind {
   if (/scratch|cook|kitchen/.test(l)) return 'cook'
   return 'seal'
 }
+
+// What's printed on the wall under each seal. Only true things about the
+// café (see BRAND_STORIES.stackd): no invented menu items.
+const LORE: Record<Kind, string> = {
+  cook: 'made here, never assembled.',
+  stack: 'the morning\u2019s pastries wait in the case at the bar.',
+  pour: 'mocktails are poured at the barista bar.',
+  bag: 'our mascot rides on every cup and bag.',
+  seal: 'the packaging is the plate.',
+}
+
+/** How long a peeled seal stays up before it sticks itself back down. */
+const RESTICK_MS = 5000
+/** Corner drag: px of pull for a full peel, and the fraction that commits. */
+const PULL_PX = 150
+const COMMIT = 0.35
 
 function Vignette({ kind }: { kind: Kind }) {
   switch (kind) {
@@ -102,6 +125,118 @@ function Vignette({ kind }: { kind: Kind }) {
   }
 }
 
+interface SealProps {
+  label: string
+  index: number
+  peeled: boolean
+  reduce: boolean
+  onToggle: (index: number, el: HTMLElement) => void
+}
+
+function Seal({ label, index, peeled, reduce, onToggle }: SealProps) {
+  const kind = kindFor(label)
+  const liRef = useRef<HTMLLIElement | null>(null)
+  const drag = useRef<{ id: number; x: number; y: number; p: number; moved: boolean } | null>(null)
+  const swallowClick = useRef(false)
+
+  const setPeelVar = (p: number | null) => {
+    const el = liRef.current
+    if (!el) return
+    if (p === null) el.style.removeProperty('--peel')
+    else el.style.setProperty('--peel', p.toFixed(3))
+  }
+
+  function onCornerDown(e: ReactPointerEvent<HTMLSpanElement>) {
+    if (e.button !== 0 || reduce || peeled) return
+    e.stopPropagation()
+    drag.current = { id: e.pointerId, x: e.clientX, y: e.clientY, p: 0, moved: false }
+    try { e.currentTarget.setPointerCapture(e.pointerId) } catch { /* old browsers */ }
+    liRef.current?.setAttribute('data-dragging', '')
+  }
+
+  function onCornerMove(e: ReactPointerEvent<HTMLSpanElement>) {
+    const d = drag.current
+    if (!d || d.id !== e.pointerId) return
+    // Peeling runs up and to the left, back over the seal.
+    const pull = Math.max(0, (d.x - e.clientX) * 0.6 + (d.y - e.clientY) + Math.hypot(e.clientX - d.x, e.clientY - d.y) * 0.4)
+    if (pull > 4) d.moved = true
+    d.p = Math.min(1, pull / PULL_PX)
+    setPeelVar(d.p)
+  }
+
+  function onCornerUp(e: ReactPointerEvent<HTMLSpanElement>) {
+    const d = drag.current
+    if (!d || d.id !== e.pointerId) return
+    drag.current = null
+    liRef.current?.removeAttribute('data-dragging')
+    if (!d.moved) { setPeelVar(null); return } // a click on the corner is just a click on the seal
+    swallowClick.current = true
+    if (d.p >= COMMIT && liRef.current) {
+      onToggle(index, liRef.current)
+      // Hold the dragged amount for a frame so it eases on up to fully
+      // peeled instead of dipping back towards the wall first.
+      requestAnimationFrame(() => setPeelVar(null))
+    } else {
+      setPeelVar(null)
+    }
+  }
+
+  function onCornerCancel() {
+    if (!drag.current) return
+    drag.current = null
+    liRef.current?.removeAttribute('data-dragging')
+    setPeelVar(null)
+  }
+
+  return (
+    <li
+      ref={liRef}
+      className={s.sticker}
+      data-peeled={peeled || undefined}
+      style={{ '--i': index } as CSSProperties}
+    >
+      <div className={s.under} aria-hidden>
+        <svg className={s.ghost} viewBox="0 0 100 100" preserveAspectRatio="none" focusable="false">
+          <path d={STACKD_DIE} vectorEffect="non-scaling-stroke" />
+        </svg>
+        <p className={s.lore}>{LORE[kind]}</p>
+      </div>
+      <button
+        type="button"
+        className={s.seal}
+        data-toy="peel"
+        aria-label={`peel the ${label.toLowerCase()} seal`}
+        aria-pressed={peeled}
+        onClick={(e) => {
+          if (swallowClick.current) { swallowClick.current = false; return }
+          const li = liRef.current ?? e.currentTarget
+          onToggle(index, li)
+        }}
+      >
+        <Die className={s.die} face={index % 2 ? '#FFFFFF' : '#FCE8CE'} />
+        <span className={s.inner}>
+          <Vignette kind={kind} />
+          <span className={s.num}>{String(index + 1).padStart(2, '0')}</span>
+          <span className={s.label}>{label}</span>
+        </span>
+        <span
+          aria-hidden
+          className={s.corner}
+          onPointerDown={onCornerDown}
+          onPointerMove={onCornerMove}
+          onPointerUp={onCornerUp}
+          onPointerCancel={onCornerCancel}
+          onLostPointerCapture={onCornerCancel}
+        >
+          <svg viewBox="0 0 30 30" focusable="false">
+            <path className={s.cornerFlap} d="M28 3 C 20 12, 12 20, 3 28 C 4 18, 6 10, 10 7 C 16 4, 22 3, 28 3 Z" />
+          </svg>
+        </span>
+      </button>
+    </li>
+  )
+}
+
 export function StickerWall({ highlights }: { highlights: string[] }) {
   // Seen once -> the slap plays. On screen now -> the loops run.
   const { ref, inView } = useInView<HTMLElement>({ rootMargin: '0px 0px -15% 0px' })
@@ -113,6 +248,49 @@ export function StickerWall({ highlights }: { highlights: string[] }) {
   }, [])
   useEffect(() => { if (inView) setSeen(true) }, [inView])
 
+  const reduce = usePrefersReducedMotion()
+
+  // Peel state: which seals are up now, which have ever been peeled.
+  const [peeled, setPeeled] = useState<ReadonlySet<number>>(() => new Set())
+  const [said, setSaid] = useState('')
+  const everPeeled = useRef(new Set<number>())
+  const timers = useRef(new Map<number, number>())
+
+  useEffect(() => {
+    const t = timers.current
+    return () => { t.forEach((id) => window.clearTimeout(id)); t.clear() }
+  }, [])
+
+  const restick = useCallback((i: number) => {
+    const t = timers.current.get(i)
+    if (t !== undefined) window.clearTimeout(t)
+    timers.current.delete(i)
+    setPeeled((prev) => {
+      if (!prev.has(i)) return prev
+      const next = new Set(prev)
+      next.delete(i)
+      return next
+    })
+  }, [])
+
+  const toggle = useCallback((i: number, el: HTMLElement) => {
+    if (peeled.has(i)) { restick(i); sfx('thunk'); return }
+    setPeeled((prev) => new Set(prev).add(i))
+    const label = highlights[i]
+    if (label) setSaid(LORE[kindFor(label)])
+    sfx('whoosh')
+    buzz(10)
+    const prevT = timers.current.get(i)
+    if (prevT !== undefined) window.clearTimeout(prevT)
+    timers.current.set(i, window.setTimeout(() => restick(i), RESTICK_MS))
+
+    everPeeled.current.add(i)
+    if (highlights.length > 0 && everPeeled.current.size >= highlights.length) {
+      const r = el.getBoundingClientRect()
+      collect('peel', { x: r.left + r.width / 2, y: r.top + r.height / 2 })
+    }
+  }, [peeled, highlights, restick])
+
   const cls = [s.wall, armed ? s.armed : '', seen ? s.seen : '', inView ? s.live : ''].filter(Boolean).join(' ')
 
   return (
@@ -121,19 +299,14 @@ export function StickerWall({ highlights }: { highlights: string[] }) {
         <div className={s.head}>
           <p className={ui.spec}>What we do</p>
           <h2 id="stackd-what" className={ui.h2}>Made here, <em>not assembled.</em></h2>
+          <p className={s.hint} aria-hidden>every seal peels. go on.</p>
         </div>
         <ul className={s.grid}>
           {highlights.map((h, i) => (
-            <li key={h} className={s.sticker} style={{ '--i': i } as CSSProperties}>
-              <Die className={s.die} face={i % 2 ? '#FFFFFF' : '#FCE8CE'} />
-              <div className={s.inner}>
-                <Vignette kind={kindFor(h)} />
-                <span className={s.num}>{String(i + 1).padStart(2, '0')}</span>
-                <p className={s.label}>{h}</p>
-              </div>
-            </li>
+            <Seal key={h} label={h} index={i} peeled={peeled.has(i)} reduce={reduce} onToggle={toggle} />
           ))}
         </ul>
+        <p className={ui.srOnly} aria-live="polite">{said}</p>
       </div>
     </section>
   )

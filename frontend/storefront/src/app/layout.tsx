@@ -6,6 +6,7 @@ import { StorefrontNav } from '../components/StorefrontNav'
 import { StorefrontFooter } from '../components/StorefrontFooter'
 import { FeedbackWidget } from '../components/feedback/FeedbackWidget'
 import { SmoothScroll } from '../components/ui/SmoothScroll'
+import { PlayLayer } from '../components/play/PlayLayer'
 import { SERVD_ORIGIN, BRAND_HOST_HEADER } from '../lib/brandDomains'
 
 export const metadata: Metadata = {
@@ -71,6 +72,7 @@ export default function StorefrontLayout({ children }: { children: React.ReactNo
         <main id="main">{children}</main>
         <StorefrontFooter initialBrandSlug={initialBrandSlug} />
         <FeedbackWidget />
+        <PlayLayer />
         <SmoothScroll />
       </body>
     </html>

@@ -29,12 +29,16 @@
   position: relative;
   overflow: hidden;
   isolation: isolate;
-  padding: clamp(3.5rem, 7vw, 5.5rem) 0 2rem;
+  /* The extra bottom room keeps the last line clear of the fixed sticker tin
+     (bottom-left) and the feedback button (bottom-right) at the page end. */
+  padding: clamp(3.5rem, 7vw, 5.5rem) 0 calc(2rem + 64px);
   background: linear-gradient(165deg, #4E2A4F 0%, #2D1E2F 55%, #1E1420 100%);
   color: var(--party-cream);
 }
 
-/* Scalloped/wavy top edge — the page above dips down onto the plum ground. */
+/* Scalloped/wavy top edge — the page above dips down onto the plum ground.
+   The path is filled ABOVE the wave line (the section above's colour), so
+   the plum shows through below it. */
 .waveWrap {
   position: absolute;
   top: -1px;
@@ -47,8 +51,18 @@
   line-height: 0;
 }
 
-.wave { display: block; width: 100%; height: 100%; }
+.wave { display: block; width: 100%; height: 100%; overflow: visible; }
 .wave path { fill: var(--wave-color); }
+
+/* The live (jelly) wave is taller than the resting edge so a desktop pull has
+   room to hang down into the plum; everything below the wave line is empty. */
+.waveLive { height: calc(clamp(28px, 5vw, 48px) + 44px); }
+.wavePath { pointer-events: none; }
+
+@media (hover: hover) and (pointer: fine) {
+  .waveLive .wavePath { pointer-events: visiblePainted; cursor: grab; touch-action: none; }
+  .waveLive[data-dragging] .wavePath { cursor: grabbing; }
+}
 
 .inner {
   position: relative;
@@ -59,23 +73,61 @@
 }
 
 /* ── Doodles ──────────────────────────────────────────────────────────── */
-.doodle { position: absolute; z-index: 1; pointer-events: none; }
+/* Each doodle sits in a 44px poke target. The target carries the poke
+   (spin + pop); the svg inside keeps its idle loop, so the two never fight. */
+.doodleHit {
+  position: absolute;
+  z-index: 3;
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.doodleHit[data-quiet] { pointer-events: none; cursor: default; }
+.hitStar { top: 12%; right: 8%; }
+.hitDot { top: 30%; left: 4%; }
+
+.doodle { display: block; pointer-events: none; }
 .doodleStar {
   width: clamp(20px, 2.6vw, 34px);
-  top: 12%;
-  right: 8%;
   fill: var(--party-butter);
   animation: spin 11s linear infinite;
 }
 .doodleDot {
   width: clamp(10px, 1.2vw, 16px);
-  top: 30%;
-  left: 4%;
   fill: var(--party-tomato);
   animation: bob 2.8s ease-in-out infinite;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 @keyframes bob  { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-8px); } }
+
+.poked { animation: doodlePoke 520ms cubic-bezier(0.34, 1.56, 0.64, 1); }
+@keyframes doodlePoke {
+  0%   { transform: scale(1) rotate(0deg); }
+  35%  { transform: scale(1.5) rotate(200deg); }
+  100% { transform: scale(1) rotate(360deg); }
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .doodleHit:not([data-quiet]):hover .doodle { filter: drop-shadow(0 0 6px rgba(255, 212, 71, 0.55)); }
+}
+
+/* A poke's burst particles (appended to the footer by the poke handler). */
+.burstBit {
+  position: absolute;
+  z-index: 4;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1.5px solid var(--party-ink);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
 
 /* ── Headline lockup ──────────────────────────────────────────────────── */
 .lockup { margin-bottom: clamp(3rem, 5vw, 4rem); max-width: 900px; }
@@ -124,8 +176,10 @@
 }
 
 .cta svg { transition: transform 200ms ease; }
-.cta:hover { transform: translateY(-3px) rotate(-1.5deg); box-shadow: 0 9px 0 var(--party-ink); }
-.cta:hover svg { transform: translateX(4px); }
+@media (hover: hover) and (pointer: fine) {
+  .cta:hover { transform: translateY(-3px) rotate(-1.5deg); box-shadow: 0 9px 0 var(--party-ink); }
+  .cta:hover svg { transform: translateX(4px); }
+}
 .cta:active { transform: translateY(4px); box-shadow: 0 2px 0 var(--party-ink); }
 .cta:focus-visible { outline: 3px solid var(--party-butter); outline-offset: 4px; }
 
@@ -179,10 +233,35 @@
   transition: color 140ms ease, transform 140ms ease;
 }
 
-.linkRow:hover { color: var(--party-butter); transform: translateX(2px); }
+@media (hover: hover) and (pointer: fine) {
+  .linkRow:hover { color: var(--party-butter); transform: translateX(2px); }
+  .linkRow:hover .dot { transform: scale(1.4); }
+}
+.linkRow:active { color: var(--party-butter); }
 .linkRow:focus-visible { outline: 3px solid var(--party-butter); outline-offset: 2px; border-radius: 4px; }
 
-.dot { width: 0.6rem; height: 0.6rem; border-radius: 999px; display: inline-block; border: 1px solid rgba(0, 0, 0, 0.25); flex-shrink: 0; }
+.dot {
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 999px;
+  display: inline-block;
+  border: 1px solid rgba(0, 0, 0, 0.25);
+  flex-shrink: 0;
+  transition: transform 180ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* Kitchen dots bounce in as the list enters the viewport. Hidden only once
+   JS has "armed" them below the fold. */
+.linkList[data-dots='armed'] .dot { transform: scale(0); }
+.linkList[data-dots='in'] .dot {
+  animation: dotIn 560ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  animation-delay: calc(var(--i, 0) * 110ms + 60ms);
+}
+@keyframes dotIn {
+  0%   { transform: scale(0); }
+  60%  { transform: scale(1.6); }
+  100% { transform: scale(1); }
+}
 
 .staticRow { display: inline-flex; align-items: center; min-height: 44px; font-size: 0.95rem; color: var(--cream-mute); }
 
@@ -199,12 +278,24 @@
   color: var(--cream-dim);
 }
 
+/* Phones keep the doodles, smaller, clear of the headline. */
 @media (max-width: 640px) {
-  .doodle { display: none; }
+  .doodle { scale: 0.7; }
+  .hitStar { top: 2.2rem; right: 0.5rem; }
+  .hitDot { top: 2.2rem; left: 46%; }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .doodle { animation: none; }
-  .cta:hover { transform: none; }
-  .linkRow:hover { transform: none; }
+  .poked { animation: doodleBlink 120ms linear; }
+  .cta:hover,
+  .cta:active { transform: none; }
+  .linkRow:hover,
+  .linkRow:hover .dot { transform: none; }
+  .dot { transition: none; }
+  .linkList[data-dots] .dot { transform: none; animation: none; }
+}
+@keyframes doodleBlink {
+  0%   { opacity: 0.35; }
+  100% { opacity: 1; }
 }

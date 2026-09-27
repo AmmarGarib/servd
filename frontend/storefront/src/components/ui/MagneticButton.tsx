@@ -3,6 +3,7 @@ import * as React from 'react'
 import { useEffect, useState, useCallback } from 'react'
 import { motion, useAnimation, type AnimationControls } from 'framer-motion'
 import Link, { type LinkProps } from 'next/link'
+import { usePrefersReducedMotion } from '../../lib/play/motion'
 
 // "Magnetize" hover effect, colour-preserving. Two drop-ins:
 //   <MagneticButton …>  for <button> CTAs
@@ -14,13 +15,29 @@ import Link, { type LinkProps } from 'next/link'
 // Notes:
 //  - The element keeps overflow visible (box-shadows intact); the particle
 //    layer clips itself (overflow hidden + borderRadius inherit).
-//  - Particles are invisible at rest and only fly in on hover/touch, so a page
-//    full of these stays calm until you interact.
+//  - Particles are invisible at rest and only fly in on hover/touch/focus, so a
+//    page full of these stays calm until you interact.
+//  - attract/release are fire-and-forget: the latest controls.start() simply
+//    interrupts the one before it, so fast hover in/out never queues up.
+//  - Reduced motion: no particle springs. A static currentColor wash shows the
+//    active state instead.
 
 interface Particle { id: number; x: number; y: number }
 
+// Keyboard focus only: a tap also focuses the element, and the particles must
+// not stay gathered after a touch ends.
+function focusVisible(el: Element): boolean {
+  try {
+    return el.matches(':focus-visible')
+  } catch {
+    return true
+  }
+}
+
 function useMagnet(particleCount: number, disabled?: boolean) {
   const [particles, setParticles] = useState<Particle[]>([])
+  const [active, setActive] = useState(false)
+  const reduced = usePrefersReducedMotion()
   const controls = useAnimation()
 
   useEffect(() => {
@@ -33,27 +50,51 @@ function useMagnet(particleCount: number, disabled?: boolean) {
     )
   }, [particleCount])
 
-  const attract = useCallback(async () => {
+  const attract = useCallback(() => {
     if (disabled) return
-    await controls.start({ x: 0, y: 0, opacity: 0.85, transition: { type: 'spring', stiffness: 50, damping: 10 } })
-  }, [controls, disabled])
+    setActive(true)
+    if (reduced) return
+    void controls.start({ x: 0, y: 0, opacity: 0.85, transition: { type: 'spring', stiffness: 50, damping: 10 } })
+  }, [controls, disabled, reduced])
 
-  const release = useCallback(async () => {
-    await controls.start((i: number) => ({
+  const release = useCallback(() => {
+    setActive(false)
+    if (reduced) return
+    void controls.start((i: number) => ({
       x: particles[i]?.x ?? 0,
       y: particles[i]?.y ?? 0,
       opacity: 0,
       transition: { type: 'spring', stiffness: 100, damping: 15 },
     }))
-  }, [controls, particles])
+  }, [controls, particles, reduced])
 
-  return { particles, controls, attract, release }
+  return { particles, controls, attract, release, active, reduced }
 }
 
-function ParticleLayer({ particles, controls }: { particles: Particle[]; controls: AnimationControls }) {
+function ParticleLayer({
+  particles,
+  controls,
+  active,
+  reduced,
+}: {
+  particles: Particle[]
+  controls: AnimationControls
+  active: boolean
+  reduced: boolean
+}) {
   return (
     <span aria-hidden style={{ position: 'absolute', inset: 0, overflow: 'hidden', borderRadius: 'inherit', pointerEvents: 'none' }}>
-      <span style={{ position: 'absolute', top: '50%', left: '50%' }}>
+      {reduced ? (
+        <span
+          style={{
+            position: 'absolute',
+            inset: 0,
+            background: 'currentColor',
+            opacity: active ? 0.12 : 0,
+          }}
+        />
+      ) : null}
+      <span style={{ position: 'absolute', top: '50%', left: '50%', display: reduced ? 'none' : undefined }}>
         {particles.map((p, i) => (
           <motion.span
             key={p.id}
@@ -90,21 +131,25 @@ export function MagneticButton({
   onMouseLeave,
   onTouchStart,
   onTouchEnd,
+  onFocus,
+  onBlur,
   ...props
 }: MagneticButtonProps) {
-  const { particles, controls, attract, release } = useMagnet(particleCount, disabled)
+  const { particles, controls, attract, release, active, reduced } = useMagnet(particleCount, disabled)
   return (
     <button
       className={className}
       disabled={disabled}
       style={{ position: 'relative', ...style }}
-      onMouseEnter={(e) => { void attract(); onMouseEnter?.(e) }}
-      onMouseLeave={(e) => { void release(); onMouseLeave?.(e) }}
-      onTouchStart={(e) => { void attract(); onTouchStart?.(e) }}
-      onTouchEnd={(e) => { void release(); onTouchEnd?.(e) }}
+      onMouseEnter={(e) => { attract(); onMouseEnter?.(e) }}
+      onMouseLeave={(e) => { release(); onMouseLeave?.(e) }}
+      onTouchStart={(e) => { attract(); onTouchStart?.(e) }}
+      onTouchEnd={(e) => { release(); onTouchEnd?.(e) }}
+      onFocus={(e) => { if (focusVisible(e.currentTarget)) attract(); onFocus?.(e) }}
+      onBlur={(e) => { release(); onBlur?.(e) }}
       {...props}
     >
-      <ParticleLayer particles={particles} controls={controls} />
+      <ParticleLayer particles={particles} controls={controls} active={active} reduced={reduced} />
       <Content>{children}</Content>
     </button>
   )
@@ -127,20 +172,24 @@ export function MagneticLink({
   onMouseLeave,
   onTouchStart,
   onTouchEnd,
+  onFocus,
+  onBlur,
   ...props
 }: MagneticLinkProps) {
-  const { particles, controls, attract, release } = useMagnet(particleCount, false)
+  const { particles, controls, attract, release, active, reduced } = useMagnet(particleCount, false)
   return (
     <Link
       className={className}
       style={{ position: 'relative', ...style }}
-      onMouseEnter={(e) => { void attract(); onMouseEnter?.(e) }}
-      onMouseLeave={(e) => { void release(); onMouseLeave?.(e) }}
-      onTouchStart={(e) => { void attract(); onTouchStart?.(e) }}
-      onTouchEnd={(e) => { void release(); onTouchEnd?.(e) }}
+      onMouseEnter={(e) => { attract(); onMouseEnter?.(e) }}
+      onMouseLeave={(e) => { release(); onMouseLeave?.(e) }}
+      onTouchStart={(e) => { attract(); onTouchStart?.(e) }}
+      onTouchEnd={(e) => { release(); onTouchEnd?.(e) }}
+      onFocus={(e) => { if (focusVisible(e.currentTarget)) attract(); onFocus?.(e) }}
+      onBlur={(e) => { release(); onBlur?.(e) }}
       {...props}
     >
-      <ParticleLayer particles={particles} controls={controls} />
+      <ParticleLayer particles={particles} controls={controls} active={active} reduced={reduced} />
       <Content>{children}</Content>
     </Link>
   )

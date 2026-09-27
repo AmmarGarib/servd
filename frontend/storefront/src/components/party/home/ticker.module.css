@@ -18,7 +18,14 @@
   border-block: 2.5px solid #2A1A2B;
   padding-block: clamp(0.55rem, 1vw, 0.85rem);
   box-shadow: 0 6px 0 #2A1A2B;
+  /* Grab it sideways; vertical swipes still scroll the page. */
+  touch-action: pan-y;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  cursor: grab;
 }
+.tape[data-dragging] { cursor: grabbing; }
 
 .tapeFront {
   z-index: 2;
@@ -78,6 +85,27 @@
 .tapeBack .doodle[data-kind='squiggle'] { width: clamp(26px, 2.8vw, 36px); stroke: #2A1A2B; }
 .tapeBack .doodle[data-kind='dot'] { fill: #FFF4D6; }
 
+/* A doodle you can pop: pointer-only (the strip is aria-hidden; the hero
+   doodles are the keyboard twin). Gone = instantly hidden; coming back
+   springs in on the jelly curve. */
+.pop {
+  display: inline-grid;
+  place-items: center;
+  line-height: 0;
+  cursor: pointer;
+  transition: transform 420ms cubic-bezier(0.34, 1.56, 0.64, 1), opacity 160ms ease;
+}
+.pop[data-gone] {
+  transform: scale(0);
+  opacity: 0;
+  pointer-events: none;
+  transition: none;
+}
+@media (hover: hover) and (pointer: fine) {
+  .pop:hover { transform: scale(1.2) rotate(-10deg); }
+}
+.pop:active { transform: scale(0.85); }
+
 @keyframes spin { to { transform: rotate(360deg); } }
 
 /* Phones: the hero has no floor band there (it ends in plain butter), and
@@ -88,6 +116,12 @@
   .tapeBack { transform: rotate(4.5deg); }
 }
 
+/* Reduced motion: the tape is static — no autoplay, no drag, no spin.
+   Doodles still pop (the burst is a still ring) and fade back. */
 @media (prefers-reduced-motion: reduce) {
   .doodle { animation: none !important; }
+  .tape { cursor: default; }
+  .pop { transition: opacity 120ms linear; }
+  .pop[data-gone] { transform: none; }
+  .pop:hover, .pop:active { transform: none; }
 }

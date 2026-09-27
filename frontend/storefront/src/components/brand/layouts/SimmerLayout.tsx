@@ -283,7 +283,7 @@ export function SimmerLayout({ concept, concepts }: Props) {
         <Reveal>
           {/* The candle is out: a curl of smoke off the wick. */}
           <div className={s.rise} style={{ display: 'flex', justifyContent: 'center', marginBottom: '2.2rem' }}>
-            <Candle lit={false} height={110} />
+            <Candle lit={false} height={110} interactive />
           </div>
           <p className={`${s.amarante} ${s.rise}`} style={{ ...i(1), fontSize: '1.4rem', margin: 0 }}>simmer</p>
           <p className={s.amarante} style={{ fontSize: 'clamp(3.4rem, 11vw, 6.5rem)', lineHeight: 1, margin: '0.8rem 0 0' }}>

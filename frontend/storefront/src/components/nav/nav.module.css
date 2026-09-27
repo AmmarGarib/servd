@@ -1,0 +1,232 @@
+/* Global servd nav: googly-eyed badge, springy pills, bouncy basket.
+   Colours stay on the existing --servd-* tokens; the basket borrows the party
+   butter for its body. The nav must fit logo + Browse + basket + account on a
+   360-390px phone without wrapping. */
+
+.bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  max-width: 1200px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.home {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-height: 44px;
+  text-decoration: none;
+  flex-shrink: 0;
+  border-radius: 999px;
+  -webkit-tap-highlight-color: transparent;
+}
+.home:focus-visible { outline: 3px solid var(--servd-green); outline-offset: 3px; }
+
+.wordmark {
+  font-family: var(--font-wordmark);
+  font-size: 1.5rem;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  line-height: 1;
+  color: var(--servd-black);
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+/* ── Badge with eyes ─────────────────────────────────────────────────── */
+.badge {
+  position: relative;
+  width: 2.3rem;
+  height: 2.3rem;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--servd-green);
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
+  transform-origin: 50% 70%;
+}
+
+.badgeLetter {
+  font-family: var(--font-display);
+  font-weight: 900;
+  font-size: 1.05rem;
+  letter-spacing: -0.02em;
+  line-height: 1;
+  transform: translateY(0.32rem);
+}
+
+.eyes {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.eye {
+  transform-box: fill-box;
+  transform-origin: center;
+  transition: transform 45ms linear;
+}
+.eyeWhite { fill: #fff; stroke: var(--servd-green-ink, #1e1420); stroke-width: 1.2; }
+.pupil { fill: var(--servd-green-ink, #1e1420); transition: transform 90ms linear; }
+
+/* ── Press + hover ───────────────────────────────────────────────────── */
+/* The spring press (whileTap) lives on this wrapper; the hover overshoot
+   lives on the link inside, so the two transforms never fight. */
+.press { display: inline-flex; flex-shrink: 0; }
+
+.hoverPop { transition: transform 160ms cubic-bezier(0.34, 1.56, 0.64, 1), color 160ms ease, background 160ms ease; }
+
+@media (hover: hover) and (pointer: fine) {
+  .actions .hoverPop:hover {
+    transform: scale(1.06);
+    transition: transform 60ms cubic-bezier(0.34, 1.56, 0.64, 1), color 160ms ease, background 160ms ease;
+  }
+  .browse:hover { color: var(--servd-ink); }
+}
+.actions .hoverPop:active { transform: scale(0.97); }
+
+.browse {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-height: 44px;
+  min-width: 44px;
+  justify-content: center;
+  padding: 0.7rem 0.95rem;
+  border-radius: 0.6rem;
+  color: var(--servd-mute);
+  font-weight: 600;
+  font-size: 0.92rem;
+  text-decoration: none;
+}
+.browse:focus-visible,
+.account:focus-visible,
+.basket:focus-visible,
+.signIn:focus-visible { outline: 3px solid var(--servd-green); outline-offset: 2px; }
+
+.browseIcon { display: none; }
+
+.account {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 44px;
+  min-width: 44px;
+  justify-content: center;
+  padding: 0.6rem 1rem;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.04);
+  border: 1px solid var(--servd-line);
+  color: var(--servd-ink);
+  font-weight: 600;
+  font-size: 0.88rem;
+  text-decoration: none;
+}
+
+.avatar {
+  width: 1.4rem;
+  height: 1.4rem;
+  border-radius: 50%;
+  background: var(--servd-green);
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.7rem;
+  font-weight: 900;
+}
+
+/* Beats .brand-pill's own padding and hover lift. */
+.actions .signIn {
+  padding: 0.7rem 1.3rem;
+  font-size: 0.92rem;
+  min-height: 44px;
+  white-space: nowrap;
+}
+
+/* ── Basket ──────────────────────────────────────────────────────────── */
+.basketWrap { display: inline-flex; flex-shrink: 0; }
+
+.basket {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 999px;
+  color: var(--servd-ink);
+  background: rgba(0, 0, 0, 0.04);
+  border: 1px solid var(--servd-line);
+  text-decoration: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.basketCount {
+  position: absolute;
+  top: -4px;
+  right: -5px;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--party-tomato, #FF5A3C);
+  color: var(--party-ink, #2A1A2B);
+  border: 2px solid var(--party-ink, #2A1A2B);
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 0.7rem;
+  line-height: 16px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+
+/* ── Phones ──────────────────────────────────────────────────────────── */
+@media (max-width: 440px) {
+  .bar { gap: 0.25rem; }
+  .actions { gap: 0.25rem; }
+  .home { gap: 0.45rem; }
+  .wordmark { font-size: 1.35rem; }
+  .browse { padding: 0.6rem 0.6rem; }
+  .actions .signIn { padding: 0.7rem 1rem; }
+  /* Account shrinks to its avatar; the link keeps aria-label="account". */
+  .account { padding: 0.5rem; }
+  .accountLabel { display: none; }
+}
+
+@media (max-width: 359px) {
+  .browseIcon { display: block; }
+  .browseLabel {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .wordmark { font-size: 1.2rem; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hoverPop,
+  .eye,
+  .pupil { transition: none; }
+  .actions .hoverPop:hover,
+  .actions .hoverPop:active { transform: none; }
+}
