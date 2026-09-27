@@ -35,3 +35,7 @@ _legacy/
 # build-temp (generated during image build, never commit)
 frontend/storefront/Dockerfile.deploy
 frontend/storefront/proxy-ca.crt
+
+# Redis snapshot written by local test runs
+backend/dump.rdb
+dump.rdb
