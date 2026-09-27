@@ -198,26 +198,26 @@ enum JournalEntryType {
 // ─── Concept ──────────────────────────────────────────────────────────────────
 
 model Concept {
-  id           String      @id @default(uuid())
-  tenantId     String? // tenant — backfilled to "main" on first boot
-  name         String
-  slug         String      @unique
-  type         ConceptType
-  description  String?
-  logoUrl      String?
-  primaryColor String?
-  isActive     Boolean     @default(true)
+  id                       String      @id @default(uuid())
+  tenantId                 String? // tenant — backfilled to "main" on first boot
+  name                     String
+  slug                     String      @unique
+  type                     ConceptType
+  description              String?
+  logoUrl                  String?
+  primaryColor             String?
+  isActive                 Boolean     @default(true)
   // Expected monthly portions at steady state — denominator for the
   // brand's Opex per Portion calc on the Recipe page. Operator-edited
   // when projections are set or revised.
-  forecastPortionsPerMonth Int @default(0)
-  taxRate      Float       @default(17) // FBR GST % — legacy single rate; kept for back-compat. New calc uses the split below.
+  forecastPortionsPerMonth Int         @default(0)
+  taxRate                  Float       @default(17) // FBR GST % — legacy single rate; kept for back-compat. New calc uses the split below.
   // FBR allows a discounted GST rate on card / digital tenders to encourage
   // banked payments. The split is per-brand because some concepts negotiate
   // their own rates with the tax authority. Cash defaults to the higher rate
   // (15% as of 2026), card to the lower (8%).
-  taxRateCash  Float       @default(15)
-  taxRateCard  Float       @default(8)
+  taxRateCash              Float       @default(15)
+  taxRateCard              Float       @default(8)
 
   // Storefront CMS — editable from ops admin
   storefrontVisible  Boolean @default(true) // show/hide on customer ordering page
@@ -234,8 +234,8 @@ model Concept {
   //                 live text), used in the hero and the sign-off.
   //   mascotUrl   — the brand character, shown in its own showcase band.
   // Prefer a transparent PNG at 1000px+ on the long edge, or an SVG.
-  wordmarkUrl        String?
-  mascotUrl          String?
+  wordmarkUrl String?
+  mascotUrl   String?
 
   // Reservation availability — per-brand master toggle. When false, public
   // booking endpoints reject (RESERVATIONS_DISABLED) and customer-facing
@@ -732,12 +732,12 @@ model GiftCard {
 }
 
 model GiftCardRedemption {
-  id           String   @id @default(uuid())
+  id           String    @id @default(uuid())
   giftCardId   String
   orderId      String?
   amountCents  Int
   balanceAfter Int
-  redeemedAt   DateTime @default(now())
+  redeemedAt   DateTime  @default(now())
   redeemedById String? // staff user when manual
   // Set when a refund has re-credited this redemption back onto the card.
   // The refund path claimed to be idempotent "on a flag we add
@@ -770,17 +770,17 @@ model GuestTag {
 // ─── User (Staff) ─────────────────────────────────────────────────────────────
 
 model User {
-  id              String        @id @default(uuid())
-  tenantId        String? // tenant — backfilled on first boot
-  name            String
+  id                  String        @id @default(uuid())
+  tenantId            String? // tenant — backfilled on first boot
+  name                String
   // Email is nullable so the CEO can stub a staff row from the workforce hub
   // (just a name + category) and fill the contact details in later. Postgres
   // permits multiple NULLs on a @unique column, so the uniqueness guarantee
   // still holds for real addresses. Login flows already gate on `email != null`.
-  email           String?       @unique
-  phone           String? // staff contact + source for the 4-digit PIN
-  password        String // bcrypt hash
-  pin             String? // bcrypt hash of PIN
+  email               String?       @unique
+  phone               String? // staff contact + source for the 4-digit PIN
+  password            String // bcrypt hash
+  pin                 String? // bcrypt hash of PIN
   // Set true for legacy accounts whose PIN was derived from the last 4 digits
   // of their phone number. Login is blocked for these accounts until an admin
   // re-issues a CSPRNG PIN via POST /auth/staff/:id/issue-pin. New signups
@@ -788,8 +788,8 @@ model User {
   // Set when an account is created with a generated password, or an admin
   // reissues one. A nudge for the client to prompt a change — NEVER a login
   // block: hard-blocking here is how you strand people on deploy day.
-  mustChangePassword Boolean    @default(false)
-  pinMustReset    Boolean       @default(false)
+  mustChangePassword  Boolean       @default(false)
+  pinMustReset        Boolean       @default(false)
   // Set when a staff member taps "forgot PIN" on the login screen. Surfaces
   // the request to the CEO/owner in the staff directory; cleared when a new
   // PIN is issued. Never reveals anything about the old PIN.
@@ -811,27 +811,27 @@ model User {
   // change already made once.
   twoFactorPhone      String?
   twoFactorEnabledAt  DateTime?
-  role            UserRole      @default(kitchen)
+  role                UserRole      @default(kitchen)
   // Free-text job title shown next to the role chip in /workforce. The role
   // enum is the *category* (FOH / BOH / Procurement / etc); jobTitle is what
   // the operator actually calls them ("Sous Chef Bukhari", "Floor manager —
   // Clifton", "Pastry CDP"). Optional — falls back to the role label.
-  jobTitle        String?
+  jobTitle            String?
   // Self-signup creates accounts as `pending` — CEO approves from the user
   // dropdown before they can sign in. Existing accounts back-fill to `active`.
-  accountStatus   AccountStatus @default(active)
+  accountStatus       AccountStatus @default(active)
   // Free-text reason kept around for the audit log / approval modal.
-  signupReason    String?
+  signupReason        String?
   // Concepts this user is allowed to access. Empty array = no concept restriction
   // is applied (intended for admin/manager — role check is the gate). Non-admin
   // roles MUST have explicit concept IDs to access concept-scoped resources.
-  conceptIds      String[]      @default([])
+  conceptIds          String[]      @default([])
   // Stations this user is assigned to work. Drives the /kds dashboard (line
   // cook sees only their stations) and is the route the head chef uses to
   // hand a tablet to a cook without showing them every station's queue.
   // Empty = "not station-restricted" → admin / management / expediter see
   // every station via the existing /kds/stations endpoint.
-  stationIds      String[]      @default([])
+  stationIds          String[]      @default([])
   // ─── Per-user permission + module overrides ─────────────────────────
   // The role gives a baseline (set in /configuration/roles for actions and
   // /configuration/role-modules for sidebar visibility). These four arrays
@@ -846,19 +846,19 @@ model User {
   //
   // Effective access = role default ± user overrides. Resolution is in
   // backend/src/lib/permissions.ts (userCan) and the frontend useCan hook.
-  permissionAllow String[]      @default([])
-  permissionDeny  String[]      @default([])
-  moduleAllow     String[]      @default([])
-  moduleDeny      String[]      @default([])
+  permissionAllow     String[]      @default([])
+  permissionDeny      String[]      @default([])
+  moduleAllow         String[]      @default([])
+  moduleDeny          String[]      @default([])
   // Payroll: hourly rate in paisa (PKR cents). Null = unpaid (volunteer/owner).
-  hourlyRateCents Int?
+  hourlyRateCents     Int?
   // Wage account this employee's labour posts to: 6030 kitchen / 6031 FOH /
   // 6032 management / 6035 riders. Null = derive from role.
-  wageAccountCode String?
-  isActive        Boolean       @default(true)
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
-  deletedAt       DateTime?
+  wageAccountCode     String?
+  isActive            Boolean       @default(true)
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
+  deletedAt           DateTime?
 
   shifts                 Shift[]
   clockLogs              ClockLog[]
@@ -893,7 +893,7 @@ model Shift {
   id                String      @id @default(uuid())
   userId            String
   // Owning company — company master data, never shared across companies.
-  tenantId  String?
+  tenantId          String?
   locationId        String? // physical place this shift was opened at
   status            ShiftStatus @default(open)
   openedAt          DateTime    @default(now())
@@ -908,10 +908,9 @@ model Shift {
   location      Location?      @relation(fields: [locationId], references: [id])
   payments      Payment[]
   cashMovements CashMovement[]
+  tenant        Tenant?        @relation("TenantShifts", fields: [tenantId], references: [id])
 
   @@index([locationId, openedAt(sort: Desc)])
-  tenant Tenant? @relation("TenantShifts", fields: [tenantId], references: [id])
-
   @@index([tenantId])
   @@map("shifts")
 }
@@ -1309,10 +1308,10 @@ model TriggerLog {
 // Sensible defaults are seeded on first read so the system works
 // out-of-the-box without any admin intervention.
 model TierConfig {
-  id   String @id @default(uuid())
+  id       String  @id @default(uuid())
   // Each company has its own ladder (owner decision 13).
   tenantId String?
-  tier String // 'bronze' | 'silver' | 'gold' | 'insider' | custom slug
+  tier     String // 'bronze' | 'silver' | 'gold' | 'insider' | custom slug
 
   // Display name shown on the storefront (e.g. "Insider Gold"). The `tier`
   // field above is the immutable slug used by code; `displayName` is the
@@ -1326,8 +1325,8 @@ model TierConfig {
   // Paid-tier support. Free tiers (bronze) get assigned automatically
   // by lifetime spend; paid tiers (Insider Gold) are subscription-priced
   // and assigned via /crm or by the customer subscribing.
-  isPaid           Boolean @default(false)
-  monthlyPriceCents Int?    // null when isPaid=false
+  isPaid            Boolean @default(false)
+  monthlyPriceCents Int? // null when isPaid=false
 
   // For FREE tiers, auto-upgrade once a customer's lifetime spend
   // reaches this amount (in paisa). Null = no auto-upgrade.
@@ -1881,34 +1880,34 @@ model GroupOrderItem {
 // ─── InventoryItem ────────────────────────────────────────────────────────────
 
 model InventoryItem {
-  id            String    @id @default(uuid())
+  id             String    @id @default(uuid())
   // Tenant the ingredient stock belongs to. Critical: inventory is per-
   // company — GS Foods Bukhari's chicken doesn't show up in GS x Viva
   // Clifton's par sheet. Backfilled to the supplier's tenant where one
   // exists; legacy rows with no supplier remain nullable until the CEO
   // assigns them via the inventory edit drawer.
-  tenantId      String?
-  name          String
-  unit          String // e.g. "kg", "pcs", "litres"
-  parLevel      Float     @default(0)
-  currentStock  Float     @default(0)
-  unitCostCents Int? // cost per unit (paisa) — moving average of deliveries
+  tenantId       String?
+  name           String
+  unit           String // e.g. "kg", "pcs", "litres"
+  parLevel       Float     @default(0)
+  currentStock   Float     @default(0)
+  unitCostCents  Int? // cost per unit (paisa) — moving average of deliveries
   // The negotiated price on the sourcing sheet. A reference only; never the cost.
   listPriceCents Int?
   // Edible portion after trim/peel/loss. The Recipe page uses this as the
   // default yield when adding this ingredient to a recipe; per-recipe rows
   // can still override on RecipeIngredient.yieldPct.
-  yieldPct      Float     @default(100)
+  yieldPct       Float     @default(100)
   // Dietary tags surfaced on Recipe / Menu pages — e.g. ['dairy','gluten'].
-  allergens     String[]  @default([])
+  allergens      String[]  @default([])
   // Coarse classification used for ingredient picker grouping: 'protein',
   // 'produce', 'dairy', 'dry_goods', 'sauce', 'packaging', 'other'.
-  category      String?
-  supplierId    String?
-  notes         String?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
-  deletedAt     DateTime?
+  category       String?
+  supplierId     String?
+  notes          String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  deletedAt      DateTime?
 
   supplier           Supplier?           @relation(fields: [supplierId], references: [id])
   tenant             Tenant?             @relation("TenantInventoryItems", fields: [tenantId], references: [id], onDelete: SetNull)
@@ -2021,59 +2020,59 @@ enum RecipeStatus {
 }
 
 model Recipe {
-  id           String      @id @default(uuid())
-  kind         RecipeKind  @default(plate)
+  id                      String       @id @default(uuid())
+  kind                    RecipeKind   @default(plate)
   // Lifecycle status (see RecipeStatus). New recipes start as `iteration`.
-  status       RecipeStatus @default(iteration)
+  status                  RecipeStatus @default(iteration)
   // Promotion audit. Plain staff-user IDs (no FK relation — mirrors the
   // `createdBy` convention on PurchaseOrder). `submitted*` is set when a
   // manager requests promotion; `approved*` when a CEO/owner signs off;
   // `rejectionReason` is the note left on a rejection back to `iteration`.
-  submittedById   String?
-  submittedAt     DateTime?
-  approvedById    String?
-  approvedAt      DateTime?
-  rejectionReason String?
+  submittedById           String?
+  submittedAt             DateTime?
+  approvedById            String?
+  approvedAt              DateTime?
+  rejectionReason         String?
   // PLATE recipes are 1:1 with a MenuItem. COMPONENT recipes have menuItemId=null
   // and are named via the `name` field below. A plate created while in
   // `iteration` has NO MenuItem yet — testing recipes must not appear on the
   // menu. The intended menu item is stashed in `pendingMenuItem` and created
   // only when the recipe is approved to production.
-  menuItemId   String?     @unique
+  menuItemId              String?      @unique
   // Deferred new-menu-item payload for testing plates:
   // { conceptId, categoryId, name, description }. Null once the item is
   // created (on approval) or when the plate was attached to an existing item.
-  pendingMenuItem Json?
+  pendingMenuItem         Json?
   // Display name for component recipes (plate recipes inherit name from menuItem).
   // Required when kind=component; null when kind=plate (validated at the route layer).
-  name         String?
+  name                    String?
   // Batch yield in grams — relevant only for component recipes. Drives the
   // cost-per-gram calculation: batchCost ÷ yieldGrams = costPerGram. Required
   // when kind=component; null when kind=plate (which uses portionSizeG instead).
-  yieldGrams   Float?
-  servings     Int         @default(1) // portions per batch (plate recipes)
-  portionSizeG Float? // grams per portion (display reference, plate recipes)
-  laborMinutes Int         @default(0)
-  notes        String?
-  steps        String? // cooking/assembly steps for kitchen staff (KDS) — also the free-text MOP for sub-recipes (components)
-  stepsUrdu    String? @map("steps_urdu")
+  yieldGrams              Float?
+  servings                Int          @default(1) // portions per batch (plate recipes)
+  portionSizeG            Float? // grams per portion (display reference, plate recipes)
+  laborMinutes            Int          @default(0)
+  notes                   String?
+  steps                   String? // cooking/assembly steps for kitchen staff (KDS) — also the free-text MOP for sub-recipes (components)
+  stepsUrdu               String?      @map("steps_urdu")
   // Finished-plate method as an ordered, station-tagged step list:
   //   [{ station: "Grill", instruction: "Sear patty 90s/side" }, …]
   // Sub-recipes use the free-text `steps` (MOP) instead; plates use this.
-  methodSteps  Json?
+  methodSteps             Json?
   // ── Pricing inputs (per spec — sections 3 & 4) ──────────────────────────
   // Q factor = waste buffer. Default 10% pre-fills on every new recipe;
   // operator can override per-recipe (e.g. tighter for hard-to-waste prep,
   // looser for protein-heavy plates).
-  qFactorPct        Float   @default(10)
+  qFactorPct              Float        @default(10)
   // Target net profit % the recipe should generate after opex + packaging.
   // Default 25%. Drives the suggested Target Price calculation.
-  targetProfitPct   Float   @default(25)
+  targetProfitPct         Float        @default(25)
   // The food-cost % the operator wants this item to run at (Menu Engineering
   // "price to hit target" suggestion = plateCost ÷ target%). Default 30.
-  targetFoodCostPct Float   @default(30)
+  targetFoodCostPct       Float        @default(30)
   // Packaging as % of selling price (takeaway boxes, lids, bags). Default 8%.
-  packagingPct      Float   @default(8)
+  packagingPct            Float        @default(8)
   // What the operator actually charges on the menu. Null = defaults to
   // the computed Target Price. Stored as cents (paisa) per servd convention.
   actualSellingPriceCents Int?
@@ -2081,9 +2080,9 @@ model Recipe {
   // 'sub_recipe'. Plate recipes usually inherit category from MenuItem;
   // component recipes own this field directly since they have no
   // MenuItem.
-  category          String?
+  category                String?
   // Optional hero photo URL. Operator-uploaded via the media upload helper.
-  photoUrl          String?
+  photoUrl                String?
 
   // Seasonality. `seasons` is an array of slugs from the curated set:
   // 'spring' | 'summer' | 'monsoon' | 'autumn' | 'winter' | 'ramadan' | 'year-round'
@@ -2104,13 +2103,13 @@ model Recipe {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  menuItem    MenuItem?          @relation(fields: [menuItemId], references: [id])
-  ingredients RecipeIngredient[]
+  menuItem     MenuItem?           @relation(fields: [menuItemId], references: [id])
+  ingredients  RecipeIngredient[]
   // Back-relation: rows where this recipe appears as a prep component on
   // another recipe (only meaningful for prep recipes). Used to detect when
   // editing/deleting a prep would affect plate recipes.
-  usedInPlates RecipeIngredient[] @relation("RecipeAsIngredient")
-  recipeSteps RecipeStep[]
+  usedInPlates RecipeIngredient[]  @relation("RecipeAsIngredient")
+  recipeSteps  RecipeStep[]
   testAttempts RecipeTestAttempt[]
 
   @@index([isActive])
@@ -2132,15 +2131,15 @@ enum RecipeTestOutcome {
 model RecipeTestAttempt {
   id           String             @id @default(uuid())
   recipeId     String
-  version      Int                // sequential within a recipe: 1, 2, 3…
+  version      Int // sequential within a recipe: 1, 2, 3…
   notes        String
   outcome      RecipeTestOutcome?
-  rating       Int?               // optional 1–5 quality score
-  testedById   String             // staff user id who logged the cook
-  testedByName String?            // denormalised name for display
+  rating       Int? // optional 1–5 quality score
+  testedById   String // staff user id who logged the cook
+  testedByName String? // denormalised name for display
   createdAt    DateTime           @default(now())
 
-  recipe       Recipe             @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+  recipe Recipe @relation(fields: [recipeId], references: [id], onDelete: Cascade)
 
   @@unique([recipeId, version])
   @@index([recipeId])
@@ -2576,7 +2575,6 @@ model BankStatementLine {
   @@map("bank_statement_lines")
 }
 
-
 // ─── Cost allocation ─────────────────────────────────────────────────────────
 //
 // A shared OpEx account (rent, electricity, etc.) is split across concepts by
@@ -2630,7 +2628,7 @@ model AllocationRuleWeight {
 
 model CostAllocationRun {
   id               String   @id @default(uuid())
-  tenantId  String?
+  tenantId         String?
   ruleId           String
   periodStart      DateTime
   periodEnd        DateTime
@@ -2733,17 +2731,74 @@ model InvoiceCounter {
 // editor; storefront falls back to hard-coded defaults if no row exists.
 
 model SiteLayout {
-  id          String    @id @default(uuid())
-  slug        String    @unique // "servd:home" | "brand:<conceptSlug>" | "brand:<slug>:about" etc.
-  title       String? // operator-facing label, e.g. "Simmer — home"
-  blocks      Json // Block[] — array of typed block configs
-  updatedById String?
-  publishedAt DateTime?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  id               String    @id @default(uuid())
+  slug             String    @unique // "servd:home" | "servd:hero" | "brand:<slug>" | "brand:<slug>:footer" | "page:<slug>" | "popup:<key>"
+  title            String? // operator-facing label, e.g. "Simmer — home"
+  // Storefront content module (decision 41). One row per page / pop-up.
+  // blocks + settings are the LIVE copy the storefront reads; draft* is the
+  // working copy. Nothing reaches the live copy without CEO approval.
+  kind             String    @default("page") // page | hero | footer | popup
+  tenantId         String? // null = the shared servd pages; else the owning company
+  blocks           Json // Block[] — live
+  settings         Json? // live PageSettings: fonts, A/B variant, pop-up rules
+  draftBlocks      Json?
+  draftSettings    Json?
+  draftStatus      String    @default("none") // none | draft | pending | scheduled
+  draftUpdatedById String?
+  draftUpdatedAt   DateTime?
+  submittedById    String?
+  submittedAt      DateTime?
+  reviewNote       String?
+  reviewedById     String?
+  reviewedAt       DateTime?
+  publishAt        DateTime? // approved + scheduled: goes live at this time
+  liveVersion      Int       @default(0)
+  updatedById      String?
+  publishedAt      DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  versions SiteLayoutVersion[]
+  stats    SiteLayoutStat[]
 
   @@index([slug])
+  @@index([tenantId, kind])
+  @@index([draftStatus, publishAt])
   @@map("site_layouts")
+}
+
+// Every publish of a SiteLayout, for one-click rollback and the audit trail.
+model SiteLayoutVersion {
+  id            String   @id @default(uuid())
+  layoutId      String
+  version       Int
+  blocks        Json
+  settings      Json?
+  publishedById String?
+  approvedById  String?
+  note          String?
+  publishedAt   DateTime @default(now())
+
+  layout SiteLayout @relation(fields: [layoutId], references: [id], onDelete: Cascade)
+
+  @@unique([layoutId, version])
+  @@map("site_layout_versions")
+}
+
+// A/B counters per published version and variant ("a" | "b").
+model SiteLayoutStat {
+  id          String   @id @default(uuid())
+  layoutId    String
+  version     Int
+  variant     String
+  views       Int      @default(0)
+  conversions Int      @default(0)
+  updatedAt   DateTime @updatedAt
+
+  layout SiteLayout @relation(fields: [layoutId], references: [id], onDelete: Cascade)
+
+  @@unique([layoutId, version, variant])
+  @@map("site_layout_stats")
 }
 
 // ─── Audit log ───────────────────────────────────────────────────────────────
@@ -3491,7 +3546,7 @@ model SupplierPortalToken {
 model ModifierTemplate {
   id          String    @id @default(cuid())
   // Owning company — this is company master data, never shared across companies.
-  tenantId  String?
+  tenantId    String?
   name        String // 'Sauces', 'Sizes', 'Sides', 'Spice Level'
   description String?
   isRequired  Boolean   @default(false)
@@ -3530,7 +3585,7 @@ model ModifierTemplateOption {
 model DeliveryZone {
   id               String   @id @default(cuid())
   // Owning company — company master data, never shared across companies.
-  tenantId  String?
+  tenantId         String?
   conceptId        String? // null = all concepts
   name             String // "Inner DHA", "Phase 5", "Outside city"
   // Distance-based mode
@@ -3546,10 +3601,9 @@ model DeliveryZone {
   sortOrder        Int      @default(0)
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
+  tenant           Tenant?  @relation("TenantDeliveryZones", fields: [tenantId], references: [id])
 
   @@index([conceptId])
-  tenant Tenant? @relation("TenantDeliveryZones", fields: [tenantId], references: [id])
-
   @@index([tenantId])
   @@map("delivery_zones")
 }
@@ -3570,11 +3624,10 @@ model NotificationTemplate {
   notes     String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+  tenant    Tenant?  @relation("TenantNotificationTemplates", fields: [tenantId], references: [id])
 
   @@unique([tenantId, conceptId, channel, event, language], map: "notification_templates_tenant_scope_key")
   @@index([conceptId, channel])
-  tenant Tenant? @relation("TenantNotificationTemplates", fields: [tenantId], references: [id])
-
   @@index([tenantId])
   @@map("notification_templates")
 }
@@ -3583,7 +3636,7 @@ model NotificationTemplate {
 model BankAccount {
   id                  String    @id @default(cuid())
   // Owning company — this is company master data, never shared across companies.
-  tenantId  String?
+  tenantId            String?
   name                String // "HBL Operations Account"
   bankName            String? // "HBL", "Meezan"
   accountTitle        String?
@@ -3638,7 +3691,7 @@ model KdsDevice {
 model WebhookSubscription {
   id           String    @id @default(cuid())
   // Owning company — this is company master data, never shared across companies.
-  tenantId  String?
+  tenantId     String?
   url          String // https://accountant.example.com/webhooks/servd
   events       String[]  @default([]) // ['order.completed', 'order.refunded', 'shift.closed']
   secret       String // HMAC SHA-256 signing secret
@@ -3687,7 +3740,7 @@ model WebhookDelivery {
 model CustomFieldDefinition {
   id         String   @id @default(cuid())
   // Owning company — company master data, never shared across companies.
-  tenantId  String?
+  tenantId   String?
   scope      String // 'customer' | 'order' | 'menu_item' | 'supplier'
   key        String // 'gift_recipient', 'table_preference', 'allergy_severity'
   label      String // operator-facing label
@@ -3702,11 +3755,10 @@ model CustomFieldDefinition {
   updatedAt  DateTime @updatedAt
 
   values CustomFieldValue[]
+  tenant Tenant?            @relation("TenantCustomFieldDefinitions", fields: [tenantId], references: [id])
 
   @@unique([tenantId, scope, key])
   @@index([scope])
-  tenant Tenant? @relation("TenantCustomFieldDefinitions", fields: [tenantId], references: [id])
-
   @@index([tenantId])
   @@map("custom_field_definitions")
 }
@@ -3731,7 +3783,7 @@ model CustomFieldValue {
 model ScheduledReport {
   id          String    @id @default(cuid())
   // Owning company — company master data, never shared across companies.
-  tenantId  String?
+  tenantId    String?
   name        String // "Daily P&L"
   reportType  String // 'sales_daily' | 'shift_summary' | 'low_stock' | 'food_cost' | 'ap_aging' | 'menu_engineering'
   cron        String // standard cron syntax
@@ -3754,11 +3806,11 @@ model ScheduledReport {
 
 // Refund / void / comp policy — single record per scope
 model RefundPolicy {
-  id      String  @id @default(cuid())
-  scope   String  @default("global") // 'global' | 'concept'
-  scopeId String? // concept id when scope='concept'
+  id       String  @id @default(cuid())
+  scope    String  @default("global") // 'global' | 'concept'
+  scopeId  String? // concept id when scope='concept'
   // Owning company — this is company master data, never shared across companies.
-  tenantId  String?
+  tenantId String?
 
   // Per-role caps (cents). 0 = role can't perform without manager override.
   cashierVoidLimitCents   Int @default(0)
@@ -3776,21 +3828,20 @@ model RefundPolicy {
   notes                 String?
   updatedAt             DateTime @updatedAt
   updatedById           String?
+  tenant                Tenant?  @relation("TenantRefundPolicies", fields: [tenantId], references: [id])
 
   @@unique([tenantId, scope, scopeId])
-  tenant Tenant? @relation("TenantRefundPolicies", fields: [tenantId], references: [id])
-
   @@index([tenantId])
   @@map("refund_policies")
 }
 
 // Reservation policy — single record per scope
 model ReservationPolicy {
-  id      String  @id @default(cuid())
-  scope   String  @default("global")
-  scopeId String?
+  id       String  @id @default(cuid())
+  scope    String  @default("global")
+  scopeId  String?
   // Owning company — this is company master data, never shared across companies.
-  tenantId  String?
+  tenantId String?
 
   depositRequiredAboveParty Int? // require deposit for parties larger than this
   depositCents              Int     @default(0)
@@ -3820,10 +3871,9 @@ model ReservationPolicy {
   notes       String?
   updatedAt   DateTime @updatedAt
   updatedById String?
+  tenant      Tenant?  @relation("TenantReservationPolicies", fields: [tenantId], references: [id])
 
   @@unique([tenantId, scope, scopeId])
-  tenant Tenant? @relation("TenantReservationPolicies", fields: [tenantId], references: [id])
-
   @@index([tenantId])
   @@map("reservation_policies")
 }
@@ -3834,7 +3884,7 @@ model ReceiptConfig {
   scope                  String   @default("global")
   scopeId                String?
   // Owning company — this is company master data, never shared across companies.
-  tenantId  String?
+  tenantId               String?
   paperWidthMm           Int      @default(80) // 80 or 58
   showLogo               Boolean  @default(true)
   logoUrl                String?
@@ -3851,10 +3901,9 @@ model ReceiptConfig {
   cashVarianceLimitCents Int      @default(20000) // PKR 200 default
   updatedAt              DateTime @updatedAt
   updatedById            String?
+  tenant                 Tenant?  @relation("TenantReceiptConfigs", fields: [tenantId], references: [id])
 
   @@unique([tenantId, scope, scopeId])
-  tenant Tenant? @relation("TenantReceiptConfigs", fields: [tenantId], references: [id])
-
   @@index([tenantId])
   @@map("receipt_configs")
 }
@@ -3863,11 +3912,11 @@ model ReceiptConfig {
 // brand assets, period locks, COA — settings the platform reads but no dedicated full
 // model. Stored as a single typed record per scope.
 model OperationsConfig {
-  id      String  @id @default(cuid())
-  scope   String  @default("global")
-  scopeId String?
+  id       String  @id @default(cuid())
+  scope    String  @default("global")
+  scopeId  String?
   // Owning company — this is company master data, never shared across companies.
-  tenantId  String?
+  tenantId String?
 
   // Service charge
   serviceChargePct               Float    @default(0) // 0–1, e.g. 0.05 = 5%
@@ -3909,10 +3958,9 @@ model OperationsConfig {
 
   updatedAt   DateTime @updatedAt
   updatedById String?
+  tenant      Tenant?  @relation("TenantOperationsConfigs", fields: [tenantId], references: [id])
 
   @@unique([tenantId, scope, scopeId])
-  tenant Tenant? @relation("TenantOperationsConfigs", fields: [tenantId], references: [id])
-
   @@index([tenantId])
   @@map("operations_configs")
 }
@@ -4074,7 +4122,7 @@ model CapexProject {
   // overall. Same shape as Tenant.jvPartners. UI renders partner-share
   // chips next to every cost line on the project's CapEx + OpEx tabs.
   isJointVenture      Boolean   @default(false)
-  jvPartners          Json?     // [{label, pct}, ...]
+  jvPartners          Json? // [{label, pct}, ...]
   status              String    @default("planning") // legacy alias for phase
   notes               String?
   createdAt           DateTime  @default(now())
@@ -4354,43 +4402,43 @@ model ProFormaMonth {
 //   payback (months) = capitalAsk / max(1, steadyStateMonthlyProfit)
 
 model Projection {
-  id        String                  @id @default(cuid())
+  id        String                 @id @default(cuid())
   tenantId  String?
-  name      String                  @default("Default scenario")
-  isActive  Boolean                 @default(true)
+  name      String                 @default("Default scenario")
+  isActive  Boolean                @default(true)
   // 12-month ramp curve (multipliers on steady-state daily covers, applied
   // from each brand's launch month onward). Default = PDF spec.
-  rampCurve Float[]                 @default([0.30, 0.45, 0.60, 0.75, 0.90, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00])
+  rampCurve Float[]                @default([0.30, 0.45, 0.60, 0.75, 0.90, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00])
   brands    ProjectionBrandInput[]
-  createdAt DateTime                @default(now())
-  updatedAt DateTime                @updatedAt
+  createdAt DateTime               @default(now())
+  updatedAt DateTime               @updatedAt
 
   @@map("projections")
 }
 
 model ProjectionBrandInput {
-  id                  String     @id @default(cuid())
+  id                  String @id @default(cuid())
   projectionId        String
   conceptId           String
-  launchMonth         Int        @default(1) // 1..12
-  checkAverageCents   Int        @default(0)
-  tradingDaysPerMonth Int        @default(26)
-  foodCostPct         Float      @default(32)
-  packagingCostPct    Float      @default(8)
+  launchMonth         Int    @default(1) // 1..12
+  checkAverageCents   Int    @default(0)
+  tradingDaysPerMonth Int    @default(26)
+  foodCostPct         Float  @default(32)
+  packagingCostPct    Float  @default(8)
   // Manual fallback for daily covers. When the timing block below is filled
   // (seats > 0 and turn time > 0), daily covers are CALCULATED from it instead:
   //   covers = seats × utilization% × (total operating hours ÷ turn hours)
-  dailyCoversAtSS     Int        @default(0)
+  dailyCoversAtSS     Int    @default(0)
   // ── Timing & capacity block (per the ops model sheet) ──────────────────
-  seats               Int        @default(0)   // max seated capacity
-  tableTurnHours      Float      @default(1.5) // avg table turn time (hrs)
-  seatUtilizationPct  Float      @default(70)  // % of seats filled per turn
-  breakfastHours      Float      @default(4)   // 8–12
-  lunchHours          Float      @default(4)   // 12–4
-  dinnerHours         Float      @default(10)  // 4–2 (next day)
+  seats               Int    @default(0) // max seated capacity
+  tableTurnHours      Float  @default(1.5) // avg table turn time (hrs)
+  seatUtilizationPct  Float  @default(70) // % of seats filled per turn
+  breakfastHours      Float  @default(4) // 8–12
+  lunchHours          Float  @default(4) // 12–4
+  dinnerHours         Float  @default(10) // 4–2 (next day)
   // Per-brand tax rate on profit (Flip'd vs Stax sole-prop differ). Applied to
   // profitable months only — losses carry through untaxed.
-  taxRatePct          Float      @default(0)
+  taxRatePct          Float  @default(0)
 
   projection Projection @relation(fields: [projectionId], references: [id], onDelete: Cascade)
   concept    Concept    @relation(fields: [conceptId], references: [id], onDelete: Cascade)
@@ -4467,55 +4515,55 @@ model Domain {
 //   - Per-tenant billing customer ID, plan tier (next iteration)
 
 model Tenant {
-  id          String    @id @default(cuid())
-  slug        String    @unique
-  name        String
-  industry    String? // 'qsr' | 'cafe' | 'fine_dining' | 'cloud_kitchen' | 'biryani' | 'multi_brand'
-  countryCode String    @default("PK") // ISO 3166-1 alpha-2 — drives currency, tax regime
-  currency    String    @default("PKR")
-  timezone    String    @default("Asia/Karachi")
-  isActive    Boolean   @default(true)
+  id             String    @id @default(cuid())
+  slug           String    @unique
+  name           String
+  industry       String? // 'qsr' | 'cafe' | 'fine_dining' | 'cloud_kitchen' | 'biryani' | 'multi_brand'
+  countryCode    String    @default("PK") // ISO 3166-1 alpha-2 — drives currency, tax regime
+  currency       String    @default("PKR")
+  timezone       String    @default("Asia/Karachi")
+  isActive       Boolean   @default(true)
   // Joint-venture metadata. When isJointVenture=true, every cost line viewed
   // under this tenant (OpEx, positions, contributions) renders with partner-
   // split chips so the operator can see at a glance "who pays what". Stored
   // as JSON array: [{ label: 'Viva', pct: 60 }, { label: 'Garibsons', pct: 40 }].
   // Percentages should sum to 100 but we don't enforce — the chips display
   // whatever was entered, the operator can correct.
-  isJointVenture Boolean @default(false)
-  jvPartners     Json?   // [{label, pct}, ...]
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-  deletedAt   DateTime?
+  isJointVenture Boolean   @default(false)
+  jvPartners     Json? // [{label, pct}, ...]
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  deletedAt      DateTime?
 
-  concepts       Concept[]
-  users          User[]
-  members        TenantMember[]
-  riders         Rider[]
-  suppliers      Supplier[]      @relation("TenantSuppliers")
-  inventoryItems InventoryItem[] @relation("TenantInventoryItems")
-  locations      Location[]      @relation("TenantLocations")
-  bankAccounts         BankAccount[]         @relation("TenantBankAccounts")
-  depositDrops         DepositDrop[]         @relation("TenantDepositDrops")
-  bankStatementImports BankStatementImport[] @relation("TenantBankStatementImports")
-  modifierTemplates    ModifierTemplate[]    @relation("TenantModifierTemplates")
-  webhookSubscriptions WebhookSubscription[] @relation("TenantWebhookSubscriptions")
-  refundPolicies       RefundPolicy[]        @relation("TenantRefundPolicies")
-  reservationPolicies  ReservationPolicy[]   @relation("TenantReservationPolicies")
-  receiptConfigs       ReceiptConfig[]       @relation("TenantReceiptConfigs")
-  operationsConfigs    OperationsConfig[]    @relation("TenantOperationsConfigs")
-  deliveryZones        DeliveryZone[]        @relation("TenantDeliveryZones")
-  notificationTemplates NotificationTemplate[] @relation("TenantNotificationTemplates")
-  scheduledReports     ScheduledReport[]     @relation("TenantScheduledReports")
+  concepts               Concept[]
+  users                  User[]
+  members                TenantMember[]
+  riders                 Rider[]
+  suppliers              Supplier[]              @relation("TenantSuppliers")
+  inventoryItems         InventoryItem[]         @relation("TenantInventoryItems")
+  locations              Location[]              @relation("TenantLocations")
+  bankAccounts           BankAccount[]           @relation("TenantBankAccounts")
+  depositDrops           DepositDrop[]           @relation("TenantDepositDrops")
+  bankStatementImports   BankStatementImport[]   @relation("TenantBankStatementImports")
+  modifierTemplates      ModifierTemplate[]      @relation("TenantModifierTemplates")
+  webhookSubscriptions   WebhookSubscription[]   @relation("TenantWebhookSubscriptions")
+  refundPolicies         RefundPolicy[]          @relation("TenantRefundPolicies")
+  reservationPolicies    ReservationPolicy[]     @relation("TenantReservationPolicies")
+  receiptConfigs         ReceiptConfig[]         @relation("TenantReceiptConfigs")
+  operationsConfigs      OperationsConfig[]      @relation("TenantOperationsConfigs")
+  deliveryZones          DeliveryZone[]          @relation("TenantDeliveryZones")
+  notificationTemplates  NotificationTemplate[]  @relation("TenantNotificationTemplates")
+  scheduledReports       ScheduledReport[]       @relation("TenantScheduledReports")
   customFieldDefinitions CustomFieldDefinition[] @relation("TenantCustomFieldDefinitions")
-  shifts               Shift[]               @relation("TenantShifts")
-  accounts             Account[]             @relation("TenantAccounts")
-  periodLocks          PeriodLock[]          @relation("TenantPeriodLocks")
-  journalEntries       JournalEntry[]        @relation("TenantJournalEntries")
-  departments    Department[]
-  shiftBands     ShiftBand[]
-  positions      Position[]
-  contributionsOut TenantContribution[] @relation("ContributionsFromTenant")
-  contributionsIn  TenantContribution[] @relation("ContributionsToTenant")
+  shifts                 Shift[]                 @relation("TenantShifts")
+  accounts               Account[]               @relation("TenantAccounts")
+  periodLocks            PeriodLock[]            @relation("TenantPeriodLocks")
+  journalEntries         JournalEntry[]          @relation("TenantJournalEntries")
+  departments            Department[]
+  shiftBands             ShiftBand[]
+  positions              Position[]
+  contributionsOut       TenantContribution[]    @relation("ContributionsFromTenant")
+  contributionsIn        TenantContribution[]    @relation("ContributionsToTenant")
 
   @@map("tenants")
 }
@@ -4724,9 +4772,18 @@ model MediaAsset {
   filename     String
   contentType  String
   category     String   @default("general") // menu, marketing, shoot, kds, general
+  // Storefront content library (decision 41): images, videos, fonts and copy
+  // snippets. Copy snippets have no file (key/url ''), the words live in text.
+  kind         String   @default("image") // image | video | font | copy
+  name         String?
+  tags         String[] @default([])
+  conceptId    String? // brand the asset is for; null = any brand of the company
+  text         String?
+  fontFamily   String? // kind=font: the CSS family name pages refer to
   uploadedById String?
   createdAt    DateTime @default(now())
 
+  @@index([tenantId, kind])
   @@index([category, createdAt])
   @@index([tenantId, createdAt])
   @@map("media_assets")
@@ -4775,7 +4832,7 @@ model GoodsReceiptLine {
   // back to what was ordered.
   poLineId        String?
 
-  receipt GoodsReceipt      @relation(fields: [receiptId], references: [id], onDelete: Cascade)
+  receipt GoodsReceipt       @relation(fields: [receiptId], references: [id], onDelete: Cascade)
   poLine  PurchaseOrderLine? @relation(fields: [poLineId], references: [id], onDelete: SetNull)
 
   @@index([receiptId])
@@ -4920,21 +4977,21 @@ model PettyCashBox {
 }
 
 model PettyCashMovement {
-  id           String   @id @default(cuid())
-  boxId        String
-  type         String // 'topup' | 'spend' | 'reconcile' | 'transfer'
-  amountCents  Int // signed: + topup, - spend
-  category     String? // expense category (drives JE account)
-  reason       String // free-text description
-  receiptUrl   String? // photo of vendor receipt (required above threshold)
-  vendorName   String?
-  approvedById String? // for spend > role cap
+  id                String   @id @default(cuid())
+  boxId             String
+  type              String // 'topup' | 'spend' | 'reconcile' | 'transfer'
+  amountCents       Int // signed: + topup, - spend
+  category          String? // expense category (drives JE account)
+  reason            String // free-text description
+  receiptUrl        String? // photo of vendor receipt (required above threshold)
+  vendorName        String?
+  approvedById      String? // for spend > role cap
   // Set when the spend paid a supplier's open bill: it was recorded as that
   // SupplierPayment (method 'cash', Dr 2010 AP / Cr 1010), the one
   // ledger-backed way to pay a vendor in cash — never expense it again.
   supplierPaymentId String?
-  createdById  String
-  createdAt    DateTime @default(now())
+  createdById       String
+  createdAt         DateTime @default(now())
 
   box PettyCashBox @relation(fields: [boxId], references: [id])
 
@@ -5179,14 +5236,14 @@ model ComplianceViolation {
 // keeps the math un-ambiguous in reports.
 
 model Department {
-  id           String   @id @default(uuid())
+  id           String    @id @default(uuid())
   tenantId     String? // null = global / template
   name         String // "Procurement", "Main Kitchen", "FOH Service"
   emoji        String?
-  isHeadOffice Boolean  @default(false) // surfaces head-office split UI
-  order        Int      @default(0)
+  isHeadOffice Boolean   @default(false) // surfaces head-office split UI
+  order        Int       @default(0)
   archivedAt   DateTime?
-  createdAt    DateTime @default(now())
+  createdAt    DateTime  @default(now())
 
   tenant    Tenant?    @relation(fields: [tenantId], references: [id])
   positions Position[]
@@ -5197,14 +5254,14 @@ model Department {
 }
 
 model ShiftBand {
-  id         String   @id @default(uuid())
+  id         String    @id @default(uuid())
   tenantId   String? // null = global
   name       String // "10am-6pm", "6pm-2am"
   startTime  String // "10:00"
   endTime    String // "18:00"
-  order      Int      @default(0)
+  order      Int       @default(0)
   archivedAt DateTime?
-  createdAt  DateTime @default(now())
+  createdAt  DateTime  @default(now())
 
   tenant    Tenant?    @relation(fields: [tenantId], references: [id])
   positions Position[]
@@ -5238,7 +5295,7 @@ enum PositionStatus {
 
 enum ContributionCategory {
   head_office // shared HO salaries (procurement / finance / marketing)
-  commissary  // shared kitchen prep (e.g. Viva uses GS Foods' 42C)
+  commissary // shared kitchen prep (e.g. Viva uses GS Foods' 42C)
   shared_services // other (legal, IT, brand assets)
   other
 }
@@ -5261,8 +5318,8 @@ model TenantContribution {
   createdAt           DateTime             @default(now())
   updatedAt           DateTime             @updatedAt
 
-  sourceTenant      Tenant @relation("ContributionsFromTenant", fields: [sourceTenantId],      references: [id])
-  destinationTenant Tenant @relation("ContributionsToTenant",   fields: [destinationTenantId], references: [id])
+  sourceTenant      Tenant @relation("ContributionsFromTenant", fields: [sourceTenantId], references: [id])
+  destinationTenant Tenant @relation("ContributionsToTenant", fields: [destinationTenantId], references: [id])
 
   @@index([destinationTenantId, isActive])
   @@index([sourceTenantId, isActive])
@@ -5563,9 +5620,9 @@ model HrEmployee {
   payslips  HrPayslip[]
 
   @@unique([tenantId, employeeCode])
+  @@unique([tenantId, userId])
   @@index([tenantId, status])
   @@index([managerId])
-  @@unique([tenantId, userId])
   @@index([userId])
   @@map("hr_employees")
 }
@@ -5671,23 +5728,23 @@ model HrRecord {
 }
 
 model HrPayrollRun {
-  id           String    @id @default(uuid())
-  tenantId     String
-  period       String // YYYY-MM
-  status       String    @default("draft") // draft | approved | locked
-  settings     Json // the rates in force when it was calculated
-  totals       Json      @default("{}")
-  createdById  String?
+  id            String    @id @default(uuid())
+  tenantId      String
+  period        String // YYYY-MM
+  status        String    @default("draft") // draft | approved | locked
+  settings      Json // the rates in force when it was calculated
+  totals        Json      @default("{}")
+  createdById   String?
   // Everyone who recalculated it or edited a payslip on it. None of them may
   // approve it (the CEO excepted) — nor may the creator.
-  preparedByIds String[] @default([])
-  approvedById String?
-  approvedAt   DateTime?
-  lockedAt     DateTime?
+  preparedByIds String[]  @default([])
+  approvedById  String?
+  approvedAt    DateTime?
+  lockedAt      DateTime?
   // Marked paid: the wages-payable clearance is posted then.
-  paidAt       DateTime?
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  paidAt        DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
 
   payslips HrPayslip[]
 
