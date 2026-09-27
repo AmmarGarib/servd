@@ -1,0 +1,200 @@
+/* Returning-guest pieces for /account and /orders: the reel, the tier-up
+   sticker + confetti, the order accent bar. Party palette; ink on cream
+   14.96:1, cream on plum 10.84:1. */
+
+/* ── Your reel ────────────────────────────────────────────────────────── */
+.reelSection { margin: 0 0 0.9rem; }
+.reelHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.55rem;
+}
+.reelTitle {
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 1.15rem;
+  letter-spacing: -0.02em;
+  color: var(--servd-ink, #2A1A2B);
+}
+.reelCount {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--servd-mute, #5C4A3D);
+}
+
+.reel {
+  list-style: none;
+  display: flex;
+  gap: 0.8rem;
+  margin: 0 -1rem;
+  padding: 0.4rem 1rem 0.9rem;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scroll-snap-type: x mandatory;
+  scroll-padding-inline: 1rem;
+  scrollbar-width: thin;
+  -webkit-overflow-scrolling: touch;
+}
+.reelItem {
+  flex: 0 0 auto;
+  width: min(15rem, 72vw);
+  scroll-snap-align: start;
+}
+
+/* A film ticket: accent bar, perforated edge, name, date, total, status. */
+.ticket {
+  position: relative;
+  display: flex;
+  min-height: 44px;
+  height: 100%;
+  border: 2px solid #2A1A2B;
+  border-radius: 18px;
+  background: #FFF4D6;
+  box-shadow: 4px 4px 0 #2A1A2B;
+  color: #2A1A2B;
+  text-decoration: none;
+  overflow: hidden;
+  transition: translate 200ms cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 200ms ease;
+}
+.ticket:hover { translate: 0 -3px; box-shadow: 6px 7px 0 #2A1A2B; }
+.ticket:focus-visible { outline: 3px solid #4E2A4F; outline-offset: 3px; }
+.ticketBar { flex: 0 0 10px; }
+.ticketBody {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 0.2rem;
+  padding: 0.75rem 0.9rem 0.85rem 0.95rem;
+  /* sprocket holes along the bar edge */
+  background: radial-gradient(circle at 0 50%, #2A1A2B 0 2.5px, transparent 3px) 0 6px / 8px 14px repeat-y;
+}
+.ticketScene {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 0.64rem;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: #FF5A3C;
+}
+.ticketName {
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 1.2rem;
+  line-height: 1.05;
+  letter-spacing: -0.02em;
+  color: #4E2A4F;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ticketMeta {
+  font-size: 0.8rem;
+  color: #5C4A3D;
+}
+.ticketMeta strong { color: #2A1A2B; font-weight: 800; }
+.chip {
+  justify-self: start;
+  margin-top: 0.25rem;
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+/* ── Tier-up ──────────────────────────────────────────────────────────── */
+.tierUp {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.9rem;
+  margin: 0 0 0.9rem;
+  padding: 0.75rem 0.9rem;
+  border: 2px dashed rgba(78, 42, 79, 0.35);
+  border-radius: 18px;
+  background: rgba(255, 212, 71, 0.22);
+}
+.tierSticker {
+  display: inline-grid;
+  gap: 0.05rem;
+  padding: 0.45rem 0.9rem 0.5rem;
+  border: 2.5px solid #2A1A2B;
+  border-radius: 999px;
+  background: #4E2A4F;
+  color: #FFF4D6;
+  box-shadow: 0 3px 0 #2A1A2B;
+  rotate: -4deg;
+  text-align: center;
+}
+.tierKicker {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 0.58rem;
+  font-weight: 700;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: #FFD447;
+}
+.tierName {
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 1.1rem;
+  line-height: 1;
+  text-transform: lowercase;
+}
+.tierLine {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 0.95rem;
+  color: #4E2A4F;
+}
+
+/* Confetti fires from the sticker, over everything, and never takes a click. */
+.confetti {
+  position: absolute;
+  left: 3rem;
+  top: 50%;
+  width: 0;
+  height: 0;
+  z-index: 30;
+  pointer-events: none;
+}
+.bit,
+.bitRound {
+  position: absolute;
+  left: -4px;
+  top: -7px;
+  width: 8px;
+  height: 14px;
+  border-radius: 2px;
+  box-shadow: 0 0 0 1px rgba(42, 26, 43, 0.35);
+  will-change: transform;
+}
+.bitRound { width: 10px; height: 10px; top: -5px; left: -5px; border-radius: 999px; }
+
+/* ── /orders: accent bar on each order card ───────────────────────────── */
+.orderCard {
+  position: relative;
+  overflow: hidden;
+  padding-left: calc(1.5rem + 6px) !important;
+}
+.orderBar {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ticket { transition: none; }
+  .ticket:hover { translate: none; }
+}

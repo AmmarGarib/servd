@@ -1,7 +1,8 @@
-/* The kitchens — trading-card deck on a cream ground. */
+/* Act ii, the kitchens — a trading-card deck dealt on a cream ground. */
 .section {
   position: relative;
-  padding: clamp(3rem, 6vw, 5rem) 0 clamp(4.5rem, 8vw, 7rem);
+  /* Top padding stays ≤ 6rem: no dead void between the tapes and the slate. */
+  padding: clamp(2.25rem, 4.5vw, 4rem) 0 clamp(4.5rem, 8vw, 7rem);
   background:
     radial-gradient(circle, rgba(78, 42, 79, 0.09) 1.4px, transparent 1.6px) 0 0 / 22px 22px,
     #FFF4D6;
@@ -17,13 +18,23 @@
   animation: spin 11s linear infinite;
 }
 
+.slate {
+  margin-bottom: clamp(1rem, 2vw, 1.5rem);
+}
+
 .head {
   display: flex;
   flex-wrap: wrap;
   align-items: flex-end;
   justify-content: space-between;
   gap: 1.5rem 3rem;
-  margin-bottom: clamp(3.5rem, 6vw, 5rem);
+  margin-bottom: clamp(3rem, 5vw, 4.25rem);
+}
+
+/* Heading words rise by position only; inline-block so y% applies. */
+.word {
+  display: inline-block;
+  will-change: transform;
 }
 
 .note {
@@ -60,7 +71,9 @@
 /* ── One card ─────────────────────────────────────────────────────────── */
 .slot {
   position: relative;
-  /* Stagger the hand so it doesn't read as a template row. */
+  /* Stagger the hand so it doesn't read as a template row. The deal
+     transforms (x / y / rotate / scale) are inline, scrubbed by scroll. */
+  will-change: transform;
 }
 .slot:nth-child(2) { margin-top: 2.5rem; }
 
@@ -288,6 +301,8 @@
   mix-blend-mode: soft-light;
 }
 .slot:hover .glare { opacity: 1; }
+/* Touch twin: the glare stripe is always on and sweeps with the scroll. */
+.card[data-coarse='true'] .glare { opacity: 1; transition: none; }
 
 /* ── simmer: the quiet card in the set ────────────────────────────────── */
 .elegant .name {

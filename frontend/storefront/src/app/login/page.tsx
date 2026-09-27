@@ -1,5 +1,5 @@
 'use client'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { ArrowRight, Eye, EyeOff } from 'lucide-react'
@@ -7,6 +7,8 @@ import { useCustomerAuth } from '../../store/customerAuth'
 import { ErrorToast } from '../../components/ui/ErrorToast'
 import { SmokeyBackground } from '../../components/ui/SmokeyBackground'
 import { MagneticButton } from '../../components/ui/MagneticButton'
+import { voice, type VoiceBrand } from '../../lib/voice'
+import { finaleTheme, brandFromReturnPath } from '../../components/checkout/brandTheme'
 
 // /login — glassmorphism card over an interactive servd-purple WebGL shader.
 // Auth flow (email/password → /auth/customer/login → setAuth → /account) is
@@ -28,6 +30,14 @@ function postAuthDest(): string {
   return '/account'
 }
 
+// The raw ?next= / ?return= value (for theming + carrying it to /signup).
+// Auth routing still goes through postAuthDest above.
+function rawReturn(): string | null {
+  if (typeof window === 'undefined') return null
+  const sp = new URLSearchParams(window.location.search)
+  return sp.get('next') || sp.get('return')
+}
+
 export default function LoginPage() {
   const router  = useRouter()
   const setAuth = useCustomerAuth((s) => s.setAuth)
@@ -37,6 +47,19 @@ export default function LoginPage() {
   const [loading,  setLoading]  = useState(false)
   const [error,    setError]    = useState('')
   const [showPassword, setShowPassword] = useState(false)
+
+  // Brand-aware dressing: coming from /flipd/checkout, the smoke turns Flipd
+  // Blue and the kicker speaks Flipd. Read after mount (window only), so the
+  // server render is the servd default.
+  const [brand, setBrand] = useState<VoiceBrand>('servd')
+  const [carry, setCarry] = useState('')
+  useEffect(() => {
+    const r = rawReturn()
+    setBrand(brandFromReturnPath(r))
+    if (r && r.startsWith('/') && !r.startsWith('//')) setCarry(`?next=${encodeURIComponent(r)}`)
+  }, [])
+  const theme = finaleTheme(brand)
+  const kicker = voice(brand).loginKicker
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -59,14 +82,25 @@ export default function LoginPage() {
   }
 
   return (
-    <main className="relative flex items-center justify-center px-5" style={{ minHeight: '100dvh', background: '#1E1420' }}>
-      <SmokeyBackground color="#4E2A4F" backdropBlur="sm" />
+    <main className="relative flex items-center justify-center px-5" style={{ minHeight: '100dvh', background: theme.smokeBase, transition: 'background-color 400ms ease' }}>
+      <SmokeyBackground color={theme.smoke} backdropBlur="sm" />
 
       <div className="relative z-10 w-full max-w-sm">
-        <Link href="/" aria-label="servd home" className="mb-6 block text-center"
-          style={{ fontFamily: 'var(--font-display)', fontSize: '1.85rem', fontWeight: 800, letterSpacing: '-0.045em', color: 'white', textDecoration: 'none' }}>
-          servd<span style={{ color: '#C9A6F0' }}>.</span>
-        </Link>
+        {brand === 'servd' ? (
+          <Link href="/" aria-label="servd home" className="mb-3 block text-center"
+            style={{ fontFamily: 'var(--font-display)', fontSize: '1.85rem', fontWeight: 800, letterSpacing: '-0.045em', color: 'white', textDecoration: 'none' }}>
+            servd<span style={{ color: '#C9A6F0' }}>.</span>
+          </Link>
+        ) : (
+          <Link href={`/${brand}`} aria-label={`${theme.name} home`} className="mb-3 block text-center"
+            style={{ fontFamily: theme.display, fontSize: '2rem', fontWeight: brand === 'stackd' ? 700 : 400, letterSpacing: brand === 'simmer' ? '0.02em' : '-0.01em', color: theme.loginInk, textDecoration: 'none' }}>
+            {theme.name}
+          </Link>
+        )}
+        <p className="mb-5 text-center text-[11px] font-bold tracking-[0.24em]"
+          style={{ color: theme.loginInk, opacity: 0.78, fontFamily: brand === 'simmer' ? theme.body : "'JetBrains Mono', ui-monospace, monospace", textTransform: 'lowercase' }}>
+          {kicker}
+        </p>
 
         <div className="w-full rounded-3xl px-7 py-8 bg-white/10 backdrop-blur-xl border border-white/20 shadow-2xl" style={{ animation: 'fadeSlideUp 0.4s both' }}>
           <h1 className="font-black tracking-tight text-white mb-1" style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(1.9rem, 6vw, 2.3rem)', letterSpacing: '-0.03em' }}>Sign in</h1>
@@ -104,7 +138,7 @@ export default function LoginPage() {
 
           <p className="text-center text-sm mt-6 text-white/60">
             Don&apos;t have an account?{' '}
-            <Link href="/signup" className="font-black text-white hover:text-white/80 transition-colors">Create one →</Link>
+            <Link href={`/signup${carry}`} className="font-black text-white hover:text-white/80 transition-colors">Create one →</Link>
           </p>
         </div>
 

@@ -5,6 +5,16 @@ import Link from 'next/link'
 import { fmt, isLight } from '../../../../lib/ui'
 import { useCustomerAuth } from '../../../../store/customerAuth'
 import { LoadingScreen } from '../../../../components/ui/Loader'
+import { formatBrandName } from '../../../../lib/concept'
+import { statusStory, voiceBrand } from '../../../../lib/voice'
+import { sfx } from '../../../../lib/film/sfx'
+import { haptic } from '../../../../lib/haptics'
+import { Companion, companionKindFor } from '../../../../components/characters/Companion'
+import { moodAccent } from '../../../../components/checkout/brandTheme'
+import { PotIcon } from '../../../../components/tracker/PotIcon'
+import { SteamWisps, ReadyBag } from '../../../../components/tracker/ActMood'
+import { CurbsideBeat } from '../../../../components/tracker/CurbsideBeat'
+import tr from '../../../../components/tracker/tracker.module.css'
 
 // /<concept>/order/[id] — live order tracker.
 // Restyled onto the on-system --servd-* tokens. Status icons are inline
@@ -39,9 +49,17 @@ const STEP_INDEX: Record<string, number> = {
   received: 0, confirmed: 1, preparing: 2, ready: 3, completed: 4, cancelled: -1,
 }
 
-// Headline + sub copy moved to lib/orderStatus.ts so all three order
-// surfaces (/orders, /account, this tracker) share the same wording.
-import { statusFor } from '../../../../lib/orderStatus'
+// Headline + sub copy come from lib/voice.ts (statusStory): the order plays
+// as five acts in the kitchen's own voice. Chip labels for /orders and
+// /account still come from lib/orderStatus.ts.
+
+// Companion pose per act.
+function companionMood(status: string): 'watch' | 'cheer' | 'wave' | 'gasp' {
+  if (status === 'ready') return 'cheer'
+  if (status === 'completed') return 'wave'
+  if (status === 'cancelled' || status === 'refunded') return 'gasp'
+  return 'watch'
+}
 
 export default function OrderStatusPage() {
   const { concept: slug, id } = useParams<{ concept: string; id: string }>()
@@ -51,7 +69,11 @@ export default function OrderStatusPage() {
   const [order,    setOrder]    = useState<OrderStatus | null>(null)
   const [notFound, setNotFound] = useState(false)
   const [flash,    setFlash]    = useState(false)
+  // True only when the customer tapped "I'm here" in this session, so the
+  // car-arrives beat plays once and a reload goes straight to the copy.
+  const [justArrived, setJustArrived] = useState(false)
   const prevStatus = useRef<string | null>(null)
+  const brand = voiceBrand(slug)
 
   // Guest order viewing is gone — every order tracker requires sign-in.
   // Bounce to login with a return URL so the customer lands back here after
@@ -87,6 +109,12 @@ export default function OrderStatusPage() {
         if (prevStatus.current && prevStatus.current !== data.status) {
           setFlash(true)
           setTimeout(() => setFlash(false), 900)
+          // Foley for the cut to the next act (silent unless sound is on).
+          try {
+            sfx('tick', { theme: brand })
+            haptic(10)
+            if (data.status === 'completed') sfx('chime', { theme: brand })
+          } catch { /* decorative only */ }
         }
         prevStatus.current = data.status
         setOrder(data)
@@ -98,10 +126,10 @@ export default function OrderStatusPage() {
     void poll()
     iv = setInterval(() => void poll(), 10000)
     return () => stop()
-  }, [id, token, router, pathname, slug])
+  }, [id, token, router, pathname, slug, brand])
 
   if (notFound) return (
-    <main className="flex min-h-dvh flex-col items-center justify-center gap-5 px-4" style={{ background: 'var(--servd-bg)' }}>
+    <main className="flex min-h-dvh flex-col items-center justify-center gap-5 px-4" style={{ background: brand === 'simmer' ? '#EDE6D3' : 'var(--servd-bg)' }}>
       <SearchIcon size={48} stroke="var(--servd-mute)" />
       <div className="text-center space-y-2">
         <p className="font-display font-black text-2xl tracking-tight" style={{ fontFamily: 'var(--font-display)', color: 'var(--servd-ink)' }}>Order not found</p>
@@ -118,27 +146,39 @@ export default function OrderStatusPage() {
   )
 
   if (!order) return (
-    <main className="flex min-h-dvh items-center justify-center" style={{ background: 'var(--servd-bg)' }}>
+    <main className="flex min-h-dvh items-center justify-center" style={{ background: brand === 'simmer' ? '#EDE6D3' : 'var(--servd-bg)' }}>
       <LoadingScreen label="Loading your order…" minHeight="auto" />
     </main>
   )
 
-  // Brand accent for the per-brand color wash on the hero ring + total. Use
-  // brandAccent override semantics: prefer the brand's primaryColor, fall
-  // back to servd-green.
-  const color       = order.concept.primaryColor ?? 'var(--servd-green)'
+  // Brand mood accent for the page wash, hero, step dots and total: the
+  // brand's deep colour (stackd plum, Flipd Blue, simmer tiber), else the
+  // concept's primaryColor, else servd plum.
+  const isSimmer    = brand === 'simmer'
+  const color       = moodAccent(brand, order.concept.primaryColor)
   const stepIdx     = STEP_INDEX[order.status] ?? 0
-  const isCancelled = order.status === 'cancelled'
+  const isCancelled = order.status === 'cancelled' || order.status === 'refunded'
   const isReady     = order.status === 'ready'
   const isPreparing = order.status === 'preparing'
   const isDone      = order.status === 'completed' || isCancelled
-  const cfg         = statusFor(order.status)
+  const story       = statusStory(brand, order.status)
+  const brandLabel  = formatBrandName(order.concept.name)
+  const sidekick    = isSimmer ? null : companionKindFor(brand)
 
-  const heroBg     = isCancelled ? 'rgba(239,68,68,0.06)' : `color-mix(in srgb, ${color} 8%, white)`
-  const heroBorder = isCancelled ? '1px solid rgba(239,68,68,0.22)' : `1px solid color-mix(in srgb, ${color} 25%, transparent)`
+  // simmer never shows white: its base is bone, and its skin class remaps the
+  // --servd-* tokens + repaints the white cards (globals.css .simmer-ordering).
+  const base       = isSimmer ? '#EDE6D3' : '#FFFFFF'
+  const skinClass  = isSimmer ? ' simmer-ordering' : brand === 'flipd' ? ' flipd-ordering' : ''
+  // Act mood: the brand accent rises from 4% to 14% of the page as the
+  // order moves through its five acts. Colour only; no motion needed.
+  const moodPct    = 4 + Math.max(0, stepIdx) * 2.5
+  const pageMood   = `color-mix(in srgb, ${color} ${moodPct}%, ${base})`
+  const heroBg     = isCancelled ? (isSimmer ? '#E9DCCB' : 'rgba(239,68,68,0.06)') : `color-mix(in srgb, ${color} ${moodPct + 4}%, ${base})`
+  const heroBorder = isCancelled ? (isSimmer ? '1px solid rgba(6,57,47,0.22)' : '1px solid rgba(239,68,68,0.22)') : `1px solid color-mix(in srgb, ${color} 25%, transparent)`
+  const headerBg   = isSimmer ? 'rgba(237,230,211,0.94)' : 'rgba(255,255,255,0.92)'
 
   return (
-    <main className="min-h-dvh pb-16" style={{ background: 'var(--servd-bg)' }}>
+    <main className={`min-h-dvh pb-16 ${tr.mood}${skinClass}`} style={{ backgroundColor: pageMood }}>
 
       {flash && (
         <div className="fixed inset-0 z-50 pointer-events-none"
@@ -147,24 +187,24 @@ export default function OrderStatusPage() {
 
       {/* Sticky header — on-system glass bar, matches /checkout */}
       <div className="relative z-10 px-4 pt-5 pb-4 flex items-center gap-2.5"
-        style={{ borderBottom: '1px solid var(--servd-line)', background: 'rgba(255,255,255,0.92)', backdropFilter: 'blur(16px)' }}>
+        style={{ borderBottom: '1px solid var(--servd-line)', background: headerBg, backdropFilter: 'blur(16px)' }}>
         {token ? (
-          <Link href="/account" className="flex items-center gap-1 text-xs font-bold mr-1 transition-colors" style={{ color: 'var(--servd-mute)' }}>
-            ← My orders
+          <Link href="/account" className="flex items-center gap-1 min-h-[44px] text-xs font-bold mr-1 transition-colors" style={{ color: 'var(--servd-mute)' }}>
+            ← {isSimmer ? 'my orders' : 'My orders'}
           </Link>
         ) : (
-          <Link href={`/${slug}`} className="flex items-center gap-1 text-xs font-bold mr-1 transition-colors" style={{ color: 'var(--servd-mute)' }}>
-            ← Menu
+          <Link href={`/${slug}`} className="flex items-center gap-1 min-h-[44px] text-xs font-bold mr-1 transition-colors" style={{ color: 'var(--servd-mute)' }}>
+            ← {isSimmer ? 'menu' : 'Menu'}
           </Link>
         )}
         <span style={{ color: 'var(--servd-dim)' }}>·</span>
-        <span className="font-display text-sm font-semibold" style={{ fontFamily: 'var(--font-display)', color: 'var(--servd-ink)' }}>
-          {order.concept.name}
+        <span className="font-display text-sm font-semibold" style={{ fontFamily: isSimmer ? 'var(--simmer-display)' : 'var(--font-display)', color: 'var(--servd-ink)' }}>
+          {brandLabel}
         </span>
         {!isDone && !isCancelled && (
           <div className="ml-auto flex items-center gap-1.5">
             <span className="h-1.5 w-1.5 rounded-full animate-pulse" style={{ background: 'var(--servd-green)' }} />
-            <span className="text-xs font-bold" style={{ color: 'var(--servd-mute)' }}>Live</span>
+            <span className="text-xs font-bold" style={{ color: 'var(--servd-mute)' }}>{isSimmer ? 'live' : 'Live'}</span>
           </div>
         )}
       </div>
@@ -172,39 +212,52 @@ export default function OrderStatusPage() {
       <div className="relative z-10 max-w-md lg:max-w-2xl mx-auto px-4 py-6 space-y-4">
 
         {/* ── Status hero ── */}
-        <div className="rounded-3xl p-7 text-center relative overflow-hidden"
-          style={{ background: heroBg, border: heroBorder }}>
+        <div className={`rounded-3xl p-7 text-center relative overflow-hidden ${tr.hero}`}
+          data-act={order.status}
+          style={{ background: heroBg, border: heroBorder, color }}>
           {isReady && (
             <div className="absolute inset-0 rounded-3xl pointer-events-none"
-              style={{ border: `1.5px solid color-mix(in srgb, ${color} 40%, transparent)`, animation: 'glowPulse 2s ease-in-out infinite' }} />
+              style={{ border: `1.5px solid color-mix(in srgb, ${color} 40%, transparent)` }} />
+          )}
+          {isPreparing && <SteamWisps />}
+
+          {sidekick && (
+            <div className={tr.companion} aria-hidden="true">
+              <Companion kind={sidekick} placement="inline" mood={companionMood(order.status)} size={96} />
+            </div>
           )}
 
-          <div className="mb-5 flex justify-center" style={{ color }}>
-            <StatusIcon status={order.status} animated={isPreparing} />
+          <div className="relative mb-5 flex justify-center" style={{ color }}>
+            <StatusIcon status={order.status} />
           </div>
 
+          <p className={`relative ${tr.actKicker}`} style={{ color }}>
+            <span className={isSimmer ? tr.actRule : tr.actStripe} aria-hidden="true" />
+            {story.act}
+          </p>
+
           {order.customerName && (
-            <p className="text-sm font-medium mb-1" style={{ color: 'var(--servd-mute)' }}>
-              Hi, {order.customerName}.
+            <p className="relative text-sm font-medium mb-1" style={{ color: 'var(--servd-mute)' }}>
+              hi, {order.customerName}.
             </p>
           )}
 
-          <h1 className="font-display font-black text-3xl leading-tight tracking-tight" style={{ fontFamily: 'var(--font-display)', color: 'var(--servd-ink)', letterSpacing: '-0.03em' }}>
-            {cfg.headline}
+          <h1 className="relative font-display font-black text-3xl leading-tight tracking-tight" style={{ fontFamily: isSimmer ? undefined : 'var(--font-display)', color: 'var(--servd-ink)', letterSpacing: isSimmer ? undefined : '-0.03em' }}>
+            {story.headline}
           </h1>
-          <p className="text-sm mt-2 font-medium" style={{ color: 'var(--servd-mute)' }}>
-            {cfg.sub}
+          <p className="relative text-sm mt-2 font-medium" style={{ color: 'var(--servd-mute)' }}>
+            {story.sub}
           </p>
 
           {!isDone && !isReady && (
-            <p className="text-xs mt-3" style={{ color: 'var(--servd-dim)' }}>
-              Updates automatically · checking every 10s
+            <p className="relative text-xs mt-3" style={{ color: 'var(--servd-mute)', opacity: 0.75 }}>
+              {isSimmer ? 'updates on their own, every ten seconds' : 'updates on its own · checking every 10s'}
             </p>
           )}
 
-          <div className="mt-5 inline-flex items-center gap-1.5 rounded-full px-3 py-1.5"
+          <div className="relative mt-5 inline-flex items-center gap-1.5 rounded-full px-3 py-1.5"
             style={{ background: 'var(--servd-surface)', border: '1px solid var(--servd-line)' }}>
-            <span className="text-[9px] font-black uppercase tracking-[0.2em]" style={{ color: 'var(--servd-mute)' }}>Order</span>
+            <span className="text-[9px] font-black uppercase tracking-[0.2em]" style={{ color: 'var(--servd-mute)' }}>{isSimmer ? 'order' : 'Order'}</span>
             <span className="text-[11px] font-black font-mono" style={{ color: 'var(--servd-ink)' }}>
               #{order.id.slice(-8).toUpperCase()}
             </span>
@@ -224,7 +277,7 @@ export default function OrderStatusPage() {
                   <div key={step.key} className="flex items-center flex-1">
                     <div className="flex flex-col items-center gap-2 flex-1">
                       <div
-                        className="h-9 w-9 rounded-full flex items-center justify-center text-sm transition-all duration-700"
+                        className={`h-9 w-9 rounded-full flex items-center justify-center text-sm ${tr.stepDot}`}
                         style={{
                           background: done ? color : 'var(--servd-surface)',
                           color: done ? (isLight(color) ? '#000' : '#fff') : 'var(--servd-dim)',
@@ -232,14 +285,14 @@ export default function OrderStatusPage() {
                           transform: current ? 'scale(1.15)' : 'scale(1)',
                         }}>
                         {current && isPreparing
-                          ? <span style={{ display: 'inline-block', animation: 'spin 1.2s linear infinite' }} aria-hidden>⏳</span>
+                          ? <PotIcon size={18} />
                           : done
                             ? <CheckSmall />
                             : <span className="text-[11px]" style={{ color: 'var(--servd-dim)' }}>{i + 1}</span>
                         }
                       </div>
-                      <span className="text-[9px] font-black uppercase tracking-wider text-center leading-tight"
-                        style={{ color: done ? 'var(--servd-ink)' : 'var(--servd-dim)' }}>
+                      <span className={`text-[9px] font-black tracking-wider text-center leading-tight ${isSimmer ? 'lowercase' : 'uppercase'}`}
+                        style={{ color: done ? 'var(--servd-ink)' : 'var(--servd-mute)', opacity: done ? 1 : 0.7 }}>
                         {step.label}
                       </span>
                     </div>
@@ -259,8 +312,8 @@ export default function OrderStatusPage() {
           style={{ background: 'white', border: '1px solid var(--servd-line)', boxShadow: '0 1px 3px rgba(0,0,0,0.04)' }}>
           <div className="px-4 py-3.5"
             style={{ borderBottom: '1px solid var(--servd-line)' }}>
-            <p className="font-display font-black text-sm" style={{ fontFamily: 'var(--font-display)', color: 'var(--servd-ink)' }}>
-              {order.concept.name}
+            <p className="font-display font-black text-sm" style={{ fontFamily: isSimmer ? undefined : 'var(--font-display)', color: 'var(--servd-ink)' }}>
+              {brandLabel}
             </p>
           </div>
 
@@ -319,15 +372,12 @@ export default function OrderStatusPage() {
         {/* ── Curbside flow ── */}
         {order.curbsideVehicle && !order.curbsideArrivedAt && order.status !== 'cancelled' && order.status !== 'completed' && (
           <CurbsideArrivedButton orderId={order.id} onArrived={() => {
+            setJustArrived(true)
             setOrder((o) => o ? { ...o, curbsideArrivedAt: new Date().toISOString() } : o)
           }} />
         )}
         {order.curbsideVehicle && order.curbsideArrivedAt && !order.curbsideRunnerOutAt && (
-          <div className="rounded-2xl px-4 py-3.5 text-center"
-            style={{ background: 'rgba(58,14,105,0.1)', border: '1px solid rgba(58,14,105,0.35)', color: 'var(--servd-green-dark)' }}>
-            <p className="font-black text-sm">We see you. Bringing your food now.</p>
-            <p className="text-xs mt-0.5 opacity-70">{order.curbsideVehicle}</p>
-          </div>
+          <CurbsideBeat vehicle={order.curbsideVehicle} play={justArrived} />
         )}
         {order.curbsideVehicle && order.curbsideRunnerOutAt && (
           <div className="rounded-2xl px-4 py-3.5 text-center"
@@ -401,16 +451,16 @@ function CurbsideArrivedButton({ orderId, onArrived }: { orderId: string; onArri
 
 // ── Inline SVG iconography — no emoji as structural icons ──────────────────
 
-function StatusIcon({ status, animated }: { status: string; animated: boolean }) {
+function StatusIcon({ status }: { status: string }) {
   const props = { width: 64, height: 64, viewBox: '0 0 64 64', fill: 'none', stroke: 'currentColor', strokeWidth: 2.5, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const, 'aria-hidden': true }
-  const animStyle = animated ? { animation: 'float 2s ease-in-out infinite' as string } : undefined
   switch (status) {
     case 'received':  return <svg {...props}><rect x="14" y="10" width="36" height="44" rx="3"/><path d="M22 22h20M22 30h20M22 38h12"/></svg>
     case 'confirmed': return <svg {...props}><circle cx="32" cy="32" r="22"/><path d="M22 32l8 8 14-16"/></svg>
-    case 'preparing': return <svg {...props} style={animStyle}><path d="M16 28a16 16 0 0 1 32 0"/><path d="M12 32h40v8a6 6 0 0 1-6 6H18a6 6 0 0 1-6-6z"/><path d="M22 22V14M32 22V12M42 22V14"/></svg>
-    case 'ready':     return <svg {...props} style={{ animation: 'float 1.4s ease-in-out infinite' }}><path d="M16 26L32 14l16 12"/><path d="M20 26v22h24V26"/><path d="M28 48v-12h8v12"/></svg>
+    case 'preparing': return <PotIcon size={64} strokeWidth={1.4} />
+    case 'ready':     return <ReadyBag size={64} />
     case 'completed': return <svg {...props}><circle cx="32" cy="32" r="22"/><path d="M22 32l8 8 14-16"/></svg>
-    case 'cancelled': return <svg {...props}><circle cx="32" cy="32" r="22"/><path d="M22 22l20 20M42 22L22 42"/></svg>
+    case 'cancelled':
+    case 'refunded':  return <svg {...props}><circle cx="32" cy="32" r="22"/><path d="M22 22l20 20M42 22L22 42"/></svg>
     default:          return <svg {...props}><circle cx="32" cy="32" r="22"/></svg>
   }
 }

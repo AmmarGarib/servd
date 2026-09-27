@@ -6,6 +6,7 @@
 
 import { useEffect, useState, type CSSProperties } from 'react'
 import { Die } from './Die'
+import { usePrefersReducedMotion } from '../../../lib/film/motion'
 import { useInView } from './hooks'
 import s from './stickers.module.css'
 import ui from './ui.module.css'
@@ -104,13 +105,14 @@ function Vignette({ kind }: { kind: Kind }) {
 
 export function StickerWall({ highlights }: { highlights: string[] }) {
   // Seen once -> the slap plays. On screen now -> the loops run.
-  const { ref, inView } = useInView<HTMLElement>({ rootMargin: '0px 0px -15% 0px' })
+  const { ref, inView } = useInView<HTMLElement>()
   const [seen, setSeen] = useState(false)
   const [armed, setArmed] = useState(false)
+  const reduced = usePrefersReducedMotion()
   useEffect(() => {
-    // Only hide-until-seen once JS is here, so no-JS readers see the wall.
-    if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) setArmed(true)
-  }, [])
+    // Only stage-until-seen once JS is here, so no-JS readers see the wall.
+    setArmed(!reduced)
+  }, [reduced])
   useEffect(() => { if (inView) setSeen(true) }, [inView])
 
   const cls = [s.wall, armed ? s.armed : '', seen ? s.seen : '', inView ? s.live : ''].filter(Boolean).join(' ')

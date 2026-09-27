@@ -157,7 +157,7 @@
   border: 2.5px solid var(--party-ink);
   background: var(--party-cream);
   color: var(--party-ink);
-  font-size: 1rem;
+  font-size: 16px; /* never below 16px: no iOS zoom-on-focus */
   font-family: inherit;
   box-shadow: 0 4px 0 var(--party-ink);
   transition: box-shadow 160ms ease;
@@ -229,21 +229,26 @@
 
 .chip:focus-visible { outline: 3px solid var(--party-ink); outline-offset: 2px; }
 
-/* ── Doodles ──────────────────────────────────────────────────────────── */
-.doodle { position: absolute; pointer-events: none; z-index: 1; }
+/* ── Doodles ──────────────────────────────────────────────────────────
+   The wrapper span is positioned and carries the scroll drift (framer);
+   the svg inside carries the idle loop, so the two transforms never fight. */
+.doodle { position: absolute; pointer-events: none; z-index: 1; display: block; line-height: 0; }
+.doodleSvg { display: block; width: 100%; height: auto; overflow: visible; }
 
 .doodleStar {
   width: clamp(24px, 3vw, 40px);
   top: 12%;
   right: 9%;
-  fill: var(--party-plum);
-  animation: spin 10s linear infinite;
 }
+.doodleStar .doodleSvg { fill: var(--party-plum); animation: spin 10s linear infinite; }
 
 .doodleSquiggle {
   width: clamp(50px, 6vw, 84px);
   bottom: 10%;
   right: 20%;
+  transform-origin: 0% 50%;
+}
+.doodleSquiggle .doodleSvg {
   fill: none;
   stroke: var(--party-tomato);
   stroke-width: 5;
@@ -255,9 +260,8 @@
   width: clamp(12px, 1.4vw, 18px);
   bottom: 16%;
   left: 6%;
-  fill: var(--party-tomato);
-  animation: bob 2.6s ease-in-out infinite;
 }
+.doodleDot .doodleSvg { fill: var(--party-tomato); animation: bob 2.6s ease-in-out infinite; }
 
 @keyframes spin   { to { transform: rotate(360deg); } }
 @keyframes wiggle { 0%, 100% { transform: rotate(-6deg); } 50% { transform: rotate(6deg) translateY(-3px); } }
@@ -339,9 +343,17 @@
   gap: 1.6rem 1.4rem;
 }
 
-.cardWrap { height: 100%; }
-.cardWrap:nth-child(odd) .card  { transform: rotate(-1.1deg); }
-.cardWrap:nth-child(even) .card { transform: rotate(1.1deg); }
+/* The grid stage holds the filter swap: AnimatePresence popLayout pops the
+   outgoing grid out of flow (absolute) while it swipes away. */
+.gridStage { position: relative; }
+
+.cardWrap { height: 100%; transform-origin: 50% 100%; }
+.tilt { height: 100%; transform-style: preserve-3d; }
+.hitWrap { min-width: 0; }
+/* Resting tilt, alternating. The grid's direct children are the drop-in
+   wrappers, so the alternation keys off them. */
+.grid > :nth-child(odd) .card  { transform: rotate(-1.1deg); }
+.grid > :nth-child(even) .card { transform: rotate(1.1deg); }
 
 .card {
   display: flex;
@@ -425,6 +437,13 @@
 .statusOpen   { background: var(--party-butter); color: var(--party-ink); }
 .statusClosed { background: var(--party-ink);    color: var(--party-cream); }
 .statusDot    { width: 0.4rem; height: 0.4rem; border-radius: 999px; background: currentColor; display: inline-block; }
+/* The "open now" dot breathes. */
+.statusOpen .statusDot { animation: breathe 1.9s ease-in-out infinite; }
+
+@keyframes breathe {
+  0%, 100% { transform: scale(0.8); box-shadow: 0 0 0 0 rgba(42, 26, 43, 0.35); }
+  50%      { transform: scale(1.25); box-shadow: 0 0 0 4px rgba(42, 26, 43, 0); }
+}
 
 .cardBody {
   padding: 1.15rem 1.25rem 1.3rem;
@@ -441,6 +460,26 @@
   font-size: 1.2rem;
   letter-spacing: -0.01em;
   color: var(--party-ink);
+}
+
+.cardDot {
+  display: inline-block;
+  width: 0.62rem;
+  height: 0.62rem;
+  margin-right: 0.45rem;
+  border-radius: 999px;
+  border: 1.5px solid var(--party-ink);
+  vertical-align: 0.12em;
+}
+
+.cardTagline {
+  margin: 0;
+  font-family: var(--font-display);
+  font-style: italic;
+  font-weight: 700;
+  font-size: 0.95rem;
+  line-height: 1.35;
+  color: var(--party-plum);
 }
 
 .cardDesc {
@@ -484,9 +523,34 @@
   gap: 1rem;
 }
 
-.emptyIcon { color: var(--party-plum); }
+/* the fries shrug: a head-tilt, a little lift of the shoulders, settle */
+.emptyCast {
+  width: 150px;
+  height: 170px;
+  transform-origin: 50% 100%;
+  animation: shrug 2.8s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
 
-.emptyTitle { margin: 0; font-size: 1.1rem; font-weight: 700; color: var(--party-ink); }
+.emptyCast > * { width: 100%; height: 100%; }
+
+@keyframes shrug {
+  0%, 55%, 100% { transform: rotate(0deg) translateY(0); }
+  62% { transform: rotate(-9deg) translateY(-6px); }
+  70% { transform: rotate(-9deg) translateY(-6px) scaleY(1.03); }
+  78% { transform: rotate(7deg) translateY(-2px); }
+  86% { transform: rotate(0deg) translateY(0); }
+}
+
+.emptyTitle {
+  margin: 0;
+  max-width: 22rem;
+  font-family: var(--font-display);
+  font-size: clamp(1.2rem, 2.4vw, 1.5rem);
+  font-weight: 800;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+  color: var(--party-ink);
+}
 
 .clearAllBtn {
   display: inline-flex;
@@ -518,7 +582,8 @@
 @media (prefers-reduced-motion: reduce) {
   .titleWord, .titleTail, .lead, .underline { animation: none; }
   .underline { stroke-dashoffset: 0; }
-  .doodle { animation: none; }
+  .doodleSvg { animation: none !important; }
+  .statusOpen .statusDot, .emptyCast { animation: none; }
   .card, .chip, .clearAllBtn, .hitCard, .searchInput, .clearBtn, .photo {
     transition: none;
   }

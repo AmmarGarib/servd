@@ -41,9 +41,11 @@
     conic-gradient(from 135deg at top, #0000, #000 1deg 89deg, #0000 90deg) 50% 0 / 14px var(--edge) repeat-x,
     linear-gradient(#000 0 0) 0 var(--edge) / 100% calc(100% - var(--edge) * 2) no-repeat;
 }
-.printed { animation: print 1400ms steps(18, end) both; }
+/* The till prints the rest of the receipt; the head is always out of the
+   slot, so the hours never read as a blank strip mid-print. */
+.printed { animation: print 800ms steps(12, end) both; }
 @keyframes print {
-  from { clip-path: inset(0 0 100% 0); translate: 0 -12px; }
+  from { clip-path: inset(0 0 55% 0); translate: 0 -12px; }
   to { clip-path: inset(0 0 0 0); translate: 0 0; }
 }
 .rHead {

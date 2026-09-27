@@ -18,6 +18,7 @@
 
 import { useRef, type CSSProperties, type ReactNode } from 'react'
 import { motion, useScroll, useTransform } from 'framer-motion'
+import { useLitCandleOnScreen } from './litCandles'
 import { Reveal, useReducedMotionAfterMount } from './reveal'
 import s from './simmer.module.css'
 
@@ -127,10 +128,13 @@ export function Itinerary({ spaceImage }: { spaceImage: string }) {
   // The ember burns out at the end of the rail, so it never shares a screen
   // with the candle in the next scene — one orange per viewport.
   const opacity = useTransform(scrollYProgress, [0, 0.04, 0.78, 0.94], [0, 1, 1, 0])
+  // And if a lit candle is on screen anyway (a tall phone viewport, a fast
+  // fling), the ember sets in ink: the candle keeps the one orange.
+  const candleLit = useLitCandleOnScreen()
   return (
     <div ref={ref} style={{ position: 'relative', padding: '0.5rem 0' }}>
       <div aria-hidden="true" className={s.rail} />
-      <motion.span aria-hidden="true" className={s.railEmber} style={{ top: reduce ? '4%' : top, opacity: reduce ? 1 : opacity }} />
+      <motion.span aria-hidden="true" className={`${s.railEmber} ${candleLit ? s.railEmberInk : ''}`} style={{ top: reduce ? '4%' : top, opacity: reduce ? 1 : opacity }} />
 
       <Stop side="left" label="the space">
         {/* Decorative — the label names it. Lazy: it sits below a tall hero. */}

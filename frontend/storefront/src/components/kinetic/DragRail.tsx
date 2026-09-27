@@ -30,8 +30,10 @@ export function DragRail({
     let startScroll = 0
     let dragging = false
     function onDown(e: PointerEvent) {
-      // Skip mouse middle-click and right-click; touch comes through fine.
-      if (e.button !== 0 && e.pointerType === 'mouse') return
+      // Mouse only, primary button. Touch and pen keep native flick
+      // scrolling — hijacking them fought the browser's own momentum and
+      // swallowed vertical page scrolls that started on the rail.
+      if (e.pointerType !== 'mouse' || e.button !== 0) return
       dragging = true
       startX = e.clientX
       startScroll = el!.scrollLeft
@@ -42,14 +44,18 @@ export function DragRail({
       el!.scrollLeft = startScroll - (e.clientX - startX)
     }
     function onUp() { dragging = false }
+    function onScroll() { setTouched(true) }
     el.addEventListener('pointerdown', onDown)
     el.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
-    el.addEventListener('scroll', () => setTouched(true), { passive: true })
+    window.addEventListener('pointercancel', onUp)
+    el.addEventListener('scroll', onScroll, { passive: true })
     return () => {
       el.removeEventListener('pointerdown', onDown)
       el.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onUp)
+      el.removeEventListener('scroll', onScroll)
     }
   }, [])
 

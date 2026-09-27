@@ -1,7 +1,9 @@
 'use client'
 import Link from 'next/link'
-import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
 import { useScrollProgress } from './motionHooks'
+import { useIsCoarsePointer, usePrefersReducedMotion } from '../../lib/film/motion'
+import { haptic } from '../../lib/haptics'
 import { Die } from '../brand/stackd/Die'
 import s from '../brand/stackd/slip.module.css'
 import ui from '../brand/stackd/ui.module.css'
@@ -27,6 +29,11 @@ import ui from '../brand/stackd/ui.module.css'
  *
  * The CTAs are always visible and reachable — nothing here is gated behind
  * the gag. Reduced motion: he stands still, holding it, and nothing pins.
+ *
+ * Touch twin (phones have no cursor to lean after and no hover to fret
+ * over): a tap pokes him — he hops and leans away from your finger, with a
+ * short haptic tick — and flinging the page makes him nervous, the loaf
+ * wobbling on the tray until the scroll calms down.
  */
 
 interface Props {
@@ -75,13 +82,16 @@ export function StackdSlipHero({
   const [nervous, setNervous] = useState(false)
   const [hopping, setHopping] = useState(false)
   const hopTimer = useRef<number | undefined>(undefined)
+  const leanTimer = useRef<number | undefined>(undefined)
+  const reduced = usePrefersReducedMotion()
+  const coarse = useIsCoarsePointer()
 
   // Cursor lean: which side of him the pointer is on, -1..1. Written straight
   // to a CSS variable once per frame; the springy transition does the rest.
   useEffect(() => {
     const stage = stageRef.current
     if (!stage) return
-    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+    if (reduced) return
     if (!window.matchMedia('(pointer: fine)').matches) return
     let raf = 0
     let x = 0
@@ -103,19 +113,69 @@ export function StackdSlipHero({
       window.removeEventListener('pointermove', onMove)
       if (raf) cancelAnimationFrame(raf)
     }
+  }, [reduced])
+
+  // Touch twin of the hover fret: on coarse pointers, a fast fling of the
+  // page makes him nervous; he calms down once the scroll settles. Scroll
+  // speed is sampled per frame from scrollY (no layout reads) and React only
+  // hears about it when he starts or stops fretting.
+  useEffect(() => {
+    if (!coarse || reduced || custom) return
+    let lastY = window.scrollY
+    let lastT = performance.now()
+    let raf = 0
+    let calm: number | undefined
+    let fretting = false
+    const sample = () => {
+      raf = 0
+      const now = performance.now()
+      const y = window.scrollY
+      const dt = Math.max(1, now - lastT)
+      const v = Math.abs(y - lastY) / dt // px per ms
+      lastY = y
+      lastT = now
+      // Only while he is still standing; once he has slipped there is
+      // nothing left to be nervous about.
+      if (v > 1.1 && progressRef.current < 0.12) {
+        if (!fretting) { fretting = true; setNervous(true) }
+        window.clearTimeout(calm)
+        calm = window.setTimeout(() => { fretting = false; setNervous(false) }, 420)
+      }
+    }
+    const onScroll = () => { if (!raf) raf = requestAnimationFrame(sample) }
+    window.addEventListener('scroll', onScroll, { passive: true })
+    return () => {
+      window.removeEventListener('scroll', onScroll)
+      if (raf) cancelAnimationFrame(raf)
+      window.clearTimeout(calm)
+    }
+  }, [coarse, reduced, custom, progressRef])
+
+  useEffect(() => () => {
+    window.clearTimeout(hopTimer.current)
+    window.clearTimeout(leanTimer.current)
   }, [])
 
-  useEffect(() => () => window.clearTimeout(hopTimer.current), [])
-
   // Poke him: a hop, the loaf jumps on the tray. Only while he is standing.
-  const poke = useCallback(() => {
+  // A tap also leans him away from the finger (the touch twin of the cursor
+  // lean) and gives a short haptic tick.
+  const poke = useCallback((e: ReactMouseEvent<HTMLDivElement>) => {
     if (progressRef.current > 0.08) return
-    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+    if (reduced) return
+    haptic(8)
     setHopping(false)
     requestAnimationFrame(() => setHopping(true))
     window.clearTimeout(hopTimer.current)
     hopTimer.current = window.setTimeout(() => setHopping(false), 860)
-  }, [progressRef])
+    const stage = stageRef.current
+    if (stage && !window.matchMedia('(pointer: fine)').matches) {
+      const r = stage.getBoundingClientRect()
+      const side = e.clientX < r.left + r.width / 2 ? 1 : -1
+      stage.style.setProperty('--lx', (side * 0.85).toFixed(2))
+      window.clearTimeout(leanTimer.current)
+      leanTimer.current = window.setTimeout(() => stage.style.setProperty('--lx', '0'), 520)
+    }
+  }, [progressRef, reduced])
 
   const pinVars = {
     '--s': ramp(0.1, 4.5),
@@ -184,7 +244,7 @@ export function StackdSlipHero({
           <div className={s.coaster} aria-hidden>
             <Die className={s.coasterDie} />
             <span className={s.stamp}>
-              <Die face="#FFFFFF" bandWidth={0} keylineWidth={4} keyline="#3D1122" />
+              <Die face="#FCE8CE" bandWidth={0} keylineWidth={4} keyline="#3D1122" />
               <span className={s.stampText}>cooked<br />here.</span>
             </span>
           </div>

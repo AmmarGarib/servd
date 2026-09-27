@@ -2,16 +2,28 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useEffect, useState } from 'react'
+import { motion, useMotionTemplate, useScroll, useTransform } from 'framer-motion'
 import { useCustomerAuth } from '../store/customerAuth'
 import { useOnBrandMicrosite } from '../lib/host'
+import { cutThemeFor, type CutTheme } from '../lib/film/cut'
+import { usePrefersReducedMotion } from '../lib/film/motion'
+import { FoleyToggle } from './film/FoleyToggle'
 
 // Pages that manage their own header (full-screen splashes, brand
 // microsites with their own nav, the per-concept ordering experience).
 const HIDDEN_PREFIXES = ['/auth', '/login', '/signup', '/brand/']
 
-// Hero pages keep the nav transparent so the kinetic floating shapes
-// behind it stay readable; everywhere else uses the blurred-glass look.
+// Hero pages start with a clear nav over the stage and frost into glass as
+// the scene scrolls; everywhere else uses the blurred-glass look.
 const TRANSPARENT_PATHS = new Set(['/'])
+
+// Chapter tint: the logo dot takes the accent of the scene you're in.
+const ACCENT: Record<CutTheme, string> = {
+  servd: '#4E2A4F',
+  stackd: '#7C2946',
+  flipd: '#294375',
+  simmer: '#06392F',
+}
 
 interface Props {
   /**
@@ -29,19 +41,29 @@ export function StorefrontNav({ initialBrandSlug = null }: Props) {
   // cannot be answered by the path alone, or once in a layout.
   const onBrandMicrosite = useOnBrandMicrosite(initialBrandSlug)
 
-  // On dark-hero pages, the sticky nav is transparent and renders white
-  // text. Once the user scrolls past the hero into the white sections,
-  // the white text becomes invisible — so flip to the blurred-glass look
-  // (white bg + ink text) after the first 60vh of scroll.
-  const [scrolledPastHero, setScrolledPastHero] = useState(false)
+  const reduced = usePrefersReducedMotion()
+  const accent = ACCENT[cutThemeFor(pathname)]
+
+  // Continuous glass on the home: over the first half-viewport of scroll the
+  // nav frosts from clear to glass — background alpha 0→0.88, blur 0→16px.
+  // Scroll-linked MotionValues only; no React state per frame. The viewport
+  // height is measured on mount and resize, never inside the scroll path.
+  const [vh, setVh] = useState(800)
   useEffect(() => {
-    if (!TRANSPARENT_PATHS.has(pathname)) return
-    const threshold = window.innerHeight * 0.6
-    const onScroll = () => setScrolledPastHero(window.scrollY > threshold)
-    onScroll()
-    window.addEventListener('scroll', onScroll, { passive: true })
-    return () => window.removeEventListener('scroll', onScroll)
-  }, [pathname])
+    const measure = () => setVh(window.innerHeight || 800)
+    measure()
+    window.addEventListener('resize', measure)
+    return () => window.removeEventListener('resize', measure)
+  }, [])
+  const { scrollY } = useScroll()
+  const glass = useTransform(scrollY, [0, Math.max(1, vh * 0.5)], [0, 1], { clamp: true })
+  const bgAlpha = useTransform(glass, (g) => g * 0.88)
+  const blurPx = useTransform(glass, (g) => g * 16)
+  const satPct = useTransform(glass, (g) => 100 + g * 60)
+  const lineAlpha = useTransform(glass, (g) => g * 0.08)
+  const glassBg = useMotionTemplate`rgba(255,255,255,${bgAlpha})`
+  const glassBlur = useMotionTemplate`blur(${blurPx}px) saturate(${satPct}%)`
+  const glassLine = useMotionTemplate`1px solid rgba(0,0,0,${lineAlpha})`
 
   if (onBrandMicrosite) return null
   if (HIDDEN_PREFIXES.some((p) => pathname.startsWith(p))) return null
@@ -53,28 +75,36 @@ export function StorefrontNav({ initialBrandSlug = null }: Props) {
     return null
   }
 
-  const transparent = TRANSPARENT_PATHS.has(pathname) && !scrolledPastHero
+  const home = TRANSPARENT_PATHS.has(pathname)
   // The home hero is a light butter-yellow stage (the food crowd), so the
-  // transparent nav stays ink-on-light — no white text, no dark scrim.
+  // clear nav stays ink-on-light — no white text, no dark scrim.
   const onDarkHero  = false
+  const tint = reduced ? 'none' : 'background-color 500ms var(--film-ease-settle), color 500ms var(--film-ease-settle)'
 
   return (
-    <nav
+    <motion.nav
       aria-label="Primary"
-      style={{
-        // Not sticky — the header lives at the top of the page and scrolls away
-        // with the content. On the home it's ABSOLUTE so the hero's full-bleed
-        // background image sits behind it (the servd mark is immersed in the
-        // image, video expands in front); elsewhere a normal top-of-page header.
-        position: pathname === '/' ? 'absolute' : 'relative',
+      style={home ? {
+        // On the home the header floats over the pinned opening shot and
+        // stays with the viewer through the film, frosting as it scrolls.
+        position: 'fixed',
         top: 0, left: 0, right: 0,
         zIndex: 50,
         padding: '0.95rem clamp(1rem, 4vw, 2rem)',
-        background: transparent ? 'transparent' : 'rgba(255,255,255,0.88)',
-        backdropFilter: transparent ? undefined : 'blur(16px) saturate(160%)',
-        WebkitBackdropFilter: transparent ? undefined : 'blur(16px) saturate(160%)',
-        borderBottom: transparent ? 'none' : '1px solid var(--servd-line)',
-        transition: 'background 220ms ease',
+        background: glassBg,
+        backdropFilter: glassBlur,
+        WebkitBackdropFilter: glassBlur,
+        borderBottom: glassLine,
+      } : {
+        // Elsewhere a normal top-of-page header that scrolls away.
+        position: 'relative',
+        top: 0, left: 0, right: 0,
+        zIndex: 50,
+        padding: '0.95rem clamp(1rem, 4vw, 2rem)',
+        background: 'rgba(255,255,255,0.88)',
+        backdropFilter: 'blur(16px) saturate(160%)',
+        WebkitBackdropFilter: 'blur(16px) saturate(160%)',
+        borderBottom: '1px solid var(--servd-line)',
       }}
     >
       <div
@@ -96,12 +126,13 @@ export function StorefrontNav({ initialBrandSlug = null }: Props) {
       >
         <span aria-hidden="true" style={{
           width: '2.3rem', height: '2.3rem', borderRadius: '50%', flexShrink: 0,
-          background: 'var(--servd-green)', color: 'white',
+          background: accent, color: 'white',
           display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
           fontFamily: 'var(--font-display)', fontWeight: 900, fontSize: '1.05rem',
           letterSpacing: '-0.02em', boxShadow: '0 2px 10px rgba(0,0,0,0.25)',
+          transition: tint,
         }}>s</span>
-        <span style={{
+        <span className="film-nav-word" style={{
           fontFamily: 'var(--font-wordmark)',
           fontSize: '1.5rem',
           fontWeight: 800,
@@ -109,18 +140,20 @@ export function StorefrontNav({ initialBrandSlug = null }: Props) {
           lineHeight: 1,
           color: onDarkHero ? 'white' : 'var(--servd-black)',
         }}>
-          servd<span style={{ color: 'var(--servd-green)' }}>.</span>
+          servd<span style={{ color: accent, transition: tint }}>.</span>
         </span>
       </Link>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+        {/* Foley: optional synthesized sound, off by default. Icon-only on phones. */}
+        <FoleyToggle tone="light" />
         <Link
           href="/browse"
           style={{
             color: onDarkHero ? 'rgba(255,255,255,0.75)' : 'var(--servd-mute)',
             fontWeight: 600,
             fontSize: '0.92rem',
-            padding: '0.7rem 0.95rem',
+            padding: '0.7rem clamp(0.55rem, 2vw, 0.95rem)',
             textDecoration: 'none',
             borderRadius: '0.6rem',
             transition: 'color 160ms ease',
@@ -185,6 +218,6 @@ export function StorefrontNav({ initialBrandSlug = null }: Props) {
         )}
       </div>
       </div>
-    </nav>
+    </motion.nav>
   )
 }

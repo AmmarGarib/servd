@@ -22,11 +22,16 @@
 //   3. tonight's service  — bone ground; three walnut frames hung off a rail,
 //                           a live service date. orange: one ember on the rail.
 //   4. what's next        — the kitchen's note, by candlelight, sentence by
-//                           sentence. orange: the candle.
+//                           sentence. orange: the candle, whose flame grows
+//                           with how far down the evening you have read.
 //   5. find the door      — address, hours, live service status, directions,
 //                           the elsewhere links. no orange.
-//   6. other kitchens + sign-off — the candle is out; a curl of smoke over
-//                           "simmer down." orange: the full stop.
+//   6. other kitchens + sign-off — the last candle gutters out as you
+//                           arrive and a curl of smoke rises over "simmer
+//                           down."; the orange passes to the full stop.
+//
+// One continuous take: every scene is scrubbed by scroll or reveals from a
+// readable 0.35, so no scroll offset lands on an empty tiber screen.
 //
 // Menu items are intentionally absent from this surface — /brand/simmer/menu
 // renders the menu as a printed card.
@@ -37,11 +42,13 @@ import type { Concept } from '../../../lib/concept'
 import { conceptHeroImage } from '../../../lib/concept'
 import { SpeakeasyFridgeHero } from '../../kinetic/SpeakeasyFridgeHero'
 import { locationFor, whatsappLink } from '../../../lib/brandLocations'
-import { Candle } from '../simmer/Candle'
 import { Itinerary } from '../simmer/Itinerary'
 import { OtherKitchens } from '../simmer/OtherKitchens'
 import { SimmerCursor } from '../simmer/SimmerCursor'
-import { Reveal, Line, Letters } from '../simmer/reveal'
+import { Reveal, Line } from '../simmer/reveal'
+import { ScrollCandle } from '../simmer/ScrollCandle'
+import { SimmerSignOff } from '../simmer/SimmerSignOff'
+import { TitleCard } from '../simmer/TitleCard'
 import { useService } from '../simmer/serviceClock'
 import s from '../simmer/simmer.module.css'
 
@@ -157,27 +164,10 @@ export function SimmerLayout({ concept, concepts }: Props) {
       />
 
       {/* ── 2. TITLES ────────────────────────────────────────────────────
-          A title card after the door: the wordmark surfaces one letter at a
-          time, the tagline sets BELOW it, then the credits. Bone only. */}
-      <section aria-label="simmer, the room" style={{ padding: `clamp(6rem, 16vh, 10rem) ${pad} clamp(5rem, 14vh, 9rem)`, textAlign: 'center' }}>
-        <Reveal style={{ maxWidth: '60rem', margin: '0 auto' }}>
-          <p className={`${s.utility} ${s.rise}`} style={{ margin: 0 }}>gs foods presents</p>
-          <p className={s.amarante} style={{ fontSize: 'clamp(5.2rem, 21vw, 13rem)', lineHeight: 0.9, margin: '1.6rem 0 0' }}>
-            <Letters text="simmer" />
-          </p>
-          <p className={`${s.amarante} ${s.rise}`} style={{ ...i(8), fontSize: 'clamp(1.5rem, 3.6vw, 2.3rem)', margin: '1.2rem 0 0' }}>
-            simmer down.
-          </p>
-          <span aria-hidden="true" className={s.rule} style={{ width: 'min(14rem, 50%)', margin: '3.4rem auto 3rem', opacity: 0.35 }} />
-        </Reveal>
-        <Reveal as="p" className={s.amarante} style={{ fontSize: 'clamp(1.7rem, 4.6vw, 3.2rem)', lineHeight: 1.18, margin: '0 auto', maxWidth: '48rem' }}>
-          <Line i={0}>small plates, to share.</Line>
-          <Line i={1}>mocktails, stirred slow.</Line>
-          <Line i={2}>a dark room below stackd.</Line>
-          <Line i={3}>tuesday to sunday,</Line>
-          <Line i={4}>seven till late.</Line>
-        </Reveal>
-      </section>
+          A title card after the door, scrubbed by scroll: the wordmark
+          surfaces one letter at a time, the tagline sets BELOW it, then the
+          credits. Bone only. */}
+      <TitleCard />
 
       {/* ── 3. TONIGHT'S SERVICE ─────────────────────────────────────────
           Bone ground. The date is the room's service night, live. */}
@@ -198,17 +188,17 @@ export function SimmerLayout({ concept, concepts }: Props) {
           <Eyebrow id="simmer-next" title="what's next" aside={service.stamp} />
           <Reveal className={s.noteGrid}>
             <div className={s.noteCandle}>
-              <Candle height={190} />
+              <ScrollCandle height={190} />
             </div>
             <div>
               <p className={s.note} style={{
                 fontFamily: 'var(--simmer-body)', fontSize: 'clamp(1.08rem, 1.6vw, 1.25rem)',
                 lineHeight: 1.8, letterSpacing: '0.02em', margin: 0,
               }}>
-                <span className={s.sentence} style={i(0)}>We&apos;re testing a stone-fruit dessert for late June. </span>
-                <span className={s.sentence} style={i(1)}>Apricots came in two weeks early this year. </span>
-                <span className={s.sentence} style={i(2)}>The pastry team has been pulling late nights. </span>
-                <span className={s.sentence} style={i(3)}>If you sit again in three weeks, it might be on the table.</span>
+                <span className={s.sentence} style={i(0)}>we&apos;re testing a stone-fruit dessert for late june. </span>
+                <span className={s.sentence} style={i(1)}>apricots came in two weeks early this year. </span>
+                <span className={s.sentence} style={i(2)}>the pastry team has been pulling late nights. </span>
+                <span className={s.sentence} style={i(3)}>if you sit again in three weeks, it might be on the table.</span>
               </p>
               <p className={`${s.amarante} ${s.sentence}`} style={{ ...i(5), fontSize: '1.1rem', marginTop: '2rem', color: 'rgba(237,230,211,0.85)' }}>
                 — the simmer team
@@ -236,7 +226,7 @@ export function SimmerLayout({ concept, concepts }: Props) {
                 <Line i={1}>{area.toLowerCase()}.</Line>
               </p>
               <p className={s.rise} style={{ ...i(2), fontSize: '1.05rem', lineHeight: 1.75, margin: '1.6rem 0 0', maxWidth: '30rem' }}>
-                Walk into stackd and look for the walk-in door. It is ours.
+                walk into stackd and look for the walk-in door. it is ours.
               </p>
               <div className={s.rise} style={{ ...i(3), display: 'flex', flexWrap: 'wrap', gap: '0.2rem 2rem', marginTop: '1.2rem' }}>
                 <a href={mapsHref} target="_blank" rel="noopener noreferrer" className={`${s.draw} ${s.utility}`}>
@@ -279,18 +269,7 @@ export function SimmerLayout({ concept, concepts }: Props) {
       {/* ── 6. OTHER KITCHENS + SIGN-OFF ────────────────────────────────── */}
       <OtherKitchens current={concept} concepts={concepts} />
 
-      <section aria-label="sign-off" style={{ padding: `clamp(5rem, 13vh, 8rem) ${pad} clamp(5rem, 12vh, 7rem)`, textAlign: 'center' }}>
-        <Reveal>
-          {/* The candle is out: a curl of smoke off the wick. */}
-          <div className={s.rise} style={{ display: 'flex', justifyContent: 'center', marginBottom: '2.2rem' }}>
-            <Candle lit={false} height={110} />
-          </div>
-          <p className={`${s.amarante} ${s.rise}`} style={{ ...i(1), fontSize: '1.4rem', margin: 0 }}>simmer</p>
-          <p className={s.amarante} style={{ fontSize: 'clamp(3.4rem, 11vw, 6.5rem)', lineHeight: 1, margin: '0.8rem 0 0' }}>
-            <Line i={2}>simmer down<span style={{ color: 'var(--simmer-orange)' }}>.</span></Line>
-          </p>
-        </Reveal>
-      </section>
+      <SimmerSignOff />
     </div>
   )
 }

@@ -8,11 +8,24 @@ import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment
 import type { CharacterKind } from './types'
 import { buildCharacter, type BuildContext } from './characters'
 import { Kit, radialTexture, sharedFace, sharedLimbs } from './kit'
-import { Character } from './rig'
+import { Character, type FrameContext, type StillPose } from './rig'
+
+export type CrowdEntrance = 'walk' | 'grow' | 'none'
+
+/** Camera shot: dolly 0..1 push-in, orbit -1..1 (≈ ±0.35 rad yaw), lift -1..1. */
+export interface CrowdShot {
+  dolly: number
+  orbit: number
+  lift: number
+}
 
 export interface EngineOptions {
   cast: CharacterKind[]
   excitement: number
+  /** How characters arrive the first time they're placed. Default 'walk'. */
+  entrance?: CrowdEntrance
+  /** Initial camera shot (applied immediately, no damping). */
+  shot?: Partial<CrowdShot>
   onFirstFrame?: () => void
 }
 
@@ -20,6 +33,13 @@ export interface CrowdEngine {
   setCast(cast: CharacterKind[]): void
   setExcitement(v: number): void
   cheer(kind?: CharacterKind): void
+  /** One character steps forward and waves; the others turn to it. null = back in line. */
+  focus(kind: CharacterKind | null): void
+  wave(kind?: CharacterKind): void
+  gasp(kind?: CharacterKind): void
+  catch(kind?: CharacterKind): void
+  /** Damped camera move; cheap enough to call on every scroll frame. */
+  setShot(shot: Partial<CrowdShot>): void
   /** Glance at a viewport point (CSS px, clientX/clientY space). */
   look(clientX: number, clientY: number): void
   dispose(): void
@@ -113,6 +133,10 @@ export function createCrowdEngine(host: HTMLElement, opts: EngineOptions): Crowd
   const built = new Map<CharacterKind, Character>()
   let cast: CharacterKind[] = []
   let shown: Character[] = []
+  /** Hit proxies of `shown`, kept in sync so picking never allocates. */
+  let hitList: THREE.Object3D[] = []
+  const entrance: CrowdEntrance = opts.entrance ?? 'walk'
+  let focusKind: CharacterKind | null = null
 
   const getChar = (kind: CharacterKind): Character => {
     let c = built.get(kind)
@@ -162,6 +186,50 @@ export function createCrowdEngine(host: HTMLElement, opts: EngineOptions): Crowd
   let width = 0
   let height = 0
   const lookAt = new THREE.Vector3()
+  const basePos = new THREE.Vector3()
+  const camOffset = new THREE.Vector3()
+
+  /* ---------------- camera shot ---------------- */
+  const clampShot = (v: number | undefined, lo: number, hi: number, fallback: number) =>
+    typeof v === 'number' && Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : fallback
+  const shotTarget: CrowdShot = { dolly: 0, orbit: 0, lift: 0 }
+  const shot: CrowdShot = { dolly: 0, orbit: 0, lift: 0 }
+  if (opts.shot) {
+    shotTarget.dolly = shot.dolly = clampShot(opts.shot.dolly, 0, 1, 0)
+    shotTarget.orbit = shot.orbit = clampShot(opts.shot.orbit, -1, 1, 0)
+    shotTarget.lift = shot.lift = clampShot(opts.shot.lift, -1, 1, 0)
+  }
+  /** Camera = base pose pushed toward lookAt (dolly), yawed around it (orbit), raised (lift). */
+  function applyCamera(): void {
+    camOffset.subVectors(basePos, lookAt).multiplyScalar(1 - shot.dolly * 0.38)
+    const yaw = shot.orbit * 0.35
+    const cs = Math.cos(yaw)
+    const sn = Math.sin(yaw)
+    const ox = camOffset.x
+    const oz = camOffset.z
+    camOffset.x = ox * cs + oz * sn
+    camOffset.z = -ox * sn + oz * cs
+    camera.position.copy(lookAt).add(camOffset)
+    camera.position.y += shot.lift * 0.5
+    camera.lookAt(lookAt)
+  }
+  function stepShot(dt: number): void {
+    const dd = shotTarget.dolly - shot.dolly
+    const dor = shotTarget.orbit - shot.orbit
+    const dl = shotTarget.lift - shot.lift
+    if (Math.abs(dd) + Math.abs(dor) + Math.abs(dl) < 1e-5) return
+    if (reduced) {
+      shot.dolly = shotTarget.dolly
+      shot.orbit = shotTarget.orbit
+      shot.lift = shotTarget.lift
+    } else {
+      const k = 1 - Math.exp(-8 * dt)
+      shot.dolly += dd * k
+      shot.orbit += dor * k
+      shot.lift += dl * k
+    }
+    applyCamera()
+  }
 
   function layout(): void {
     width = host.clientWidth
@@ -192,23 +260,36 @@ export function createCrowdEngine(host: HTMLElement, opts: EngineOptions): Crowd
     for (const c of shown) if (!next.includes(c)) scene.remove(c.root)
     for (const c of entering) scene.add(c.root)
     shown = next
-    if (!reduced) entering.forEach((c, i) => c.enter(0.1 + i * 0.09))
+    hitList = shown.map((c) => c.hit)
+    shown.forEach((c, i) => {
+      c.left = shown[i - 1] ?? null
+      c.right = shown[i + 1] ?? null
+    })
     if (!shown.length) return
+
+    // Depth staging: alternate a step nearer / further (and a touch smaller)
+    // so the row reads as a crowd rather than a frieze.
+    const depthZ = (i: number) => (i % 2 === 0 ? 0.25 : -0.2)
+    const depthS = (i: number) => (i % 2 === 0 ? 1 : 0.94)
 
     const vfov = THREE.MathUtils.degToRad(camera.fov)
     const tanV = Math.tan(vfov / 2)
     const tanH = tanV * aspect
-    const maxH = Math.max(...shown.map((c) => c.built.height))
-    const top = maxH + 0.22 // headroom for hops
+    let maxH = 0
+    shown.forEach((c, i) => {
+      maxH = Math.max(maxH, c.built.height * depthS(i))
+    })
+    const nearZ = depthZ(0) // the front rank is the one that crops first
+    const top = maxH + 0.28 // headroom for hops and the focus step-forward
     const bottom = -0.08
     const halfV = (top - bottom) / 2
-    const dV = halfV / tanV + 0.45
+    const dV = halfV / tanV + 0.45 + nearZ
 
     // widen the gaps on wide stages so the crowd fills it, never crop on narrow ones
-    const widths = shown.map((c) => c.built.width)
+    const widths = shown.map((c, i) => c.built.width * depthS(i))
     const sum = widths.reduce((a, b) => a + b, 0)
     const minGap = aspect < 0.95 ? -0.06 : 0.04
-    const avail = (tanH * (dV - 0.45) - 0.1) * 2
+    const avail = (tanH * (dV - 0.45 - nearZ) - 0.1) * 2
     const gap = Math.max(minGap, Math.min(0.5, (avail - sum) / Math.max(1, shown.length - 1)))
     let x = -(sum + gap * (shown.length - 1)) / 2
     let halfW = 0
@@ -217,9 +298,8 @@ export function createCrowdEngine(host: HTMLElement, opts: EngineOptions): Crowd
       const w = widths[i]!
       const cx = x + w / 2
       x += w + gap
-      const z = -0.07 * cx * cx
-      c.root.position.set(cx, 0, z)
-      c.root.rotation.y = -cx * 0.035
+      const z = -0.07 * cx * cx + depthZ(i)
+      c.setHome(cx, z, -cx * 0.035, depthS(i))
       halfW = Math.max(halfW, Math.abs(cx) + w / 2)
       // distance at which this character's outer edge just fits (perspective-aware)
       dH = Math.max(dH, (Math.abs(cx) + w / 2 + 0.06) / tanH + z + 0.45)
@@ -227,9 +307,26 @@ export function createCrowdEngine(host: HTMLElement, opts: EngineOptions): Crowd
     const d = Math.max(dV, dH)
     const midY = (top + bottom) / 2
     lookAt.set(0, midY - 0.04, 0)
-    camera.position.set(0, midY + d * 0.1, d)
-    camera.lookAt(lookAt)
+    basePos.set(0, midY + d * 0.1, d)
+    applyCamera()
     camera.updateProjectionMatrix()
+
+    // Entrances for anyone new on stage. Walk-on: alternate sides, hop in,
+    // staggered 110ms, the whole line home within 1.4s.
+    entering.forEach((c) => c.setSeed(shown.indexOf(c), t))
+    if (reduced || entrance === 'none') {
+      for (const c of entering) c.place()
+    } else if (entrance === 'grow') {
+      entering.forEach((c, i) => c.enter(0.1 + i * 0.09))
+    } else {
+      entering.forEach((c, i) => {
+        const delay = i * 0.11
+        const hops = delay + 3 * 0.35 <= 1.4 ? 3 : 2
+        const side = i % 2 === 0 ? -1 : 1
+        c.walkIn(delay, side * (halfW + 2), hops)
+      })
+    }
+    if (focusKind) applyFocus()
 
     const sc = key.shadow.camera
     sc.left = -halfW - 1.5
@@ -246,6 +343,7 @@ export function createCrowdEngine(host: HTMLElement, opts: EngineOptions): Crowd
   /* ---------------- input ---------------- */
   const ndc = new THREE.Vector2()
   const raycaster = new THREE.Raycaster()
+  const pickHits: THREE.Intersection[] = []
   const lookPlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), -2.2)
   const target = new THREE.Vector3(0, 0.8, 6)
   const rawTarget = new THREE.Vector3()
@@ -262,7 +360,7 @@ export function createCrowdEngine(host: HTMLElement, opts: EngineOptions): Crowd
     pointer.touch = touch
     pointer.last = now()
     pointer.inside = true
-    requestRender()
+    if (!reduced) requestRender()
   }
   const onPointerMove = (e: PointerEvent) => setPointer(e.clientX, e.clientY, e.pointerType === 'touch')
   const onTouch = (e: TouchEvent) => {
@@ -292,10 +390,9 @@ export function createCrowdEngine(host: HTMLElement, opts: EngineOptions): Crowd
     const rect = canvas.getBoundingClientRect()
     if (clientX < rect.left || clientX > rect.right || clientY < rect.top || clientY > rect.bottom) return null
     raycaster.setFromCamera(toNdc(clientX, clientY, rect), camera)
-    const hits = raycaster.intersectObjects(
-      shown.map((c) => c.hit),
-      false,
-    )
+    pickHits.length = 0
+    raycaster.intersectObjects(hitList, false, pickHits)
+    const hits = pickHits
     const first = hits[0]
     return first ? ((first.object.userData.character as Character | undefined) ?? null) : null
   }
@@ -351,11 +448,34 @@ export function createCrowdEngine(host: HTMLElement, opts: EngineOptions): Crowd
   let last = performance.now()
   let t = 0
 
+  const fc: FrameContext = { t: 0, dt: 0, target, camera: camera.position, excitement: 0, reduced: false }
+  /** Engine time the last idle bit started (bits are ≥ 600ms apart crowd-wide). */
+  let lastBitAt = -1e9
+
+  function scheduleBits(ex: number): void {
+    if (reduced) return
+    for (let i = 0; i < shown.length; i++) {
+      const c = shown[i]!
+      if (!c.bitDue(t)) continue
+      if (!c.bitReady(ex)) c.deferBit(t + 0.6 + i * 0.13)
+      else if (t - lastBitAt < 0.6) c.deferBit(lastBitAt + 0.6 + 0.05 + i * 0.07)
+      else {
+        c.startBit(t)
+        lastBitAt = t
+      }
+    }
+  }
+
   const frame = (dt: number) => {
     t += dt
     excitement = damp(excitement, excitementTarget, 5, dt)
+    stepShot(dt)
     updateTarget(dt, t)
-    const fc = { t, dt, target, excitement: reduced ? 0 : excitement, reduced }
+    fc.t = t
+    fc.dt = dt
+    fc.excitement = reduced ? 0 : excitement
+    fc.reduced = reduced
+    scheduleBits(fc.excitement)
     for (const c of shown) c.update(fc)
     renderer.render(scene, camera)
     if (!firstFrame) {
@@ -415,6 +535,31 @@ export function createCrowdEngine(host: HTMLElement, opts: EngineOptions): Crowd
   }
   reducedMq?.addEventListener?.('change', onMotion)
 
+  /* ---------------- actions ---------------- */
+  const cast_ = (kind?: CharacterKind) => (kind ? shown.filter((c) => c.kind === kind) : shown)
+
+  function applyFocus(): void {
+    const f = focusKind ? (shown.find((c) => c.kind === focusKind) ?? null) : null
+    for (const c of shown) {
+      c.setFocused(c === f)
+      c.setFocusOf(f && c !== f ? f : null)
+    }
+  }
+
+  /** Reduced motion: an action is a pose change, rendered once, then back to rest. */
+  let poseTimer = 0
+  function stillPose(who: Character[], pose: StillPose): void {
+    if (!who.length) return
+    for (const c of who) c.pose = pose
+    window.clearTimeout(poseTimer)
+    poseTimer = window.setTimeout(() => {
+      if (disposed) return
+      for (const c of shown) c.pose = 'rest'
+      requestRender()
+    }, 1600)
+    requestRender()
+  }
+
   /* ---------------- api ---------------- */
   const api: CrowdEngine = {
     setCast(next) {
@@ -425,9 +570,40 @@ export function createCrowdEngine(host: HTMLElement, opts: EngineOptions): Crowd
       excitementTarget = Math.min(1, Math.max(0, Number.isFinite(v) ? v : 0))
     },
     cheer(kind) {
-      if (reduced) return
-      const who = kind ? shown.filter((c) => c.kind === kind) : shown
+      const who = cast_(kind)
+      if (reduced) return stillPose(who, 'cheer')
       who.forEach((c, i) => c.jump({ height: 0.48, duration: 0.7, armsUp: true, delay: kind ? 0 : i * 0.06 }))
+    },
+    focus(kind) {
+      focusKind = kind
+      applyFocus()
+      requestRender()
+    },
+    wave(kind) {
+      const who = cast_(kind)
+      if (reduced) return stillPose(who, 'wave')
+      who.forEach((c, i) => c.wave(i * 0.08))
+      requestRender()
+    },
+    gasp(kind) {
+      const who = cast_(kind)
+      if (reduced) return stillPose(who, 'gasp')
+      who.forEach((c, i) => c.gasp(i * 0.05))
+      requestRender()
+    },
+    catch(kind) {
+      const who = cast_(kind)
+      if (reduced) return stillPose(who, 'cheer')
+      who.forEach((c, i) => c.catchIt(i * 0.05))
+      requestRender()
+    },
+    setShot(next) {
+      if (!next) return
+      shotTarget.dolly = clampShot(next.dolly, 0, 1, shotTarget.dolly)
+      shotTarget.orbit = clampShot(next.orbit, -1, 1, shotTarget.orbit)
+      shotTarget.lift = clampShot(next.lift, -1, 1, shotTarget.lift)
+      if (reduced) stepShot(0)
+      requestRender()
     },
     look(x, y) {
       pointer.x = x
@@ -442,6 +618,7 @@ export function createCrowdEngine(host: HTMLElement, opts: EngineOptions): Crowd
       disposed = true
       if (raf) cancelAnimationFrame(raf)
       raf = 0
+      window.clearTimeout(poseTimer)
       window.removeEventListener('pointermove', onPointerMove)
       window.removeEventListener('touchstart', onTouch)
       window.removeEventListener('touchmove', onTouch)

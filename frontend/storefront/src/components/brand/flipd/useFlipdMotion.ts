@@ -7,19 +7,10 @@
 
 import { useEffect, useRef, useState } from 'react'
 
-/** True when the reader has asked for reduced motion. SSR-safe (false). */
-export function usePrefersReducedMotion(): boolean {
-  const [reduced, setReduced] = useState(false)
-  useEffect(() => {
-    const mq = window.matchMedia?.('(prefers-reduced-motion: reduce)')
-    if (!mq) return
-    const on = () => setReduced(mq.matches)
-    on()
-    mq.addEventListener?.('change', on)
-    return () => mq.removeEventListener?.('change', on)
-  }, [])
-  return reduced
-}
+/** True when the reader has asked for reduced motion. SSR-safe (false).
+ *  Kept as an export for existing callers; the one implementation lives in
+ *  the film kit so every surface reacts to the same media query. */
+export { usePrefersReducedMotion } from '../../../lib/film/motion'
 
 /**
  * Pinned-section progress. Writes `--scroll-progress` (0..1) on the element
@@ -78,14 +69,19 @@ export function useBuildProgress<T extends HTMLElement>(
 /**
  * Reveal-once + live-while-visible, for a whole section.
  *
- *  - `data-in` is set the first time the section is meaningfully on screen
- *    and never removed: CSS keys every entrance (ticket swings, sticker slaps,
- *    word drops) off it.
+ *  - `data-in` is set the first time ANY pixel of the section is on screen
+ *    and never removed. CSS keys the sticker slaps and doodle draws off it;
+ *    headings and body copy are never gated on it, so a snapshot at any
+ *    scroll offset shows a readable section (the old 20% threshold with a
+ *    negative root margin left whole viewports of navy on phones).
  *  - `data-live` is set only while the section is on screen, so looping
- *    decoration (marquees, steam, bulbs, doodles) can pause off-screen with
- *    `animation-play-state`.
+ *    decoration (marquees, steam, bulbs, doodles, the MiniBuild loop) can
+ *    pause off-screen.
+ *
+ * `threshold` is extra: 0 is always observed, so a larger value only adds a
+ * callback, it never delays `data-in`.
  */
-export function useSectionMotion<T extends HTMLElement>(threshold = 0.2) {
+export function useSectionMotion<T extends HTMLElement>(threshold = 0, rootMargin = '0px') {
   const ref = useRef<T | null>(null)
   useEffect(() => {
     const el = ref.current
@@ -95,25 +91,26 @@ export function useSectionMotion<T extends HTMLElement>(threshold = 0.2) {
       el.dataset.live = '1'
       return
     }
-    // "Armed" is what lets CSS hide things BEFORE their entrance. It is only
-    // set once JS is running, so without JS (or before hydration) every
-    // section renders in its final, readable state rather than invisible.
+    // "Armed" lets CSS stage decoration BEFORE its entrance. It is only set
+    // once JS is running, so without JS (or before hydration) every section
+    // renders in its final state.
     el.dataset.armed = '1'
+    const thresholds = threshold > 0 ? [0, threshold] : [0]
     const io = new IntersectionObserver(
       ([e]) => {
         if (!e) return
-        if (e.isIntersecting) {
+        if (e.isIntersecting || e.intersectionRatio > 0) {
           el.dataset.in = '1'
           el.dataset.live = '1'
         } else {
           delete el.dataset.live
         }
       },
-      { threshold, rootMargin: '0px 0px -8% 0px' },
+      { threshold: thresholds, rootMargin },
     )
     io.observe(el)
     return () => io.disconnect()
-  }, [threshold])
+  }, [threshold, rootMargin])
   return ref
 }
 

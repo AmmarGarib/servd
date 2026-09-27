@@ -184,7 +184,7 @@
 /* Settle: pastries drop onto the shelves the first time the case is seen. */
 .settled .art { animation: settle 800ms cubic-bezier(0.34, 1.56, 0.64, 1) both; animation-delay: calc(var(--n) * 90ms); }
 @keyframes settle {
-  0% { opacity: 0; transform: translateY(-40%); }
+  0% { opacity: 0.4; transform: translateY(-40%); }
   60% { opacity: 1; transform: translateY(4%) scale(1.04, 0.94); }
   100% { opacity: 1; transform: none; }
 }

@@ -35,48 +35,49 @@ interface PlaceholderCourse {
 
 // Placeholder courses — operator can replace any item via the API.
 // Copy intentionally dry: ingredient list, no banned words, no exclamation
-// marks.
+// marks. Everything user-visible is lowercase, dish names included (the
+// bible's rule; capitalised dish names were a regression).
 const PLACEHOLDER_MENU: PlaceholderCourse[] = [
   {
-    rubric: 'I.',
+    rubric: 'i.',
     title: 'small plates',
     items: [
-      { name: 'Burrata',         body: 'blistered tomato · olive oil cracker · basil',  pricePkr: 1400 },
-      { name: 'Charred octopus', body: 'smoked aioli · pickled chilli · lemon',         pricePkr: 1650 },
-      { name: 'Beef tartare',    body: 'capers · cured yolk · sourdough crisp',         pricePkr: 1750 },
+      { name: 'burrata',         body: 'blistered tomato · olive oil cracker · basil',  pricePkr: 1400 },
+      { name: 'charred octopus', body: 'smoked aioli · pickled chilli · lemon',         pricePkr: 1650 },
+      { name: 'beef tartare',    body: 'capers · cured yolk · sourdough crisp',         pricePkr: 1750 },
     ],
   },
   {
-    rubric: 'II.',
+    rubric: 'ii.',
     title: 'large plates',
     items: [
-      { name: 'Lamb shoulder',         body: 'soft polenta · jus · gremolata',           pricePkr: 2800 },
-      { name: 'Hand-cut tagliatelle',  body: 'brown butter · sage · aged parmesan',      pricePkr: 2200 },
-      { name: 'Seared duck breast',    body: 'charred plum · turnip · five-spice jus',   pricePkr: 2950 },
+      { name: 'lamb shoulder',         body: 'soft polenta · jus · gremolata',           pricePkr: 2800 },
+      { name: 'hand-cut tagliatelle',  body: 'brown butter · sage · aged parmesan',      pricePkr: 2200 },
+      { name: 'seared duck breast',    body: 'charred plum · turnip · five-spice jus',   pricePkr: 2950 },
     ],
   },
   {
-    rubric: 'III.',
+    rubric: 'iii.',
     title: 'desserts',
     items: [
-      { name: 'Olive oil chocolate cake', body: 'maldon flake · whipped crème fraîche',  pricePkr:  950 },
-      { name: 'Cardamom panna cotta',     body: 'roasted apricot · honeycomb shard',     pricePkr:  900 },
-      { name: 'Bone marrow caramel',      body: 'salted caramel · burnt-butter ice',     pricePkr: 1050 },
+      { name: 'olive oil chocolate cake', body: 'maldon flake · whipped crème fraîche',  pricePkr:  950 },
+      { name: 'cardamom panna cotta',     body: 'roasted apricot · honeycomb shard',     pricePkr:  900 },
+      { name: 'bone marrow caramel',      body: 'salted caramel · burnt-butter ice',     pricePkr: 1050 },
     ],
   },
   {
-    rubric: 'IV.',
+    rubric: 'iv.',
     title: 'mocktails',
     items: [
-      { name: 'Garden Spritz',         body: 'basil · lime · cucumber · house soda',       pricePkr:  850 },
-      { name: 'Negroni, sin',          body: 'non-alc bitters · blood orange · oleo',      pricePkr:  950 },
-      { name: 'Smoked Old Fashioned',  body: 'smoked cherry · char · sugar · non-alc',     pricePkr:  950 },
+      { name: 'garden spritz',         body: 'basil · lime · cucumber · house soda',       pricePkr:  850 },
+      { name: 'negroni, sin',          body: 'non-alc bitters · blood orange · oleo',      pricePkr:  950 },
+      { name: 'smoked old fashioned',  body: 'smoked cherry · char · sugar · non-alc',     pricePkr:  950 },
     ],
   },
 ]
 
 const i = (n: number) => ({ ['--i' as string]: n } as CSSProperties)
-const fmt = (pkr: number) => `Rs ${pkr.toLocaleString('en-PK')}`
+const fmt = (pkr: number) => `rs ${pkr.toLocaleString('en-PK')}`
 
 /**
  * Which course is being read: the last one whose top has passed the reading
@@ -218,7 +219,7 @@ export function SimmerMenu({ slug, conceptName }: { slug: string, conceptName: s
             <Line>ready when you are.</Line>
           </p>
           <p className={s.rise} style={{ ...i(1), fontSize: '1rem', lineHeight: 1.7, letterSpacing: '0.02em', margin: '0.9rem 0 0' }}>
-            Flag your server — they&apos;ll take the order. Tableside ordering opens once the kitchen publishes.
+            flag your server — they&apos;ll take the order. tableside ordering opens once the kitchen publishes.
           </p>
           <div className={s.rise} style={{ ...i(2), marginTop: '2rem', display: 'flex', gap: '0.8rem', justifyContent: 'center', flexWrap: 'wrap' }}>
             <Link href={`/reserve/${slug}`} className={s.btnSolid}>reserve a table</Link>

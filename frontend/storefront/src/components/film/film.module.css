@@ -1,0 +1,486 @@
+/* The film kit: slates, the skip control, letterbox bars, the title card
+   (shared by the cut and the route loaders, so a reveal onto a loader is
+   seamless) and the cut overlay itself.
+
+   Contrast: plum #4E2A4F on butter #FFD447 8.35:1 · plum #7C2946 on cream
+   #FCE8CE 8.1:1 · Flipd blue #294375 on mustard #FED561 7.2:1 · bone
+   #EDE6D3 on tiber #06392F 10.4:1. simmer surfaces carry no gradient, no
+   white and one orange signal. */
+
+/* ── Slate: a chapter title card ────────────────────────────────────── */
+.slate {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  max-width: 100%;
+  color: #4E2A4F;
+}
+.slate.alignCenter { align-items: center; text-align: center; }
+.slate.alignLeft { align-items: flex-start; text-align: left; }
+.slate.dark { color: #FFF4D6; }
+.slate.simmer { color: #EDE6D3; }
+
+.slateHead { display: inline-flex; align-items: center; gap: 0.7rem; }
+
+/* Clapper stripes: hard-stop repeating stripes on a hinged chip. */
+.clapper {
+  flex: none;
+  width: 3.4rem;
+  height: 0.95rem;
+  border: 2px solid currentColor;
+  border-radius: 3px;
+  background: repeating-linear-gradient(-45deg, currentColor 0 6px, transparent 6px 12px);
+  transform: rotate(-4deg);
+  transform-origin: 0 100%;
+}
+/* simmer: no gradients anywhere — a solid bone hairline instead. */
+.hairline {
+  flex: none;
+  display: block;
+  width: 3rem;
+  height: 1px;
+  background: #EDE6D3;
+}
+
+.act {
+  margin: 0;
+  font-family: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace;
+  font-size: 0.74rem;
+  font-weight: 500;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  line-height: 1.2;
+}
+.slate.simmer .act {
+  font-family: var(--simmer-body, 'Times New Roman', Times, serif);
+  font-style: italic;
+  font-size: 0.95rem;
+  letter-spacing: 0.18em;
+  text-transform: none;
+}
+
+.slateTitle {
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: clamp(2rem, 5.4vw, 3.8rem);
+  line-height: 0.95;
+  letter-spacing: -0.035em;
+  text-wrap: balance;
+}
+.slate.simmer .slateTitle {
+  font-family: var(--simmer-display, 'Amarante', serif);
+  font-weight: 400;
+  letter-spacing: 0;
+}
+
+/* ── SkipScene ──────────────────────────────────────────────────────── */
+.skip {
+  position: absolute;
+  right: clamp(12px, 3vw, 28px);
+  bottom: calc(clamp(12px, 3vh, 28px) + env(safe-area-inset-bottom, 0px));
+  z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-height: 44px;
+  padding: 0 1.05rem;
+  border-radius: 999px;
+  border: 1.5px solid currentColor;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: transform 160ms var(--film-ease-settle), background-color 160ms ease;
+}
+.skip.light { color: #4E2A4F; background: rgba(255, 244, 214, 0.78); }
+.skip.dark { color: #FFF4D6; background: rgba(45, 30, 47, 0.55); }
+.skip:hover { transform: translateY(-2px); }
+.skip:focus-visible { outline: 3px solid currentColor; outline-offset: 3px; }
+.skip svg { width: 0.9rem; height: 0.9rem; }
+
+/* ── Letterbox bars: consumers scrub --lb from 0 to 1 ───────────────── */
+.lbTop,
+.lbBottom {
+  position: absolute;
+  left: 0;
+  right: 0;
+  z-index: 4;
+  height: calc(var(--lb, 0) * var(--film-lb, 7vh));
+  background: #4E2A4F;
+  pointer-events: none;
+}
+.lbTop { top: 0; }
+.lbBottom { bottom: 0; }
+
+/* ── Title card: the frame the cut holds on, and the loaders render ─── */
+.card {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  isolation: isolate;
+  padding: 16px;
+  text-align: center;
+}
+.card.servd { background: #FFD447; color: #4E2A4F; }
+.card.stackd { background: #7C2946; color: #FCE8CE; }
+.card.flipd { background: #FED561; color: #294375; }
+.card.simmer { background: #06392F; color: #EDE6D3; }
+
+/* servd: the crowd stands on the floor of the frame; the title sits above. */
+.card.hasFloor { --floor-h: clamp(150px, 30vh, 280px); padding-bottom: calc(var(--floor-h) * 0.9); }
+.floor {
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  width: min(100%, 980px);
+  height: var(--floor-h, 30vh);
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+.floor > svg { display: block; width: 100%; height: 100%; }
+.floor::before {
+  /* the butter floor the crowd stands on */
+  content: '';
+  position: absolute;
+  left: 4%;
+  right: 4%;
+  bottom: -14px;
+  height: 36px;
+  border-radius: 50%;
+  background: #F4C22E;
+  z-index: -1;
+}
+
+.center {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  max-width: min(100%, 62rem);
+}
+
+.art { display: flex; justify-content: center; margin-bottom: clamp(0.6rem, 2vh, 1.2rem); }
+.art > svg { display: block; height: auto; overflow: visible; }
+
+.block {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: clamp(0.5rem, 1.4vh, 0.9rem);
+}
+
+.kicker {
+  margin: 0;
+  font-family: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace;
+  font-size: clamp(0.7rem, 1.5vw, 0.86rem);
+  font-weight: 500;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  line-height: 1.2;
+}
+
+.title {
+  margin: 0;
+  font-size: clamp(2.4rem, 7vw, 5.6rem);
+  line-height: 0.94;
+  letter-spacing: -0.035em;
+  text-wrap: balance;
+  overflow-wrap: break-word;
+  max-width: 100%;
+}
+.servd .title { font-family: var(--font-display); font-weight: 800; }
+.stackd .title { font-family: var(--stackd-display, 'Playfair Display', Georgia, serif); font-weight: 700; letter-spacing: -0.02em; }
+.flipd .title { font-family: var(--flipd-display, 'Alfa Slab One', Georgia, serif); font-weight: 400; letter-spacing: -0.01em; }
+.simmer .title { font-family: var(--simmer-display, 'Amarante', serif); font-weight: 400; letter-spacing: 0; }
+
+/* simmer: lowercase Times for the kicker — no caps, no mono. */
+.simmer .kicker {
+  font-family: var(--simmer-body, 'Times New Roman', Times, serif);
+  font-style: italic;
+  font-size: clamp(0.95rem, 2vw, 1.1rem);
+  letter-spacing: 0.18em;
+  text-transform: none;
+}
+.simmerDot {
+  display: block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #E94E1B;
+  margin-bottom: 0.4rem;
+}
+
+/* stackd: the title is a cream die-cut sticker on the plum field. */
+.sticker {
+  padding: clamp(1rem, 2.6vh, 1.6rem) clamp(1.4rem, 4vw, 2.8rem) clamp(1.2rem, 3vh, 1.9rem);
+  border-radius: 2.4rem;
+  background: #FCE8CE;
+  color: #7C2946;
+  transform: rotate(-3deg);
+  box-shadow:
+    0 0 0 5px #FCE8CE,
+    0 0 0 6.5px rgba(61, 17, 34, 0.28),
+    9px 12px 0 rgba(61, 17, 34, 0.42);
+}
+
+/* Flipd: checker bands top and bottom of the frame. */
+.band {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: clamp(22px, 4vh, 36px);
+  background-image: var(--flipd-checker);
+  background-size: 36px 36px;
+  background-repeat: repeat-x;
+}
+.bandTop { top: 0; }
+.bandBottom { bottom: 0; }
+
+/* Stamp: an outline rubber stamp, set at -8deg. */
+.stamp {
+  display: inline-block;
+  margin-top: clamp(0.6rem, 2vh, 1.2rem);
+  padding: 0.35rem 0.9rem 0.3rem;
+  border: 3px solid currentColor;
+  border-radius: 0.45rem;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-weight: 700;
+  font-size: clamp(1rem, 2.6vw, 1.5rem);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  transform: rotate(-8deg);
+}
+
+/* Loader status line — absolutely placed below the block so it never moves
+   the title off the cut's composition. */
+.status {
+  position: absolute;
+  top: calc(100% + clamp(0.9rem, 2.6vh, 1.6rem));
+  left: 50%;
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: calc(100vw - 32px);
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 1.02rem;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+.stackd .status { font-family: var(--stackd-body, 'Inter', system-ui, sans-serif); font-weight: 500; font-size: 0.95rem; color: rgba(252, 232, 206, 0.86); }
+.flipd .status { font-family: var(--flipd-body, 'Poppins', system-ui, sans-serif); font-weight: 600; font-size: 0.95rem; }
+.simmer .status { font-family: var(--simmer-body, 'Times New Roman', Times, serif); font-style: italic; font-weight: 400; font-size: 1.05rem; letter-spacing: 0.04em; opacity: 0.8; }
+
+/* servd decor: a slow diner sunburst and three doodles. */
+.burst {
+  position: absolute;
+  z-index: -1;
+  left: 50%;
+  top: 42%;
+  width: min(150vmax, 1500px);
+  aspect-ratio: 1;
+  translate: -50% -50%;
+  border-radius: 50%;
+  background: repeating-conic-gradient(rgba(255, 248, 214, 0.5) 0 7.5deg, rgba(255, 248, 214, 0) 7.5deg 15deg);
+  -webkit-mask-image: radial-gradient(circle, #000 12%, transparent 58%);
+  mask-image: radial-gradient(circle, #000 12%, transparent 58%);
+  animation: filmSpin 60s linear infinite;
+}
+@keyframes filmSpin { to { rotate: 360deg; } }
+
+.doodle { position: absolute; animation: filmFloat 5s ease-in-out infinite; }
+.dStar { top: 15%; left: 9%; width: clamp(28px, 4vw, 46px); fill: #4E2A4F; }
+.dDot { top: 22%; right: 12%; width: 18px; fill: #FF5A3C; animation-delay: -2s; }
+.dSquig {
+  top: 58%; right: 7%; width: clamp(64px, 9vw, 96px);
+  fill: none; stroke: #FF5A3C; stroke-width: 5; stroke-linecap: round;
+  animation-delay: -3.5s;
+}
+@keyframes filmFloat {
+  0%, 100% { transform: translateY(0) rotate(0); }
+  50% { transform: translateY(-12px) rotate(10deg); }
+}
+
+/* During the cover the title block settles up 12px over the last 40%. */
+.rise .center { animation: filmRise 420ms linear both; }
+@keyframes filmRise {
+  0%, 60% { translate: 0 12px; animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1); }
+  100% { translate: 0 0; }
+}
+
+/* ── The cut overlay ────────────────────────────────────────────────── */
+.cut {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 100vh;
+  height: 100dvh;
+  z-index: 1000;
+  overflow: hidden;
+  pointer-events: auto;
+  cursor: progress;
+  will-change: clip-path;
+  contain: strict;
+}
+
+.panel { position: absolute; top: 0; left: 0; right: 0; height: 100%; will-change: transform; }
+/* servd: the butter field carries a wavy hem below it; the whole sheet
+   (field + hem) lifts off the top. */
+.panel.withHem { height: calc(100% + 9vh); }
+.sheet { position: absolute; top: 0; left: 0; right: 0; height: 100%; }
+.withHem .sheet { height: calc(100% - 9vh); }
+.hem { position: absolute; left: 0; right: 0; bottom: 0; width: 100%; height: 9vh; display: block; }
+
+/* stackd: the sticker casts a lifted shadow as it peels. */
+.peeling { box-shadow: -18px 30px 60px rgba(30, 8, 18, 0.45); }
+
+/* flipd + simmer: the frame is two halves, each holding a full copy of the
+   card offset so the pair reads as one picture until they part. */
+.half { position: absolute; overflow: hidden; will-change: transform; }
+.halfL { top: 0; bottom: 0; left: 0; width: 50%; }
+.halfR { top: 0; bottom: 0; right: 0; width: 50%; }
+.halfT { top: 0; left: 0; right: 0; height: 50%; }
+.halfB { bottom: 0; left: 0; right: 0; height: 50%; }
+.inner { position: absolute; }
+.halfL .inner { top: 0; left: 0; width: 200%; height: 100%; }
+.halfR .inner { top: 0; left: -100%; width: 200%; height: 100%; }
+.halfT .inner { top: 0; left: 0; width: 100%; height: 200%; }
+.halfB .inner { top: -100%; left: 0; width: 100%; height: 200%; }
+
+/* simmer doors: a bone hairline at the seam, only once they start to part. */
+.seam { position: absolute; top: 0; bottom: 0; width: 1px; background: #EDE6D3; opacity: 0; }
+.halfL .seam { right: 0; }
+.halfR .seam { left: 0; }
+.parting .seam { opacity: 1; }
+
+/* Flipd shutter: a checker lip appears on each half's inner edge as they
+   part, so the split itself reads as shutter slats. */
+.lip {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 10px;
+  background-image: var(--flipd-checker);
+  background-size: 20px 20px;
+  opacity: 0;
+}
+.halfT .lip { bottom: 0; }
+.halfB .lip { top: 0; }
+.parting .lip { opacity: 1; }
+
+/* Loader frame: fixed under the nav so it sits exactly where the cut held. */
+.screen {
+  position: fixed;
+  inset: 0;
+  height: 100vh;
+  height: 100dvh;
+  z-index: 48;
+}
+.spacer { min-height: 100vh; min-height: 100dvh; }
+
+/* ── Off-script scenes: 404 and the error boundary ──────────────────── */
+.scene {
+  position: relative;
+  min-height: 86vh;
+  min-height: 86dvh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1.1rem;
+  padding: clamp(3rem, 8vh, 5rem) 16px clamp(11rem, 30vh, 16rem);
+  overflow: hidden;
+  isolation: isolate;
+  text-align: center;
+  background: #FFD447;
+  color: #4E2A4F;
+}
+.sceneKicker {
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.7rem;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 0.78rem;
+  font-weight: 500;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+}
+.sceneTitle {
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: clamp(2.4rem, 7vw, 5.6rem);
+  line-height: 0.94;
+  letter-spacing: -0.035em;
+  text-wrap: balance;
+}
+.sceneBody {
+  margin: 0;
+  max-width: 30rem;
+  font-size: 1.02rem;
+  line-height: 1.55;
+  color: rgba(78, 42, 79, 0.86);
+}
+.sceneRef { display: block; margin-top: 0.4rem; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 0.72rem; letter-spacing: 0.08em; opacity: 0.7; }
+.ctaRow { display: flex; flex-wrap: wrap; justify-content: center; gap: 0.7rem; margin-top: 0.5rem; }
+.cta,
+.ctaGhost {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 48px;
+  padding: 0 1.6rem;
+  border-radius: 999px;
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 1rem;
+  letter-spacing: -0.01em;
+  text-decoration: none;
+  cursor: pointer;
+  transition: transform 180ms var(--film-ease-settle), box-shadow 180ms ease;
+}
+.cta { background: #4E2A4F; color: #FFD447; border: 2px solid #4E2A4F; box-shadow: 4px 5px 0 #2D1E2F; }
+.ctaGhost { background: transparent; color: #4E2A4F; border: 2px solid #4E2A4F; }
+.cta:hover, .ctaGhost:hover { transform: translateY(-2px); }
+.cta:active { transform: translate(2px, 3px); box-shadow: 1px 1px 0 #2D1E2F; }
+.cta:focus-visible, .ctaGhost:focus-visible { outline: 3px solid #4E2A4F; outline-offset: 3px; }
+.scenePoster {
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  width: min(100%, 820px);
+  height: clamp(130px, 26vh, 230px);
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+.scenePoster::before {
+  content: '';
+  position: absolute;
+  left: 6%;
+  right: 6%;
+  bottom: -14px;
+  height: 34px;
+  border-radius: 50%;
+  background: #F4C22E;
+  z-index: -1;
+}
+.reel { width: clamp(150px, 26vw, 220px); height: auto; overflow: visible; }
+.reelL { transform-box: fill-box; transform-origin: 100% 50%; animation: reelDangle 3.6s ease-in-out infinite; }
+.reelR { transform-box: fill-box; transform-origin: 0% 50%; animation: reelDangle 3.6s ease-in-out infinite reverse; }
+@keyframes reelDangle { 0%, 100% { rotate: 0deg; } 50% { rotate: 3deg; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .card *, .card *::before, .card *::after { animation: none !important; }
+  .rise .center { animation: none; translate: none; }
+  .skip { transition: none; }
+  .reelL, .reelR { animation: none; }
+  .cta, .ctaGhost { transition: none; }
+}

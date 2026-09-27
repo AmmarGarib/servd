@@ -1,4 +1,5 @@
-/* "Right now" — a diner departures board on the plum band.
+/* Act iii, "right now" — a diner departures board on the plum band.
+   Tiles flip by scroll (KitchenBoard.tsx); nothing here fades from 0.
    Text pairs: cream #FFF4D6 on ink #2A1A2B 14.96:1; #D9C9B0 on ink 9.6:1;
    cream on plum 10.84:1; butter #FFD447 on ink 11.5:1. */
 .section {
@@ -6,6 +7,11 @@
   padding: clamp(3.5rem, 7vw, 6rem) 0 clamp(4rem, 8vw, 6.5rem);
   background: #4E2A4F;
   color: #FFF4D6;
+  scroll-margin-top: 4rem;
+}
+
+.slate {
+  margin-bottom: clamp(1rem, 2vw, 1.5rem);
 }
 
 .head {
@@ -45,6 +51,8 @@
 /* ── The board ────────────────────────────────────────────────────────── */
 .board {
   position: relative;
+  transform-origin: 50% 0;
+  will-change: transform;
   padding: clamp(1.1rem, 2.5vw, 2rem);
   border: 2.5px solid #2A1A2B;
   border-radius: 28px;
@@ -91,6 +99,7 @@
 
 .row {
   position: relative;
+  will-change: transform;
   display: grid;
   grid-template-columns: minmax(0, 1.35fr) minmax(0, 1.3fr) minmax(0, 1fr) auto;
   align-items: center;
@@ -134,6 +143,15 @@
   line-height: 1;
   color: #FFF4D6;
   transform-origin: 50% 50%;
+  backface-visibility: hidden;
+}
+/* Still shuffling: a real letter-shaped stand-in, a touch dimmer. */
+.tileScramble { color: #D9C9B0; }
+/* Resolved: one flap drop onto the real letter. */
+.tileFlip { animation: flap 320ms cubic-bezier(0.34, 1.56, 0.64, 1) both; }
+@keyframes flap {
+  from { transform: rotateX(-88deg); }
+  to { transform: rotateX(0deg); }
 }
 .tile::after {
   content: '';
@@ -192,10 +210,12 @@
   box-shadow: 0 0 14px rgba(124, 242, 154, 0.35), inset 0 0 10px rgba(124, 242, 154, 0.2);
   animation: buzz 4s linear infinite;
 }
+/* The "open now" dot breathes: 2.4s, scale 1 → 1.35 with an opacity pulse. */
 .sign[data-state='open'] .bulb {
-  box-shadow: 0 0 0 0 rgba(124, 242, 154, 0.7);
-  animation: pulseGreen 1.6s ease-out infinite;
+  box-shadow: 0 0 8px rgba(124, 242, 154, 0.8);
+  animation: breathe 2.4s ease-in-out infinite;
 }
+.sign[data-state='pending'] .bulb { animation: breathe 2.4s ease-in-out infinite; }
 .sign[data-state='closed'] { color: #FFB199; }
 .sign[data-state='closed'] .bulb { background: transparent; border: 2px solid currentColor; }
 .sign[data-state='pending'] { color: #FFD447; }
@@ -234,9 +254,9 @@
   0% { box-shadow: 0 0 0 0 rgba(255, 90, 60, 0.7); }
   100% { box-shadow: 0 0 0 12px rgba(255, 90, 60, 0); }
 }
-@keyframes pulseGreen {
-  0% { box-shadow: 0 0 0 0 rgba(124, 242, 154, 0.7); }
-  100% { box-shadow: 0 0 0 12px rgba(124, 242, 154, 0); }
+@keyframes breathe {
+  0%, 100% { transform: scale(1); opacity: 0.7; }
+  50% { transform: scale(1.35); opacity: 1; }
 }
 @keyframes buzz {
   0%, 91%, 95%, 100% { opacity: 1; }
@@ -260,13 +280,24 @@
   .links { grid-area: links; }
 }
 
+/* Phones: one column — the hours wrap straight under the name, then the
+   sign, then two full-width 44px buttons. */
 @media (max-width: 480px) {
-  .row { grid-template-columns: minmax(0, 1fr); grid-template-areas: 'name' 'status' 'where' 'links'; }
-  .links > * { flex: 1; }
+  .row {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: 'name' 'where' 'status' 'links';
+    gap: 0.7rem;
+    padding: 1.2rem 0.3rem 1.2rem 1rem;
+  }
+  .tile { width: 1.75rem; height: 2.25rem; font-size: 1.3rem; }
+  .sign { white-space: normal; }
+  .links > * { flex: 1; min-height: 44px; }
+  .board { padding: 0.9rem; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .board::before, .board::after, .liveDot, .sign, .sign .bulb { animation: none !important; }
+  .board::before, .board::after, .liveDot, .sign, .sign .bulb, .tileFlip { animation: none !important; }
+  .board, .row { transform: none !important; }
   .board::after { display: none; }
   .orderLink:hover, .waLink:hover { transform: none; }
 }

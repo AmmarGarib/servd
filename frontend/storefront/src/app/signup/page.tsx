@@ -7,6 +7,8 @@ import { useCustomerAuth } from '../../store/customerAuth'
 import { ErrorToast } from '../../components/ui/ErrorToast'
 import { SmokeyBackground } from '../../components/ui/SmokeyBackground'
 import { MagneticButton } from '../../components/ui/MagneticButton'
+import { voice } from '../../lib/voice'
+import { finaleTheme, brandFromReturnPath } from '../../components/checkout/brandTheme'
 
 // /signup — glassmorphism card over the servd-purple WebGL shader.
 //
@@ -42,6 +44,15 @@ export default function SignupPage() {
   const [error,    setError]    = useState('')
   const [emailTaken, setEmailTaken] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
+
+  // Brand-aware dressing from ?next= / ?return= (e.g. /stackd/checkout).
+  // Presentation only: the post-signup redirect below is unchanged.
+  const returnPath = params?.get('next') || params?.get('return') || null
+  const brand = brandFromReturnPath(returnPath)
+  const theme = finaleTheme(brand)
+  const kicker = voice(brand).loginKicker
+  const carry = returnPath && returnPath.startsWith('/') && !returnPath.startsWith('//')
+    ? `?next=${encodeURIComponent(returnPath)}` : ''
 
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
   const setFieldError = (k: string, msg: string) => setFieldErrors((m) => ({ ...m, [k]: msg }))
@@ -153,14 +164,25 @@ export default function SignupPage() {
   })
 
   return (
-    <main className="relative flex items-center justify-center px-5 py-12" style={{ minHeight: '100dvh', background: '#1E1420' }}>
-      <SmokeyBackground color="#4E2A4F" backdropBlur="sm" />
+    <main className="relative flex items-center justify-center px-5 py-12" style={{ minHeight: '100dvh', background: theme.smokeBase }}>
+      <SmokeyBackground color={theme.smoke} backdropBlur="sm" />
 
       <div className="relative z-10 w-full max-w-sm">
-        <Link href="/" aria-label="servd home" className="mb-6 block text-center"
-          style={{ fontFamily: 'var(--font-display)', fontSize: '1.85rem', fontWeight: 800, letterSpacing: '-0.045em', color: 'white', textDecoration: 'none' }}>
-          servd<span style={{ color: '#C9A6F0' }}>.</span>
-        </Link>
+        {brand === 'servd' ? (
+          <Link href="/" aria-label="servd home" className="mb-3 block text-center"
+            style={{ fontFamily: 'var(--font-display)', fontSize: '1.85rem', fontWeight: 800, letterSpacing: '-0.045em', color: 'white', textDecoration: 'none' }}>
+            servd<span style={{ color: '#C9A6F0' }}>.</span>
+          </Link>
+        ) : (
+          <Link href={`/${brand}`} aria-label={`${theme.name} home`} className="mb-3 block text-center"
+            style={{ fontFamily: theme.display, fontSize: '2rem', fontWeight: brand === 'stackd' ? 700 : 400, letterSpacing: brand === 'simmer' ? '0.02em' : '-0.01em', color: theme.loginInk, textDecoration: 'none' }}>
+            {theme.name}
+          </Link>
+        )}
+        <p className="mb-5 text-center text-[11px] font-bold tracking-[0.24em]"
+          style={{ color: theme.loginInk, opacity: 0.78, fontFamily: brand === 'simmer' ? theme.body : "'JetBrains Mono', ui-monospace, monospace", textTransform: 'lowercase' }}>
+          {kicker}
+        </p>
 
         <div className="w-full rounded-3xl px-7 py-8 bg-white/10 backdrop-blur-xl border border-white/20 shadow-2xl" style={{ animation: 'fadeSlideUp 0.4s both' }}>
           {step === 'details' ? (
@@ -171,7 +193,7 @@ export default function SignupPage() {
               {error && <ErrorToast message={error} onDismiss={() => setError('')} />}
               {emailTaken && (
                 <div className="mb-4 rounded-2xl px-4 py-3" style={{ background: 'rgba(255,255,255,0.10)', border: '1px solid rgba(255,255,255,0.25)' }}>
-                  <Link href="/login" className="text-sm font-black text-white">→ Sign in to your existing account</Link>
+                  <Link href={`/login${carry}`} className="text-sm font-black text-white">→ Sign in to your existing account</Link>
                 </div>
               )}
 
@@ -286,7 +308,7 @@ export default function SignupPage() {
 
               <p className="text-center text-sm mt-5 text-white/60">
                 Already have an account?{' '}
-                <Link href="/login" className="font-black text-white hover:text-white/80 transition-colors">Sign in →</Link>
+                <Link href={`/login${carry}`} className="font-black text-white hover:text-white/80 transition-colors">Sign in →</Link>
               </p>
             </>
           )}

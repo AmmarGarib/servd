@@ -28,7 +28,8 @@
 // Section rhythm: mustard hero → blue marquee → mustard mission → mustard
 // rail → blue values → bone court-side → mustard cross-links → blue sign-off.
 
-import type { CSSProperties } from 'react'
+import { useRef, type CSSProperties } from 'react'
+import { motion, useTransform } from 'framer-motion'
 import type { Concept } from '../../../lib/concept'
 import { CrossBrandStrip } from '../parts/CrossBrandStrip'
 import { useHoursData } from '../parts/OpenStatusBadge'
@@ -39,6 +40,8 @@ import { Marquee, Words, DoodleBurst, DoodleSquiggle, DoodleStar } from '../flip
 import { MiniBuild } from '../flipd/MiniBuild'
 import { OffTheGrill, CourtSide } from '../flipd/LandingSections'
 import { useSectionMotion } from '../flipd/useFlipdMotion'
+import { Shutter } from '../flipd/Shutter'
+import { useScene } from '../../../lib/film/motion'
 import f from '../flipd/flipd.module.css'
 import l from '../flipd/landing.module.css'
 
@@ -82,12 +85,13 @@ const FACTS = ['Salt and pepper, nothing else.', 'Real components, not sauce.', 
 const FACT_TILTS = [-3, 2.5, -1.5]
 const VALUE_TILTS = [-2, 1.5, -1, 2]
 
-function Checker() {
-  return <div aria-hidden className={f.checker} />
+/** The checker rule between sections, played as a shutter by scroll. */
+function Checker({ reverse = false }: { reverse?: boolean }) {
+  return <Shutter reverse={reverse} />
 }
 
 function Mission({ long }: { long: string }) {
-  const ref = useSectionMotion<HTMLElement>(0.2)
+  const ref = useSectionMotion<HTMLElement>()
   return (
     <section ref={ref} className={l.section} aria-labelledby="flipd-mission-title">
       <div className={`${l.inner} ${l.mission}`}>
@@ -126,14 +130,21 @@ function Mission({ long }: { long: string }) {
 }
 
 function Values() {
-  const ref = useSectionMotion<HTMLElement>(0.15)
+  const ref = useSectionMotion<HTMLElement>()
+  // The heading wipes on with a clip scrubbed by the section's entry — a
+  // third of it is always showing, so no scroll offset catches it blank, and
+  // it is never faded. Reduced motion: progress is pinned at 1 (fully set).
+  const headRef = useRef<HTMLHeadingElement>(null)
+  const enter = useScene(headRef, 'enter')
+  const wipe = useTransform(enter, (v) => `inset(-0.2em ${((1 - v) * 66).toFixed(2)}% -0.2em 0%)`)
+  const nudge = useTransform(enter, (v) => (1 - v) * 18)
   return (
     <section ref={ref} className={`${l.section} ${l.blue}`} aria-labelledby="flipd-values-title">
       <div className={l.inner}>
         <p className={l.eyebrow}>Core values</p>
-        <h2 id="flipd-values-title" className={l.h2}>
-          <Words text="What we hold to." />
-        </h2>
+        <motion.h2 ref={headRef} id="flipd-values-title" className={l.h2} style={{ clipPath: wipe, x: nudge }}>
+          What we hold to.
+        </motion.h2>
         <ol className={l.values}>
           {CORE_VALUES.map((v, i) => (
             <li
@@ -154,7 +165,7 @@ function Values() {
 }
 
 function SignOff({ badge, badgeIsFallback, address }: { badge: string; badgeIsFallback: boolean; address: string }) {
-  const ref = useSectionMotion<HTMLElement>(0.3)
+  const ref = useSectionMotion<HTMLElement>()
   return (
     <section ref={ref} className={l.signoff} aria-label="Sign-off">
       <div className={l.badgeWrap}>
@@ -241,7 +252,7 @@ export function FlipdLayout({ concept, concepts }: Props) {
 
       <CourtSide concept={concept} hoursData={hoursData} mapsUrl={mapsUrl} reservations={reservations} />
 
-      <Checker />
+      <Checker reverse />
 
       <CrossBrandStrip
         current={concept}

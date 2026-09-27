@@ -3,6 +3,7 @@ import * as React from 'react'
 import { useEffect, useState, useCallback } from 'react'
 import { motion, useAnimation, type AnimationControls } from 'framer-motion'
 import Link, { type LinkProps } from 'next/link'
+import { useIsCoarsePointer, usePrefersReducedMotion } from '../../lib/film/motion'
 
 // "Magnetize" hover effect, colour-preserving. Two drop-ins:
 //   <MagneticButton …>  for <button> CTAs
@@ -14,14 +15,19 @@ import Link, { type LinkProps } from 'next/link'
 // Notes:
 //  - The element keeps overflow visible (box-shadows intact); the particle
 //    layer clips itself (overflow hidden + borderRadius inherit).
-//  - Particles are invisible at rest and only fly in on hover/touch, so a page
-//    full of these stays calm until you interact.
+//  - Particles are invisible at rest and only fly in on hover, so a page full
+//    of these stays calm until you interact.
+//  - No magnet on coarse pointers (phones/tablets): there is no hover, and a
+//    touch that turns into a scroll used to leave the particles stranded.
+//    Any pointercancel/touchcancel releases them.
 
 interface Particle { id: number; x: number; y: number }
 
 function useMagnet(particleCount: number, disabled?: boolean) {
   const [particles, setParticles] = useState<Particle[]>([])
   const controls = useAnimation()
+  const coarse = useIsCoarsePointer()
+  const reduced = usePrefersReducedMotion()
 
   useEffect(() => {
     setParticles(
@@ -34,9 +40,9 @@ function useMagnet(particleCount: number, disabled?: boolean) {
   }, [particleCount])
 
   const attract = useCallback(async () => {
-    if (disabled) return
+    if (disabled || coarse || reduced) return
     await controls.start({ x: 0, y: 0, opacity: 0.85, transition: { type: 'spring', stiffness: 50, damping: 10 } })
-  }, [controls, disabled])
+  }, [controls, disabled, coarse, reduced])
 
   const release = useCallback(async () => {
     await controls.start((i: number) => ({
@@ -90,6 +96,8 @@ export function MagneticButton({
   onMouseLeave,
   onTouchStart,
   onTouchEnd,
+  onTouchCancel,
+  onPointerCancel,
   ...props
 }: MagneticButtonProps) {
   const { particles, controls, attract, release } = useMagnet(particleCount, disabled)
@@ -102,6 +110,8 @@ export function MagneticButton({
       onMouseLeave={(e) => { void release(); onMouseLeave?.(e) }}
       onTouchStart={(e) => { void attract(); onTouchStart?.(e) }}
       onTouchEnd={(e) => { void release(); onTouchEnd?.(e) }}
+      onTouchCancel={(e) => { void release(); onTouchCancel?.(e) }}
+      onPointerCancel={(e) => { void release(); onPointerCancel?.(e) }}
       {...props}
     >
       <ParticleLayer particles={particles} controls={controls} />
@@ -127,6 +137,8 @@ export function MagneticLink({
   onMouseLeave,
   onTouchStart,
   onTouchEnd,
+  onTouchCancel,
+  onPointerCancel,
   ...props
 }: MagneticLinkProps) {
   const { particles, controls, attract, release } = useMagnet(particleCount, false)
@@ -138,6 +150,8 @@ export function MagneticLink({
       onMouseLeave={(e) => { void release(); onMouseLeave?.(e) }}
       onTouchStart={(e) => { void attract(); onTouchStart?.(e) }}
       onTouchEnd={(e) => { void release(); onTouchEnd?.(e) }}
+      onTouchCancel={(e) => { void release(); onTouchCancel?.(e) }}
+      onPointerCancel={(e) => { void release(); onPointerCancel?.(e) }}
       {...props}
     >
       <ParticleLayer particles={particles} controls={controls} />

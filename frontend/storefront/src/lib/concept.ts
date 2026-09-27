@@ -153,7 +153,7 @@ interface BrandStory {
 
 export const BRAND_STORIES: Record<string, BrandStory> = {
   'simmer': {
-    tagline: 'Slow nights, plated softly.',
+    tagline: 'slow nights, plated softly.',
     oneLiner: 'Fine-casual mocktail bar and small-plates kitchen — intimate room, seasonal menu.',
     long: 'simmer is GS Foods’ flagship plated-service concept. The menu rotates with the season — small plates built to share, hand-built mocktails, and a room that knows when to fade and when to glow. We cook because we care about the table. Every dish is plated as if it’s going to someone we know.',
     highlights: ['Plated table service', 'Hand-built mocktails', 'Seasonal small plates', 'Mains & desserts', 'Reservations welcome'],
@@ -176,11 +176,13 @@ export const BRAND_STORIES: Record<string, BrandStory> = {
 }
 
 export function brandStory(slug: string): BrandStory {
+  // House register for any kitchen that has not written its own story yet:
+  // same playful hub voice as the rest of servd, never generic ad copy.
   return BRAND_STORIES[slug] ?? {
-    tagline: 'Direct from the kitchen.',
-    oneLiner: 'A brand on servd.',
-    long: 'Fresh from the kitchen, every time.',
-    highlights: ['Direct ordering', 'Fresh daily'],
-    hours: 'Check our page for current hours',
+    tagline: 'new here. worth the wait.',
+    oneLiner: 'a new kitchen on servd, cooking its first menu.',
+    long: 'a new kitchen just joined the servd crowd. the menu is still settling in, but everything is cooked to order and handed over the pass, the same as every other kitchen here.',
+    highlights: ['cooked to order', 'order direct', 'one bag, any kitchen'],
+    hours: 'hours on the menu page',
   }
 }

@@ -13,19 +13,18 @@ import { InsidersPass } from './party/home/InsidersPass'
 import { Divider } from './party/home/Divider'
 import s from './party/home/home.module.css'
 
-// servd home — the playful "food crowd" hub.
+// servd home — "servd, the film". The page plays as consecutive scenes,
+// every one scrubbed by scroll position (never a time-triggered pop), so any
+// scroll offset shows a composed, populated frame — even with the API down.
 //
-// Flow after the hero, each band a different ground so the page has rhythm
-// (butter → cream → plum → butter → cream), joined by drifting wavy /
-// scalloped seams:
-//   hero (butter)          — the 3D food crowd; "Meet the kitchens" → #brands
-//   ticker                 — crossed tapes over the seam, speed with scroll
-//   #brands (cream)        — trading-card deck, two links per card
-//   right now (plum)       — departures board: live open sign, area, hours,
-//                            order + WhatsApp
-//   how servd works (butter) — second (last) crowd + 3 steps + the
-//                            "Every kitchen, one order" /browse ticket
-//   insiders (cream)       — swinging VIP pass + three perk stickers
+//   act i    #act-1     (butter)  PartyHero — the opening shot, the crowd
+//            ticker              crossed tapes; speed + skew follow scroll velocity
+//   act ii   #brands    (cream)   BrandDeck — the cards are dealt by scroll
+//   act iii  #right-now (plum)    KitchenBoard — the departures board flips
+//                                 from scrambled letters to the real names
+//   act iv   #one-bag   (butter)  HowItWorks — the "one bag" set piece
+//            #insiders  (cream)   InsidersPass
+// Bands are joined by wavy / scalloped Dividers that drift with the camera.
 //
 // Graceful degradation: if the api hiccups and concepts comes back empty,
 // we render the three live brands from hardcoded data so the home page
@@ -84,8 +83,9 @@ export function HomeClient({ concepts, heroConfig }: Props) {
       <PartyHero config={heroConfig} />
 
       {/* Everything below the hero. reducedMotion="user" makes framer skip
-          transform animations for reduced-motion users; each section also
-          renders its final state directly in that case. */}
+          transform animations for reduced-motion users; every scene also
+          renders its final composed state directly in that case (useScene
+          pins progress at 1). */}
       <MotionConfig reducedMotion="user">
         <div className={s.root}>
           <Ticker />

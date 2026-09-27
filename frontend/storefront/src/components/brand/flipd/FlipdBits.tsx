@@ -8,6 +8,7 @@ import { useRouter } from 'next/navigation'
 import type { CSSProperties, ReactNode, MouseEvent as ReactMouseEvent } from 'react'
 import { emitCrowd } from '../../characters/crowdBus'
 import type { CharacterKind } from '../../characters/types'
+import { requestCut } from '../../../lib/film/cut'
 import { useSectionMotion } from './useFlipdMotion'
 import s from './flipd.module.css'
 
@@ -64,8 +65,10 @@ export function Arrow() {
 
 /**
  * The primary order link. Hover/focus winds the crowd up; a plain click makes
- * every crowd on the page cheer, then navigates. Modified clicks (new tab,
- * etc.) and keyboard activation with reduced motion behave natively.
+ * every crowd on the page cheer, then cuts to ordering (the Flipd checker
+ * shutter, grown from the button). Modified clicks (new tab, etc.) and
+ * reduced motion behave natively. `data-no-cut` because this onClick drives
+ * its own navigation — SceneCut must not also intercept it.
  */
 export function OrderLink({
   href,
@@ -84,11 +87,15 @@ export function OrderLink({
     if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return
     e.preventDefault()
     emitCrowd({ type: 'cheer' })
-    window.setTimeout(() => router.push(href), 480)
+    const origin = e.currentTarget.getBoundingClientRect()
+    window.setTimeout(() => {
+      if (!requestCut(href, { origin, theme: 'flipd' })) router.push(href)
+    }, 360)
   }
   return (
     <Link
       href={href}
+      data-no-cut=""
       className={className ?? s.btn}
       onClick={onClick}
       onMouseEnter={() => onExcite?.(true)}

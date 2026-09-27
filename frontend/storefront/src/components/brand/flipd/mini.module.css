@@ -25,8 +25,8 @@
   inset: 0;
   width: 100%;
   height: 100%;
-  animation: ringSpin 26s linear infinite;
 }
+.plate[data-live] .ring { animation: ringSpin 26s linear infinite; }
 @keyframes ringSpin { to { transform: rotate(360deg); } }
 
 .stack {
@@ -37,15 +37,33 @@
   align-items: center;
   translate: 0 6%;
 }
+
+/* The seated, static burger is the BASE state: every part in place, fully
+   opaque. The build loop only ever runs while the plate is on screen
+   ([data-live]); off screen, before hydration, in a snapshot taken the moment
+   it scrolls in, or under reduced motion, the worst case is a correct, still
+   burger — never an empty plate. */
 .part {
   width: var(--w);
   --d: calc(var(--step) * 0.26s);
-  animation: build 7.2s infinite backwards;
-  animation-delay: var(--d);
+  transform: none;
+  opacity: 1;
   transform-origin: 50% 100%;
 }
 .part + .part { margin-top: -2.6%; }
 .part img { display: block; width: 100%; height: auto; }
+.flip { transform: none; opacity: 1; transform-origin: 50% 50%; }
+
+/* The loop starts on the SEATED hold (the 21%..74% plateau), so the first
+   thing a new viewer sees is the finished burger; it lifts off, then builds. */
+.plate[data-live] .part {
+  animation: build 7.2s infinite both;
+  animation-delay: calc(var(--d) - 2.6s);
+}
+.plate[data-live] .flip {
+  animation: flip 7.2s infinite both;
+  animation-delay: calc(0.26s - 2.6s);
+}
 
 @keyframes build {
   0%   { opacity: 0; transform: translateY(-230%) rotate(var(--tilt)); animation-timing-function: cubic-bezier(0.55, 0, 1, 0.45); }
@@ -57,22 +75,14 @@
   84%  { opacity: 0; transform: translateY(-120%) rotate(calc(var(--tilt) * -1.4)); }
   100% { opacity: 0; transform: translateY(-230%); }
 }
-
-.flip {
-  animation: flip 7.2s infinite backwards;
-  animation-delay: 0.26s;
-  transform-origin: 50% 50%;
-}
 @keyframes flip {
   0%   { transform: perspective(500px) rotateX(540deg); animation-timing-function: ease-out; }
   13%  { transform: perspective(500px) rotateX(0deg); }
   100% { transform: perspective(500px) rotateX(0deg); }
 }
 
-.plate:not([data-live]) .ring,
-.plate:not([data-live]) .part,
-.plate:not([data-live]) .flip { animation-play-state: paused; }
-
 @media (prefers-reduced-motion: reduce) {
-  .ring, .part, .flip { animation: none; }
+  .plate[data-live] .ring,
+  .plate[data-live] .part,
+  .plate[data-live] .flip { animation: none; }
 }

@@ -6,7 +6,7 @@
 
 import Link from 'next/link'
 import type { Concept } from '../../lib/concept'
-import { conceptHeroImage, brandStory, brandAccent } from '../../lib/concept'
+import { conceptHeroImage, brandStory, brandAccent, formatBrandName } from '../../lib/concept'
 import { OpenNowPill } from '../../components/brand/parts/OpenNowPill'
 
 const API_URL = process.env.INTERNAL_API_URL ?? process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
@@ -63,7 +63,7 @@ export default async function ReservePage() {
                   <Link
                     key={c.id}
                     href={`/reserve/${c.slug}`}
-                    aria-label={`Book a table at ${c.name}`}
+                    aria-label={`Book a table at ${formatBrandName(c.name)}`}
                     className="servd-card"
                     style={{
                       textDecoration: 'none', color: 'inherit', display: 'flex', flexDirection: 'column',
@@ -81,13 +81,13 @@ export default async function ReservePage() {
                     </div>
                     <div style={{ padding: '1.25rem 1.4rem', display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
                       <h2 style={{ fontFamily: 'var(--font-display)', fontSize: '1.4rem', fontWeight: 800, letterSpacing: '-0.02em' }}>
-                        {c.name}
+                        {formatBrandName(c.name)}
                       </h2>
                       <p style={{ color: 'var(--servd-mute)', fontSize: '0.9rem', lineHeight: 1.45 }}>
                         {story.oneLiner}
                       </p>
                       <span style={{ marginTop: '0.6rem', fontSize: '0.85rem', fontWeight: 800, color: accent }}>
-                        Book at {c.name} →
+                        Book at {formatBrandName(c.name)} →
                       </span>
                     </div>
                   </Link>

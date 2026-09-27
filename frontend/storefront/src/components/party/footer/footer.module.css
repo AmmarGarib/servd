@@ -47,8 +47,20 @@
   line-height: 0;
 }
 
-.wave { display: block; width: 100%; height: 100%; }
+/* Twice as wide as the footer and drifting by half its width: the scallop
+   pattern repeats every 720 units, so the loop is seamless. */
+.wave {
+  display: block;
+  width: 200%;
+  height: 100%;
+  animation: drift 18s linear infinite;
+}
 .wave path { fill: var(--wave-color); }
+@keyframes drift { to { transform: translateX(-50%); } }
+
+/* Only animate while the footer is on screen (IntersectionObserver → data-live). */
+.footer[data-live='false'] .wave,
+.footer[data-live='false'] .doodle { animation-play-state: paused; }
 
 .inner {
   position: relative;
@@ -78,7 +90,64 @@
 @keyframes bob  { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-8px); } }
 
 /* ── Headline lockup ──────────────────────────────────────────────────── */
-.lockup { margin-bottom: clamp(3rem, 5vw, 4rem); max-width: 900px; }
+/* Top row: the headline lockup, and the end credits rolling beside it. */
+.top {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+  gap: clamp(2rem, 5vw, 4rem);
+  align-items: start;
+  margin-bottom: clamp(3rem, 5vw, 4rem);
+}
+.lockup { max-width: 900px; }
+.ctaWrap { display: inline-block; transform-origin: 30% 100%; }
+
+/* ── End credits ──────────────────────────────────────────────────────── */
+.creditsWindow {
+  position: relative;
+  height: clamp(19rem, 25vw, 22rem);
+  overflow: hidden;
+  padding-top: 1.5rem;
+  -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 12%, #000 86%, transparent 100%);
+  mask-image: linear-gradient(180deg, transparent 0, #000 12%, #000 86%, transparent 100%);
+}
+.credits {
+  display: grid;
+  gap: 1.1rem;
+  text-align: center;
+  will-change: transform;
+}
+.creditsHead,
+.creditsEnd {
+  margin: 0;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-weight: 700;
+  font-size: 0.74rem;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: var(--party-butter);
+}
+.creditsHead span { color: var(--party-tomato); }
+.creditsEnd { letter-spacing: 0.22em; color: var(--cream-mute); }
+.creditList { display: grid; gap: 1.1rem; margin: 0; }
+.creditRow { display: grid; gap: 0.2rem; }
+.creditRole {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.26em;
+  text-transform: uppercase;
+  color: var(--cream-dim);
+}
+.creditNames {
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: clamp(1.05rem, 1.6vw, 1.3rem);
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+  color: var(--party-cream);
+  text-wrap: balance;
+}
 
 .eyebrow {
   margin: 0 0 1rem;
@@ -199,12 +268,18 @@
   color: var(--cream-dim);
 }
 
+@media (max-width: 860px) {
+  .top { grid-template-columns: minmax(0, 1fr); }
+  .creditsWindow { height: 21rem; }
+}
+
 @media (max-width: 640px) {
   .doodle { display: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .doodle { animation: none; }
+  .doodle, .wave { animation: none; }
+  .creditsWindow { height: auto; -webkit-mask-image: none; mask-image: none; }
   .cta:hover { transform: none; }
   .linkRow:hover { transform: none; }
 }

@@ -176,6 +176,8 @@
   transition: opacity 250ms ease;
 }
 .lanyard:hover .holo { opacity: 1; }
+/* Touch twin: the shine is scroll-driven, so it is always on. */
+.lanyard[data-touch] .holo { opacity: 1; }
 /* Idle shimmer sweep for touch / before the pointer arrives. */
 .pass::after {
   content: '';
@@ -271,8 +273,8 @@
 .simmer:hover .perkIcon { transform: none; }
 
 @keyframes sway {
-  0%, 100% { transform: rotate(-1.6deg); }
-  50% { transform: rotate(1.6deg); }
+  0%, 100% { transform: rotate(-2deg); }
+  50% { transform: rotate(2deg); }
 }
 @keyframes sweep {
   0% { transform: translateX(-70%); }

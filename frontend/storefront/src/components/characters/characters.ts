@@ -32,6 +32,29 @@ export interface BuiltCharacter {
   height: number
   /** Arm rest angle (radians, outward). */
   armRest: number
+  /** Optional pivots the rig animates for per-kind idle quirks. */
+  parts?: CharacterParts
+}
+
+/**
+ * Sub-groups a quirk may move. Each is a pivot whose rest transform is
+ * identity-relative (the rig only ever offsets from rest and returns to it).
+ */
+export interface CharacterParts {
+  /** coffee: lid + sip hole, pivot on the rim. */
+  lid?: THREE.Object3D
+  /** coffee: a steam puff, hidden (no draw call) until a quirk shows it. */
+  puff?: THREE.Object3D
+  /** coffee: the puff's material, faded in and out by the quirk. */
+  puffMat?: THREE.Material
+  /** burger: top bun + seeds + face, pivot at the back of the crown. */
+  bunTop?: THREE.Object3D
+  /** shake: the straw, pivot at its own centre. */
+  straw?: THREE.Object3D
+  /** sandwich: the fillings stack between the slices. */
+  fill?: THREE.Object3D
+  /** fries: the sticks in the carton. */
+  sticks?: THREE.Object3D
 }
 
 export interface BuildContext {
@@ -242,7 +265,15 @@ function buildBurger({ kit, face, limbs }: BuildContext): BuiltCharacter {
   }
   const topBun = mesh(kit.geo(paint(organic(smoothLathe(topPts, { smooth: false, segments: 120 }), 0.018, 3.2, 11), bunPaint(0.02, 0.5))), bunMat)
   topBun.position.y = y
-  g.add(topBun)
+  // The crown (bun, seeds and face) hinges at the back of its base so a
+  // quirk can tip it like a hat. Children are offset back by the pivot.
+  const bunPivot = new THREE.Group()
+  bunPivot.position.set(0, y, -0.5)
+  const bunInner = new THREE.Group()
+  bunInner.position.set(0, -y, 0.5)
+  bunPivot.add(bunInner)
+  bunInner.add(topBun)
+  g.add(bunPivot)
 
   // Sesame seeds (instanced), kept off the face
   const seedGeo = kit.geo(new THREE.SphereGeometry(0.026, 14, 10))
@@ -277,7 +308,7 @@ function buildBurger({ kit, face, limbs }: BuildContext): BuiltCharacter {
     seeds.setMatrixAt(placed++, m4)
   }
   seeds.count = placed
-  g.add(seeds)
+  bunInner.add(seeds)
 
   const topY = y
   const surfaceZ = (x: number, yy: number) => {
@@ -299,7 +330,7 @@ function buildBurger({ kit, face, limbs }: BuildContext): BuiltCharacter {
       { x: 0.3, y: fy - 0.12, r: 0.06 },
     ],
   })
-  g.add(faceRig.group)
+  bunInner.add(faceRig.group)
 
   const limbMat = kit.physical('limb-burger', { color: '#8A4A22', roughness: 0.45, clearcoat: 0.4 })
   const arms = addArms(g, limbs, limbMat, [
@@ -308,7 +339,7 @@ function buildBurger({ kit, face, limbs }: BuildContext): BuiltCharacter {
   ])
   addLegs(g, limbs, limbMat, [-0.2, 0.2], legH + 0.03)
 
-  return { model: g, face: faceRig, arms, width: 1.3, height: topY + base + Bh, armRest: 0.45 }
+  return { model: g, face: faceRig, arms, width: 1.3, height: topY + base + Bh, armRest: 0.45, parts: { bunTop: bunPivot } }
 }
 
 /* ================================================================== */
@@ -480,7 +511,7 @@ function buildFries({ kit, face, limbs }: BuildContext): BuiltCharacter {
     [0.36, legH + 0.4, 0],
   ])
   addLegs(g, limbs, limbMat, [-0.16, 0.16], legH + 0.03)
-  return { model: g, face: faceRig, arms, width: 1.0, height: legH + H + 0.3, armRest: 0.3 }
+  return { model: g, face: faceRig, arms, width: 1.0, height: legH + H + 0.3, armRest: 0.3, parts: { sticks } }
 }
 
 /* ================================================================== */
@@ -566,12 +597,40 @@ function buildCoffee({ kit, face, limbs }: BuildContext): BuiltCharacter {
     ),
     lidMat,
   )
-  lid.position.y = legH
-  g.add(lid)
+  // Lid + sip hole hinge on the rim so a quirk can wobble the lid.
+  const lidY = legH + 0.86
+  const lidPivot = new THREE.Group()
+  lidPivot.position.y = lidY
+  lid.position.y = legH - lidY
+  lidPivot.add(lid)
   const sip = mesh(kit.geo(new RoundedBoxGeometry(0.12, 0.03, 0.05, 3, 0.014)), kit.physical('sip', { color: '#1B0F0D', roughness: 0.5 }))
-  sip.position.set(0, legH + 1.04, 0.2)
+  sip.position.set(0, legH + 1.04 - lidY, 0.2)
   sip.rotation.x = 0.12
-  g.add(sip)
+  lidPivot.add(sip)
+  g.add(lidPivot)
+
+  // Steam puff: three soft blobs in ONE instanced draw, hidden until a quirk.
+  const puffMat = kit.material(
+    new THREE.MeshStandardMaterial({ color: '#FFF4E6', roughness: 1, metalness: 0, transparent: true, opacity: 0, depthWrite: false }),
+  )
+  const puff = new THREE.InstancedMesh(kit.geo(new THREE.SphereGeometry(0.07, 14, 10)), puffMat, 3)
+  {
+    const pm = new THREE.Matrix4()
+    const pq = new THREE.Quaternion()
+    const blobs: Array<[number, number, number, number]> = [
+      [-0.05, 0, 0.02, 1],
+      [0.05, 0.07, -0.01, 0.8],
+      [-0.01, 0.15, 0, 0.62],
+    ]
+    blobs.forEach(([bx, by, bz, bs], i) => {
+      pm.compose(new THREE.Vector3(bx, by, bz), pq, new THREE.Vector3(bs, bs * 0.85, bs))
+      puff.setMatrixAt(i, pm)
+    })
+  }
+  puff.position.set(0, legH + 1.12, 0.05)
+  puff.visible = false
+  puff.renderOrder = 2
+  g.add(puff)
 
   const surfaceZ = (x: number, yy: number) => {
     const rr = r(Math.min(0.86, Math.max(0, yy - legH)))
@@ -598,7 +657,7 @@ function buildCoffee({ kit, face, limbs }: BuildContext): BuiltCharacter {
     [0.355, legH + 0.42, 0],
   ])
   addLegs(g, limbs, lidMat, [-0.13, 0.13], legH + 0.03)
-  return { model: g, face: faceRig, arms, width: 0.95, height: legH + 1.05, armRest: 0.3 }
+  return { model: g, face: faceRig, arms, width: 0.95, height: legH + 1.05, armRest: 0.3, parts: { lid: lidPivot, puff, puffMat } }
 }
 
 /* ================================================================== */
@@ -674,7 +733,10 @@ function buildSandwich({ kit, face, limbs }: BuildContext): BuiltCharacter {
   tomato.position.z = -0.018
   const ham = mesh(kit.geo(ruffle(slab(0.03, 0.012, 1.075), 0.018, 7)), kit.physical('ham', { color: '#F08A95', roughness: 0.42, clearcoat: 0.45, sheen: 0.5, sheenColor: new THREE.Color('#FFD6DA') }))
   ham.position.z = -0.062
-  inner.add(lettuce, cheese, tomato, ham)
+  // The fillings ride in their own group so a quirk can slide the stack.
+  const fill = new THREE.Group()
+  fill.add(lettuce, cheese, tomato, ham)
+  inner.add(fill)
   inner.position.y = legH
   inner.rotation.y = -0.42
   g.add(inner)
@@ -703,7 +765,7 @@ function buildSandwich({ kit, face, limbs }: BuildContext): BuiltCharacter {
     [0.47, 0.26, 0.04],
   ])
   addLegs(g, limbs, limbMat, [-0.2, 0.2], legH + 0.05)
-  return { model: g, face: faceRig, arms, width: 1.2, height: legH + 1.02, armRest: 0.5 }
+  return { model: g, face: faceRig, arms, width: 1.2, height: legH + 1.02, armRest: 0.5, parts: { fill } }
 }
 
 /* ================================================================== */
@@ -823,9 +885,12 @@ function buildShake({ kit, face, limbs }: BuildContext): BuiltCharacter {
     kit.geo(new THREE.CylinderGeometry(0.03, 0.03, 0.75, 24, 1)),
     kit.physical('straw', { color: strawTex ? '#FFFFFF' : '#E8392F', map: strawTex ?? null, roughness: 0.3, clearcoat: 0.8 }),
   )
-  straw.position.set(0.14, legH + 1.15, -0.1)
+  // The straw spins about the vertical through its middle.
+  const strawPivot = new THREE.Group()
+  strawPivot.position.set(0.14, legH + 1.15, -0.1)
   straw.rotation.z = -0.32
-  g.add(straw)
+  strawPivot.add(straw)
+  g.add(strawPivot)
 
   const surfaceZ = (x: number, yy: number) => {
     const rr = r(Math.min(0.84, Math.max(0, yy - legH)))
@@ -854,7 +919,7 @@ function buildShake({ kit, face, limbs }: BuildContext): BuiltCharacter {
     [0.31, legH + 0.4, 0],
   ])
   addLegs(g, limbs, limbMat, [-0.12, 0.12], legH + 0.03)
-  return { model: g, face: faceRig, arms, width: 0.9, height: legH + 1.42, armRest: 0.28 }
+  return { model: g, face: faceRig, arms, width: 0.9, height: legH + 1.42, armRest: 0.28, parts: { straw: strawPivot } }
 }
 
 /* ================================================================== */

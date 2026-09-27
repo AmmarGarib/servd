@@ -10,7 +10,7 @@
  *   --l0 --l1 --l2  the three lines of the titles, one after another
  *   --cta     0→1  reserve / menu
  *   --floor   0→1  the hours on the floor
- *   --cue     1→0  "scroll to open"
+ *   --cue     1→0  "scroll to open" (held until the door is ~60% open)
  *
  * Flat colour only: the grid is an SVG pattern (no linear-gradient), the
  * steel frame is two bone rules, the door's weight is a real edge, not a
@@ -20,7 +20,9 @@
 
 .walkin {
   position: relative;
-  height: 250vh;
+  /* Was 250vh, which left ~40vh of dead scroll after the last line set.
+     svh so the runway does not jump as a phone's toolbar shows and hides. */
+  height: 215svh;
   background: var(--simmer-green);
   color: var(--simmer-bone);
 }
@@ -30,7 +32,6 @@
   /* The brand header is sticky above this and ~5rem tall; pin just under it
      so the door is centred in what is actually visible. */
   top: 5rem;
-  height: calc(100vh - 5rem);
   height: calc(100svh - 5rem);
   min-height: 30rem;
   overflow: hidden;

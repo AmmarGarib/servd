@@ -19,12 +19,17 @@ export function ItemTicket({
   index,
   orderHref,
   label,
+  placeholder = false,
 }: {
   item: FlipdMenuItemLive
   index: number
   orderHref: string
   /** Right-hand head text — the category name on the menu page. */
   label?: string
+  /** A stand-in ticket for when the menu can't be read (API down, nothing
+   *  published): no price stamp, and the link reads "see it" rather than
+   *  "order", pointing wherever `orderHref` says (the menu page). */
+  placeholder?: boolean
 }) {
   const soldOut = item.isAvailable === false
   const options = itemOptions(item)
@@ -50,10 +55,10 @@ export function ItemTicket({
           </ul>
         )}
         <div className={t.foot}>
-          <span className={t.price}>{fmtPkr(item.priceCents)}</span>
+          <span className={t.price}>{placeholder ? 'On the menu' : fmtPkr(item.priceCents)}</span>
           {!soldOut && (
-            <Link href={orderHref} className={t.order} aria-label={`Order ${item.name}`}>
-              Order
+            <Link href={orderHref} className={t.order} aria-label={placeholder ? `See ${item.name} on the menu` : `Order ${item.name}`}>
+              {placeholder ? 'See it' : 'Order'}
               <svg aria-hidden viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
             </Link>
           )}

@@ -13,7 +13,7 @@ import { DAY_LABELS, formatMins, useOpenStatus, usePktToday, windowsFor } from '
 import { FlipdCrowd, Words, Arrow } from './FlipdBits'
 import { ItemTicket } from './ItemTicket'
 import type { FlipdMenuCategoryLive, FlipdMenuItemLive } from './types'
-import { useInView, useSectionMotion } from './useFlipdMotion'
+import { useInView, usePrefersReducedMotion, useSectionMotion } from './useFlipdMotion'
 import f from './flipd.module.css'
 import l from './landing.module.css'
 
@@ -23,9 +23,9 @@ const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
 /**
  * Up to six items from the live menu (the same `/storefront/:slug/menu` the
- * menu page and the till read), available ones first. If the API is down or
- * nothing is published, the tickets are simply absent and the section is
- * a heading and a link to the full menu.
+ * menu page and the till read), available ones first. `null` while loading;
+ * `[]` when the API is down or nothing is published — the section then hangs
+ * three stand-in tickets on the rail rather than going bare.
  */
 function useMenuHighlights(slug: string, max = 6) {
   const [items, setItems] = useState<{ item: FlipdMenuItemLive; cat: string }[] | null>(null)
@@ -34,7 +34,8 @@ function useMenuHighlights(slug: string, max = 6) {
     fetch(`${API_URL}/api/v1/storefront/${encodeURIComponent(slug)}/menu`)
       .then((r) => (r.ok ? (r.json() as Promise<FlipdMenuCategoryLive[] | { categories?: FlipdMenuCategoryLive[] }>) : null))
       .then((payload) => {
-        if (!alive || !payload) return
+        if (!alive) return
+        if (!payload) { setItems([]); return }
         const cats = Array.isArray(payload) ? payload : payload.categories ?? []
         const all = cats.flatMap((c) => (c.items ?? []).map((item) => ({ item, cat: c.name })))
         const picked = [
@@ -43,16 +44,34 @@ function useMenuHighlights(slug: string, max = 6) {
         ].slice(0, max)
         setItems(picked)
       })
-      .catch(() => { /* API down — the section degrades to a link */ })
+      .catch(() => { if (alive) setItems([]) })
     return () => { alive = false }
   }, [slug, max])
   return items
 }
 
+/** The stand-in rail: what is always on, in the spec sheet's plain words. */
+const FALLBACK_TICKETS: { item: FlipdMenuItemLive; cat: string }[] = [
+  {
+    cat: 'Special',
+    item: { id: 'fallback-special', name: 'ask about today\u2019s build', description: 'Whatever is on the board, built to the same sheet as the rest.', priceCents: 0 },
+  },
+  {
+    cat: 'Burgers',
+    item: { id: 'fallback-classic', name: 'the classic, on spec', description: 'Brioche, smashed patty, salt and pepper. Nothing else.', priceCents: 0 },
+  },
+  {
+    cat: 'Sides',
+    item: { id: 'fallback-fries', name: 'hand-cut, triple-cooked', description: 'Potatoes cut in the kitchen and cooked three times.', priceCents: 0 },
+  },
+]
+
 export function OffTheGrill({ slug, orderHref, menuHref }: { slug: string; orderHref: string; menuHref: string }) {
-  const ref = useSectionMotion<HTMLElement>(0.12)
+  const ref = useSectionMotion<HTMLElement>()
   const items = useMenuHighlights(slug)
-  const has = !!items && items.length > 0
+  const live = !!items && items.length > 0
+  const fallback = !!items && items.length === 0
+  const rail = live ? items! : fallback ? FALLBACK_TICKETS : null
 
   return (
     <section ref={ref} className={l.section} aria-labelledby="flipd-grill-title">
@@ -70,12 +89,19 @@ export function OffTheGrill({ slug, orderHref, menuHref }: { slug: string; order
           </Link>
         </div>
 
-        {has && (
+        {rail && (
           <div className={l.railBlock}>
             <div className={f.rail} aria-hidden />
             <div className={l.tickets}>
-              {items!.map(({ item, cat }, i) => (
-                <ItemTicket key={item.id} item={item} index={i} orderHref={orderHref} label={cat} />
+              {rail.map(({ item, cat }, i) => (
+                <ItemTicket
+                  key={item.id}
+                  item={item}
+                  index={i}
+                  orderHref={live ? orderHref : menuHref}
+                  label={cat}
+                  placeholder={!live}
+                />
               ))}
             </div>
             <span className={l.swipeHint} aria-hidden>
@@ -129,21 +155,36 @@ function Ball() {
 }
 
 /**
- * While the stand is on screen and the pointer has been still for a moment,
- * the crowd's eyes follow the ball — heads going back and forth like a
- * court-side crowd. Moving the pointer takes their attention back.
+ * The court-side beat. The first time the stand goes live the whole crowd
+ * watches the rally — heads going back and forth after the ball for a couple
+ * of seconds whatever the pointer is doing — and then cheers the point. That
+ * is the hand-off from the hero: the same cast, now spectators.
+ *
+ * After that (the bonus): whenever the pointer has been still for 1.5s their
+ * eyes drift back to the ball; moving the pointer takes their attention back.
  */
 function useWatchTheBall(active: boolean, ballRef: RefObject<HTMLElement>) {
+  const reduced = usePrefersReducedMotion()
+  const played = useRef(false)
   useEffect(() => {
-    if (!active) return
-    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return
+    if (!active || reduced) return
     let lastMove = -1e9
     let raf = 0
     let lastEmit = 0
+    const beatStart = played.current ? -1 : performance.now()
+    let cheered = played.current
+    played.current = true
+    const BEAT_MS = 2200
     const onMove = () => { lastMove = performance.now() }
     const tick = (now: number) => {
       raf = requestAnimationFrame(tick)
-      if (now - lastMove < 1500 || now - lastEmit < 90) return
+      const inBeat = beatStart >= 0 && now - beatStart < BEAT_MS
+      if (!inBeat && !cheered) {
+        cheered = true
+        emitCrowd({ type: 'cheer' })
+      }
+      if (now - lastEmit < 90) return
+      if (!inBeat && now - lastMove < 1500) return
       const r = ballRef.current?.getBoundingClientRect()
       if (!r) return
       lastEmit = now
@@ -155,7 +196,7 @@ function useWatchTheBall(active: boolean, ballRef: RefObject<HTMLElement>) {
       window.removeEventListener('pointermove', onMove)
       cancelAnimationFrame(raf)
     }
-  }, [active, ballRef])
+  }, [active, reduced, ballRef])
 }
 
 /**
@@ -216,8 +257,8 @@ export function CourtSide({
   mapsUrl: string | null
   reservations: boolean
 }) {
-  const sectionRef = useSectionMotion<HTMLElement>(0.1)
-  const standMotion = useSectionMotion<HTMLDivElement>(0)
+  const sectionRef = useSectionMotion<HTMLElement>()
+  const standMotion = useSectionMotion<HTMLDivElement>()
   const [standRef, standInView] = useInView<HTMLDivElement>()
   const ballRef = useRef<HTMLSpanElement>(null)
   useWatchTheBall(standInView, ballRef)

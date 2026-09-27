@@ -7,6 +7,19 @@ import { useCustomerAuth } from '../../../store/customerAuth'
 import { fmt } from '../../../lib/ui'
 import { decodeCartToken } from '../../../lib/cartHandoff'
 import { trackCheckoutStarted, trackCheckoutAbandoned, trackOrderPlaced, trackPromoApplied, trackPromoFailed } from '../../../lib/analytics'
+import { motion } from 'framer-motion'
+import { voice } from '../../../lib/voice'
+import { SPRING_POP, usePrefersReducedMotion } from '../../../lib/film/motion'
+import { requestCut, cutThemeFor } from '../../../lib/film/cut'
+import { sfx } from '../../../lib/film/sfx'
+import { haptic } from '../../../lib/haptics'
+import { emitCrowd } from '../../../components/characters/crowdBus'
+import { Companion, companionKindFor } from '../../../components/characters/Companion'
+import { EmptyBagScene } from '../../../components/checkout/EmptyBagScene'
+import { WrapHold } from '../../../components/checkout/WrapHold'
+import { RoutePreview } from '../../../components/checkout/RoutePreview'
+import { PaymentMark, paymentMarkFor } from '../../../components/checkout/PaymentMark'
+import film from '../../../components/checkout/checkout.module.css'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -81,6 +94,15 @@ export default function CheckoutPage() {
     slug === 'stackd'   ? 'stackd-ordering'   :
     slug === 'flipd'  ? 'flipd-ordering'  :
     ''
+  // Brand voice for the CTA + the "that's a wrap" cut, and the sidekick that
+  // watches the bag from the CTA bar (none on simmer, per its brand bible).
+  const v = voice(slug)
+  const sidekick = slug === 'simmer' ? null : companionKindFor(slug)
+  const reducedMotion = usePrefersReducedMotion()
+  // Set the moment the order is placed: holds the "that's a wrap" frame
+  // (with the total stamped on it) so the cleared cart never flashes the
+  // empty bag under the cut to the tracker.
+  const [wrapStamp, setWrapStamp] = useState<string | null>(null)
   // Cross-brand upsell ("want a side from another GS Foods kitchen?")
 
   // Guest checkout is gone — every order needs a logged-in customer. Bounce
@@ -192,49 +214,8 @@ export default function CheckoutPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  if (itemCount() === 0) return (
-    <main className={`flex min-h-dvh flex-col items-center justify-center gap-5 px-4${brandSkinClass ? ' ' + brandSkinClass : ''}`}
-      style={{ background: 'transparent' }}>
-      <svg width="80" height="80" viewBox="0 0 24 24" fill="none" stroke="var(--servd-mute)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-        <circle cx="9" cy="21" r="1"/>
-        <circle cx="20" cy="21" r="1"/>
-        <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/>
-      </svg>
-      <div className="text-center space-y-2">
-        <p className="font-black text-2xl tracking-tight" style={{ color: 'var(--servd-ink)' }}>
-          Your cart&rsquo;s empty
-        </p>
-        <p className="text-sm" style={{ color: 'var(--servd-mute)' }}>
-          Pick something from {slug ? slug.charAt(0).toUpperCase() + slug.slice(1) : 'the menu'} to get going.
-        </p>
-      </div>
-      <Link href={`/${slug}`}
-        className="mt-1 rounded-2xl font-black px-8 py-4 text-sm transition-all hover:scale-[1.02] active:scale-[0.98]"
-        style={{ background: 'var(--servd-green)', color: 'white', boxShadow: '0 6px 18px rgba(58,14,105,0.28)' }}>
-        See the {slug ? slug.charAt(0).toUpperCase() + slug.slice(1) : ''} menu
-      </Link>
-      {/* Quick switch to the other brands so an empty-cart visitor doesn't
-          have to back out to the home page to change kitchens. */}
-      <div className="flex flex-col items-center gap-1.5 pt-2">
-        <p className="text-[10px] font-bold uppercase tracking-[0.22em]" style={{ color: 'var(--servd-dim)' }}>
-          or pick a different kitchen
-        </p>
-        <div className="flex gap-2 flex-wrap justify-center">
-          {['stackd', 'simmer', 'flipd'].filter((s) => s !== slug).map((s) => (
-            <Link key={s} href={`/${s}`}
-              className="rounded-full px-4 py-2 text-xs font-bold transition-colors"
-              style={{
-                background: 'var(--servd-surface)',
-                color: 'var(--servd-ink)',
-                border: '1px solid var(--servd-line)',
-              }}>
-              {s.charAt(0).toUpperCase() + s.slice(1)}
-            </Link>
-          ))}
-        </div>
-      </div>
-    </main>
-  )
+  if (wrapStamp !== null) return <WrapHold slug={slug} stamp={wrapStamp} />
+  if (itemCount() === 0) return <EmptyBagScene slug={slug} />
 
   const walletBalance    = account?.walletBalance ?? 0
   const loyaltyBalance   = account?.loyaltyAccount?.pointsBalance ?? 0
@@ -386,8 +367,26 @@ export default function CheckoutPage() {
         if (promoCode.trim()) trackPromoApplied(promoCode.trim(), slug, subtotalCents() - displayTotal)
         _orderPlaced.current = true
         trackOrderPlaced(order.id, slug, displayTotal, paymentMethod)
+        setWrapStamp(fmt(displayTotal))
         clearCart()
-        router.push(`/${slug}/order/${order.id}`)
+        // "that's a wrap": stamp the total on a clapper slate and cut to the
+        // tracker. Purely presentational; the order is already placed, so a
+        // failure in any of this must never surface as a checkout error.
+        const trackerHref = `/${slug}/order/${order.id}`
+        let cut = false
+        try {
+          sfx('stamp')
+          haptic([12, 40, 18])
+          emitCrowd({ type: 'cheer' })
+          cut = requestCut(trackerHref, {
+            kicker: v.wrapKicker,
+            title: v.wrapTitle,
+            stamp: fmt(displayTotal),
+            theme: cutThemeFor('/' + slug),
+            replace: true,
+          })
+        } catch { cut = false }
+        if (!cut) router.push(trackerHref)
       } else {
         // Guest checkout is no longer available — anonymous order placement
         // was abused (free kitchen tickets fired before payment ever cleared).
@@ -408,14 +407,14 @@ export default function CheckoutPage() {
 
   // CTA label that reflects payment method
   const ctaLabel = loading
-    ? 'Placing order…'
+    ? v.placing
     : paymentMethod === 'keenu'
       ? 'Continue to Keenu'
-      : 'Place Order'
+      : v.placeCta
 
   return (
     <main
-      className={`min-h-dvh pb-32 relative overflow-hidden${brandSkinClass ? ' ' + brandSkinClass : ''}`}
+      className={`min-h-dvh ${sidekick ? 'pb-44' : 'pb-32'} relative overflow-hidden${brandSkinClass ? ' ' + brandSkinClass : ''}`}
       style={{ background: 'transparent' }}
     >
 
@@ -484,6 +483,7 @@ export default function CheckoutPage() {
                     ? 'Your order goes straight to your table.'
                     : ''}
                 </p>
+                <RoutePreview type={fulfilmentType} lineColor={slug === 'simmer' ? 'var(--servd-ink)' : undefined} />
               </>
             ) : (
               <>
@@ -494,7 +494,8 @@ export default function CheckoutPage() {
                       key={m}
                       type="button"
                       onClick={() => setFulfilmentType(m)}
-                      className="flex-1 rounded-lg px-3 py-2 text-xs font-bold transition-all"
+                      aria-pressed={fulfilmentType === m}
+                      className="flex-1 min-h-[44px] rounded-lg px-3 py-2 text-xs font-bold transition-all"
                       style={fulfilmentType === m
                         ? { background: 'var(--servd-green-dark)', color: '#0a0a0a', border: '1px solid var(--servd-green)' }
                         : { background: '#fff', color: 'var(--servd-ink)', border: '1px solid rgba(0,0,0,0.08)' }}>
@@ -502,6 +503,7 @@ export default function CheckoutPage() {
                     </button>
                   ))}
                 </div>
+                <RoutePreview type={fulfilmentType} lineColor={slug === 'simmer' ? 'var(--servd-ink)' : undefined} />
               </>
             )}
             {fulfilmentType === 'dine-in' && allowedFulfilment.length > 1 && (
@@ -711,7 +713,7 @@ export default function CheckoutPage() {
                   color: giftCardStatus === 'valid' ? '#fff' : 'var(--servd-ink)',
                   border: '1px solid rgba(0,0,0,0.08)',
                 }}>
-                {giftCardStatus === 'checking' ? '…' : giftCardStatus === 'valid' ? '✓' : 'Check'}
+                {giftCardStatus === 'checking' ? '…' : giftCardStatus === 'valid' ? <TickMark label="Gift card valid" /> : 'Check'}
               </button>
             </div>
             {giftCardStatus === 'valid' && (
@@ -786,12 +788,12 @@ export default function CheckoutPage() {
                   className="shrink-0 rounded-xl px-4 py-3 text-sm font-black transition-all disabled:opacity-40"
                   style={{ background: 'var(--servd-green-dark)', color: '#fff' }}
                 >
-                  {promoStatus === 'checking' ? '…' : promoStatus === 'valid' ? '✓' : 'Apply'}
+                  {promoStatus === 'checking' ? '…' : promoStatus === 'valid' ? <TickMark label="Promo applied" /> : 'Apply'}
                 </button>
               </div>
               {promoStatus === 'valid' && promoMessage && (
                 <p className="text-xs font-semibold mt-1.5" style={{ color: 'var(--servd-green-dark)' }}>
-                  ✓ {promoMessage} · saving {fmt(promoDiscountCents)}
+                  <TickMark /> {promoMessage} · saving {fmt(promoDiscountCents)}
                 </p>
               )}
               {promoStatus === 'invalid' && promoMessage && (
@@ -892,14 +894,25 @@ export default function CheckoutPage() {
               const isSelected = paymentMethod === opt.id
               return (
                 <div key={opt.id}>
-                  <button
+                  <motion.button
                     type="button"
                     onClick={() => setPaymentMethod(opt.id)}
-                    className="w-full flex items-center gap-3 rounded-xl px-3.5 py-3 transition-all"
+                    aria-pressed={isSelected}
+                    className="relative w-full flex items-center gap-3 rounded-xl px-3.5 py-3 transition-colors"
+                    initial={false}
+                    animate={{
+                      scale: isSelected && !reducedMotion ? 1.02 : 1,
+                      boxShadow: isSelected
+                        ? '0 10px 28px -8px rgba(58,14,105,0.30), 0 0 0 4px rgba(58,14,105,0.07)'
+                        : '0 0px 0px 0px rgba(58,14,105,0), 0 0 0 0px rgba(58,14,105,0)',
+                    }}
+                    transition={reducedMotion ? { duration: 0 } : SPRING_POP}
                     style={isSelected
-                      ? { background: 'rgba(58,14,105,0.06)', border: '1.5px solid rgba(58,14,105,0.35)' }
+                      ? { background: 'rgba(58,14,105,0.06)', border: '1.5px solid rgba(58,14,105,0.35)', zIndex: 1 }
                       : { background: 'rgba(0,0,0,0.025)', border: '1px solid rgba(0,0,0,0.07)' }}>
-                    <span className="text-lg shrink-0">{opt.icon}</span>
+                    <span className={`${film.payMark}${isSelected ? ' ' + film.payMarkOn : ''}`}>
+                      <PaymentMark kind={paymentMarkFor(opt.id)} />
+                    </span>
                     <div className="flex-1 text-left min-w-0">
                       <p className="font-bold text-sm" style={{ color: 'var(--servd-ink)' }}>{opt.label}</p>
                       {!opt.phoneRequired && (
@@ -912,7 +925,7 @@ export default function CheckoutPage() {
                         : { background: 'transparent', border: '1.5px solid rgba(0,0,0,0.15)' }}>
                       {isSelected && <div className="h-2 w-2 rounded-full" style={{ background: 'var(--servd-green-dark)' }} />}
                     </div>
-                  </button>
+                  </motion.button>
 
                   {/* Phone number input for mobile wallets */}
                   {isSelected && opt.phoneRequired && (
@@ -993,6 +1006,11 @@ export default function CheckoutPage() {
       {/* ── Fixed CTA ── */}
       <div className="fixed bottom-0 left-0 right-0 px-4 pt-4 z-40"
         style={{ background: 'rgba(255,255,255,0.96)', backdropFilter: 'blur(24px)', borderTop: '1px solid rgba(0,0,0,0.08)', paddingBottom: 'calc(1rem + env(safe-area-inset-bottom))' }}>
+        {sidekick && (
+          <div className={film.dock} aria-hidden="true">
+            <Companion kind={sidekick} placement="inline" mood="watch" size={80} />
+          </div>
+        )}
         <button
           onClick={() => { void handlePlaceOrder() }} disabled={loading}
           className="flex items-center justify-between w-full max-w-lg mx-auto rounded-2xl py-4 px-6 font-black text-base transition-all duration-200 disabled:opacity-40 hover:scale-[1.01] active:scale-[0.98]"
@@ -1010,6 +1028,16 @@ export default function CheckoutPage() {
 }
 
 /* ── Sub-components ── */
+
+function TickMark({ label }: { label?: string }) {
+  return (
+    <svg className={film.tick} width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor"
+      strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"
+      role={label ? 'img' : undefined} aria-label={label} aria-hidden={label ? undefined : true}>
+      <path d="M2.5 7.5l3 3 6-7" />
+    </svg>
+  )
+}
 
 function Panel({ icon, label, extra, children }: {
   icon?: string; label: string; extra?: React.ReactNode; children: React.ReactNode

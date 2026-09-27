@@ -1,6 +1,9 @@
 'use client'
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import { emitCrowd } from '../components/characters/crowdBus'
+import { haptic } from '../lib/haptics'
+import { sfx } from '../lib/film/sfx'
 
 export interface CartItemModifier {
   modifierId?: string
@@ -28,6 +31,15 @@ function modifierKey(mods?: CartItemModifier[]): string {
     .filter(Boolean)
     .sort()
     .join('|')
+}
+
+/** Film feedback for an add: client-only, and never allowed to throw into
+ *  the cart update (each call is isolated). */
+function bagFeedback(): void {
+  if (typeof window === 'undefined') return
+  try { emitCrowd({ type: 'catch' }) } catch { /* decorative */ }
+  try { haptic(10) } catch { /* decorative */ }
+  try { sfx('pop') } catch { /* decorative */ }
 }
 
 function genCartId() {
@@ -77,7 +89,7 @@ export const useCart = create<CartStore>()(
 
       setConceptSlug: (slug) => set({ conceptSlug: slug }),
 
-      addItem: (item) =>
+      addItem: (item) => {
         set((state) => {
           // Two cart entries for the same menu item with DIFFERENT modifier
           // picks are distinct lines. Hash the modifier set (sorted by id
@@ -93,7 +105,11 @@ export const useCart = create<CartStore>()(
             }
           }
           return { items: [...state.items, { ...item, lineId, quantity: 1 }] }
-        }),
+        })
+        // The item has landed in the bag: the companion catches it, the
+        // phone ticks, and (only if sound is on) a pop. Decorative only.
+        bagFeedback()
+      },
 
       removeItem: (lineId) =>
         set((state) => ({ items: state.items.filter((i) => i.lineId !== lineId) })),

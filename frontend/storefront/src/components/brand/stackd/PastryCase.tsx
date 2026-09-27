@@ -143,7 +143,7 @@ function Shelf({ items, offset, hop }: { items: Item[]; offset: number; hop: num
 
 export function PastryCase({ menuHref }: { menuHref: string }) {
   const glassRef = useViewProgress<HTMLDivElement>({ start: 1, end: 0 })
-  const { ref, inView } = useInView<HTMLElement>({ rootMargin: '0px 0px -10% 0px' })
+  const { ref, inView } = useInView<HTMLElement>()
   const [hop, setHop] = useState(-1)
   const [settled, setSettled] = useState(false)
   const timer = useRef<number | undefined>(undefined)

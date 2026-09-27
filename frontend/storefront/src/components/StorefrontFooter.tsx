@@ -1,8 +1,11 @@
 'use client'
 import Link from 'next/link'
-import type { CSSProperties } from 'react'
+import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { usePathname } from 'next/navigation'
+import { motion, useTransform } from 'framer-motion'
 import { useOnBrandMicrosite } from '../lib/host'
+import { formatBrandName } from '../lib/concept'
+import { SPRING_POP, useBeat, usePrefersReducedMotion, useScene } from '../lib/film/motion'
 import { FooterWave } from './party/footer/FooterWave'
 import s from './party/footer/footer.module.css'
 
@@ -12,11 +15,20 @@ import s from './party/footer/footer.module.css'
 // down to match the live state on the home page. Add back when their
 // concept rows + microsites land.
 // Accents match the canonical per-brand palette (lib/concept BRAND_ACCENT_OVERRIDES).
-// "simmer" and "stackd" are lowercase per their brand rules.
+// Every name goes through formatBrandName (simmer and stackd are lowercase).
 const BRANDS = [
-  { slug: 'stackd', name: 'stackd', accent: '#FCE8CE' },
-  { slug: 'simmer', name: 'simmer', accent: '#E94E1B' },
-  { slug: 'flipd',  name: 'Flipd',  accent: '#2092E9' },
+  { slug: 'stackd', name: formatBrandName('stackd'), accent: '#FCE8CE' },
+  { slug: 'simmer', name: formatBrandName('simmer'), accent: '#E94E1B' },
+  { slug: 'flipd',  name: formatBrandName('Flipd'),  accent: '#2092E9' },
+]
+
+// The end credits of "servd, the film". Role on the left, names on the right,
+// the way a credit roll reads.
+const CREDITS: Array<{ role: string; names: string }> = [
+  { role: 'starring', names: BRANDS.map((b) => b.name).join(' · ') },
+  { role: 'the crowd', names: 'fries · burger · coffee · sandwich · shake · croissant' },
+  { role: 'filmed in', names: 'karachi' },
+  { role: 'delivered by', names: 'our own riders' },
 ]
 
 interface StorefrontFooterProps {
@@ -47,11 +59,46 @@ export function StorefrontFooter({ initialBrandSlug = null, groundColor }: Store
   const onBrandMicrosite = useOnBrandMicrosite(initialBrandSlug)
   if (onBrandMicrosite || pathname.startsWith('/brand/')) return null
 
+  return <HubFooter groundColor={groundColor} />
+}
+
+// The servd hub footer, split out so its scroll hooks never run on the
+// brand microsites (where the component above returns early).
+function HubFooter({ groundColor }: { groundColor?: string }) {
+  const reduce = usePrefersReducedMotion()
+  const footRef = useRef<HTMLElement>(null)
+  const ctaRef = useRef<HTMLDivElement>(null)
+
+  // The wave and doodles only animate while the footer is on screen.
+  const [live, setLive] = useState(false)
+  useEffect(() => {
+    const el = footRef.current
+    if (!el || typeof IntersectionObserver === 'undefined') return
+    const io = new IntersectionObserver((entries) => {
+      const e = entries[entries.length - 1]
+      if (e) setLive(e.isIntersecting)
+    })
+    io.observe(el)
+    return () => io.disconnect()
+  }, [])
+
+  // Credits roll against the page: 30% → -10% over the footer's traversal.
+  const pass = useScene(footRef, 'pass')
+  const creditsY = useTransform(pass, (p) => (reduce ? '0%' : `${(30 - 40 * p).toFixed(2)}%`))
+
+  // The closing CTA lands with an overshoot once it has fully entered.
+  const ctaIn = useScene(ctaRef, 'enter')
+  const [landed, setLanded] = useState(false)
+  useEffect(() => { if (ctaIn.get() >= 0.98) setLanded(true) }, [ctaIn])
+  useBeat(ctaIn, [0.98], (b) => { if (b >= 1) setLanded(true) })
+  const down = landed || reduce
+
+  const style: CSSProperties | undefined = groundColor
+    ? ({ ['--wave-color' as string]: groundColor } as CSSProperties)
+    : undefined
+
   return (
-    <footer
-      className={s.footer}
-      style={groundColor ? ({ ['--wave-color' as string]: groundColor } as CSSProperties) : undefined}
-    >
+    <footer id="credits" ref={footRef} className={s.footer} style={style} data-live={live ? 'true' : 'false'}>
       <FooterWave />
 
       {/* Doodles — decoration only. */}
@@ -64,18 +111,44 @@ export function StorefrontFooter({ initialBrandSlug = null, groundColor }: Store
 
       <div className={s.inner}>
 
-        {/* Headline lockup */}
-        <div className={s.lockup}>
-          <p className={s.eyebrow}>One place for every kitchen</p>
-          <h2 className={s.title}>
-            Hungry now?<span className={s.titleItalic}> Let's go.</span>
-          </h2>
-          <Link href="/browse" className={s.cta}>
-            Order now
-            <svg aria-hidden viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M5 12h14M13 6l6 6-6 6" />
-            </svg>
-          </Link>
+        <div className={s.top}>
+          {/* Headline lockup */}
+          <div className={s.lockup}>
+            <p className={s.eyebrow}>One place for every kitchen</p>
+            <h2 className={s.title}>
+              Hungry now?<span className={s.titleItalic}> Let's go.</span>
+            </h2>
+            <motion.div
+              ref={ctaRef}
+              className={s.ctaWrap}
+              initial={false}
+              animate={down ? { y: 0, scale: 1, rotate: 0 } : { y: 18, scale: 0.94, rotate: -2 }}
+              transition={down && !reduce ? SPRING_POP : { duration: 0 }}
+            >
+              <Link href="/browse" className={s.cta}>
+                Order now
+                <svg aria-hidden viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M5 12h14M13 6l6 6-6 6" />
+                </svg>
+              </Link>
+            </motion.div>
+          </div>
+
+          {/* End credits */}
+          <section className={s.creditsWindow} aria-label="Credits">
+            <motion.div className={s.credits} style={{ y: creditsY }}>
+              <p className={s.creditsHead} aria-hidden>servd<span>.</span> the film</p>
+              <dl className={s.creditList}>
+                {CREDITS.map((c) => (
+                  <div key={c.role} className={s.creditRow}>
+                    <dt className={s.creditRole}>{c.role}</dt>
+                    <dd className={s.creditNames}>{c.names}</dd>
+                  </div>
+                ))}
+              </dl>
+              <p className={s.creditsEnd} aria-hidden>that&rsquo;s a wrap.</p>
+            </motion.div>
+          </section>
         </div>
 
         {/* Link columns */}

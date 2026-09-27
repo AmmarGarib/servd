@@ -33,6 +33,7 @@
 
 import Link from 'next/link'
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
+import { usePrefersReducedMotion } from '../../lib/film/motion'
 import { Candle } from '../brand/simmer/Candle'
 import { useService } from '../brand/simmer/serviceClock'
 import h from '../brand/simmer/hero.module.css'
@@ -49,6 +50,11 @@ interface Props {
 
 const clamp01 = (v: number) => Math.max(0, Math.min(1, v))
 const seg = (p: number, a: number, b: number) => clamp01((p - a) / (b - a))
+/** The phases below were authored against a longer runway that ended in
+ *  ~40vh of dead scroll after the hours set. The track is now shorter
+ *  (hero.module.css) and the phases are stretched to fill it, so the last
+ *  line lands just before the pin releases into the title card. */
+const RUNWAY = 1.13
 const easeOut = (t: number) => 1 - Math.pow(1 - t, 3)
 const easeInOut = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2)
 
@@ -61,14 +67,15 @@ const easeInOut = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t 
 function useWalkIn() {
   const ref = useRef<HTMLDivElement | null>(null)
   const [live, setLive] = useState(false)
+  const reduced = usePrefersReducedMotion()
   useEffect(() => {
     const el = ref.current
     if (!el) return
     const pin = el.firstElementChild as HTMLElement | null
-    const mq = window.matchMedia?.('(prefers-reduced-motion: reduce)')
     let raf = 0
 
-    const apply = (p: number) => {
+    const apply = (raw: number) => {
+      const p = clamp01(raw * RUNWAY)
       const handle = easeOut(seg(p, 0.02, 0.1))
       const crack = easeOut(seg(p, 0.09, 0.16))
       const swing = easeInOut(seg(p, 0.16, 0.62))
@@ -86,7 +93,9 @@ function useWalkIn() {
         '--l2': easeOut(seg(p, 0.58, 0.7)),
         '--cta': easeOut(seg(p, 0.65, 0.77)),
         '--floor': seg(p, 0.72, 0.84),
-        '--cue': 1 - seg(p, 0.02, 0.1),
+        // "scroll to open" stays until the door is ~60% open (72 of 120°),
+        // so nobody is left wondering whether to keep going.
+        '--cue': 1 - seg(p, 0.385, 0.41),
       }
       for (const [k, v] of Object.entries(vars)) el.style.setProperty(k, v.toFixed(4))
       const now = p >= 0.65
@@ -95,7 +104,7 @@ function useWalkIn() {
 
     const update = () => {
       raf = 0
-      if (mq?.matches || !pin) { apply(1); return }
+      if (reduced || !pin) { apply(1); return }
       const rect = el.getBoundingClientRect()
       const stickTop = parseFloat(getComputedStyle(pin).top) || 0
       const total = rect.height - pin.offsetHeight
@@ -104,16 +113,15 @@ function useWalkIn() {
     const onScroll = () => { if (!raf) raf = requestAnimationFrame(update) }
 
     update()
+    if (reduced) return
     window.addEventListener('scroll', onScroll, { passive: true })
     window.addEventListener('resize', onScroll, { passive: true })
-    mq?.addEventListener?.('change', onScroll)
     return () => {
       window.removeEventListener('scroll', onScroll)
       window.removeEventListener('resize', onScroll)
-      mq?.removeEventListener?.('change', onScroll)
       if (raf) cancelAnimationFrame(raf)
     }
-  }, [])
+  }, [reduced])
   return { ref, live }
 }
 

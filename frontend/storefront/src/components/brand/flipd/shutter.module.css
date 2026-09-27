@@ -1,0 +1,25 @@
+/* Checker shutter — see Shutter.tsx. The box is always 56px; the visible
+   band is clipped from 12px (a rule) to 56px (a shutter) by scroll. */
+.shutter {
+  position: relative;
+  height: 56px;
+  overflow: hidden;
+}
+.band {
+  position: absolute;
+  inset: 0;
+  /* Before hydration (and without JS) the band reads as the book's rule. */
+  clip-path: inset(22px 0 22px 0);
+  border-block: 0;
+}
+.pattern {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -112px;
+  right: -112px;
+  background-image: var(--flipd-checker);
+  background-size: 28px 28px;
+  background-repeat: repeat;
+  will-change: transform;
+}

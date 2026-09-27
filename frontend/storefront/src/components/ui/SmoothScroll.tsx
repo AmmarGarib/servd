@@ -6,6 +6,11 @@
 //
 // Off for prefers-reduced-motion. Touch devices keep native momentum
 // scrolling (syncTouch is left off) — smoothing touch feels laggy.
+//
+// The instance is published as window.__lenis so the cut can stop/start it
+// and scenes (SkipScene, "meet the kitchens") can drive it. Any element (or
+// ancestor) marked data-lenis-prevent scrolls natively — drawers, sheets,
+// scrollable menus.
 
 import Lenis from 'lenis'
 import { usePathname } from 'next/navigation'
@@ -22,8 +27,10 @@ export function SmoothScroll() {
       wheelMultiplier: 1,
       smoothWheel: true,
       anchors: true,       // in-page #links glide instead of jumping
+      prevent: (node) => !!node.closest?.('[data-lenis-prevent]'),
     })
     lenisRef.current = lenis
+    window.__lenis = lenis
     let raf = 0
     const loop = (time: number) => {
       lenis.raf(time)
@@ -34,6 +41,7 @@ export function SmoothScroll() {
       cancelAnimationFrame(raf)
       lenis.destroy()
       lenisRef.current = null
+      if (window.__lenis === lenis) delete window.__lenis
     }
   }, [])
 

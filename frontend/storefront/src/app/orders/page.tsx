@@ -7,6 +7,11 @@ import { useRouter } from 'next/navigation'
 import { useCustomerAuth } from '../../store/customerAuth'
 import { useCart, type CartItemModifier } from '../../store/cart'
 import { ErrorToast } from '../../components/ui/ErrorToast'
+import { motion, useReducedMotion } from 'framer-motion'
+import { formatBrandName } from '../../lib/concept'
+import { EASE_SETTLE } from '../../lib/film/motion'
+import { brandBar } from '../../components/account/scene'
+import a from '../../components/account/account.module.css'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -110,6 +115,7 @@ import { statusFor } from '../../lib/orderStatus'
 
 export default function OrdersPage() {
   const router = useRouter()
+  const reduce = useReducedMotion()
   const { token } = useCustomerAuth()
   const [profile, setProfile] = useState<Profile | null>(null)
   const [loading, setLoading] = useState(true)
@@ -168,19 +174,23 @@ export default function OrdersPage() {
             </div>
           ) : (
             <div style={{ display: 'grid', gap: '0.85rem', maxWidth: '820px', margin: '0 auto' }}>
-              {profile.orders.map((o) => {
+              {profile.orders.map((o, i) => {
                 const badge = statusFor(o.status)
                 const itemSummary = o.items.slice(0, 2).map((i) => `${i.quantity}× ${i.name}`).join(', ')
                 const more = o.items.length > 2 ? ` +${o.items.length - 2} more` : ''
                 return (
-                  <article
+                  <motion.article
                     key={o.id}
-                    className="servd-card"
+                    className={`servd-card ${a.orderCard}`}
                     style={{ padding: '1.25rem 1.5rem', display: 'grid', gridTemplateColumns: '1fr auto', gap: '1rem', alignItems: 'center' }}
+                    initial={reduce ? false : { y: 14 }}
+                    animate={{ y: 0 }}
+                    transition={{ duration: 0.3, ease: EASE_SETTLE, delay: Math.min(i, 3) * 0.05 }}
                   >
+                    <span aria-hidden className={a.orderBar} style={{ background: brandBar(o.concept.slug) }} />
                     <div>
                       <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
-                        <h2 style={{ fontSize: '1.05rem', fontWeight: 800, margin: 0 }}>{o.concept.name}</h2>
+                        <h2 style={{ fontSize: '1.05rem', fontWeight: 800, margin: 0 }}>{formatBrandName(o.concept.name)}</h2>
                         <span style={{
                           background: badge.bg, color: badge.text,
                           fontSize: '0.7rem', fontWeight: 700, letterSpacing: '0.06em',
@@ -219,7 +229,7 @@ export default function OrdersPage() {
                         </Link>
                       </div>
                     </div>
-                  </article>
+                  </motion.article>
                 )
               })}
             </div>

@@ -30,15 +30,17 @@
 .sticker:nth-child(4n + 4) { --tilt: 2.6deg; }
 .sticker:hover { --tilt: 0deg; --lift: -8px; filter: drop-shadow(0 26px 26px rgba(28, 8, 16, 0.55)); }
 
-/* Slapped on: hidden until the wall is first seen (only when JS armed it). */
-.armed .sticker { opacity: 0; }
+/* Slapped on. Before the wall is first seen (only once JS armed it) the
+   stickers hover off the wall, oversized and tilted at 0.4 — staged, never
+   hidden, so any frame of the page shows the wall. The slap is transform-led. */
+.armed:not(.seen) .sticker { opacity: 0.4; scale: 1.18; rotate: -8deg; translate: 0 -16px; }
 .armed.seen .sticker {
   opacity: 1;
-  animation: slap 760ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
-  animation-delay: calc(var(--i) * 130ms);
+  animation: slap 560ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  animation-delay: calc(var(--i) * 80ms);
 }
 @keyframes slap {
-  0% { opacity: 0; scale: 1.6; rotate: -14deg; translate: 0 -30px; }
+  0% { opacity: 0.4; scale: 1.3; rotate: -12deg; translate: 0 -24px; }
   55% { opacity: 1; scale: 0.94; rotate: 3deg; translate: 0 0; }
   78% { scale: 1.03; rotate: -1deg; }
   100% { opacity: 1; scale: 1; rotate: 0deg; translate: 0 0; }

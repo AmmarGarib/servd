@@ -153,22 +153,26 @@
 }
 .line > span { display: inline-block; will-change: transform; }
 
+/* Armed lines sit part-way under their mask at 0.35, never fully hidden —
+   a frame caught mid-reveal still reads. */
 [data-reveal='armed'] .line > span {
-  transform: translateY(108%);
+  opacity: 0.35;
+  transform: translateY(55%);
 }
 [data-reveal='shown'] .line > span {
+  opacity: 1;
   transform: translateY(0);
-  transition: transform 1150ms var(--s-ease);
-  transition-delay: calc(var(--i, 0) * 150ms);
+  transition: transform 900ms var(--s-ease), opacity 600ms ease;
+  transition-delay: calc(var(--i, 0) * 110ms);
 }
 
 /* Fade-rise for blocks (paragraphs, rows, frames). */
-[data-reveal='armed'] .rise { opacity: 0; transform: translateY(18px); }
+[data-reveal='armed'] .rise { opacity: 0.35; transform: translateY(14px); }
 [data-reveal='shown'] .rise {
   opacity: 1;
   transform: none;
-  transition: opacity 900ms ease, transform 1100ms var(--s-ease);
-  transition-delay: calc(var(--i, 0) * 140ms);
+  transition: opacity 700ms ease, transform 900ms var(--s-ease);
+  transition-delay: calc(var(--i, 0) * 100ms);
 }
 
 /* A hairline that draws across. */
@@ -184,13 +188,17 @@
 
 /* Letters of the title wordmark surface one at a time, like a title card. */
 .letter { display: inline-block; }
-[data-reveal='armed'] .letter { opacity: 0; transform: translateY(0.08em); }
+[data-reveal='armed'] .letter { opacity: 0.35; transform: translateY(0.08em); }
 [data-reveal='shown'] .letter {
   opacity: 1;
   transform: none;
-  transition: opacity 1400ms ease, transform 1600ms var(--s-ease);
-  transition-delay: calc(300ms + var(--i, 0) * 170ms);
+  transition: opacity 900ms ease, transform 1100ms var(--s-ease);
+  transition-delay: calc(100ms + var(--i, 0) * 110ms);
 }
+
+/* Scroll-scrubbed title letters (TitleCard): the motion values live inline;
+   this only makes them transformable. */
+.scrubLetter { display: inline-block; will-change: transform, clip-path; }
 
 /* ── Candle ──────────────────────────────────────────────────────────────── */
 /* Built from flat layered shapes: wax, wick, an orange outer flame, a bone
@@ -269,6 +277,18 @@
   100% { opacity: 0; transform: translate(var(--dx, 6px), -64px); }
 }
 
+/* Scroll-linked light (ScrollCandle writes the variables; unset = as drawn).
+   The flame group scales from the wick with the CSS `scale` property, so it
+   composes with the flicker/sway animations on the paths inside it. */
+.flameGroup {
+  transform-box: view-box;
+  transform-origin: 30px 56px;
+  scale: var(--flame-scale, 1);
+}
+.haloGroup { opacity: var(--halo, 1); }
+.wispGroup { opacity: calc(1 - var(--gutter, 0)); }
+.snuffGroup { opacity: var(--gutter, 1); }
+
 /* The snuffed wick at the sign-off: one thin curl, slower. */
 .snuff {
   transform-box: fill-box;
@@ -331,6 +351,10 @@
   opacity: 0.16;
   animation: breathe 2.6s ease-in-out infinite;
 }
+/* Ink, not orange, while a lit candle shares the screen (tiber on bone). */
+.railEmberInk,
+.railEmberInk::before { background: var(--s-green); }
+
 .stopDot {
   position: absolute;
   left: 50%; top: 50%;
@@ -390,7 +414,7 @@
   display: block;
 }
 
-[data-reveal='armed'] .frame { opacity: 0; transform: translateY(26px) rotate(-1.6deg); }
+[data-reveal='armed'] .frame { opacity: 0.35; transform: translateY(26px) rotate(-1.6deg); }
 [data-reveal='shown'] .frame {
   opacity: 1;
   transform: none;
@@ -454,7 +478,11 @@
   .railEmber { left: 6.5px; }
   /* The frame zone starts after the stop's 1.6rem gutter; reach back to
      the rail. */
-  .stopDot { left: calc(6.5px - 1.6rem); }
+  /* Ink, not orange, while a lit candle shares the screen (tiber on bone). */
+.railEmberInk,
+.railEmberInk::before { background: var(--s-green); }
+
+.stopDot { left: calc(6.5px - 1.6rem); }
   .stop { align-items: flex-start !important; padding-left: 1.6rem; }
   .frame, .label { width: 100%; max-width: 420px; }
   .label { text-align: left !important; }
@@ -477,11 +505,11 @@
 }
 /* Sentences surface one after another, in place — opacity only, so the
    paragraph never reflows. */
-[data-reveal='armed'] .sentence { opacity: 0; }
+[data-reveal='armed'] .sentence { opacity: 0.35; }
 [data-reveal='shown'] .sentence {
   opacity: 1;
-  transition: opacity 1400ms ease;
-  transition-delay: calc(400ms + var(--i, 0) * 650ms);
+  transition: opacity 900ms ease;
+  transition-delay: calc(150ms + var(--i, 0) * 280ms);
 }
 
 /* ── Find the door ───────────────────────────────────────────────────────── */
@@ -618,7 +646,7 @@
   animation: layCard 1500ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
 @keyframes layCard {
-  0%   { opacity: 0; transform: translateY(70px) rotate(-3.5deg) scale(1.03); box-shadow: 34px 44px 0 #042a22; }
+  0%   { opacity: 0.35; transform: translateY(70px) rotate(-3.5deg) scale(1.03); box-shadow: 34px 44px 0 #042a22; }
   35%  { opacity: 1; }
   100% { opacity: 1; transform: rotate(-0.5deg); box-shadow: 12px 14px 0 #042a22; }
 }
@@ -648,7 +676,7 @@
 @media (max-width: 480px) {
   .card { transform: none; animation-name: layCardFlat; }
   @keyframes layCardFlat {
-    0%   { opacity: 0; transform: translateY(50px) rotate(-2deg); box-shadow: 20px 28px 0 #042a22; }
+    0%   { opacity: 0.35; transform: translateY(50px) rotate(-2deg); box-shadow: 20px 28px 0 #042a22; }
     35%  { opacity: 1; }
     100% { opacity: 1; transform: none; box-shadow: 8px 10px 0 #042a22; }
   }

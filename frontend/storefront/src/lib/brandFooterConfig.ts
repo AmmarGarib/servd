@@ -1,3 +1,5 @@
+import { formatBrandName } from './concept'
+
 // Per-brand footer configuration.
 //
 // The brand-microsite footer (BrandShell → BrandFooter) is operator-editable
@@ -30,6 +32,27 @@ export function defaultBrandFooter(concept: { name: string; slug?: string; descr
       ctaEyebrow: 'simmer · the room is set',
       ctaHeadline: 'the kitchen is on.',
       ctaAccent: 'come down.',
+      tagline: concept.description ?? '',
+      social: {},
+    }
+  }
+  // stackd is a café + market whose packaging is the vessel; the line ends on
+  // the wrap, never on anything grilled.
+  if (concept.slug === 'stackd') {
+    return {
+      ctaEyebrow: `${formatBrandName(concept.name)} · ready when you are`,
+      ctaHeadline: 'wrapped and ready.',
+      ctaAccent: 'come stack up.',
+      tagline: concept.description ?? '',
+      social: {},
+    }
+  }
+  // Flipd is the diner: the promise is consistency off the flat-top.
+  if (concept.slug === 'flipd') {
+    return {
+      ctaEyebrow: `${formatBrandName(concept.name)} · ready when you are`,
+      ctaHeadline: 'same burger.',
+      ctaAccent: 'every time.',
       tagline: concept.description ?? '',
       social: {},
     }

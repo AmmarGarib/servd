@@ -1,7 +1,11 @@
-// 404 page. Browsers will land here on any unmatched route — including
-// stale brand slugs after a concept rename.
+// 404 — "this scene was cut." Browsers land here on any unmatched route,
+// including stale brand slugs after a concept rename. It plays on the servd
+// butter field with the crowd standing by, and offers the two ways back into
+// the film: the opening shot and the browse scene.
 
 import Link from 'next/link'
+import { CrowdPoster } from '../components/party/loader/CrowdPoster'
+import s from '../components/film/film.module.css'
 
 export const metadata = {
   title: 'Not found',
@@ -9,55 +13,22 @@ export const metadata = {
 
 export default function NotFound() {
   return (
-    <div
-      style={{
-        minHeight: '70dvh',
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: '2rem',
-        gap: '1.25rem',
-        textAlign: 'center',
-      }}
-    >
-      <p style={{
-        color: 'rgba(0,0,0,0.4)',
-        fontSize: 'clamp(0.7rem, 1.8vw, 0.85rem)',
-        fontWeight: 500,
-        letterSpacing: '0.18em',
-        textTransform: 'uppercase',
-        margin: 0,
-      }}>
-        404
+    <section className={s.scene} aria-labelledby="nf-title">
+      <p className={s.sceneKicker}>
+        <span className={s.clapper} aria-hidden="true" />
+        404 · missing reel
       </p>
-      <h1 style={{
-        fontSize: 'clamp(2rem, 6vw, 3.5rem)',
-        fontWeight: 900,
-        letterSpacing: '-0.04em',
-        margin: 0,
-      }}>
-        We couldn&rsquo;t find that.
-      </h1>
-      <p style={{ color: 'rgba(0,0,0,0.5)', maxWidth: '28rem', margin: 0 }}>
-        The page may have moved, or the brand may no longer be on servd.
+      <h1 id="nf-title" className={s.sceneTitle}>this scene was cut.</h1>
+      <p className={s.sceneBody}>
+        the page may have moved, or that kitchen has left the lineup. the rest of the film is right where you left it.
       </p>
-      <Link
-        href="/order"
-        style={{
-          display: 'inline-block',
-          background: '#4ade80',
-          color: '#000',
-          fontWeight: 800,
-          fontSize: '1rem',
-          padding: '0.75rem 2rem',
-          borderRadius: '999px',
-          textDecoration: 'none',
-          marginTop: '0.5rem',
-        }}
-      >
-        See all brands
-      </Link>
-    </div>
+      <div className={s.ctaRow}>
+        <Link href="/" className={s.cta}>back to the opening</Link>
+        <Link href="/browse" className={s.ctaGhost}>pick a craving</Link>
+      </div>
+      <div className={s.scenePoster} aria-hidden="true">
+        <CrowdPoster id="nf" />
+      </div>
+    </section>
   )
 }

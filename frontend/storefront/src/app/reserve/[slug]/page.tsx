@@ -14,6 +14,7 @@ import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { MagneticButton, MagneticLink } from '@/components/ui/MagneticButton'
 import { useBrandSlug } from '../../../lib/host'
+import { formatBrandName } from '../../../lib/concept'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -60,10 +61,17 @@ export default function ReservePage() {
   // canonical servd host, we want them on the explicit `/brand/<slug>` page.
   // brandHost is null until the client mounts; SSR pass treats it as servd.
   const backToBrandHref = brandHost ? '/' : `/brand/${slug}`
+  // simmer's bible forbids white: /reserve/simmer wears a bone + tiber skin
+  // (see .simmer-reserve in globals.css) instead of the white servd form.
+  const simmer = slug === 'simmer'
+  const skin = simmer ? 'simmer-reserve' : undefined
 
   const [partySize, setPartySize] = useState(2)
   const [date, setDate] = useState(todayPktIso())
   const [data, setData] = useState<AvailabilityResponse | null>(null)
+  // Every user-visible brand name goes through formatBrandName (lowercase
+  // brands stay lowercase: simmer, stackd).
+  const brandName = data ? formatBrandName(data.concept.name) : ''
   const [loading, setLoading] = useState(false)
   const [selected, setSelected] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
@@ -150,16 +158,21 @@ export default function ReservePage() {
 
   if (done) {
     return (
-      <div style={{ minHeight: '60dvh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2rem' }}>
+      <div className={skin} style={{ minHeight: '60dvh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2rem' }}>
         <div style={{ textAlign: 'center', maxWidth: '32rem' }}>
-          <div style={{ fontSize: '3rem', marginBottom: '0.5rem' }}>✓</div>
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--servd-ink)"
+            strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"
+            style={{ display: 'inline-block', marginBottom: '0.75rem' }}>
+            <circle cx="12" cy="12" r="10" />
+            <path d="M7.5 12.5l3 3 6-6.5" />
+          </svg>
           <h1 style={{ fontSize: 'clamp(1.6rem, 4vw, 2.25rem)', fontWeight: 800, marginBottom: '0.75rem' }}>
             Reservation request sent.
           </h1>
           <p style={{ color: 'var(--servd-mute)', marginBottom: '1.5rem' }}>
-            Check your phone — we&rsquo;ve sent a confirmation link with your booking. {data?.concept.name} will see it in their dashboard.
+            Check your phone — we&rsquo;ve sent a confirmation link with your booking. {brandName || 'The kitchen'} will see it in their dashboard.
           </p>
-          <MagneticLink href={backToBrandHref} className="servd-btn-primary">Back to {data?.concept.name}</MagneticLink>
+          <MagneticLink href={backToBrandHref} className="servd-btn-primary">Back to {brandName || 'the brand'}</MagneticLink>
         </div>
       </div>
     )
@@ -167,7 +180,7 @@ export default function ReservePage() {
 
   if (disabled) {
     return (
-      <div style={{ minHeight: '60dvh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2rem' }}>
+      <div className={skin} style={{ minHeight: '60dvh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2rem' }}>
         <div style={{ textAlign: 'center', maxWidth: '32rem' }}>
           <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--servd-mute)"
             strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"
@@ -190,17 +203,17 @@ export default function ReservePage() {
   }
 
   return (
-    <div style={{ background: '#fff', minHeight: '100dvh' }}>
+    <div className={skin} style={{ background: simmer ? 'var(--simmer-bone)' : '#fff', minHeight: '100dvh' }}>
       <section className="section-tight" style={{ borderBottom: '1px solid var(--servd-line)' }}>
         <div className="container">
           <Link href={backToBrandHref} style={{ color: 'var(--servd-mute)', fontSize: '0.85rem', textDecoration: 'none' }}>
-            ← {data?.concept.name ?? 'Back'}
+            ← {brandName || 'Back'}
           </Link>
           <h1 style={{ fontSize: 'clamp(1.75rem, 4vw, 2.5rem)', fontWeight: 800, marginTop: '0.5rem', marginBottom: '0.5rem' }}>
             Book a table
           </h1>
           <p style={{ color: 'var(--servd-mute)' }}>
-            {data ? `at ${data.concept.name}` : 'Choose a time and we&rsquo;ll save your spot.'}
+            {data ? `at ${brandName}` : 'Choose a time and we\u2019ll save your spot.'}
           </p>
         </div>
       </section>
@@ -269,8 +282,8 @@ export default function ReservePage() {
                           padding: '0.55rem 0.95rem',
                           borderRadius: '999px',
                           border: `1px solid ${sel ? 'var(--servd-green-dark)' : 'var(--servd-line)'}`,
-                          background: sel ? 'var(--servd-green)' : (s.available ? '#fff' : 'rgba(0,0,0,0.04)'),
-                          color: sel ? 'var(--servd-black)' : (s.available ? 'var(--servd-ink)' : 'var(--servd-dim)'),
+                          background: sel ? 'var(--servd-green)' : (s.available ? (simmer ? 'transparent' : '#fff') : 'rgba(0,0,0,0.04)'),
+                          color: sel ? (simmer ? 'var(--simmer-bone)' : 'var(--servd-black)') : (s.available ? 'var(--servd-ink)' : 'var(--servd-dim)'),
                           fontWeight: sel ? 800 : 500,
                           fontSize: '0.875rem',
                           cursor: s.available ? 'pointer' : 'not-allowed',
@@ -312,7 +325,7 @@ export default function ReservePage() {
               </div>
 
               <div style={{ marginTop: '1.25rem', padding: '0.75rem 1rem', background: 'var(--servd-green-soft)', borderRadius: '0.6rem', fontSize: '0.85rem', color: 'var(--servd-green-ink)' }}>
-                Booking <strong>{partySize}</strong> at <strong>{data?.concept.name}</strong> for <strong>{fmtSlot(selected)} on {date}</strong>
+                Booking <strong>{partySize}</strong> at <strong>{brandName}</strong> for <strong>{fmtSlot(selected)} on {date}</strong>
               </div>
 
               {error && (

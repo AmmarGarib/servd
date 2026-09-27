@@ -1,165 +1,367 @@
-/* How servd works — butter ground, the second crowd on a counter. */
-.section {
+/* Act iv, "one bag" — a pinned set piece on the butter ground.
+   Palette matches home.module.css (plum/butter 8.35:1, ink/cream 14.96:1).
+   Layering inside the sticky frame (one stacking context):
+     crowd 0 · bag back 1 · act sheet 1 · items in flight 2 · bag front 3 · foot 4 */
+
+.track {
+  --butter: #FFD447;
+  --cream: #FFF4D6;
+  --plum: #4E2A4F;
+  --ink: #2A1A2B;
+  --ink-mute: #5C4A3D;
+  --tomato: #FF5A3C;
+  --kraft: #D9AA73;
+  --settle: cubic-bezier(0.22, 1, 0.36, 1);
+  --pop: cubic-bezier(0.34, 1.56, 0.64, 1);
+
   position: relative;
-  padding: clamp(3.5rem, 7vw, 6rem) 0 clamp(4.5rem, 8vw, 7rem);
-  background:
-    radial-gradient(ellipse 60% 45% at 50% 30%, rgba(255, 250, 225, 0.7) 0%, rgba(255, 250, 225, 0) 70%),
-    #FFD447;
+  height: 240svh;
+  background: var(--butter);
+  color: var(--ink);
+}
+
+.frame {
+  --item: clamp(62px, 9.5svh, 88px);
+  --gutter: max(clamp(1rem, 4vw, 2.5rem), calc((100% - 1200px) / 2));
+
+  position: sticky;
+  top: 0;
+  height: 100svh;
   overflow: hidden;
   isolation: isolate;
+  display: grid;
+  grid-template-columns: minmax(16rem, 23rem) minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    'head head'
+    'acts bag'
+    'acts foot';
+  column-gap: clamp(1.5rem, 4vw, 4rem);
+  padding: clamp(4.75rem, 11svh, 6.5rem) var(--gutter) clamp(0.75rem, 2.5svh, 1.75rem);
+  background: radial-gradient(ellipse 55% 50% at 62% 52%, rgba(255, 250, 225, 0.75) 0%, rgba(255, 250, 225, 0) 70%);
 }
 
-.head { text-align: center; }
-.head > p { justify-content: center; }
-
-.stage {
+/* ── Head ─────────────────────────────────────────────────────────────── */
+.head {
+  grid-area: head;
   position: relative;
-  width: min(1040px, 100%);
-  height: clamp(220px, 24vw, 320px);
-  margin: clamp(0.5rem, 2vw, 1.5rem) auto 0;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.6rem;
+  margin-bottom: clamp(0.75rem, 2.5svh, 1.75rem);
 }
-.counter {
-  position: absolute;
-  left: 8%;
-  right: 8%;
-  bottom: 4%;
-  height: 26%;
-  border-radius: 50%;
-  background: radial-gradient(ellipse at center, #F4C22E 0%, rgba(244, 194, 46, 0) 70%);
-  pointer-events: none;
+.title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: clamp(1.05rem, 1.6vw, 1.3rem);
+  line-height: 1.2;
+  letter-spacing: -0.015em;
+  color: var(--ink-mute);
+  text-wrap: balance;
 }
+.title em { font-style: italic; color: var(--ink); }
 
-.stepsWrap {
-  position: relative;
-  margin-top: clamp(1rem, 2.5vw, 2rem);
-}
-
-.arrow {
-  position: absolute;
-  z-index: 2;
-  top: 22%;
-  right: calc(-0.5 * clamp(1.25rem, 3vw, 2.5rem) - 32px);
-  width: 64px;
-  height: 40px;
-  fill: none;
-  stroke: #4E2A4F;
-  stroke-width: 4;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  pointer-events: none;
-}
-
-.steps {
+/* ── Acts (desktop: a column of cards) ────────────────────────────────── */
+.sheet {
+  grid-area: acts;
   position: relative;
   z-index: 1;
+  align-self: center;
+}
+.acts {
   list-style: none;
   margin: 0;
   padding: 0;
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: clamp(1.25rem, 3vw, 2.5rem);
+  gap: clamp(0.7rem, 2svh, 1.1rem);
 }
-
-.step {
+.act {
   position: relative;
-  padding: 2.4rem 1.5rem 1.6rem;
-  border: 2.5px solid #2A1A2B;
-  border-radius: 24px;
-  background: #FFF4D6;
-  box-shadow: 8px 8px 0 #2A1A2B;
-  transition: translate 240ms cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 200ms ease;
-}
-.step:nth-child(1) { z-index: 3; }
-.step:nth-child(2) { z-index: 2; }
-.step:hover { translate: 0 -6px; box-shadow: 10px 14px 0 #2A1A2B; }
-
-.num {
-  position: absolute;
-  top: -26px;
-  left: 1.25rem;
   display: grid;
-  place-items: center;
-  width: 54px;
-  height: 54px;
-  border: 2.5px solid #2A1A2B;
+  grid-template-columns: var(--item) minmax(0, 1fr);
+  align-items: center;
+  gap: 0.9rem;
+  padding: 0.75rem 1rem 0.75rem 0.8rem;
+  border: 2.5px solid var(--ink);
+  border-radius: 20px;
+  background: var(--cream);
+  box-shadow: 6px 6px 0 var(--ink);
+  transition:
+    transform 320ms var(--pop),
+    box-shadow 240ms ease,
+    border-color 240ms ease;
+}
+.act:nth-child(2) { rotate: 0.8deg; }
+.act:nth-child(3) { rotate: -0.6deg; }
+.actActive {
+  transform: translateX(10px) rotate(-1.2deg);
+  border-color: var(--plum);
+  box-shadow: 8px 8px 0 var(--plum);
+}
+
+.slot {
+  position: relative;
+  width: var(--item);
+  height: var(--item);
+  border-radius: 16px;
+  background: rgba(78, 42, 79, 0.07);
+}
+.slot::before {
+  content: '';
+  position: absolute;
+  inset: 4px;
+  border: 2px dashed rgba(78, 42, 79, 0.32);
+  border-radius: 13px;
+}
+.slotArt { position: absolute; inset: 0; display: block; }
+/* Once its item has flown, the slot keeps a quiet solid outline. */
+.actDone .slot { background: rgba(78, 42, 79, 0.04); }
+.actDone .slot::before { border-style: solid; border-color: rgba(78, 42, 79, 0.18); }
+.inBag {
+  position: absolute;
+  left: 50%;
+  bottom: -9px;
+  translate: -50% 0;
+  rotate: -5deg;
+  padding: 0.18rem 0.5rem;
+  border: 2px solid var(--ink);
   border-radius: 999px;
-  background: #4E2A4F;
-  color: #FFF4D6;
+  background: var(--plum);
+  color: var(--cream);
   font-family: var(--font-display);
   font-weight: 800;
-  font-size: 1.6rem;
-  line-height: 1;
-  box-shadow: 0 4px 0 #2A1A2B;
-  transform: rotate(-8deg);
+  font-size: 0.62rem;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
 }
 
-.icon {
-  position: absolute;
-  top: 1rem;
-  right: 1rem;
-  display: grid;
-  place-items: center;
-  width: 48px;
-  height: 48px;
-  border-radius: 14px;
-  background: #FFD447;
-  border: 2px solid #2A1A2B;
-  color: #2A1A2B;
-  transform: rotate(6deg);
-  transition: transform 300ms cubic-bezier(0.34, 1.56, 0.64, 1);
+.actText { display: grid; gap: 0.15rem; min-width: 0; }
+.actLabel {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-weight: 700;
+  font-size: 0.7rem;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--tomato);
 }
-.step:hover .icon { transform: rotate(-8deg) scale(1.12); }
-
-.stepTitle {
-  margin: 0.4rem 0 0.5rem;
-  padding-right: 3.5rem;
+.actActive .actLabel { color: var(--plum); }
+.actTitle {
   font-family: var(--font-display);
   font-weight: 800;
-  font-size: clamp(1.35rem, 2vw, 1.65rem);
+  font-size: clamp(1.1rem, 1.6vw, 1.35rem);
   line-height: 1.05;
   letter-spacing: -0.03em;
-  color: #4E2A4F;
+  color: var(--plum);
 }
-.stepBody {
-  margin: 0;
-  font-size: 1rem;
-  line-height: 1.6;
-  color: #5C4A3D;
+.actBody {
+  font-size: 0.88rem;
+  line-height: 1.45;
+  color: var(--ink-mute);
 }
 
-/* ── Explore ticket ───────────────────────────────────────────────────── */
+.dots { display: none; }
+.dot, .dotOn {
+  width: 9px;
+  height: 9px;
+  border: 2px solid var(--ink);
+  border-radius: 999px;
+  background: transparent;
+  transition: background 200ms ease, width 260ms var(--pop);
+}
+.dotOn { width: 22px; background: var(--plum); }
+
+/* ── The bag + the crowd ──────────────────────────────────────────────── */
+.bagCell {
+  grid-area: bag;
+  position: relative;
+  min-height: 0;
+  height: 100%;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding-bottom: 0.6rem;
+}
+/* The counter the bag stands on. */
+.bagCell::after {
+  content: '';
+  position: absolute;
+  left: 4%;
+  right: 4%;
+  bottom: 0.35rem;
+  height: 5px;
+  border-radius: 999px;
+  background: var(--ink);
+}
+
+.crowd {
+  position: absolute;
+  z-index: 0;
+  right: 0;
+  bottom: 0.6rem;
+  width: clamp(170px, 27%, 300px);
+  height: 62%;
+  pointer-events: none;
+}
+.poster {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  transition: opacity 420ms ease;
+}
+.posterGone { opacity: 0; }
+.crowdCanvas { position: absolute; inset: 0; }
+
+.bagBox {
+  position: relative;
+  flex: none;
+  height: min(100%, 46svh);
+  aspect-ratio: 200 / 240;
+  max-width: 100%;
+}
+.bagBox::after {
+  /* soft floor shadow */
+  content: '';
+  position: absolute;
+  left: 8%;
+  right: 8%;
+  bottom: -6px;
+  height: 14px;
+  border-radius: 50%;
+  background: rgba(42, 26, 43, 0.22);
+  z-index: 0;
+}
+.bagBack,
+.bagFront {
+  position: absolute;
+  inset: 0;
+  transform-origin: 50% 100%;
+}
+.bagBack { z-index: 1; }
+.bagFront { z-index: 3; }
+.bagBack > svg,
+.bagFront > svg { display: block; }
+
+/* Corner flaps: stand above the rim, fold down onto the front panel. */
+.tab {
+  position: absolute;
+  bottom: calc(100% - 62 / 240 * 100%);
+  width: 22%;
+  height: 13%;
+  display: block;
+}
+.tabL { left: 7%; transform-origin: 0 100%; }
+.tabR { right: 7%; transform-origin: 100% 100%; }
+
+.stamp {
+  position: absolute;
+  left: 63%;
+  top: 76%;
+  width: 40%;
+  aspect-ratio: 1;
+  margin: -20% 0 0 -20%;
+  display: block;
+  mix-blend-mode: multiply;
+}
+
+/* ── Items in flight ──────────────────────────────────────────────────── */
+.flight {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+}
+.flyer {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: var(--item);
+  height: var(--item);
+  will-change: transform;
+}
+
+/* ── Foot: reel counter + torn ticket ─────────────────────────────────── */
+.foot {
+  grid-area: foot;
+  position: relative;
+  z-index: 4;
+  display: grid;
+  grid-template-areas: 'stack';
+  align-items: end;
+  justify-self: center;
+  width: min(100%, 44rem);
+  overflow: hidden;
+  padding: 14px 16px 14px 18px;
+}
+.foot > * { grid-area: stack; }
+
+.strip {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  padding: 0.4rem 0 1.1rem;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-weight: 700;
+  font-size: 0.72rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--plum);
+}
+.stripLabel { white-space: nowrap; }
+.stripTrack {
+  position: relative;
+  flex: 1;
+  height: 16px;
+  border: 2.5px solid var(--ink);
+  border-radius: 999px;
+  overflow: hidden;
+  background:
+    repeating-linear-gradient(90deg, transparent 0 10px, rgba(42, 26, 43, 0.18) 10px 14px),
+    var(--cream);
+}
+.stripFill {
+  position: absolute;
+  inset: 0;
+  display: block;
+  background: var(--plum);
+  transform-origin: 0 50%;
+}
+
 .ticket {
   position: relative;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 1.25rem 2rem;
-  margin: clamp(3rem, 6vw, 4.5rem) auto 0;
-  max-width: 62rem;
-  padding: clamp(1.5rem, 3vw, 2.2rem) clamp(1.5rem, 4vw, 3rem);
-  border: 2.5px solid #2A1A2B;
+  gap: 0.9rem 1.5rem;
+  padding: clamp(1rem, 2.2svh, 1.5rem) clamp(1.25rem, 3vw, 2.25rem);
+  border: 2.5px solid var(--ink);
   border-radius: 22px;
-  background: #FFF4D6;
-  box-shadow: 8px 8px 0 #2A1A2B;
+  background: var(--cream);
+  box-shadow: 8px 8px 0 var(--ink);
+  rotate: -1deg;
 }
-/* Punched notches on both short edges — butter discs with a half ink rim. */
+/* Keyboard users never land on an invisible CTA. */
+.ticket:focus-within { transform: none !important; }
+/* Punched notches on the short edges. */
 .ticket::before,
 .ticket::after {
   content: '';
   position: absolute;
   top: 50%;
-  width: 30px;
-  height: 30px;
-  margin-top: -15px;
+  width: 26px;
+  height: 26px;
+  margin-top: -13px;
   border-radius: 999px;
-  background: #FFD447;
-  border: 2.5px solid #2A1A2B;
+  background: var(--butter);
+  border: 2.5px solid var(--ink);
   pointer-events: none;
 }
-.ticket::before { left: -17px; border-left-color: transparent; border-top-color: transparent; transform: rotate(-45deg); }
-.ticket::after { right: -17px; border-right-color: transparent; border-bottom-color: transparent; transform: rotate(-45deg); }
-
+.ticket::before { left: -15px; border-left-color: transparent; border-top-color: transparent; transform: rotate(-45deg); }
+.ticket::after { right: -15px; border-right-color: transparent; border-bottom-color: transparent; transform: rotate(-45deg); }
 
 .ticketCopy {
   margin: 0;
@@ -171,52 +373,136 @@
 }
 .ticketCopy strong {
   font-weight: 800;
-  font-size: clamp(1.5rem, 2.8vw, 2.2rem);
-  letter-spacing: -0.035em;
-  color: #4E2A4F;
+  font-size: clamp(1.2rem, 2vw, 1.6rem);
+  letter-spacing: -0.03em;
+  color: var(--plum);
 }
 .ticketCopy span {
   font-weight: 600;
-  font-size: clamp(1rem, 1.5vw, 1.2rem);
-  color: #5C4A3D;
+  font-size: 0.98rem;
+  color: var(--ink-mute);
 }
+.ticketBtn { min-height: 48px; }
 
 /* ── Doodles ──────────────────────────────────────────────────────────── */
-.doodle { position: absolute; z-index: -1; pointer-events: none; }
+.doodle { position: absolute; z-index: 0; pointer-events: none; }
 .doodleSquiggle {
   width: clamp(60px, 7vw, 100px);
-  top: 12%;
-  left: 7%;
+  top: 16%;
+  right: 6%;
   fill: none;
-  stroke: #FF5A3C;
+  stroke: var(--tomato);
   stroke-width: 5;
   stroke-linecap: round;
   animation: wiggle 3.2s ease-in-out infinite;
 }
 .doodleStar {
   width: clamp(26px, 3vw, 44px);
-  top: 16%;
-  right: 9%;
-  fill: #4E2A4F;
+  top: 38%;
+  left: 34%;
+  fill: var(--plum);
   animation: spin 10s linear infinite;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 @keyframes wiggle { 0%, 100% { transform: rotate(-6deg); } 50% { transform: rotate(6deg) translateY(-4px); } }
 
+/* ── Phones: bag top-centre, the acts become a sliding bottom sheet ───── */
 @media (max-width: 860px) {
-  .steps { grid-template-columns: minmax(0, 1fr); gap: 2.6rem; max-width: 30rem; margin-inline: auto; }
-  .arrow { top: auto; bottom: -46px; right: auto; left: 50%; margin-left: -32px; transform: rotate(90deg); }
-}
+  .track { height: 190svh; }
+  .frame {
+    --item: 58px;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    grid-template-areas:
+      'head'
+      'bag'
+      'acts';
+    padding: clamp(4.25rem, 10svh, 5rem) 1rem 0;
+    background: radial-gradient(ellipse 80% 40% at 50% 38%, rgba(255, 250, 225, 0.75) 0%, rgba(255, 250, 225, 0) 70%);
+  }
+  .head { align-items: center; text-align: center; margin-bottom: 0.5rem; }
+  .title { font-size: 0.98rem; }
 
-@media (max-width: 640px) {
-  .stage { height: 210px; }
-  .doodleStar { top: 5%; }
+  .bagCell { padding-bottom: 0.5rem; }
+  .bagBox { height: min(100%, 34svh); }
+  .crowd { width: 36%; height: 46%; right: -3%; bottom: 0.5rem; }
+
+  .sheet {
+    align-self: end;
+    margin: 0 -1rem;
+    padding: 1rem 1rem calc(4.1rem + env(safe-area-inset-bottom, 0px));
+    border-top: 2.5px solid var(--ink);
+    border-radius: 26px 26px 0 0;
+    background: var(--cream);
+    box-shadow: 0 -6px 0 rgba(42, 26, 43, 0.12);
+    transform: translateY(calc(var(--out, 0) * 115%));
+  }
+  .acts { position: relative; height: 8.4rem; display: block; }
+  .act {
+    position: absolute;
+    inset: 0;
+    grid-template-columns: var(--item) minmax(0, 1fr);
+    align-items: start;
+    padding: 0.7rem 0.85rem;
+    box-shadow: 4px 4px 0 var(--ink);
+    rotate: 0deg;
+    transform: translateX(calc((var(--i) - var(--active, 0)) * 108%));
+    transition: transform 440ms var(--settle), border-color 240ms ease, box-shadow 240ms ease;
+  }
+  .act:nth-child(2), .act:nth-child(3) { rotate: 0deg; }
+  .actActive { box-shadow: 4px 4px 0 var(--plum); }
+  .actBody {
+    font-size: 0.82rem;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .dots {
+    position: absolute;
+    left: 1.25rem;
+    bottom: calc(1.6rem + env(safe-area-inset-bottom, 0px));
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .foot {
+    grid-area: acts;
+    align-self: end;
+    width: 100%;
+    overflow: visible;
+    /* clear the skip pill's row */
+    padding: 0 0 calc(4.1rem + env(safe-area-inset-bottom, 0px));
+  }
+  .strip { display: none; }
+  .ticket { flex-direction: column; align-items: stretch; text-align: center; rotate: 0deg; box-shadow: 5px 5px 0 var(--ink); }
+  .ticketBtn { width: 100%; }
+
   .doodleSquiggle { display: none; }
-  .ticket { flex-direction: column; align-items: stretch; text-align: center; }
+  .doodleStar { top: 22%; left: 8%; }
 }
 
+/* ── Reduced motion: no pin, the finished composition, steps as a list ── */
 @media (prefers-reduced-motion: reduce) {
+  .track { height: auto; }
+  .frame { position: relative; height: auto; overflow: visible; padding-bottom: clamp(2.5rem, 6vw, 4rem); }
+  .bagCell { height: auto; }
+  .bagBox { height: 44svh; }
   .doodle { animation: none; }
-  .step:hover { translate: none; }
-  .step:hover .icon { transform: rotate(6deg); }
+  .act, .dot, .dotOn { transition: none; }
+}
+@media (prefers-reduced-motion: reduce) and (max-width: 860px) {
+  .frame {
+    grid-template-rows: auto auto auto auto;
+    grid-template-areas: 'head' 'bag' 'acts' 'foot';
+    row-gap: 1rem;
+  }
+  .bagBox { height: 34svh; }
+  .sheet { transform: none; margin: 0; padding: 0; border: 0; border-radius: 0; background: none; box-shadow: none; }
+  .acts { height: auto; display: grid; gap: 0.9rem; }
+  .act { position: relative; inset: auto; transform: none; box-shadow: 4px 4px 0 var(--ink); }
+  .actBody { display: block; -webkit-line-clamp: unset; }
+  .dots { display: none; }
+  .foot { grid-area: foot; }
 }

@@ -1,0 +1,113 @@
+/* WrapHold — the "that's a wrap" frame. No gradients (simmer shares it). */
+
+.hold {
+  position: fixed;
+  inset: 0;
+  z-index: 55;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: var(--wr-bg);
+  color: var(--wr-ink);
+  font-family: var(--wr-body);
+}
+
+.card {
+  position: relative;
+  width: min(100%, 460px);
+  text-align: center;
+}
+
+.clapper {
+  display: block;
+  width: 132px;
+  height: 22px;
+  margin: 0 auto 22px;
+  border-radius: 4px;
+  border: 2px solid var(--wr-ink);
+  background: repeating-linear-gradient(-45deg, var(--wr-ink) 0 12px, transparent 12px 24px);
+  transform-origin: 0 100%;
+  animation: clap 520ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+.rule {
+  display: block;
+  width: 64px;
+  height: 1px;
+  margin: 0 auto 22px;
+  background: var(--wr-ink);
+}
+
+.kicker {
+  margin: 0 0 8px;
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.26em;
+  text-transform: lowercase;
+  color: var(--wr-mute);
+}
+
+.title {
+  margin: 0;
+  font-family: var(--wr-display);
+  font-size: clamp(2.2rem, 9vw, 3.8rem);
+  line-height: 1;
+  letter-spacing: -0.02em;
+  color: var(--wr-ink);
+}
+
+.stamp {
+  display: inline-block;
+  margin: 26px 0 0;
+  padding: 8px 18px;
+  border: 3px solid var(--wr-ink);
+  border-radius: 10px;
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: clamp(1.2rem, 5vw, 1.6rem);
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: var(--wr-ink);
+  transform: rotate(-6deg);
+  animation: stamp 420ms cubic-bezier(0.2, 1.4, 0.4, 1) 180ms both;
+}
+
+.hold[data-brand='simmer'] .stamp {
+  border-width: 1px;
+  border-radius: 0;
+  font-weight: 400;
+  font-family: var(--wr-body);
+  transform: none;
+  animation: none;
+}
+
+.companion {
+  margin: 18px auto 0;
+  display: flex;
+  justify-content: center;
+  line-height: 0;
+}
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+@keyframes clap {
+  0%   { transform: rotate(-18deg); }
+  100% { transform: rotate(0deg); }
+}
+
+@keyframes stamp {
+  0%   { transform: scale(1.7) rotate(-14deg); }
+  100% { transform: scale(1) rotate(-6deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .clapper,
+  .stamp { animation: none; }
+}

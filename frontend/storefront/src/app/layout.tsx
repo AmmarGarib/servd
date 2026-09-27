@@ -6,6 +6,7 @@ import { StorefrontNav } from '../components/StorefrontNav'
 import { StorefrontFooter } from '../components/StorefrontFooter'
 import { FeedbackWidget } from '../components/feedback/FeedbackWidget'
 import { SmoothScroll } from '../components/ui/SmoothScroll'
+import { SceneCut } from '../components/film/SceneCut'
 import { SERVD_ORIGIN, BRAND_HOST_HEADER } from '../lib/brandDomains'
 
 export const metadata: Metadata = {
@@ -69,6 +70,10 @@ export default function StorefrontLayout({ children }: { children: React.ReactNo
         </a>
         <StorefrontNav initialBrandSlug={initialBrandSlug} />
         <main id="main">{children}</main>
+        {/* Every page change plays as a cut: the clicked element grows into the
+            destination's title card, the router navigates underneath, and the
+            card opens in that brand's own way. */}
+        <SceneCut />
         <StorefrontFooter initialBrandSlug={initialBrandSlug} />
         <FeedbackWidget />
         <SmoothScroll />

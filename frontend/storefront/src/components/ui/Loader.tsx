@@ -6,11 +6,11 @@
 import React from 'react'
 import { PartyLoader } from '../party/loader/PartyLoader'
 
-// servd obsidian-plum gradient (the storefront brand). Simmer = single orange
-// signal (their rules ban gradients); Stackd = navy-grey.
+// servd obsidian-plum ramp (the storefront brand). Simmer = single orange
+// signal (their rules ban gradients); stackd = red plum → cream → one sky cell.
 export const SERVD_CELLS = ['#2D1E2F', '#3D2540', '#4E2A4F', '#623A63', '#774B78', '#8C5E8E', '#A375A4', '#BE96BE', '#D9BFD9']
 export const SIMMER_CELLS = Array<string>(9).fill('#E94E1B')
-export const STACKD_CELLS = ['#142834', '#1E3340', '#293B47', '#384A56', '#45505C', '#5C6470', '#737A85', '#8D8F97', '#B0B2B8']
+export const STACKD_CELLS = ['#3D1122', '#5A1C33', '#7C2946', '#94405C', '#AE5D76', '#C98C98', '#E4B9B4', '#FCE8CE', '#9BD3DD']
 
 const DELAYS = [0, 100, 200, 100, 200, 200, 300, 300, 400]
 

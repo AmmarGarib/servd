@@ -41,7 +41,7 @@ function mapsUrl(address: string | null, locality: string | null, lat: number | 
 }
 
 export function Visit({ slug, hoursData, status, fallbackHours, address, locality, latitude, longitude, phone, reservations }: Props) {
-  const { ref, inView } = useInView<HTMLDivElement>({ once: true, rootMargin: '0px 0px -15% 0px' })
+  const { ref, inView } = useInView<HTMLDivElement>({ once: true })
   const [today, setToday] = useState<number | null>(null)
   useEffect(() => setToday(pktNow().day), [])
 

@@ -157,6 +157,29 @@ summary:focus-visible {
 /* simmer — night-mode editorial. Bone surface, forest ink, orange signal,
    Amarante display + Times body. Per the simmer-brand SKILL.md: single
    orange signal per viewport, no white, no gradients, no emojis. */
+/* simmer — reserve form (/reserve/simmer). The generic servd booking form
+   re-skinned flat: bone surface, tiber ink, Amarante heads, lowercase copy,
+   no white, no gradient, no orange (the page has no signal to spend). */
+.simmer-reserve {
+  --servd-ink:        var(--simmer-green);
+  --servd-mute:       rgba(6,57,47,0.7);
+  --servd-dim:        rgba(6,57,47,0.45);
+  --servd-line:       rgba(6,57,47,0.2);
+  --servd-green:      var(--simmer-green);
+  --servd-green-dark: var(--simmer-green);
+  --servd-green-soft: rgba(6,57,47,0.08);
+  --servd-green-ink:  var(--simmer-green);
+  background: var(--simmer-bone);
+  color: var(--simmer-green);
+  font-family: var(--simmer-body);
+}
+.simmer-reserve h1,
+.simmer-reserve h2 { font-family: var(--simmer-display); font-weight: 400 !important; letter-spacing: 0.02em; }
+.simmer-reserve :is(h1, h2, p, span, a, button) { text-transform: lowercase; }
+.simmer-reserve .servd-card,
+.simmer-reserve .servd-input { background: var(--simmer-bone); box-shadow: none; }
+.simmer-reserve .servd-btn-primary { background: var(--simmer-green); color: var(--simmer-bone); background-image: none; box-shadow: none; }
+
 .simmer-ordering {
   /* token remap — touches everything the checkout already styles
      through CSS vars (text, accents, borders, surfaces, CTAs) */
@@ -794,7 +817,7 @@ summary:focus-visible {
 .stackd-page .stackd-sticker .stackd-display,
 .stackd-page .stackd-sticker-lg .stackd-display { color: var(--stackd-plum-dark); }
 .stackd-page .stackd-sticker .stackd-spec,
-.stackd-page .stackd-sticker-lg .stackd-spec { color: rgba(61,17,34,0.55); }
+.stackd-page .stackd-sticker-lg .stackd-spec { color: var(--stackd-plum, #7C2946); }
 
 @media (prefers-reduced-motion: reduce) {
   .stackd-page .stackd-sticker,
@@ -2160,3 +2183,80 @@ html:has(.brand-shell) { scroll-padding-top: 5.5rem; }
   transform: translate(-50%, -50%);
 }
 
+
+/* ── servd, the film ──────────────────────────────────────────────────────
+   Shared timing for the cut and every scroll-scrubbed scene. The cut itself
+   and the chapter slates live in components/film/film.module.css. */
+:root {
+  --film-ease-cut: cubic-bezier(.76,0,.24,1);
+  --film-ease-settle: cubic-bezier(.22,1,.36,1);
+  --film-lb: 7vh;
+}
+
+/* The cut's screen-reader announcer ("now ordering Flipd"). Visually hidden,
+   never display:none, so live-region updates are read. */
+.film-sr-live {
+  position: absolute !important;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* After a cut, focus moves to <main> so keyboard and screen-reader users land
+   on the new scene; the container itself needs no focus ring. */
+#main[tabindex="-1"]:focus { outline: none; }
+
+/* Pinned scenes (a tall track with a sticky frame) collapse to their final
+   frame under reduced motion — no scroll track to scrub, nothing pinned. */
+@media (prefers-reduced-motion: reduce) {
+  [data-film-pin] { height: auto !important }
+  [data-film-pin] > [data-film-frame] { position: relative !important; height: auto !important }
+}
+
+/* Very narrow phones: the nav keeps the round "s" mark (which carries the
+   chapter tint) and drops the wordmark, so the sound toggle, Browse and
+   Sign in fit without a horizontal scroll. */
+@media (max-width: 379px) {
+  .film-nav-word { display: none; }
+}
+
+/* Feedback trigger — z 45 sits under the nav (50) and above the companion
+   (42) and cart FAB (40). On phones it is a 48px icon-only circle above the
+   home indicator; the label stays in aria-label. */
+.film-fb-trigger {
+  position: fixed;
+  right: 1rem;
+  bottom: calc(1rem + env(safe-area-inset-bottom, 0px));
+  z-index: 45;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  min-height: 44px;
+  padding: 0 1.2rem;
+  border: none;
+  border-radius: 999px;
+  background: #4E2A4F;
+  color: #FFF4D6;
+  font-size: 0.85rem;
+  font-weight: 700;
+  box-shadow: 0 4px 16px rgba(45, 30, 47, 0.28);
+  cursor: pointer;
+  transition: transform 180ms var(--film-ease-settle);
+}
+.film-fb-trigger:hover { transform: translateY(-2px); }
+.film-fb-trigger:focus-visible { outline: 3px solid #4E2A4F; outline-offset: 3px; }
+@media (max-width: 639px) {
+  .film-fb-trigger { width: 48px; height: 48px; min-height: 48px; padding: 0; }
+  .film-fb-trigger .film-fb-label { display: none; }
+  .film-fb-trigger svg { width: 20px; height: 20px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .film-fb-trigger { transition: none; }
+}

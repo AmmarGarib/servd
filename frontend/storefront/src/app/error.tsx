@@ -1,11 +1,43 @@
 'use client'
 
-// Global error boundary for the storefront. Renders when any client-side
-// rendering throws below the layout. Don't drop the user on a blank page —
-// give them something to click and a way to recover.
+// Global error boundary for the storefront — "the reel snapped." Renders when
+// any client-side rendering throws below the layout. Never a blank page: the
+// servd butter field, a snapped film strip, a retry, and a way back.
 
 import { useEffect } from 'react'
 import Link from 'next/link'
+import s from '../components/film/film.module.css'
+
+function SnappedReel() {
+  const holes = [0, 1, 2, 3]
+  return (
+    <svg className={s.reel} viewBox="0 0 220 90" aria-hidden="true" focusable="false">
+      <g className={s.reelL}>
+        <path d="M4 22H96L90 34L100 44L88 56L96 68H4Z" fill="#4E2A4F" />
+        {holes.map((i) => (
+          <g key={i}>
+            <rect x={12 + i * 20} y="26" width="9" height="6" rx="1.5" fill="#FFD447" />
+            <rect x={12 + i * 20} y="58" width="9" height="6" rx="1.5" fill="#FFD447" />
+          </g>
+        ))}
+        <rect x="14" y="36" width="30" height="18" rx="2" fill="#FFF4D6" opacity=".9" />
+        <rect x="52" y="36" width="28" height="18" rx="2" fill="#FFF4D6" opacity=".9" />
+      </g>
+      <g className={s.reelR} transform="rotate(9 170 45)">
+        <path d="M124 22H216V68H124L132 56L120 44L130 34Z" fill="#4E2A4F" />
+        {holes.map((i) => (
+          <g key={i}>
+            <rect x={140 + i * 19} y="26" width="9" height="6" rx="1.5" fill="#FFD447" />
+            <rect x={140 + i * 19} y="58" width="9" height="6" rx="1.5" fill="#FFD447" />
+          </g>
+        ))}
+        <rect x="140" y="36" width="30" height="18" rx="2" fill="#FFF4D6" opacity=".9" />
+        <rect x="178" y="36" width="30" height="18" rx="2" fill="#FFF4D6" opacity=".9" />
+      </g>
+      <path d="M106 30l4 -8M112 50l6 -2M104 62l3 7" stroke="#FF5A3C" strokeWidth="3" strokeLinecap="round" />
+    </svg>
+  )
+}
 
 export default function GlobalError({ error, reset }: { error: Error & { digest?: string }; reset: () => void }) {
   useEffect(() => {
@@ -14,65 +46,21 @@ export default function GlobalError({ error, reset }: { error: Error & { digest?
   }, [error])
 
   return (
-    <div
-      role="alert"
-      aria-live="assertive"
-      style={{
-        minHeight: '100dvh',
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: '2rem',
-        gap: '1.25rem',
-        textAlign: 'center',
-        background: '#fff',
-        color: '#0a0a0a',
-      }}
-    >
-      <h1 style={{ fontSize: 'clamp(1.5rem, 4vw, 2rem)', fontWeight: 800, margin: 0 }}>
-        Something broke
-      </h1>
-      <p style={{ color: 'rgba(0,0,0,0.55)', maxWidth: '32rem', margin: 0 }}>
-        We&rsquo;re sorry — that wasn&rsquo;t supposed to happen. You can try again, or head back to the menu.
-        {error.digest && (
-          <span style={{ display: 'block', fontSize: '0.75rem', marginTop: '0.5rem', opacity: 0.5 }}>
-            Reference: {error.digest}
-          </span>
-        )}
+    <section className={s.scene} role="alert" aria-live="assertive" style={{ paddingBottom: 'clamp(3rem, 8vh, 5rem)' }}>
+      <SnappedReel />
+      <p className={s.sceneKicker}>
+        <span className={s.clapper} aria-hidden="true" />
+        take two
       </p>
-      <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', justifyContent: 'center' }}>
-        <button
-          onClick={reset}
-          style={{
-            background: '#4ade80',
-            color: '#000',
-            fontWeight: 800,
-            padding: '0.75rem 2rem',
-            borderRadius: '999px',
-            border: 'none',
-            cursor: 'pointer',
-            fontSize: '1rem',
-          }}
-        >
-          Try again
-        </button>
-        <Link
-          href="/order"
-          style={{
-            background: 'transparent',
-            color: '#000',
-            fontWeight: 600,
-            padding: '0.75rem 2rem',
-            borderRadius: '999px',
-            border: '1px solid rgba(0,0,0,0.15)',
-            textDecoration: 'none',
-            fontSize: '1rem',
-          }}
-        >
-          Back to brands
-        </Link>
+      <h1 className={s.sceneTitle}>the reel snapped.</h1>
+      <p className={s.sceneBody}>
+        something broke on our side, not yours. give it another take, or head back to the opening.
+        {error.digest && <span className={s.sceneRef}>reference: {error.digest}</span>}
+      </p>
+      <div className={s.ctaRow}>
+        <button type="button" onClick={reset} className={s.cta}>try again</button>
+        <Link href="/" className={s.ctaGhost}>back to the opening</Link>
       </div>
-    </div>
+    </section>
   )
 }

@@ -1,6 +1,6 @@
 'use client'
 import Link from 'next/link'
-import { useCallback, useRef, useState, type CSSProperties } from 'react'
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
 import { emitCrowd } from '../characters/crowdBus'
 import type { CharacterKind } from '../characters/types'
 import {
@@ -169,6 +169,25 @@ export function FlipdSpecHero({ brandName, orderHref, menuHref, tagline }: Props
   const [excited, setExcited] = useState(false)
   const [jiggling, setJiggling] = useState(false)
   const stageRef = useRef<HTMLDivElement | null>(null)
+  const focusTimer = useRef<number | null>(null)
+
+  // A part landing is the burger's moment: it steps forward in the crowd and
+  // the others turn to it, then it rejoins the line after 900ms — long
+  // enough for the reaction to read.
+  const spotlightBurger = useCallback(() => {
+    emitCrowd({ type: 'focus', kind: 'burger' })
+    if (focusTimer.current) window.clearTimeout(focusTimer.current)
+    focusTimer.current = window.setTimeout(() => {
+      focusTimer.current = null
+      emitCrowd({ type: 'focus', kind: null })
+    }, 900)
+  }, [])
+  useEffect(() => () => {
+    if (focusTimer.current) {
+      window.clearTimeout(focusTimer.current)
+      emitCrowd({ type: 'focus', kind: null })
+    }
+  }, [])
 
   // Point the crowd's eyes at the burger (they go back to the cursor on the
   // next real pointer move).
@@ -181,11 +200,12 @@ export function FlipdSpecHero({ brandName, orderHref, menuHref, tagline }: Props
     if (i === 0) { setStarted(forward); return }
     if (i === MARKS.length - 1) {
       setLanded(forward)
-      if (forward) { glance(); emitCrowd({ type: 'cheer' }) }
+      if (forward) { glance(); spotlightBurger(); emitCrowd({ type: 'cheer' }) }
       return
     }
     if (forward) {
       glance()
+      spotlightBurger()
       const part = BUILD_ORDER[i - 1]
       if (part) emitCrowd({ type: 'cheer', kind: part.cheer })
     }

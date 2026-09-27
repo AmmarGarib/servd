@@ -9,6 +9,7 @@
 // readers never see a transition.
 
 import { useEffect, useRef, useState, type CSSProperties, type ElementType, type ReactNode } from 'react'
+import { usePrefersReducedMotion } from '../../../lib/film/motion'
 import s from './simmer.module.css'
 
 export type RevealState = 'idle' | 'armed' | 'shown'
@@ -19,22 +20,16 @@ export function prefersReducedMotion(): boolean {
 }
 
 /** Reduced-motion preference, read after mount so the first client render
- *  matches the server's (no hydration mismatch on motion styles). */
+ *  matches the server's (no hydration mismatch on motion styles). The one
+ *  implementation is the film kit's; this name stays for existing callers. */
 export function useReducedMotionAfterMount(): boolean {
-  const [reduce, setReduce] = useState(false)
-  useEffect(() => {
-    if (!window.matchMedia) return
-    const mq = window.matchMedia('(prefers-reduced-motion: reduce)')
-    const sync = () => setReduce(mq.matches)
-    sync()
-    mq.addEventListener?.('change', sync)
-    return () => mq.removeEventListener?.('change', sync)
-  }, [])
-  return reduce
+  return usePrefersReducedMotion()
 }
 
-/** Arms on mount, shows once in view, never un-shows. */
-export function useReveal<T extends HTMLElement = HTMLElement>(rootMargin = '0px 0px -12% 0px') {
+/** Arms on mount, shows the moment any pixel is in view, never un-shows.
+ *  Armed states never start below 0.35 opacity (simmer.module.css), so a
+ *  snapshot taken mid-reveal still reads. */
+export function useReveal<T extends HTMLElement = HTMLElement>(rootMargin = '0px') {
   const ref = useRef<T | null>(null)
   const [state, setState] = useState<RevealState>('idle')
   useEffect(() => {
@@ -48,7 +43,7 @@ export function useReveal<T extends HTMLElement = HTMLElement>(rootMargin = '0px
         requestAnimationFrame(() => setState('shown'))
         io.disconnect()
       }
-    }, { rootMargin, threshold: 0.01 })
+    }, { rootMargin, threshold: 0 })
     io.observe(el)
     return () => io.disconnect()
   }, [rootMargin])

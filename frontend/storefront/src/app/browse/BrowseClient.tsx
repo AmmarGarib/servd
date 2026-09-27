@@ -1,13 +1,15 @@
 'use client'
 import Link from 'next/link'
-import { useEffect, useMemo, useState, type CSSProperties } from 'react'
-import { motion, useReducedMotion } from 'framer-motion'
-import { Search, X, UtensilsCrossed } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { AnimatePresence, motion } from 'framer-motion'
+import { Search, X } from 'lucide-react'
 import type { Concept } from '../../lib/concept'
 import { formatBrandName } from '../../lib/concept'
-import { trackSearch, trackFilterApplied, track } from '../../lib/analytics'
-import { BrowseCard } from '../../components/party/browse/BrowseCard'
+import { trackSearch, trackFilterApplied } from '../../lib/analytics'
+import { DealtCard } from '../../components/party/browse/BrowseCard'
 import { Doodles } from '../../components/party/browse/Doodles'
+import { CrowdPoster } from '@/components/party/loader/CrowdPoster'
+import { useScene, usePrefersReducedMotion, EASE_SETTLE } from '@/lib/film/motion'
 import s from '../../components/party/browse/browse.module.css'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
@@ -18,6 +20,16 @@ const FILTERS = [
   { key: 'digital',    label: 'Delivery' },
   { key: 'cart',       label: 'Walk-up' },
 ] as const
+
+// When the concepts API is down or empty, browse still lists the three live
+// kitchens — mirroring HomeClient's FALLBACK_BRANDS. BrowseCard fills in the
+// tagline (brandStory), photo (conceptHeroImage) and accent (brandAccent)
+// from the slug, so these only need identity.
+const FALLBACK_CONCEPTS: Concept[] = [
+  { id: 'fallback-stackd', name: 'stackd', slug: 'stackd', type: 'restaurant', description: null, logoUrl: null, primaryColor: null },
+  { id: 'fallback-simmer', name: 'simmer', slug: 'simmer', type: 'restaurant', description: null, logoUrl: null, primaryColor: null },
+  { id: 'fallback-flipd',  name: 'Flipd',  slug: 'flipd',  type: 'restaurant', description: null, logoUrl: null, primaryColor: null },
+]
 
 interface Props {
   concepts: Concept[]
@@ -42,12 +54,17 @@ function BouncyWords({ text }: { text: string }) {
   )
 }
 
-export function BrowseClient({ concepts }: Props) {
+export function BrowseClient({ concepts: live }: Props) {
+  const concepts = live.length > 0 ? live : FALLBACK_CONCEPTS
   const [filter, setFilter] = useState<typeof FILTERS[number]['key']>('all')
   const [query, setQuery] = useState('')
   const [menuHits, setMenuHits] = useState<MenuHit[]>([])
   const [searching, setSearching] = useState(false)
-  const reduceMotion = useReducedMotion()
+  const reduceMotion = usePrefersReducedMotion()
+
+  // The header's full traversal drives the doodles.
+  const headerRef = useRef<HTMLElement>(null)
+  const headerPass = useScene(headerRef, 'pass')
 
   // Debounced cross-menu search. Only fires when there's a query — otherwise
   // we leave the static brand grid alone.
@@ -93,18 +110,33 @@ export function BrowseClient({ concepts }: Props) {
     setQuery('')
   }
 
+  // Filter swap: the outgoing grid swipes left and blurs (180ms); the new
+  // cards drop in (200ms each, 40ms apart). Instant under reduced motion.
+  const gridExit = reduceMotion
+    ? { opacity: 0, transition: { duration: 0 } }
+    : { opacity: 0, x: -40, filter: 'blur(4px)', transition: { duration: 0.18, ease: EASE_SETTLE } }
+  const dropIn = (i: number) => reduceMotion
+    ? {}
+    : {
+        initial: { opacity: 0, y: -22 },
+        animate: { opacity: 1, y: 0 },
+        transition: { duration: 0.2, delay: Math.min(i, 8) * 0.04, ease: EASE_SETTLE },
+      }
+
+  const count = concepts.length
+
   return (
     <div className={s.page}>
 
       {/* Header — butter stage, same energy as the home hero */}
-      <section className={s.header}>
-        <Doodles />
+      <section ref={headerRef} className={s.header}>
+        <Doodles progress={reduceMotion ? undefined : headerPass} />
         <div className={s.headerInner}>
           <p className={s.eyebrow}>Every kitchen</p>
           <h1 className={s.title}>
             <BouncyWords text="Pick your craving." />
             <span className={s.titleTail}>
-              {concepts.length} kitchen{concepts.length === 1 ? '' : 's'}.
+              {count} kitchen{count === 1 ? '' : 's'}.
               <svg aria-hidden className={s.underline} viewBox="0 0 220 20" preserveAspectRatio="none">
                 <path d="M4 14 C 44 4, 88 18, 132 9 S 204 6, 216 12" />
               </svg>
@@ -124,6 +156,7 @@ export function BrowseClient({ concepts }: Props) {
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search brands, cuisines, dishes…"
               className={s.searchInput}
+              autoComplete="off"
             />
             {query.length > 0 && (
               <button
@@ -161,7 +194,8 @@ export function BrowseClient({ concepts }: Props) {
           the visible headings below. */}
       <p aria-live="polite" className={s.srOnly}>{liveMessage}</p>
 
-      {/* Menu hits — only when typing */}
+      {/* Menu hits — only when typing. Each hit is "plated in": scale
+          0.92→1 and blur 6→0, 35ms apart, done inside 400ms. */}
       {isSearchingDishes && (
         <section className={s.hitsSection}>
           <div className={s.inner}>
@@ -170,30 +204,37 @@ export function BrowseClient({ concepts }: Props) {
             </h2>
             {menuHits.length > 0 && (
               <div className={s.hitsGrid}>
-                {menuHits.map((hit) => {
+                {menuHits.map((hit, i) => {
                   const fmt = (c: number) => `PKR ${(c / 100).toLocaleString('en-PK', { maximumFractionDigits: 0 })}`
                   return (
-                    <Link
+                    <motion.div
                       key={hit.id}
-                      href={`/${hit.concept.slug}`}
-                      aria-label={`${hit.name} from ${formatBrandName(hit.concept.name)}`}
-                      className={s.hitCard}
+                      className={s.hitWrap}
+                      initial={reduceMotion ? false : { opacity: 0.4, scale: 0.92, filter: 'blur(6px)' }}
+                      animate={{ opacity: 1, scale: 1, filter: 'blur(0px)' }}
+                      transition={{ duration: 0.2, delay: Math.min(i, 5) * 0.035, ease: EASE_SETTLE }}
                     >
-                      <div
-                        className={s.hitThumb}
-                        aria-hidden
-                        style={{
-                          background: hit.imageUrl
-                            ? `url(${hit.imageUrl}) center/cover`
-                            : `linear-gradient(135deg, ${hit.concept.primaryColor ?? 'var(--party-plum)'} 0%, var(--party-cream) 200%)`,
-                        }}
-                      />
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <p className={s.hitConcept}>{formatBrandName(hit.concept.name)}</p>
-                        <p className={s.hitName}>{hit.name}</p>
-                        <p className={s.hitPrice}>{fmt(hit.priceCents)}</p>
-                      </div>
-                    </Link>
+                      <Link
+                        href={`/${hit.concept.slug}`}
+                        aria-label={`${hit.name} from ${formatBrandName(hit.concept.name)}`}
+                        className={s.hitCard}
+                      >
+                        <div
+                          className={s.hitThumb}
+                          aria-hidden
+                          style={{
+                            background: hit.imageUrl
+                              ? `url(${hit.imageUrl}) center/cover`
+                              : (hit.concept.primaryColor ?? 'var(--party-plum)'),
+                          }}
+                        />
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <p className={s.hitConcept}>{formatBrandName(hit.concept.name)}</p>
+                          <p className={s.hitName}>{hit.name}</p>
+                          <p className={s.hitPrice}>{fmt(hit.priceCents)}</p>
+                        </div>
+                      </Link>
+                    </motion.div>
                   )
                 })}
               </div>
@@ -206,28 +247,27 @@ export function BrowseClient({ concepts }: Props) {
       <section className={s.gridSection}>
         <div className={s.inner}>
           {isSearchingDishes && filtered.length > 0 && (
-            <h2 className={s.sectionLabel}>Brands matching "{trimmedQuery}"</h2>
+            <h2 className={s.sectionLabel}>Brands matching &ldquo;{trimmedQuery}&rdquo;</h2>
           )}
           {filtered.length === 0 ? (
             <div className={s.empty}>
-              <UtensilsCrossed aria-hidden size={40} className={s.emptyIcon} />
-              <p className={s.emptyTitle}>No brands match — try another craving.</p>
+              <div className={s.emptyCast} aria-hidden>
+                <CrowdPoster cast={['fries']} id="browse-empty" />
+              </div>
+              <p className={s.emptyTitle}>nobody here by that name. try another craving.</p>
               <button type="button" onClick={clearAll} className={s.clearAllBtn}>Clear filters</button>
             </div>
           ) : (
-            <div className={s.grid}>
-              {filtered.map((c, i) => (
-                <motion.div
-                  key={c.id}
-                  className={s.cardWrap}
-                  initial={reduceMotion ? false : { opacity: 0, y: 26 }}
-                  whileInView={{ opacity: 1, y: 0 }}
-                  viewport={{ once: true, margin: '0px 0px -80px 0px' }}
-                  transition={{ type: 'spring', stiffness: 220, damping: 20, delay: reduceMotion ? 0 : (i % 6) * 0.06 }}
-                >
-                  <BrowseCard concept={c} />
+            <div className={s.gridStage}>
+              <AnimatePresence mode="popLayout" initial={false}>
+                <motion.div key={filter} className={s.grid} exit={gridExit}>
+                  {filtered.map((c, i) => (
+                    <motion.div key={c.id} style={{ height: '100%' }} {...dropIn(i)}>
+                      <DealtCard concept={c} index={i} />
+                    </motion.div>
+                  ))}
                 </motion.div>
-              ))}
+              </AnimatePresence>
             </div>
           )}
         </div>

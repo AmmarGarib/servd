@@ -5,6 +5,10 @@ import Link from 'next/link'
 import { useCustomerAuth } from '../../store/customerAuth'
 import { LoadingScreen } from '../../components/ui/Loader'
 import { fmt } from '../../lib/ui'
+import { formatBrandName } from '../../lib/concept'
+import { YourReel } from '../../components/account/YourReel'
+import { TierUp } from '../../components/account/TierUp'
+import { sceneGreeting } from '../../components/account/scene'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -137,7 +141,9 @@ export default function AccountPage() {
   if (error || !profile) return (
     <main className="flex min-h-dvh flex-col items-center justify-center gap-5 px-4"
       style={{ background: 'transparent' }}>
-      <div className="text-5xl">⚠</div>
+      <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--servd-mute)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <path d="M12 3 2 20h20L12 3z" /><path d="M12 10v4" /><path d="M12 17h.01" />
+      </svg>
       <p className="text-sm" style={{ color: '#dc2626' }}>{error || 'Account not found'}</p>
       <Link href="/browse"
         className="rounded-2xl font-black px-8 py-3.5 text-sm transition-all hover:scale-[1.02]"
@@ -161,9 +167,11 @@ export default function AccountPage() {
   const totalOrders   = profile.orders.length
   const tc            = TIER_COLOR[tier] ?? '#cd7f32'
   const firstName     = profile.name?.split(' ')[0] ?? null
+  // The film-voice line comes from the orders already loaded; null keeps the plain greeting.
+  const sceneLine     = sceneGreeting(profile.orders)
 
   return (
-    <main className="min-h-dvh pb-16 relative" style={{ background: 'transparent' }}>
+    <main className="min-h-dvh pb-16 relative" style={{ background: 'transparent', overflowX: 'clip' }}>
 
       {/* Subtle tier color accent */}
       <div className="fixed pointer-events-none select-none" style={{
@@ -197,9 +205,11 @@ export default function AccountPage() {
 
         {/* ── Greeting ── */}
         <div className="mb-5">
-          <p className="text-sm" style={{ color: 'var(--servd-mute)' }}>Your account</p>
+          <p className="text-sm" style={{ color: 'var(--servd-mute)' }}>
+            {sceneLine ? (firstName ? `Hi, ${firstName}` : 'Your account') : 'Your account'}
+          </p>
           <h1 className="font-display font-black text-3xl leading-tight tracking-tight mt-0.5" style={{ fontFamily: 'var(--font-display)', color: 'var(--servd-ink)', letterSpacing: '-0.03em' }}>
-            {firstName ? `Hi, ${firstName}.` : 'Welcome back.'}
+            {sceneLine ?? (firstName ? `Hi, ${firstName}.` : 'Welcome back.')}
           </h1>
         </div>
 
@@ -207,6 +217,9 @@ export default function AccountPage() {
         {token && (
           <VerifyContactBanner token={token} profile={profile} onVerified={fetchAccount} />
         )}
+
+        {/* ── Tier-up: a one-time celebration when the tier has moved up ── */}
+        <TierUp tier={profile.loyaltyAccount?.tier ?? null} label={current?.label} />
 
         {/* ── Bento top row: profile + loyalty side by side ── */}
         <div className="flex gap-3 mb-3">
@@ -308,6 +321,9 @@ export default function AccountPage() {
             <p className="font-black text-lg" style={{ color: 'var(--servd-ink)' }}>{fmt(lifetimeSpend)}</p>
           </div>
         )}
+
+        {/* ── Your reel: recent orders as a strip of tickets ── */}
+        <YourReel orders={profile.orders} />
 
         {/* ── Saved addresses ── */}
         <div className="mb-3">
@@ -507,14 +523,14 @@ export default function AccountPage() {
                       background: '#fff',
                       border: '1px solid rgba(0,0,0,0.07)',
                       boxShadow: '0 2px 8px rgba(0,0,0,0.04)',
-                      animation: `revealUp 0.4s ${i * 0.04}s both`,
+                      animation: `revealUp 0.3s ${Math.min(i, 3) * 0.05}s both`,
                     }}>
                     <div className="flex">
                       <div className="w-1 shrink-0" style={{ background: sc.bar }} />
                       <div className="flex items-start justify-between gap-3 p-4 flex-1 min-w-0">
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2 flex-wrap mb-0.5">
-                            <p className="font-bold text-sm" style={{ color: 'var(--servd-ink)' }}>{order.concept.name}</p>
+                            <p className="font-bold text-sm" style={{ color: 'var(--servd-ink)' }}>{formatBrandName(order.concept.name)}</p>
                             <span className="text-[9px] font-black uppercase tracking-[0.18em] px-2 py-0.5 rounded-full"
                               style={{ background: sc.bg, color: sc.text }}>
                               {sc.label}
@@ -643,7 +659,7 @@ function ReferralSection({
         <button onClick={() => copy(referralCode)}
           className="rounded-xl px-3 py-3 text-xs font-bold whitespace-nowrap"
           style={{ background: '#7c2d12', color: '#0a0a0a' }}>
-          {copied ? '✓ Copied' : 'Copy'}
+          {copied ? 'Copied' : 'Copy'}
         </button>
       </div>
 
@@ -850,7 +866,7 @@ function MyBookingsSection({ token }: { token: string | null }) {
                 }}>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-black text-sm">{r.concept.name}</span>
+                    <span className="font-black text-sm">{formatBrandName(r.concept.name)}</span>
                     {r.isVip && <span className="text-[10px] font-bold text-amber-600">★ VIP</span>}
                     <span className="text-[10px] font-bold uppercase tracking-wider px-1.5 rounded-full"
                       style={{
@@ -905,7 +921,7 @@ function MyBookingsSection({ token }: { token: string | null }) {
             {data.past.slice(0, 8).map((r) => (
               <div key={r.id} className="text-xs flex items-center justify-between py-1"
                 style={{ color: 'var(--servd-mute)' }}>
-                <span>{r.concept.name} · {r.partySize}px</span>
+                <span>{formatBrandName(r.concept.name)} · {r.partySize}px</span>
                 <span>{fmtDate(r.startTime)}</span>
               </div>
             ))}
@@ -949,7 +965,7 @@ function MyReviewsSection({ token }: { token: string | null }) {
         {reviews.slice(0, 5).map((r) => (
           <div key={r.id} className="rounded-xl p-3" style={{ background: 'rgba(0,0,0,0.025)' }}>
             <div className="flex items-center justify-between gap-2">
-              <span className="font-bold text-sm">{r.concept.name}</span>
+              <span className="font-bold text-sm">{formatBrandName(r.concept.name)}</span>
               <span className="text-amber-500 text-sm font-bold">{'★'.repeat(r.rating)}{'☆'.repeat(5 - r.rating)}</span>
             </div>
             {r.comment && (
@@ -1012,7 +1028,7 @@ function MyFavoritesSection({ token }: { token: string | null }) {
             style={{ background: 'rgba(0,0,0,0.025)', border: '1px solid rgba(0,0,0,0.05)' }}>
             <div className="text-[10px] font-bold uppercase tracking-wider"
               style={{ color: 'var(--servd-mute)' }}>
-              {it.concept?.name ?? 'Brand'}
+              {it.concept ? formatBrandName(it.concept.name) : 'Brand'}
             </div>
             <div className="font-bold text-sm mt-0.5 line-clamp-2" style={{ color: 'var(--servd-ink)' }}>
               {it.name}
@@ -1091,7 +1107,7 @@ function SupportSection({ orders }: { orders: Order[] }) {
         >
           <div className="flex items-center justify-between gap-3">
             <div>
-              <p className="font-black text-sm" style={{ color: 'var(--servd-ink)' }}>🎫 Raise an issue</p>
+              <p className="font-black text-sm" style={{ color: 'var(--servd-ink)' }}>Raise an issue</p>
               <p className="text-xs mt-0.5" style={{ color: 'var(--servd-mute)' }}>
                 Wrong item, late delivery, quality concern — we&apos;ll fix it.
               </p>
@@ -1110,7 +1126,7 @@ function SupportSection({ orders }: { orders: Order[] }) {
           {success && (
             <div className="rounded-xl px-3 py-2 text-xs font-bold"
               style={{ background: 'rgba(58,14,105,0.1)', color: 'var(--servd-green-dark)', border: '1px solid rgba(58,14,105,0.25)' }}>
-              ✓ Got it — a manager will reach out within 24 hours.
+              Got it — a manager will reach out within 24 hours.
             </div>
           )}
 
@@ -1122,7 +1138,7 @@ function SupportSection({ orders }: { orders: Order[] }) {
               <option value="">— No specific order —</option>
               {orders.map((o) => (
                 <option key={o.id} value={o.id}>
-                  {o.concept.name} · #{o.id.slice(-8).toUpperCase()} · {fmt(o.totalCents)}
+                  {formatBrandName(o.concept.name)} · #{o.id.slice(-8).toUpperCase()} · {fmt(o.totalCents)}
                 </option>
               ))}
             </select>
