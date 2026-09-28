@@ -1,7 +1,7 @@
 import { prisma } from '../../lib/prisma.js'
 import { ingestOrder } from '../orders/service.js'
 import { NotFoundError, AppError } from '../../lib/errors.js'
-import { getSrbQueue } from '../../lib/queue.js'
+import { enqueueJob } from '../../lib/jobs.js'
 import { getRefundPolicy, getOperationsConfig } from '../../lib/setup-config.js'
 import { audit } from '../../lib/audit.js'
 import { sendEmail } from '../../lib/notify.js'
@@ -547,8 +547,7 @@ async function submitSrbReturnForRefund(orderId: string, refundAmountCents: numb
     return srbInvoiceId
   } catch (err) {
     console.warn(`[SRB] sales-return sync failed for order ${orderId} (refund ${refundRef}); enqueuing retry: ${(err as Error).message}`)
-    getSrbQueue()
-      ?.add('submit', { orderId, kind: 'return', refundAmountCents, refundRef })
+    enqueueJob('srb-submission', { orderId, kind: 'return', refundAmountCents, refundRef }, { maxAttempts: 6, backoffMs: 5000 })
       .catch((e: Error) => console.error(`[SRB] COMPLIANCE: failed to enqueue sales-return retry for ${orderId}: ${e.message}`))
     return null
   }
@@ -1255,8 +1254,7 @@ export async function refundOrder(input: RefundInput) {
     srbReturnInvoiceNo = await submitSrbReturnForRefund(input.orderId, input.amountCents, refundPayment.id)
     srbReturn = srbReturnInvoiceNo ? 'filed' : 'queued'
   } else if (order.source === 'pos') {
-    getSrbQueue()
-      ?.add('submit', { orderId: input.orderId, kind: 'return', refundAmountCents: input.amountCents, refundRef: refundPayment.id }, { delay: 5 * 60_000 })
+    enqueueJob('srb-submission', { orderId: input.orderId, kind: 'return', refundAmountCents: input.amountCents, refundRef: refundPayment.id }, { delayMs: 5 * 60_000, maxAttempts: 6, backoffMs: 5000 })
       .catch((e: Error) => console.error(`[SRB] COMPLIANCE: failed to enqueue sales-return for ${input.orderId}: ${e.message}`))
     srbReturn = 'queued'
   }

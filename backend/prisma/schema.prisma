@@ -3,7 +3,7 @@
 
 generator client {
   provider      = "prisma-client-js"
-  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x", "rhel-openssl-3.0.x"]
 }
 
 datasource db {
@@ -3131,6 +3131,48 @@ model Setting {
   updatedAt DateTime @updatedAt
 
   @@map("settings")
+}
+
+// ─── Background jobs (serverless driver) ─────────────────────────────────────
+// On Vercel there is no always-on BullMQ worker, so queued work is stored here
+// and drained by the scheduler tick (POST /api/v1/internal/cron/tick). On the
+// Docker deployment BullMQ remains the driver and this table stays empty.
+
+enum BackgroundJobStatus {
+  pending
+  running
+  done
+  failed
+}
+
+model BackgroundJob {
+  id          String              @id @default(cuid())
+  queue       String
+  // Caller-chosen idempotency key (mirrors BullMQ jobId); unique per queue.
+  jobKey      String?
+  payload     Json
+  status      BackgroundJobStatus @default(pending)
+  runAt       DateTime            @default(now())
+  attempts    Int                 @default(0)
+  maxAttempts Int                 @default(5)
+  lastError   String?
+  lockedAt    DateTime?
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+
+  @@unique([queue, jobKey])
+  @@index([queue, status, runAt])
+  @@map("background_jobs")
+}
+
+// One row per scheduled task, so the every-minute tick knows what last ran.
+model CronRun {
+  name      String   @id
+  lastRunAt DateTime
+  lastError String?
+  updatedAt DateTime @updatedAt
+
+  @@map("cron_runs")
 }
 
 // ─── StorefrontPromo ──────────────────────────────────────────────────────────

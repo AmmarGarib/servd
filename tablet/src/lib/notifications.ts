@@ -6,8 +6,10 @@
 // even when the foreground isn't ours.
 //
 // Two channels:
-//   1. LOCAL alerts — fired by us when the socket delivers `order:new` while
-//      the app is backgrounded. No server involvement, instant.
+//   1. LOCAL alerts — fired by us when realtime delivers `order:new` while
+//      the app is backgrounded. No server involvement, instant. (Works the
+//      same whether the live transport underneath is Supabase Realtime or
+//      the socket.io fallback — see realtime.ts.)
 //   2. PUSH alerts — admin can broadcast "kitchen has 30 mins to go" or
 //      "manager needs you" from the backend. We register the Expo token via
 //      `/notifications/register` (a route the backend either has or can add
@@ -23,7 +25,7 @@ import { createStore } from 'zustand/vanilla'
 import { useStore } from 'zustand'
 
 import { api } from './api'
-import { getSocket } from './socket'
+import { getRealtime } from './realtime'
 
 const LOCAL_ALERTS_KEY = 'servd_local_alerts'
 
@@ -102,15 +104,15 @@ export async function registerPushNotifications(): Promise<string | null> {
 
 // ─── Local order alert wiring ───────────────────────────────────────────────
 /**
- * Subscribe to socket order:new events and fire a local notification when the
- * app is backgrounded. Called once from app/_layout.tsx during boot.
+ * Subscribe to realtime order:new events and fire a local notification when
+ * the app is backgrounded. Called once from app/_layout.tsx during boot.
  */
 export async function attachLocalOrderAlerts(): Promise<() => void> {
-  const sock = getSocket()
+  const handle = getRealtime()
   const handler = async (payload: { orderId?: string; source?: string }) => {
     const enabled = await getLocalAlertsEnabled()
     if (!enabled) return
-    if (AppState.currentState === 'active') return  // socket already chimes in-app
+    if (AppState.currentState === 'active') return  // realtime already chimes in-app
 
     await Notifications.scheduleNotificationAsync({
       content: {
@@ -122,6 +124,5 @@ export async function attachLocalOrderAlerts(): Promise<() => void> {
       trigger: null,
     })
   }
-  sock.on('order:new', handler)
-  return () => sock.off('order:new', handler)
+  return handle.on('order:new', handler)
 }

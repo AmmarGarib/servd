@@ -1,12 +1,13 @@
 'use client'
 import { useEffect } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { getSocket } from '../lib/socket'
+import { getRealtime } from '../lib/realtime'
 
 // Subscribes to reservation events and invalidates the relevant React Query
-// caches so the UI refetches automatically. The backend joins staff sockets
-// to the `reservations:all` room on connect, and clients can join a
-// per-concept room via `reservations:join`.
+// caches so the UI refetches automatically. Live updates arrive over
+// whichever transport the backend hands out (Supabase broadcast or
+// socket.io — see lib/realtime.ts); joining a concept's reservation room is
+// just asking `getRealtime` for that conceptId's topics.
 //
 // Usage:
 //   const queryKeys = [['kitchen-tracker'], ['reservations']]
@@ -44,13 +45,12 @@ export function useReservationSocket({ conceptId, queryKeys, onEvent }: Options 
   const qc = useQueryClient()
 
   useEffect(() => {
-    const socket = getSocket()
+    // Passing conceptId through is what used to be a separate
+    // `reservations:join` emit — the realtime token endpoint now grants the
+    // concept's reservation topics up front, based on the same conceptId.
+    const realtime = getRealtime({ conceptId })
 
-    if (conceptId) {
-      socket.emit('reservations:join', { conceptId })
-    }
-
-    const handlers: Array<[string, (payload: unknown) => void]> = []
+    const unsubs: Array<() => void> = []
     for (const event of EVENTS) {
       const handler = (payload: unknown) => {
         // Refetch all caller-supplied queries on any reservation event.
@@ -62,14 +62,11 @@ export function useReservationSocket({ conceptId, queryKeys, onEvent }: Options 
         }
         onEvent?.(event, payload)
       }
-      socket.on(event, handler)
-      handlers.push([event, handler])
+      unsubs.push(realtime.on(event, handler))
     }
 
     return () => {
-      for (const [event, handler] of handlers) {
-        socket.off(event, handler)
-      }
+      for (const unsub of unsubs) unsub()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [conceptId, ...(queryKeys ?? []).flat().map(String)])

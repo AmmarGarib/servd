@@ -1,6 +1,9 @@
 import { Redis } from 'ioredis'
 
 const redisUrl = process.env['REDIS_URL'] ?? 'redis://localhost:6379'
+// On Vercel without REDIS_URL there is nothing to dial; the login limiter then
+// runs on its in-memory fallback instead of retrying localhost forever.
+const redisConfigured = Boolean(process.env['REDIS_URL'])
 
 // TLS certificate validation is ON by default — disabling it silently allows
 // MITM of session/rate-limit/queue traffic. If the Redis host genuinely uses a
@@ -58,6 +61,7 @@ export const redisPub = new Redis(redisUrl, { ...baseOpts, lazyConnect: true })
 // login arrives.
 export const redisFast = new Redis(redisUrl, {
   ...baseOpts,
+  lazyConnect: !redisConfigured && Boolean(process.env['VERCEL']),
   maxRetriesPerRequest: 1,
   enableOfflineQueue: false,
   // A much tighter reconnect than the shared clients use. Their backoff climbs

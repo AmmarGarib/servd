@@ -53,7 +53,7 @@ export function startPaymentRetryWorker() {
   }
 }
 
-async function runRetrySweep(): Promise<void> {
+export async function runRetrySweep(): Promise<void> {
   const backOffCutoff = new Date(Date.now() - BACK_OFF_MS)
 
   const due = await prisma.payment.findMany({

@@ -1,0 +1,10 @@
+tests
+scripts
+coverage
+dist
+.env
+.env.*
+*.md
+Dockerfile
+Dockerfile.dev
+entrypoint.sh

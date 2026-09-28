@@ -1042,17 +1042,16 @@ export async function completeOrder(
     })
 
   // FBR (federal) and SRB (Sindh). The builders skip brands that are not
-  // registered. jobId dedupes a second enqueue of the same order.
-  const { getFbrQueue, getSrbQueue } = await import('../../lib/queue.js')
-  getFbrQueue()
-    ?.add('submit', { orderId }, { jobId: `fbr-${orderId}` })
+  // registered. jobKey (the BullMQ jobId) dedupes a second enqueue of the same
+  // order. Retry policy: 6 attempts, exponential backoff from 5s (lib/queue.ts).
+  const { enqueueJob } = await import('../../lib/jobs.js')
+  enqueueJob('fbr-submission', { orderId }, { jobKey: `fbr-${orderId}`, maxAttempts: 6, backoffMs: 5000 })
     .catch((err: Error) => console.warn(`[FBR] enqueue failed for ${orderId}:`, err.message))
   let srb: SrbReceipt | null = null
   if (opts.syncSrb) {
     srb = await submitSrbForReceipt(orderId)
   } else {
-    getSrbQueue()
-      ?.add('submit', { orderId }, { jobId: `srb-${orderId}` })
+    enqueueJob('srb-submission', { orderId }, { jobKey: `srb-${orderId}`, maxAttempts: 6, backoffMs: 5000 })
       .catch((err: Error) => console.warn(`[SRB] enqueue failed for ${orderId}:`, err.message))
   }
 
@@ -1103,9 +1102,8 @@ async function submitSrbForReceipt(orderId: string): Promise<SrbReceipt | null> 
     return result
   } catch (err) {
     console.warn(`[SRB] sync submit failed for ${orderId}; falling back to queue: ${(err as Error).message}`)
-    const { getSrbQueue } = await import('../../lib/queue.js')
-    getSrbQueue()
-      ?.add('submit', { orderId }, { jobId: `srb-${orderId}` })
+    const { enqueueJob } = await import('../../lib/jobs.js')
+    enqueueJob('srb-submission', { orderId }, { jobKey: `srb-${orderId}`, maxAttempts: 6, backoffMs: 5000 })
       .catch((e: Error) => console.warn('[SRB] Failed to enqueue fallback submission:', e.message))
     return null
   }

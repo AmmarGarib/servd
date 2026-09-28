@@ -1,7 +1,13 @@
-// Socket.IO client singleton + room helpers. The tablet is highly real-time
-// (KDS tickets, curbside arrivals, reservation state) so a persistent socket
-// makes more sense than polling. We surface a thin `useSocketEvent` hook for
-// screens to subscribe ergonomically.
+// Socket.IO client singleton + room helpers.
+//
+// This is now the FALLBACK transport: `../lib/realtime.ts` asks the backend
+// (`GET /auth/realtime-token`) which driver to use, and when it says
+// `socketio` it wraps the singleton exported from this file. When it says
+// `supabase`, realtime.ts talks to Supabase Realtime directly and this file
+// isn't touched at all. Screens should subscribe via
+// `useRealtimeEvent`/`getRealtime` in realtime.ts, not the exports here —
+// `useSocketEvent` below is kept only as a thin, drop-in-compatible wrapper
+// so existing screens keep compiling.
 //
 // Rooms the backend emits to (see backend/src/lib/ws.ts):
 //   - tenant:{id}:orders   (every order of the signed-in company — the server
@@ -12,11 +18,14 @@
 //
 // We join `reservations:all` automatically on connect, then per-station /
 // per-concept rooms are joined imperatively by the screen that needs them.
+// (Per the realtime-token contract, the server now auto-joins rooms by role
+// from the token request, so these explicit join/leave emits are belt-and-
+// suspenders — harmless if the server ignores them.)
 
 import Constants from 'expo-constants'
 import { io, Socket } from 'socket.io-client'
-import { useEffect, useRef } from 'react'
 import { sessionStore } from '../store/session'
+import { useRealtimeEvent } from './realtime'
 
 const WS_URL = (Constants.expoConfig?.extra?.wsUrl as string | undefined)
   ?? (Constants.expoConfig?.extra?.apiUrl as string | undefined)
@@ -53,25 +62,23 @@ export function leaveRoom(room: string) {
 }
 
 /**
- * Hook for subscribing to a socket event. Cleans up on unmount. If you pass
- * a `room`, the client joins on mount and leaves on unmount.
+ * @deprecated Thin wrapper over `useRealtimeEvent` (see realtime.ts) kept so
+ * screens written against the old socket.io-only API keep compiling. New
+ * code should call `useRealtimeEvent` directly. `options.room` is mapped to
+ * `stationId`/`conceptId` scope — only `station:{id}` and `concept:{id}`
+ * rooms carry meaning under the new driver-agnostic contract; anything else
+ * (e.g. `reservations:all`) is just the default scope, already covered.
  */
 export function useSocketEvent<T = unknown>(
   event: string,
   handler: (payload: T) => void,
   options: { room?: string } = {},
 ) {
-  const handlerRef = useRef(handler)
-  handlerRef.current = handler
-
-  useEffect(() => {
-    const sock = getSocket()
-    const cb   = (p: T) => handlerRef.current(p)
-    if (options.room) joinRoom(options.room)
-    sock.on(event, cb)
-    return () => {
-      sock.off(event, cb)
-      if (options.room) leaveRoom(options.room)
-    }
-  }, [event, options.room])
+  const stationId = options.room?.startsWith('station:')
+    ? options.room.slice('station:'.length)
+    : undefined
+  const conceptId = options.room?.startsWith('concept:')
+    ? options.room.slice('concept:'.length)
+    : undefined
+  useRealtimeEvent<T>(event, handler, { stationId, conceptId })
 }

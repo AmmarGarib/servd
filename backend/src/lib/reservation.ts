@@ -1,19 +1,17 @@
-// Cart reservation system — atomic Redis holds + BullMQ TTL release
+// Cart reservation system — atomic Redis holds + a delayed TTL release job
+// (lib/jobs.ts: BullMQ on Docker, the background_jobs table on Vercel).
 // Tracks per-item availability when portionsAvailable is set on a MenuItem.
 // null portionsAvailable = unlimited (no tracking needed).
 
-import { Queue, Worker } from 'bullmq'
+import { Worker } from 'bullmq'
 import { redis } from './redis.js'
 import { emitAvailabilityChange } from './ws.js'
+import { enqueueJob, cancelJob } from './jobs.js'
+import type { CartReleaseJob as ReleaseJob } from './queue.js'
 
 const HOLD_TTL_MS  = 20 * 60 * 1000   // 20 min hold window
 const AVAIL_PREFIX = 'avail:'
-const releaseQueue = new Queue<ReleaseJob>('cart-releases', {
-  connection: redis,
-  defaultJobOptions: { removeOnComplete: true, removeOnFail: false },
-})
-
-interface ReleaseJob { cartId: string; menuItemId: string; qty: number }
+const RELEASE_QUEUE = 'cart-releases'
 
 // Lua: atomic check-and-decrement. Returns 1 = ok, 0 = insufficient stock.
 // KEYS[1] = avail:{menuItemId}   ARGV[1] = delta (positive = reserve)
@@ -159,15 +157,29 @@ async function scheduleRelease(
 ): Promise<void> {
   // Only track jobs for limited items (unlimited items don't need release)
   if (portionsAvailable === null) return
-  const jobId = `release-${cartId}-${menuItemId}`
-  const existing = await releaseQueue.getJob(jobId)
-  if (existing) await existing.remove()
-  await releaseQueue.add('release', { cartId, menuItemId, qty }, { jobId, delay: HOLD_TTL_MS })
+  const jobKey = `release-${cartId}-${menuItemId}`
+  await cancelJob(RELEASE_QUEUE, jobKey)
+  await enqueueJob(RELEASE_QUEUE, { cartId, menuItemId, qty } satisfies ReleaseJob, { jobKey, delayMs: HOLD_TTL_MS })
 }
 
 async function cancelRelease(cartId: string, menuItemId: string): Promise<void> {
-  const job = await releaseQueue.getJob(`release-${cartId}-${menuItemId}`)
-  if (job) await job.remove()
+  await cancelJob(RELEASE_QUEUE, `release-${cartId}-${menuItemId}`)
+}
+
+// ── Release processor ─────────────────────────────────────────────────────────
+// Shared by the BullMQ worker (Docker) and the db jobs driver (Vercel,
+// workers/registry.ts).
+
+export async function processCartRelease(data: ReleaseJob): Promise<void> {
+  const { menuItemId, qty } = data
+  const exists = await redis.exists(`${AVAIL_PREFIX}${menuItemId}`)
+  if (exists) {
+    await redis.incrby(`${AVAIL_PREFIX}${menuItemId}`, qty)
+    const raw = await redis.get(`${AVAIL_PREFIX}${menuItemId}`)
+    const newAvail = raw ? Math.max(0, parseInt(raw, 10)) : 0
+    emitAvailabilityChange(menuItemId, newAvail)
+    console.info(`[reservation] cart hold expired — restored ${qty}x ${menuItemId}, avail=${newAvail}`)
+  }
 }
 
 // ── Worker (registered in index.ts) ───────────────────────────────────────────
@@ -175,18 +187,8 @@ async function cancelRelease(cartId: string, menuItemId: string): Promise<void> 
 export function startCartReleaseWorker() {
   try {
     const worker = new Worker<ReleaseJob>(
-      'cart-releases',
-      async (job) => {
-        const { menuItemId, qty } = job.data
-        const exists = await redis.exists(`${AVAIL_PREFIX}${menuItemId}`)
-        if (exists) {
-          await redis.incrby(`${AVAIL_PREFIX}${menuItemId}`, qty)
-          const raw = await redis.get(`${AVAIL_PREFIX}${menuItemId}`)
-          const newAvail = raw ? Math.max(0, parseInt(raw, 10)) : 0
-          emitAvailabilityChange(menuItemId, newAvail)
-          console.info(`[reservation] cart hold expired — restored ${qty}x ${menuItemId}, avail=${newAvail}`)
-        }
-      },
+      RELEASE_QUEUE,
+      async (job) => processCartRelease(job.data),
       { connection: redis },
     )
     worker.on('failed', (job, err) => console.error('[reservation] release job failed', job?.id, err))

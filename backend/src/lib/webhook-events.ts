@@ -1,7 +1,7 @@
 // Outbound webhook fan-out. Call `emitDomainEvent(event, payload, tenantId)`
 // from any place where a meaningful state change happens; we look up the
 // OWNING COMPANY's active WebhookSubscription rows that subscribe to the event
-// and enqueue one delivery job per subscription. The worker
+// and enqueue one delivery job per subscription (lib/jobs.ts). The worker
 // (workers/webhookDelivery.ts) HMAC-signs and POSTs.
 //
 // Company scope: a subscription is company master data. The event's company
@@ -15,7 +15,8 @@
 // they are wrapped in catches and log warnings only.
 
 import { serviceClient as prisma } from './prisma.js'
-import { getWebhookQueue } from './queue.js'
+import { enqueueJob } from './jobs.js'
+import type { WebhookDeliveryJob } from './queue.js'
 
 export type DomainEvent =
   | 'order.placed'
@@ -49,16 +50,15 @@ export async function emitDomainEvent(event: DomainEvent, payload: unknown, tena
       select: { id: true },
     })
     if (subs.length === 0) return
-    const queue = getWebhookQueue()
-    if (!queue) return
     const emittedAt = new Date().toISOString()
     // No custom jobId: the old `${id}:${event}:${emittedAt}` carried the ISO
     // timestamp's colons, which BullMQ rejects ("Custom Id cannot contain :"),
     // so every add threw into the catch below and no webhook was ever queued.
     // A timestamp-derived id would also collapse two events for different
     // orders emitted in the same millisecond into one delivery.
+    // Attempts / backoff: the queue's policy (lib/queue.ts, 5 attempts).
     await Promise.all(subs.map((s) =>
-      queue.add('deliver', { subscriptionId: s.id, event, payload, emittedAt }),
+      enqueueJob('webhook-delivery', { subscriptionId: s.id, event, payload, emittedAt } satisfies WebhookDeliveryJob),
     ))
   } catch (err) {
     console.warn(`[webhook-events] emit failed for ${event}:`, (err as Error).message)

@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify'
+import jwt from 'jsonwebtoken'
 import bcrypt from 'bcryptjs'                  // password checks on the self-service routes
 import { z } from 'zod'
 import { staffLogin, refreshStaffToken, customerRegister, customerLogin, verifyMagicLink, requestMagicLink, hashPassword, issueStaffSession, findOtpLoginStaff } from './service.js'
@@ -22,6 +23,8 @@ import { requireAuth, requireCustomerAuth, ADMIN_ONLY, MANAGERS, ALL_STAFF, uses
 import { revokeBearer, revokeAllForSubject } from '../../lib/tokenRevocation.js'
 import { setAuthCookies, setAccessCookie, clearAuthCookies, readCookie, ACCESS_COOKIE, REFRESH_COOKIE } from '../../lib/cookies.js'
 import { serviceClient as prisma } from '../../lib/prisma.js'
+import { clientRealtimeDriver } from '../../lib/realtime.js'
+import { loadRealtimePrincipal, resolveRealtimeTopics } from '../../lib/realtimeTopics.js'
 import { resolveTenantScope, tenantWhere } from '../../lib/tenantScope.js'
 import { AppError, UnauthorizedError, NotFoundError } from '../../lib/errors.js'
 import { audit } from '../../lib/audit.js'
@@ -308,6 +311,66 @@ export async function authRoutes(fastify: FastifyInstance) {
       enabledAt: u?.twoFactorEnabledAt ?? null,
     }
   })
+
+  // ─── Realtime token ────────────────────────────────────────────────────
+  //
+  // GET /auth/realtime-token?stationId=&conceptId=
+  //
+  // Tells a staff client how to receive live events and hands it a
+  // credential for the transport. With Supabase Realtime the credential is a
+  // short-lived JWT signed with the Supabase project's JWT secret; its
+  // `servd_topics` claim lists exactly the channels this person may hear,
+  // computed by lib/realtimeTopics.ts — the same function that decides
+  // socket.io room membership. The RLS policy in supabase/realtime-policy.sql
+  // enforces the claim at join time, so a client that asks for a foreign
+  // station id simply never gets that topic. Every company's feed stays its
+  // own on either transport.
+  //
+  // The principal is re-read from the database, not taken from the access
+  // token: a demotion or suspension must narrow the topics immediately.
+  fastify.get<{ Querystring: { stationId?: string; conceptId?: string } }>(
+    '/realtime-token',
+    { preHandler: requireAuth() },
+    async (req) => {
+      const stationId = typeof req.query.stationId === 'string' && req.query.stationId ? req.query.stationId : undefined
+      const conceptId = typeof req.query.conceptId === 'string' && req.query.conceptId ? req.query.conceptId : undefined
+
+      const principal = await loadRealtimePrincipal(req.staffUser!.id)
+      if (!principal) throw new UnauthorizedError('Account is not active')
+      const topics = await resolveRealtimeTopics(principal, { stationId, conceptId })
+
+      const driver = clientRealtimeDriver()
+      if (driver === 'socketio') {
+        // Legacy transport: the socket.io handshake carries the normal access
+        // token; nothing extra to mint. `topics` is informational.
+        return { driver, url: process.env['WS_PUBLIC_URL'] ?? process.env['API_URL'] ?? '', anonKey: '', token: '', topics, expiresAt: null }
+      }
+
+      const secret = process.env['SUPABASE_JWT_SECRET']
+      const url = process.env['SUPABASE_URL']
+      const anonKey = process.env['SUPABASE_ANON_KEY']
+      if (!secret || !url || !anonKey) {
+        throw new AppError('REALTIME_NOT_CONFIGURED', 'Realtime is not configured on this server', 503)
+      }
+      // Realtime disconnects the client when the JWT expires, so keep it short
+      // and let the client refresh a couple of minutes early.
+      const ttlSeconds = 55 * 60
+      const expiresAt = new Date(Date.now() + ttlSeconds * 1000)
+      const token = jwt.sign(
+        {
+          sub: principal.id,
+          role: 'authenticated',
+          aud: 'authenticated',
+          iss: 'servd',
+          servd_role: principal.role,
+          servd_topics: topics,
+        },
+        secret,
+        { algorithm: 'HS256', expiresIn: ttlSeconds },
+      )
+      return { driver, url, anonKey, token, topics, expiresAt: expiresAt.toISOString() }
+    },
+  )
 
   // ─── Password self-service ────────────────────────────────────────────
   //

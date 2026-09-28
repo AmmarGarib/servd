@@ -286,6 +286,30 @@ export const authApi = {
     ),
   refresh: (refreshToken: string) =>
     api.post<{ accessToken: string }>('/auth/refresh', { refreshToken }),
+  // Issues a short-lived credential (~55 min) for the live-updates transport —
+  // either a Supabase Realtime broadcast token scoped to `topics`, or a
+  // pass-through for the socket.io driver. See lib/realtime.ts, the sole
+  // consumer: it decides which transport to speak based on `driver`.
+  realtimeToken: (params: { stationId?: string; conceptId?: string } = {}) => {
+    const qs = new URLSearchParams()
+    if (params.stationId) qs.set('stationId', params.stationId)
+    if (params.conceptId) qs.set('conceptId', params.conceptId)
+    const suffix = qs.toString() ? `?${qs.toString()}` : ''
+    return api.get<RealtimeTokenResponse>(`/auth/realtime-token${suffix}`)
+  },
+}
+
+export interface RealtimeTokenResponse {
+  driver: 'supabase' | 'socketio'
+  url: string
+  anonKey: string
+  token: string
+  topics: string[]
+  // Contract is an ISO string (~55 min out); some server branches — notably
+  // the socket.io fallback, which mints no short-lived credential — may send
+  // null. lib/realtime.ts's scheduleRefresh() treats a missing/invalid value
+  // as "use the default TTL" rather than crashing on `new Date(null)`.
+  expiresAt: string | null
 }
 
 // ─── Orders ───────────────────────────────────────────────────────────────────

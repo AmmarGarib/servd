@@ -10,7 +10,7 @@
 import { useEffect, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../../lib/api'
-import { getSocket } from '../../../lib/socket'
+import { getRealtime } from '../../../lib/realtime'
 
 interface CurbsideOrder {
   id: string; status: string; totalCents: number; placedAt: string
@@ -38,13 +38,13 @@ export default function CurbsidePage() {
 
   // Live updates: a customer arriving fires `order:curbsideArrived`. Refetch.
   useEffect(() => {
-    const sock = getSocket()
+    const realtime = getRealtime()
     const handler = () => qc.invalidateQueries({ queryKey: ['curbside-queue'] })
-    sock.on('order:curbsideArrived', handler)
-    sock.on('order:updated', handler)
+    const unsubArrived = realtime.on('order:curbsideArrived', handler)
+    const unsubUpdated = realtime.on('order:updated', handler)
     return () => {
-      sock.off('order:curbsideArrived', handler)
-      sock.off('order:updated', handler)
+      unsubArrived()
+      unsubUpdated()
     }
   }, [qc])
 

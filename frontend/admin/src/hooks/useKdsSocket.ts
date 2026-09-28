@@ -27,7 +27,7 @@ function playNewOrderBeep() {
   } catch { /* no audio context in non-browser envs */ }
 }
 
-import { getSocket } from '../lib/socket'
+import { getRealtime } from '../lib/realtime'
 import { useKdsStore } from '../store/kds'
 import { ordersApi, type Order } from '../lib/api'
 
@@ -64,18 +64,12 @@ export function useKdsSocket(options: UseKdsSocketOptions = {}): KdsSocketState 
   handlersRef.current = { addOrder, updateOrderStatus, updateItemStatus, mark86d, unmark86d, triggerNewOrderPulse }
 
   useEffect(() => {
-    const socket = getSocket(options)
+    const realtime = getRealtime(options)
 
-    setConnected(socket.connected)
-    setWsConnected(socket.connected)
-
-    const onConnect    = () => { setConnected(true); setWsConnected(true) }
-    const onDisconnect = () => { setConnected(false); setWsConnected(false) }
-    const onReconnectAttempt = () => { setConnected(false); setWsConnected(false) }
-
-    socket.on('connect', onConnect)
-    socket.on('disconnect', onDisconnect)
-    socket.io.on('reconnect_attempt', onReconnectAttempt)
+    const onStatusChange = (isConnected: boolean) => {
+      setConnected(isConnected)
+      setWsConnected(isConnected)
+    }
 
     const onOrderNew = async (data: { orderId: string }) => {
       const now = new Date()
@@ -103,19 +97,18 @@ export function useKdsSocket(options: UseKdsSocketOptions = {}): KdsSocketState 
       else handlersRef.current.mark86d(data.menuItemId)
     }
 
-    socket.on('order:new', onOrderNew)
-    socket.on('order:updated', onOrderUpdated)
-    socket.on('item:updated', onItemUpdated)
-    socket.on('item:86d', on86d)
+    const unsubStatus       = realtime.onStatus(onStatusChange)
+    const unsubOrderNew     = realtime.on('order:new', onOrderNew)
+    const unsubOrderUpdated = realtime.on('order:updated', onOrderUpdated)
+    const unsubItemUpdated  = realtime.on('item:updated', onItemUpdated)
+    const unsub86d          = realtime.on('item:86d', on86d)
 
     return () => {
-      socket.off('connect', onConnect)
-      socket.off('disconnect', onDisconnect)
-      socket.io.off('reconnect_attempt', onReconnectAttempt)
-      socket.off('order:new', onOrderNew)
-      socket.off('order:updated', onOrderUpdated)
-      socket.off('item:updated', onItemUpdated)
-      socket.off('item:86d', on86d)
+      unsubStatus()
+      unsubOrderNew()
+      unsubOrderUpdated()
+      unsubItemUpdated()
+      unsub86d()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [options.stationId, options.conceptId, options.role])
@@ -124,21 +117,13 @@ export function useKdsSocket(options: UseKdsSocketOptions = {}): KdsSocketState 
 }
 
 export function useKdsActions() {
-  const socket = getSocket()
-
   return {
-    bump: (itemId: string) => {
-      socket.emit('kds:bump', { itemId })
-      return ordersApi.updateItemStatus(itemId, 'bumped')
-    },
-    hold: (itemId: string) => {
-      socket.emit('kds:hold', { itemId })
-      return ordersApi.updateItemStatus(itemId, 'held')
-    },
-    recall: (itemId: string) => {
-      socket.emit('kds:recall', { itemId })
-      return ordersApi.updateItemStatus(itemId, 'recalled')
-    },
+    // The HTTP call already broadcasts `item:updated` (socket.io or
+    // Supabase, whichever driver is active) — no client listens for
+    // `kds:bump`/`kds:hold`/`kds:recall`, so those emits were dead weight.
+    bump: (itemId: string) => ordersApi.updateItemStatus(itemId, 'bumped'),
+    hold: (itemId: string) => ordersApi.updateItemStatus(itemId, 'held'),
+    recall: (itemId: string) => ordersApi.updateItemStatus(itemId, 'recalled'),
     fire: (itemId: string) => ordersApi.updateItemStatus(itemId, 'preparing'),
   }
 }

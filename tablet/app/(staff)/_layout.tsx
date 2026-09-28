@@ -14,7 +14,7 @@ import { Slot, useRouter, usePathname } from 'expo-router'
 
 import { theme } from '../../src/lib/theme'
 import { useSessionStore, sessionStore } from '../../src/store/session'
-import { getSocket } from '../../src/lib/socket'
+import { getRealtime } from '../../src/lib/realtime'
 import { StatusDot } from '../../src/components/StatusDot'
 import { initials } from '../../src/lib/format'
 
@@ -35,7 +35,7 @@ export default function StaffLayout() {
   const user     = useSessionStore(s => s.user)
 
   // Boot the socket as soon as we enter the staff area.
-  useEffect(() => { getSocket() }, [])
+  useEffect(() => { getRealtime() }, [])
 
   function signOut() {
     Alert.alert('Sign out?', `Sign ${user?.name ?? 'this user'} out of this tablet?`, [

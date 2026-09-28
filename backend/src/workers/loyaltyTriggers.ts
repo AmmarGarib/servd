@@ -1,5 +1,6 @@
-import { Queue, Worker } from 'bullmq'
+import { Worker } from 'bullmq'
 import { redis } from '../lib/redis.js'
+import { getBullQueue } from '../lib/queue.js'
 import { serviceClient as prisma } from '../lib/prisma.js'
 import { sendEmail, sendPhoneMessage } from '../lib/notify.js'
 import { reachableCustomer, reachableAtCompany } from '../lib/marketingAudience.js'
@@ -30,14 +31,24 @@ async function reach(c: { email: string | null; phone: string | null }, subject:
   else if (c.phone) await sendPhoneMessage(c.phone, text)
 }
 
+/** Every automated trigger, in order. Hourly: BullMQ repeat (Docker) or the scheduler tick (Vercel). */
+export async function runLoyaltyTriggers(): Promise<void> {
+  await runBirthdayTriggers()
+  await runWinBackTriggers()
+  await runActivateUsersTrigger()
+  await runEncourageSecondOrderTrigger()
+  await runAbandonedCartTrigger()
+  await runFirstOrderWelcomeTrigger()
+  await runComplaintFollowUpTrigger()
+  await runSpendMilestoneTrigger()
+  await runReferralRewardTrigger()
+}
+
 export function startLoyaltyTriggerWorker() {
   try {
-    const triggersQueue = new Queue('loyalty-triggers', {
-      connection: redis,
-      defaultJobOptions: { removeOnComplete: { count: 500 }, removeOnFail: { count: 200 } },
-    })
+    const triggersQueue = getBullQueue('loyalty-triggers')
 
-    void triggersQueue.add('scan', {}, {
+    void triggersQueue?.add('scan', {}, {
       repeat: { every: 60 * 60 * 1000 },
       jobId: 'loyalty-scan-recurring',
     }).catch((err: Error) => console.warn('[loyaltyTriggers] schedule failed:', err.message))
@@ -45,15 +56,7 @@ export function startLoyaltyTriggerWorker() {
     const worker = new Worker(
       'loyalty-triggers',
       async () => {
-        await runBirthdayTriggers()
-        await runWinBackTriggers()
-        await runActivateUsersTrigger()
-        await runEncourageSecondOrderTrigger()
-        await runAbandonedCartTrigger()
-        await runFirstOrderWelcomeTrigger()
-        await runComplaintFollowUpTrigger()
-        await runSpendMilestoneTrigger()
-        await runReferralRewardTrigger()
+        await runLoyaltyTriggers()
       },
       { connection: redis, concurrency: 1 },
     )

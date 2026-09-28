@@ -45,7 +45,7 @@ export function startReviewPromptWorker() {
   }
 }
 
-async function runPromptSweep(): Promise<void> {
+export async function runPromptSweep(): Promise<void> {
   const cutoff = new Date(Date.now() - PROMPT_DELAY_MIN * 60_000)
   const STOREFRONT_URL = process.env['STOREFRONT_URL'] ?? 'https://order.servd.pk'
 

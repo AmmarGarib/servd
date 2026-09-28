@@ -27,7 +27,8 @@ export function startScheduledReportsWorker(): void {
   console.log('[scheduledReports] worker started — ticking every minute')
 }
 
-async function tick(): Promise<void> {
+/** Docker tick: the reports whose cron matches this minute, fired in the background. */
+export async function tick(): Promise<void> {
   const now = new Date()
   const reports = await prisma.scheduledReport.findMany({
     where: { isActive: true, deletedAt: null },
@@ -87,6 +88,43 @@ async function run(
     }).catch(() => {})
     throw err
   }
+}
+
+/**
+ * Serverless tick (Vercel scheduler, workers/registry.ts). The invoker's clock
+ * jitters, so instead of matching only the current minute this runs each
+ * report once if ANY minute in (since, now] matches its cron and the report
+ * has not run since that minute — no slot is skipped by a late tick, none is
+ * sent twice by an early one. The window is capped at 15 minutes so a long
+ * outage does not replay a backlog. Awaited: the function ends with the tick.
+ */
+export async function runScheduledReportsWindow(since: Date | null, now: Date = new Date()): Promise<number> {
+  const floorMin = (d: Date) => Math.floor(d.getTime() / 60_000) * 60_000
+  const nowMin = floorMin(now)
+  const earliest = nowMin - 14 * 60_000
+  const startMin = since ? Math.max(floorMin(since) + 60_000, earliest) : nowMin
+  const reports = await prisma.scheduledReport.findMany({
+    where: { isActive: true, deletedAt: null },
+  })
+  const runs: Promise<void>[] = []
+  for (const r of reports) {
+    let slot: number | null = null
+    for (let t = nowMin; t >= startMin; t -= 60_000) {
+      if (matchesCron(r.cron, new Date(t))) { slot = t; break }
+    }
+    if (slot === null) continue
+    if (r.lastRunAt && r.lastRunAt.getTime() >= slot) continue // already ran for this slot
+    if (RUNNING.has(r.id)) continue
+    if (!r.tenantId) { console.warn(`[scheduledReports] ${r.id} has no company — skipped`); continue }
+    RUNNING.add(r.id)
+    runs.push(
+      run(r.id, r.reportType as ReportType, r.recipients, r.conceptId, r.tenantId, r.name, r.lastRunAt)
+        .catch((err) => console.warn(`[scheduledReports] ${r.id} failed:`, (err as Error).message))
+        .finally(() => RUNNING.delete(r.id)),
+    )
+  }
+  await Promise.all(runs)
+  return runs.length
 }
 
 // ─── Cron matcher ────────────────────────────────────────────────────────────

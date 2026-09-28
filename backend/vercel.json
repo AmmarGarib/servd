@@ -1,0 +1,18 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "installCommand": "npm ci",
+  "buildCommand": "npx prisma generate && npm run build",
+  "regions": ["bom1"],
+  "rewrites": [{ "source": "/(.*)", "destination": "/api/index" }],
+  "functions": {
+    "api/index.js": {
+      "maxDuration": 60,
+      "memory": 1024,
+      "includeFiles": "{dist/**,node_modules/.prisma/client/**,prisma/schema.prisma}"
+    }
+  },
+  "crons": [
+    { "path": "/api/v1/internal/cron/tick", "schedule": "0 3 * * *" }
+  ]
+}

@@ -14,7 +14,7 @@ import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, ALL_STAFF, MANAGERS } from '../auth/middleware.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
-import { getIOSafe } from '../../lib/ws.js'
+import { emitExpoFire } from '../../lib/ws.js'
 import { scopeTenantWhere } from '../../lib/tenantScope.js'
 
 const HANDOFF_ACTION = 'expo.handoff'
@@ -192,7 +192,6 @@ export async function expoRoutes(fastify: FastifyInstance) {
       // Items with neither recipe steps NOR a stationId (menu item never got
       // routed in /menu) end up tracked but unrouted — surfaced back to the
       // operator below so they know why "nothing happened".
-      const ws = getIOSafe()
       const now = new Date()
       const unroutedItems: Array<{ id: string; name: string }> = []
       for (const item of order.items) {
@@ -217,8 +216,8 @@ export async function expoRoutes(fastify: FastifyInstance) {
           })
           const firstSteps = serviceSteps.filter((s) => s.dependsOnIds.length === 0)
           for (const step of firstSteps) {
-            if (!step.stationId || !ws) continue
-            ws.to(`station:${step.stationId}`).emit('expo:fire', {
+            if (!step.stationId) continue
+            emitExpoFire(step.stationId, {
               orderId:    order.id,
               itemId:     item.id,
               stepId:     step.id,
@@ -233,8 +232,8 @@ export async function expoRoutes(fastify: FastifyInstance) {
             where: { id: item.id },
             data: { status: 'preparing', firedAt: now },
           })
-          if (item.stationId && ws) {
-            ws.to(`station:${item.stationId}`).emit('expo:fire', {
+          if (item.stationId) {
+            emitExpoFire(item.stationId, {
               orderId:    order.id,
               itemId:     item.id,
               stepId:     null,

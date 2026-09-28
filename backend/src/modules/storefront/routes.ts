@@ -974,27 +974,16 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
         select: { id: true, curbsideArrivedAt: true, curbsideVehicle: true, curbsideSpot: true, status: true },
       })
 
-      // Light up the kitchen / front-of-house immediately.
-      const { getIO, tenantOfConcept } = await import('../../lib/ws.js')
-      try {
-        const io = getIO()
-        // Company-scoped fan-out: only the brand's own company hears about it.
-        const ownerTenant = await tenantOfConcept(order.conceptId)
-        if (ownerTenant) io.to(`tenant:${ownerTenant}:orders`).emit('order:curbsideArrived', {
-          orderId: updated.id,
-          conceptId: order.conceptId,
-          vehicle: updated.curbsideVehicle,
-          spot:    updated.curbsideSpot,
-          arrivedAt: updated.curbsideArrivedAt,
-        })
-        io.to(`concept:${order.conceptId}`).emit('order:curbsideArrived', {
-          orderId: updated.id,
-          conceptId: order.conceptId,
-          vehicle: updated.curbsideVehicle,
-          spot:    updated.curbsideSpot,
-          arrivedAt: updated.curbsideArrivedAt,
-        })
-      } catch { /* ws may not be up in tests; non-blocking */ }
+      // Light up the kitchen / front-of-house immediately. Company-scoped
+      // fan-out: only the brand's own company hears about it.
+      const { emitCurbsideArrived } = await import('../../lib/ws.js')
+      emitCurbsideArrived({
+        orderId: updated.id,
+        conceptId: order.conceptId,
+        vehicle: updated.curbsideVehicle,
+        spot:    updated.curbsideSpot,
+        arrivedAt: updated.curbsideArrivedAt,
+      })
 
       return updated
     },

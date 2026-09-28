@@ -10,14 +10,20 @@ import { publishDueLayouts } from '../modules/siteLayouts/service.js'
 
 const RUN_EVERY_MS = 60_000
 
+/** One sweep. Throws on failure (the scheduler tick records it). */
+export async function runSitePublishSweep(): Promise<number> {
+  const n = await publishDueLayouts()
+  if (n > 0) console.info(`[sitePublish] published ${n} scheduled page(s)`)
+  return n
+}
+
 export function startSitePublishWorker(): NodeJS.Timeout {
   let running = false
   const tick = async () => {
     if (running) return
     running = true
     try {
-      const n = await publishDueLayouts()
-      if (n > 0) console.info(`[sitePublish] published ${n} scheduled page(s)`)
+      await runSitePublishSweep()
     } catch (err) {
       console.warn('[sitePublish] sweep failed:', (err as Error).message)
     } finally {
