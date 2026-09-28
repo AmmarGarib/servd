@@ -101,7 +101,7 @@ function hash32(s: string): number {
 }
 
 /** Same rule as web: hash(visitorId + slug + version) % 100 < splitPct → 'b'. */
-export function pickVariant(visitorId: string, layout: Pick<SiteLayout, 'slug' | 'version' | 'settings'>): Variant {
+export function pickVariant(visitorId: string, layout: { slug: string; version: number; settings?: SiteLayout['settings'] | undefined }): Variant {
   const ab = layout.settings?.ab
   if (!ab || !Array.isArray(ab.blocks) || ab.blocks.length === 0) return 'a'
   const pct = Math.max(0, Math.min(100, Number(ab.splitPct) || 0))

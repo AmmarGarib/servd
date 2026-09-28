@@ -39,8 +39,8 @@ const createCategorySchema = z.object({
   conceptId: z.string().uuid(),
   name: z.string().min(1),
   sortOrder: z.number().int().default(0),
-  timeRestrictionStart: z.string().regex(/^\d{2}:\d{2}$/).optional(),
-  timeRestrictionEnd: z.string().regex(/^\d{2}:\d{2}$/).optional(),
+  timeRestrictionStart: z.string().regex(/^\d{2}:\d{2}$/).nullable().optional(),
+  timeRestrictionEnd: z.string().regex(/^\d{2}:\d{2}$/).nullable().optional(),
 })
 
 const createModifierGroupSchema = z.object({

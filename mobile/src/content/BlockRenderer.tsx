@@ -696,7 +696,7 @@ function ColumnsView({ b }: P<ColumnsBlock>) {
     <View style={{ flexDirection: row ? 'row' : 'column', gap }}>
       {b.columns.map((col, i) => (
         <View key={i} style={row ? { flex: 1 } : undefined}>
-          <BlockRenderer blocks={(Array.isArray(col) ? col : []).filter((x) => x && x.type !== 'columns')} />
+          <BlockRenderer blocks={(Array.isArray(col) ? col : []).filter((x) => x && (x as { type: string }).type !== 'columns')} />
         </View>
       ))}
     </View>
