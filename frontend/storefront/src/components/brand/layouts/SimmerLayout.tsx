@@ -303,25 +303,6 @@ export function SimmerLayout({ concept, concepts }: Props) {
   // .action, .action--signal, .simmer-visit-grid) live in globals.css.
   return (
     <div className="simmer-page">
-      {/* ── Announcement strip (only when operator has filled the field) ───────
-          Per the brand bible: operational copy stays plain and clear. */}
-      {concept.announcementBanner && (
-        <div
-          role="status"
-          style={{
-            background: 'var(--simmer-black)',
-            color: 'var(--simmer-bone)',
-            padding: '0.7rem 1.5rem',
-            textAlign: 'center',
-            fontFamily: 'var(--simmer-body)',
-            fontSize: '0.78rem',
-            letterSpacing: '0.22em',
-            textTransform: 'lowercase',
-          }}
-        >
-          {concept.announcementBanner}
-        </div>
-      )}
 
       {/* ── SPEAKEASY FRIDGE HERO ────────────────────────────────────────
           Scroll-driven walk-in chiller door that swings open to reveal

@@ -82,23 +82,6 @@ export function FlipdLayout({ concept, concepts }: Props) {
     <div className="flipd-page">
       <Checker />
 
-      {concept.announcementBanner && (
-        <div
-          role="status"
-          style={{
-            background: 'var(--flipd-blue)',
-            color: 'var(--flipd-mustard)',
-            padding: '0.7rem 1.5rem',
-            textAlign: 'center',
-            fontSize: '0.74rem',
-            fontWeight: 700,
-            letterSpacing: '0.18em',
-            textTransform: 'uppercase',
-          }}
-        >
-          {concept.announcementBanner}
-        </div>
-      )}
 
       {/* ── HERO: THE BUILD SHEET ────────────────────────────────────────
           The badge is NOT repeated here. It sits in the nav at top left,

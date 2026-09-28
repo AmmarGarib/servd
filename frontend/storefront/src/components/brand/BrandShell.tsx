@@ -74,11 +74,10 @@ function BrandNav({ concept, onBrandHost, accent }: { concept: Concept; onBrandH
   //  • others use a soft scrim of their own bg colour (no band)
   const diner = concept.slug === 'flipd'
   // flipd paints its checker as a full header band. As its own box it leaves a
-  // half-tile SEAM where it meets the hero checker just below. When there's no
-  // announcement banner, float the header as a TRANSPARENT overlay on the hero
-  // instead: the hero's checker shows through it, so the floor is one
-  // continuous, seamless checker. (With a banner we keep the in-flow band.)
-  const flipdOverlay = diner && !concept.announcementBanner
+  // half-tile SEAM where it meets the hero checker just below, so the header
+  // floats as a TRANSPARENT overlay on the hero instead: the hero's checker
+  // shows through it, so the floor is one continuous, seamless checker.
+  const flipdOverlay = diner
   // Once it floats, it stays: the badge and the nav pill ride down the page
   // rather than scrolling away at the top of the hero.
   //

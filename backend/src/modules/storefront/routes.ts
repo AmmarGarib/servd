@@ -346,7 +346,6 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
           slug: concept.slug,
           description: concept.description,
           heroTagline: concept.heroTagline,
-          announcementBanner: concept.announcementBanner,
           logoUrl: concept.logoUrl,
           primaryColor: concept.primaryColor,
           storefrontLayout: concept.storefrontLayout,
@@ -447,7 +446,7 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
         // only offer siblings from the SAME company, or it tells a customer a
         // different operator's restaurant is run by this one.
         tenantId: true,
-        logoUrl: true, primaryColor: true, heroTagline: true, announcementBanner: true,
+        logoUrl: true, primaryColor: true, heroTagline: true,
         // Brand microsite artwork. This select is explicit, so a new column is
         // invisible to the storefront until it is named here.
         wordmarkUrl: true, mascotUrl: true,

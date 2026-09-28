@@ -21,7 +21,6 @@ interface Concept {
   storefrontVisible: boolean
   reservationsEnabled: boolean
   heroTagline: string | null
-  announcementBanner: string | null
   // Brand microsite artwork. Null = the storefront falls back to the file
   // bundled in its build, which is how every brand behaved before these
   // existed — so clearing one is safe, not a broken image.
@@ -249,7 +248,6 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
   const [competitors, setCompetitors] = useState((concept.competitors ?? []).join(', '))
 
   const [heroTagline, setHeroTagline] = useState(concept.heroTagline ?? '')
-  const [announcementBanner, setAnnouncementBanner] = useState(concept.announcementBanner ?? '')
   const [storefrontVisible, setStorefrontVisible] = useState(concept.storefrontVisible)
   const [reservationsEnabled, setReservationsEnabled] = useState(concept.reservationsEnabled)
   const [wordmarkUrl, setWordmarkUrl] = useState(concept.wordmarkUrl ?? '')
@@ -296,7 +294,7 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
       brandVoice: brandVoice || null,
       daypartFocus,
       competitors: competitors.split(',').map((c) => c.trim()).filter(Boolean).slice(0, 10),
-      heroTagline: heroTagline || null, announcementBanner: announcementBanner || null,
+      heroTagline: heroTagline || null,
       wordmarkUrl: wordmarkUrl || null, mascotUrl: mascotUrl || null,
       storefrontVisible,
       reservationsEnabled,
@@ -597,11 +595,6 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
             <div className="space-y-4">
               <Field label="Hero tagline" hint="One punchy line under the brand name. Max 120 chars.">
                 <input value={heroTagline} onChange={(e) => setHeroTagline(e.target.value)} maxLength={120}
-                  className="s-input w-full" />
-              </Field>
-              <Field label="Announcement banner" hint="Pinned message at the top. Use for closures, promos, holidays. Empty = no banner.">
-                <input value={announcementBanner} onChange={(e) => setAnnouncementBanner(e.target.value)} maxLength={300}
-                  placeholder="e.g. Closed for Eid 10–12 May. Pre-order opens 13 May."
                   className="s-input w-full" />
               </Field>
               <Field label="Storefront visibility">

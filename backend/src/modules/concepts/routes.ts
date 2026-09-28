@@ -39,7 +39,6 @@ const createConceptSchema = z.object({
   // Storefront CMS
   storefrontVisible: z.boolean().optional(),
   heroTagline: z.string().max(120).optional().nullable(),
-  announcementBanner: z.string().max(300).optional().nullable(),
   // Brand microsite artwork. Null / '' means "use the asset bundled in the
   // storefront build", which is what every brand did before these existed.
   //

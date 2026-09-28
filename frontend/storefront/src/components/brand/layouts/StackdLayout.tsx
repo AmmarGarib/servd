@@ -145,23 +145,6 @@ export function StackdLayout({ concept, concepts }: Props) {
       <div aria-hidden className="stackd-bg-fixed" />
 
       <div style={{ position: 'relative', zIndex: 1 }}>
-        {concept.announcementBanner && (
-          <div
-            role="status"
-            style={{
-              background: 'var(--stackd-plum-dark)',
-              color: 'var(--stackd-cream)',
-              padding: '0.7rem 1.5rem',
-              textAlign: 'center',
-              fontFamily: 'var(--stackd-mono)',
-              fontSize: '0.74rem',
-              letterSpacing: '0.2em',
-              textTransform: 'uppercase',
-            }}
-          >
-            {concept.announcementBanner}
-          </div>
-        )}
 
         {/* ── THE SLIP ────────────────────────────────────────────────────────
             He goes down and the bread goes up. Scroll down, it climbs — the

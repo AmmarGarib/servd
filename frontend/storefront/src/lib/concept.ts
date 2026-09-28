@@ -25,7 +25,6 @@ export interface Concept {
   // Operator-editable strings returned by the API but optional in the type
   // — used for the brand-page promo strip and hero subhead respectively.
   heroTagline?: string | null
-  announcementBanner?: string | null
   // Physical presence — included in /storefront/concepts response.
   //   phone / whatsapp / addressLocality / cuisine / priceTier — per brand,
   //     edited in admin → Storefront → Brands.
