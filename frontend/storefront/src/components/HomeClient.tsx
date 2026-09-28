@@ -5,7 +5,7 @@ import { LandingScrollHero } from './LandingScrollHero'
 import type { HeroConfig } from '../lib/heroConfig'
 
 import type { Concept } from '../lib/concept'
-import { brandAccent, brandStory, conceptHeroImage } from '../lib/concept'
+import { brandAccent, brandStory, conceptHeroImage, heroCover } from '../lib/concept'
 import { useScrollReveal } from './kinetic/motionHooks'
 import { OpenNowPill } from './brand/parts/OpenNowPill'
 import { BRAND_LOCATIONS, locationFor, whatsappLink } from '../lib/brandLocations'
@@ -94,7 +94,7 @@ export function HomeClient({ concepts, heroConfig }: Props) {
                   position: 'relative', overflow: 'hidden',
                   borderRadius: '1.5rem',
                   minHeight: 'clamp(320px, 42vw, 460px)',
-                  background: `${b.accent} url(${b.img}) center/cover`,
+                  background: `${b.accent}${heroCover(b.img)}`,
                   boxShadow: '0 8px 24px rgba(0,0,0,0.12)',
                 }}>
                 {/* Full-card hit-area Link to the brand landing page */}

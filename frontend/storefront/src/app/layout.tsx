@@ -4,6 +4,7 @@ import './globals.css'
 import { StorefrontNav } from '../components/StorefrontNav'
 import { StorefrontFooter } from '../components/StorefrontFooter'
 import { FeedbackWidget } from '../components/feedback/FeedbackWidget'
+import { PopupHost } from '../components/popups/PopupHost'
 import { SERVD_ORIGIN, BRAND_HOST_HEADER } from '../lib/brandDomains'
 
 export const metadata: Metadata = {
@@ -65,6 +66,9 @@ export default function StorefrontLayout({ children }: { children: React.ReactNo
         >
           Skip to content
         </a>
+        {/* Storefront pop-ups. Mounted above the header so a 'bar' pop-up sits
+            in flow at the very top; modal / corner are fixed. */}
+        <PopupHost initialBrandSlug={initialBrandSlug} />
         <StorefrontNav initialBrandSlug={initialBrandSlug} />
         <main id="main">{children}</main>
         <StorefrontFooter initialBrandSlug={initialBrandSlug} />

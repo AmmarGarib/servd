@@ -13,6 +13,7 @@ import { TenantSwitcher, useViewAllTenants } from './TenantSwitcher'
 import { BrandPicker } from './BrandPicker'
 import { moduleForPath } from '../../lib/moduleCatalog'
 import { PortfolioWriteGuardModal } from './PortfolioWriteGuardModal'
+import { PENDING_LAYOUTS_KEY } from '../storefront/ApprovalsPanel'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -167,19 +168,15 @@ const NAV: NavSection[] = [
   },
   {
     // ── Storefront — everything the customer sees, gathered in one place:
-    // the brands (identity + colour), their microsite layout, the landing
-    // hero, the per-brand footers, the menu, business info and locations.
-    // Consolidated here out of Marketing / Executive so all storefront edits
-    // live together. (Menu is also linked under Kitchen for the line team.)
+    // the brands (identity + colour), the storefront content module (library,
+    // pages incl. landing hero and brand footers, pop-ups, approvals —
+    // decision 41), the menu, business info and locations. (Menu is also
+    // linked under Kitchen for the line team.)
     title: 'Storefront',
     defaultCollapsed: true,
     items: [
-      { href: '/marketing/brands',  label: 'Brands',        icon: '🏷', module: 'brands', children: [
-        { href: '/storefront',           label: 'Visual Layout', module: 'brands' },
-        { href: '/marketing/storefront', label: 'Designer hub',  module: 'brands' },
-      ]},
-      { href: '/storefront-hero',   label: 'Landing Hero',  icon: '🖼', module: 'brands' },
-      { href: '/storefront-footer', label: 'Brand Footers', icon: '🔗', module: 'brands' },
+      { href: '/storefront',        label: 'Storefront',    icon: '◩', module: 'storefront' },
+      { href: '/marketing/brands',  label: 'Brands',        icon: '🏷', module: 'brands' },
       { href: '/menu',              label: 'Menu',          icon: '📝', module: 'menu' },
       // Business Info is folded into Brands (contact + brief tabs); the
       // kitchen address and pin are on Locations (decision 18).
@@ -208,8 +205,7 @@ const NAV: NavSection[] = [
       { href: '/complaints',        label: 'Complaints',  icon: '🎫', module: 'complaints' },
       { href: '/reviews',           label: 'Reviews',     icon: '⭐', module: 'reviews' },
       { href: '/calendar',          label: 'Calendar',    icon: '📅', module: 'calendar' },
-      { href: '/media',             label: 'Media',       icon: '🖼', module: 'media' },
-      { href: '/promos',            label: 'Promotions',  icon: '🎟', module: 'promos', children: [
+      { href: '/promos',           label: 'Promotions',  icon: '🎟', module: 'promos', children: [
         { href: '/discounts', label: 'Discounts', module: 'promos' },
         { href: '/qrcodes',   label: 'QR Codes',  module: 'promos' },
       ]},
@@ -770,6 +766,17 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       staleTime: 15_000,
     })
 
+    // Storefront changes waiting for CEO approval (decision 41) — same
+    // pattern, 60s poll. Shares its cache key with the hub's Approvals tab.
+    const { data: pendingLayouts = [] } = useQuery<Array<{ id: string }>>({
+      queryKey: PENDING_LAYOUTS_KEY,
+      queryFn:  () => api.get('/site-layouts?status=pending'),
+      enabled:  isSuper,
+      refetchInterval: 60_000,
+      staleTime: 30_000,
+    })
+    const hasQueue = pending.length > 0 || pendingLayouts.length > 0
+
     // Drop admin/CEO from impersonation targets — viewing-as-self is the
     // default state, no need to offer it as a discrete option.
     const switchTargets = APP_ROLES.filter((r) => r.value !== 'admin')
@@ -812,8 +819,21 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </Link>
         )}
 
+        {isSuper && pendingLayouts.length > 0 && (
+          <Link href="/storefront?tab=approvals"
+            className={`${pending.length > 0 ? 'mt-0.5' : 'mt-1.5 pt-1.5 border-t border-white/[0.05]'} flex items-center gap-2 rounded-md px-1 py-1 -mx-1 transition-colors`}
+            onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(245,158,11,0.06)')}
+            onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}>
+            <span className="h-1.5 w-1.5 rounded-full animate-pulse" style={{ background: '#F59E0B' }} />
+            <span className="text-[10px] font-bold flex-1" style={{ color: '#F59E0B' }}>
+              {pendingLayouts.length} storefront {pendingLayouts.length === 1 ? 'change' : 'changes'} to approve
+            </span>
+            <span className="text-[10px]" style={{ color: 'rgba(255,255,255,0.4)' }}>→</span>
+          </Link>
+        )}
+
         {isSuper && (
-          <div className={`${pending.length > 0 ? 'mt-1' : 'mt-1.5'} pt-1.5 border-t border-white/[0.05] flex items-center gap-1.5`}>
+          <div className={`${hasQueue ? 'mt-1' : 'mt-1.5'} pt-1.5 border-t border-white/[0.05] flex items-center gap-1.5`}>
             <span className="text-[9px] uppercase tracking-wider font-bold shrink-0"
               style={{ color: viewAs ? '#A5B4FC' : 'rgba(255,255,255,0.3)' }}>
               {viewAs ? '🔭 As' : 'View as'}

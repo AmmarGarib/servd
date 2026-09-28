@@ -1,7 +1,7 @@
 'use client'
 import Link from 'next/link'
 import type { Concept } from '../../../lib/concept'
-import { typeLabel, conceptHeroImage, formatBrandName } from '../../../lib/concept'
+import { typeLabel, conceptHeroImage, heroCover, formatBrandName } from '../../../lib/concept'
 
 interface Props {
   current: Concept
@@ -57,7 +57,7 @@ export function CrossBrandStrip({ current, concepts, accent, kicker, heading }: 
             >
               <div style={{
                 aspectRatio: '4/3',
-                background: `${c.primaryColor ?? 'var(--servd-green-dark)'} url(${conceptHeroImage(c)}) center/cover`,
+                background: `${c.primaryColor ?? 'var(--servd-green-dark)'}${heroCover(conceptHeroImage(c))}`,
                 position: 'relative',
               }}>
                 <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, transparent 50%, rgba(0,0,0,0.55) 100%)' }} />

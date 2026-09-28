@@ -1,5 +1,6 @@
 'use client'
 
+import { heroCover } from '../../lib/concept'
 import { useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
@@ -12,7 +13,7 @@ interface BrandCard {
   name: string
   slug: string
   accent: string
-  heroImage: string
+  heroImage: string | null
 }
 
 interface Props {
@@ -122,7 +123,7 @@ export function GroupOrderEntryClient({ brands }: Props) {
                     }}>
                     <div aria-hidden style={{
                       aspectRatio: '4 / 3',
-                      background: `${b.accent} url(${b.heroImage}) center/cover`,
+                      background: `${b.accent}${heroCover(b.heroImage)}`,
                     }} />
                     <div style={{
                       padding: '0.6rem 0.8rem',

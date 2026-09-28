@@ -11,7 +11,15 @@ import { fmtPkrWhole } from '../../lib/money'
 
 interface ConceptTab { id: string; name: string; tenantId?: string | null; tenant?: { id: string; name: string } | null }
 
+// Categories as GET /menu/:conceptId returns them — the shared Category type
+// does not carry the storefront time window.
+type WindowedCategory = Category & { timeRestrictionStart?: string | null; timeRestrictionEnd?: string | null }
+
+type MenuView = 'items' | 'availability' | 'windows'
+const VIEW_LABEL: Record<MenuView, string> = { items: 'Items', availability: 'Availability (86)', windows: 'Time windows' }
+
 export default function MenuPage() {
+  const [view, setView] = useState<MenuView>('items')
   const [selectedConceptId, setSelectedConceptId] = useState<string>('')
   const [editItem, setEditItem] = useState<MenuItem | null>(null)
   const [addingItemToCat, setAddingItemToCat] = useState<string | null>(null)
@@ -78,7 +86,7 @@ export default function MenuPage() {
           <h1 className="text-2xl font-black text-kds-text mt-1">Menu Editor</h1>
         </div>
         <button
-          onClick={() => setAddingCategory(true)}
+          onClick={() => { setView('items'); setAddingCategory(true) }}
           disabled={!conceptId}
           className="rounded-xl bg-kds-green text-black font-bold px-4 py-2 hover:opacity-90 text-sm disabled:opacity-40 disabled:cursor-not-allowed"
         >
@@ -106,6 +114,36 @@ export default function MenuPage() {
         {concepts.length === 0 && <p className="text-kds-subtext text-sm">Loading concepts…</p>}
       </div>
 
+      {/* Views — the item editor, the quick 86 board and the storefront time
+          windows (the last two moved here from the retired Visual Layout page). */}
+      <div className="mb-6 flex gap-1 border-b border-kds-border">
+        {(Object.keys(VIEW_LABEL) as MenuView[]).map((v) => (
+          <button key={v} onClick={() => setView(v)}
+            className={`rounded-t-lg border-b-2 px-4 py-2 text-sm font-medium transition-colors ${
+              view === v ? 'border-kds-green text-kds-green' : 'border-transparent text-kds-subtext hover:text-kds-text'
+            }`}>
+            {VIEW_LABEL[v]}
+          </button>
+        ))}
+      </div>
+
+      {view === 'availability' && (
+        <AvailabilityBoard
+          categories={categories}
+          loading={isLoading}
+          pendingId={toggle86.isPending ? toggle86.variables?.id ?? null : null}
+          onToggle={(id, isAvailable) => toggle86.mutate({ id, isAvailable })}
+        />
+      )}
+      {view === 'windows' && (
+        <TimeWindows
+          categories={categories as WindowedCategory[]}
+          loading={isLoading}
+          onSaved={() => void qc.invalidateQueries({ queryKey: ['menu', conceptId] })}
+        />
+      )}
+
+      {view === 'items' && (<>
       {/* Add category form */}
       {addingCategory && (
         <AddCategoryForm
@@ -261,10 +299,11 @@ export default function MenuPage() {
               { emoji: '🥤', title: 'Drinks',   hint: 'Soft drinks, lassi, chai' },
             ]}
             primaryAction={{ label: 'Add your first category', onClick: () => setAddingCategory(true) }}
-            secondaryAction={{ label: 'Browse media library for photos', href: '/media' }}
+            secondaryAction={{ label: 'Browse the library for photos', href: '/storefront?tab=library' }}
           />
         )}
       </div>
+      </>)}
 
       {editItem && (
         <EditItemDrawer
@@ -273,6 +312,136 @@ export default function MenuPage() {
           onSaved={() => { setEditItem(null); void qc.invalidateQueries({ queryKey: ['menu', conceptId] }) }}
         />
       )}
+    </div>
+  )
+}
+
+// ─── Availability (86) board ────────────────────────────────────────────────
+// One compact row per item with an on/off switch — the fast way to 86 a dish
+// mid-service. Same endpoint as the "86 Item" button on the item cards
+// (PATCH /menu/items/:id/availability), which also emits the 86 to the KDS.
+function AvailabilityBoard({ categories, loading, pendingId, onToggle }: {
+  categories: Category[]
+  loading: boolean
+  pendingId: string | null
+  onToggle: (id: string, isAvailable: boolean) => void
+}) {
+  const off = categories.reduce((n, c) => n + c.items.filter((i) => !i.isAvailable).length, 0)
+  return (
+    <div className="max-w-3xl space-y-4">
+      <p className="text-sm text-kds-subtext">
+        Switch an item off to 86 it: it drops off the storefront menu at once and the kitchen screens are told.
+        {off > 0 && <span className="ml-1 font-semibold text-kds-red">{off} item{off === 1 ? '' : 's'} 86&apos;d now.</span>}
+      </p>
+      {loading && <p className="text-sm text-kds-subtext">Loading menu…</p>}
+      {!loading && categories.length === 0 && <p className="text-sm text-kds-subtext">No categories yet — add them in the Items view.</p>}
+      {categories.map((cat) => (
+        <div key={cat.id} className="overflow-hidden rounded-xl border border-kds-border">
+          <div className="flex items-center justify-between border-b border-kds-border bg-kds-card px-4 py-2.5">
+            <p className="font-bold text-kds-text">{cat.name}</p>
+            <p className="text-xs text-kds-subtext">
+              {cat.items.filter((i) => i.isAvailable).length} of {cat.items.length} on
+            </p>
+          </div>
+          {cat.items.length === 0 && <p className="px-4 py-3 text-xs italic text-kds-subtext">No items in this category</p>}
+          {cat.items.map((item) => (
+            <div key={item.id}
+              className={`flex items-center justify-between gap-3 border-b border-kds-border/50 px-4 py-2.5 last:border-0 ${item.isAvailable ? '' : 'opacity-60'}`}>
+              <div className="min-w-0">
+                <p className={`truncate text-sm font-medium ${item.isAvailable ? 'text-kds-text' : 'text-kds-subtext line-through'}`}>{item.name}</p>
+                <p className="text-xs text-kds-subtext">{fmtPkrWhole(item.priceCents)}</p>
+              </div>
+              <div className="flex shrink-0 items-center gap-3">
+                {!item.isAvailable && <span className="rounded-full bg-kds-red/15 px-2 py-0.5 text-xs font-bold text-kds-red">86&apos;d</span>}
+                <Switch value={item.isAvailable} disabled={pendingId === item.id}
+                  label={item.isAvailable ? `86 ${item.name}` : `Restore ${item.name}`}
+                  onChange={(v) => onToggle(item.id, v)} />
+              </div>
+            </div>
+          ))}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function Switch({ value, onChange, disabled, label }: { value: boolean; onChange: (v: boolean) => void; disabled?: boolean; label: string }) {
+  return (
+    <button type="button" role="switch" aria-checked={value} aria-label={label} title={label}
+      disabled={disabled} onClick={() => onChange(!value)}
+      className={`relative h-6 w-11 shrink-0 rounded-full transition-colors disabled:opacity-50 ${value ? 'bg-kds-green' : 'bg-kds-border'}`}>
+      <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${value ? 'translate-x-5' : 'translate-x-0.5'}`} />
+    </button>
+  )
+}
+
+// ─── Storefront time windows ────────────────────────────────────────────────
+// A category with a window only shows on the storefront between From and To
+// (server clock). Stored on Category.timeRestrictionStart/End and saved with
+// PATCH /menu/categories/:id. Both ends are required: the storefront treats a
+// window with no end as "never", and it does not wrap past midnight.
+function TimeWindows({ categories, loading, onSaved }: {
+  categories: WindowedCategory[]
+  loading: boolean
+  onSaved: () => void
+}) {
+  return (
+    <div className="max-w-2xl space-y-3">
+      <p className="text-sm text-kds-subtext">
+        Limit a category to certain hours on the storefront, e.g. breakfast 08:00 to 11:30. Leave both blank for always on.
+      </p>
+      {loading && <p className="text-sm text-kds-subtext">Loading…</p>}
+      {!loading && categories.length === 0 && <p className="text-sm text-kds-subtext">No categories yet.</p>}
+      {categories.map((cat) => (
+        <TimeWindowRow key={`${cat.id}:${cat.timeRestrictionStart ?? ''}:${cat.timeRestrictionEnd ?? ''}`} cat={cat} onSaved={onSaved} />
+      ))}
+    </div>
+  )
+}
+
+function TimeWindowRow({ cat, onSaved }: { cat: WindowedCategory; onSaved: () => void }) {
+  const [start, setStart] = useState(cat.timeRestrictionStart ?? '')
+  const [end, setEnd] = useState(cat.timeRestrictionEnd ?? '')
+  const dirty = start !== (cat.timeRestrictionStart ?? '') || end !== (cat.timeRestrictionEnd ?? '')
+  const invalid = (!!start !== !!end) || (!!start && !!end && end <= start)
+
+  const save = useMutation({
+    mutationFn: () => api.patch(`/menu/categories/${cat.id}`, {
+      timeRestrictionStart: start || null,
+      timeRestrictionEnd: end || null,
+    }),
+    onSuccess: onSaved,
+  })
+
+  const inputCls = 'rounded-lg border border-kds-border bg-kds-bg px-2 py-1.5 text-sm text-kds-text focus:border-kds-green focus:outline-none'
+  return (
+    <div className="rounded-xl border border-kds-border bg-kds-card px-4 py-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="font-semibold text-kds-text">{cat.name}</p>
+        <div className="flex flex-wrap items-center gap-3">
+          <label className="flex items-center gap-2 text-xs text-kds-subtext">From
+            <input type="time" value={start} onChange={(e) => setStart(e.target.value)} className={inputCls} />
+          </label>
+          <label className="flex items-center gap-2 text-xs text-kds-subtext">To
+            <input type="time" value={end} onChange={(e) => setEnd(e.target.value)} className={inputCls} />
+          </label>
+          {(start || end) && (
+            <button onClick={() => { setStart(''); setEnd('') }} className="text-xs text-kds-subtext hover:text-kds-red">Clear</button>
+          )}
+          {dirty && (
+            <button onClick={() => save.mutate()} disabled={invalid || save.isPending}
+              className="rounded-lg bg-kds-green px-3 py-1.5 text-xs font-bold text-black hover:opacity-90 disabled:opacity-40">
+              {save.isPending ? 'Saving…' : 'Save'}
+            </button>
+          )}
+        </div>
+      </div>
+      <p className={`mt-1.5 text-xs ${invalid ? 'text-kds-red' : 'text-kds-subtext'}`}>
+        {invalid
+          ? (!!start !== !!end ? 'Set both From and To, or clear both.' : 'To must be later than From (windows cannot run past midnight).')
+          : start && end ? `Shown ${start} to ${end} only` : 'Always shown'}
+      </p>
+      {save.isError && <p className="mt-1 text-xs text-kds-red">{(save.error as Error).message || 'Save failed'}</p>}
     </div>
   )
 }

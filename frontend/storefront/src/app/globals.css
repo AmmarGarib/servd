@@ -2100,3 +2100,54 @@ button:hover > .kinetic-caret::after { transform: translateX(6px); }
 @media (prefers-reduced-motion: reduce) {
   .servd-loader-cell { animation: none; background-color: var(--cell-color); opacity: 0.35; }
 }
+
+/* ── Storefront content module (SiteLayout pages + pop-ups) ──────────────── */
+
+/* Per-element entrance animation. The block starts hidden and plays its
+   keyframes once `.sv-in` is added by <Animate> when it scrolls into view.
+   Reduced motion (and no-JS, via a <noscript> in SiteLayoutView) shows it
+   straight away. */
+.sv-anim { opacity: 0; }
+.sv-anim.sv-in {
+  animation-name: var(--sv-anim-name);
+  animation-duration: var(--sv-anim-dur, 600ms);
+  animation-delay: var(--sv-anim-delay, 0ms);
+  animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+  animation-fill-mode: both;
+}
+@keyframes sv-fade-up    { from { opacity: 0; transform: translateY(28px); } to { opacity: 1; transform: none; } }
+@keyframes sv-fade-in    { from { opacity: 0; } to { opacity: 1; } }
+@keyframes sv-slide-left { from { opacity: 0; transform: translateX(48px); } to { opacity: 1; transform: none; } }
+@keyframes sv-slide-right{ from { opacity: 0; transform: translateX(-48px); } to { opacity: 1; transform: none; } }
+@keyframes sv-zoom-in    { from { opacity: 0; transform: scale(0.94); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .sv-anim, .sv-anim.sv-in { opacity: 1 !important; animation: none !important; transform: none !important; }
+}
+
+/* Heading font from PageSettings.fonts.heading or a block's fontFamily.
+   !important so it wins over the inline display fonts the blocks carry. */
+[data-sv-font] :is(h1, h2, h3, h4, h5, h6) { font-family: var(--sv-heading-font) !important; }
+
+/* Columns block: a responsive grid that stacks on mobile unless told not to. */
+.sv-cols {
+  display: grid;
+  grid-template-columns: repeat(var(--sv-cols, 2), minmax(0, 1fr));
+  gap: var(--sv-gap, 2rem);
+  align-items: start;
+}
+@media (max-width: 767px) {
+  .sv-cols[data-stack='true'] { grid-template-columns: minmax(0, 1fr); }
+}
+.sv-cols .container,
+.sv-cols .container-narrow,
+.sv-popup .container,
+.sv-popup .container-narrow { max-width: none; padding-left: 0; padding-right: 0; }
+
+/* Pop-ups */
+@keyframes sv-popup-in { from { opacity: 0; transform: translateY(12px) scale(0.98); } to { opacity: 1; transform: none; } }
+@keyframes sv-backdrop-in { from { opacity: 0; } to { opacity: 1; } }
+.sv-popup-backdrop { animation: sv-backdrop-in 200ms ease-out both; }
+.sv-popup-card { animation: sv-popup-in 260ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+@media (prefers-reduced-motion: reduce) {
+  .sv-popup-backdrop, .sv-popup-card { animation: none !important; }
+}

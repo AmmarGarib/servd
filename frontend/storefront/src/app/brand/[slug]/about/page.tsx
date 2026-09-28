@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import type { Concept } from '../../../../lib/concept'
-import { brandStory, conceptHeroImage } from '../../../../lib/concept'
+import { brandStory, conceptHeroImage, heroCover } from '../../../../lib/concept'
 
 // force-dynamic + cache: 'no-store' so a single API outage at deploy
 // time can't poison the ISR cache and return 404s for the lifetime of
@@ -73,7 +73,7 @@ export default async function BrandAboutPage({ params }: { params: Promise<{ slu
       {/* Big image break */}
       <section style={{
         height: 'clamp(220px, 40vw, 420px)',
-        background: `${concept.primaryColor ?? 'var(--servd-green-dark)'} url(${conceptHeroImage(concept)}) center/cover`,
+        background: `${concept.primaryColor ?? 'var(--servd-green-dark)'}${heroCover(conceptHeroImage(concept))}`,
       }} aria-hidden="true" />
 
       {/* CTA */}

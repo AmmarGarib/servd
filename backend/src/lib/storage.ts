@@ -26,8 +26,10 @@ const ALLOWED_TYPES = [
   'video/mp4', 'video/webm', 'video/quicktime',
 ]
 
-export async function getSignedUploadUrl(filename: string, contentType: string, folder = 'menu') {
-  if (!ALLOWED_TYPES.includes(contentType)) {
+// `extraTypes`: types a caller has already validated for its own purpose (the
+// content library passes the font types it accepts for .woff2/.woff/.ttf/.otf).
+export async function getSignedUploadUrl(filename: string, contentType: string, folder = 'menu', extraTypes: readonly string[] = []) {
+  if (!ALLOWED_TYPES.includes(contentType) && !extraTypes.includes(contentType)) {
     throw new Error(`Content type '${contentType}' not allowed`)
   }
 

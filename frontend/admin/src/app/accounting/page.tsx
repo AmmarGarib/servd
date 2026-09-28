@@ -142,7 +142,7 @@ export default function AccountingHubPage() {
               <Link href="/gift-cards"         className="s-card-hover p-3 rounded border border-s-border text-s-text">🎁 Gift cards</Link>
               <Link href="/dispatch"           className="s-card-hover p-3 rounded border border-s-border text-s-text">🛵 Dispatch</Link>
               <Link href="/tip-pools"          className="s-card-hover p-3 rounded border border-s-border text-s-text">💰 Tip pools</Link>
-              <Link href="/content"            className="s-card-hover p-3 rounded border border-s-border text-s-text">🧱 Content editor</Link>
+              <Link href="/storefront"         className="s-card-hover p-3 rounded border border-s-border text-s-text">Storefront content</Link>
               <Link href="/analytics"          className="s-card-hover p-3 rounded border border-s-border text-s-text">📊 Sales analytics</Link>
               <Link href="/crm"                className="s-card-hover p-3 rounded border border-s-border text-s-text">👥 Customers</Link>
               <Link href="/refunds"            className="s-card-hover p-3 rounded border border-s-border text-s-text">↩️ Refunds</Link>

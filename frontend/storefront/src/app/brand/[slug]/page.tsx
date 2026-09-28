@@ -1,14 +1,13 @@
-// Brand microsite home — mirrors the servd home pattern: fetch raw blocks
-// from the SiteLayout API, render PageRenderer if the operator has saved any,
-// otherwise render the rich BrandFallback (a per-brand mirror of HomeClient).
-// We deliberately bypass `fetchLayout` here because that helper falls back to
-// a 4-block minimal default; we want the *real* DB state, with BrandFallback
-// as the only fallback so brand pages match the depth of the servd home.
+// Brand microsite home — mirrors the servd home pattern: read the live
+// SiteLayout `brand:<slug>` and render it if one is published, otherwise
+// render the rich BrandFallback (the bespoke per-brand layout). A `signature`
+// block inside a live layout renders that same BrandFallback, so the owner can
+// add elements above/below the built-in design.
 
 import { notFound } from 'next/navigation'
 import { brandAccent, brandStory, formatBrandName, type Concept } from '../../../lib/concept'
-import type { Block } from '../../../lib/blocks'
-import { PageRenderer } from '../../../components/blocks/PageRenderer'
+import { fetchSiteLayout } from '../../../lib/blocks'
+import { SiteLayoutView } from '../../../components/blocks/SiteLayoutView'
 import { BrandFallback } from '../../../components/brand/BrandFallback'
 import ConceptViewTracker from '../../../components/ConceptViewTracker'
 import { locationFromConcept } from '../../../lib/brandLocations'
@@ -18,11 +17,6 @@ import { restaurantSchema, breadcrumbSchema, jsonLdScript } from '../../../lib/j
 const API_URL = process.env.INTERNAL_API_URL ?? process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
 export const dynamic = 'force-dynamic'
-
-interface LayoutResponse {
-  slug: string
-  blocks: Block[] | null
-}
 
 // Same fallback record set as brand/[slug]/layout.tsx — keeps the
 // microsites usable when the live /storefront/concepts can't be
@@ -59,15 +53,6 @@ async function getConcepts(): Promise<Concept[]> {
   return Object.values(FALLBACK_CONCEPTS)
 }
 
-async function getBrandBlocks(slug: string): Promise<Block[]> {
-  try {
-    const res = await fetch(`${API_URL}/api/v1/site-layouts/brand:${encodeURIComponent(slug)}`, { cache: 'no-store' })
-    if (!res.ok) return []
-    const body = await res.json() as LayoutResponse
-    return Array.isArray(body.blocks) ? body.blocks : []
-  } catch { return [] }
-}
-
 export default async function BrandHome({
   params,
 }: {
@@ -75,9 +60,9 @@ export default async function BrandHome({
 }) {
   const { slug } = await Promise.resolve(params as Promise<{ slug: string }>)
 
-  const [concepts, blocks] = await Promise.all([
+  const [concepts, layout] = await Promise.all([
     getConcepts(),
-    getBrandBlocks(slug),
+    fetchSiteLayout(`brand:${slug}`),
   ])
 
   const found = concepts.find((c) => c.slug === slug) ?? null
@@ -104,12 +89,14 @@ export default async function BrandHome({
     ]),
   ]
 
-  if (blocks.length === 0) {
+  const signature = <BrandFallback concept={concept} concepts={concepts} />
+
+  if (!layout?.blocks?.length) {
     return (
       <>
         <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLdScript(ld) }} />
         <ConceptViewTracker conceptId={concept.id} slug={slug} />
-        <BrandFallback concept={concept} concepts={concepts} />
+        {signature}
       </>
     )
   }
@@ -118,9 +105,10 @@ export default async function BrandHome({
     <>
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLdScript(ld) }} />
       <ConceptViewTracker conceptId={concept.id} slug={slug} />
-      <PageRenderer
-        blocks={blocks}
+      <SiteLayoutView
+        layout={layout}
         context={{
+          signature,
           conceptSlug: slug,
           brand: {
             name: formatBrandName(concept.name),

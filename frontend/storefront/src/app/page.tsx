@@ -1,14 +1,13 @@
-// servd home page — content can be overridden via the SiteLayout CMS system
-// (operator edits blocks at /content/servd:home), but if no blocks are saved
-// the page renders the conversion-focused HomeClient marketing layout
-// directly. We deliberately bypass `fetchLayout` here because that helper has
-// its own internal fallback to a stale `defaultServdHomeLayout()`; we want
-// the *real* DB state, with HomeClient as the only fallback.
+// servd home page — content can be overridden from the storefront content
+// module (SiteLayout `servd:home`, approved drafts only). When nothing is live
+// the page renders the conversion-focused HomeClient marketing layout directly;
+// when a layout is live, a `signature` block in it renders that same HomeClient
+// so the owner can add elements above/below the built-in design.
 
-import { PageRenderer } from '../components/blocks/PageRenderer'
+import { SiteLayoutView } from '../components/blocks/SiteLayoutView'
 import { SERVD_ORIGIN } from '../lib/brandDomains'
 import { HomeClient } from '../components/HomeClient'
-import type { Block } from '../lib/blocks'
+import { fetchSiteLayout } from '../lib/blocks'
 import type { Concept } from '../lib/concept'
 import { fetchBrandLocations } from '../lib/brandLocations'
 import { organizationSchema, websiteSchema, restaurantSchema, jsonLdScript } from '../lib/jsonLd'
@@ -19,30 +18,12 @@ const API_URL = process.env.INTERNAL_API_URL ?? process.env['NEXT_PUBLIC_API_URL
 
 export const dynamic = 'force-dynamic'
 
-interface LayoutResponse {
-  slug: string
-  blocks: Block[] | null
-}
-
-async function getHomeBlocks(): Promise<Block[]> {
-  try {
-    const res = await fetch(`${API_URL}/api/v1/site-layouts/servd:home`, { cache: 'no-store' })
-    if (!res.ok) return []
-    const body = await res.json() as LayoutResponse
-    return Array.isArray(body.blocks) ? body.blocks : []
-  } catch { return [] }
-}
-
 // Operator-editable landing hero (background image + the expanding photo/video),
-// stored as a `scrollHero` block under the SiteLayout slug `servd:hero` and
-// edited in Admin → Marketing → Landing Hero. Empty → food placeholders.
+// stored as a `scrollHero` block under the SiteLayout slug `servd:hero`.
+// Nothing live → defaults.
 async function getHeroConfig() {
-  try {
-    const res = await fetch(`${API_URL}/api/v1/site-layouts/servd:hero`, { cache: 'no-store' })
-    if (!res.ok) return parseHeroBlock(null)
-    const body = await res.json() as LayoutResponse
-    return parseHeroBlock(body.blocks)
-  } catch { return parseHeroBlock(null) }
+  const layout = await fetchSiteLayout('servd:hero')
+  return parseHeroBlock(layout?.blocks)
 }
 
 async function getConcepts(): Promise<Concept[]> {
@@ -54,8 +35,8 @@ async function getConcepts(): Promise<Concept[]> {
 }
 
 export default async function HomePage() {
-  const [blocks, concepts, brandLocations, heroConfig] = await Promise.all([
-    getHomeBlocks(),
+  const [layout, concepts, brandLocations, heroConfig] = await Promise.all([
+    fetchSiteLayout('servd:home'),
     getConcepts(),
     fetchBrandLocations(API_URL),
     getHeroConfig(),
@@ -80,10 +61,14 @@ export default async function HomePage() {
     ),
   ]
 
+  const home = <HomeClient concepts={concepts} heroConfig={heroConfig} />
+
   return (
     <>
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLdScript(schema) }} />
-      {blocks.length === 0 ? <HomeClient concepts={concepts} heroConfig={heroConfig} /> : <PageRenderer blocks={blocks} />}
+      {layout?.blocks?.length
+        ? <SiteLayoutView layout={layout} context={{ signature: home }} />
+        : home}
     </>
   )
 }

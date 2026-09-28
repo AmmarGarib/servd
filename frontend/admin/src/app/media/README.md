@@ -1,7 +1,8 @@
 # media
 
-Admin route: **/media**. Next.js App Router page module — `page.tsx` is the entry, any sibling `layout.tsx` wraps it.
+Admin route: **/media**. Redirects to `/storefront?tab=library` — the media
+library is the Library tab of the storefront hub (`components/storefront/LibraryPanel.tsx`).
 
 ## Files
 
-- `page.tsx` — Next.js page component (server or client)
+- `page.tsx` — redirect only

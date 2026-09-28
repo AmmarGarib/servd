@@ -15,7 +15,7 @@ import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { MagneticButton, MagneticLink } from '@/components/ui/MagneticButton'
 import { useCart } from '../../store/cart'
-import { conceptHeroImage } from '../../lib/concept'
+import { conceptHeroImage, heroCover } from '../../lib/concept'
 import { useBrandSlug, getServdHost } from '../../lib/host'
 import { encodeCartToken } from '../../lib/cartHandoff'
 
@@ -250,7 +250,7 @@ export default function ConceptOrderPage() {
           minHeight: '320px',
           display: 'flex',
           alignItems: 'flex-end',
-          background: `${accent} url(${conceptHeroImage(concept)}) center/cover`,
+          background: `${accent}${heroCover(conceptHeroImage(concept))}`,
           color: '#fff',
         }}
       >

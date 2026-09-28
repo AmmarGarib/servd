@@ -208,13 +208,17 @@ const ScrollExpandMedia = ({
             animate={{ opacity: 1 - scrollProgress }}
             transition={{ duration: 0.1 }}
           >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={bgImageSrc}
-              alt='Background'
-              className='w-screen h-screen object-cover'
-              style={{ objectPosition: 'center' }}
-            />
+            {bgImageSrc ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={bgImageSrc}
+                alt='Background'
+                className='w-screen h-screen object-cover'
+                style={{ objectPosition: 'center' }}
+              />
+            ) : (
+              <div aria-hidden='true' className='w-screen h-screen' style={{ background: 'var(--servd-green-dark)' }} />
+            )}
             <div className='absolute inset-0 bg-black/10' />
           </motion.div>
 

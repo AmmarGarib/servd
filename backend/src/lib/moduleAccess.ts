@@ -32,6 +32,9 @@ export const MODULE_IDS = [
   'pos', 'reservations', 'reservations_admin', 'scheduling', 'tables', 'dispatch', 'riders',
   'menu', 'components', 'recipes', 'inventory', 'kds_config', 'par_sheet', 'food_safety',
   'marketing_workspace', 'crm', 'campaigns', 'complaints', 'reviews', 'calendar', 'media', 'promos', 'brands', 'analytics',
+  // Storefront content module (decision 41): pages, pop-ups, library, drafts.
+  // Publishing still needs the CEO (role admin) — this only lets you draft.
+  'storefront',
   'finance_pl', 'payroll', 'accounting', 'gift_cards', 'reconciliation', 'exceptions', 'capital', 'projections', 'procurement', 'reports',
   'staff_directory', 'staff_hr',
   'settings', 'notifications', 'help', 'configuration', 'onboarding', 'integrations',
@@ -102,12 +105,12 @@ export const DEFAULT_MODULE_ACCESS: Record<UserRole, string[]> = {
   procurement: ['procurement', 'inventory', 'reports'],
   marketing: [
     'marketing_workspace', 'crm', 'campaigns', 'complaints', 'reviews',
-    'calendar', 'media', 'promos', 'brands', 'analytics',
+    'calendar', 'media', 'promos', 'brands', 'analytics', 'storefront',
   ],
   brand_manager: [
     'brand_dashboard',
     'marketing_workspace', 'crm', 'campaigns', 'complaints', 'reviews',
-    'calendar', 'media', 'promos', 'brands', 'analytics',
+    'calendar', 'media', 'promos', 'brands', 'analytics', 'storefront',
   ],
   fnb_manager: [
     'fnb_dashboard',

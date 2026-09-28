@@ -107,7 +107,7 @@ export default function ConfigurationHubPage() {
 
     // ── Channels ──────────────────────────────────────────────────────────
     { href: '/storefront',  icon: '🛍', title: 'Online Storefront',
-      desc: 'Hours, layout, hero, announcement banner.',
+      desc: 'Library, pages (landing hero, brand pages, brand footers and social links), pop-ups and approvals.',
       category: 'channels', status: 'unknown' },
 
     { href: '/configuration/whatsapp',  icon: '💬', title: 'WhatsApp',
@@ -220,10 +220,6 @@ export default function ConfigurationHubPage() {
     { href: '/configuration/scheduled-reports', icon: '📊', title: 'Scheduled reports',
       desc: 'Daily/weekly digests delivered to your inbox. P&L, low stock, AP aging.',
       category: 'platform', status: 'optional' },
-
-    { href: '/storefront-footer', icon: '🔗', title: 'Brand footers & social links',
-      desc: 'Per-brand footer copy and Instagram / TikTok / Facebook links.',
-      category: 'channels', status: 'optional' },
 
     { href: '/configuration/dietary-tags', icon: '🥗', title: 'Dietary tags & allergens',
       desc: 'Taxonomy your menu items pick from — Vegan, Halal, Gluten-free, etc.',

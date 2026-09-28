@@ -77,6 +77,7 @@ const PORTFOLIO_GUARD_EXCLUSIONS: readonly RegExp[] = [
   /^\/tenants\b/,               // tenant primitives: switch, list, merge
   /^\/me\b/,                    // self-prefs (theme, notifications)
   /^\/media\/upload-url\b/,     // presigned URL is tenant-agnostic
+  /^\/site-layouts\b/,          // page's company comes from its slug (brand) or none (shared pages)
   // Transactional kitchen routes: tenant is deterministic from the order's
   // conceptId. Prompting the operator to pick a company would be nonsense —
   // an order at Stax always lands on Bukhari, an order at Flipd always lands

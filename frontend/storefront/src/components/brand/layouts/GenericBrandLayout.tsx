@@ -2,7 +2,6 @@
 import Link from 'next/link'
 import type { Concept } from '../../../lib/concept'
 import { brandStory, conceptHeroImage, typeLabel, formatBrandName } from '../../../lib/concept'
-import { PromoBar } from '../parts/PromoBar'
 import { CrossBrandStrip } from '../parts/CrossBrandStrip'
 import { BottomCTA } from '../parts/BottomCTA'
 import { OpenStatusBadge, HoursGrid, useHoursData } from '../parts/OpenStatusBadge'
@@ -37,8 +36,6 @@ export function GenericBrandLayout({ concept, concepts }: Props) {
 
   return (
     <div style={{ background: '#fff', color: 'var(--servd-ink)' }}>
-      <PromoBar brandName={formatBrandName(concept.name)} brandSlug={concept.slug} accent={accent} />
-
       <section style={{
         position: 'relative',
         minHeight: 'min(78dvh, 680px)',
@@ -46,7 +43,7 @@ export function GenericBrandLayout({ concept, concepts }: Props) {
         flexDirection: 'column',
         justifyContent: 'flex-end',
         padding: 'clamp(2rem, 6vw, 4rem) 0',
-        background: `linear-gradient(135deg, ${accent} 0%, ${accent}dd 60%, ${accent}aa 100%), url(${heroImage}) center/cover`,
+        background: `linear-gradient(135deg, ${accent} 0%, ${accent}dd 60%, ${accent}aa 100%)${heroImage ? `, url(${heroImage}) center/cover` : ''}`,
         backgroundBlendMode: 'multiply',
         color: 'white',
         overflow: 'hidden',

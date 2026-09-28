@@ -32,6 +32,7 @@ import { startScheduledReportsWorker, carryOverDigestRecipient } from './workers
 import { startShrinkageTrendWorker } from './workers/shrinkageTrend.js'
 import { startRiderScoringWorker } from './workers/riderScoring.js'
 import { startOrderAutoCancelWorker } from './workers/orderAutoCancel.js'
+import { startSitePublishWorker } from './workers/sitePublish.js'
 import { startPaymentRetryWorker } from './workers/paymentRetry.js'
 import { startRiderDispatchWorker } from './workers/riderDispatch.js'
 import { analyticsRoutes } from './modules/analytics/routes.js'
@@ -797,6 +798,7 @@ async function build() {
     startOrderAutoCancelWorker()
     startPaymentRetryWorker()
     startRiderDispatchWorker()
+    startSitePublishWorker()
   } else {
     fastify.log.warn('Background workers disabled (set ENABLE_WORKERS=true to run them)')
   }

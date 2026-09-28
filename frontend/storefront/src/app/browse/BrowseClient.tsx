@@ -2,7 +2,7 @@
 import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
 import type { Concept } from '../../lib/concept'
-import { typeLabel, conceptHeroImage, brandStory } from '../../lib/concept'
+import { typeLabel, conceptHeroImage, heroCover, brandStory } from '../../lib/concept'
 import { isOpenNow, fmtHourWindow } from '../../lib/hours'
 import { trackSearch, trackFilterApplied, track } from '../../lib/analytics'
 
@@ -225,7 +225,7 @@ function BrowseCard({ concept }: { concept: Concept }) {
     >
       <div style={{
         aspectRatio: '16/10',
-        background: `${concept.primaryColor ?? 'var(--servd-green-dark)'} url(${conceptHeroImage(concept)}) center/cover`,
+        background: `${concept.primaryColor ?? 'var(--servd-green-dark)'}${heroCover(conceptHeroImage(concept))}`,
         position: 'relative',
         filter: status.open ? undefined : 'saturate(0.5)',
       }}>

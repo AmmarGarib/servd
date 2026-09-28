@@ -86,7 +86,7 @@ export type ModuleId =
   // Kitchen
   | 'menu' | 'components' | 'recipes' | 'inventory' | 'kds_config' | 'par_sheet' | 'food_safety'
   // Marketing
-  | 'marketing_workspace' | 'crm' | 'campaigns' | 'complaints' | 'reviews' | 'calendar' | 'media' | 'promos' | 'brands' | 'analytics'
+  | 'marketing_workspace' | 'crm' | 'campaigns' | 'complaints' | 'reviews' | 'calendar' | 'media' | 'promos' | 'brands' | 'storefront' | 'analytics'
   // Finance
   | 'finance_pl' | 'payroll' | 'accounting' | 'gift_cards' | 'reconciliation' | 'exceptions' | 'capital' | 'projections' | 'procurement' | 'reports'
   // Workforce — `staff_directory` is the unified hub; `staff_hr` is the HR
@@ -147,9 +147,10 @@ export const MODULES: ModuleMeta[] = [
   { id: 'complaints',         label: 'Complaints',          section: 'Marketing' },
   { id: 'reviews',            label: 'Reviews',             section: 'Marketing' },
   { id: 'calendar',           label: 'Content Calendar',    section: 'Marketing' },
-  { id: 'media',              label: 'Media',               section: 'Marketing' },
+  { id: 'media',              label: 'Media (legacy)',      section: 'Marketing' },
   { id: 'promos',             label: 'Promotions',          section: 'Marketing' },
-  { id: 'brands',             label: 'Brands & Storefront', section: 'Marketing' },
+  { id: 'brands',             label: 'Brands',              section: 'Marketing' },
+  { id: 'storefront',         label: 'Storefront content',  section: 'Marketing' },
   { id: 'analytics',          label: 'Analytics',           section: 'Marketing' },
 
   { id: 'finance_pl',         label: 'P&L',                 section: 'Finance' },

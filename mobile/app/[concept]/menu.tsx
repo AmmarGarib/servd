@@ -2,12 +2,15 @@
 // to the cart. The cart lives in zustand (`useCartStore`), surfaced as a
 // sticky bar at the bottom that links to /[concept]/cart.
 
-import { useEffect } from 'react'
+import { useEffect, useMemo } from 'react'
 import { View, Text, FlatList, TouchableOpacity, ActivityIndicator, ScrollView } from 'react-native'
 import { useLocalSearchParams, useRouter } from 'expo-router'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../../src/lib/api'
 import { useCartStore } from '../../src/store/cart'
+import { ContentBlocks } from '../../src/content/BlockRenderer'
+import { hasLiveBlocks, useSiteLayout } from '../../src/content/api'
+import { reportScroll } from '../../src/content/scroll'
 
 interface Category { id: string; name: string; sortOrder: number }
 interface MenuItem {
@@ -15,9 +18,9 @@ interface MenuItem {
   priceCents: number; imageUrl: string | null; isAvailable: boolean
 }
 interface MenuResponse {
-  concept: { id: string; name: string; slug: string }
-  categories: Category[]
-  items: MenuItem[]
+  concept: { id: string; name: string; slug: string; description?: string | null }
+  categories: Array<Category & { items?: MenuItem[] }>
+  items?: MenuItem[]
 }
 
 export default function ConceptMenuScreen() {
@@ -30,6 +33,14 @@ export default function ConceptMenuScreen() {
     queryFn: () => api.get<MenuResponse>(`/storefront/${slug}/menu`),
     enabled: !!slug,
   })
+  // Owner-built brand page (`brand:<slug>`): its elements sit around the
+  // menu (the menu is the `signature`; with no signature element the blocks
+  // go above it).
+  const { data: layout } = useSiteLayout(slug ? `brand:${slug}` : undefined)
+  const brandCtx = useMemo(
+    () => (data ? { name: data.concept.name, description: data.concept.description ?? null, slug: data.concept.slug } : undefined),
+    [data],
+  )
 
   // If the user picked a different concept than what's in the cart, reset
   // the cart (we don't mix brands in one cart in mobile).
@@ -52,19 +63,21 @@ export default function ConceptMenuScreen() {
 
   const categories = [...data.categories].sort((a, b) => a.sortOrder - b.sortOrder)
   const itemsByCat: Record<string, MenuItem[]> = {}
-  for (const it of data.items) {
+  // The API nests items under categories; older responses had a flat list.
+  const allItems = data.items ?? data.categories.flatMap((c) => c.items ?? [])
+  for (const it of allItems) {
     const key = it.categoryId ?? '__uncat'
     ;(itemsByCat[key] ??= []).push(it)
   }
+  const noItems = allItems.length === 0
   const totalQty = items.reduce((s, i) => s + i.quantity, 0)
 
-  return (
-    <View style={{ flex: 1, backgroundColor: '#0b0d12' }}>
-      <ScrollView contentContainerStyle={{ padding: 18, paddingBottom: 120 }}>
+  const menuBody = (
+    <View style={{ padding: 18 }}>
         <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 11, fontWeight: '700', letterSpacing: 1.5, marginBottom: 4 }}>MENU</Text>
         <Text style={{ color: '#fff', fontSize: 26, fontWeight: '800', marginBottom: 24 }}>{data.concept.name}</Text>
 
-        {categories.length === 0 && data.items.length === 0 && (
+        {categories.length === 0 && noItems && (
           <Text style={{ color: 'rgba(255,255,255,0.5)' }}>This kitchen is updating their menu — check back shortly.</Text>
         )}
 
@@ -86,6 +99,15 @@ export default function ConceptMenuScreen() {
             </View>
           )
         })}
+    </View>
+  )
+
+  return (
+    <View style={{ flex: 1, backgroundColor: '#0b0d12' }}>
+      <ScrollView contentContainerStyle={{ paddingBottom: 120 }} onScroll={reportScroll} scrollEventThrottle={100}>
+        {hasLiveBlocks(layout)
+          ? <ContentBlocks layout={layout} signature={menuBody} conceptSlug={slug} {...(brandCtx && { brand: brandCtx })} ensureSignature />
+          : menuBody}
       </ScrollView>
 
       {totalQty > 0 && (

@@ -529,7 +529,7 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
           </div>
           <p className="text-[11px] text-white/40">
             Street address and map pin belong to the kitchen, not the brand — see the Kitchen &amp; delivery tab.
-            Social links (Instagram, TikTok, Facebook) are set on <Link href="/storefront-footer" className="text-kds-green hover:underline">Brand Footers</Link>.
+            Social links (Instagram, TikTok, Facebook) are set on this brand&apos;s <Link href={`/storefront/pages/${encodeURIComponent(`brand:${concept.slug}:footer`)}`} className="text-kds-green hover:underline">footer page</Link> in the storefront hub.
           </p>
         </Section>
       )}
@@ -661,7 +661,7 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
           )}
           <div className="rounded-xl p-4 text-xs text-white/55"
             style={{ background: 'rgba(99,102,241,0.05)', border: '1px solid rgba(99,102,241,0.18)' }}>
-            💡 For the visual page builder (hero blocks, gallery, menu strip), open <Link href="/storefront" className="text-kds-green underline">Storefront Designer</Link>. Footer copy and social links are on <Link href="/storefront-footer" className="text-kds-green underline">Brand Footers</Link>.
+            The brand page itself (blocks above and below the signature design, pop-ups, fonts) is built in the <Link href={`/storefront/pages/${encodeURIComponent(`brand:${concept.slug}`)}`} className="text-kds-green underline">storefront hub</Link>; footer copy and social links are on its <Link href={`/storefront/pages/${encodeURIComponent(`brand:${concept.slug}:footer`)}`} className="text-kds-green underline">footer page</Link>. Changes go live after CEO approval.
           </div>
         </div>
       )}

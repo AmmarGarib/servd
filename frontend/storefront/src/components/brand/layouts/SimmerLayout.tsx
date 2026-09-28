@@ -16,7 +16,6 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import type { Concept } from '../../../lib/concept'
-import { conceptHeroImage } from '../../../lib/concept'
 import { CrossBrandStrip } from '../parts/CrossBrandStrip'
 import { SpeakeasyFridgeHero } from '../../kinetic/SpeakeasyFridgeHero'
 import { locationFromConcept, whatsappLink } from '../../../lib/brandLocations'
@@ -377,11 +376,9 @@ export function SimmerLayout({ concept, concepts }: Props) {
             }}/>
 
             <ItineraryStop side="left" label="the space">
-              <img
-                src={conceptHeroImage(concept)}
-                alt=""
-                style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
-              />
+              {/* No stock photography: the room's own photo comes in through the
+                  storefront content module; until then, the tiber surface. */}
+              <div aria-hidden="true" style={{ width: '100%', height: '100%', background: 'var(--simmer-green)' }} />
             </ItineraryStop>
 
             <ItineraryStop side="right" label="the plate">

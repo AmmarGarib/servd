@@ -275,14 +275,14 @@ describe('media library', () => {
   it("B does not see A's assets and cannot delete them", async () => {
     const r = await call('GET', '/media', auth(userB))
     expect(r.statusCode).toBe(200)
-    expect(r.json().data.map((a: { id: string }) => a.id)).not.toContain(assetA)
+    expect(r.json().map((a: { id: string }) => a.id)).not.toContain(assetA)
     expect((await call('DELETE', `/media/${assetA}`, auth(userB))).statusCode).toBe(404)
     expect(await prisma.mediaAsset.findUnique({ where: { id: assetA } })).not.toBeNull()
   })
 
   it('A sees and deletes its own', async () => {
     const r = await call('GET', '/media', auth(userA))
-    expect(r.json().data.map((a: { id: string }) => a.id)).toContain(assetA)
+    expect(r.json().map((a: { id: string }) => a.id)).toContain(assetA)
     expect((await call('DELETE', `/media/${assetA}`, auth(userA))).statusCode).toBe(204)
   })
 })

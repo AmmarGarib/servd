@@ -154,7 +154,8 @@ export function KineticBrandLayout({ concept, concepts }: Props) {
             aspectRatio: '16 / 9',
             borderRadius: '1.5rem',
             overflow: 'hidden',
-            backgroundImage: `url(${heroImg})`,
+            background: accent,
+            backgroundImage: heroImg ? `url(${heroImg})` : undefined,
             backgroundSize: 'cover',
             backgroundPosition: 'center',
           }}>

@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import type { KitchensBlock } from '../../lib/blocks'
 import type { Concept } from '../../lib/concept'
-import { typeLabel, conceptHeroImage } from '../../lib/concept'
+import { typeLabel, conceptHeroImage, heroCover } from '../../lib/concept'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -51,7 +51,7 @@ export async function Kitchens({ block }: { block: KitchensBlock }) {
               style={{ textDecoration: 'none', color: 'inherit', display: 'flex', flexDirection: 'column' }}>
               <div style={{
                 aspectRatio: '4/3',
-                background: `${c.primaryColor ?? 'var(--servd-green-dark)'} url(${conceptHeroImage(c)}) center/cover`,
+                background: `${c.primaryColor ?? 'var(--servd-green-dark)'}${heroCover(conceptHeroImage(c))}`,
                 position: 'relative',
               }}>
                 <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, transparent 50%, rgba(0,0,0,0.55) 100%)' }} />

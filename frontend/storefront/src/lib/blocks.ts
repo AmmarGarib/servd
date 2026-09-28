@@ -19,6 +19,7 @@ export type ButtonStyle = 'primary' | 'secondary' | 'dark' | 'ghost'
 export type ButtonSize  = 'sm' | 'md' | 'lg' | 'xl' | 'huge'
 export type Align       = 'left' | 'center' | 'right'
 export type SectionPad  = 'none' | 'sm' | 'md' | 'lg' | 'xl'
+export type BlockAnimation = 'none' | 'fade-up' | 'fade-in' | 'slide-left' | 'slide-right' | 'zoom-in'
 
 interface BlockBase {
   id: string                  // uuid, stable across edits
@@ -28,6 +29,10 @@ interface BlockBase {
   paddingY?: SectionPad       // top/bottom padding band
   fullBleed?: boolean         // bleed to edges (default: container-constrained)
   hidden?: boolean            // toggle off without deleting
+  animation?: BlockAnimation  // plays once when the block scrolls into view
+  animationDelayMs?: number   // 0..3000
+  animationDurationMs?: number // 200..3000, default 600
+  fontFamily?: string         // a library font family or a built-in stack
 }
 
 export interface HeroBlock extends BlockBase {
@@ -139,15 +144,203 @@ export interface DividerBlock extends BlockBase {
   type: 'divider'
 }
 
+export interface ColumnsBlock extends BlockBase {
+  type: 'columns'
+  columns: Block[][]          // 2..4 columns; nested blocks may not be 'columns'
+  gap?: 'sm' | 'md' | 'lg'
+  stackOnMobile?: boolean     // default true
+}
+
+export interface VideoBlock extends BlockBase {
+  type: 'video'
+  url: string
+  posterUrl?: string
+  autoplay?: boolean          // implies muted + playsInline
+  loop?: boolean
+  muted?: boolean
+  aspectRatio?: '16:9' | '9:16' | '1:1' | '4:5'
+}
+
+/** The page's built-in design (brand page → BrandFallback, servd:home →
+ *  HomeClient), so the owner can add elements above/below it. */
+export interface SignatureBlock extends BlockBase {
+  type: 'signature'
+}
+
+/** The storefront's existing sign-in / one-code sign-up forms. */
+export interface SignupFormBlock extends BlockBase {
+  type: 'signup_form'
+  mode: 'signup' | 'login'
+  title?: string
+  subtitle?: string
+}
+
 export type BlockType =
   | 'hero' | 'cta_button' | 'banner' | 'text' | 'image' | 'gallery'
   | 'stat_strip' | 'voices' | 'kitchens' | 'featured_menu' | 'reviews'
   | 'quote' | 'spacer' | 'divider'
+  | 'columns' | 'video' | 'signature' | 'signup_form'
 
 export type Block =
   | HeroBlock | CtaButtonBlock | BannerBlock | TextBlock | ImageBlock | GalleryBlock
   | StatStripBlock | VoicesBlock | KitchensBlock | FeaturedMenuBlock | ReviewsBlock
   | QuoteBlock | SpacerBlock | DividerBlock
+  | ColumnsBlock | VideoBlock | SignatureBlock | SignupFormBlock
+
+// ── Page settings, pop-up rules, public read shape ─────────────────────────
+
+export interface PopupRules {
+  popupKind: 'signup' | 'login' | 'offer' | 'announcement'
+  display: 'modal' | 'bar' | 'corner'
+  trigger: 'before_page' | 'after_seconds' | 'exit_intent' | 'scroll'
+  delaySeconds?: number       // after_seconds
+  scrollPct?: number          // scroll
+  pages: string[]             // path patterns, '*' suffix wildcard; [] = every page
+  brands: string[]            // concept slugs; [] = all brands
+  audience: 'everyone' | 'signed_out' | 'signed_in' | 'never_ordered'
+  frequency: 'once' | 'daily' | 'every_visit'
+  startsAt?: string
+  endsAt?: string
+}
+
+export interface PageSettings {
+  fonts?: { heading?: string; body?: string }
+  ab?: { splitPct: number; blocks: Block[] }
+  popup?: PopupRules
+}
+
+export interface LibraryFont { family: string; url: string }
+
+/** GET /site-layouts/:slug and GET /site-layouts/preview/:token. */
+export interface SiteLayoutRead {
+  slug: string
+  kind: string
+  title: string | null
+  version: number
+  blocks: Block[] | null      // null when nothing is live
+  settings: PageSettings | null
+  fonts: LibraryFont[]
+  publishedAt: string | null
+  updatedAt: string | null
+}
+
+/** GET /site-layouts/popups/live */
+export interface LivePopup {
+  slug: string
+  version: number
+  title: string | null
+  blocks: Block[]
+  rules: PopupRules
+  fonts: LibraryFont[]
+}
+
+const LAYOUT_API = process.env['INTERNAL_API_URL'] ?? process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
+
+function asFonts(v: unknown): LibraryFont[] {
+  if (!Array.isArray(v)) return []
+  return v.filter((f): f is LibraryFont =>
+    !!f && typeof f === 'object' && typeof (f as LibraryFont).family === 'string' && typeof (f as LibraryFont).url === 'string')
+}
+
+export function normalizeSiteLayout(raw: unknown): SiteLayoutRead | null {
+  if (!raw || typeof raw !== 'object') return null
+  const b = raw as Record<string, unknown>
+  const settings = b['settings'] && typeof b['settings'] === 'object' ? b['settings'] as PageSettings : null
+  return {
+    slug:        typeof b['slug'] === 'string' ? b['slug'] : '',
+    kind:        typeof b['kind'] === 'string' ? b['kind'] : 'page',
+    title:       typeof b['title'] === 'string' ? b['title'] : null,
+    version:     typeof b['version'] === 'number' ? b['version'] : 0,
+    blocks:      Array.isArray(b['blocks']) ? b['blocks'] as Block[] : null,
+    settings,
+    fonts:       asFonts(b['fonts']),
+    publishedAt: typeof b['publishedAt'] === 'string' ? b['publishedAt'] : null,
+    updatedAt:   typeof b['updatedAt'] === 'string' ? b['updatedAt'] : null,
+  }
+}
+
+async function readLayout(path: string): Promise<SiteLayoutRead | null> {
+  try {
+    // no-store: a cached failure would stick until restart (CLAUDE.md).
+    const res = await fetch(`${LAYOUT_API}/api/v1/site-layouts/${path}`, { cache: 'no-store' })
+    if (!res.ok) return null
+    return normalizeSiteLayout(await res.json())
+  } catch {
+    return null
+  }
+}
+
+/** The LIVE copy of a SiteLayout. null when the API is down or the slug is unknown. */
+export function fetchSiteLayout(slug: string): Promise<SiteLayoutRead | null> {
+  return readLayout(encodeURIComponent(slug))
+}
+
+/** The DRAFT behind a preview token. */
+export function fetchSiteLayoutPreview(token: string): Promise<SiteLayoutRead | null> {
+  return readLayout(`preview/${encodeURIComponent(token)}`)
+}
+
+/** Live pop-ups. Used client-side by PopupHost. */
+export async function fetchLivePopups(apiBase: string): Promise<LivePopup[]> {
+  try {
+    const res = await fetch(`${apiBase}/api/v1/site-layouts/popups/live`, { cache: 'no-store' })
+    if (!res.ok) return []
+    const body = await res.json() as unknown
+    if (!Array.isArray(body)) return []
+    return body
+      .filter((p): p is Record<string, unknown> => !!p && typeof p === 'object')
+      .filter((p) => typeof p['slug'] === 'string' && Array.isArray(p['blocks']) && !!p['rules'] && typeof p['rules'] === 'object')
+      .map((p) => ({
+        slug:    p['slug'] as string,
+        version: typeof p['version'] === 'number' ? p['version'] : 0,
+        title:   typeof p['title'] === 'string' ? p['title'] : null,
+        blocks:  p['blocks'] as Block[],
+        rules:   p['rules'] as PopupRules,
+        fonts:   asFonts(p['fonts']),
+      }))
+  } catch {
+    return []
+  }
+}
+
+/** Fire-and-forget A/B + conversion beacon: POST /site-layouts/:slug/track. */
+export function trackLayout(apiBase: string, slug: string, version: number, variant: 'a' | 'b', event: 'view' | 'convert'): void {
+  try {
+    void fetch(`${apiBase}/api/v1/site-layouts/${encodeURIComponent(slug)}/track`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ version, variant, event }),
+      keepalive: true,
+    }).catch(() => { /* stats are best-effort */ })
+  } catch { /* ignore */ }
+}
+
+// ── Fonts ──────────────────────────────────────────────────────────────────
+
+const GENERIC_FAMILIES = new Set(['serif', 'sans-serif', 'monospace', 'cursive', 'fantasy', 'system-ui', 'inherit'])
+
+/** A CSS font-family value for a library family name or a built-in stack. */
+export function cssFontFamily(name: string | undefined | null): string | undefined {
+  const n = (name ?? '').replace(/[<>{};\\]/g, '').trim()
+  if (!n) return undefined
+  if (n.includes(',') || n.startsWith('var(') || GENERIC_FAMILIES.has(n)) return n
+  return `"${n.replace(/["']/g, '')}", system-ui, sans-serif`
+}
+
+/** @font-face rules for library fonts (font-display: swap). */
+export function fontFaceCss(fonts: LibraryFont[]): string {
+  return fonts
+    .map((f) => {
+      const family = f.family.replace(/["'<>{};\\]/g, '').trim()
+      const url = f.url.trim()
+      if (!family || !/^(https?:\/\/|\/)/.test(url)) return ''
+      const ext = url.split('?')[0]!.split('.').pop()?.toLowerCase()
+      const format = ext === 'woff2' ? 'woff2' : ext === 'woff' ? 'woff' : ext === 'ttf' ? 'truetype' : ext === 'otf' ? 'opentype' : null
+      const safeUrl = url.replace(/["'()<>\s\\]/g, (c) => '%' + c.charCodeAt(0).toString(16).padStart(2, '0'))
+      return `@font-face{font-family:"${family}";src:url("${safeUrl}")${format ? ` format("${format}")` : ''};font-display:swap;}`
+    })
+    .join('')
+}
 
 // ── Catalogue ──────────────────────────────────────────────────────────────
 

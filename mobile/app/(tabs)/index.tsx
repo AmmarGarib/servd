@@ -1,7 +1,10 @@
-import { View, Text, FlatList, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native'
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native'
 import { useQuery } from '@tanstack/react-query'
 import { useRouter } from 'expo-router'
 import { api } from '../../src/lib/api'
+import { ContentBlocks } from '../../src/content/BlockRenderer'
+import { hasLiveBlocks, useSiteLayout } from '../../src/content/api'
+import { reportScroll } from '../../src/content/scroll'
 
 interface Concept {
   id: string
@@ -14,12 +17,18 @@ interface Concept {
 
 export default function BrowseScreen() {
   const router = useRouter()
+  // Public brand list. (This used to call GET /concepts, which is staff-only,
+  // so customers always saw "No brands available".) Shares its cache key with
+  // the `kitchens` content block.
   const { data: concepts, isLoading } = useQuery({
     queryKey: ['concepts-public'],
-    queryFn: () => api.get<Concept[]>('/concepts'),
+    queryFn: () => api.get<Concept[]>('/storefront/concepts'),
   })
+  // Owner-built home page (`servd:home`). Its `signature` element is this
+  // screen's own browse list; with nothing live the browse list stands alone.
+  const { data: layout, isLoading: layoutLoading } = useSiteLayout('servd:home')
 
-  if (isLoading) {
+  if (isLoading || layoutLoading) {
     return (
       <View style={s.center}>
         <ActivityIndicator color="#00D4B1" size="large" />
@@ -27,15 +36,13 @@ export default function BrowseScreen() {
     )
   }
 
-  return (
-    <View style={s.container}>
+  const browse = (
+    <View>
       <Text style={s.heading}>What are you craving?</Text>
-      <FlatList
-        data={concepts ?? []}
-        keyExtractor={item => item.id}
-        contentContainerStyle={s.list}
-        renderItem={({ item }) => (
-          <View style={[s.card, { borderColor: item.primaryColor ?? '#00D4B1' }]}>
+      <View style={s.list}>
+        {(concepts ?? []).length === 0 && <Text style={s.empty}>No brands available</Text>}
+        {(concepts ?? []).map((item) => (
+          <View key={item.id} style={[s.card, { borderColor: item.primaryColor ?? '#00D4B1' }]}>
             <View style={[s.brandColor, { backgroundColor: item.primaryColor ?? '#00D4B1' }]} />
             <View style={s.cardBody}>
               <Text style={s.brandName}>{item.name}</Text>
@@ -50,10 +57,17 @@ export default function BrowseScreen() {
               </View>
             </View>
           </View>
-        )}
-        ListEmptyComponent={<Text style={s.empty}>No brands available</Text>}
-      />
+        ))}
+      </View>
     </View>
+  )
+
+  return (
+    <ScrollView style={s.container} onScroll={reportScroll} scrollEventThrottle={100}>
+      {hasLiveBlocks(layout)
+        ? <ContentBlocks layout={layout} signature={browse} />
+        : browse}
+    </ScrollView>
   )
 }
 

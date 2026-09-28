@@ -124,24 +124,21 @@ export function typeLabel(t: string): string {
   return 'Order'
 }
 
-// Stock hero images keyed on slug.
-// Replace with real photography when art direction is delivered.
-// HERO_BY_SLUG — fallback hero image per concept slug. Operator can
-// override per-brand via the admin once art direction is delivered.
-// Only the three live brands are listed here; unknown slugs fall back
-// to the generic image below.
+// Brand hero image keyed on slug — ONLY the brand's own assets from /public,
+// never stock photography. A brand without one gets null and callers paint
+// its accent / a token background instead. Real photography goes in through
+// the storefront content module (Admin → Storefront → Library).
 const HERO_BY_SLUG: Record<string, string> = {
-  'simmer':          'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?w=1200&q=85',
-  // Stackd — rustic toasted focaccia/rye sandwich on a wood board. Matches
-  // the upscale dine-in / Italian-leaning brand direction.
-  'stackd':            'https://images.unsplash.com/photo-1559054663-e8d23213f55c?w=1200&q=85',
-  // Flipd — smash burger, close-up and warm-lit, which is what the brand
-  // book's imagery rules ask for: bold close-up angles, warm light, no filters.
-  'flipd':           'https://images.unsplash.com/photo-1568901346375-23c9450c58cd?w=1200&q=85',
+  'stackd': '/brand/stackd-concrete.webp',
 }
 
-export function conceptHeroImage(concept: Concept): string {
-  return HERO_BY_SLUG[concept.slug] ?? 'https://images.unsplash.com/photo-1495195134817-aeb325a55b65?w=1200&q=85'
+export function conceptHeroImage(concept: Pick<Concept, 'slug'>): string | null {
+  return HERO_BY_SLUG[concept.slug] ?? null
+}
+
+/** `url(...) center/cover` for a CSS background shorthand, or '' when there is no image. */
+export function heroCover(img: string | null): string {
+  return img ? ` url(${img}) center/cover` : ''
 }
 
 // Editorial copy per brand for marketing pages.

@@ -1,184 +1,527 @@
-// Site layout API.
+// Storefront content module API (owner decision 41).
 //
-// Storefront pages are stored as `Block[]` JSON keyed by slug.
-//   "servd:home"     → the marketing homepage
-//   "brand:simmer"   → Simmer microsite home
-//   "brand:stax"     → Stax microsite home
-//   etc.
+// One row per page / pop-up, keyed by slug (see service.ts parseSlug):
+//   servd:home, servd:hero        shared servd pages          tenantId null
+//   brand:<slug>[:footer]         a brand's page / footer     the brand's company
+//   page:<slug>                   custom page (/pages/<slug>) tenantId null
+//   popup:<key>                   pop-up                      null, or the one company its brands belong to
 //
-// Reads are public (no auth) so the storefront can fetch without leaking
-// credentials. Writes are manager-only and audit-logged.
+// blocks/settings are the LIVE copy the storefront reads. Every edit goes to
+// draftBlocks/draftSettings and nothing reaches the storefront until the CEO
+// (role `admin`) approves it — now, or at a scheduled publishAt. Every publish
+// writes a SiteLayoutVersion so any version can be rolled back to.
 //
-// Company ownership: SiteLayout carries no tenantId/conceptId — it is keyed
-// purely by slug — so ownership is derived from the slug:
-//   "brand:<conceptSlug>[:page]" → owned by the brand's company (Concept.slug
-//                                  is globally unique, so this is unambiguous)
-//   "servd:*"                    → the shared platform pages; they present every
-//                                  company's brands, so only an admin may write
-// Anything else cannot be attributed to a company and is rejected on write.
+// Drafting (and the staff reads) needs the `storefront` module; approve,
+// reject, rollback and delete are the CEO's. The old publish-on-save
+// PUT /site-layouts/:slug is gone.
 
-import type { FastifyInstance, FastifyRequest } from 'fastify'
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
+import { Prisma, type SiteLayout } from '@prisma/client'
 import { z } from 'zod'
+import jwt from 'jsonwebtoken'
 import { prisma } from '../../lib/prisma.js'
-import { requireAuth, MANAGERS, ADMIN_ONLY } from '../auth/middleware.js'
+import { requireAuth, ADMIN_ONLY } from '../auth/middleware.js'
 import { audit } from '../../lib/audit.js'
-import { AppError, ForbiddenError, NotFoundError } from '../../lib/errors.js'
-import { scopeTenantWhere, type ScopeMode } from '../../lib/tenantScope.js'
+import { AppError, ConflictError, ForbiddenError, NotFoundError, UnauthorizedError } from '../../lib/errors.js'
+import { effectiveModulesForUser } from '../../lib/moduleAccess.js'
+import { scopeTenantWhere } from '../../lib/tenantScope.js'
+import {
+  blocksSchema, pageSettingsSchema, popupRulesSchema, MAX_CONTENT_BYTES,
+} from './schemas.js'
+import {
+  parseSlugOrThrow, resolveLayoutTenant, assertRowInScope, publishDraft, publishDueLayouts,
+  publicShape, resolveFonts, namesById,
+} from './service.js'
 
-// Block validation — relaxed (allow extension fields), enforces shape on the
-// known discriminator. We trust managers to not put garbage in; the renderer
-// also defends with optional-chaining.
-const blockSchema = z.object({
-  id:         z.string().min(1),
-  type:       z.string().min(1),
-}).passthrough()
+const PREVIEW_TOKEN_TYPE = 'site_preview'
+const PREVIEW_TTL = '30m'
+const jwtSecret = () => process.env['JWT_SECRET'] as string
 
-const blocksSchema = z.array(blockSchema).max(80)
+type SlugParams = { Params: { slug: string } }
 
-type LayoutOwner = { kind: 'platform' } | { kind: 'brand'; conceptSlug: string } | null
-
-function parseLayoutSlug(slug: string): LayoutOwner {
-  if (slug.startsWith('servd:')) return { kind: 'platform' }
-  if (slug.startsWith('brand:')) {
-    const conceptSlug = slug.slice('brand:'.length).split(':')[0] ?? ''
-    return conceptSlug ? { kind: 'brand', conceptSlug } : null
-  }
-  return null
+function slugOf(req: FastifyRequest<SlugParams>): string {
+  try { return decodeURIComponent(req.params.slug) } catch { return req.params.slug }
 }
 
-/**
- * Throws unless the caller may write the layout at `slug` in `mode`:
- *   • brand:<slug>… — the brand must belong to a company in scope ('create'
- *     = the active company only, 'write' = every company the operator is in).
- *     404 rather than 403 so a foreign slug doesn't confirm the brand exists.
- *   • servd:*       — admin only (the page is shared across every company).
- *   • anything else — 422; it can't be attributed to a company.
- */
-async function assertLayoutSlugOwned(req: FastifyRequest, slug: string, mode: ScopeMode): Promise<void> {
-  const owner = parseLayoutSlug(slug)
-  if (!owner) {
-    throw new AppError('LAYOUT_SLUG_INVALID', 'Layout slug must be "servd:<page>" or "brand:<brand-slug>[:page]"', 422)
+// ── Access ───────────────────────────────────────────────────────────────────
+
+async function assertStorefrontModule(req: FastifyRequest, _reply: FastifyReply) {
+  const su = req.staffUser!
+  if (su.role === 'admin') return
+  const u = await prisma.user.findUnique({ where: { id: su.id }, select: { moduleAllow: true, moduleDeny: true } })
+  const modules = await effectiveModulesForUser({ role: su.role, moduleAllow: u?.moduleAllow ?? [], moduleDeny: u?.moduleDeny ?? [] })
+  if (!modules.has('storefront')) {
+    throw new ForbiddenError('Your account does not have access to the Storefront module. Ask the CEO to enable it in Module Access.')
   }
-  if (owner.kind === 'platform') {
-    if (!ADMIN_ONLY.includes(req.staffUser!.role)) {
-      throw new ForbiddenError('Only an admin can edit the shared servd pages')
-    }
-    return
-  }
-  if (mode === 'create' && !req.staffUser!.tenantId) {
-    throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company before saving a brand page', 422)
-  }
-  const concept = await prisma.concept.findFirst({
-    where: { slug: owner.conceptSlug, deletedAt: null, ...(await scopeTenantWhere(req, mode)) },
-    select: { id: true },
-  })
-  if (!concept) throw new NotFoundError('SiteLayout', slug)
 }
+
+const STOREFRONT = { preHandler: [requireAuth(), assertStorefrontModule] }
+const CEO = { preHandler: requireAuth(...ADMIN_ONLY) }
+
+/** The row at `slug`, 404 unless its company is in `mode`'s scope. */
+async function loadRow(req: FastifyRequest, slug: string, mode: 'read' | 'write'): Promise<SiteLayout> {
+  parseSlugOrThrow(slug)
+  const row = await prisma.siteLayout.findUnique({ where: { slug } })
+  if (!row) throw new NotFoundError('SiteLayout', slug)
+  await assertRowInScope(req, row, mode)
+  return row
+}
+
+function actor(req: FastifyRequest) {
+  const su = req.staffUser
+  return { userId: su?.id ?? null, userEmail: su?.email ?? null, tenantId: su?.tenantId ?? null }
+}
+
+function editShape(row: SiteLayout) {
+  const live = row.liveVersion > 0
+  return {
+    id: row.id,
+    slug: row.slug,
+    kind: row.kind,
+    title: row.title,
+    tenantId: row.tenantId,
+    blocks: live ? row.blocks : null,
+    settings: live ? row.settings : null,
+    draftBlocks: row.draftBlocks,
+    draftSettings: row.draftSettings,
+    draftStatus: row.draftStatus,
+    reviewNote: row.reviewNote,
+    publishAt: row.publishAt,
+    liveVersion: row.liveVersion,
+    publishedAt: row.publishedAt,
+    submittedAt: row.submittedAt,
+    draftUpdatedAt: row.draftUpdatedAt,
+    updatedAt: row.updatedAt,
+  }
+}
+
+function contentBytes(blocks: unknown, settings: unknown): number {
+  return Buffer.byteLength(JSON.stringify(blocks ?? null), 'utf8') + Buffer.byteLength(JSON.stringify(settings ?? null), 'utf8')
+}
+
+const jsonOrNull = (v: unknown) => (v === null || v === undefined ? Prisma.DbNull : (v as Prisma.InputJsonValue))
 
 export async function siteLayoutRoutes(fastify: FastifyInstance) {
-  // List layouts (admin index) — the shared servd:* pages plus the layouts of
-  // brands in the operator's company (every member company in "All
-  // companies" view). Brand layouts of other companies never appear.
-  fastify.get('/', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
-    const brands = await prisma.concept.findMany({
-      where: { deletedAt: null, ...(await scopeTenantWhere(req, 'read')) },
-      select: { slug: true },
-    })
-    return prisma.siteLayout.findMany({
-      where: {
-        OR: [
-          { slug: { startsWith: 'servd:' } },
-          ...brands.flatMap((b) => [
-            { slug: `brand:${b.slug}` },
-            { slug: { startsWith: `brand:${b.slug}:` } },
-          ]),
-        ],
-      },
-      orderBy: { slug: 'asc' },
-      select: { id: true, slug: true, title: true, updatedAt: true, publishedAt: true },
-    })
-  })
+  // ── Public ────────────────────────────────────────────────────────────────
 
-  // Public read — storefront fetches this on each page render (with revalidate)
-  fastify.get<{ Params: { slug: string } }>(
+  // Live pop-ups inside their window. Static paths are registered before
+  // /:slug; find-my-way prefers static segments either way.
+  fastify.get(
+    '/popups/live',
+    { config: { rateLimit: { max: 240, timeWindow: '1 minute' } } },
+    async () => {
+      await publishDueLayouts({ kind: 'popup' })
+      const rows = await prisma.siteLayout.findMany({
+        where: { kind: 'popup', liveVersion: { gt: 0 } },
+        orderBy: { slug: 'asc' },
+      })
+      const now = Date.now()
+      const out = []
+      for (const row of rows) {
+        const settings = (row.settings ?? {}) as Record<string, unknown>
+        const rules = popupRulesSchema.safeParse(settings['popup'])
+        if (!rules.success) continue
+        if (rules.data.startsAt && new Date(rules.data.startsAt).getTime() > now) continue
+        if (rules.data.endsAt && new Date(rules.data.endsAt).getTime() <= now) continue
+        out.push({
+          slug: row.slug,
+          version: row.liveVersion,
+          title: row.title,
+          blocks: row.blocks,
+          rules: rules.data,
+          ab: settings['ab'] ?? null,
+          fonts: await resolveFonts(row.blocks, row.settings, row.tenantId),
+        })
+      }
+      return out
+    },
+  )
+
+  // Draft preview for the storefront's /preview/<token> page. A wildcard, not
+  // `:token`: a JWT is longer than the router's 100-char param limit (414).
+  fastify.get<{ Params: { '*': string } }>(
+    '/preview/*',
+    { config: { rateLimit: { max: 120, timeWindow: '1 minute' } } },
+    async (req, reply) => {
+      let payload: { type?: string; slug?: string }
+      try {
+        payload = jwt.verify(req.params['*'], jwtSecret()) as typeof payload
+      } catch {
+        throw new UnauthorizedError('This preview link has expired. Open a new one from the editor.')
+      }
+      if (payload.type !== PREVIEW_TOKEN_TYPE || typeof payload.slug !== 'string') {
+        throw new UnauthorizedError('Not a preview link')
+      }
+      const row = await prisma.siteLayout.findUnique({ where: { slug: payload.slug } })
+      reply.header('Cache-Control', 'no-store')
+      return publicShape(payload.slug, row, true)
+    },
+  )
+
+  // Live read — the storefront fetches this per render. A slug with no row
+  // (or nothing live yet) returns blocks null and the storefront falls back
+  // to its built-in design. A scheduled draft that has come due is published
+  // here first, so the page never waits for the worker.
+  fastify.get<SlugParams>(
     '/:slug',
     { config: { rateLimit: { max: 240, timeWindow: '1 minute' } } },
     async (req) => {
-      const slug = decodeURIComponent(req.params.slug)
-      const row = await prisma.siteLayout.findUnique({ where: { slug } })
-      // Returning null lets the storefront fall back to its hard-coded default.
-      // (Avoids 404 noise in logs.)
-      return row ?? { slug, title: null, blocks: null, publishedAt: null, updatedAt: null }
-    },
-  )
-
-  // Upsert — the operator hits "Save" in the dashboard editor.
-  fastify.put<{ Params: { slug: string } }>(
-    '/:slug',
-    { preHandler: requireAuth(...MANAGERS) },
-    async (req) => {
-      const slug = decodeURIComponent(req.params.slug)
-      const body = z.object({
-        title:  z.string().max(120).optional(),
-        blocks: blocksSchema,
-      }).parse(req.body)
-
-      // Defensive: don't allow more than 200KB of JSON
-      if (JSON.stringify(body.blocks).length > 200_000) {
-        throw new AppError('LAYOUT_TOO_LARGE', 'Layout exceeds 200KB. Slim it down.', 413)
+      const slug = slugOf(req)
+      let row = await prisma.siteLayout.findUnique({ where: { slug } })
+      if (row && row.draftStatus === 'scheduled' && row.publishAt && row.publishAt <= new Date()) {
+        await publishDueLayouts({ slug })
+        row = await prisma.siteLayout.findUnique({ where: { slug } })
       }
-
-      // Upsert: a first save binds a NEW row to the brand, so it must be a
-      // brand of the ACTIVE company; a re-save edits an existing row, so any
-      // company the operator belongs to will do.
-      const before = await prisma.siteLayout.findUnique({ where: { slug } })
-      await assertLayoutSlugOwned(req, slug, before ? 'write' : 'create')
-
-      const saved = await prisma.siteLayout.upsert({
-        where: { slug },
-        create: {
-          slug,
-          title: body.title ?? slug,
-          blocks: body.blocks as never,
-          updatedById: req.staffUser?.id ?? null,
-          publishedAt: new Date(),
-        },
-        update: {
-          ...(body.title !== undefined && { title: body.title }),
-          blocks: body.blocks as never,
-          updatedById: req.staffUser?.id ?? null,
-          publishedAt: new Date(),
-        },
-      })
-
-      await audit({ category: 'identity',
-        action: before ? 'layout.update' : 'layout.create',
-        entity: 'SiteLayout',
-        entityId: saved.id,
-        userId: req.staffUser?.id ?? null, tenantId: req.staffUser?.tenantId ?? null,
-        userEmail: req.staffUser?.email ?? null,
-        before: before ? { blockCount: Array.isArray(before.blocks) ? (before.blocks as unknown[]).length : 0 } : null,
-        after:  { slug: saved.slug, blockCount: body.blocks.length },
-      })
-
-      return saved
+      return publicShape(slug, row)
     },
   )
 
-  // Reset to default (delete the row → storefront falls back to defaults)
-  fastify.delete<{ Params: { slug: string } }>(
-    '/:slug',
-    { preHandler: requireAuth(...MANAGERS) },
+  // A/B counters. Unknown slugs / versions are ignored (still 204) so the
+  // storefront never has to care whether a page is live.
+  fastify.post<SlugParams>(
+    '/:slug/track',
+    { config: { rateLimit: { max: 120, timeWindow: '1 minute' } } },
     async (req, reply) => {
-      const slug = decodeURIComponent(req.params.slug)
-      await assertLayoutSlugOwned(req, slug, 'write')
-      await prisma.siteLayout.deleteMany({ where: { slug } })
-      await audit({ category: 'identity',
-        action: 'layout.reset', entity: 'SiteLayout',
-        userId: req.staffUser?.id ?? null, tenantId: req.staffUser?.tenantId ?? null, userEmail: req.staffUser?.email ?? null,
-        metadata: { slug },
+      const body = z.object({
+        version: z.number().int().min(1),
+        variant: z.enum(['a', 'b']),
+        event:   z.enum(['view', 'convert']),
+      }).parse(req.body)
+      const row = await prisma.siteLayout.findUnique({ where: { slug: slugOf(req) }, select: { id: true, liveVersion: true } })
+      if (!row || body.version > row.liveVersion) return reply.status(204).send()
+      const exists = await prisma.siteLayoutVersion.findUnique({
+        where: { layoutId_version: { layoutId: row.id, version: body.version } },
+        select: { id: true },
       })
+      if (!exists) return reply.status(204).send()
+
+      const views = body.event === 'view' ? 1 : 0
+      const conversions = body.event === 'convert' ? 1 : 0
+      const key = { layoutId_version_variant: { layoutId: row.id, version: body.version, variant: body.variant } }
+      const upsert = () => prisma.siteLayoutStat.upsert({
+        where: key,
+        create: { layoutId: row.id, version: body.version, variant: body.variant, views, conversions },
+        update: { views: { increment: views }, conversions: { increment: conversions } },
+      })
+      try {
+        await upsert()
+      } catch (err) {
+        // Two first-hits racing on the create: the loser retries as an update.
+        if ((err as { code?: string }).code !== 'P2002') throw err
+        await upsert()
+      }
       return reply.status(204).send()
     },
   )
+
+  // ── Staff ─────────────────────────────────────────────────────────────────
+
+  // Index: the shared rows plus the rows of companies in view.
+  fastify.get<{ Querystring: { status?: string; kind?: string } }>(
+    '/',
+    STOREFRONT,
+    async (req) => {
+      const q = z.object({
+        status: z.enum(['pending', 'draft', 'scheduled', 'all']).default('all'),
+        kind:   z.enum(['page', 'hero', 'footer', 'popup']).optional(),
+      }).parse(req.query)
+      const rows = await prisma.siteLayout.findMany({
+        where: {
+          OR: [{ tenantId: null }, await scopeTenantWhere(req, 'read')],
+          ...(q.status !== 'all' ? { draftStatus: q.status } : {}),
+          ...(q.kind ? { kind: q.kind } : {}),
+        },
+        orderBy: { slug: 'asc' },
+      })
+      const names = await namesById(rows.map((r) => r.submittedById))
+      return rows.map((r) => ({
+        id: r.id,
+        slug: r.slug,
+        kind: r.kind,
+        title: r.title,
+        tenantId: r.tenantId,
+        draftStatus: r.draftStatus,
+        liveVersion: r.liveVersion,
+        publishedAt: r.publishedAt,
+        publishAt: r.publishAt,
+        submittedAt: r.submittedAt,
+        submittedBy: r.submittedById ? (names.get(r.submittedById) ?? { id: r.submittedById, name: null }) : null,
+        reviewNote: r.reviewNote,
+        updatedAt: r.updatedAt,
+        draftUpdatedAt: r.draftUpdatedAt,
+      }))
+    },
+  )
+
+  // Full row for the editor; a slug with no row returns a skeleton.
+  fastify.get<SlugParams>('/:slug/edit', STOREFRONT, async (req) => {
+    const slug = slugOf(req)
+    const parsed = parseSlugOrThrow(slug)
+    const row = await prisma.siteLayout.findUnique({ where: { slug } })
+    if (row) {
+      await assertRowInScope(req, row, 'read')
+      return editShape(row)
+    }
+    const tenantId = await resolveLayoutTenant(req, slug, 'read')
+    return {
+      slug, kind: parsed.kind, title: null, tenantId,
+      blocks: null, settings: null, draftBlocks: null, draftSettings: null,
+      draftStatus: 'none', reviewNote: null, publishAt: null, liveVersion: 0, publishedAt: null,
+      submittedAt: null, draftUpdatedAt: null, updatedAt: null,
+    }
+  })
+
+  // Save the working copy. Editing a pending or scheduled draft drops it back
+  // to 'draft' (the CEO approved something else).
+  fastify.put<SlugParams>('/:slug/draft', STOREFRONT, async (req) => {
+    const slug = slugOf(req)
+    const parsed = parseSlugOrThrow(slug)
+    const body = z.object({
+      title:    z.string().max(120).nullish(),
+      kind:     z.enum(['page', 'hero', 'footer', 'popup']).optional(), // derived from the slug; accepted for the contract
+      blocks:   blocksSchema,
+      settings: pageSettingsSchema.nullish(),
+    }).parse(req.body)
+    const settings = body.settings ?? null
+
+    if (contentBytes(body.blocks, settings) > MAX_CONTENT_BYTES) {
+      throw new AppError('LAYOUT_TOO_LARGE', 'This page is over 200KB. Slim it down.', 413)
+    }
+    if (parsed.kind === 'popup' && !settings?.popup) {
+      throw new AppError('POPUP_RULES_REQUIRED', 'A pop-up needs its display rules (settings.popup)', 422)
+    }
+    if (parsed.kind !== 'popup' && settings?.popup) {
+      throw new AppError('POPUP_RULES_NOT_ALLOWED', 'Only a pop-up carries pop-up rules', 422)
+    }
+
+    const before = await prisma.siteLayout.findUnique({ where: { slug } })
+    if (before) await assertRowInScope(req, before, 'write')
+    const tenantId = await resolveLayoutTenant(req, slug, before ? 'write' : 'create', settings?.popup?.brands)
+
+    const now = new Date()
+    const draft = {
+      kind: parsed.kind,
+      tenantId,
+      draftBlocks: body.blocks as Prisma.InputJsonValue,
+      draftSettings: jsonOrNull(settings),
+      draftStatus: 'draft',
+      draftUpdatedById: req.staffUser!.id,
+      draftUpdatedAt: now,
+      submittedById: null,
+      submittedAt: null,
+      publishAt: null,
+    }
+    const saved = before
+      ? await prisma.siteLayout.update({
+          where: { id: before.id },
+          data: { ...draft, ...(body.title != null ? { title: body.title } : {}) },
+        })
+      : await prisma.siteLayout.create({
+          data: { ...draft, slug, title: body.title ?? slug, blocks: [], liveVersion: 0 },
+        })
+
+    await audit({
+      category: 'identity', ...actor(req),
+      action: 'site_layout.draft_save', entity: 'SiteLayout', entityId: saved.id,
+      before: before ? { draftStatus: before.draftStatus, publishAt: before.publishAt } : null,
+      after: { slug, blockCount: body.blocks.length, tenantId },
+    })
+    return editShape(saved)
+  })
+
+  // Throw the working copy away. A page that was never published has nothing
+  // else in it, so the row goes too.
+  fastify.delete<SlugParams>('/:slug/draft', STOREFRONT, async (req, reply) => {
+    const slug = slugOf(req)
+    const row = await loadRow(req, slug, 'write')
+    if (row.liveVersion === 0) {
+      await prisma.siteLayout.delete({ where: { id: row.id } })
+    } else {
+      await prisma.siteLayout.update({
+        where: { id: row.id },
+        data: {
+          draftBlocks: Prisma.DbNull, draftSettings: Prisma.DbNull, draftStatus: 'none',
+          draftUpdatedAt: null, draftUpdatedById: null, submittedAt: null, submittedById: null,
+          publishAt: null, reviewNote: null,
+        },
+      })
+    }
+    await audit({
+      category: 'identity', ...actor(req),
+      action: 'site_layout.draft_discard', entity: 'SiteLayout', entityId: row.id,
+      before: { draftStatus: row.draftStatus, publishAt: row.publishAt }, metadata: { slug },
+    })
+    return reply.status(204).send()
+  })
+
+  // Send the draft to the CEO.
+  fastify.post<SlugParams>('/:slug/submit', STOREFRONT, async (req) => {
+    const slug = slugOf(req)
+    const row = await loadRow(req, slug, 'write')
+    if (row.draftBlocks === null || row.draftStatus !== 'draft') {
+      throw new ConflictError(row.draftStatus === 'none' ? 'There is no draft to submit' : `This draft is already ${row.draftStatus}`)
+    }
+    const saved = await prisma.siteLayout.update({
+      where: { id: row.id },
+      data: { draftStatus: 'pending', submittedById: req.staffUser!.id, submittedAt: new Date(), reviewNote: null },
+    })
+    await audit({
+      category: 'identity', ...actor(req),
+      action: 'site_layout.submit', entity: 'SiteLayout', entityId: row.id, after: { slug },
+    })
+    return editShape(saved)
+  })
+
+  // CEO: publish now, or schedule for publishAt.
+  fastify.post<SlugParams>('/:slug/approve', CEO, async (req) => {
+    const slug = slugOf(req)
+    const body = z.object({
+      publishAt: z.preprocess((v) => (v === '' || v === null ? undefined : v), z.string().datetime({ offset: true }).optional()),
+    }).parse(req.body ?? {})
+    const row = await loadRow(req, slug, 'write')
+    if (row.draftBlocks === null || row.draftStatus === 'none') throw new ConflictError('There is no draft to approve')
+
+    const publishAt = body.publishAt ? new Date(body.publishAt) : null
+    const approver = req.staffUser!.id
+    if (publishAt && publishAt.getTime() > Date.now()) {
+      const saved = await prisma.siteLayout.update({
+        where: { id: row.id },
+        data: {
+          draftStatus: 'scheduled', publishAt, reviewedById: approver, reviewedAt: new Date(), reviewNote: null,
+          // The approval is of the draft as it stands; keep a submitter on record.
+          submittedById: row.submittedById ?? row.draftUpdatedById, submittedAt: row.submittedAt ?? new Date(),
+        },
+      })
+      await audit({
+        category: 'identity', ...actor(req),
+        action: 'site_layout.schedule', entity: 'SiteLayout', entityId: row.id,
+        after: { slug, publishAt: publishAt.toISOString() },
+      })
+      return editShape(saved)
+    }
+
+    const version = await publishDraft(row.id, { approvedById: approver, expect: ['draft', 'pending', 'scheduled'] })
+    if (version === null) throw new ConflictError('The draft changed while you were approving it. Reload and try again.')
+    await audit({
+      category: 'identity', ...actor(req),
+      action: 'site_layout.publish', entity: 'SiteLayout', entityId: row.id,
+      before: { liveVersion: row.liveVersion }, after: { slug, version },
+    })
+    return editShape(await prisma.siteLayout.findUniqueOrThrow({ where: { id: row.id } }))
+  })
+
+  // CEO: send it back with a note.
+  fastify.post<SlugParams>('/:slug/reject', CEO, async (req) => {
+    const slug = slugOf(req)
+    const body = z.object({ note: z.string().trim().min(1).max(2000) }).parse(req.body)
+    const row = await loadRow(req, slug, 'write')
+    if (row.draftStatus !== 'pending' && row.draftStatus !== 'scheduled') {
+      throw new ConflictError('Only a submitted or scheduled draft can be sent back')
+    }
+    const saved = await prisma.siteLayout.update({
+      where: { id: row.id },
+      data: { draftStatus: 'draft', reviewNote: body.note, reviewedById: req.staffUser!.id, reviewedAt: new Date(), publishAt: null },
+    })
+    await audit({
+      category: 'identity', ...actor(req),
+      action: 'site_layout.reject', entity: 'SiteLayout', entityId: row.id,
+      before: { draftStatus: row.draftStatus }, after: { slug, note: body.note },
+    })
+    return editShape(saved)
+  })
+
+  fastify.get<SlugParams>('/:slug/versions', STOREFRONT, async (req) => {
+    const slug = slugOf(req)
+    const row = await prisma.siteLayout.findUnique({ where: { slug } })
+    if (!row) { await resolveLayoutTenant(req, slug, 'read'); return [] }
+    await assertRowInScope(req, row, 'read')
+    const versions = await prisma.siteLayoutVersion.findMany({ where: { layoutId: row.id }, orderBy: { version: 'desc' } })
+    const names = await namesById(versions.flatMap((v) => [v.publishedById, v.approvedById]))
+    const who = (id: string | null) => (id ? (names.get(id) ?? { id, name: null }) : null)
+    return versions.map((v) => ({
+      version: v.version,
+      publishedAt: v.publishedAt,
+      publishedBy: who(v.publishedById),
+      approvedBy: who(v.approvedById),
+      note: v.note,
+      blocks: v.blocks,
+      settings: v.settings,
+    }))
+  })
+
+  // CEO: put an old version back live — as a NEW version, so history only grows.
+  fastify.post<SlugParams>('/:slug/rollback', CEO, async (req) => {
+    const slug = slugOf(req)
+    const body = z.object({ version: z.number().int().min(1) }).parse(req.body)
+    const row = await loadRow(req, slug, 'write')
+    const target = await prisma.siteLayoutVersion.findUnique({
+      where: { layoutId_version: { layoutId: row.id, version: body.version } },
+    })
+    if (!target) throw new NotFoundError('SiteLayoutVersion', String(body.version))
+
+    const version = row.liveVersion + 1
+    const now = new Date()
+    const admin = req.staffUser!.id
+    const ok = await prisma.$transaction(async (tx) => {
+      const claimed = await tx.siteLayout.updateMany({
+        where: { id: row.id, liveVersion: row.liveVersion },
+        data: {
+          blocks: target.blocks as Prisma.InputJsonValue,
+          settings: jsonOrNull(target.settings),
+          liveVersion: version, publishedAt: now, updatedById: admin,
+        },
+      })
+      if (claimed.count === 0) return false
+      await tx.siteLayoutVersion.create({
+        data: {
+          layoutId: row.id, version, blocks: target.blocks as Prisma.InputJsonValue, settings: jsonOrNull(target.settings),
+          publishedById: admin, approvedById: admin, note: `Rollback to version ${target.version}`, publishedAt: now,
+        },
+      })
+      return true
+    })
+    if (!ok) throw new ConflictError('The page was published again while you were rolling back. Reload and try again.')
+    await audit({
+      category: 'identity', ...actor(req),
+      action: 'site_layout.rollback', entity: 'SiteLayout', entityId: row.id,
+      before: { liveVersion: row.liveVersion }, after: { slug, version, from: target.version },
+    })
+    return editShape(await prisma.siteLayout.findUniqueOrThrow({ where: { id: row.id } }))
+  })
+
+  fastify.get<SlugParams>('/:slug/stats', STOREFRONT, async (req) => {
+    const slug = slugOf(req)
+    const row = await prisma.siteLayout.findUnique({ where: { slug } })
+    if (!row) { await resolveLayoutTenant(req, slug, 'read'); return [] }
+    await assertRowInScope(req, row, 'read')
+    const stats = await prisma.siteLayoutStat.findMany({
+      where: { layoutId: row.id },
+      orderBy: [{ version: 'desc' }, { variant: 'asc' }],
+    })
+    return stats.map((s) => ({ version: s.version, variant: s.variant, views: s.views, conversions: s.conversions }))
+  })
+
+  // Short-lived link for the storefront's /preview/<token> page. The token is
+  // `type: 'site_preview'`, which every staff/customer token check refuses.
+  fastify.post<SlugParams>('/:slug/preview-token', STOREFRONT, async (req) => {
+    const slug = slugOf(req)
+    const row = await prisma.siteLayout.findUnique({ where: { slug } })
+    if (row) await assertRowInScope(req, row, 'read')
+    else await resolveLayoutTenant(req, slug, 'read')
+    const token = jwt.sign({ type: PREVIEW_TOKEN_TYPE, slug }, jwtSecret(), { expiresIn: PREVIEW_TTL })
+    return { token }
+  })
+
+  // CEO: remove the page entirely; the storefront falls back to its built-in design.
+  fastify.delete<SlugParams>('/:slug', CEO, async (req, reply) => {
+    const slug = slugOf(req)
+    const row = await loadRow(req, slug, 'write')
+    await prisma.siteLayout.delete({ where: { id: row.id } })
+    await audit({
+      category: 'identity', ...actor(req),
+      action: 'site_layout.delete', entity: 'SiteLayout', entityId: row.id,
+      before: { slug, liveVersion: row.liveVersion, draftStatus: row.draftStatus },
+    })
+    return reply.status(204).send()
+  })
 }

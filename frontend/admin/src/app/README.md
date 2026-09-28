@@ -19,8 +19,8 @@ Next.js App Router. Each subdirectory is a URL segment.
 - [`scheduling/`](./scheduling/) — Weekly staff roster.
 - [`tables/`](./tables/) — Floor plan + table assignments.
 - [`reservations/`](./reservations/) — Bookings.
-- [`storefront/`](./storefront/) — Storefront layout editor.
-- [`media/`](./media/) — Image library (R2-backed).
+- [`storefront/`](./storefront/) — Storefront content module: library, pages, pop-ups, approvals (decision 41).
+- [`media/`](./media/) — Redirects to the storefront Library tab.
 - [`promos/`](./promos/), [`discounts/`](./discounts/), [`gift-cards/`](./gift-cards/), [`qrcodes/`](./qrcodes/) — Marketing/incentives.
 - [`reviews/`](./reviews/), [`complaints/`](./complaints/) — Customer feedback.
 - [`payroll/`](./payroll/), [`tip-pools/`](./tip-pools/) — People + comp.
@@ -36,6 +36,5 @@ Next.js App Router. Each subdirectory is a URL segment.
 - [`supplier/`](./supplier/) — Public supplier portal (token-auth, no login).
 - [`login/`](./login/) — Staff sign-in.
 - [`calendar/`](./calendar/) — Content calendar.
-- [`content/`](./content/) — CMS-ish content blocks.
 - [`analytics/`](./analytics/) — Storefront analytics dashboard.
 - [`customers/`](./customers/) — Customer detail pages.

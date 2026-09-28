@@ -6,7 +6,7 @@
 
 import Link from 'next/link'
 import type { Concept } from '../../lib/concept'
-import { conceptHeroImage, brandStory, brandAccent } from '../../lib/concept'
+import { conceptHeroImage, heroCover, brandStory, brandAccent } from '../../lib/concept'
 import { OpenNowPill } from '../../components/brand/parts/OpenNowPill'
 
 const API_URL = process.env.INTERNAL_API_URL ?? process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
@@ -71,7 +71,7 @@ export default async function ReservePage() {
                     }}>
                     <div style={{
                       aspectRatio: '4/3',
-                      background: `${accent} url(${conceptHeroImage(c)}) center/cover`,
+                      background: `${accent}${heroCover(conceptHeroImage(c))}`,
                       position: 'relative',
                     }}>
                       <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, transparent 50%, rgba(0,0,0,0.55) 100%)' }} />

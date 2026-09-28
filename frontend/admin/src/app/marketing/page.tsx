@@ -85,9 +85,8 @@ export default function MarketingWorkspacePage() {
             <Tool href="/promos"               emoji="🎟" title="Promo codes"      desc="Create + retire promo codes; track redemptions." color="#22C55E" />
             <Tool href="/discounts"            emoji="🏷" title="Discounts"        desc="Time-limited section / category discounts." color="#F59E0B" />
             <Tool href="/calendar"             emoji="📅" title="Content calendar" desc="Schedule social posts; one-click Instagram / Meta publish." color="#EC4899" />
-            <Tool href="/media"                emoji="🖼" title="Media library"    desc="Upload + organise creative for menus + storefront." color="#A855F7" />
             <Tool href="/marketing/brands"     emoji="🏷" title="Brand editor"     desc="Logo, colour, tagline, banner, hours per brand." color="#0EA5E9" />
-            <Tool href="/marketing/storefront" emoji="🎨" title="Storefront"       desc="Hero copy, page builder, microsite layouts." color="#F472B6" />
+            <Tool href="/storefront"           emoji="🎨" title="Storefront"       desc="Library, page builder, pop-ups; the CEO approves every change." color="#F472B6" />
             <Tool href="/analytics"            emoji="📊" title="Analytics"        desc="Funnel, conversion, top items, search insights." color="#FCD34D" />
           </div>
         </section>
