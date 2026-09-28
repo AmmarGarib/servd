@@ -23,6 +23,38 @@ paths…), leaving two sources of truth that disagree. So:
   (ledger postings, reports, dashboards) moved to the new one first. Keep the
   old tables unless the owner says to drop the data.
 
+## ⚠️ Standing rule: every new line of code follows company separation (product owner, 2026-09-28)
+
+servd runs several companies (tenants) side by side. Company separation was
+retrofitted across 683 routes once; it must never need doing again. Every new
+model, route, worker, report, socket room, upload or admin page is
+company-scoped FROM THE FIRST COMMIT — not "added later":
+
+- **Models:** a new table that holds company data gets `tenantId` (indexed).
+  Unique keys are per company (`@@unique([tenantId, …])`), never global.
+  "Global"/singleton rows are one per company. Only genuinely shared
+  platform data (e.g. the `servd:*` storefront pages) may have a null
+  tenant, and that must be deliberate and commented.
+- **Routes:** use `lib/tenantScope.ts` — `scopeTenantWhere(req, mode)`,
+  `assertConceptOwned`, `conceptIdsInScope`, `conceptWhere`,
+  `activeTenantId`. `read` for lists, `write` for editing an existing row,
+  `create` for binding a new row to the ACTIVE company. Never trust an id
+  from the client (`conceptId`, `locationId`, `shiftId`, `supplierId`, …):
+  resolve it to its company first. Foreign rows → 404; cross-company
+  attach on create → 422. Never `tenantFilter ?? undefined` (that is "no
+  filter"); an empty scope must DENY (`{ tenantId: { in: [] } }`).
+- **Money:** ledger postings take the company from the source document
+  (`postJournalEntry` requires `tenantId`); reports take
+  `resolveTenantScope(req)`.
+- **Workers, sockets, notifications:** loop per company; socket rooms are
+  per company; messages and webhooks fan out only to the owning company.
+- **Customer-facing:** gift cards, loyalty, promos, bans and segments stay
+  inside the company that issued them.
+- **Tests:** every new route ships with a two-company test — company B gets
+  404 on company A's rows, and creates bind to the active company.
+
+A change that skips any of this is not done, however well the feature works.
+
 ## ⚠️ Corrections (2026-06-11 audit) — read before trusting older sections
 
 Parts of this file have drifted from reality. Until the relevant sections are
