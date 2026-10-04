@@ -187,8 +187,16 @@ export async function runDeliveryWatch(): Promise<DeliveryState> {
   // was that it was broken.
   if (state.ok && previous && !previous.ok) {
     const people = await recipients()
+    // Same channels as the alert: whoever heard "down" by email must hear
+    // "back up" by email too, or the last thing they saw is the outage.
+    const okLine = 'servd: codes are sending again. Signup is back up.'
     for (const p of people) {
-      if (p.phone) { try { await sendText(p.phone, 'servd: codes are sending again. Signup is back up.') } catch { /* ignore */ } }
+      if (p.phone) {
+        try { await sendText(p.phone, okLine); continue } catch { /* fall through to email */ }
+      }
+      if (p.email && await emailConfigured()) {
+        try { await sendEmail({ to: p.email, subject: 'servd: customer signup is back up', html: `<p>${okLine}</p>` }) } catch { /* ignore */ }
+      }
     }
   }
 
