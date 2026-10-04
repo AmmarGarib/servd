@@ -84,6 +84,7 @@ enum UserRole {
   fnb_manager // food & beverage manager — owns BOH + FOH; owns the F&B dashboard
   finance // P&L, payroll, accounting, reconciliation
   hr // staff records, attendance, payroll, scheduling
+  it // IT / developer — the Dev workspace: integrations, backups, webhooks, user audit log
 }
 
 // Self-signed-up staff start as `pending` until the CEO approves them. Only
@@ -820,6 +821,9 @@ model User {
   // Self-signup creates accounts as `pending` — CEO approves from the user
   // dropdown before they can sign in. Existing accounts back-fill to `active`.
   accountStatus       AccountStatus @default(active)
+  // Who added this login (a workspace owner adding staff under them, decision 47).
+  // The CEO approves it before it can sign in; null = created by the CEO.
+  invitedById         String?
   // Free-text reason kept around for the audit log / approval modal.
   signupReason        String?
   // Concepts this user is allowed to access. Empty array = no concept restriction
@@ -884,6 +888,7 @@ model User {
   positionsFilled        Position[]             @relation("PositionFilledBy")
   passwordResets         StaffPasswordReset[]
 
+  @@index([invitedById])
   @@map("users")
 }
 
