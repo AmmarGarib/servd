@@ -130,6 +130,8 @@ export const DEFAULT_MODULE_ACCESS: Record<UserRole, string[]> = {
   hr: [
     'staff_directory', 'staff_hr', 'payroll', 'scheduling',
   ],
+  // IT / developer — owns the Dev workspace (decision 47, lib/workspaces.ts).
+  it: ['integrations', 'audit_log', 'notifications', 'help'],
 }
 
 export function isKnownModuleId(id: string): boolean { return MODULE_ID_SET.has(id) }

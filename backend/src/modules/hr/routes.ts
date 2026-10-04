@@ -25,7 +25,7 @@ import {
   getSettings, saveSettings, getFormat, getAllFormats, defaultFormat, employeeLabels, employeeLabelsAcross,
   applyDueEffects, onFinalApproval, leaveBalancesFor, checkLeave, lockEmployeeLeave, loansFor,
   calculateRun, recalcPayslip, dashboard, dueList, letterContext, payableEmployees,
-  salaryForPeriod, unpaidOvertime, firstPayrollStart, runBlocker,
+  salaryForPeriod, unpaidOvertime, firstPayrollStart, runBlocker, STANDING_ATTENDANCE,
 } from './service.js'
 import {
   mergeSettings, canActOnStep, finalSettlement, accruedLeaveDays, nextEmployeeCode, periodOf, periodStart, periodEnd, pktToday,
@@ -92,6 +92,17 @@ async function ownEmployee(req: FastifyRequest): Promise<HrEmployee | null> {
   return mine.find((e) => e.tenantId === req.staffUser!.tenantId)
     ?? mine.find((e) => ['active', 'on_leave'].includes(e.status))
     ?? mine[0]!
+}
+
+/** A day's attendance category, reduced to the five states /hr/team shows. */
+function todayStatusOf(category: string | null | undefined): 'present' | 'late' | 'absent' | 'off' | null {
+  switch (category) {
+    case 'present': case 'early_departure': case 'half_day': case 'missing_punch': return 'present'
+    case 'late': return 'late'
+    case 'absent': return 'absent'
+    case 'off_day': case 'holiday': return 'off'
+    default: return null
+  }
 }
 
 /** Canonical phone key (auth/otp normalisePhone — 0300…, +92300… and 92300… all agree); null when too short to match on. */
@@ -1404,7 +1415,11 @@ export async function hrRoutes(fastify: FastifyInstance) {
   })
 
   // ── Manager / HOD portal ──────────────────────────────────────────────────
-  fastify.get('/approvals', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
+  fastify.get('/approvals', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => approvalsWaitingOn(req))
+
+  // The ONE "what is waiting on me" resolver — /approvals lists it, /team
+  // counts it.
+  async function approvalsWaitingOn(req: FastifyRequest) {
     const pending = await prisma.hrRecord.findMany({
       where: { tenantId: { in: req.staffUser!.memberTenantIds }, status: 'submitted' },
       include: { employee: { select: { id: true, fullName: true, employeeCode: true } } },
@@ -1423,17 +1438,62 @@ export async function hrRoutes(fastify: FastifyInstance) {
       out.push({ ...rec, label: recordLabel(rec, fmt.fields), sectionTitle: sectionByKey(rec.section)?.title ?? rec.section, step, format: fmt })
     }
     return out
-  })
+  }
 
+  // GET /hr/team — the caller's WHOLE reporting tree (indirect reports too,
+  // decision 47), within their employee record's company. Cycle-safe (a
+  // manager loop in the data stops at the first repeat) and capped at depth
+  // 10. Each row: who they report to, how deep, today's attendance/leave and
+  // their linked login. Never pay.
   fastify.get('/team', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
     const me = await ownEmployee(req)
-    if (!me) return { me: null, team: [] }
-    const team = await prisma.hrEmployee.findMany({
-      where: { managerId: me.id, status: { in: ['active', 'on_leave'] } },
-      select: { id: true, fullName: true, employeeCode: true, status: true, phone: true, employmentType: true, probationEnd: true },
-      orderBy: { fullName: 'asc' },
-    })
-    return { me: { id: me.id, fullName: me.fullName }, team }
+    const pendingApprovals = (await approvalsWaitingOn(req)).length
+    if (!me) return { me: null, team: [], pendingApprovals }
+
+    const MAX_DEPTH = 10
+    const seen = new Set<string>([me.id])
+    const team: Array<{
+      id: string; fullName: string; employeeCode: string; status: string; phone: string | null
+      employmentType: string; probationEnd: Date | null; managerId: string | null; userId: string | null
+      depth: number; todayStatus: 'present' | 'late' | 'absent' | 'on_leave' | 'off' | null
+    }> = []
+    let frontier = [me.id]
+    for (let depth = 1; depth <= MAX_DEPTH && frontier.length; depth++) {
+      const rows = await prisma.hrEmployee.findMany({
+        where: { tenantId: me.tenantId, managerId: { in: frontier }, status: { in: ['active', 'on_leave'] } },
+        select: { id: true, fullName: true, employeeCode: true, status: true, phone: true, employmentType: true, probationEnd: true, managerId: true, userId: true },
+        orderBy: { fullName: 'asc' },
+      })
+      const next: string[] = []
+      for (const r of rows) {
+        if (seen.has(r.id)) continue
+        seen.add(r.id)
+        next.push(r.id)
+        team.push({ ...r, depth, todayStatus: null })
+      }
+      frontier = next
+    }
+
+    if (team.length) {
+      const today = pktToday()
+      const tomorrow = new Date(today.getTime() + 86_400_000)
+      const ids = team.map((t) => t.id)
+      const [leave, attendance] = await Promise.all([
+        prisma.hrRecord.findMany({
+          where: { tenantId: me.tenantId, section: 'leave', status: 'approved', employeeId: { in: ids }, startDate: { lte: today }, endDate: { gte: today } },
+          select: { employeeId: true },
+        }),
+        prisma.hrRecord.findMany({
+          where: { tenantId: me.tenantId, section: 'attendance', status: STANDING_ATTENDANCE, employeeId: { in: ids }, startDate: { gte: today, lt: tomorrow } },
+          select: { employeeId: true, category: true },
+          orderBy: { createdAt: 'asc' },   // latest wins below — the one payroll reads
+        }),
+      ])
+      const onLeave = new Set(leave.map((l) => l.employeeId))
+      const att = new Map(attendance.map((a) => [a.employeeId, a.category]))
+      for (const t of team) t.todayStatus = onLeave.has(t.id) || t.status === 'on_leave' ? 'on_leave' : todayStatusOf(att.get(t.id))
+    }
+    return { me: { id: me.id, fullName: me.fullName }, team, pendingApprovals }
   })
 
   // ── Employee self-service ─────────────────────────────────────────────────

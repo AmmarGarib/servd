@@ -94,6 +94,21 @@ export async function startLoginChallenge(user: {
  * otherwise an attacker with any valid challenge could point verification at a
  * number they control.
  */
+/**
+ * Who a challenge belongs to — for attributing a FAILED code in the audit
+ * trail only. The signature is checked (an unsigned token could otherwise pin
+ * failures on anyone); expiry is not, so an expired challenge still names its
+ * owner. Never use this to authenticate.
+ */
+export function challengeSubject(challengeToken: string): string | null {
+  try {
+    const p = jwt.verify(challengeToken, JWT_SECRET, { ignoreExpiration: true }) as MfaChallengePayload
+    return p.type === 'mfa' && typeof p.sub === 'string' ? p.sub : null
+  } catch {
+    return null
+  }
+}
+
 export async function verifyLoginChallenge(challengeToken: string, code: string) {
   let payload: MfaChallengePayload
   try {

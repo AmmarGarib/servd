@@ -1,8 +1,9 @@
-import type { FastifyInstance } from 'fastify'
+import type { FastifyInstance, FastifyRequest } from 'fastify'
 import bcrypt from 'bcryptjs'                  // password checks on the self-service routes
 import { z } from 'zod'
 import { staffLogin, refreshStaffToken, customerRegister, customerLogin, verifyMagicLink, requestMagicLink, hashPassword, issueStaffSession, findOtpLoginStaff } from './service.js'
 import {
+  challengeSubject,
   verifyLoginChallenge,
   startEnrolment,
   completeEnrolment,
@@ -22,7 +23,8 @@ import { requireAuth, requireCustomerAuth, ADMIN_ONLY, MANAGERS, ALL_STAFF, uses
 import { revokeBearer, revokeAllForSubject } from '../../lib/tokenRevocation.js'
 import { setAuthCookies, setAccessCookie, clearAuthCookies, readCookie, ACCESS_COOKIE, REFRESH_COOKIE } from '../../lib/cookies.js'
 import { serviceClient as prisma } from '../../lib/prisma.js'
-import { resolveTenantScope, tenantWhere } from '../../lib/tenantScope.js'
+import { resolveTenantScope, tenantWhere, scopeTenantWhere } from '../../lib/tenantScope.js'
+import { childRolesFor } from '../../lib/workspaces.js'
 import { AppError, UnauthorizedError, NotFoundError } from '../../lib/errors.js'
 import { audit } from '../../lib/audit.js'
 import { isStaffEmail, normaliseStaffEmail, STAFF_EMAIL_MESSAGE } from '../../lib/staffEmail.js'
@@ -95,6 +97,41 @@ const STAFF_ROLE_WITH_ADMIN = z.enum(ASSIGNABLE_ROLES_WITH_ADMIN as [UserRole, .
 export { isWeakPin } from './managerPin.js'
 import { clockIn, clockOut } from '../timeclock/service.js'
 
+/**
+ * Sign-in trail (decision 47): auth.login, auth.login_failed, auth.otp_login,
+ * auth.2fa_failed, auth.logout — category identity, stamped with the SIGNING-IN
+ * user's company (null when the email matched nobody). Never carries a
+ * password, code or token: only who, where from, and why it failed.
+ */
+async function signInAudit(
+  req: FastifyRequest,
+  action: 'auth.login' | 'auth.login_failed' | 'auth.otp_login' | 'auth.2fa_failed' | 'auth.logout',
+  who: { userId: string | null; email: string | null },
+  extra: Record<string, unknown> = {},
+): Promise<void> {
+  let tenantId: string | null = null
+  if (who.userId) {
+    const u = await prisma.user.findUnique({ where: { id: who.userId }, select: { tenantId: true } }).catch(() => null)
+    tenantId = u?.tenantId ?? null
+  }
+  const ua = req.headers['user-agent']
+  await audit({
+    category: 'identity',
+    action,
+    entity: 'User',
+    entityId: who.userId,
+    userId: who.userId,
+    userEmail: who.email,
+    tenantId,
+    metadata: { ip: req.ip ?? null, userAgent: typeof ua === 'string' ? ua.slice(0, 300) : null, ...extra },
+  })
+}
+
+/** Why a sign-in failed, as a short code — never the message, never the input. */
+function failReason(err: unknown): string {
+  return err instanceof AppError ? err.code.toLowerCase() : 'error'
+}
+
 export async function authRoutes(fastify: FastifyInstance) {
   // POST /auth/login — staff email+password login (brute-force protected)
   fastify.post('/login', async (req, reply) => {
@@ -135,6 +172,11 @@ export async function authRoutes(fastify: FastifyInstance) {
     } catch (err) {
       await recordFailure(STAFF_PASSWORD_USER_LIMIT, accountKey)
       await recordFailure(STAFF_PASSWORD_LIMIT, ip)
+      // Attribute to the account when the typed address is one; the response
+      // stays the same generic error either way.
+      const typed = normaliseStaffEmail(body.email)
+      const known = await prisma.user.findFirst({ where: { email: typed }, select: { id: true } }).catch(() => null)
+      await signInAudit(req, 'auth.login_failed', { userId: known?.id ?? null, email: typed }, { reason: failReason(err), method: 'password' })
       throw err
     }
     // 2FA accounts get no session yet — just the challenge and a masked hint
@@ -147,6 +189,7 @@ export async function authRoutes(fastify: FastifyInstance) {
       })
     }
 
+    await signInAudit(req, 'auth.login', { userId: result.user.id, email: result.user.email }, { method: 'password' })
     // Manager web: also set httpOnly session cookies (the token stays out of
     // JS). Tablet/mobile ignore these and keep using the body tokens + Bearer.
     setAuthCookies(reply, result.accessToken, result.refreshToken)
@@ -229,10 +272,12 @@ export async function authRoutes(fastify: FastifyInstance) {
       await verifySharedCode({ phone, email: staff.email, code: body.code, purpose: 'staff_login' })
     } catch (err) {
       await recordFailure(STAFF_OTP_PHONE_LIMIT, key)
+      await signInAudit(req, 'auth.login_failed', { userId: staff.id, email: staff.email }, { reason: failReason(err), method: 'otp' })
       throw err
     }
     await clearFailures(STAFF_OTP_PHONE_LIMIT, key)
 
+    await signInAudit(req, 'auth.otp_login', { userId: staff.id, email: staff.email }, { method: 'otp' })
     const session = issueStaffSession(staff)
     setAuthCookies(reply, session.accessToken, session.refreshToken)
     return reply.status(200).send({ twoFactorRequired: false, ...session })
@@ -258,9 +303,13 @@ export async function authRoutes(fastify: FastifyInstance) {
       await clearFailures(STAFF_PASSWORD_LIMIT, ip)
     } catch (err) {
       await recordFailure(STAFF_PASSWORD_LIMIT, ip)
+      const sub = challengeSubject(body.challengeToken)
+      const who = sub ? await prisma.user.findUnique({ where: { id: sub }, select: { id: true, email: true } }).catch(() => null) : null
+      await signInAudit(req, 'auth.2fa_failed', { userId: who?.id ?? null, email: who?.email ?? null }, { reason: failReason(err) })
       throw err
     }
 
+    await signInAudit(req, 'auth.login', { userId: user.id, email: user.email }, { method: 'password+2fa' })
     const session = issueStaffSession(user)
     setAuthCookies(reply, session.accessToken, session.refreshToken)
     return reply.status(200).send(session)
@@ -613,6 +662,7 @@ export async function authRoutes(fastify: FastifyInstance) {
     const cookieRt = readCookie(req, REFRESH_COOKIE); if (cookieRt) await revokeBearer(`Bearer ${cookieRt}`)
     const body = z.object({ refreshToken: z.string().optional() }).parse(req.body ?? {})
     if (body.refreshToken) await revokeBearer(`Bearer ${body.refreshToken}`)
+    await signInAudit(req, 'auth.logout', { userId: req.staffUser!.id, email: req.staffUser!.email })
     clearAuthCookies(reply)
     return reply.status(200).send({ ok: true })
   })
@@ -800,37 +850,171 @@ export async function authRoutes(fastify: FastifyInstance) {
 
   // GET /auth/staff/pending — the CEO's "N pending" badge in the sidebar. The
   // queue itself is reviewed on /workforce?status=pending.
-  fastify.get('/staff/pending', { preHandler: requireAuth('admin') }, async () => {
+  //
+  // Company-scoped (decision 47): the CEO's READ scope — the active company, or
+  // every company they belong to in "All companies" view. Company-less legacy
+  // rows (the old self-signup made them) stay the CEO's to clear.
+  fastify.get('/staff/pending', { preHandler: requireAuth('admin') }, async (req) => {
+    const scope = await scopeTenantWhere(req, 'read')
     const pending = await prisma.user.findMany({
-      where: { ...whereAccountState('pending'), deletedAt: null },
+      where: { ...whereAccountState('pending'), deletedAt: null, OR: [scope, { tenantId: null }] },
       select: {
         id: true, name: true, email: true, phone: true, role: true,
-        signupReason: true, createdAt: true,
+        signupReason: true, createdAt: true, tenantId: true, invitedById: true,
       },
       orderBy: { createdAt: 'desc' },
     })
-    return pending
+    const inviterIds = Array.from(new Set(pending.map((p) => p.invitedById).filter((x): x is string => !!x)))
+    const inviters = inviterIds.length
+      ? await prisma.user.findMany({ where: { id: { in: inviterIds } }, select: { id: true, name: true } })
+      : []
+    const byId = new Map(inviters.map((u) => [u.id, u]))
+    return pending.map(({ invitedById, ...p }) => ({ ...p, invitedBy: invitedById ? (byId.get(invitedById) ?? null) : null }))
+  })
+
+  // POST /auth/staff/invite — a workspace owner adds a login under them
+  // (decision 47). The role must be one the caller may add (lib/workspaces.ts
+  // CHILD_ROLES); the account is created PENDING in the caller's ACTIVE
+  // company and cannot sign in until the CEO approves it. The CEO's own
+  // direct path (POST /auth/users) is unchanged and needs no approval.
+  fastify.post('/staff/invite', { preHandler: requireAuth(...ALL_STAFF) }, async (req, reply) => {
+    const body = z.object({
+      name:       z.string().trim().min(1).max(120),
+      email:      z.string().email().max(200),
+      phone:      z.string().min(7).max(20).optional().or(z.literal('')),
+      role:       z.string().min(1),
+      employeeId: z.string().min(1).optional(),
+    }).parse(req.body)
+
+    const allowed = childRolesFor(req.staffUser!.role)
+    if (allowed.length === 0) {
+      throw new AppError('FORBIDDEN', 'Your role cannot add logins.', 403)
+    }
+    // The CEO seat is never invited — only the CEO names a successor, through
+    // the CEO-only staff editor.
+    if (body.role === 'admin' || !(allowed as string[]).includes(body.role)) {
+      throw new AppError('ROLE_NOT_ALLOWED', `You cannot add a login with the role "${body.role}".`, 403)
+    }
+    const tenantId = req.staffUser!.tenantId
+    if (!tenantId) {
+      throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company first — a new login belongs to one company.', 422)
+    }
+    if (!isStaffEmail(body.email)) {
+      throw new AppError('EMAIL_NOT_COMPANY_DOMAIN', STAFF_EMAIL_MESSAGE, 400)
+    }
+    const email = normaliseStaffEmail(body.email)
+    const taken = await prisma.user.findUnique({ where: { email }, select: { id: true } })
+    if (taken) throw new AppError('EMAIL_TAKEN', 'A login with that email already exists.', 409)
+
+    // The employee record, if given, must be this company's and not already
+    // linked to a login. It is linked on APPROVAL, not now.
+    if (body.employeeId) {
+      const emp = await prisma.hrEmployee.findFirst({
+        where: { id: body.employeeId, tenantId },
+        select: { id: true, userId: true },
+      })
+      if (!emp) throw new AppError('EMPLOYEE_NOT_IN_COMPANY', 'That employee is not in your active company.', 422)
+      if (emp.userId) throw new AppError('EMPLOYEE_ALREADY_LINKED', 'That employee already has a login.', 409)
+    }
+
+    // Nobody signs in with this: the invitee sets their own password from the
+    // link sent on approval (or the CEO issues one from Workforce).
+    const password = await hashPassword(generateStaffPassword())
+    const user = await prisma.user.create({
+      data: {
+        name: body.name,
+        email,
+        ...(body.phone ? { phone: body.phone.trim() } : {}),
+        password,
+        role: body.role as UserRole,
+        tenantId,
+        accountStatus: 'pending',
+        isActive: true,
+        mustChangePassword: true,
+        invitedById: req.staffUser!.id,
+        // Linked to the HrEmployee on approval (validated above, re-checked then).
+        ...(body.employeeId ? { inviteEmployeeId: body.employeeId } : {}),
+        tenantMemberships: { create: [{ tenant: { connect: { id: tenantId } }, role: 'member' }] },
+      },
+      select: { id: true, name: true, email: true, role: true, accountStatus: true, isActive: true, createdAt: true, tenantId: true },
+    })
+    await audit({
+      category: 'identity',
+      action: 'staff.invite',
+      entity: 'User',
+      entityId: user.id,
+      userId: req.staffUser!.id,
+      userEmail: req.staffUser!.email,
+      tenantId,
+      after: { name: user.name, email: user.email, role: user.role, tenantId, employeeId: body.employeeId ?? null },
+    })
+    return reply.status(201).send({ ...user, status: accountStateOf(user), isActive: undefined })
+  })
+
+  // GET /auth/staff/invites — the caller's own invites and where each stands.
+  fastify.get('/staff/invites', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
+    const rows = await prisma.user.findMany({
+      where: { invitedById: req.staffUser!.id, deletedAt: null },
+      select: { id: true, name: true, email: true, role: true, accountStatus: true, isActive: true, createdAt: true },
+      orderBy: { createdAt: 'desc' },
+      take: 500,
+    })
+    return rows.map((r) => ({ id: r.id, name: r.name, email: r.email, role: r.role, status: accountStateOf(r), createdAt: r.createdAt }))
   })
 
   // PATCH /auth/staff/:id/approve — CEO flips a pending hire to active.
-  // Approving issues no credential: the CEO issues a password from Workforce.
+  // When the server can send one, the new login gets the password-set link
+  // (the same one /password/forgot sends); otherwise the CEO issues a
+  // password from Workforce as before.
   fastify.patch<{ Params: { id: string } }>(
     '/staff/:id/approve',
     { preHandler: requireAuth('admin') },
     async (req, reply) => {
+      const scope = await scopeTenantWhere(req, 'write')
       const user = await prisma.user.findFirst({
-        where: { id: req.params.id, deletedAt: null },
-        select: { id: true, name: true, email: true, role: true, accountStatus: true, isActive: true },
+        where: { id: req.params.id, deletedAt: null, OR: [scope, { tenantId: null }] },
+        select: { id: true, name: true, email: true, phone: true, role: true, accountStatus: true, isActive: true, tenantId: true, inviteEmployeeId: true },
       })
       if (!user) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'No such staff' } })
       if (accountStateOf(user) === 'active') {
-        return reply.status(200).send({ ...user, message: 'Already active' })
+        const { inviteEmployeeId: _drop, ...shown } = user
+        return reply.status(200).send({ ...shown, message: 'Already active' })
       }
+
+      // Link the HR employee named at invite time — re-validated now: still in
+      // this login's company and still without a login. Anything else is
+      // skipped (logged), never fatal: HR can link it from the employee record.
+      let linkedEmployeeId: string | null = null
+      if (user.inviteEmployeeId && user.tenantId) {
+        const linked = await prisma.hrEmployee.updateMany({
+          where: { id: user.inviteEmployeeId, tenantId: user.tenantId, userId: null },
+          data: { userId: user.id },
+        }).catch((err) => { req.log.warn({ err, employeeId: user.inviteEmployeeId, userId: user.id }, 'invite: employee link failed'); return { count: 0 } })
+        if (linked.count === 1) linkedEmployeeId = user.inviteEmployeeId
+        else req.log.warn({ employeeId: user.inviteEmployeeId, userId: user.id }, 'invite: employee no longer linkable')
+      }
+
       const updated = await prisma.user.update({
         where: { id: req.params.id },
-        data: approveData(),
+        // The pending link is spent either way.
+        data: { ...approveData(), inviteEmployeeId: null },
         select: { id: true, name: true, email: true, role: true, accountStatus: true },
       })
+
+      // Send the set-your-password link when a channel exists. A failure here
+      // is logged, never fatal: the CEO can still issue a password.
+      let passwordLink: 'sent' | 'unavailable' | 'failed' = 'unavailable'
+      if (user.email && await deliveryConfigured().catch(() => false)) {
+        try {
+          const outcome = await requestPasswordReset(user.email, req.ip ?? null)
+          passwordLink = outcome.email === 'sent' || outcome.whatsapp === 'sent' ? 'sent' : 'failed'
+          if (outcome.errors.length) req.log.error({ userId: user.id, outcome }, 'approve: password link delivery failed')
+        } catch (err) {
+          passwordLink = 'failed'
+          req.log.error({ err, userId: user.id }, 'approve: password link failed')
+        }
+      }
+
       // Letting someone in is half of "who can get in"; it was never recorded.
       await audit({
         category: 'identity',
@@ -841,9 +1025,9 @@ export async function authRoutes(fastify: FastifyInstance) {
         userEmail: req.staffUser?.email ?? null,
         tenantId: req.staffUser?.tenantId ?? null,
         before: { accountStatus: user.accountStatus },
-        after: { accountStatus: updated.accountStatus, targetEmail: user.email, role: user.role },
+        after: { accountStatus: updated.accountStatus, targetEmail: user.email, role: user.role, linkedEmployeeId, passwordLink },
       })
-      return reply.status(200).send(updated)
+      return reply.status(200).send({ ...updated, linkedEmployeeId, passwordLink })
     },
   )
 
@@ -854,8 +1038,9 @@ export async function authRoutes(fastify: FastifyInstance) {
     '/staff/:id/reject',
     { preHandler: requireAuth('admin') },
     async (req, reply) => {
-      const before = await prisma.user.findUnique({
-        where: { id: req.params.id },
+      const scope = await scopeTenantWhere(req, 'write')
+      const before = await prisma.user.findFirst({
+        where: { id: req.params.id, OR: [scope, { tenantId: null }] },
         select: { accountStatus: true, email: true },
       })
       if (!before) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'No such staff' } })
@@ -1105,23 +1290,42 @@ export async function authRoutes(fastify: FastifyInstance) {
   // that, and who let them"; the accounting one answers "who moved the books",
   // and only the CEO and exec may read that. A manager needs the first to run a
   // shift and has no business in the second.
-  fastify.get<{ Querystring: { action?: string; entity?: string; userId?: string; limit?: string; cursor?: string } }>(
+  //
+  // Decision 47: IT (role `it`, module audit_log) reads it too, and it filters
+  // by user, action prefix (e.g. `auth.`) and a from/to window.
+  const AUDIT_READERS = [...MANAGERS, 'it'] as UserRole[]
+  async function identityTrailWhere(req: FastifyRequest) {
+    const scope = await resolveTenantScope(req)
+    // Same rule as the accounting trail: unattributed legacy rows (and failed
+    // sign-ins against unknown emails) are the CEO's to read, nobody else's.
+    return {
+      category: 'identity',
+      ...(req.staffUser!.role === 'admin'
+        ? { OR: [{ tenantId: { in: scope.tenantIds } }, { tenantId: null }] }
+        : { tenantId: { in: scope.tenantIds } }),
+    }
+  }
+  const parseDate = (s?: string) => {
+    if (!s) return undefined
+    const d = new Date(s)
+    if (Number.isNaN(d.getTime())) throw new AppError('INVALID_DATE', `Not a date: ${s}`, 400)
+    return d
+  }
+
+  fastify.get<{ Querystring: { action?: string; entity?: string; userId?: string; from?: string; to?: string; limit?: string; cursor?: string } }>(
     '/audit-log',
-    { preHandler: requireAuth(...MANAGERS) },
+    { preHandler: requireAuth(...AUDIT_READERS) },
     async (req) => {
-      const limit = Math.min(parseInt(req.query.limit ?? '100', 10), 500)
-      const scope = await resolveTenantScope(req)
+      const limit = Math.min(Math.max(parseInt(req.query.limit ?? '100', 10) || 100, 1), 500)
+      const from = parseDate(req.query.from)
+      const to = parseDate(req.query.to)
       const rows = await prisma.auditLog.findMany({
         where: {
-          category: 'identity',
-          // Same rule as the accounting trail: unattributed legacy rows are the
-          // CEO's to read, nobody else's.
-          ...(req.staffUser!.role === 'admin'
-            ? { OR: [{ tenantId: { in: scope.tenantIds } }, { tenantId: null }] }
-            : { tenantId: { in: scope.tenantIds } }),
+          ...(await identityTrailWhere(req)),
           ...(req.query.action && { action: { startsWith: req.query.action } }),
           ...(req.query.entity && { entity: req.query.entity }),
           ...(req.query.userId && { userId: req.query.userId }),
+          ...((from || to) && { createdAt: { ...(from && { gte: from }), ...(to && { lte: to }) } }),
           ...(req.query.cursor && { id: { lt: req.query.cursor } }),
         },
         orderBy: { createdAt: 'desc' },
@@ -1130,6 +1334,57 @@ export async function authRoutes(fastify: FastifyInstance) {
       const hasMore = rows.length > limit
       if (hasMore) rows.pop()
       return { data: rows, cursor: hasMore ? (rows[rows.length - 1]?.id ?? null) : null, hasMore }
+    },
+  )
+
+  // GET /auth/audit-log/users/:userId/summary — one person's sign-in and
+  // activity picture over the last 30 days, from the same scoped trail.
+  fastify.get<{ Params: { userId: string } }>(
+    '/audit-log/users/:userId/summary',
+    { preHandler: requireAuth(...AUDIT_READERS) },
+    async (req) => {
+      const scope = await resolveTenantScope(req)
+      const isAdmin = req.staffUser!.role === 'admin'
+      // The person must be someone the caller can see: in a company of their
+      // read scope (the CEO also sees company-less legacy rows). Else 404.
+      const user = await prisma.user.findFirst({
+        where: {
+          id: req.params.userId,
+          OR: [
+            { tenantId: { in: scope.tenantIds } },
+            { tenantMemberships: { some: { tenantId: { in: scope.tenantIds } } } },
+            ...(isAdmin ? [{ tenantId: null }] : []),
+          ],
+        },
+        select: { id: true, name: true, email: true, role: true },
+      })
+      if (!user) throw new NotFoundError('User')
+
+      const base = { ...(await identityTrailWhere(req)), userId: user.id }
+      const since = new Date(Date.now() - 30 * 86_400_000)
+      const SIGN_INS = ['auth.login', 'auth.otp_login']
+      const FAILS = ['auth.login_failed', 'auth.2fa_failed']
+      const [last, signIns, failed, actions, top] = await Promise.all([
+        prisma.auditLog.findFirst({ where: { ...base, action: { in: SIGN_INS } }, orderBy: { createdAt: 'desc' }, select: { createdAt: true } }),
+        prisma.auditLog.count({ where: { ...base, action: { in: SIGN_INS }, createdAt: { gte: since } } }),
+        prisma.auditLog.count({ where: { ...base, action: { in: FAILS }, createdAt: { gte: since } } }),
+        prisma.auditLog.count({ where: { ...base, createdAt: { gte: since } } }),
+        prisma.auditLog.groupBy({
+          by: ['action'],
+          where: { ...base, createdAt: { gte: since } },
+          _count: { _all: true },
+          orderBy: { _count: { action: 'desc' } },
+          take: 10,
+        }),
+      ])
+      return {
+        user,
+        lastSignInAt: last?.createdAt ?? null,
+        signInsLast30d: signIns,
+        failedLast30d: failed,
+        actionsLast30d: actions,
+        topActions: top.map((t) => ({ action: t.action, count: t._count._all })),
+      }
     },
   )
 

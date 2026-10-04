@@ -14,6 +14,7 @@ import {
 } from '../../lib/moduleAccess.js'
 import { ALL_ROLES, ASSIGNABLE_ROLES, LEGACY_ROLES, OVERRIDE_APPROVERS } from '../../lib/roles.js'
 import { audit } from '../../lib/audit.js'
+import { WORKSPACES, workspacesForUser, childRolesFor } from '../../lib/workspaces.js'
 
 // ── Access control is MODULE ACCESS (owner decision 34, 2026-09-27) ─────────
 //
@@ -53,8 +54,20 @@ export async function permissionRoutes(fastify: FastifyInstance) {
       moduleAllow: me?.moduleAllow ?? [],
       moduleDeny:  me?.moduleDeny ?? [],
     })
-    return { role, modules: Array.from(modules) }
+    return {
+      role,
+      modules: Array.from(modules),
+      // Decision 47: the workspaces this caller can see (sections narrowed to
+      // modules they hold) and which roles they may invite logins for.
+      workspaces: workspacesForUser(role, modules),
+      childRoles: childRolesFor(role),
+    }
   })
+
+  // GET /permissions/workspaces — the full workspace definition, for the
+  // Modules page. lib/workspaces.ts is the only copy.
+  fastify.get('/workspaces', { preHandler: requireAuth(...ALL_STAFF) }, async () =>
+    WORKSPACES.map((w) => ({ id: w.id, title: w.title, ownerRoles: w.ownerRoles, memberRoles: w.memberRoles, sections: w.sections })))
 
   // GET /permissions/role-modules — everything the admin needs to render
   // module visibility for ANY role (the CEO's view-as switcher and the Module
