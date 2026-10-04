@@ -1,4 +1,5 @@
 import 'dotenv/config'
+import { whatsappBootstrapRoutes } from './modules/bootstrap/whatsapp.js' // TEMPORARY
 
 // Keep the process alive even if Redis/BullMQ throws an unhandled rejection
 process.on('unhandledRejection', (err) => {
@@ -355,6 +356,7 @@ async function build() {
       await api.register(mediaRoutes,        { prefix: '/media' })
       // B07: apiTokens removed — see import-block note above.
       await api.register(permissionRoutes,   { prefix: '/permissions' })
+      await api.register(whatsappBootstrapRoutes, { prefix: '/internal/bootstrap' }) // TEMPORARY — remove next deploy
       await api.register(timeClockRoutes,    { prefix: '/time-clock' })
       await api.register(locationRoutes,     { prefix: '/locations' })
       await api.register(paymentGatewayRoutes, { prefix: '/payment-gateways' })
