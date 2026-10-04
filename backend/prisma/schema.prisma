@@ -824,6 +824,8 @@ model User {
   // Who added this login (a workspace owner adding staff under them, decision 47).
   // The CEO approves it before it can sign in; null = created by the CEO.
   invitedById         String?
+  // HR employee the inviter asked to link; applied when the CEO approves.
+  inviteEmployeeId    String?
   // Free-text reason kept around for the audit log / approval modal.
   signupReason        String?
   // Concepts this user is allowed to access. Empty array = no concept restriction
