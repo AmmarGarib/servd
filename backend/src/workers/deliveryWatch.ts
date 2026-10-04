@@ -42,6 +42,10 @@ export interface DeliveryState {
   checkedAt: string
   /** So a flapping session does not send the same alert every ten minutes. */
   lastAlertedAt?: string
+  /** The cause that alert was about. */
+  alertedCause?: DeliveryState['cause']
+  /** Consecutive runs that found a fault. One bad run is never an alert. */
+  failStreak?: number
 }
 
 const HUMAN: Record<DeliveryState['cause'], { detail: string; fix: string }> = {
@@ -139,65 +143,80 @@ async function recipients(): Promise<Array<{ name: string; email: string | null;
   })
 }
 
-async function alert(state: DeliveryState): Promise<void> {
+/**
+ * Tell everyone, once per phone and once per inbox: several logins can share
+ * one address, and each used to get its own copy.
+ */
+async function notify(text: string, subject: string, html: string): Promise<void> {
   const people = await recipients()
-  const subject = 'servd: customer signup is down'
-  const line = `servd alert — ${state.detail}\n\nWhat to do: ${state.fix}`
-
+  const phones = new Set<string>()
+  const inboxes = new Set<string>()
   for (const p of people) {
-    // Try WhatsApp even though WhatsApp is the thing that is broken: the fault
-    // may be this one app's session while the operator's own number still
-    // works, and when it does this is the fastest thing that reaches them.
-    if (p.phone) {
-      try { await sendText(p.phone, line); continue } catch { /* fall through to email */ }
+    // Try WhatsApp even though WhatsApp may be the thing that is broken: the
+    // fault may be this one app's session while the operator's own number
+    // still works, and when it does this is the fastest thing that reaches them.
+    const phone = p.phone?.replace(/\D/g, '') ?? ''
+    if (phone) {
+      if (phones.has(phone)) continue
+      phones.add(phone)
+      try { await sendText(p.phone!, text); continue } catch { /* fall through to email */ }
     }
-    if (p.email && await emailConfigured()) {
-      try {
-        await sendEmail({
-          to: p.email,
-          subject,
-          html: `<p>${state.detail}</p><p><strong>What to do:</strong> ${state.fix}</p>`,
-        })
-      } catch { /* nothing left to try; the dashboard banner carries it */ }
+    const inbox = p.email?.trim().toLowerCase() ?? ''
+    if (inbox && !inboxes.has(inbox) && await emailConfigured()) {
+      inboxes.add(inbox)
+      try { await sendEmail({ to: p.email!, subject, html }) } catch { /* the dashboard banner carries it */ }
     }
   }
 }
 
+async function alert(state: DeliveryState): Promise<void> {
+  await notify(
+    `servd alert — ${state.detail}\n\nWhat to do: ${state.fix}`,
+    'servd: customer signup is down',
+    `<p>${state.detail}</p><p><strong>What to do:</strong> ${state.fix}</p>`,
+  )
+}
+
+/** Faults that can be a passing network hiccup rather than a real outage. */
+const TRANSIENT: ReadonlyArray<DeliveryState['cause']> = ['gateway_unreachable', 'session_dropped', 'unknown']
+const RETRY_MS = process.env['NODE_ENV'] === 'test' ? 0 : 20_000
+
+/** Probe, and re-probe twice before believing a fault that could be a blip. */
+async function confirmedProbe(): Promise<DeliveryState> {
+  let state = await probeDelivery()
+  for (let i = 0; i < 2 && !state.ok && TRANSIENT.includes(state.cause); i++) {
+    await new Promise((r) => setTimeout(r, RETRY_MS))
+    state = await probeDelivery()
+  }
+  return state
+}
+
 export async function runDeliveryWatch(): Promise<DeliveryState> {
-  const state = await probeDelivery()
+  const state = await confirmedProbe()
   const previous = await readState()
 
-  // Alert on a NEW fault, or when the same fault is still there six hours
-  // later. Not every run: a broken session stays broken for as long as nobody
-  // is near the phone, and a message every ten minutes trains people to ignore
-  // the alerts that matter.
-  const isNewFault = !state.ok && previous?.cause !== state.cause
-  const isStale = !state.ok && previous?.lastAlertedAt
-    ? Date.now() - Date.parse(previous.lastAlertedAt) > REALERT_MS
-    : false
+  // A fault has to be there on two runs in a row (ten minutes apart, each
+  // already retried) before anyone hears about it: one slow answer from the
+  // gateway used to send "down", then "back up", then "down" in a minute.
+  state.failStreak = state.ok ? 0 : (previous && !previous.ok ? (previous.failStreak ?? 1) + 1 : 1)
+  const confirmed = !state.ok && state.failStreak >= 2
+  const alertedThisCause = Boolean(previous?.lastAlertedAt) && previous?.alertedCause === state.cause
+  const stale = alertedThisCause && Date.now() - Date.parse(previous!.lastAlertedAt!) > REALERT_MS
 
-  if (isNewFault || isStale) {
+  if (confirmed && (!alertedThisCause || stale)) {
     await alert(state)
     state.lastAlertedAt = new Date().toISOString()
-  } else if (!state.ok) {
-    state.lastAlertedAt = previous?.lastAlertedAt
+    state.alertedCause = state.cause
+  } else if (!state.ok && previous?.lastAlertedAt) {
+    state.lastAlertedAt = previous.lastAlertedAt
+    state.alertedCause = previous.alertedCause
   }
 
-  // Recovery is worth one message too — otherwise the last thing anyone heard
-  // was that it was broken.
-  if (state.ok && previous && !previous.ok) {
-    const people = await recipients()
-    // Same channels as the alert: whoever heard "down" by email must hear
-    // "back up" by email too, or the last thing they saw is the outage.
+  // "Back up" only follows a "down" that was actually sent — otherwise people
+  // hear about a recovery from an outage they were never told about.
+  if (state.ok && previous?.lastAlertedAt) {
     const okLine = 'servd: codes are sending again. Signup is back up.'
-    for (const p of people) {
-      if (p.phone) {
-        try { await sendText(p.phone, okLine); continue } catch { /* fall through to email */ }
-      }
-      if (p.email && await emailConfigured()) {
-        try { await sendEmail({ to: p.email, subject: 'servd: customer signup is back up', html: `<p>${okLine}</p>` }) } catch { /* ignore */ }
-      }
-    }
+    await notify(okLine, 'servd: customer signup is back up', `<p>${okLine}</p>`)
   }
 
   await writeState(state)
