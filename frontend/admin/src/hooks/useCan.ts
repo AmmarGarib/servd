@@ -14,6 +14,18 @@ import { api } from '../lib/api'
 export interface MePermissions {
   role: string
   modules: string[]
+  /**
+   * The workspaces the caller can open (decision 47), sections filtered to
+   * their modules; `owner` = the caller owns it. Shape in hooks/useWorkspaces.
+   */
+  workspaces?: Array<{
+    id: string
+    title: string
+    owner: boolean
+    sections: Array<{ key: string; title: string; modules: string[] }>
+  }>
+  /** Roles this user may add logins for (POST /auth/staff/invite). */
+  childRoles?: string[]
 }
 
 export function usePermissions() {

@@ -135,6 +135,28 @@ rewritten, trust these corrections:
   runs at boot for every company (and only adds codes that are missing, so
   operator edits survive). `/health` checks the required codes per company.
 
+## Workspaces — servd is organised by owner (2026-10-04, owner decision 47)
+
+Five workspaces replace the old 18-module catalogue: **Operations** (the CEO —
+all BOH and FOH, menu, stock, buying, the till, company setup), **Finance**,
+**Marketing**, **HR**, **Dev** (IT role `it` — integrations, backups,
+webhooks, the user audit log). `backend/src/lib/workspaces.ts` is the ONE
+definition (sections, module ids, owner/member roles, `childRoles`); every
+module id belongs to exactly one workspace (tested). The admin sidebar,
+`/w/<id>` homes and `/modules` read it from `GET /permissions/me` /
+`GET /permissions/workspaces` — never keep a copy in the frontend. A new
+module id must be placed in a workspace in the same change.
+
+- **Team = the HR reporting line** (`HrEmployee.managerId`). `GET /hr/team`
+  returns the whole tree under the caller. Don't build another hierarchy.
+- **Owners add logins only for roles under them** (`childRoles`;
+  `POST /auth/staff/invite`), always `pending` until the CEO approves on
+  /workforce. The CEO's own `POST /auth/users` needs no approval.
+- **User audit log** (`/configuration/audit-log`, module `audit_log`):
+  identity trail incl. `auth.login`, `auth.login_failed`, `auth.otp_login`,
+  `auth.2fa_failed`, `auth.logout`. The books' trail
+  (`/accounting/audit-log`) stays CEO + management only.
+
 ## Storefront content module (2026-09-28, owner decision 41)
 
 **Admin → Storefront (`/storefront`) is the ONLY place storefront content is

@@ -6,12 +6,13 @@ import { usePathname, useRouter } from 'next/navigation'
 import { useAuthStore } from '../../store/auth'
 import { api } from '../../lib/api'
 import { useViewAsRole, type ViewAsRole } from '../../store/viewAsRole'
-import { useRoleModules, modulesForRole, useSyncRoleModules } from '../../store/roleModules'
+import { useSyncRoleModules } from '../../store/roleModules'
 import { usePermissions } from '../../hooks/useCan'
-import { APP_ROLES, roleLabel, isExecutive, type AppRole, type ModuleId } from '../../lib/appRoles'
+import { useMyWorkspaces } from '../../hooks/useWorkspaces'
+import { APP_ROLES, roleLabel, type ModuleId } from '../../lib/appRoles'
 import { TenantSwitcher, useViewAllTenants } from './TenantSwitcher'
 import { BrandPicker } from './BrandPicker'
-import { moduleForPath } from '../../lib/moduleCatalog'
+import { MODULE_PAGES, PERSONAL_PAGES } from '../../lib/moduleCatalog'
 import { PortfolioWriteGuardModal } from './PortfolioWriteGuardModal'
 import { PENDING_LAYOUTS_KEY } from '../storefront/ApprovalsPanel'
 
@@ -19,17 +20,18 @@ const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
 // ─── Nav structure ────────────────────────────────────────────────────────────
 //
-// Design rules:
-// - Sections collapse independently. State persisted per-user to localStorage.
-// - Heavy / config-tier sections (Marketing, Finance) start collapsed.
-// - Items can have `children` — only revealed when the parent's pill is open.
-// - User can pin any item (★) — pinned items render in a sticky strip up top.
-
-// Each nav item carries a `module` ID drawn from src/lib/appRoles.ts. The role
-// → module mapping (with CEO-editable overrides) decides what each role sees.
-// Items without a module are visible to everyone. Sections also carry a
-// module — when *every* item in a section is hidden, the section header
-// disappears too.
+// The sidebar is grouped by WORKSPACE (owner decision 47): Operations,
+// Finance, Marketing, HR, Dev. Which workspaces a user sees, and which
+// sections and modules sit in each, come from GET /permissions/me →
+// `workspaces` (already filtered to the user's effective modules — the same
+// resolver the API enforces with). The admin keeps no copy of the workspace
+// definitions; it only knows which PAGES sit behind each module id
+// (lib/moduleCatalog.ts MODULE_PAGES), so every item keeps its module tag and
+// href. The user's own workspace(s) come first and start open.
+//
+// - Workspaces collapse independently; the choice is persisted per browser.
+// - A page's sub-pages are revealed under it with the chevron.
+// - Any item can be pinned (star) into a strip at the top.
 
 interface NavItem {
   href: string
@@ -40,214 +42,31 @@ interface NavItem {
   module?: ModuleId
 }
 
-interface NavSection {
+interface NavGroup {
+  id: string
   title: string
-  items: NavItem[]
-  defaultCollapsed?: boolean
-  module?: ModuleId
+  owner: boolean
+  sections: Array<{ key: string; title: string; items: NavItem[] }>
 }
 
-const NAV: NavSection[] = [
-  // ── Executive — CEO / Admin only by default.
-  //
-  // Access control is Module Access (enforced by the API):
-  //   /configuration/role-modules → what each ROLE can open
-  //   /workforce (Staff Directory) → accounts, companies, pending signups
-  //
-  // The per-action "Roles & Permissions" matrix and the separate "Pending
-  // Signups" screen were removed (owner decisions 34 and the 2026-09-27
-  // reconcile): the matrix enforced nothing, and pending signups are a
-  // status filter on /workforce.
-  {
-    title: 'Executive',
-    items: [
-      { href: '/dashboard/ceo',                 label: 'CEO Overview',        icon: '👑', module: 'ceo_overview' },
-      // Single link — the category/tab shortcuts that used to nest here were
-      // noise at this team size; filtering lives inside the page itself.
-      { href: '/workforce',                     label: 'Workforce',           icon: '👥', module: 'staff_directory' },
-      { href: '/hr',                            label: 'HR',                  icon: '🪪', module: 'staff_hr' },
-      // Project Tracker — capital projects, run-rate opex, and forward
-      // projections. Moved up from its own standalone section (CEO surface).
-      { href: '/finance/capex', label: 'Project Tracker', icon: '🏗', module: 'capital', children: [
-        { href: '/finance/capex',       label: 'Capex',       module: 'capital' },
-        { href: '/finance/opex',        label: 'OpEx',        module: 'capital' },
-        { href: '/finance/projections', label: 'Projections', module: 'projections' },
-      ]},
-      { href: '/configuration/role-modules',    label: 'Module Access',       icon: '🗂', module: 'role_modules' },
-      // 'Tenants & Brands' (/settings) is retired: brands are edited in ONE
-      // place, Storefront → Brands; adding a brand or company is /onboarding.
-      // ── Account config (relocated from the retired "Setup" section). These
-      // are one-time-per-account surfaces: connect Meta (FB+IG) / WhatsApp /
-      // FBR PRAL / the Supplier Portal, push to staff devices, read the docs.
-      { href: '/settings/integrations',         label: 'Integrations',        icon: '🔌', module: 'integrations' },
-      { href: '/notifications',                 label: 'Notifications',       icon: '🔔', module: 'notifications' },
-      { href: '/help',                          label: 'Help & Support',      icon: '❓', module: 'help' },
-    ],
-  },
-  {
-    title: 'Live',
-    items: [
-      { href: '/dashboard', label: 'Dashboard',    icon: '⬡', module: 'dashboard' },
-      // Expo Station is the pass-station screen — expediter/management
-      // territory. Orders arrive here, expo fires them, then each line cook
-      // works off their own per-station /kds/<id> URL (opened on the station's
-      // iPad — managed via KDS Config). Tagged with `expo_station` (not
-      // `kds_all`) so the kitchen role can't see it — they get the Kitchen
-      // view dashboard below instead.
-      { href: '/expo',      label: 'Expo Station', icon: '🪧', module: 'expo_station' },
-      // Kitchen view — the line cook's home. Lists their assigned stations
-      // with click-to-expand inline queues. Tagged with its own module so
-      // it can be shown to roles that don't get /expo.
-      { href: '/kds',       label: 'Kitchen view', icon: '🍳', module: 'kds_dashboard' },
-      { href: '/chain',     label: 'Chain Rollup', icon: '🏢', module: 'chain' },
-    ],
-  },
-  {
-    // ── Management — every manager-facing surface in one tab. The manager-tier
-    // dashboards (each gated by module: the Brand Manager gets Brand, the F&B
-    // Manager gets F&B, the CEO + GM see both) plus the "look back / look
-    // across" layer — past orders, refunds, ops anomalies. Sits right after
-    // Live: Live is what's happening RIGHT NOW, Management is the post-hoc +
-    // analytical layer the floor can drop into for a quick lookup (refund last
-    // night's #1042). For managers whose Executive + Live sections are hidden,
-    // this becomes the first section in their sidebar.
-    title: 'Management',
-    items: [
-      { href: '/dashboard/brand', label: 'Brand Dashboard', icon: '📣', module: 'brand_dashboard' },
-      { href: '/dashboard/fnb',   label: 'F&B Dashboard',   icon: '🍽️', module: 'fnb_dashboard' },
-      { href: '/orders',    label: 'Orders (history)', icon: '📋', module: 'orders', children: [
-        { href: '/refunds',         label: 'Refunds',  module: 'refunds' },
-      ]},
-      { href: '/ops',       label: 'Ops Center',   icon: '⚡', module: 'ops' },
-      // People-ops that aren't CEO-only: Scheduling (F&B Manager, GM, FOH
-      // Management) and Payroll (HR, Finance, GM) live here so the roles that
-      // hold those modules can reach them — the CEO-gated Executive section
-      // would otherwise hide them. Module gating keeps each row scoped to the
-      // right roles. Workforce *admin* — staff allowances, categories,
-      // onboarding — stays CEO-only up in Executive.
-      { href: '/scheduling', label: 'Scheduling',  icon: '📅', module: 'scheduling' },
-      { href: '/hr/payroll', label: 'Payroll',     icon: '🧾', module: 'staff_hr', children: [
-        { href: '/tip-pools', label: 'Tip pools', module: 'payroll' },
-      ]},
-    ],
-  },
-  {
-    title: 'Service',
-    items: [
-      { href: '/pos', label: 'Point of Sale', icon: '💳', module: 'pos', children: [
-        { href: '/pos/waiter', label: 'Waiter mode', module: 'pos' },
-        { href: '/pos/shift',  label: 'Shift / Till', module: 'pos' },
-      ]},
-      { href: '/reservations', label: 'Reservations', icon: '🍽', module: 'reservations', children: [
-        { href: '/reservations/week',      label: 'Week view',            module: 'reservations' },
-        { href: '/reservations/blockouts', label: 'Closures & blockouts', module: 'reservations_admin' },
-        { href: '/configuration/hours',    label: 'Service hours',        module: 'reservations_admin' },
-        { href: '/reservations/analytics', label: 'Analytics',            module: 'reservations_admin' },
-        { href: '/kds/reservations',       label: 'Kitchen tracker',      module: 'kds_all' },
-      ]},
-      { href: '/orders/curbside', label: 'Curbside',   icon: '🚗', module: 'curbside' },
-      { href: '/floorplan',       label: 'Floor Plan', icon: '🪑', module: 'tables' },
-      { href: '/dispatch',        label: 'Dispatch',   icon: '🛵', module: 'dispatch', children: [
-        { href: '/riders', label: 'Riders', module: 'riders' },
-      ]},
-    ],
-  },
-  {
-    title: 'Kitchen',
-    items: [
-      { href: '/menu',                label: 'Menu',         icon: '📝', module: 'menu' },
-      { href: '/accounting/recipes',  label: 'Recipes',      icon: '📐', module: 'recipes' },
-      // Pricing lives here, not on recipes: recipes are pure cost; this page
-      // takes each plate's cost and owns selling price + margins.
-      { href: '/menu-engineering',    label: 'Menu Engineering', icon: '💹', module: 'recipes' },
-      { href: '/sourcing',            label: 'Sourcing Master Sheet', icon: '🧾', module: 'inventory' },
-      { href: '/par-sheet',           label: 'Par Sheet',    icon: '📋', module: 'par_sheet' },
-      { href: '/inventory',           label: 'Inventory',    icon: '📦', module: 'inventory' },
-      { href: '/kds/config',          label: 'KDS Config',   icon: '⚙️', module: 'kds_config' },
-    ],
-  },
-  {
-    // ── Storefront — everything the customer sees, gathered in one place:
-    // the brands (identity + colour), the storefront content module (library,
-    // pages incl. landing hero and brand footers, pop-ups, approvals —
-    // decision 41), the menu, business info and locations. (Menu is also
-    // linked under Kitchen for the line team.)
-    title: 'Storefront',
-    defaultCollapsed: true,
-    items: [
-      { href: '/storefront',        label: 'Storefront',    icon: '◩', module: 'storefront' },
-      { href: '/marketing/brands',  label: 'Brands',        icon: '🏷', module: 'brands' },
-      { href: '/menu',              label: 'Menu',          icon: '📝', module: 'menu' },
-      // Business Info is folded into Brands (contact + brief tabs); the
-      // kitchen address and pin are on Locations (decision 18).
-      { href: '/configuration/locations', label: 'Locations', icon: '📍', module: 'business_info' },
-    ],
-  },
-  {
-    // Single Marketing umbrella covers customer ops + outbound — for a
-    // single-team operator the host who handles a complaint is the same
-    // person sending the win-back. Higher-frequency engagement items
-    // (CRM, Campaigns, Complaints, Reviews) sit at the top of the group;
-    // creative/strategic items (Brands, Calendar, Media, Promotions,
-    // Analytics) below.
-    title: 'Marketing',
-    defaultCollapsed: true,
-    items: [
-      { href: '/marketing',         label: 'Workspace',   icon: '🚀', module: 'marketing_workspace', children: [
-        { href: '/marketing/activity', label: 'Activity Log', module: 'marketing_workspace' },
-      ]},
-      { href: '/crm',               label: 'CRM',         icon: '👥', module: 'crm', children: [
-        { href: '/crm/conversations', label: 'Conversations', module: 'crm' },
-        { href: '/crm/segments',      label: 'Segments',      module: 'crm' },
-        { href: '/crm/naughty-list',  label: 'Naughty list',  module: 'crm' },
-      ]},
-      { href: '/crm/campaigns',     label: 'Campaigns',   icon: '✉️', module: 'campaigns' },
-      { href: '/complaints',        label: 'Complaints',  icon: '🎫', module: 'complaints' },
-      { href: '/reviews',           label: 'Reviews',     icon: '⭐', module: 'reviews' },
-      { href: '/calendar',          label: 'Calendar',    icon: '📅', module: 'calendar' },
-      { href: '/promos',           label: 'Promotions',  icon: '🎟', module: 'promos', children: [
-        { href: '/discounts', label: 'Discounts', module: 'promos' },
-        { href: '/qrcodes',   label: 'QR Codes',  module: 'promos' },
-      ]},
-      { href: '/analytics',         label: 'Analytics',   icon: '📊', module: 'analytics' },
-    ],
-  },
-  {
-    title: 'Finance',
-    defaultCollapsed: true,
-    items: [
-      { href: '/accounting/pl-ledger',   label: 'P&L',             icon: '💰', module: 'finance_pl' },
-      { href: '/accounting',             label: 'Accounting',      icon: '📊', module: 'accounting', children: [
-        { href: '/accounting/ledger',           label: 'Ledger',           module: 'accounting' },
-        { href: '/accounting/food-cost',        label: 'Food Cost',        module: 'accounting' },
-        // Sales-mix quadrant report (orders × margin). Renamed so the ONE
-        // "Menu Engineering" is the Kitchen pricing page at /menu-engineering.
-        { href: '/accounting/menu-engineering', label: 'Sales Quadrants', module: 'accounting' },
-        { href: '/allocations',                 label: 'Allocations',      module: 'accounting' },
-      ]},
-      { href: '/gift-cards',             label: 'Gift Cards',      icon: '🎁', module: 'gift_cards' },
-      { href: '/reconciliation',         label: 'Reconciliation',  icon: '⚖️', module: 'reconciliation' },
-      { href: '/exceptions',             label: 'Exceptions',      icon: '🚨', module: 'exceptions' },
-      // Investment Dashboard is a read-only roll-up of Project Tracker —
-      // every CapexLine + payment flows here. To log anything, use the
-      // Capex tab under Project Tracker.
-      { href: '/finance/capital-ledger', label: 'Investment',      icon: '📊', module: 'capital' },
-      { href: '/procurement',            label: 'Procurement',     icon: '🏭', module: 'procurement', children: [
-        { href: '/procurement/receiving', label: 'Receiving',   module: 'procurement' },
-        { href: '/procurement/chat',    label: 'Supplier Chat', module: 'procurement' },
-        { href: '/procurement/monitor', label: 'Monitor',       module: 'procurement' },
-      ]},
-      { href: '/reports',                label: 'Reports',         icon: '📈', module: 'reports', children: [
-        { href: '/analytics/forecast', label: 'Demand Forecast', module: 'reports' },
-      ]},
-    ],
-  },
-  // Note: the standalone "Project Tracker" section moved into Executive above
-  // (Capex / OpEx / Projections as children of one Project Tracker entry).
-  // Note: the standalone "Setup" section was retired — the first-run wizard is
-  // still reachable from the Dashboard onboarding checklist, and the surfaces
-  // worth keeping (Integrations, Notifications, Help) moved up into Executive.
-]
+/** A section's modules → sidebar items (sub-pages become children). */
+function itemsForModules(modules: readonly string[], seen: Set<string>): NavItem[] {
+  const items: NavItem[] = []
+  for (const m of modules) {
+    let parent: NavItem | null = null
+    for (const p of MODULE_PAGES[m as ModuleId] ?? []) {
+      if (seen.has(p.href)) continue
+      seen.add(p.href)
+      if (p.sub && parent) {
+        parent.children = [...(parent.children ?? []), { href: p.href, label: p.label, module: m as ModuleId }]
+        continue
+      }
+      parent = { href: p.href, label: p.label, icon: p.icon ?? '·', module: m as ModuleId }
+      items.push(parent)
+    }
+  }
+  return items
+}
 
 const FULL_SCREEN_PREFIXES = ['/kds', '/pos', '/login', '/supplier']
 
@@ -286,115 +105,90 @@ function NavLinks({
   collapsed: boolean
   onNavigate?: () => void
 }) {
-  // Determine the role that drives nav visibility. Real role for everyone,
-  // overridden by the view-as switcher when admin/CEO is impersonating.
   const { data: me } = usePermissions()
-  const viewAsRole = useViewAsRole((s) => s.role)
-  // Keep the local role→modules cache in step with the server's rows so every
-  // admin browser renders the same matrix (and the API enforces the same one).
-  useSyncRoleModules()
-  const overrides = useRoleModules((s) => s.overrides)
   const isSuper = me?.role === 'admin'
-  const effectiveRole: AppRole = (
-    isSuper && viewAsRole
-      ? viewAsRole
-      : (me?.role ?? 'cashier')
-  ) as AppRole
+  // Keep the local role→modules cache in step with the server's rows — the
+  // CEO's view-as preview filters the workspace definitions with it.
+  useSyncRoleModules()
+  const { workspaces } = useMyWorkspaces()
 
-  // Modules the effective role is allowed to see, derived from the CEO-editable
-  // role→modules map. Memoised so we don't re-derive on every nav render.
   const allowedModules = useMemo(() => {
-    if (isSuper && !viewAsRole) return null               // real admin/CEO sees everything
-    // CEO viewing as another role: that role's server-side set.
-    if (isSuper && viewAsRole) return new Set<ModuleId>(modulesForRole(effectiveRole, overrides))
-    // Everyone else: THEIR effective modules as the API resolves them
-    // (role override ?? default, + moduleAllow − moduleDeny), so the sidebar
-    // and the API's 403s cannot disagree.
-    return new Set<ModuleId>((me?.modules ?? []) as ModuleId[])
-  }, [isSuper, viewAsRole, effectiveRole, overrides, me?.modules])
+    const s = new Set<string>()
+    for (const w of workspaces) for (const sec of w.sections) for (const m of sec.modules) s.add(m)
+    return s
+  }, [workspaces])
 
-  function visibleByModule(module?: ModuleId) {
-    if (!allowedModules) return true                      // real admin/CEO: full access
-    if (!module) return true                              // un-tagged items default visible
-    return allowedModules.has(module)
-  }
-
-  // Live per-station KDS entries — sidebar injects one child under "Stations"
-  // for every station the operator has configured. Stations are concept-scoped
-  // and dynamic, so we fetch at runtime rather than hard-coding the NAV array.
-  // Visible only to staff who can see kds_all (the kitchen line + management).
+  // Live per-station KDS entries — one child under Kitchen view for every
+  // station the operator has configured (concept-scoped, so fetched).
   const { data: stations = [] } = useQuery<Array<{ id: string; name: string; isActive: boolean }>>({
     queryKey: ['nav-stations'],
     queryFn:  () => api.get('/kds/stations'),
     staleTime: 60_000,
-    // Skip the query for roles that don't see kitchen surfaces — the line cook,
-    // POS-only cashier, etc. don't need the sidebar to ask the server.
-    enabled:  !allowedModules || allowedModules.has('kds_all'),
+    enabled:  allowedModules.has('kds_all'),
   })
 
-  // ── Module-scoped navigation ────────────────────────────────────────────
-  //
-  // The sidebar used to be the whole app: one long dropdown tree of every
-  // section. Navigation now starts at the /modules hub, and the sidebar shows
-  // ONLY the module you are currently inside. Items stay module-gated exactly
-  // as before, so a partial-access role sees a partial list.
-  const currentModule = useMemo(() => moduleForPath(pathname), [pathname])
+  // CEO queues — same cache keys as the identity card's badges.
+  const { data: pendingStaff = [] } = useQuery<Array<{ id: string }>>({
+    queryKey: ['staff', 'pending'],
+    queryFn:  () => api.get('/auth/staff/pending'),
+    enabled:  isSuper,
+    refetchInterval: 30_000,
+    staleTime: 15_000,
+  })
+  const { data: pendingLayouts = [] } = useQuery<Array<{ id: string }>>({
+    queryKey: PENDING_LAYOUTS_KEY,
+    queryFn:  () => api.get('/site-layouts?status=pending'),
+    enabled:  isSuper,
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+  })
 
-  const moduleNav: NavSection[] = useMemo(() => {
-    if (!currentModule) return []
-    const items: NavItem[] = currentModule.sections.map((sec) => ({
-      href: sec.href,
-      label: sec.label,
-      icon: '·',
-      ...(sec.module ? { module: sec.module } : {}),
-    }))
-    // Live per-station KDS entries still belong under the Kitchen module.
-    if (currentModule.id === 'kitchen' && stations.length > 0) {
-      for (const st of stations.filter((s) => s.isActive)) {
-        items.push({ href: `/kds/${st.id}`, label: st.name, icon: '·', module: 'kds_all' })
-      }
-    }
-    return [{ title: currentModule.name, items }]
-  }, [currentModule, stations])
+  const groups: NavGroup[] = useMemo(() => {
+    return workspaces.map((w) => {
+      const seen = new Set<string>()
+      const sections = w.sections.map((sec) => {
+        const items = itemsForModules(sec.modules, seen).map((item) => {
+          if (item.href === '/kds' && allowedModules.has('kds_all')) {
+            const live = stations.filter((s) => s.isActive).map((s) => ({ href: `/kds/${s.id}`, label: s.name, module: 'kds_all' as ModuleId }))
+            if (live.length) return { ...item, children: [...(item.children ?? []), ...live] }
+          }
+          if (item.module === 'role_management' && pendingStaff.length > 0) return { ...item, badge: String(pendingStaff.length) }
+          if (item.module === 'storefront' && pendingLayouts.length > 0) return { ...item, badge: String(pendingLayouts.length) }
+          return item
+        })
+        return { key: sec.key, title: sec.title, items }
+      }).filter((s) => s.items.length > 0)
+      return { id: w.id, title: w.title, owner: w.owner, sections }
+    }).filter((g) => g.sections.length > 0)
+  }, [workspaces, stations, allowedModules, pendingStaff.length, pendingLayouts.length])
 
-  // Legacy full tree — retained only so the station-injection logic below keeps
-  // compiling; it is no longer rendered.
-  const legacyNav: NavSection[] = useMemo(() => {
-    if (stations.length === 0) return NAV
-    const activeStations = stations.filter((s) => s.isActive)
-    return NAV.map((section) => {
-      if (section.title !== 'Live') return section
-      const newItems: NavItem[] = []
-      for (const item of section.items) {
-        newItems.push(item)
-        if (item.href === '/expo') {
-          // Insert a Stations parent right after Expo Station for expediters
-          // and managers — gives them a 1-tap jump into any station's
-          // full-screen view. The parent click lands on /kds (kitchen
-          // dashboard) since expediters don't have kds_config access;
-          // children open each station directly. The kitchen role doesn't
-          // have kds_all so this whole subtree filters out for them — they
-          // use the /kds dashboard cards instead.
-          newItems.push({
-            href: '/kds',
-            label: 'Stations',
-            icon: '🍳',
-            module: 'kds_all',
-            children: activeStations.map((s) => ({
-              href:   `/kds/${s.id}`,
-              label:  s.name,
-              module: 'kds_all',
-            })),
-          })
-        }
-      }
-      return { ...section, items: newItems }
-    })
-  }, [stations])
+  const personalItems: NavItem[] = useMemo(
+    () => PERSONAL_PAGES.map((p) => ({ href: p.href, label: p.label, icon: '·' })),
+    [],
+  )
 
-  // Section collapse state — defaults from NAV definition, persisted to localStorage
-  const defaultCollapsedSet = useMemo(() => new Set(NAV.filter((s) => s.defaultCollapsed).map((s) => s.title)), [])
-  const [collapsedSections, setCollapsedSections] = usePersistedSet('servd_nav_collapsed_v2', defaultCollapsedSet)
+  // Workspace open/closed — entries "id:1" / "id:0" once the user has chosen;
+  // until then the first (own) workspace and any they own start open, and the
+  // one holding the current page opens itself.
+  const [wsState, setWsState] = usePersistedSet('servd_nav_workspaces_v1', new Set())
+  function explicitOpen(id: string): boolean | undefined {
+    if (wsState.has(`${id}:1`)) return true
+    if (wsState.has(`${id}:0`)) return false
+    return undefined
+  }
+  function groupHasActive(g: NavGroup): boolean {
+    return g.sections.some((s) => s.items.some((i) => isActive(pathname, i.href) || i.children?.some((c) => isActive(pathname, c.href))))
+  }
+  function isOpen(g: NavGroup, index: number): boolean {
+    const e = explicitOpen(g.id)
+    if (e !== undefined) return e
+    return index === 0 || g.owner || groupHasActive(g)
+  }
+  function toggleGroup(g: NavGroup, index: number) {
+    const next = new Set(Array.from(wsState).filter((k) => !k.startsWith(`${g.id}:`)))
+    next.add(`${g.id}:${isOpen(g, index) ? 0 : 1}`)
+    setWsState(next)
+  }
 
   // Expanded parents (child reveal) — also persisted
   const [expandedParents, setExpandedParents] = usePersistedSet('servd_nav_expanded_parents_v1', new Set())
@@ -402,11 +196,6 @@ function NavLinks({
   // Pinned items — flat list of hrefs the user has starred
   const [pinned, setPinned] = usePersistedSet('servd_nav_pinned_v1', new Set())
 
-  function toggleSection(title: string) {
-    const next = new Set(collapsedSections)
-    if (next.has(title)) next.delete(title); else next.add(title)
-    setCollapsedSections(next)
-  }
   function toggleParent(href: string) {
     const next = new Set(expandedParents)
     if (next.has(href)) next.delete(href); else next.add(href)
@@ -421,10 +210,10 @@ function NavLinks({
   // Auto-expand parent if we're on a child route
   useEffect(() => {
     if (collapsed) return
-    for (const section of moduleNav) {
-      for (const item of section.items) {
-        if (item.children?.some((c) => isActive(pathname, c.href))) {
-          if (!expandedParents.has(item.href)) {
+    for (const g of groups) {
+      for (const section of g.sections) {
+        for (const item of section.items) {
+          if (item.children?.some((c) => isActive(pathname, c.href)) && !expandedParents.has(item.href)) {
             const next = new Set(expandedParents)
             next.add(item.href)
             setExpandedParents(next)
@@ -433,27 +222,73 @@ function NavLinks({
       }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pathname])
+  }, [pathname, groups.length])
 
-  // Flatten all items so we can resolve pinned hrefs to icon+label.
-  // Uses renderedNav so dynamically-injected station children also resolve
-  // when the operator pins one (otherwise they'd appear as orphans).
+  // Pinned hrefs resolve only against pages this user can see — a pin to a
+  // module that was since withdrawn simply disappears.
   const allItems = useMemo(() => {
     const map = new Map<string, NavItem>()
-    for (const s of legacyNav) {
-      for (const i of s.items) {
-        map.set(i.href, i)
-        for (const c of i.children ?? []) {
-          map.set(c.href, { href: c.href, label: c.label, icon: '·' })
+    for (const i of personalItems) map.set(i.href, i)
+    for (const g of groups) {
+      for (const s of g.sections) {
+        for (const i of s.items) {
+          map.set(i.href, i)
+          for (const c of i.children ?? []) map.set(c.href, { href: c.href, label: c.label, icon: '·' })
         }
       }
     }
     return map
-  }, [legacyNav])
+  }, [groups, personalItems])
 
   const pinnedItems = useMemo(() =>
     Array.from(pinned).map((h) => allItems.get(h)).filter((x): x is NavItem => !!x),
   [pinned, allItems])
+
+  function renderItems(items: NavItem[]) {
+    return (
+      <div className="space-y-0.5 px-1.5">
+        {items.map((item) => {
+          const active = isActive(pathname, item.href)
+          const children = item.children ?? []
+          const hasChildren = children.length > 0
+          const expanded = expandedParents.has(item.href)
+          return (
+            <div key={item.href}>
+              <NavLinkRow
+                item={item}
+                active={active}
+                collapsed={collapsed}
+                pinned={pinned.has(item.href)}
+                expandable={hasChildren}
+                expanded={expanded}
+                onNavigate={onNavigate}
+                onTogglePin={() => togglePin(item.href)}
+                onToggleExpand={() => toggleParent(item.href)}
+              />
+              {!collapsed && hasChildren && expanded && children.map((c) => (
+                <Link key={c.href} href={c.href}
+                  onClick={() => onNavigate?.()}
+                  className="flex items-center gap-2 rounded-md transition-all duration-150 ml-7 mr-1.5 px-2.5 py-1.5 group"
+                  style={isActive(pathname, c.href) ? {
+                    background: 'rgba(0,212,177,0.08)',
+                    color: '#00D4B1',
+                  } : {
+                    background: 'transparent',
+                    color: 'rgba(255,255,255,0.32)',
+                  }}
+                  onMouseEnter={(e) => { if (!isActive(pathname, c.href)) e.currentTarget.style.color = 'rgba(255,255,255,0.65)' }}
+                  onMouseLeave={(e) => { if (!isActive(pathname, c.href)) e.currentTarget.style.color = 'rgba(255,255,255,0.32)' }}
+                >
+                  <span className="text-[10px] opacity-50">└</span>
+                  <span className="text-[11.5px] font-medium leading-none truncate flex-1">{c.label}</span>
+                </Link>
+              ))}
+            </div>
+          )
+        })}
+      </div>
+    )
+  }
 
   return (
     <nav className="relative z-10 flex-1 overflow-y-auto scrollbar-hide py-2 space-y-3">
@@ -474,84 +309,73 @@ function NavLinks({
         </div>
       )}
 
-      {/* ── Back to the hub ────────────────────────────────────────────
-          Navigation starts at /modules; every screen keeps a way back to it. */}
+      {/* ── Me — open to every login; the API scopes each to the caller ── */}
+      <div>
+        {!collapsed && <SubHeader title="Me" />}
+        {renderItems(personalItems)}
+      </div>
+
+      {/* ── Workspaces ─────────────────────────────────────────────────── */}
+      {groups.map((g, index) => {
+        const open = isOpen(g, index)
+        return (
+          <div key={g.id}>
+            {collapsed ? (
+              <div className="h-px mx-2 mb-2" style={{ background: 'rgba(255,255,255,0.06)' }} />
+            ) : (
+              <div className="flex items-center gap-1 px-2.5 pb-1">
+                <button onClick={() => toggleGroup(g, index)}
+                  className="flex items-center gap-1.5 flex-1 min-w-0 rounded-md px-1.5 py-1 text-left hover:bg-white/[0.03]"
+                  title={open ? `Collapse ${g.title}` : `Expand ${g.title}`}>
+                  <span className="transition-transform duration-150"
+                    style={{ color: 'rgba(255,255,255,0.3)', display: 'inline-block', fontSize: '8px', transform: open ? 'rotate(0deg)' : 'rotate(-90deg)' }}>▼</span>
+                  <span className="text-[10.5px] font-black uppercase tracking-[0.2em] truncate"
+                    style={{ color: open ? 'rgba(255,255,255,0.7)' : 'rgba(255,255,255,0.4)' }}>{g.title}</span>
+                  {g.owner && (
+                    <span className="text-[8px] font-black uppercase tracking-wider px-1 rounded"
+                      style={{ background: 'rgba(0,212,177,0.1)', color: '#00D4B1' }}>yours</span>
+                  )}
+                </button>
+                <Link href={`/w/${g.id}`} onClick={onNavigate}
+                  className="text-[10px] font-bold px-1.5 py-1 rounded-md hover:bg-white/[0.05]"
+                  style={{ color: isActive(pathname, `/w/${g.id}`) ? '#00D4B1' : 'rgba(255,255,255,0.3)' }}
+                  title={`${g.title} home`}>
+                  home
+                </Link>
+              </div>
+            )}
+            {(open || collapsed) && g.sections.map((s) => (
+              <div key={s.key} className="mb-1.5">
+                {!collapsed && <SubHeader title={s.title} />}
+                {renderItems(s.items)}
+              </div>
+            ))}
+          </div>
+        )
+      })}
+
+      {/* ── Every workspace, including the ones you can't open ─────────── */}
       <div className="px-1.5 pb-2">
         <Link
           href="/modules"
           onClick={onNavigate}
           className="flex items-center gap-2 rounded-lg px-2.5 py-2 text-xs font-bold transition-colors"
-          style={{ color: 'rgba(255,255,255,0.55)', background: 'rgba(255,255,255,0.03)' }}
-          title="All modules"
+          style={{ color: 'rgba(255,255,255,0.45)', background: 'rgba(255,255,255,0.03)' }}
+          title="All workspaces"
         >
           <span aria-hidden>⊞</span>
-          {!collapsed && <span>All modules</span>}
+          {!collapsed && <span>All workspaces</span>}
         </Link>
       </div>
-
-      {/* ── Current module ─────────────────────────────────────────────── */}
-      {moduleNav.map((section) => {
-        // Governance rows (Roles & Permissions, Module Access) stay hidden by
-        // their module atoms — an owner simply doesn't hold them — so no
-        // section-level special case is needed any more.
-        const sectionItems = section.items.filter((i) => visibleByModule(i.module))
-        if (sectionItems.length === 0) return null
-        const isCollapsed = collapsedSections.has(section.title)
-        return (
-          <div key={section.title}>
-            {!collapsed && (
-              <SectionHeader title={section.title} collapsed={isCollapsed}
-                onClick={() => toggleSection(section.title)} />
-            )}
-            {collapsed && <div className="h-px mx-2 mb-2" style={{ background: 'rgba(255,255,255,0.04)' }} />}
-            {(!isCollapsed || collapsed) && (
-              <div className="space-y-0.5 px-1.5">
-                {sectionItems.map((item) => {
-                  const active = isActive(pathname, item.href)
-                  const visibleChildren = (item.children ?? []).filter((c) => visibleByModule(c.module))
-                  const hasChildren = visibleChildren.length > 0
-                  const expanded = expandedParents.has(item.href)
-                  return (
-                    <div key={item.href}>
-                      <NavLinkRow
-                        item={item}
-                        active={active}
-                        collapsed={collapsed}
-                        pinned={pinned.has(item.href)}
-                        expandable={hasChildren}
-                        expanded={expanded}
-                        onNavigate={onNavigate}
-                        onTogglePin={() => togglePin(item.href)}
-                        onToggleExpand={() => toggleParent(item.href)}
-                      />
-                      {/* Children */}
-                      {!collapsed && hasChildren && expanded && visibleChildren.map((c) => (
-                        <Link key={c.href} href={c.href}
-                          onClick={() => onNavigate?.()}
-                          className="flex items-center gap-2 rounded-md transition-all duration-150 ml-7 mr-1.5 px-2.5 py-1.5 group"
-                          style={isActive(pathname, c.href) ? {
-                            background: 'rgba(0,212,177,0.08)',
-                            color: '#00D4B1',
-                          } : {
-                            background: 'transparent',
-                            color: 'rgba(255,255,255,0.32)',
-                          }}
-                          onMouseEnter={(e) => { if (!isActive(pathname, c.href)) e.currentTarget.style.color = 'rgba(255,255,255,0.65)' }}
-                          onMouseLeave={(e) => { if (!isActive(pathname, c.href)) e.currentTarget.style.color = 'rgba(255,255,255,0.32)' }}
-                        >
-                          <span className="text-[10px] opacity-50">└</span>
-                          <span className="text-[11.5px] font-medium leading-none truncate flex-1">{c.label}</span>
-                        </Link>
-                      ))}
-                    </div>
-                  )
-                })}
-              </div>
-            )}
-          </div>
-        )
-      })}
     </nav>
+  )
+}
+
+function SubHeader({ title }: { title: string }) {
+  return (
+    <p className="px-4 pt-1 pb-1 text-[9px] font-bold uppercase tracking-[0.18em]" style={{ color: 'rgba(255,255,255,0.22)' }}>
+      {title}
+    </p>
   )
 }
 

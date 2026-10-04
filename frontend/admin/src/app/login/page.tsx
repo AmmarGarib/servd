@@ -105,7 +105,7 @@ export default function StaffLoginPage() {
       // Nudge, never a block: an account created with a generated password is
       // flagged, but it still signs in. Blocking on this flag is how people get
       // stranded on deploy day.
-      router.replace(d.user?.mustChangePassword ? '/account/password' : '/modules')
+      router.replace(d.user?.mustChangePassword ? '/account/password' : '/w')
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Invalid credentials')
     } finally {
@@ -126,7 +126,7 @@ export default function StaffLoginPage() {
       const d = await res.json()
       if (!res.ok) throw new Error(d.error?.message ?? 'That code did not work')
       setAuth(d.user, d.accessToken, d.refreshToken)
-      router.replace('/modules')
+      router.replace('/w')
     } catch (e) {
       setError(e instanceof Error ? e.message : 'That code did not work')
     } finally {
@@ -232,7 +232,7 @@ export default function StaffLoginPage() {
       const d = await res.json()
       if (!res.ok) throw new Error(d.error?.message ?? 'That code did not work')
       setAuth(d.user, d.accessToken, d.refreshToken)
-      router.replace('/modules')
+      router.replace('/w')
     } catch (e) {
       setError(e instanceof Error ? e.message : 'That code did not work')
     } finally {

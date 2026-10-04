@@ -35,6 +35,7 @@ export type AppRole =
   | 'fnb_manager'       // food & beverage manager (BOH + FOH) — owns the F&B dashboard
   | 'finance'
   | 'hr'
+  | 'it'                // IT / developer — owns the Dev workspace
 
 export interface RoleMeta {
   value: AppRole
@@ -62,6 +63,7 @@ export const APP_ROLES: RoleMeta[] = [
   { value: 'fnb_manager',     label: 'F&B Manager',      emoji: '🍽️',  description: 'Owns the F&B dashboard — kitchen throughput, menu, food cost, quality. BOH + FOH.' },
   { value: 'finance',         label: 'Finance',          emoji: '💰',  description: 'P&L, payroll, accounting, reconciliation' },
   { value: 'hr',              label: 'HR / Workforce',   emoji: '👥',  description: 'Staff records, attendance, payroll, scheduling' },
+  { value: 'it',              label: 'IT / developer',   emoji: '',    description: 'Owns the Dev workspace — integrations, the user audit log, notifications, help' },
 ]
 
 /** Display label for any role string the backend returns. Maps admin → CEO. */
@@ -109,7 +111,7 @@ export const MODULES: ModuleMeta[] = [
   { id: 'business_info',      label: 'Business Info',       section: 'Executive' },
   { id: 'role_management',    label: 'Staff approvals',     section: 'Executive' },
   { id: 'role_modules',       label: 'Module Access',       section: 'Executive' },
-  { id: 'audit_log',          label: 'Audit Log',           section: 'Executive' },
+  { id: 'audit_log',          label: 'User audit log',      section: 'Executive' },
   { id: 'accounting_audit',   label: 'Accounting Audit',    section: 'Executive' },
   { id: 'brand_dashboard',    label: 'Brand Dashboard',     section: 'Management' },
   { id: 'fnb_dashboard',      label: 'F&B Dashboard',       section: 'Management' },

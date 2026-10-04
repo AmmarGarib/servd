@@ -20,8 +20,8 @@ export default function LandingPage() {
   const router = useRouter()
 
   useEffect(() => {
-    // Signed-in users go to the module hub, not a single dashboard.
-    if (user) router.replace('/modules')
+    // Signed-in users land on their own workspace home (/w picks it).
+    if (user) router.replace('/w')
   }, [user, router])
 
   return (

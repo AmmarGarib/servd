@@ -3,6 +3,7 @@
 // Open to every staff login: the server only lists what this person may act on.
 
 import { useState } from 'react'
+import Link from 'next/link'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../../lib/api'
 import { card, day, human, type HrFormat, type HrRecord, type WorkflowStep } from '../../../lib/hr'
@@ -37,7 +38,10 @@ export default function ApprovalsPage() {
           ))}
         </div>
         <div className="rounded-2xl p-4" style={card}>
-          <p className="text-sm font-black text-white/85 mb-3">My team</p>
+          <div className="flex items-center justify-between mb-3">
+            <p className="text-sm font-black text-white/85">My team</p>
+            <Link href="/team" className="text-[11px] font-bold text-[#00D4B1] hover:underline">Whole tree →</Link>
+          </div>
           {!team?.me && <p className="text-xs text-white/40">Your login isn&rsquo;t linked to an employee record, so no team is shown. HR can link it from the employee&rsquo;s profile.</p>}
           {team?.me && team.team.length === 0 && <p className="text-xs text-white/40">Nobody reports to you.</p>}
           {team?.team.map((m) => (

@@ -1,49 +1,33 @@
 'use client'
-// Module hub — the first thing you see after logging in.
+// All workspaces — servd grouped by owner (decision 47): Operations, Finance,
+// Marketing, HR, Dev.
 //
-// Every module in the system is listed, always, for everyone. What differs is
-// the state on the card: full / partial / locked. Locked modules are still
-// clickable — opening one explains what it is and who to ask — so the shape of
-// the whole system stays legible to everyone, instead of people discovering
-// features only when someone grants them.
+// Every workspace is listed for everyone, with who owns it, which roles live
+// there, its sections and the pages behind them. Pages you cannot open are
+// shown dimmed, so the shape of the whole system stays legible. The
+// definitions come from GET /permissions/workspaces; the admin keeps no copy.
+// The amber notes are the current known gaps (lib/moduleCatalog.ts).
 
 import Link from 'next/link'
 import { useMemo } from 'react'
 import { usePermissions } from '../../hooks/useCan'
+import { useWorkspaceDefs } from '../../hooks/useWorkspaces'
 import { useAuthStore } from '../../store/auth'
-import { useRoleModules, modulesForRole } from '../../store/roleModules'
-import { isExecutive, type AppRole, type ModuleId } from '../../lib/appRoles'
-import { MODULE_CATALOG, moduleAccessFor, type ModuleAccessState } from '../../lib/moduleCatalog'
+import { roleLabel } from '../../lib/appRoles'
+import { pagesForModules, gapsForModules, MODULE_PAGES } from '../../lib/moduleCatalog'
 
-const STATE_META: Record<ModuleAccessState, { label: string; color: string; bg: string; border: string }> = {
-  full:        { label: 'Open',      color: '#00D4B1', bg: 'rgba(0,212,177,0.08)',  border: 'rgba(0,212,177,0.22)' },
-  partial:     { label: 'Partial',   color: '#F59E0B', bg: 'rgba(245,158,11,0.08)', border: 'rgba(245,158,11,0.22)' },
-  locked:      { label: 'Locked',    color: 'rgba(255,255,255,0.35)', bg: 'rgba(255,255,255,0.02)', border: 'rgba(255,255,255,0.07)' },
-  'not-built': { label: 'Not built', color: '#A78BFA', bg: 'rgba(139,92,246,0.10)', border: 'rgba(139,92,246,0.28)' },
-}
-
-export default function ModuleHubPage() {
+export default function WorkspacesPage() {
   const { data: me } = usePermissions()
   const user = useAuthStore((s) => s.user)
-  const overrides = useRoleModules((s) => s.overrides)
+  const { data: defs = [], isLoading, error } = useWorkspaceDefs()
 
-  // null = unrestricted (real CEO). Otherwise the exact atom set for the role.
-  const allowed = useMemo<Set<ModuleId> | null>(() => {
-    if (!me) return new Set<ModuleId>()
+  // null = everything (the CEO)
+  const allowed = useMemo<Set<string> | null>(() => {
+    if (!me) return new Set()
     if (me.role === 'admin') return null
-    return new Set(modulesForRole((me.role ?? 'cashier') as AppRole, overrides))
-  }, [me, overrides])
-
-  // One list, in catalogue order. The catalogue is ordered by what a defect
-  // costs you if left alone, so reading top-down is working in descending order
-  // of damage — which is the whole point of collapsing the old A/B split.
-  const all = useMemo(
-    () => MODULE_CATALOG.map((m) => ({ mod: m, access: moduleAccessFor(m, allowed) })),
-    [allowed],
-  )
-  const notBuilt = all.filter((x) => x.mod.build === 'not-built').length
-  const partial  = all.filter((x) => x.mod.build === 'partial').length
-  const withGaps = all.filter((x) => x.mod.gaps).length
+    return new Set(me.modules)
+  }, [me])
+  const mine = new Set((me?.workspaces ?? []).map((w) => w.id))
 
   return (
     <div className="min-h-screen bg-s-bg">
@@ -51,90 +35,82 @@ export default function ModuleHubPage() {
         <p className="text-xs uppercase tracking-[0.18em] text-s-muted">
           {user?.name ? `Welcome back, ${user.name.split(' ')[0]}` : 'servd'}
         </p>
-        <h1 className="text-3xl font-black text-s-text mt-1">Modules</h1>
+        <h1 className="text-3xl font-black text-s-text mt-1">Workspaces</h1>
         <p className="text-sm text-s-muted mt-1.5 max-w-2xl">
-          {MODULE_CATALOG.length} modules, ordered by what a defect costs you.{' '}
-          {isExecutive(me?.role)
-            ? `${notBuilt} not built · ${partial} partly built · ${withGaps} carry known gaps.`
-            : 'Locked modules still show what they cover.'}
+          servd is organised by who owns the work. Each workspace has an owner, the roles that
+          work in it, and its sections. Pages you can&rsquo;t open are dimmed.
         </p>
       </header>
 
-      <main className="px-6 pb-16 max-w-6xl mx-auto">
-        <ModuleGrid items={all} />
+      <main className="px-6 pb-16 max-w-6xl mx-auto space-y-4">
+        {isLoading && <p className="text-sm text-s-muted">Loading…</p>}
+        {error != null && <p className="text-sm text-s-muted">Could not load the workspaces.</p>}
+        {defs.map((w) => {
+          const open = mine.has(w.id)
+          return (
+            <section key={w.id} className="rounded-2xl p-5"
+              style={{ background: 'rgba(255,255,255,0.025)', border: `1px solid ${open ? 'rgba(0,212,177,0.22)' : 'rgba(255,255,255,0.07)'}` }}>
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h2 className="text-xl font-black text-s-text">{w.title}</h2>
+                  <p className="text-xs text-s-muted mt-1">
+                    Owner: <span className="text-s-text font-semibold">{w.ownerRoles.map(roleLabel).join(' / ') || '—'}</span>
+                    {w.memberRoles.length > 0 && (
+                      <> · Roles: {w.memberRoles.map(roleLabel).join(', ')}</>
+                    )}
+                  </p>
+                </div>
+                {open ? (
+                  <Link href={`/w/${w.id}`} className="text-xs font-bold px-3 py-1.5 rounded-lg"
+                    style={{ background: 'rgba(0,212,177,0.1)', color: '#00D4B1', border: '1px solid rgba(0,212,177,0.25)' }}>
+                    Open {w.title} →
+                  </Link>
+                ) : (
+                  <span className="text-[10px] font-black uppercase tracking-wider px-2 py-1 rounded-full text-s-dim"
+                    style={{ border: '1px solid rgba(255,255,255,0.08)' }}>No access</span>
+                )}
+              </div>
+
+              <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {w.sections.map((s) => {
+                  const pages = pagesForModules(s.modules)
+                  const gaps = gapsForModules(s.modules)
+                  return (
+                    <div key={s.key} className="rounded-xl p-3"
+                      style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                      <p className="text-sm font-bold text-s-text">{s.title}</p>
+                      <div className="mt-1.5 flex flex-wrap gap-x-2 gap-y-1">
+                        {pages.length === 0 && <span className="text-[11px] text-s-dim">No admin page</span>}
+                        {pages.map((p) => {
+                          const mod = moduleOfPage(p.href)
+                          const can = !allowed || (mod ? allowed.has(mod) : true)
+                          return can ? (
+                            <Link key={p.href} href={p.href} className="text-[11px] text-s-teal hover:underline">{p.label}</Link>
+                          ) : (
+                            <span key={p.href} className="text-[11px] text-s-dim">{p.label}</span>
+                          )
+                        })}
+                      </div>
+                      {gaps.map((g) => (
+                        <p key={g.module} className="text-[10.5px] mt-2 leading-snug" style={{ color: 'rgba(245,158,11,0.85)' }}>
+                          {g.note}
+                        </p>
+                      ))}
+                    </div>
+                  )
+                })}
+              </div>
+            </section>
+          )
+        })}
       </main>
     </div>
   )
 }
 
-const BUILD_META: Record<string, { label: string; color: string }> = {
-  built:       { label: 'Built',     color: 'rgba(255,255,255,0.30)' },
-  partial:     { label: 'Partial',   color: '#F59E0B' },
-  'not-built': { label: 'Not built', color: '#A78BFA' },
-}
-
-function ModuleGrid({ items }: {
-  items: Array<{ mod: (typeof MODULE_CATALOG)[number]; access: ReturnType<typeof moduleAccessFor> }>
-}) {
-  if (items.length === 0) return null
-  return (
-    <section>
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {items.map(({ mod, access }) => {
-          const meta = STATE_META[access.state]
-          const locked = access.state === 'locked'
-          const dim = locked || access.state === 'not-built'
-          return (
-            <Link
-              key={mod.id}
-              href={`/modules/${mod.id}`}
-              className="group rounded-2xl p-4 transition-all block"
-              style={{
-                background: dim ? 'rgba(255,255,255,0.015)' : 'rgba(255,255,255,0.03)',
-                border: `1px solid ${meta.border}`,
-                opacity: dim ? 0.66 : 1,
-              }}
-            >
-              <div className="flex items-start justify-between gap-3">
-                <span className="text-2xl leading-none" aria-hidden>{locked ? '🔒' : mod.icon}</span>
-                <span
-                  className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full shrink-0"
-                  style={{ background: meta.bg, color: meta.color, border: `1px solid ${meta.border}` }}
-                >
-                  {meta.label}
-                </span>
-              </div>
-              <div className="flex items-center gap-1.5 mt-2.5">
-                <span className="text-[9px] font-black tracking-wider text-s-dim">{mod.ref}</span>
-                {mod.build !== 'built' && (
-                  <span className="text-[8px] font-black uppercase tracking-wider px-1.5 py-px rounded"
-                    style={{ background: 'rgba(255,255,255,0.05)', color: BUILD_META[mod.build]!.color }}
-                    title="What exists today, independent of your access">{BUILD_META[mod.build]!.label}</span>
-                )}
-                {mod.platform && (
-                  <span className="text-[8px] font-black uppercase tracking-wider px-1.5 py-px rounded"
-                    style={{ background: 'rgba(99,102,241,0.14)', color: '#818CF8' }}
-                    title="Platform infrastructure — build once, properly">PLATFORM</span>
-                )}
-              </div>
-              <h3 className="text-sm font-bold text-s-text mt-0.5">{mod.name}</h3>
-              <p className="text-[11px] text-s-muted mt-1 leading-snug">{mod.blurb}</p>
-              <p className="text-[10px] text-s-dim mt-2">
-                {access.state === 'not-built'
-                  ? 'Nothing built yet'
-                  : locked
-                    ? `${access.total} section${access.total === 1 ? '' : 's'} — no access`
-                    : `${access.visible.length} of ${access.total} sections`}
-              </p>
-              {mod.gaps && (
-                <p className="text-[10px] mt-1.5 leading-snug" style={{ color: 'rgba(245,158,11,0.85)' }}>
-                  ⚠ {mod.gaps.length > 120 ? mod.gaps.slice(0, 120).trimEnd() + '…' : mod.gaps}
-                </p>
-              )}
-            </Link>
-          )
-        })}
-      </div>
-    </section>
-  )
+function moduleOfPage(href: string): string | undefined {
+  for (const [mod, pages] of Object.entries(MODULE_PAGES)) {
+    if (pages?.some((p) => p.href === href)) return mod
+  }
+  return undefined
 }

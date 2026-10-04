@@ -121,6 +121,13 @@ const CATEGORIES: Category[] = [
     blurb: 'Staff records, scheduling, compliance.',
     roles: ['hr'],
   },
+  {
+    key: 'it',
+    label: 'IT / Dev',
+    emoji: '',
+    blurb: 'IT / developer — integrations, the user audit log, notifications, help.',
+    roles: ['it'],
+  },
 ]
 
 const STATUS_META: Record<StaffUser['accountStatus'], { label: string; color: string; bg: string }> = {
@@ -260,6 +267,18 @@ function WorkforcePageInner() {
 
   const pendingCount = users.filter((u) => statusOf(u) === 'pending').length
 
+  // Who added each pending login (team leads add logins for their own roles —
+  // POST /auth/staff/invite) — from the CEO's queue, GET /auth/staff/pending.
+  // Same cache key as the sidebar badge.
+  const { data: pendingQueue = [] } = useQuery<Array<{ id: string; invitedBy?: { id: string; name: string } | null; tenantId?: string | null }>>({
+    queryKey: ['staff', 'pending'],
+    queryFn:  () => api.get('/auth/staff/pending'),
+    enabled:  canEdit,
+    refetchInterval: 30_000,
+    staleTime: 15_000,
+  })
+  const invitedBy = useMemo(() => new Map(pendingQueue.map((p) => [p.id, p.invitedBy ?? null])), [pendingQueue])
+
   return (
     <div className="min-h-screen bg-kds-bg text-kds-text">
       <div className="border-b border-kds-border bg-kds-card">
@@ -383,6 +402,7 @@ function WorkforcePageInner() {
             <StaffRow
               key={u.id} user={u} canEdit={canEdit}
               tenants={tenants}
+              invitedBy={invitedBy.has(u.id) ? (invitedBy.get(u.id) ?? null) : undefined}
               // Chip is mostly noise in single-tenant view (every row belongs
               // to the same company). Only render it when the operator is
               // looking across companies, OR when the row is orphaned —
@@ -461,11 +481,13 @@ function CategoryBlurb({ category }: { category: Category }) {
 // ─── Staff row + inline editor ──────────────────────────────────────────────
 
 function StaffRow({
-  user, canEdit, tenants, showTenantChip,
+  user, canEdit, tenants, showTenantChip, invitedBy,
   expanded, onExpand, onClose, onChange,
 }: {
   user: StaffUser; canEdit: boolean
   tenants: TenantLite[]
+  /** Pending rows only: who added the login (null = self sign-up). */
+  invitedBy?: { id: string; name: string } | null
   showTenantChip: boolean
   expanded: boolean
   onExpand: () => void
@@ -519,7 +541,9 @@ function StaffRow({
             {/* Brand chips — one per tenant the staff member is a member of.
                 Primary tenant first, additional memberships after. Hidden in
                 single-tenant view (every row would carry the same chips). */}
-            {showTenantChip && (user.tenants ?? (tenant ? [tenant] : [])).map((t) => (
+            {/* A pending login always names its company — the CEO is
+                approving access to THAT company. */}
+            {(showTenantChip || status === 'pending') && (user.tenants ?? (tenant ? [tenant] : [])).map((t) => (
               <span key={t.id} className="shrink-0 text-[9px] uppercase tracking-wider font-bold rounded px-1.5 py-0.5"
                 style={{ background: 'rgba(99,102,241,0.15)', color: '#A5B4FC' }}>
                 {t.name}
@@ -543,6 +567,12 @@ function StaffRow({
               <span className="italic">No contact details yet</span>
             )}
           </p>
+          {status === 'pending' && invitedBy !== undefined && (
+            <p className="text-[11px] text-amber-400/80 truncate">
+              {invitedBy ? <>Added by <span className="font-bold">{invitedBy.name}</span></> : 'Signed up themselves'}
+              {tenant && <> · {tenant.name}</>}
+            </p>
+          )}
         </div>
         <div className="shrink-0 text-right">
           <p className="text-[11px] font-bold text-kds-text">
@@ -859,7 +889,7 @@ function InlineEditor({
                 <span className="text-[10px] text-amber-400">Tick a company and save before approving.</span>
               )}
               <button onClick={() => approve.mutate()} disabled={approve.isPending || !user.tenantId}
-                title='Approving issues no password: use "New password" afterwards.'
+                title='They are sent a link to set their password when email or WhatsApp is set up; otherwise use "New password" afterwards.'
                 className="rounded-md px-2 py-1.5 text-[11px] font-bold bg-amber-400/15 border border-amber-400/30 text-amber-400 hover:bg-amber-400/25">
                 Approve
               </button>

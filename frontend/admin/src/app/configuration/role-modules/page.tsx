@@ -5,6 +5,7 @@ import { usePermissions } from '../../../hooks/useCan'
 import { useRoleModules, modulesForRole } from '../../../store/roleModules'
 import { APP_ROLES, MODULES, type AppRole, type ModuleId } from '../../../lib/appRoles'
 import { useViewAsRole } from '../../../store/viewAsRole'
+import { useWorkspaceDefs } from '../../../hooks/useWorkspaces'
 
 /**
  * Module Access editor — CEO / Admin only.
@@ -36,16 +37,24 @@ export default function RoleModulesPage() {
   // Editable roles = everyone except the CEO (admin) — they're locked to all modules.
   const editableRoles = useMemo(() => APP_ROLES.filter((r) => r.value !== 'admin'), [])
 
+  // Grouped by WORKSPACE (decision 47) as the API defines them — the admin
+  // keeps no copy of which module sits where. Anything no workspace lists
+  // (retired ids) falls into "Other".
+  const { data: workspaceDefs } = useWorkspaceDefs()
   const sections = useMemo(() => {
+    const home = new Map<string, string>()
+    for (const w of workspaceDefs ?? []) for (const s of w.sections) for (const m of s.modules) if (!home.has(m)) home.set(m, w.title)
     const map = new Map<string, typeof MODULES>()
+    for (const w of workspaceDefs ?? []) map.set(w.title, [])
     for (const m of MODULES) {
       if (search && !m.label.toLowerCase().includes(search.toLowerCase()) && !m.id.includes(search.toLowerCase())) continue
-      const arr = map.get(m.section) ?? []
+      const group = home.get(m.id) ?? 'Other'
+      const arr = map.get(group) ?? []
       arr.push(m)
-      map.set(m.section, arr)
+      map.set(group, arr)
     }
-    return Array.from(map.entries())
-  }, [search])
+    return Array.from(map.entries()).filter(([, mods]) => mods.length > 0)
+  }, [search, workspaceDefs])
 
   if (!isSuper) {
     return (
@@ -261,7 +270,7 @@ export default function RoleModulesPage() {
         {/* Helper card */}
         <div className="rounded-xl p-4 text-xs text-white/45 leading-relaxed"
           style={{ background: 'rgba(99,102,241,0.05)', border: '1px solid rgba(99,102,241,0.15)' }}>
-          💡 <strong>How this works:</strong> when an operator logs in with role <em>cashier</em>, their sidebar is filtered to the modules ticked under the Cashier column. The CEO is the only one who can change this map — non-admin sessions can&rsquo;t open this page. Amber ticks indicate a role you&rsquo;ve customised; teal ticks are still on defaults. Permission-level rules (refund, void, manager-override) are configured separately on the <Link href="/configuration/roles" className="text-[#A5B4FC] underline">Roles & Permissions matrix</Link>.
+          💡 <strong>How this works:</strong> when an operator logs in with role <em>cashier</em>, their sidebar is filtered to the modules ticked under the Cashier column. The CEO is the only one who can change this map — non-admin sessions can&rsquo;t open this page. Amber ticks indicate a role you&rsquo;ve customised; teal ticks are still on defaults. Actions that need sign-off (refunds, voids, comps) ask for a manager PIN at the till; there is no separate per-action matrix.
         </div>
 
         {focusedRoleMeta && focusedRoleModules && (
