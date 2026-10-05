@@ -11,7 +11,7 @@ import { HR_ADMIN_ROLES, PAYROLL_APPROVER_ROLES, type HrFormat, type HrSectionIn
 // `staff` tabs are open to every login (the API only shows them their own
 // requests and the ones waiting on them); the rest are HR's and would only 403.
 const NAV: Array<{ href: string; label: string; staff?: boolean }> = [
-  { href: '/hr', label: 'Dashboard' },
+  { href: '/dashboard/hr', label: 'Dashboard' },
   { href: '/hr/employees', label: 'Employees' },
   { href: '/hr/attendance', label: 'Attendance' },
   { href: '/hr/sections', label: 'All sections' },
@@ -49,7 +49,7 @@ export function HrShell({ title, subtitle, actions, children }: { title: string;
         </div>
         <nav className="flex gap-1 overflow-x-auto mt-4 -mb-px">
           {NAV.filter((n) => isHrAdmin || n.staff).map((n) => {
-            const on = n.href === '/hr' ? path === '/hr' : path.startsWith(n.href)
+            const on = path.startsWith(n.href)
             return (
               <Link key={n.href} href={n.href}
                 className="px-3 py-2 text-xs font-bold whitespace-nowrap border-b-2"

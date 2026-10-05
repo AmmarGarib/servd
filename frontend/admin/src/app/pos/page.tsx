@@ -149,7 +149,7 @@ export default function PosPage() {
 
         {/* Concept selector */}
         <div className="flex h-12 items-center gap-2 border-b border-kds-border bg-kds-card px-3">
-          <Link href="/dashboard" className="text-kds-subtext text-xs hover:text-kds-text mr-2">← Back</Link>
+          <Link href="/w" className="text-kds-subtext text-xs hover:text-kds-text mr-2">← Back</Link>
           <span className="text-sm text-kds-subtext">Concept:</span>
           {concepts.map((c) => (
             <button

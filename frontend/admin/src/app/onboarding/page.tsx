@@ -87,9 +87,9 @@ export default function OnboardingWizardPage() {
             </p>
           </div>
           <button
-            onClick={() => { localStorage.setItem('servd_skip_wizard', '1'); router.push('/dashboard') }}
+            onClick={() => { localStorage.setItem('servd_skip_wizard', '1'); router.push('/w') }}
             className="text-xs text-white/45 hover:text-white shrink-0">
-            Skip to dashboard →
+            Skip to your workspace →
           </button>
         </div>
 
@@ -122,7 +122,7 @@ export default function OnboardingWizardPage() {
         {step === 'location' && <LocationStep concepts={concepts} onDone={() => { qc.invalidateQueries({ queryKey: ['wizard-locations'] }); setStep('hours') }} />}
         {step === 'hours'    && <HoursStep concepts={concepts} onDone={() => setStep('menu')} />}
         {step === 'menu'     && <MenuStep concepts={concepts} onDone={() => setStep('done')} />}
-        {step === 'done'     && <DoneStep onGo={() => router.push('/dashboard')} />}
+        {step === 'done'     && <DoneStep onGo={() => router.push('/w')} />}
       </div>
     </div>
   )
@@ -1301,7 +1301,7 @@ function DoneStep({ onGo }: { onGo: () => void }) {
         </ul>
       </div>
       <Footer>
-        <button onClick={onGo} className={primaryBtn}>Open dashboard →</button>
+        <button onClick={onGo} className={primaryBtn}>Open your workspace →</button>
       </Footer>
     </Card>
   )

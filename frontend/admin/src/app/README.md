@@ -4,7 +4,7 @@ Next.js App Router. Each subdirectory is a URL segment.
 
 ## Top-level routes
 
-- [`dashboard/`](./dashboard/) — Live operations cockpit (loaded for any signed-in user).
+- [`dashboard/`](./dashboard/) — The four workspace dashboards (operations, finance, marketing, hr), blank until the owner picks their numbers.
 - [`kds/`](./kds/) — Kitchen Display System (per-station + expediter).
 - [`pos/`](./pos/) — Point of Sale (cashier + waiter modes).
 - [`orders/`](./orders/) — Order list + detail + courses + bill split.
@@ -29,7 +29,6 @@ Next.js App Router. Each subdirectory is a URL segment.
 - [`floorplan/`](./floorplan/) — Visual floor plan editor.
 - [`allocations/`](./allocations/) — Cost allocation across concepts.
 - [`live/`](./live/) — Real-time event stream debug page.
-- [`chain/`](./chain/) — Multi-brand chain rollup.
 - [`configuration/`](./configuration/) — Configuration Hub (single page that surfaces every editable setting).
 - [`settings/`](./settings/) — Concept / station / staff editor (older settings UI).
 - [`help/`](./help/) — Help centre with FAQ + WhatsApp support shortcut.

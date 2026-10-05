@@ -6,7 +6,7 @@ import { card } from '../../../lib/hr'
 import { HrShell, useHrSections } from '../../../components/hr/HrShell'
 
 const PAGE_HREF: Record<string, string> = {
-  dashboard: '/hr', org: '/hr/org', employees: '/hr/employees', documents: '/hr/documents',
+  dashboard: '/dashboard/hr', org: '/hr/org', employees: '/hr/employees', documents: '/hr/documents',
   payroll: '/hr/payroll', letters: '/hr/letters', ess: '/hr/me', manager: '/hr/approvals', reports: '/hr/reports',
 }
 

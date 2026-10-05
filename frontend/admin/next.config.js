@@ -28,6 +28,21 @@ const nextConfig = {
       },
     ]
   },
+  // The old dashboards were retired for four blank ones (2026-10-05); their
+  // routes only forward old links and bookmarks. Temporary, not permanent —
+  // browsers cache 308s for good.
+  async redirects() {
+    const to = (destination) => ({ destination, permanent: false })
+    return [
+      { source: '/dashboard', ...to('/dashboard/operations') },
+      { source: '/dashboard/:old(ceo|fnb|boh|foh)', ...to('/dashboard/operations') },
+      { source: '/dashboard/brand', ...to('/dashboard/marketing') },
+      { source: '/ops', ...to('/dashboard/operations') },
+      { source: '/chain', ...to('/dashboard/operations') },
+      { source: '/marketing', ...to('/dashboard/marketing') },
+      { source: '/hr', ...to('/dashboard/hr') },
+    ]
+  },
   async rewrites() {
     if (!process.env.NEXT_PUBLIC_API_URL) return []
     return [

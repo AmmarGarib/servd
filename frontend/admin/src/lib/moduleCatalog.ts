@@ -29,11 +29,13 @@ export interface ModulePage {
   icon?: string
   /** Rendered as a child of the module's first page in the sidebar. */
   sub?: boolean
+  /** The workspace's dashboard: shown first in its workspace, ahead of every
+   *  section (the sidebar and the workspace home both hoist it). */
+  lead?: boolean
 }
 
 export const MODULE_PAGES: Partial<Record<ModuleId, ModulePage[]>> = {
   // ── Company
-  ceo_overview:   [{ label: 'CEO overview', href: '/dashboard/ceo', icon: '👑' }],
   business_info:  [
     { label: 'Locations', href: '/configuration/locations', icon: '📍', hint: 'Kitchen address and map pin' },
     { label: 'Delivery zones', href: '/configuration/delivery-zones', sub: true, hint: 'Beyond the last zone, delivery is refused' },
@@ -47,16 +49,9 @@ export const MODULE_PAGES: Partial<Record<ModuleId, ModulePage[]>> = {
   configuration:  [{ label: 'Configuration hub', href: '/configuration', icon: '⚙️' }],
   onboarding:     [{ label: 'Setup wizard', href: '/onboarding' }],
 
-  // ── Dashboards
-  dashboard:      [
-    { label: 'Dashboard', href: '/dashboard', icon: '⬡' },
-    { label: 'BOH dashboard', href: '/dashboard/boh', sub: true },
-    { label: 'FOH dashboard', href: '/dashboard/foh', sub: true },
-  ],
-  ops:            [{ label: 'Ops center', href: '/ops', icon: '⚡' }],
-  fnb_dashboard:  [{ label: 'F&B dashboard', href: '/dashboard/fnb', icon: '🍽️' }],
-  brand_dashboard: [{ label: 'Brand dashboard', href: '/dashboard/brand', icon: '📣' }],
-  chain:          [{ label: 'Chain rollup', href: '/chain', icon: '🏢' }],
+  // ── Dashboards (one per workspace, blank until the owner picks the numbers)
+  dashboard:      [{ label: 'Operations dashboard', href: '/dashboard/operations', icon: '⬡', lead: true }],
+  ops:            [{ label: 'Prep list', href: '/ops/prep-list', hint: 'Per station, from the demand forecast' }],
 
   // ── Kitchen
   kds_dashboard:  [{ label: 'Kitchen view', href: '/kds', icon: '🍳' }],
@@ -119,7 +114,10 @@ export const MODULE_PAGES: Partial<Record<ModuleId, ModulePage[]>> = {
   riders:         [{ label: 'Riders', href: '/riders' }],
 
   // ── Finance
-  finance_pl:     [{ label: 'P&L', href: '/accounting/pl-ledger', icon: '💰', hint: 'From the ledger — Statement and By brand' }],
+  finance_pl:     [
+    { label: 'Finance dashboard', href: '/dashboard/finance', icon: '⬡', lead: true },
+    { label: 'P&L', href: '/accounting/pl-ledger', icon: '💰', hint: 'From the ledger — Statement and By brand' },
+  ],
   accounting:     [
     { label: 'Accounting', href: '/accounting', icon: '📊' },
     { label: 'Ledger', href: '/accounting/ledger', sub: true },
@@ -156,10 +154,8 @@ export const MODULE_PAGES: Partial<Record<ModuleId, ModulePage[]>> = {
   payroll:        [{ label: 'Tip pools', href: '/tip-pools', icon: '🧾' }],
 
   // ── Marketing
-  marketing_workspace: [
-    { label: 'Marketing workspace', href: '/marketing', icon: '🚀' },
-    { label: 'Activity log', href: '/marketing/activity', sub: true },
-  ],
+  marketing_workspace: [{ label: 'Activity log', href: '/marketing/activity', icon: '🚀' }],
+  brand_dashboard: [{ label: 'Marketing dashboard', href: '/dashboard/marketing', icon: '⬡', lead: true }],
   crm:            [
     { label: 'CRM', href: '/crm', icon: '👥' },
     { label: 'Conversations', href: '/crm/conversations', sub: true },
@@ -182,8 +178,8 @@ export const MODULE_PAGES: Partial<Record<ModuleId, ModulePage[]>> = {
 
   // ── HR
   staff_hr:       [
-    { label: 'HR', href: '/hr', icon: '🪪' },
-    { label: 'Employees', href: '/hr/employees', sub: true },
+    { label: 'HR dashboard', href: '/dashboard/hr', icon: '⬡', lead: true },
+    { label: 'Employees', href: '/hr/employees', icon: '🪪' },
     { label: 'Attendance', href: '/hr/attendance', sub: true },
     { label: 'All sections', href: '/hr/sections', sub: true },
     { label: 'HR payroll', href: '/hr/payroll', sub: true },
@@ -230,8 +226,8 @@ export const MODULE_GAPS: Partial<Record<ModuleId, string>> = {
   orders: 'Every order is created by ingestOrder and completed by one completeOrder, which issues the invoice and queues FBR and SRB submission. Voids are per line on the order page.',
   refunds: 'The one refund engine: caps, manager PIN, cash from the open drawer, its own journal entry; a full refund restores loyalty, wallet and gift-card value.',
   reservations: 'Table state is set by the reservation flow only — POS orders never mark a table occupied. Guest tags have endpoints but no admin screen.',
-  dashboard: 'Revenue on the dashboards is ledger revenue. BOH and FOH dashboards are reached from the /dashboard chooser.',
-  ceo_overview: 'Money is ledger revenue; cost no allocation rule covers is one head-office (unallocated) line, not spread across brands (decisions 20, 22, 39).',
+  dashboard: 'The four workspace dashboards (Operations, Finance, Marketing, HR) are blank until the owner picks their numbers.',
+  ops: 'The prep list forecasts for the first brand only; it has no brand picker.',
   inventory: 'Stock is set only by a count, a waste log or a delivery; sales deplete through the one recipe explosion and give stock back on cancel. Counts and prep batches are company-scoped. No stock ledger yet (only sales leave a movement trail), no expiry or lot dates, cost is moving-average, and stock transfers move no quantity.',
   par_sheet: 'A different "par" from InventoryItem.parLevel (which drives low-stock alerts): this sheet lists the sub-recipes the company\'s brands use.',
   recipes: 'One plate cost (lib/recipeCost.ts) behind recipes, pricing, food cost, COGS and stock depletion; till sales book COGS per brand at shift close. One price per item across channels; no combos.',

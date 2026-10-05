@@ -122,7 +122,7 @@ export function KdsHeader({ title, stationId }: KdsHeaderProps) {
 
         <div className="flex items-center gap-4 text-xs text-kds-subtext">
           <span>{new Date().toLocaleTimeString('en-PK', { hour: '2-digit', minute: '2-digit' })}</span>
-          <a href="/dashboard" className="hover:text-kds-text">← Dashboard</a>
+          <a href="/w" className="hover:text-kds-text">← Workspace</a>
         </div>
       </div>
     </header>

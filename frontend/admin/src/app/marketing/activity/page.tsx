@@ -64,7 +64,7 @@ export default function MarketingActivityPage() {
     <div className="min-h-screen" style={{ background: '#090a0e' }}>
       <header className="px-7 py-6 border-b border-white/[0.05]">
         <div className="flex items-center gap-2 text-xs text-white/40 mb-2">
-          <Link href="/marketing" className="hover:text-white/70">← Marketing</Link>
+          <Link href="/w/marketing" className="hover:text-white/70">← Marketing</Link>
         </div>
         <div className="flex items-start justify-between gap-4 flex-wrap">
           <div>

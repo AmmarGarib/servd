@@ -85,8 +85,8 @@ export default function KdsKitchenDashboard() {
     <div className="h-screen flex flex-col bg-kds-bg overflow-hidden">
       <header className="border-b border-kds-border px-6 py-4 shrink-0">
         <div>
-          <Link href="/dashboard" className="text-sm text-gray-500 hover:text-gray-300 inline-flex items-center gap-1 mb-1 transition-colors">
-            ← Back to Dashboard
+          <Link href="/w" className="text-sm text-gray-500 hover:text-gray-300 inline-flex items-center gap-1 mb-1 transition-colors">
+            ← Back to workspace
           </Link>
           <h1 className="text-2xl font-black text-kds-text">Kitchen view</h1>
           <p className="text-sm text-kds-subtext">

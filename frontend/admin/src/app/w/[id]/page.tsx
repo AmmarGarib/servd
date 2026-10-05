@@ -41,6 +41,8 @@ export default function WorkspaceHomePage() {
 
   const isCeo = me?.role === 'admin'
   const canInvite = (me?.childRoles ?? []).length > 0
+  // The workspace's dashboard comes first, ahead of the sections.
+  const lead = pagesForModules(ws.sections.flatMap((s) => s.modules)).filter((p) => p.lead)
 
   return (
     <Shell>
@@ -63,11 +65,20 @@ export default function WorkspaceHomePage() {
         )}
       </div>
 
+      {lead.map((p) => (
+        <Link key={p.href} href={p.href} className="mt-5 flex items-center rounded-2xl px-4 py-3 hover:bg-white/[0.04]" style={card}>
+          <span className="text-sm font-black text-white/85">{p.label}</span>
+          <span className="ml-auto text-xs text-white/35">Open →</span>
+        </Link>
+      ))}
+
       <TeamSummary />
 
       <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {ws.sections.map((s) => {
-          const pages = pagesForModules(s.modules)
+          const all = pagesForModules(s.modules)
+          const pages = all.filter((p) => !p.lead)
+          if (pages.length === 0 && all.length > 0) return null // only the dashboard, shown above
           return (
             <div key={s.key} className="rounded-2xl p-4" style={card}>
               <p className="text-sm font-black text-white/85">{s.title}</p>

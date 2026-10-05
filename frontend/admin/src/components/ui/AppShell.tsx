@@ -50,13 +50,14 @@ interface NavGroup {
   sections: Array<{ key: string; title: string; items: NavItem[] }>
 }
 
-/** A section's modules → sidebar items (sub-pages become children). */
-function itemsForModules(modules: readonly string[], seen: Set<string>): NavItem[] {
+/** A section's modules → sidebar items (sub-pages become children). With
+ *  `lead`, only the workspace's dashboard pages; without, every other page. */
+function itemsForModules(modules: readonly string[], seen: Set<string>, lead = false): NavItem[] {
   const items: NavItem[] = []
   for (const m of modules) {
     let parent: NavItem | null = null
     for (const p of MODULE_PAGES[m as ModuleId] ?? []) {
-      if (seen.has(p.href)) continue
+      if (seen.has(p.href) || !!p.lead !== lead) continue
       seen.add(p.href)
       if (p.sub && parent) {
         parent.children = [...(parent.children ?? []), { href: p.href, label: p.label, module: m as ModuleId }]
@@ -72,7 +73,6 @@ function itemsForModules(modules: readonly string[], seen: Set<string>): NavItem
 const FULL_SCREEN_PREFIXES = ['/kds', '/pos', '/login', '/supplier']
 
 function isActive(pathname: string, href: string): boolean {
-  if (href === '/dashboard') return pathname === '/dashboard' || pathname === '/'
   return pathname === href || pathname.startsWith(href + '/')
 }
 
@@ -147,6 +147,8 @@ function NavLinks({
   const groups: NavGroup[] = useMemo(() => {
     return workspaces.map((w) => {
       const seen = new Set<string>()
+      // The workspace's dashboard goes first, ahead of every section.
+      const lead = itemsForModules(w.sections.flatMap((sec) => sec.modules), seen, true)
       const sections = w.sections.map((sec) => {
         const items = itemsForModules(sec.modules, seen).map((item) => {
           if (item.href === '/kds' && allowedModules.has('kds_all')) {
@@ -159,6 +161,7 @@ function NavLinks({
         })
         return { key: sec.key, title: sec.title, items }
       }).filter((s) => s.items.length > 0)
+      if (lead.length) sections.unshift({ key: 'dashboard', title: 'Dashboard', items: lead })
       return { id: w.id, title: w.title, owner: w.owner, sections }
     }).filter((g) => g.sections.length > 0)
   }, [workspaces, stations, allowedModules, pendingStaff.length, pendingLayouts.length])
